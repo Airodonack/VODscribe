@@ -237,6 +237,16 @@ impl Db {
         Ok(())
     }
 
+    /// Forgets every finished download, after the work dir has been cleared.
+    /// VODs waiting to transcribe go back to waiting to download.
+    pub fn forget_downloads(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "UPDATE vods SET audio_path = NULL;
+             UPDATE vods SET status = 'queued', progress = 0 WHERE status = 'ready';",
+        )?;
+        Ok(())
+    }
+
     pub fn audio_path(&self, id: i64) -> Result<Option<String>> {
         Ok(self.conn.query_row("SELECT audio_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
     }

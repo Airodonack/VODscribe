@@ -332,6 +332,38 @@ async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
     gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)
 }
 
+/// Bytes of downloaded files that `clear_cache` would delete.
+#[tauri::command]
+async fn cache_size(state: State<'_, AppState>) -> CmdResult<u64> {
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || paths.cache_size()).await.map_err(err)
+}
+
+/// Deletes everything that can be downloaded again (models, tools, the GPU
+/// pack, unfinished downloads), pausing running jobs first. The library,
+/// transcripts and settings are kept; setup runs again afterwards.
+#[tauri::command]
+async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    if state.setup_running.load(Ordering::Relaxed) || state.gpu_installing.load(Ordering::Relaxed) {
+        return Err("Wait for the current download to finish first.".into());
+    }
+    let app2 = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app2.state::<AppState>();
+        if !state.worker.pause_all(std::time::Duration::from_secs(15)) {
+            return Err("A job didn't stop in time; try again.".to_string());
+        }
+        state.paths.clear_cache().map_err(err)?;
+        state.db.lock().unwrap().forget_downloads().map_err(err)
+    })
+    .await
+    .map_err(err)??;
+    for vod in state.db.lock().unwrap().vods().map_err(err)? {
+        let _ = app.emit("vod", vod);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -374,6 +406,8 @@ pub fn run() {
             gpu_status,
             install_gpu_pack,
             remove_gpu_pack,
+            cache_size,
+            clear_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

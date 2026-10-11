@@ -144,7 +144,14 @@
             title="Settings">⚙</button
           >
           {#if showSettings}
-            <div class="popover" role="dialog" aria-label="Settings"><Settings /></div>
+            <div class="popover" role="dialog" aria-label="Settings">
+              <Settings
+                oncleared={() => {
+                  showSettings = false;
+                  refreshSetup();
+                }}
+              />
+            </div>
           {/if}
         </div>
       </div>

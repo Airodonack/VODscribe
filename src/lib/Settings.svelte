@@ -2,7 +2,11 @@
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
 
+  let { oncleared }: { oncleared: () => void } = $props();
+
   let device = $state<Device>("cpu");
+  let cacheBytes = $state<number | null>(null);
+  let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<{ label: string; done: number; total: number } | null>(null);
   let error = $state<string | null>(null);
@@ -13,6 +17,30 @@
 
   async function refresh() {
     gpu = await api.gpuStatus();
+    cacheBytes = await api.cacheSize();
+  }
+
+  const size = (bytes: number) =>
+    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+
+  async function clearCache() {
+    const amount = cacheBytes ? `${size(cacheBytes)} of ` : "";
+    const ok = confirm(
+      `Delete ${amount}downloaded files? This removes the speech models, the GPU pack, yt-dlp and unfinished downloads. ` +
+        "Running jobs are paused. Your library and transcripts are kept, and setup downloads what's needed again.",
+    );
+    if (!ok) return;
+    clearing = true;
+    error = null;
+    try {
+      await api.clearCache();
+      oncleared();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      clearing = false;
+      await refresh();
+    }
   }
 
   onMount(async () => {
@@ -107,6 +135,16 @@
   {/if}
   {#if error}<p class="error-text hint">{error}</p>{/if}
   <p class="muted hint">Changes apply from the next VOD.</p>
+
+  <div class="storage">
+    <span class="label">Storage</span>
+    <p class="muted hint">
+      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library isn't included.
+    </p>
+    <button class="danger" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+      {clearing ? "Clearing…" : "Clear downloads…"}
+    </button>
+  </div>
 </div>
 
 <style>
@@ -170,5 +208,28 @@
 
   button {
     justify-self: start;
+  }
+
+  .storage {
+    display: grid;
+    gap: 6px;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .label {
+    font-weight: 600;
+    font-size: 12px;
+  }
+
+  .danger {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .danger:hover:not(:disabled) {
+    background: var(--danger);
+    color: var(--surface);
   }
 </style>

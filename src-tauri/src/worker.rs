@@ -80,6 +80,23 @@ impl Worker {
         }
     }
 
+    /// Pauses every running job and waits, up to `timeout`, for their
+    /// processes to exit. Returns whether everything stopped.
+    pub fn pause_all(&self, timeout: Duration) -> bool {
+        let ids: Vec<i64> = self.jobs.lock().unwrap().iter().map(|j| j.vod_id).collect();
+        for id in ids {
+            self.stop(id, Stop::Pause);
+        }
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.jobs.lock().unwrap().is_empty() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
     /// Stops the VOD if a stage is running it. Returns whether one was; the
     /// stage then finishes the stop according to `reason`.
     pub fn stop(&self, vod_id: i64, reason: Stop) -> bool {

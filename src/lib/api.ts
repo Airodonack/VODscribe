@@ -79,6 +79,8 @@ export const api = {
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),
   removeGpuPack: () => invoke<void>("remove_gpu_pack"),
+  cacheSize: () => invoke<number>("cache_size"),
+  clearCache: () => invoke<void>("clear_cache"),
 };
 
 export const events = {
