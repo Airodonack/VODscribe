@@ -247,6 +247,7 @@ fn db_note(paths: &Paths, vod_id: i64, note: &str) -> Result<()> {
 fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> {
     let cpu = WorkerSpec {
         program: tools::sidecar("vodscribe-worker").context("transcription worker")?,
+        model_id: model::CPU_MODEL.id,
         model_dir: paths.model_dir(),
         provider: "cpu",
         batch: 1,
@@ -272,6 +273,7 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
     };
     let cuda = WorkerSpec {
         program,
+        model_id: model::GPU_MODEL.id,
         model_dir: paths.gpu_model_dir(),
         provider: "cuda",
         batch,

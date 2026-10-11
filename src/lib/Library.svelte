@@ -36,6 +36,12 @@
     error: "Failed",
   };
 
+  function retranscribe(vod: Vod) {
+    if (confirm(`Re-transcribe “${vod.title}”? Its current transcript is replaced; the audio may need to download again.`)) {
+      api.retranscribeVod(vod.id);
+    }
+  }
+
   function cancel(vod: Vod) {
     if (confirm(`Cancel “${vod.title}”? Its partial download and transcript will be discarded.`)) {
       api.cancelVod(vod.id);
@@ -81,6 +87,8 @@
           {/if}
           {#if vod.status === "error" && vod.error}
             <span class="err muted" title={vod.error}>{vod.error}</span>
+          {:else if vod.outdated}
+            <span class="note warn">Older model; may be missing speech.</span>
           {:else if vod.note}
             <span class="note muted" title={vod.note}>{vod.note}</span>
           {/if}
@@ -94,6 +102,8 @@
           {:else if vod.status !== "done"}
             <button class="link" onclick={() => api.pauseVod(vod.id)}>Pause</button>
             <button class="link" onclick={() => cancel(vod)}>Cancel</button>
+          {:else}
+            <button class="link" class:warn={vod.outdated} onclick={() => retranscribe(vod)}>Re-transcribe</button>
           {/if}
           <button class="link" onclick={() => remove(vod)}>Remove</button>
         </div>
@@ -172,6 +182,10 @@
   .err,
   .note {
     font-size: 12px;
+  }
+
+  .warn {
+    color: var(--danger);
   }
 
   .err,

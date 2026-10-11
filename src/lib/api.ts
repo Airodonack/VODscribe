@@ -19,6 +19,8 @@ export interface Vod {
   added_at: number;
   /** Not an error: e.g. which device transcribed it, or why the GPU wasn't used. */
   note: string | null;
+  /** Transcribed by a model this version no longer uses. */
+  outdated: boolean;
 }
 
 export type Device = "cpu" | "gpu";
@@ -64,6 +66,7 @@ export const api = {
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
+  retranscribeVod: (id: number) => invoke<void>("retranscribe_vod", { id }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
   search: (query: string, vodId: number | null) =>

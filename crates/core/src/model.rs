@@ -62,6 +62,11 @@ pub const GPU_MODEL: ModelSpec = ModelSpec {
     ],
 };
 
+/// Whether transcripts from model `id` are as good as this version produces.
+pub fn is_current(id: &str) -> bool {
+    id == CPU_MODEL.id || id == GPU_MODEL.id
+}
+
 pub fn model_dir(models_root: &Path, spec: &ModelSpec) -> PathBuf {
     models_root.join(spec.id)
 }

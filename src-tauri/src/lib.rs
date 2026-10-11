@@ -161,6 +161,24 @@ async fn retry_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdRe
     Ok(())
 }
 
+/// Throws away a finished VOD's transcript and transcribes it again, e.g. with
+/// a better model.
+#[tauri::command]
+async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    match db.vod(id).map_err(err)? {
+        Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
+        _ => return Err("Only finished VODs can be re-transcribed.".into()),
+    }
+    db.clear_segments(id).map_err(err)?;
+    db.set_model(id, None).map_err(err)?;
+    db.set_note(id, None).map_err(err)?;
+    requeue(&db, id).map_err(err)?;
+    emit_vod(&app, &db, id)?;
+    state.worker.wake();
+    Ok(())
+}
+
 /// Stops a VOD, keeping its partial download and transcript.
 #[tauri::command]
 async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
@@ -344,6 +362,7 @@ pub fn run() {
             delete_vod,
             retry_vod,
             pause_vod,
+            retranscribe_vod,
             resume_vod,
             cancel_vod,
             search,

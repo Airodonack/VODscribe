@@ -35,6 +35,7 @@ fn main() -> Result<()> {
             let transcription = pipeline::Transcription {
                 worker: pipeline::WorkerSpec {
                     program: tools::sidecar("vodscribe-worker")?,
+                    model_id: model::CPU_MODEL.id,
                     model_dir: paths.model_dir(),
                     provider: "cpu",
                     batch: 1,

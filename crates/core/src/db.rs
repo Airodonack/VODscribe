@@ -59,6 +59,8 @@ pub struct Vod {
     pub error: Option<String>,
     pub added_at: i64,
     pub note: Option<String>,
+    /// Transcribed by a model this version no longer uses; re-transcribing helps.
+    pub outdated: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -85,7 +87,7 @@ pub struct Db {
     conn: Connection,
 }
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE vods (
@@ -129,9 +131,11 @@ END;
 const MIGRATE_V2: &str = "ALTER TABLE vods ADD COLUMN note TEXT;";
 /// v3: the finished download, so a resumed or retried VOD skips straight to transcription.
 const MIGRATE_V3: &str = "ALTER TABLE vods ADD COLUMN audio_path TEXT;";
+/// v4: the speech model that produced the transcript.
+const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
 
 const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note";
+    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -151,6 +155,11 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         error: r.get(11)?,
         added_at: r.get(12)?,
         note: r.get(13)?,
+        outdated: {
+            let status = Status::parse(&r.get::<_, String>(9)?);
+            let model: Option<String> = r.get(14)?;
+            status == Status::Done && !model.is_some_and(|m| crate::model::is_current(&m))
+        },
     })
 }
 
@@ -164,7 +173,7 @@ impl Db {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3];
+        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
@@ -244,6 +253,15 @@ impl Db {
             "UPDATE vods SET status = ?2, progress = ?3, error = ?4 WHERE id = ?1",
             params![id, status.as_str(), progress, error],
         )?;
+        Ok(())
+    }
+
+    pub fn model(&self, id: i64) -> Result<Option<String>> {
+        Ok(self.conn.query_row("SELECT model FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    pub fn set_model(&self, id: i64, model: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE vods SET model = ?2 WHERE id = ?1", params![id, model])?;
         Ok(())
     }
 
@@ -386,6 +404,9 @@ mod tests {
         let db = Db::open(&path).unwrap();
         let vod = &db.vods().unwrap()[0];
         assert_eq!(vod.note, None);
+        assert!(vod.outdated, "done before models were recorded");
+        db.set_model(vod.id, Some(crate::model::CPU_MODEL.id)).unwrap();
+        assert!(!db.vod(vod.id).unwrap().unwrap().outdated);
         db.set_note(vod.id, Some("ran on CPU")).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
         drop(db);

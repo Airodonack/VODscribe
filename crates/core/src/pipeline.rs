@@ -25,6 +25,8 @@ pub struct Tools<'a> {
 #[derive(Clone, Debug)]
 pub struct WorkerSpec {
     pub program: PathBuf,
+    /// Recorded on the VOD, so transcripts from older models can be flagged.
+    pub model_id: &'static str,
     pub model_dir: PathBuf,
     /// "cpu" or "cuda".
     pub provider: &'static str,
@@ -89,13 +91,22 @@ pub fn transcribe(
     let attempt = |spec: &WorkerSpec, db: &mut Db, report: &mut dyn FnMut(Status, f64)| {
         run_worker(db, vod, spec, ffmpeg, audio_path, cancel, report)
     };
-    if let Err(e) = attempt(&transcription.worker, db, report) {
+    // A paused or interrupted job resumes after its last segment, but never on
+    // top of segments from an older model (or from before models were recorded).
+    if db.transcribed_until(vod.id)? > 0.0 && !db.model(vod.id)?.is_some_and(|m| crate::model::is_current(&m)) {
+        db.clear_segments(vod.id)?;
+    }
+    let mut used = &transcription.worker;
+    db.set_model(vod.id, Some(used.model_id))?;
+    if let Err(e) = attempt(used, db, report) {
         let Some(fallback) = &transcription.fallback else { return Err(e) };
         if cancel.load(Ordering::Relaxed) {
             return Err(e);
         }
         notice(format!("GPU transcription failed, so the rest of this VOD was transcribed on the CPU: {e:#}"));
-        attempt(fallback, db, report)?;
+        used = fallback;
+        db.set_model(vod.id, Some(used.model_id))?;
+        attempt(used, db, report)?;
     }
     db.set_status(vod.id, Status::Done, 1.0, None)?;
     report(Status::Done, 1.0);
