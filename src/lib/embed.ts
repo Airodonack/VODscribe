@@ -6,6 +6,9 @@ import { api, type Vod } from "./api";
 
 export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
+  /** Current position in seconds. */
+  time(): number;
+  togglePlay(): void;
   destroy(): void;
 }
 
@@ -62,6 +65,12 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
               player.seekTo(seconds, true);
               if (play) player.playVideo();
             },
+            time: () => player.getCurrentTime(),
+            togglePlay() {
+              // State 1 is "playing".
+              if (player.getPlayerState() === 1) player.pauseVideo();
+              else player.playVideo();
+            },
             destroy: () => player.destroy(),
           }),
       },
@@ -92,6 +101,11 @@ async function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): P
         seek(seconds, play) {
           player.seek(seconds);
           if (play) player.play();
+        },
+        time: () => player.getCurrentTime(),
+        togglePlay() {
+          if (player.isPaused()) player.play();
+          else player.pause();
         },
         destroy: () => {
           el.innerHTML = "";
@@ -128,6 +142,11 @@ async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Pro
     seek(seconds, play) {
       video.currentTime = seconds;
       if (play) video.play().catch(() => {});
+    },
+    time: () => video.currentTime,
+    togglePlay() {
+      if (video.paused) video.play().catch(() => {});
+      else video.pause();
     },
     destroy() {
       hls?.destroy();
