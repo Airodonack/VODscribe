@@ -12,9 +12,10 @@ use sha2::{Digest, Sha256};
 
 use crate::net;
 
-/// Where model files are served from, as `<base>/<model id>/<file>`.
-// TODO: the R2 bucket's public URL.
-const MODELS_BASE_URL: &str = "https://models.vodscribe.invalid";
+/// Where model files are served from, as `<base>/<model id>/<file>`: the
+/// `vodscribe` R2 bucket's public r2.dev URL. r2.dev is rate-limited, so move
+/// to a custom domain before a public release.
+const MODELS_BASE_URL: &str = "https://pub-ecab7aca4f204ded9d84e75c3b5c0c54.r2.dev/models";
 
 /// Overrides the base URL, e.g. to test against a local server.
 fn base_url() -> String {

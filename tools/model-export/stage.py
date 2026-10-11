@@ -4,8 +4,8 @@
     DIST/<model id>/<file>
 
 and prints each file's size and SHA-256 for crates/core/src/model.rs, which
-pins them. Upload DIST's contents to the root of the bucket the app's
-MODELS_BASE_URL points at.
+pins them. Upload DIST's contents under models/ in the `vodscribe` R2 bucket,
+which is where the app's MODELS_BASE_URL points.
 
 usage: stage.py MODELS_DIR DIST
 """

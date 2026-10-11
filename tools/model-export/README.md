@@ -26,6 +26,15 @@ python3 evaluate.py $W/audio $W/models/fp32 \
   int8-pc=$W/models/int8-pc int8-pc-safe=$W/models/int8-pc-safe fp16-gpu=$W/models/fp16:cuda:4
 ```
 
+To ship new models, stage them, paste the printed pins into `crates/core/src/model.rs`, and upload:
+
+```sh
+python3 stage.py $W/models $W/dist
+CLOUDFLARE_ACCOUNT_ID=... uv run --with boto3 publish.py $W/dist
+```
+
+The app downloads from the `vodscribe` bucket's public r2.dev URL (`MODELS_BASE_URL` in `model.rs`). r2.dev is rate-limited, so the bucket should move to a custom domain before a public release.
+
 `evaluate.py` reports the word error rate against fp32, the number of words produced, and the speed relative to realtime. Use a mix of clips that matches real use (stream audio from each platform, plus a few non-English samples). WER against fp32 measures how much a variant loses, not its absolute accuracy.
 
 ## Results
