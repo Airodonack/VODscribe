@@ -39,7 +39,7 @@
     <li>
       <span class="check" class:ok={status.model}>{status.model ? "✓" : "•"}</span>
       <div>
-        <strong>Speech model</strong> <span class="muted">Parakeet TDT 0.6B v3, about 470 MB</span>
+        <strong>Speech model</strong> <span class="muted">Parakeet TDT 0.6B v3, about 900 MB</span>
         {#if running && !status.model}
           <div class="bar"><div style:width={pct(progress.model)}></div></div>
         {/if}

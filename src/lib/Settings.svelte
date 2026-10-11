@@ -58,7 +58,7 @@
     if (!gpu.supported) return "Not available on this operating system.";
     if (!gpu.worker) return "This build doesn't include GPU support.";
     if (!gpu.gpu) return "No NVIDIA GPU found.";
-    if (!gpu.installed) return "Needs the GPU pack, a one-time download of about 1.8 GB.";
+    if (!gpu.installed) return "Needs the GPU pack, a one-time download of about 3 GB.";
     return null;
   });
   let busy = $derived(gpu?.gpu && gpu.installed && gpu.gpu.free_mb < gpu.min_free_mb);

@@ -18,7 +18,7 @@ fn main() -> Result<()> {
                 let p = tools::install_yt_dlp(&paths.bin(), &cancel, |_, _| {})?;
                 println!("installed {}", p.display());
             }
-            model::install(&paths.models(), &model::PARAKEET_V3, &cancel, |n, total| {
+            model::install(&paths.models(), &model::CPU_MODEL, &cancel, |n, total| {
                 eprint!("\rmodel {:.0}%", n as f64 / total as f64 * 100.0)
             })?;
             println!("\nready");

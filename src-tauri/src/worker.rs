@@ -153,7 +153,7 @@ fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
             ctx.db.next_with_status(Status::Queued)
         }
         Stage::Transcribe => {
-            if !model::is_installed(&ctx.paths.model_dir()) {
+            if !model::is_installed(&ctx.paths.model_dir(), &model::CPU_MODEL) {
                 return Ok(None);
             }
             ctx.db.next_with_status(Status::Ready)

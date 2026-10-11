@@ -55,7 +55,11 @@ impl Paths {
     }
 
     pub fn model_dir(&self) -> PathBuf {
-        model::model_dir(&self.models(), &model::PARAKEET_V3)
+        model::model_dir(&self.models(), &model::CPU_MODEL)
+    }
+
+    pub fn gpu_model_dir(&self) -> PathBuf {
+        model::model_dir(&self.models(), &model::GPU_MODEL)
     }
 
     pub fn ensure(&self) -> std::io::Result<()> {

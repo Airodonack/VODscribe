@@ -42,7 +42,7 @@ async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupStatus> {
     Ok(SetupStatus {
         yt_dlp: tools::find_yt_dlp(&bin).is_some(),
         ffmpeg: tools::find_ffmpeg(&bin).is_some(),
-        model: model::is_installed(&state.paths.model_dir()),
+        model: model::is_installed(&state.paths.model_dir(), &model::CPU_MODEL),
         js_runtime: tools::find_js_runtime(&bin).is_some(),
         running: state.setup_running.load(Ordering::Relaxed),
     })
@@ -66,7 +66,8 @@ async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> 
             if tools::find_yt_dlp(&paths.bin()).is_none() {
                 tools::install_yt_dlp(&paths.bin(), &never, |n, t| progress("yt-dlp", n, t))?;
             }
-            model::install(&paths.models(), &model::PARAKEET_V3, &never, |n, t| progress("model", n, Some(t)))?;
+            model::install(&paths.models(), &model::CPU_MODEL, &never, |n, t| progress("model", n, Some(t)))?;
+            model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
             Ok(())
         })();
         running.store(false, Ordering::Relaxed);
@@ -269,7 +270,7 @@ async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatus> {
     let gpu = tauri::async_runtime::spawn_blocking(gpu::detect).await.map_err(err)?;
     Ok(GpuStatus {
         supported: gpu::supported(),
-        installed: gpu::is_installed(&pack),
+        installed: gpu::is_installed(&pack) && model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL),
         installing: state.gpu_installing.load(Ordering::Relaxed),
         worker: tools::sidecar("vodscribe-worker-cuda").is_ok(),
         gpu,
@@ -284,13 +285,20 @@ async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResu
     if state.gpu_installing.swap(true, Ordering::Relaxed) {
         return Ok(());
     }
-    let pack = state.paths.gpu_pack();
+    let paths = state.paths.clone();
     let installing = state.gpu_installing.clone();
     std::thread::spawn(move || {
         let never = AtomicBool::new(false);
-        let result = gpu::install(&pack, &never, |step, done, total| {
+        let progress = |step: &str, done: u64, total: u64| {
             let _ = app.emit("gpu-progress", (step, done, total));
-        });
+        };
+        let result = (|| -> anyhow::Result<()> {
+            if !gpu::is_installed(&paths.gpu_pack()) {
+                gpu::install(&paths.gpu_pack(), &never, progress)?;
+            }
+            model::install(&paths.models(), &model::GPU_MODEL, &never, |n, t| progress("GPU speech model", n, t))?;
+            Ok(())
+        })();
         installing.store(false, Ordering::Relaxed);
         let _ = app.emit("gpu-done", result.err().map(err));
     });
@@ -302,7 +310,8 @@ async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
     if state.gpu_installing.load(Ordering::Relaxed) {
         return Err("The GPU pack is still downloading.".into());
     }
-    gpu::uninstall(&state.paths.gpu_pack()).map_err(err)
+    gpu::uninstall(&state.paths.gpu_pack()).map_err(err)?;
+    gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
