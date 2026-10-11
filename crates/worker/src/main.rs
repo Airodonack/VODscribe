@@ -69,7 +69,11 @@ fn run() -> Result<()> {
     let parallelism = match args.provider {
         Provider::Cpu => Parallelism::auto(),
         // One decode keeps the GPU busy; extra CPU threads only feed it.
-        Provider::Cuda => Parallelism { workers: 1, threads: 2 },
+        Provider::Cuda => Parallelism {
+            workers: 1,
+            threads: 2,
+            batch: std::env::var("VODSCRIBE_GPU_BATCH").ok().and_then(|b| b.parse().ok()).unwrap_or(4),
+        },
     };
     let transcriber = Transcriber::load(&args.model, args.provider, parallelism)?;
     emit(json!({ "ready": true }))?;
