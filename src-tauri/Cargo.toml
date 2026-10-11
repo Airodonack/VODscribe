@@ -1,0 +1,23 @@
+[package]
+name = "vodscribe"
+description = "Searchable transcripts for Kick, Twitch and YouTube VODs"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name, which
+# otherwise conflicts on Windows: https://github.com/rust-lang/cargo/issues/8519
+name = "vodscribe_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+vodscribe-core = { path = "../crates/core" }
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"

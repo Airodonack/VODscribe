@@ -1,0 +1,18 @@
+[package]
+name = "vodscribe-worker"
+description = "Transcribes one audio file and streams timestamped words as JSON lines"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+default = ["static"]
+# CPU build, with sherpa-onnx linked in.
+static = ["vodscribe-core/static"]
+# Links a shared sherpa-onnx build from SHERPA_ONNX_LIB_DIR (the CUDA one for the GPU pack).
+shared = ["vodscribe-core/shared"]
+
+[dependencies]
+vodscribe-core = { path = "../core", default-features = false }
+anyhow = "1"
+serde_json = "1"

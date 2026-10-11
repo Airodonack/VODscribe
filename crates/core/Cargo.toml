@@ -1,0 +1,30 @@
+[package]
+name = "vodscribe-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+# Speech recognition. The app doesn't enable it: only the worker process links
+# the model runtime. `static` bundles the CPU build of sherpa-onnx; `shared`
+# links a shared build, such as the CUDA one used for the GPU pack.
+asr = ["dep:sherpa-onnx"]
+static = ["asr", "sherpa-onnx/static"]
+shared = ["asr", "sherpa-onnx/shared"]
+
+[[bin]]
+name = "vodscribe-cli"
+path = "src/bin/cli.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+bzip2 = "0.6.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sherpa-onnx = { version = "1.13.8", default-features = false, optional = true }
+tar = "0.4.46"
+unicode-normalization = "0.1.25"
+ureq = "3.4.2"
+which = "8.0.6"
+zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
