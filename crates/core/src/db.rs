@@ -59,7 +59,9 @@ pub struct Vod {
     pub error: Option<String>,
     pub added_at: i64,
     pub note: Option<String>,
-    /// Transcribed by a model this version no longer uses; re-transcribing helps.
+    /// Has transcript segments from a model this version no longer uses (or
+    /// from before models were recorded). Finished VODs can be re-transcribed;
+    /// unfinished ones start over when they resume.
     pub outdated: bool,
 }
 
@@ -135,7 +137,8 @@ const MIGRATE_V3: &str = "ALTER TABLE vods ADD COLUMN audio_path TEXT;";
 const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
 
 const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model";
+    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model,
+     EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id)";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -156,9 +159,9 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         added_at: r.get(12)?,
         note: r.get(13)?,
         outdated: {
-            let status = Status::parse(&r.get::<_, String>(9)?);
             let model: Option<String> = r.get(14)?;
-            status == Status::Done && !model.is_some_and(|m| crate::model::is_current(&m))
+            let has_segments: bool = r.get(15)?;
+            has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
         },
     })
 }
@@ -366,7 +369,7 @@ fn highlight(words: &[Word], ranges: &[(usize, usize)]) -> Vec<TextPart> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcript::Segmenter;
+    use crate::transcript::{Segment, Segmenter};
 
     fn info(id: &str) -> VodInfo {
         VodInfo {
@@ -401,12 +404,16 @@ mod tests {
             )
             .unwrap();
         }
-        let db = Db::open(&path).unwrap();
-        let vod = &db.vods().unwrap()[0];
+        let mut db = Db::open(&path).unwrap();
+        let vod = db.vods().unwrap().remove(0);
         assert_eq!(vod.note, None);
-        assert!(vod.outdated, "done before models were recorded");
+        assert!(!vod.outdated, "no transcript yet");
+        db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: "hi".into(), words: Vec::new() }]).unwrap();
+        assert!(db.vod(vod.id).unwrap().unwrap().outdated, "transcribed before models were recorded");
         db.set_model(vod.id, Some(crate::model::CPU_MODEL.id)).unwrap();
         assert!(!db.vod(vod.id).unwrap().unwrap().outdated);
+        db.set_model(vod.id, Some("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")).unwrap();
+        assert!(db.vod(vod.id).unwrap().unwrap().outdated, "older model");
         db.set_note(vod.id, Some("ran on CPU")).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
         drop(db);

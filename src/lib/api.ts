@@ -19,7 +19,7 @@ export interface Vod {
   added_at: number;
   /** Not an error: e.g. which device transcribed it, or why the GPU wasn't used. */
   note: string | null;
-  /** Transcribed by a model this version no longer uses. */
+  /** Has transcript from a model this version no longer uses; unfinished ones start over on resume. */
   outdated: boolean;
 }
 

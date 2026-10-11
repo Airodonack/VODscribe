@@ -88,7 +88,9 @@
           {#if vod.status === "error" && vod.error}
             <span class="err muted" title={vod.error}>{vod.error}</span>
           {:else if vod.outdated}
-            <span class="note warn">Older model; may be missing speech.</span>
+            <span class="note warn">
+              {vod.status === "done" ? "Older model; may be missing speech." : "Older model; resuming starts over."}
+            </span>
           {:else if vod.note}
             <span class="note muted" title={vod.note}>{vod.note}</span>
           {/if}
@@ -97,7 +99,8 @@
           {#if vod.status === "error"}
             <button class="link" onclick={() => api.retryVod(vod.id)}>Retry</button>
           {:else if vod.status === "paused"}
-            <button class="link" onclick={() => api.resumeVod(vod.id)}>Resume</button>
+            <!-- Resuming an outdated transcript starts over, like Re-transcribe. -->
+            <button class="link" class:warn={vod.outdated} onclick={() => api.resumeVod(vod.id)}>Resume</button>
             <button class="link" onclick={() => cancel(vod)}>Cancel</button>
           {:else if vod.status !== "done"}
             <button class="link" onclick={() => api.pauseVod(vod.id)}>Pause</button>
