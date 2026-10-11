@@ -33,7 +33,7 @@ python3 stage.py $W/models $W/dist
 CLOUDFLARE_ACCOUNT_ID=... uv run --with boto3 publish.py $W/dist
 ```
 
-The app downloads from the `vodscribe` bucket's public r2.dev URL (`MODELS_BASE_URL` in `model.rs`). r2.dev is rate-limited, so the bucket should move to a custom domain before a public release.
+The app downloads from the `vodscribe` bucket at `https://dl.vodscribe.com/models` (`MODELS_BASE_URL` in `model.rs`). Files under `models/` must never be changed or deleted: released versions of the app pin them by hash. Ship changed models under a new model id instead.
 
 `evaluate.py` reports the word error rate against fp32, the number of words produced, and the speed relative to realtime. Use a mix of clips that matches real use (stream audio from each platform, plus a few non-English samples). WER against fp32 measures how much a variant loses, not its absolute accuracy.
 
