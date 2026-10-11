@@ -166,7 +166,15 @@
         {#if searchError}
           <p class="error-text pad">{searchError}</p>
         {:else if results}
-          <Results hits={results.hits} truncated={results.truncated} vods={vodsById} onplay={play} />
+          <Results
+            hits={results.hits}
+            truncated={results.truncated}
+            vods={vodsById}
+            query={query.trim()}
+            scope={selected}
+            onplay={play}
+            onclearscope={() => (selectedId = null)}
+          />
         {:else if selected}
           <Transcript vod={selected} onplay={play} />
         {:else}

@@ -6,12 +6,19 @@
     hits,
     truncated,
     vods,
+    query,
+    scope,
     onplay,
+    onclearscope,
   }: {
     hits: SearchHit[];
     truncated: boolean;
     vods: Map<number, Vod>;
+    query: string;
+    /** The VOD the search is limited to, if any. */
+    scope: Vod | undefined;
     onplay: (vodId: number, time: number) => void;
+    onclearscope: () => void;
   } = $props();
 
   // Hits arrive sorted by VOD, so grouping consecutive runs is enough.
@@ -27,11 +34,13 @@
 </script>
 
 <div class="results">
-  <p class="summary muted">
-    {hits.length}{truncated ? "+" : ""} match{hits.length === 1 ? "" : "es"} in {groups.length} VOD{groups.length === 1
-      ? ""
-      : "s"}{#if truncated}. Showing the first {hits.length}; refine the phrase to narrow it down{/if}
-  </p>
+  {#if hits.length > 0}
+    <p class="summary muted">
+      {hits.length}{truncated ? "+" : ""} match{hits.length === 1 ? "" : "es"} in {groups.length} VOD{groups.length === 1
+        ? ""
+        : "s"}{#if truncated}. Showing the first {hits.length}; refine the phrase to narrow it down{/if}
+    </p>
+  {/if}
   {#each groups as group (group.vodId)}
     <section>
       <h2>
@@ -48,13 +57,29 @@
       {/each}
     </section>
   {:else}
-    <p class="muted">No matches. Search finds exact phrases, so try fewer words.</p>
+    <div class="none">
+      <p>
+        No matches for <strong>“{query}”</strong>{#if scope}{" "}in <strong>{scope.title}</strong>{/if}.
+      </p>
+      {#if scope}
+        <button onclick={onclearscope}>Search all VODs</button>
+      {/if}
+      <p class="muted">Search finds exact phrases, so fewer words match more.</p>
+    </div>
   {/each}
 </div>
 
 <style>
   .results {
     padding: 8px 16px 32px;
+  }
+
+  .none p {
+    margin: 0 0 10px;
+  }
+
+  .none button {
+    margin-bottom: 10px;
   }
 
   .summary {
