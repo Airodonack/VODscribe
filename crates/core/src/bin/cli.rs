@@ -32,12 +32,12 @@ fn main() -> Result<()> {
             std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
             println!("#{} {} ({:?}s)", vod.id, vod.info.title, vod.info.duration);
             let t = Instant::now();
-            let model_dir = paths.model_dir();
             let transcription = pipeline::Transcription {
-                model_dir: &model_dir,
                 worker: pipeline::WorkerSpec {
                     program: tools::sidecar("vodscribe-worker")?,
+                    model_dir: paths.model_dir(),
                     provider: "cpu",
+                    batch: 1,
                     lib_dirs: Vec::new(),
                 },
                 fallback: None,

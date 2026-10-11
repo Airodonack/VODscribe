@@ -31,8 +31,10 @@ def transcribe(model: str, provider: str, batch: int, wav: Path) -> tuple[list[s
     env = dict(os.environ)
     if cuda:
         env["LD_LIBRARY_PATH"] = GPU_LIBS
-        env["VODSCRIBE_GPU_BATCH"] = str(batch)
-    cmd = [CUDA_WORKER if cuda else WORKER, "--model", model, "--provider", provider, "--ffmpeg", FFMPEG, str(wav)]
+    cmd = [
+        CUDA_WORKER if cuda else WORKER, "--model", model, "--provider", provider,
+        "--batch", str(batch if cuda else 1), "--ffmpeg", FFMPEG, str(wav),
+    ]
     start = time.monotonic()
     out = subprocess.run(cmd, env=env, capture_output=True, text=True)
     elapsed = time.monotonic() - start

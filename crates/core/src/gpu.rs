@@ -15,10 +15,20 @@ use serde_json::Value;
 
 use crate::{net, tools};
 
-/// Free VRAM needed before a job is sent to the GPU.
-// TODO: measure with the int8 Parakeet model once the GPU is free; this is a
-// conservative estimate.
-pub const MIN_FREE_MB: u64 = 3000;
+/// Free VRAM needed before a job is sent to the GPU (the smallest batch).
+pub const MIN_FREE_MB: u64 = 3500;
+
+/// Chunks per GPU decode for the free VRAM, or None if the GPU can't take the
+/// job. Peak use of the fp16 model was 2.4 / 4.5 / 5.5 GB at batch 1 / 4 / 8
+/// (RTX 3080); each tier leaves about 1 GB for other programs' growth.
+pub fn batch_for_free_vram(free_mb: u64) -> Option<usize> {
+    match free_mb {
+        6500.. => Some(8),
+        5500.. => Some(4),
+        MIN_FREE_MB.. => Some(1),
+        _ => None,
+    }
+}
 
 /// Bump when the pack's contents change, so existing installs are refreshed.
 const PACK_VERSION: &str = "1";
@@ -205,6 +215,14 @@ mod tests {
         assert_eq!(info.name, "NVIDIA GeForce RTX 3080");
         assert_eq!((info.total_mb, info.free_mb), (10240, 4039));
         assert!(parse_smi("").is_none());
+    }
+
+    #[test]
+    fn batch_follows_free_vram() {
+        assert_eq!(batch_for_free_vram(9000), Some(8));
+        assert_eq!(batch_for_free_vram(6000), Some(4));
+        assert_eq!(batch_for_free_vram(3500), Some(1));
+        assert_eq!(batch_for_free_vram(3499), None);
     }
 
     #[test]

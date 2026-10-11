@@ -220,8 +220,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
         return Ok(());
     };
     let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context("ffmpeg is missing")?;
-    let model_dir = ctx.paths.model_dir();
-    let (transcription, note) = plan_transcription(&ctx.paths, &model_dir)?;
+    let (transcription, note) = plan_transcription(&ctx.paths)?;
     ctx.db.set_note(vod.id, note.as_deref())?;
     ctx.emit_vod(vod.id);
 
@@ -245,19 +244,21 @@ fn db_note(paths: &Paths, vod_id: i64, note: &str) -> Result<()> {
 
 /// Picks the worker for the next job. GPU is used only when selected, installed
 /// and free enough; otherwise the CPU runs it and the note says why.
-fn plan_transcription<'a>(paths: &Paths, model_dir: &'a std::path::Path) -> Result<(Transcription<'a>, Option<String>)> {
+fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> {
     let cpu = WorkerSpec {
         program: tools::sidecar("vodscribe-worker").context("transcription worker")?,
+        model_dir: paths.model_dir(),
         provider: "cpu",
+        batch: 1,
         lib_dirs: Vec::new(),
     };
-    let cpu_only = |note: Option<String>| (Transcription { model_dir, worker: cpu.clone(), fallback: None }, note);
+    let cpu_only = |note: Option<String>| (Transcription { worker: cpu.clone(), fallback: None }, note);
     if Settings::load(&paths.settings()).device != Device::Gpu {
         return Ok(cpu_only(None));
     }
     let pack = paths.gpu_pack();
     let skip = |why: &str| Ok(cpu_only(Some(format!("Transcribed on the CPU: {why}."))));
-    if !gpu::is_installed(&pack) {
+    if !gpu::is_installed(&pack) || !model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
         return skip("the GPU pack isn't installed");
     }
     let Ok(program) = tools::sidecar("vodscribe-worker-cuda") else {
@@ -266,13 +267,15 @@ fn plan_transcription<'a>(paths: &Paths, model_dir: &'a std::path::Path) -> Resu
     let Some(info) = gpu::detect() else {
         return skip("no NVIDIA GPU was found");
     };
-    if info.free_mb < gpu::MIN_FREE_MB {
-        return skip(&format!(
-            "the GPU was busy ({} MB free, {} MB needed)",
-            info.free_mb,
-            gpu::MIN_FREE_MB
-        ));
-    }
-    let cuda = WorkerSpec { program, provider: "cuda", lib_dirs: vec![gpu::lib_dir(&pack)] };
-    Ok((Transcription { model_dir, worker: cuda, fallback: Some(cpu) }, Some(format!("Transcribed on {}.", info.name))))
+    let Some(batch) = gpu::batch_for_free_vram(info.free_mb) else {
+        return skip(&format!("the GPU was busy ({} MB free, {} MB needed)", info.free_mb, gpu::MIN_FREE_MB));
+    };
+    let cuda = WorkerSpec {
+        program,
+        model_dir: paths.gpu_model_dir(),
+        provider: "cuda",
+        batch,
+        lib_dirs: vec![gpu::lib_dir(&pack)],
+    };
+    Ok((Transcription { worker: cuda, fallback: Some(cpu) }, Some(format!("Transcribed on {}.", info.name))))
 }

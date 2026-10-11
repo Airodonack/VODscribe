@@ -2,7 +2,8 @@
 //! error only fails that one job, and so the GPU build can link the CUDA
 //! libraries without the app depending on them.
 //!
-//! Usage: vodscribe-worker --model <dir> --provider cpu|cuda --ffmpeg <path> [--start <secs>] <audio>
+//! Usage: vodscribe-worker --model <dir> --provider cpu|cuda --ffmpeg <path>
+//!                         [--batch <chunks per decode>] [--start <secs>] <audio>
 //!
 //! Prints JSON lines to stdout: `{"ready":true}` once the model has loaded,
 //! then `{"end":<secs>,"words":[...]}` per batch of audio. Exits non-zero on error.
@@ -26,16 +27,19 @@ struct Args {
     audio: PathBuf,
     /// Resume point, in seconds.
     start: f64,
+    batch: usize,
 }
 
 fn parse_args() -> Result<Args> {
     let mut args = std::env::args().skip(1);
-    let (mut model, mut provider, mut ffmpeg, mut audio, mut start) = (None, Provider::Cpu, None, None, 0.0);
+    let (mut model, mut provider, mut ffmpeg, mut audio, mut start, mut batch) =
+        (None, Provider::Cpu, None, None, 0.0, 1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--model" => model = args.next().map(PathBuf::from),
             "--ffmpeg" => ffmpeg = args.next().map(PathBuf::from),
             "--start" => start = args.next().context("--start needs a value")?.parse().context("--start")?,
+            "--batch" => batch = args.next().context("--batch needs a value")?.parse().context("--batch")?,
             "--provider" => {
                 provider = match args.next().as_deref() {
                     Some("cpu") => Provider::Cpu,
@@ -53,6 +57,7 @@ fn parse_args() -> Result<Args> {
         ffmpeg: ffmpeg.context("--ffmpeg is required")?,
         audio: audio.context("an audio file is required")?,
         start,
+        batch,
     })
 }
 
@@ -67,13 +72,9 @@ fn emit(value: serde_json::Value) -> Result<()> {
 fn run() -> Result<()> {
     let args = parse_args()?;
     let parallelism = match args.provider {
-        Provider::Cpu => Parallelism::auto(),
-        // One decode keeps the GPU busy; extra CPU threads only feed it.
-        Provider::Cuda => Parallelism {
-            workers: 1,
-            threads: 2,
-            batch: std::env::var("VODSCRIBE_GPU_BATCH").ok().and_then(|b| b.parse().ok()).unwrap_or(4),
-        },
+        Provider::Cpu => Parallelism { batch: args.batch, ..Parallelism::auto() },
+        // One decode at a time keeps the GPU busy; extra CPU threads only feed it.
+        Provider::Cuda => Parallelism { workers: 1, threads: 2, batch: args.batch },
     };
     let transcriber = Transcriber::load(&args.model, args.provider, parallelism)?;
     emit(json!({ "ready": true }))?;

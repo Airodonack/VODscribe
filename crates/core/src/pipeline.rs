@@ -25,14 +25,16 @@ pub struct Tools<'a> {
 #[derive(Clone, Debug)]
 pub struct WorkerSpec {
     pub program: PathBuf,
+    pub model_dir: PathBuf,
     /// "cpu" or "cuda".
     pub provider: &'static str,
+    /// Chunks per decode call; see `asr::Parallelism::batch`.
+    pub batch: usize,
     /// Extra directories for the dynamic linker (the GPU pack's libraries).
     pub lib_dirs: Vec<PathBuf>,
 }
 
-pub struct Transcription<'a> {
-    pub model_dir: &'a Path,
+pub struct Transcription {
     pub worker: WorkerSpec,
     /// Used if `worker` fails, e.g. the GPU runs out of memory.
     pub fallback: Option<WorkerSpec>,
@@ -85,7 +87,7 @@ pub fn transcribe(
     notice: Notice,
 ) -> Result<()> {
     let attempt = |spec: &WorkerSpec, db: &mut Db, report: &mut dyn FnMut(Status, f64)| {
-        run_worker(db, vod, spec, transcription.model_dir, ffmpeg, audio_path, cancel, report)
+        run_worker(db, vod, spec, ffmpeg, audio_path, cancel, report)
     };
     if let Err(e) = attempt(&transcription.worker, db, report) {
         let Some(fallback) = &transcription.fallback else { return Err(e) };
@@ -126,7 +128,6 @@ fn run_worker(
     db: &mut Db,
     vod: &Vod,
     spec: &WorkerSpec,
-    model_dir: &Path,
     ffmpeg: &Path,
     audio_path: &Path,
     cancel: &AtomicBool,
@@ -139,7 +140,8 @@ fn run_worker(
     report(Status::Transcribing, fraction(start));
 
     let mut cmd = tools::command(&spec.program);
-    cmd.arg("--model").arg(model_dir).args(["--provider", spec.provider]);
+    cmd.arg("--model").arg(&spec.model_dir).args(["--provider", spec.provider]);
+    cmd.args(["--batch", &spec.batch.to_string()]);
     cmd.arg("--ffmpeg").arg(ffmpeg).args(["--start", &format!("{start:.3}")]).arg(audio_path);
     if !spec.lib_dirs.is_empty() {
         let var = if cfg!(windows) { "PATH" } else { "LD_LIBRARY_PATH" };

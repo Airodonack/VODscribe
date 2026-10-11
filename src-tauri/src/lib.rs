@@ -321,6 +321,10 @@ pub fn run() {
         .setup(|app| {
             let paths = Paths::new(app.path().app_data_dir()?);
             paths.ensure()?;
+            // Upgrades: drop models this version no longer uses.
+            if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
+                model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
+            }
             let db = Mutex::new(Db::open(&paths.db())?);
             let worker = Worker::start(app.handle().clone(), paths.clone())?;
             app.manage(AppState {
