@@ -49,9 +49,9 @@ impl Parallelism {
 impl Transcriber {
     pub fn load(model_dir: &Path, provider: Provider, parallelism: Parallelism) -> Result<Self> {
         let file = |name: &str| Some(model_dir.join(name).to_string_lossy().into_owned());
-        // A model dir holds one precision: int8 (CPU), or fp32 for the GPU.
+        // A model dir holds one precision: int8 (CPU), or fp16 / fp32 for the GPU.
         let part = |base: &str| {
-            let name = ["int8", "fp32"]
+            let name = ["int8", "fp16", "fp32"]
                 .iter()
                 .map(|p| format!("{base}.{p}.onnx"))
                 .chain([format!("{base}.onnx")])

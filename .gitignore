@@ -20,3 +20,7 @@ vodscribe-data/
 
 # Scratch files WebKitGTK writes to the working directory
 *.blob
+
+# Python environment for tools/model-export
+.venv/
+__pycache__/

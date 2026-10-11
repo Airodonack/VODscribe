@@ -1,0 +1,27 @@
+[project]
+name = "vodscribe-model-export"
+version = "0.1.0"
+description = "Exports and quantizes Parakeet TDT 0.6B v3 for vodscribe"
+requires-python = "==3.12.*"
+dependencies = [
+    "nemo-toolkit[asr]",
+    "torch",
+    "torchaudio",
+    "onnx",
+    "onnxruntime",
+    # For ONNX Runtime's weight-only (MatMulNBits) quantizer.
+    "onnx-ir",
+]
+
+[tool.uv]
+package = false
+
+# CPU-only PyTorch: the export doesn't need CUDA, and these wheels are far smaller.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchaudio = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
