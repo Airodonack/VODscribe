@@ -92,7 +92,10 @@ fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<R
         200
     };
     let body: Box<dyn Read + Send> = Box::new(file.take(len));
-    Ok(Response::new(StatusCode(status), headers, body, Some(len as usize), None))
+    // Always send Content-Length: tiny_http otherwise switches large bodies to
+    // chunked encoding, and without a length the player can't seek or show a
+    // timeline.
+    Ok(Response::new(StatusCode(status), headers, body, Some(len as usize), None).with_chunked_threshold(usize::MAX))
 }
 
 /// A single `bytes=` range within a file of `size` bytes, as (first, last).
@@ -150,17 +153,32 @@ mod tests {
         (head, out[split + 4..].to_vec())
     }
 
+    /// The response headers for `path`.
+    fn head_of(origin: &str, path: &str) -> String {
+        use std::io::Write;
+        let addr = origin.strip_prefix("http://").unwrap();
+        let mut conn = std::net::TcpStream::connect(addr).unwrap();
+        conn.write_all(format!("GET {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n").as_bytes()).unwrap();
+        let mut out = Vec::new();
+        conn.read_to_end(&mut out).unwrap();
+        let text = String::from_utf8_lossy(&out);
+        text.split("\r\n\r\n").next().unwrap().to_string()
+    }
+
     #[test]
     fn serves_only_local_vods_to_its_own_host_with_the_token() {
         let path = std::env::temp_dir().join(format!("vodscribe-media-{}.mp4", std::process::id()));
-        std::fs::write(&path, b"0123456789").unwrap();
+        // Larger than tiny_http's 32 KB threshold for switching to chunked encoding.
+        let data: Vec<u8> = (0..100_000u32).map(|i| (i % 10) as u8 + b'0').collect();
+        std::fs::write(&path, &data).unwrap();
         let file = path.to_string_lossy().into_owned();
         let media = MediaServer::start(move |id| (id == 7).then(|| file.clone())).unwrap();
         let ok = format!("/{}/7", media.token);
 
         let (status, body) = get(&media.origin, &ok, None, None);
         assert!(status.contains("200"), "{status}");
-        assert_eq!(body, b"0123456789");
+        assert!(head_of(&media.origin, &ok).contains("Content-Length: 100000"), "players need the length to seek");
+        assert_eq!(body, data);
         let (status, body) = get(&media.origin, &ok, None, Some("bytes=2-4"));
         assert!(status.contains("206"), "{status}");
         assert_eq!(body, b"234");
@@ -169,6 +187,17 @@ mod tests {
         assert!(get(&media.origin, "/wrongtoken/7", None, None).0.contains("404"), "wrong token");
         assert!(get(&media.origin, &ok, Some("evil.example"), None).0.contains("403"), "other host");
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Serves $VODSCRIBE_MEDIA_FILE as VOD 1 for a few minutes and prints its
+    /// URL, for trying the server with a real player: `-- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn serve_a_file_for_manual_testing() {
+        let file = std::env::var("VODSCRIBE_MEDIA_FILE").expect("set VODSCRIBE_MEDIA_FILE");
+        let media = MediaServer::start(move |id| (id == 1).then(|| file.clone())).unwrap();
+        println!("MEDIA_URL {}/{}/1", media.origin, media.token);
+        std::thread::sleep(std::time::Duration::from_secs(300));
     }
 
     #[test]
