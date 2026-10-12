@@ -31,8 +31,24 @@
   let settingsEl = $state<HTMLElement>();
 
   // Close the settings panel on Escape or a click outside it.
+  let searchInput = $state<HTMLInputElement>();
   function onWindowKey(e: KeyboardEvent) {
     if (e.key === "Escape") showSettings = false;
+    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable]")) return;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    // "/" or Ctrl/Cmd+F jumps to search from anywhere.
+    if ((plain && e.key === "/") || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f")) {
+      e.preventDefault();
+      searchInput?.focus();
+      searchInput?.select();
+      return;
+    }
+    // With no VOD open, typing starts a search. (With one open, letters are player shortcuts.)
+    if (!selected && plain && e.key.length === 1 && e.key !== " ") {
+      e.preventDefault();
+      query += e.key;
+      searchInput?.focus();
+    }
   }
   function onWindowClick(e: MouseEvent) {
     if (showSettings && settingsEl && !settingsEl.contains(e.target as Node)) showSettings = false;
@@ -168,7 +184,14 @@
       <div class="toolbar">
         <div class="search">
           <span class="search-icon muted"><Icon name="search" /></span>
-          <input type="search" placeholder="Search for a phrase…" bind:value={query} aria-label="Search" />
+          <input
+            type="search"
+            placeholder="Search for a phrase…"
+            bind:value={query}
+            bind:this={searchInput}
+            aria-label="Search"
+            title="Search (/)"
+          />
           {#if selected}
             <button
               class="scope"
