@@ -25,7 +25,7 @@ pub(crate) fn bind_both() -> Result<(Vec<TcpListener>, u16)> {
             Err(_) => return Ok((vec![v4], port)),
         }
     }
-    bail!("no free port for the app server")
+    bail!("no free loopback port")
 }
 
 /// Whether to answer `request`, or the status to refuse it with: it must be a

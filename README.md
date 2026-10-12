@@ -15,7 +15,7 @@ On first run the app downloads what it needs into its data directory: yt-dlp, ff
 - **Player.** Selecting a VOD shows its thumbnail; clicking it, a match or a transcript line loads the player and jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
 - **GPU.** NVIDIA GPU users can download an optional GPU add-on (about 3.4 GB) from the settings. Transcription falls back to the CPU when the GPU is busy or has too little free memory.
 - **Older models.** When a release ships a new speech model, transcripts made with the previous one are marked. They still work; re-transcribing replaces them.
-- **Storage.** "Free up space" in the settings deletes everything that can be downloaded again (models, tools, the GPU pack, audio). The library and transcripts are kept. Removing a VOD scrubs its transcript from the database file.
+- **Storage.** "Free up space" in the settings deletes everything that can be downloaded again (models, tools, the GPU add-on, audio). The library and transcripts are kept. Removing a VOD scrubs its transcript from the database file.
 
 ### Privacy
 
@@ -70,7 +70,7 @@ The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; afte
 
 The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
 
-`scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
+`scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU add-on stay.
 
 ## Website
 

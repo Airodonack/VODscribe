@@ -16,6 +16,7 @@ const commands: Record<string, (args: Args) => unknown> = {
     js_runtime: true,
     js_runtime_managed: true,
     can_install_tools: true,
+    // model::CPU_MODEL.total_bytes() in crates/core; setup isn't shown in the demo.
     model_bytes: 949_807_475,
     running: false,
   }),

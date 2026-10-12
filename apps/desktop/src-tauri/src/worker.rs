@@ -330,9 +330,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
     let notes = Db::open(&ctx.paths.db())?;
     pipeline::transcribe(&mut ctx.db, vod, &ffmpeg, &audio, &transcription, flag, &mut report, &mut |notice| {
         let _ = notes.set_note(vod.id, Some(&notice));
-        if let Ok(Some(v)) = notes.vod(vod.id) {
-            let _ = app.emit("vod", v);
-        }
+        let _ = crate::emit_vod(&app, &notes, vod.id);
     })?;
     pipeline::remove_work_files(&ctx.paths.work(), vod.id);
     ctx.db.set_audio_path(vod.id, None)?;
@@ -384,8 +382,24 @@ mod tests {
     use super::*;
     use vodscribe_core::fetch::VodInfo;
 
+    /// A work dir, deleted when the test ends.
+    struct Work(std::path::PathBuf);
+
+    impl std::ops::Deref for Work {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Work {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
     /// A library with one VOD in `status`, and a work dir holding its audio.
-    fn setup(status: Status) -> (Db, std::path::PathBuf, i64) {
+    fn setup(status: Status) -> (Db, Work, i64) {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let info = VodInfo {
             platform: "youtube".into(),
@@ -399,14 +413,14 @@ mod tests {
         };
         let id = db.add_vod(&info).unwrap().0.id;
         db.set_status(id, status, 0.5, None).unwrap();
-        let work = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), rand_suffix()));
+        let work = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id()));
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
         db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
-        (db, work, id)
+        (db, Work(work), id)
     }
 
-    fn rand_suffix() -> u64 {
+    fn next_id() -> u64 {
         use std::sync::atomic::AtomicU64;
         static N: AtomicU64 = AtomicU64::new(0);
         N.fetch_add(1, Ordering::Relaxed)
@@ -441,6 +455,8 @@ mod tests {
         let (db, work, id) = setup(Status::Downloading);
         finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Delete), 0.4).unwrap();
         assert!(!work.join(format!("{id}.m4a")).exists());
+        // The command that deleted it removes the row; finish leaves it be.
+        assert_eq!(status(&db, id).0, Status::Downloading);
     }
 
     #[test]

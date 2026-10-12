@@ -17,7 +17,6 @@
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
-  // Only the install steps for this computer are shown (os, from platform.ts).
 
   onMount(async () => {
     unlisten.push(
