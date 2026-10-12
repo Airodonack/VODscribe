@@ -18,12 +18,15 @@ case "$triple" in *windows*) exe=".exe" ;; esac
 out=apps/desktop/src-tauri/binaries
 mkdir -p "$out"
 
-# sherpa-onnx's build script downloads its prebuilt libraries unverified and
-# reuses whatever it finds in its cache. Put a verified archive there first, and
-# drop any extraction not made from it, so the build unpacks the verified one.
+# sherpa-onnx's build script would download its prebuilt libraries unverified.
+# Instead this downloads them, checks them against pinned hashes, unpacks them,
+# and points each build at them with SHERPA_ONNX_LIB_DIR, so the build script
+# never downloads anything. Unpacking here, every time it's missing, also keeps
+# a cached build (CI's rust-cache) from linking against a folder that's gone.
 version=1.13.8
-# sherpa-onnx's build script keeps its downloads under the Cargo target dir.
 cache="${CARGO_TARGET_DIR:-target}/sherpa-onnx-prebuilt"
+# An absolute path for the build script; Git Bash's /d/... wouldn't do on Windows.
+root=$(pwd -W 2>/dev/null || pwd)
 sha256() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | awk '{print $1}'; }
 verified_prebuilt() {
   local name="sherpa-onnx-v$version-$1.tar.bz2"
@@ -39,22 +42,40 @@ verified_prebuilt() {
       exit 1
     fi
   fi
-  if [ "$(cat "$cache/${name%.tar.bz2}.verified" 2>/dev/null)" != "$want" ]; then
-    rm -rf "${cache:?}/${name%.tar.bz2}"
-    echo "$want" > "$cache/${name%.tar.bz2}.verified"
+  local dir="${name%.tar.bz2}"
+  if [ "$(cat "$cache/$dir.verified" 2>/dev/null)" != "$want" ] || [ ! -d "$cache/$dir/lib" ]; then
+    rm -rf "${cache:?}/$dir"
+    # Windows' own tar reads .bz2 without needing bzip2 installed.
+    if [ -x /c/Windows/System32/tar.exe ]; then
+      /c/Windows/System32/tar.exe -xf "$cache/$name" -C "$cache"
+    else
+      tar -xjf "$cache/$name" -C "$cache"
+    fi
+    echo "$want" > "$cache/$dir.verified"
   fi
 }
+# The lib dir of the verified prebuilt `$1`, for SHERPA_ONNX_LIB_DIR.
+lib_dir() {
+  case "$cache" in
+    /*) echo "$cache/sherpa-onnx-v$version-$1/lib" ;;
+    *) echo "$root/$cache/sherpa-onnx-v$version-$1/lib" ;;
+  esac
+}
+# The static libraries for the CPU worker, and the shared ones the GPU worker links against.
+shared=""
 case "$triple" in
-  x86_64-unknown-linux-gnu) verified_prebuilt linux-x64-static-lib; verified_prebuilt linux-x64-shared-lib ;;
-  x86_64-pc-windows-msvc) verified_prebuilt win-x64-static-MT-Release-lib; verified_prebuilt win-x64-shared-MT-Release-lib ;;
-  x86_64-apple-darwin) verified_prebuilt osx-x64-static-lib ;;
-  aarch64-apple-darwin) verified_prebuilt osx-arm64-static-lib ;;
+  x86_64-unknown-linux-gnu) static=linux-x64-static-lib shared=linux-x64-shared-lib ;;
+  x86_64-pc-windows-msvc) static=win-x64-static-MT-Release-lib shared=win-x64-shared-MT-Release-lib ;;
+  x86_64-apple-darwin) static=osx-x64-static-lib ;;
+  aarch64-apple-darwin) static=osx-arm64-static-lib ;;
   *) echo "no pinned sherpa-onnx libraries for $triple" >&2; exit 1 ;;
 esac
+verified_prebuilt "$static"
+[ -z "$shared" ] || verified_prebuilt "$shared"
 
 # CPU worker: sherpa-onnx linked statically.
 # ${flag[@]+...}: macOS's bash 3.2 treats an empty array as unset under set -u.
-cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --target "$triple"
+SHERPA_ONNX_LIB_DIR=$(lib_dir "$static") cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --target "$triple"
 cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-$triple$exe"
 
 # GPU worker: sherpa-onnx linked dynamically; the GPU pack supplies the CUDA
@@ -62,7 +83,8 @@ cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/vodscribe-worker$exe" "$out/vod
 # with the static build.
 case "$triple" in
   x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc)
-    cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --no-default-features --features shared \
+    SHERPA_ONNX_LIB_DIR=$(lib_dir "$shared") cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker \
+      --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
     cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-cuda-$triple$exe"
     # The build bakes this machine's sherpa-onnx lib dir into the RUNPATH. Release
