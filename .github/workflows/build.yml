@@ -59,6 +59,7 @@ jobs:
           # Keep in step with rust-toolchain.toml.
           toolchain: "1.99.0"
           targets: ${{ matrix.target }}
+          components: rustfmt
 
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
@@ -71,6 +72,13 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
       - run: pnpm install --frozen-lockfile
+
+      # The same checks as .githooks/pre-commit; cheap, so they fail a release early.
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: |
+          cargo fmt --all --check
+          pnpm --filter desktop lint
 
       - name: Build transcription workers
         shell: bash

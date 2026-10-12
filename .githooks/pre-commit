@@ -1,0 +1,15 @@
+#!/bin/sh
+# Refuses a commit whose Rust or frontend code isn't formatted.
+# Enable once per clone: git config core.hooksPath .githooks
+# Fix with: cargo fmt --all && pnpm --filter desktop format
+root=$(git rev-parse --show-toplevel)
+cd "$root" || exit 1
+ok=0
+if git diff --cached --name-only | grep -q '\.rs$'; then
+  cargo fmt --all --check >/dev/null 2>&1 || { echo "Rust isn't formatted: run cargo fmt --all" >&2; ok=1; }
+fi
+if git diff --cached --name-only | grep -q '^apps/desktop/src/'; then
+  (cd apps/desktop && pnpm exec prettier --check src >/dev/null 2>&1) ||
+    { echo "Frontend isn't formatted: run pnpm --filter desktop format" >&2; ok=1; }
+fi
+exit $ok

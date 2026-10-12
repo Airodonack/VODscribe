@@ -45,7 +45,10 @@ pnpm install
 pnpm dev          # the desktop app, via `tauri dev`
 pnpm check        # type-check every app
 pnpm --filter desktop format   # Prettier (lint checks without writing)
+cargo fmt --all                # rustfmt, with the settings in rustfmt.toml
 ```
+
+Code is formatted with rustfmt and Prettier, and the release workflow refuses code that isn't. Run `git config core.hooksPath .githooks` once per clone, so `.githooks/pre-commit` refuses an unformatted commit before CI does. Claude Code formats each file it edits by itself, through the hook in `.claude/settings.json`.
 
 Transcription runs in a separate `vodscribe-worker` process, bundled as a Tauri sidecar along with a CUDA build of it on Linux and Windows. `scripts/prepare-sidecars.sh` builds both into `apps/desktop/src-tauri/binaries/`. `pnpm dev` runs it automatically; run it yourself (`bash scripts/prepare-sidecars.sh [debug|release]`) before building the app with plain `cargo`.
 
