@@ -6,46 +6,71 @@
 //! `parent` parameter. `tauri dev` already serves from localhost, so this makes
 //! release builds behave the same.
 //!
-//! The server binds a random port before the window opens, so no other
-//! program can be listening there first; answers only GET and HEAD for the
+//! The server binds a random port, on both 127.0.0.1 and [::1], before the
+//! window opens, so no other program can be listening there first; answers only GET and HEAD for the
 //! app's built assets; and refuses requests that don't name its own host, so a
 //! web page can't reach it through DNS rebinding. The pages get the app's
 //! commands through a capability limited to this exact origin.
 
-use anyhow::{Context, Result};
+use std::io::ErrorKind;
+use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
+
+use anyhow::{Result, bail};
 use tauri::{AppHandle, Manager, Runtime};
 use tiny_http::{Header, Method, Response, Server};
 
 /// The origin the app is served from, such as `http://localhost:41723`.
 pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
-    let server = Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!("start the app server: {e}"))?;
-    let port = server.server_addr().to_ip().context("app server address")?.port();
+    let (listeners, port) = bind_loopback()?;
     let host = format!("localhost:{port}");
-    let assets = app.asset_resolver();
-    std::thread::Builder::new().name("app-server".into()).spawn(move || {
-        for request in server.incoming_requests() {
-            let allowed = matches!(request.method(), Method::Get | Method::Head)
-                && request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host);
-            let path = request.url().split(['?', '#']).next().unwrap_or("/").to_string();
-            let response = match allowed.then(|| assets.get(path)).flatten() {
-                Some(asset) => {
-                    let mut response = Response::from_data(asset.bytes)
-                        .with_header(header("Content-Type", &asset.mime_type))
-                        .with_header(header("Cache-Control", "no-cache"))
-                        .with_header(header("X-Content-Type-Options", "nosniff"));
-                    if let Some(csp) = asset.csp_header {
-                        response.add_header(header("Content-Security-Policy", &csp));
-                    }
-                    response
-                }
-                None => Response::from_string("").with_status_code(if allowed { 404 } else { 403 }),
-            };
-            let _ = request.respond(response);
-        }
-    })?;
+    for listener in listeners {
+        let server = Server::from_listener(listener, None).map_err(|e| anyhow::anyhow!("start the app server: {e}"))?;
+        let (assets, host) = (app.asset_resolver(), host.clone());
+        std::thread::Builder::new().name("app-server".into()).spawn(move || serve(&server, &host, &assets))?;
+    }
     let origin = format!("http://localhost:{port}");
     allow_commands(app, &origin)?;
     Ok(origin)
+}
+
+/// One free port on both 127.0.0.1 and [::1]. Webviews resolve `localhost` to
+/// either (often ::1 first), so the app holds both: otherwise another account
+/// on the computer could listen on the other one and get the app's commands.
+fn bind_loopback() -> Result<(Vec<TcpListener>, u16)> {
+    for _ in 0..20 {
+        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = v4.local_addr()?.port();
+        match TcpListener::bind((Ipv6Addr::LOCALHOST, port)) {
+            Ok(v6) => return Ok((vec![v4, v6], port)),
+            // Taken on ::1, perhaps on purpose: try another port.
+            Err(e) if e.kind() == ErrorKind::AddrInUse => continue,
+            // No IPv6 here, so `localhost` can only mean 127.0.0.1.
+            Err(_) => return Ok((vec![v4], port)),
+        }
+    }
+    bail!("no free port for the app server")
+}
+
+fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<R>) {
+    for request in server.incoming_requests() {
+        let allowed = matches!(request.method(), Method::Get | Method::Head)
+            && request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host);
+        let path = request.url().split(['?', '#']).next().unwrap_or("/").to_string();
+        let response = match allowed.then(|| assets.get(path)).flatten() {
+            Some(asset) => {
+                let mut response = Response::from_data(asset.bytes)
+                    .with_header(header("Content-Type", &asset.mime_type))
+                    .with_header(header("Cache-Control", "no-cache"))
+                    .with_header(header("X-Content-Type-Options", "nosniff"));
+                if let Some(csp) = asset.csp_header {
+                    response.add_header(header("Content-Security-Policy", &csp));
+                }
+                response
+            }
+            None => Response::from_string("").with_status_code(if allowed { 404 } else { 403 }),
+        };
+        let _ = request.respond(response);
+    }
 }
 
 fn header(name: &'static str, value: &str) -> Header {
