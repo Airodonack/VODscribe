@@ -241,10 +241,6 @@
     color: var(--danger);
   }
 
-  .sep {
-    margin: 0 4px;
-  }
-
   .legend {
     margin: 0;
     padding: 0 16px 8px;
@@ -296,10 +292,6 @@
     border-radius: 0;
     background: #000;
     overflow: hidden;
-  }
-
-  .poster:hover:not(:disabled) {
-    background: #000;
   }
 
   .poster :global(img) {

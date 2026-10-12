@@ -81,7 +81,9 @@ input {
   outline-offset: 2px;
 }
 
-button {
+/* The base button. :where() gives these rules no specificity, so any class a
+   component puts on a button overrides them without fighting the hover rule. */
+:where(button) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -95,7 +97,7 @@ button {
   white-space: nowrap;
 }
 
-button:hover:not(:disabled) {
+:where(button:hover:not(:disabled)) {
   background: var(--surface-2);
 }
 
@@ -112,7 +114,6 @@ button.primary {
 }
 
 button.primary:hover:not(:disabled) {
-  background: var(--accent);
   filter: brightness(1.08);
 }
 
@@ -127,7 +128,6 @@ button.link {
 }
 
 button.link:hover:not(:disabled) {
-  background: none;
   color: var(--text);
   text-decoration: underline;
 }
@@ -306,4 +306,21 @@ kbd {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted);
   background-clip: padding-box;
+}
+
+/* The "·" between inline details. */
+.sep {
+  margin: 0 4px;
+}
+
+/* The round icon above an empty state. */
+.glyph {
+  display: inline-flex;
+  width: 56px;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  margin-bottom: 14px;
 }

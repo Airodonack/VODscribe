@@ -64,8 +64,4 @@
     margin: 0 0 8px;
     font-size: 12px;
   }
-
-  .sep {
-    margin: 0 5px;
-  }
 </style>

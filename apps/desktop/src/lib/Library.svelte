@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
+  import Progress from "./Progress.svelte";
   import { Reorder } from "./reorder.svelte";
   import Thumb from "./Thumb.svelte";
   import { formatTime, platformName } from "./platform";
@@ -182,9 +183,7 @@
               </span>
             {/if}
             {#if showBar}
-              <span class="bar" class:paused={vod.status === "paused"}
-                ><span style:width="{vod.progress * 100}%"></span></span
-              >
+              <Progress value={vod.progress} paused={vod.status === "paused"} thin />
             {/if}
             {#if vod.status === "error" && vod.error}
               <span class="note error-text" title={vod.error}>{vod.error}</span>
@@ -312,7 +311,6 @@
   }
 
   .credit:hover:not(:disabled) {
-    background: none;
     color: var(--accent);
     text-decoration: underline;
   }
@@ -392,10 +390,6 @@
     align-items: flex-start;
   }
 
-  .main:hover:not(:disabled) {
-    background: none;
-  }
-
   .thumb {
     position: relative;
     flex: none;
@@ -462,10 +456,6 @@
     text-overflow: ellipsis;
   }
 
-  .sep {
-    margin: 0 4px;
-  }
-
   .status-area {
     display: flex;
     flex-direction: column;
@@ -511,25 +501,6 @@
 
   .note :global(svg) {
     flex: none;
-  }
-
-  .bar {
-    display: block;
-    height: 3px;
-    border-radius: 2px;
-    background: var(--surface-3);
-    overflow: hidden;
-  }
-
-  .bar.paused > span {
-    background: var(--muted);
-  }
-
-  .bar > span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.25s;
   }
 
   .actions {

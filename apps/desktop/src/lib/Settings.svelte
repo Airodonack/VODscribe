@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
   import Icon from "./Icon.svelte";
+  import Progress from "./Progress.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
 
@@ -155,7 +156,7 @@
       {#if step || gpu?.installing}
         <div class="progress">
           <span class="muted">Downloading {step?.label ?? "GPU pack"}…</span>
-          <div class="bar"><div style:width="{step && step.total ? (step.done / step.total) * 100 : 0}%"></div></div>
+          <Progress value={step && step.total ? step.done / step.total : 0} />
         </div>
       {:else if !gpu?.installed}
         <button onclick={install}><Icon name="download" size={14} /> Download GPU pack</button>
@@ -266,18 +267,5 @@
     gap: 4px;
     font-size: 12px;
     width: 100%;
-  }
-
-  .bar {
-    height: 4px;
-    border-radius: 2px;
-    background: var(--surface-3);
-    overflow: hidden;
-  }
-
-  .bar > div {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.2s;
   }
 </style>

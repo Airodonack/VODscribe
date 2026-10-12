@@ -92,13 +92,8 @@
   }
 
   .glyph {
-    display: inline-flex;
     width: 44px;
     height: 44px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: var(--surface-2);
     margin-bottom: 10px;
   }
 

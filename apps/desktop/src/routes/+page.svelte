@@ -368,17 +368,6 @@
     padding: 0 16px;
   }
 
-  .glyph {
-    display: inline-flex;
-    width: 56px;
-    height: 56px;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
-    background: var(--surface-2);
-    margin-bottom: 14px;
-  }
-
   .empty h2 {
     margin: 0 0 6px;
     font-size: 17px;
@@ -405,7 +394,6 @@
   }
 
   .credit:hover:not(:disabled) {
-    background: none;
     color: var(--text);
   }
 

@@ -3,6 +3,7 @@
   import { api, events, type SetupStatus, type UnlistenFn } from "./api";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
+  import Progress from "./Progress.svelte";
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
 
@@ -29,8 +30,6 @@
     await api.runSetup();
     onchange();
   }
-
-  const pct = (f: number | undefined) => `${Math.round((f ?? 0) * 100)}%`;
 </script>
 
 <div class="setup">
@@ -50,7 +49,7 @@
         <strong>Speech model</strong>
         <span class="muted">Parakeet TDT 0.6B v3, about 900 MB</span>
         {#if running && !status.model}
-          <div class="bar"><div style:width={pct(progress.model)}></div></div>
+          <div class="bar"><Progress value={progress.model ?? 0} /></div>
         {/if}
       </div>
     </li>
@@ -62,7 +61,7 @@
         <strong>yt-dlp</strong>
         <span class="muted">fetches audio from Kick, Twitch and YouTube</span>
         {#if running && !status.yt_dlp}
-          <div class="bar"><div style:width={pct(progress["yt-dlp"])}></div></div>
+          <div class="bar"><Progress value={progress["yt-dlp"] ?? 0} /></div>
         {/if}
       </div>
     </li>
@@ -218,17 +217,7 @@
   }
 
   .bar {
-    height: 4px;
     margin-top: 8px;
-    border-radius: 2px;
-    background: var(--surface-2);
-    overflow: hidden;
-  }
-
-  .bar > div {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.2s;
   }
 
   .actions {
