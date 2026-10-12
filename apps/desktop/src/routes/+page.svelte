@@ -9,6 +9,8 @@
   import Setup from "$lib/Setup.svelte";
   import Transcript from "$lib/Transcript.svelte";
   import Icon from "$lib/Icon.svelte";
+  import { AUTHOR, SUPPORT } from "$lib/links";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -202,6 +204,7 @@
         {:else if selected}
           <Transcript vod={selected} onplay={play} />
         {:else}
+          <div class="home">
           <div class="empty">
             <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
             {#if vods.length === 0}
@@ -221,6 +224,12 @@
                 <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
               </p>
             {/if}
+          </div>
+          <button class="credit" onclick={() => openUrl(SUPPORT)}>
+            Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
+              >Help cover hosting on Ko-fi</span
+            >
+          </button>
           </div>
         {/if}
       </div>
@@ -321,9 +330,16 @@
     overflow-y: auto;
   }
 
+  .home {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100%;
+  }
+
   .empty {
     max-width: 440px;
-    margin: 14vh auto;
+    margin: 14vh auto 32px;
     text-align: center;
     padding: 0 16px;
   }
@@ -352,6 +368,38 @@
     font-size: 12px;
     margin-top: 20px;
     line-height: 2;
+  }
+
+  .credit {
+    gap: 0;
+    margin: auto 0 18px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  .credit:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+  }
+
+  .credit:hover .cta {
+    text-decoration: underline;
+  }
+
+  .heart {
+    color: #e5484d;
+    margin: 0 3px;
+  }
+
+  .credit .sep {
+    margin: 0 8px;
+  }
+
+  .cta {
+    color: var(--accent);
   }
 
   .pad {

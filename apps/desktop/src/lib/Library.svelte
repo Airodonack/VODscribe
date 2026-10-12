@@ -5,6 +5,7 @@
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
+  import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
   import { formatTime, platformName } from "./platform";
 
@@ -70,7 +71,6 @@
   // Thumbnails that fail to load fall back to the platform tile.
   let broken = $state(new Set<number>());
 
-  const SITE = "https://vodscribe.com";
   let version = $state<string | null>(null);
   onMount(() => {
     getVersion().then((v) => (version = v || null), () => {});
@@ -186,11 +186,19 @@
 </script>
 
 <aside>
-  <button class="brand" onclick={() => openUrl(SITE)} title="vodscribe.com">
-    <Logo size={22} tile />
-    <span class="name">VODscribe</span>
-    {#if version}<span class="version muted">v{version}</span>{/if}
-  </button>
+  <!-- Two sibling buttons, since buttons can't nest: the site link fills the
+       header and the credit sits on top of it, under the name. -->
+  <div class="brand">
+    <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
+      <Logo size={28} tile />
+      <span class="name">VODscribe</span>
+      {#if version}<span class="version muted">v{version}</span>{/if}
+      <Icon name="external" size={12} />
+    </button>
+    <button class="credit" onclick={() => openUrl(SUPPORT)} title="Support VODscribe on Ko-fi">
+      Made by {AUTHOR}
+    </button>
+  </div>
 
   <form onsubmit={add}>
     <input type="url" placeholder="Paste a VOD link…" bind:value={url} disabled={adding} aria-label="VOD link" />
@@ -337,27 +345,61 @@
   }
 
   .brand {
+    position: relative;
+    flex: none;
+    height: 53px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .site {
     display: flex;
     align-items: center;
     justify-content: flex-start;
-    gap: 8px;
-    height: 53px;
+    gap: 6px;
+    width: 100%;
+    height: 100%;
     padding: 0 14px;
     border: none;
-    border-bottom: 1px solid var(--border);
     border-radius: 0;
     background: var(--surface);
+    color: var(--muted);
+  }
+
+  .site:hover:not(:disabled) {
+    background: var(--bg);
     color: var(--text);
   }
 
-  .brand:hover:not(:disabled) {
-    background: var(--bg);
+  /* The name sits in the top half of the header, the credit below it. */
+  .name {
+    margin: 0 0 15px 4px;
+    color: var(--text);
   }
 
   .version {
     margin-left: auto;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
+    color: inherit;
+  }
+
+  .credit {
+    position: absolute;
+    left: 50px;
+    bottom: 7px;
+    padding: 0 2px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 16px;
+  }
+
+  .credit:hover:not(:disabled) {
+    background: none;
+    color: var(--accent);
+    text-decoration: underline;
   }
 
 
