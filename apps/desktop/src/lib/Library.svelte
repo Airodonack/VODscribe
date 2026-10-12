@@ -69,7 +69,8 @@
   }
 
   // Thumbnails that fail to load fall back to the platform tile.
-  let broken = $state(new Set<number>());
+  // Keyed by URL, so a new thumbnail for the same VOD gets its own chance.
+  let broken = $state(new Set<string>());
 
   let version = $state<string | null>(null);
   onMount(() => {
@@ -238,14 +239,14 @@
           title={vods.length > 1 ? "Drag to reorder (Alt+↑/↓)" : undefined}
         >
           <span class="thumb {vod.platform}">
-            {#if thumb && !broken.has(vod.id)}
+            {#if thumb && !broken.has(thumb)}
               <img
                 src={thumb}
                 alt=""
                 draggable="false"
                 loading="lazy"
                 onerror={() => {
-                  broken.add(vod.id);
+                  broken.add(thumb);
                   broken = new Set(broken);
                 }}
               />

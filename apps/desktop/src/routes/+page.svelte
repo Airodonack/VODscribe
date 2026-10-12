@@ -65,27 +65,38 @@
     runSearch();
   }
 
+  // Events that arrive before the first list has loaded are held and applied
+  // after it, so the list (possibly read before them) doesn't overwrite them.
+  let loaded = false;
+  const early: (() => void)[] = [];
+  const afterLoad =
+    <A extends unknown[]>(f: (...args: A) => void) =>
+    (...args: A) =>
+      loaded ? f(...args) : early.push(() => f(...args));
+
   onMount(async () => {
     unlisten.push(
-      await events.vod((vod) => {
+      await events.vod(afterLoad((vod) => {
         upsert(vod);
         if (vod.status === "done") runSearch();
-      }),
-      await events.vodProgress((id, status, progress) => {
+      })),
+      await events.vodProgress(afterLoad((id, status, progress) => {
         const vod = vods.find((v) => v.id === id);
         if (vod) {
           vod.status = status;
           vod.progress = progress;
         }
-      }),
-      await events.vodRemoved((id) => {
+      })),
+      await events.vodRemoved(afterLoad((id) => {
         vods = vods.filter((v) => v.id !== id);
         if (playing?.vodId === id) playing = null;
         runSearch();
-      }),
+      })),
     );
     await refreshSetup();
     vods = await api.listVods();
+    loaded = true;
+    early.splice(0).forEach((apply) => apply());
   });
   onDestroy(() => unlisten.forEach((u) => u()));
 
