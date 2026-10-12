@@ -29,3 +29,11 @@ updates:
     groups:
       npm:
         patterns: ["*"]
+    ignore:
+      # SvelteKit reads tsconfig through TypeScript's JavaScript API, which the
+      # native TypeScript 7 doesn't have; revisit when SvelteKit supports it.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # Matches the Node version in .nvmrc (24); bump together.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

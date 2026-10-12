@@ -12,7 +12,7 @@
   onMount(() => {
     const wide = matchMedia("(min-width: 821px)");
     const load = async () => {
-      if (wide.matches && !App) App = (await import("$desktop/App.svelte")).default;
+      if (wide.matches && !App) App = (await import("desktop/lib/App.svelte")).default;
     };
     load();
     wide.addEventListener("change", load);

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import "$desktop/../app.css";
+  import "desktop/app.css";
   import "../site.css";
-  import Logo from "$desktop/Logo.svelte";
-  import { AUTHOR, SUPPORT } from "$lib/links";
+  import Logo from "desktop/lib/Logo.svelte";
+  import { AUTHOR, SUPPORT } from "#lib/links.js";
 
   let { children } = $props();
 </script>

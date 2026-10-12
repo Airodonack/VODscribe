@@ -1,1 +1,1 @@
-export { AUTHOR, SUPPORT } from "$desktop/links";
+export { AUTHOR, SUPPORT } from "desktop/lib/links.ts";

@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import Icon from "$desktop/Icon.svelte";
-  import Demo from "$lib/Demo.svelte";
-  import { DOWNLOADS, detectOs, primaryDownload, type Os } from "$lib/downloads";
-  import { SUPPORT } from "$lib/links";
+  import Icon from "desktop/lib/Icon.svelte";
+  import Demo from "#lib/Demo.svelte";
+  import { DOWNLOADS, detectOs, primaryDownload, type Os } from "#lib/downloads.js";
+  import { SUPPORT } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);

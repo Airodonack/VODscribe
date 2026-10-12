@@ -74,7 +74,7 @@ The app's content security policy is in `tauri.conf.json` (`app.security.csp`). 
 
 ## Website
 
-`apps/site` is vodscribe.com: a landing page whose live demo is the app itself. It imports the desktop app's components (`$desktop`, `apps/desktop/src/lib`), and `vite.config.ts` swaps the Tauri modules they call for stand-ins (`apps/site/src/lib/tauri/`) that answer from transcripts in `static/demo/`, with the same phrase search as the app. With `__DEMO__` defined, controls that only work in the app gray out and explain themselves on hover (`apps/desktop/src/lib/demo.ts`); mark new ones with `demoOff`.
+`apps/site` is vodscribe.com: a landing page whose live demo is the app itself. It imports the desktop app's components as the workspace package `desktop` (`desktop/lib/…`, exported from `apps/desktop/package.json`), and `vite.config.ts` swaps the Tauri modules they call for stand-ins (`apps/site/src/lib/tauri/`) that answer from transcripts in `static/demo/`, with the same phrase search as the app. With `__DEMO__` defined, controls that only work in the app gray out and explain themselves on hover (`apps/desktop/src/lib/demo.ts`); mark new ones with `demoOff`.
 
 The demo's VODs are transcribed with the CLI into a fresh library, then exported:
 

@@ -5,7 +5,10 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { findPhrase, terms } from "./search.ts";
 
-const cases = JSON.parse(readFileSync(new URL("../../../../../crates/core/tests/phrase-search.json", import.meta.url)));
+/** @type {{ about: string, words: string[], query: string, ranges: [number, number][] }[]} */
+const cases = JSON.parse(
+  readFileSync(new URL("../../../../../crates/core/tests/phrase-search.json", import.meta.url), "utf8"),
+);
 
 for (const c of cases) {
   test(c.about, () => {

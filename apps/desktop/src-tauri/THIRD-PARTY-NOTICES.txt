@@ -11106,7 +11106,7 @@ bzip2/libbzip2 version 1.1.0 of 6 September 2010
 JavaScript packages in the app's interface
 
 ------------------------------------------------------------------------------
-@sveltejs/kit 2.70.3 (MIT)
+@sveltejs/kit 3.0.1 (MIT)
 
 Copyright (c) 2020 [these people](https://github.com/sveltejs/kit/graphs/contributors)
 

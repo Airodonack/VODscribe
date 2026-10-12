@@ -24,17 +24,26 @@
     "hls.js": "^1.7.3"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.65.1",
+    "@sveltejs/adapter-static": "^4.0.0",
+    "@sveltejs/kit": "^3.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@tauri-apps/cli": "^2",
     "@types/node": "^24.0.0",
     "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^3.5.2",
-    "svelte": "^5.56.3",
-    "svelte-check": "^4.6.0",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.5",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
   },
-  "private": true
+  "private": true,
+  "imports": {
+    "#lib": "./src/lib/index.js",
+    "#lib/*": "./src/lib/*"
+  },
+  "exports": {
+    "./lib/*": "./src/lib/*",
+    "./app.css": "./src/app.css",
+    "./THIRD-PARTY-NOTICES.txt": "./src-tauri/THIRD-PARTY-NOTICES.txt"
+  }
 }

@@ -13,15 +13,20 @@
     "lint": "prettier --check src"
   },
   "devDependencies": {
-    "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.65.1",
+    "@sveltejs/adapter-static": "^4.0.0",
+    "@sveltejs/kit": "^3.0.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@types/node": "^24.0.0",
+    "desktop": "workspace:*",
     "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^3.5.2",
-    "svelte": "^5.56.3",
-    "svelte-check": "^4.6.0",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.1",
+    "svelte-check": "^4.7.5",
     "typescript": "~6.0.3",
     "vite": "^8.0.16"
+  },
+  "imports": {
+    "#lib": "./src/lib/index.js",
+    "#lib/*": "./src/lib/*"
   }
 }

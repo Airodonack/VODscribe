@@ -1,3 +1,5 @@
+import adapter from "@sveltejs/adapter-static";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { sveltekit } from "@sveltejs/kit/vite";
@@ -8,7 +10,33 @@ const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const version = readFileSync(here("../../Cargo.toml"), "utf8").match(/^version = "(.+)"/m)?.[1];
 
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [
+    sveltekit({
+      preprocess: vitePreprocess(),
+      // As in the app (see its vite.config.js), and the demo's components come from there.
+      compilerOptions: { css: "injected" },
+
+      // Every page is prerendered to plain HTML for Cloudflare.
+      // 404.html is Cloudflare's not-found page: the site's shell, which shows SvelteKit's error page.
+      adapter: adapter({ fallback: "404.html", strict: true }),
+      // SvelteKit hashes its own inline startup script into this policy. Headers
+      // a <meta> policy can't set (frame-ancestors) are in static/_headers.
+      csp: {
+        mode: "hash",
+        directives: {
+          "default-src": ["self"],
+          "script-src": ["self"],
+          "style-src": ["self", "unsafe-inline"],
+          "img-src": ["self", "data:", "blob:"],
+          "connect-src": ["self"],
+          "frame-src": ["https://www.youtube-nocookie.com", "https://player.twitch.tv"],
+          "object-src": ["none"],
+          "base-uri": ["none"],
+          "form-action": ["none"],
+        },
+      },
+    }),
+  ],
   define: {
     // Turns on the demo behavior in the app's components (apps/desktop/src/lib/demo.ts).
     __DEMO__: true,

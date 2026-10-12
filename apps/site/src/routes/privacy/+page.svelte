@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SUPPORT } from "$lib/links";
+  import { SUPPORT } from "#lib/links.js";
 </script>
 
 <svelte:head>

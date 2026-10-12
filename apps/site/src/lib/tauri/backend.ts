@@ -2,7 +2,7 @@
 // static/demo (made by scripts/export-demo.py), with the same phrase search as
 // the app (crates/core: db.rs `search`, transcript.rs `terms` and `find_phrase`).
 
-import type { Line, SearchHit, Vod } from "$desktop/api";
+import type { Line, SearchHit, Vod } from "desktop/lib/api.ts";
 import { findPhrase, highlight, terms } from "./search";
 
 /** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
