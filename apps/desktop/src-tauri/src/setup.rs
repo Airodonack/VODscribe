@@ -70,7 +70,7 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
         };
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
-            tools::install_yt_dlp(&bin, never, |n, t| progress("yt-dlp", n, t))?;
+            tools::install_yt_dlp(&bin, never, |_, n, t| progress("yt-dlp", n, t))?;
         }
         if tools::find_ffmpeg(&bin).is_none()
             && let Some(dep) = deps::ffmpeg()
@@ -111,9 +111,14 @@ pub(crate) fn spawn_install(
 }
 
 #[tauri::command]
-pub(crate) async fn update_yt_dlp(state: State<'_, AppState>) -> CmdResult<String> {
+/// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (step, done, total).
+pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     let bin = state.paths.bin();
-    tauri::async_runtime::spawn_blocking(move || tools::update_yt_dlp(&bin))
+    tauri::async_runtime::spawn_blocking(move || {
+        tools::update_yt_dlp(&bin, |step, done, total| {
+            let _ = app.emit("yt-dlp-progress", (step, done, total));
+        })
+    })
         .await
         .map_err(err)?
         .map_err(err)
@@ -170,7 +175,7 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         }
         let model_label = "Downloading the GPU speech model (Parakeet TDT 0.6B v3, fp16)";
         model::install(&paths.models(), &model::GPU_MODEL, never, |n, t| progress(model_label, n, t))?;
-        progress("Every file matches its SHA-256", 1, 1);
+        progress("Every file matches its SHA‑256", 1, 1);
         Ok(())
     });
     Ok(())

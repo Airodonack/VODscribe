@@ -53,6 +53,7 @@
   onMount(async () => {
     device = (await api.getSettings()).device;
     keep(await events.gpuProgress((label, done, total) => (step = { label, done, total })));
+    keep(await events.ytDlpProgress((label, done) => (ytDlpStep = { label, done })));
     keep(
       await events.gpuDone((e) => {
         step = null;
@@ -86,6 +87,8 @@
   // Platforms change often enough that an old yt-dlp stops working.
   let updating = $state(false);
   let ytDlpStatus = $state<string | null>(null);
+  // The step under way, named like the GPU add-on's: signature check, download, install.
+  let ytDlpStep = $state<{ label: string; done: number } | null>(null);
   async function updateYtDlp() {
     updating = true;
     ytDlpStatus = null;
@@ -95,6 +98,7 @@
       ytDlpStatus = String(e);
     } finally {
       updating = false;
+      ytDlpStep = null;
     }
   }
 
@@ -191,8 +195,17 @@
   <section>
     <span class="eyebrow">Video downloader</span>
     <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
-    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update video downloader"}</button>
-    {#if ytDlpStatus}<p class="muted hint">{ytDlpStatus}</p>{/if}
+    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Updating…" : "Update video downloader"}</button>
+    {#if updating && ytDlpStep}
+      <span class="muted step">
+        {ytDlpStep.label}…
+        {#if ytDlpStep.label.startsWith("Downloading") && ytDlpStep.done}
+          <span class="mb">{mb(ytDlpStep.done)} MB</span>
+        {/if}
+      </span>
+    {:else if ytDlpStatus}
+      <p class="muted hint step">{ytDlpStatus}</p>
+    {/if}
   </section>
 
   <section>

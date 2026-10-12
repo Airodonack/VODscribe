@@ -101,14 +101,16 @@ const SUMS_MAX_BYTES: u64 = 1 << 20;
 
 /// Downloads the latest yt-dlp release into `bin_dir`, verified against the
 /// release's checksum list, which must carry the yt-dlp signing key's signature.
-/// Returns the binary's path and whether it changed.
+/// Returns the binary's path and whether it changed. `on_progress` receives
+/// (step, bytes so far, total if known), with steps named like the GPU add-on's.
 pub fn install_yt_dlp(
     bin_dir: &Path,
     cancel: &AtomicBool,
-    mut on_progress: impl FnMut(u64, Option<u64>),
+    mut on_progress: impl FnMut(&str, u64, Option<u64>),
 ) -> Result<(PathBuf, bool)> {
     fs::create_dir_all(bin_dir)?;
     let asset = yt_dlp_asset()?;
+    on_progress("Checking yt-dlp's release signature", 0, None);
     let sums = net::get_bytes(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS"), SUMS_MAX_BYTES, cancel)?;
     let sig = net::get_bytes(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS.sig"), SUMS_MAX_BYTES, cancel)?;
     let sha256 = signed_sha256(&sums, &sig, asset)?;
@@ -118,7 +120,10 @@ pub fn install_yt_dlp(
         return Ok((dest, false));
     }
     let new = dest.with_extension("new");
-    net::download_verified(&format!("{YT_DLP_RELEASE}/{asset}"), &new, None, &sha256, cancel, |n| on_progress(n, None))?;
+    net::download_verified(&format!("{YT_DLP_RELEASE}/{asset}"), &new, None, &sha256, cancel, |n| {
+        on_progress("Downloading yt-dlp", n, None)
+    })?;
+    on_progress("yt-dlp matches its signed SHA‑256 · installing", 0, None);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -137,14 +142,14 @@ fn file_sha256(path: &Path) -> Option<String> {
 
 /// Updates the managed yt-dlp the same verified way it was installed (rather
 /// than with its own `-U`) and describes the result.
-pub fn update_yt_dlp(bin_dir: &Path) -> Result<String> {
-    let (path, changed) = install_yt_dlp(bin_dir, &AtomicBool::new(false), |_, _| {})?;
+pub fn update_yt_dlp(bin_dir: &Path, on_progress: impl FnMut(&str, u64, Option<u64>)) -> Result<String> {
+    let (path, changed) = install_yt_dlp(bin_dir, &AtomicBool::new(false), on_progress)?;
     let out = command(&path).arg("--version").output().context("run yt-dlp --version")?;
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
     Ok(if changed {
-        format!("Updated the video downloader (version {version}).")
+        format!("Updated yt-dlp to {version} · signature and SHA‑256 checked")
     } else {
-        format!("The video downloader is up to date (version {version}).")
+        format!("yt-dlp {version} is up to date · signature and SHA‑256 checked")
     })
 }
 
@@ -222,10 +227,10 @@ mod tests {
     #[ignore]
     fn installs_verified_yt_dlp() {
         let dir = PathBuf::from(std::env::var("VODSCRIBE_TEST_BIN_DIR").expect("set VODSCRIBE_TEST_BIN_DIR"));
-        let (path, changed) = install_yt_dlp(&dir, &AtomicBool::new(false), |_, _| {}).unwrap();
+        let (path, changed) = install_yt_dlp(&dir, &AtomicBool::new(false), |_, _, _| {}).unwrap();
         assert!(changed && path.is_file());
-        assert!(!install_yt_dlp(&dir, &AtomicBool::new(false), |_, _| {}).unwrap().1);
-        assert!(update_yt_dlp(&dir).unwrap().starts_with("The video downloader is up to date"));
+        assert!(!install_yt_dlp(&dir, &AtomicBool::new(false), |_, _, _| {}).unwrap().1);
+        assert!(update_yt_dlp(&dir, |_, _, _| {}).unwrap().contains("is up to date"));
     }
 
     /// The release published 2026.08.19: its checksum list and signature.

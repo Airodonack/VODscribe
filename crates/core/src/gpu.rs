@@ -186,7 +186,7 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         let label = "ONNX Runtime 1.28 with CUDA (sherpa-onnx 1.13.8)";
         let downloading = format!("Downloading {label}");
         net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
-        on_progress(&format!("{label} matches its SHA-256 · unpacking"), size, size);
+        on_progress(&format!("{label} matches its SHA‑256 · unpacking"), size, size);
         extract_tar_libs(&archive, &libs, platform.lib_exts)?;
         fs::remove_file(&archive)?;
 
@@ -194,7 +194,7 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
             let wheel = staging.join("wheel.whl");
             let downloading = format!("Downloading {label}");
             net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
-            on_progress(&format!("{label} matches its SHA-256 · unpacking"), size, size);
+            on_progress(&format!("{label} matches its SHA‑256 · unpacking"), size, size);
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }
