@@ -3,6 +3,7 @@ use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, Result, bail};
@@ -175,26 +176,46 @@ fn run_worker(
         s
     });
 
+    // Read output on a thread and wake regularly, so a stop kills the worker
+    // promptly instead of waiting for its next batch.
+    let (tx, rx) = mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            if tx.send(line).is_err() {
+                return;
+            }
+        }
+    });
+
     let mut segmenter = Segmenter::new();
     let result = (|| -> Result<()> {
-        for line in BufReader::new(child.stdout.take().unwrap()).lines() {
+        loop {
+            let line = match rx.recv_timeout(tools::STOP_POLL) {
+                Ok(line) => Some(line),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+            };
             if cancel.load(Ordering::Relaxed) {
                 bail!("canceled");
             }
+            let Some(line) = line else { continue };
             let line: WorkerLine = serde_json::from_str(&line?).context("unreadable worker output")?;
             if let Some(end) = line.end {
                 db.insert_segments(vod.id, &segmenter.push(line.words))?;
                 report(Status::Transcribing, fraction(end));
             }
         }
-        Ok(())
     })();
     if result.is_err() {
         let _ = child.kill();
+        let _ = child.wait();
+        // Don't wait for the stderr reader: a process the worker started may
+        // still hold the pipe open, and the error at hand is what matters.
+        return result;
     }
     let status = child.wait()?;
     let stderr = stderr_thread.join().unwrap_or_default();
-    result?;
     if !status.success() {
         let tail: Vec<&str> = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(3).collect();
         let msg = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
@@ -204,4 +225,56 @@ fn run_worker(
         db.insert_segments(vod.id, &[last])?;
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::fetch::VodInfo;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    #[test]
+    fn a_stop_kills_a_quiet_worker_promptly() {
+        // A "worker" that prints nothing for 30 s.
+        let dir = std::env::temp_dir().join(format!("vodscribe-stop-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("worker.sh");
+        fs::write(&program, "#!/bin/sh\nsleep 30\n").unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "u".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let (vod, _) = db.add_vod(&info).unwrap();
+        let spec = WorkerSpec {
+            program,
+            model_id: "m",
+            model_dir: dir.clone(),
+            provider: "cpu",
+            batch: 1,
+            lib_dirs: Vec::new(),
+        };
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let result = run_worker(&mut db, &vod, &spec, Path::new("ffmpeg"), Path::new("audio"), &cancel, &mut |_, _| {});
+        assert!(result.is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

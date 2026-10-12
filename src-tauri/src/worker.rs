@@ -36,7 +36,17 @@ struct Job {
     reason: Arc<Mutex<Option<Stop>>>,
 }
 
-#[derive(Clone, Copy)]
+/// Queue state shared by the stages and the commands. Stages pick and
+/// register a job under this lock, and commands that stop or change a VOD
+/// take it too, so a command can't slip in between the two.
+#[derive(Default)]
+struct Queue {
+    jobs: Vec<Job>,
+    /// While set, stages start nothing new (see `Worker::hold`).
+    held: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Stage {
     Download,
     Transcribe,
@@ -44,13 +54,23 @@ enum Stage {
 
 pub struct Worker {
     wakes: Mutex<[Sender<()>; 2]>,
-    jobs: Arc<Mutex<Vec<Job>>>,
+    queue: Arc<Mutex<Queue>>,
+}
+
+/// Keeps the queue held until dropped; see `Worker::hold`.
+pub struct Hold<'a>(&'a Worker);
+
+impl Drop for Hold<'_> {
+    fn drop(&mut self) {
+        self.0.queue.lock().unwrap().held = false;
+        self.0.wake();
+    }
 }
 
 impl Worker {
     pub fn start(app: AppHandle, paths: Paths) -> Result<Self> {
         Db::open(&paths.db())?.requeue_interrupted()?;
-        let jobs = Arc::new(Mutex::new(Vec::new()));
+        let queue = Arc::new(Mutex::new(Queue::default()));
         let (dl_tx, dl_rx) = mpsc::channel();
         let (tr_tx, tr_rx) = mpsc::channel();
         for (stage, rx) in [(Stage::Download, dl_rx), (Stage::Transcribe, tr_rx)] {
@@ -58,7 +78,7 @@ impl Worker {
                 app: app.clone(),
                 db: Db::open(&paths.db())?,
                 paths: paths.clone(),
-                jobs: jobs.clone(),
+                queue: queue.clone(),
                 wake_other: match stage {
                     Stage::Download => tr_tx.clone(),
                     Stage::Transcribe => dl_tx.clone(),
@@ -70,7 +90,7 @@ impl Worker {
             };
             std::thread::Builder::new().name(name.into()).spawn(move || run(stage, ctx, rx))?;
         }
-        Ok(Self { wakes: Mutex::new([dl_tx, tr_tx]), jobs })
+        Ok(Self { wakes: Mutex::new([dl_tx, tr_tx]), queue })
     }
 
     /// Tells both stages to look for work.
@@ -80,31 +100,47 @@ impl Worker {
         }
     }
 
-    /// Pauses every running job and waits, up to `timeout`, for their
-    /// processes to exit. Returns whether everything stopped.
-    pub fn pause_all(&self, timeout: Duration) -> bool {
-        let ids: Vec<i64> = self.jobs.lock().unwrap().iter().map(|j| j.vod_id).collect();
-        for id in ids {
-            self.stop(id, Stop::Pause);
+    /// Stops new jobs from starting, pauses the running ones, and waits up to
+    /// `timeout` for them to exit. The queue stays held until the returned
+    /// guard is dropped, so nothing starts while e.g. files are deleted.
+    pub fn hold(&self, timeout: Duration) -> Result<Hold<'_>> {
+        {
+            let mut queue = self.queue.lock().unwrap();
+            queue.held = true;
+            for job in &queue.jobs {
+                job.stop(Stop::Pause);
+            }
         }
+        let hold = Hold(self);
         let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if self.jobs.lock().unwrap().is_empty() {
-                return true;
+        while !self.queue.lock().unwrap().jobs.is_empty() {
+            if Instant::now() >= deadline {
+                anyhow::bail!("a job didn't stop in time; try again");
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        false
+        Ok(hold)
     }
 
-    /// Stops the VOD if a stage is running it. Returns whether one was; the
-    /// stage then finishes the stop according to `reason`.
-    pub fn stop(&self, vod_id: i64, reason: Stop) -> bool {
-        let jobs = self.jobs.lock().unwrap();
-        let Some(job) = jobs.iter().find(|j| j.vod_id == vod_id) else { return false };
-        *job.reason.lock().unwrap() = Some(reason);
-        job.flag.store(true, Ordering::Relaxed);
-        true
+    /// Applies `reason` to a VOD. If a stage is running it, the stage is told
+    /// to stop and finishes the stop itself; otherwise `idle` runs, with the
+    /// queue locked so no stage can start the VOD meanwhile. Returns whether a
+    /// stage was running it.
+    pub fn control(&self, vod_id: i64, reason: Stop, idle: impl FnOnce() -> Result<()>) -> Result<bool> {
+        let queue = self.queue.lock().unwrap();
+        if let Some(job) = queue.jobs.iter().find(|j| j.vod_id == vod_id) {
+            job.stop(reason);
+            return Ok(true);
+        }
+        idle()?;
+        Ok(false)
+    }
+}
+
+impl Job {
+    fn stop(&self, reason: Stop) {
+        *self.reason.lock().unwrap() = Some(reason);
+        self.flag.store(true, Ordering::Relaxed);
     }
 }
 
@@ -112,7 +148,7 @@ struct Ctx {
     app: AppHandle,
     db: Db,
     paths: Paths,
-    jobs: Arc<Mutex<Vec<Job>>>,
+    queue: Arc<Mutex<Queue>>,
     wake_other: Sender<()>,
 }
 
@@ -126,11 +162,22 @@ impl Ctx {
 
 fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
     loop {
-        let next = next_job(stage, &ctx).unwrap_or_else(|e| {
-            eprintln!("queue: {e:#}");
-            None
-        });
-        let Some(vod) = next else {
+        // Pick and register the job in one step; see `Queue`.
+        let picked = {
+            let mut queue = ctx.queue.lock().unwrap();
+            let next = if queue.held { Ok(None) } else { next_job(stage, &ctx) };
+            next.unwrap_or_else(|e| {
+                eprintln!("queue: {e:#}");
+                None
+            })
+            .map(|vod| {
+                let flag = Arc::new(AtomicBool::new(false));
+                let reason = Arc::new(Mutex::new(None));
+                queue.jobs.push(Job { vod_id: vod.id, flag: flag.clone(), reason: reason.clone() });
+                (vod, flag, reason)
+            })
+        };
+        let Some((vod, flag, reason)) = picked else {
             // Sleep until something is queued, a stage finishes, or setup completes.
             if rx.recv().is_err() {
                 return;
@@ -138,18 +185,21 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
             continue;
         };
 
-        let flag = Arc::new(AtomicBool::new(false));
-        let reason = Arc::new(Mutex::new(None));
-        ctx.jobs.lock().unwrap().push(Job { vod_id: vod.id, flag: flag.clone(), reason: reason.clone() });
         let mut progress = 0.0;
         let result = match stage {
             Stage::Download => download(&mut ctx, &vod, &flag, &mut progress),
             Stage::Transcribe => transcribe(&mut ctx, &vod, &flag, &mut progress),
         };
-        ctx.jobs.lock().unwrap().retain(|j| j.vod_id != vod.id);
-
-        let stop = *reason.lock().unwrap();
-        if let Err(e) = finish(&ctx, &vod, result, stop, progress) {
+        // Finish and unregister under the queue lock, so a stop can't land
+        // after its reason has been read.
+        let finished = {
+            let mut queue = ctx.queue.lock().unwrap();
+            let stop = *reason.lock().unwrap();
+            let finished = finish(stage, &ctx, &vod, result, stop, progress);
+            queue.jobs.retain(|j| j.vod_id != vod.id);
+            finished
+        };
+        if let Err(e) = finished {
             eprintln!("queue: {e:#}");
         }
         ctx.emit_vod(vod.id);
@@ -179,10 +229,12 @@ fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
 }
 
 /// Records how a job ended: success, a stop the user asked for, or an error.
-fn finish(ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<Stop>, progress: f64) -> Result<()> {
+fn finish(stage: Stage, ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<Stop>, progress: f64) -> Result<()> {
     let work = ctx.paths.work();
     match (result, stop) {
         (_, Some(Stop::Delete)) => pipeline::remove_work_files(&work, vod.id),
+        // The transcript finished before the stop took effect: keep it.
+        (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
         (_, Some(Stop::Pause)) => ctx.db.set_status(vod.id, Status::Paused, progress, None)?,
         (_, Some(Stop::Cancel)) => discard(&ctx.db, &work, vod.id)?,
         (Ok(()), None) => {}

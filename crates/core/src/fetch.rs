@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::kick;
-use crate::tools::YtDlp;
+use crate::tools::{self, YtDlp};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct VodInfo {
@@ -134,11 +134,20 @@ pub fn download_audio(
 
     let mut path = None;
     let mut log = Vec::new();
-    for line in rx {
+    loop {
+        // Wake regularly so a stop takes effect even while yt-dlp is quiet.
+        let line = match rx.recv_timeout(tools::STOP_POLL) {
+            Ok(line) => line,
+            Err(mpsc::RecvTimeoutError::Timeout) => String::new(),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
             bail!("canceled");
+        }
+        if line.is_empty() {
+            continue;
         }
         if let Some(rest) = line.strip_prefix(PROGRESS) {
             if let Some(f) = parse_progress(rest) {

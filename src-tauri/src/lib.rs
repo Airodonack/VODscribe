@@ -129,10 +129,17 @@ async fn list_vods(state: State<'_, AppState>) -> CmdResult<Vec<Vod>> {
 #[tauri::command]
 async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // A running stage removes the files once its process has stopped.
-    if !state.worker.stop(id, Stop::Delete) {
-        pipeline::remove_work_files(&state.paths.work(), id);
+    let delete_row = || state.db.lock().unwrap().delete_vod(id);
+    let running = state
+        .worker
+        .control(id, Stop::Delete, || {
+            pipeline::remove_work_files(&state.paths.work(), id);
+            delete_row()
+        })
+        .map_err(err)?;
+    if running {
+        delete_row().map_err(err)?;
     }
-    state.db.lock().unwrap().delete_vod(id).map_err(err)?;
     let _ = app.emit("vod-removed", id);
     Ok(())
 }
@@ -183,16 +190,19 @@ async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -
 #[tauri::command]
 async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // A running job is paused by its stage once its process has stopped.
-    if !state.worker.stop(id, Stop::Pause) {
-        let db = state.db.lock().unwrap();
-        if let Some(vod) = db.vod(id).map_err(err)?
-            && matches!(vod.status, Status::Queued | Status::Ready)
-        {
-            db.set_status(id, Status::Paused, vod.progress, None).map_err(err)?;
-            emit_vod(&app, &db, id)?;
-        }
-    }
-    Ok(())
+    state
+        .worker
+        .control(id, Stop::Pause, || {
+            let db = state.db.lock().unwrap();
+            if let Some(vod) = db.vod(id)?
+                && matches!(vod.status, Status::Queued | Status::Ready)
+            {
+                db.set_status(id, Status::Paused, vod.progress, None)?;
+            }
+            Ok(())
+        })
+        .map_err(err)?;
+    emit_vod(&app, &state.db.lock().unwrap(), id)
 }
 
 #[tauri::command]
@@ -209,12 +219,11 @@ async fn resume_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdR
 /// Stops a VOD and discards its partial work; Retry then starts over.
 #[tauri::command]
 async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    if !state.worker.stop(id, Stop::Cancel) {
-        let db = state.db.lock().unwrap();
-        worker::discard(&db, &state.paths.work(), id).map_err(err)?;
-        emit_vod(&app, &db, id)?;
-    }
-    Ok(())
+    state
+        .worker
+        .control(id, Stop::Cancel, || worker::discard(&state.db.lock().unwrap(), &state.paths.work(), id))
+        .map_err(err)?;
+    emit_vod(&app, &state.db.lock().unwrap(), id)
 }
 
 #[derive(Serialize)]
@@ -350,9 +359,8 @@ async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<AppState>();
-        if !state.worker.pause_all(std::time::Duration::from_secs(15)) {
-            return Err("A job didn't stop in time; try again.".to_string());
-        }
+        // Nothing may start while files are deleted; the hold ends when `_held` drops.
+        let _held = state.worker.hold(std::time::Duration::from_secs(15)).map_err(err)?;
         state.paths.clear_cache().map_err(err)?;
         state.db.lock().unwrap().forget_downloads().map_err(err)
     })

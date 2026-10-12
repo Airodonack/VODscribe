@@ -12,6 +12,9 @@ use crate::net;
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
+/// How often code waiting on a child process checks whether to stop it.
+pub const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
 fn yt_dlp_asset() -> Result<&'static str> {
     Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => "yt-dlp_linux",
