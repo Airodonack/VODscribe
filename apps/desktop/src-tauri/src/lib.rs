@@ -45,6 +45,16 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // One copy at a time: two would share the library and the queue, and on Linux
+        // a second copy's window stays blank. Launching again focuses the open window.
+        // (First, so a second copy exits before setting anything up.)
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())

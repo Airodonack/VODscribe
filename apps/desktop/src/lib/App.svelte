@@ -48,6 +48,12 @@
   function onWindowClick(e: MouseEvent) {
     if (showSettings && settingsEl && !settingsEl.contains(e.target as Node)) showSettings = false;
   }
+  // A link dropped where nothing handles it (during setup, say) would otherwise
+  // navigate the whole window to it. The library's own drop handling still runs.
+  // The website's demo leaves its page's drops alone.
+  function keepDropsInApp(e: DragEvent) {
+    if (!DEMO) e.preventDefault();
+  }
 
   // `at` is replaced on every jump; the player seeks rather than reloading.
   let playing = $state<{ vodId: number; at: { time: number; play: boolean } } | null>(null);
@@ -167,7 +173,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onWindowKey} onclick={onWindowClick} />
+<svelte:window onkeydown={onWindowKey} onclick={onWindowClick} ondragover={keepDropsInApp} ondrop={keepDropsInApp} />
 
 {#if setup === null}
   <!-- Loading -->
