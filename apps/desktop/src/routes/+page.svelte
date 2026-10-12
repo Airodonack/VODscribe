@@ -32,25 +32,15 @@
 
   // Close the settings panel on Escape or a click outside it.
   let searchInput = $state<HTMLInputElement>();
+  // The search shortcut, as this computer writes it.
+  const searchKey = /Mac/.test(navigator.platform) ? "⌘F" : "Ctrl+F";
   function onWindowKey(e: KeyboardEvent) {
     if (e.key === "Escape") showSettings = false;
-    if (e.isComposing) return;
-    const jump = () => {
+    // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       searchInput?.focus();
       searchInput?.select();
-    };
-    // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") return jump();
-    const target = e.target as HTMLElement;
-    if (target.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (plain && e.key === "/") return jump();
-    // With no player open, typing starts a search. (With one, letters are its shortcuts.)
-    if (!playing && !selected && plain && e.key.length === 1 && e.key !== " ") {
-      e.preventDefault();
-      query += e.key;
-      searchInput?.focus();
     }
   }
   function onWindowClick(e: MouseEvent) {
@@ -193,7 +183,7 @@
             bind:value={query}
             bind:this={searchInput}
             aria-label="Search"
-            title="Search (/)"
+            title="Search ({searchKey})"
           />
           {#if selected}
             <button
@@ -263,8 +253,8 @@
               {:else}
                 <h2>Search every VOD</h2>
                 <p class="muted">
-                  Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left
-                  to read its transcript.
+                  Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
+                  one on the left to read its transcript.
                 </p>
                 <p class="keys muted">
                   <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd
