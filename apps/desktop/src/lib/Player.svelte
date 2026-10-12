@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount, untrack } from "svelte";
   import type { Vod } from "./api";
@@ -13,6 +14,16 @@
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
   let collapsed = $state(false);
   let showKeys = $state(false);
+
+  // Clicking the timestamp copies a link to that moment on the VOD's site.
+  let copied = $state(false);
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyLink() {
+    await writeText(watchUrl(vod, at.time));
+    copied = true;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied = false), 1500);
+  }
 
   let host = $state<HTMLDivElement>();
   let player: EmbeddedPlayer | null = null;
@@ -91,7 +102,13 @@
         {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
-      {#if at.time > 0}<span class="time">{formatTime(at.time)}</span>{/if}
+      {#if at.time > 0}
+        <button class="stamp" class:copied onclick={copyLink} title="Copy a link to this moment">
+          <span class="time">{formatTime(at.time)}</span>
+          <Icon name={copied ? "check" : "copy"} size={12} />
+          {#if copied}<span class="copied-text">Copied</span>{/if}
+        </button>
+      {/if}
     </div>
     <button
       class="icon keys"
@@ -168,6 +185,27 @@
     flex: none;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .stamp {
+    flex: none;
+    gap: 4px;
+    height: 22px;
+    padding: 0 6px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 12px;
+    border-radius: var(--radius-sm);
+  }
+
+  .stamp:hover:not(:disabled) {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  .stamp.copied {
+    color: var(--ok);
   }
 
   .sep {
