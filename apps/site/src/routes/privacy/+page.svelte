@@ -4,6 +4,9 @@
 
 <svelte:head>
   <title>Privacy · VODscribe</title>
+  <link rel="canonical" href="https://vodscribe.com/privacy" />
+  <meta property="og:title" content="Privacy · VODscribe" />
+  <meta property="og:image" content="https://vodscribe.com/og.jpg" />
   <meta
     name="description"
     content="What VODscribe and vodscribe.com do with your data: nothing leaves your computer."
@@ -35,7 +38,8 @@
     </li>
     <li>
       <strong>Play them.</strong> YouTube and Twitch VODs play in those sites' own players, which load only when you play
-      one. YouTube's player is its privacy-enhanced version (youtube-nocookie.com).
+      one. YouTube's player is its privacy-enhanced version (youtube-nocookie.com). Kick VODs stream straight from Kick's
+      servers.
     </li>
     <li>
       <strong>Download what it needs to run.</strong> On first run, and when you ask: the video downloader (yt-dlp, from GitHub),

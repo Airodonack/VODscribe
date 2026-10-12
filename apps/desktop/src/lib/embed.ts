@@ -4,7 +4,6 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
-import Hls from "hls.js";
 import { api, type Vod } from "./api";
 import { twitchId, twitchTime } from "./platform";
 
@@ -240,6 +239,8 @@ async function kick(
   // 720p is plenty for a preview pane and keeps bandwidth down.
   const pick = variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
   if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
+  // Loaded only when a Kick VOD plays, which keeps it out of the website's demo.
+  const { default: Hls } = await import("hls.js");
   return videoPlayer(
     el,
     time,

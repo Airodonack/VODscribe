@@ -20,8 +20,19 @@ interface Indexed {
   words: Word[];
 }
 
-let vods: Promise<Vod[]> | undefined;
+const library = new Map<"vods", Promise<Vod[]>>();
 const transcripts = new Map<number, Promise<Indexed[]>>();
+
+/** Remembers `promise` under `key` until it fails, so a failed load is tried again next time. */
+function cached<K, T>(cache: Map<K, Promise<T>>, key: K, load: () => Promise<T>): Promise<T> {
+  let p = cache.get(key);
+  if (!p) {
+    p = load();
+    cache.set(key, p);
+    p.catch(() => cache.delete(key));
+  }
+  return p;
+}
 
 async function json<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -30,20 +41,18 @@ async function json<T>(path: string): Promise<T> {
 }
 
 export function listVods(): Promise<Vod[]> {
-  vods ??= json<Vod[]>("/demo/vods.json");
-  return vods;
+  return cached(library, "vods", () => json<Vod[]>("/demo/vods.json"));
 }
 
 /** Library order, changed by dragging; kept for this visit only. */
 export async function reorder(ids: number[]) {
   const all = await listVods();
-  vods = Promise.resolve(ids.map((id) => all.find((v) => v.id === id)).filter((v) => v !== undefined));
+  library.set("vods", Promise.resolve(ids.map((id) => all.find((v) => v.id === id)).filter((v) => v !== undefined)));
 }
 
 function segments(vodId: number): Promise<Indexed[]> {
-  let t = transcripts.get(vodId);
-  if (!t) {
-    t = json<Segment[]>(`/demo/${vodId}.json`).then((segs) =>
+  return cached(transcripts, vodId, () =>
+    json<Segment[]>(`/demo/${vodId}.json`).then((segs) =>
       segs.map(([text, start, starts], i) => ({
         // Segment ids only need to be unique and stable within a visit.
         id: vodId * 100_000 + i,
@@ -51,10 +60,8 @@ function segments(vodId: number): Promise<Indexed[]> {
         text,
         words: text.split(" ").map((w, j) => ({ text: w, start: starts[j] ?? start, terms: terms(w) })),
       })),
-    );
-    transcripts.set(vodId, t);
-  }
-  return t;
+    ),
+  );
 }
 
 export async function transcript(vodId: number): Promise<Line[]> {

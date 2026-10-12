@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import Icon from "$desktop/Icon.svelte";
   import Demo from "$lib/Demo.svelte";
-  import { DOWNLOADS, VERSION, detectOs, type Os } from "$lib/downloads";
+  import { DOWNLOADS, detectOs, type Os } from "$lib/downloads";
   import { SUPPORT } from "$lib/links";
 
   // The main button offers this visitor's OS; every installer is listed below it.
@@ -29,7 +29,7 @@
     },
     {
       q: "How fast is it?",
-      a: "It depends on your computer. A recent processor transcribes an hour of VOD in minutes, and an NVIDIA graphics card with the free GPU add-on is several times faster.",
+      a: "It depends on your computer. A recent processor transcribes an hour of VOD in minutes. On Windows and Linux, an NVIDIA graphics card with the free GPU add-on is several times faster.",
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
@@ -52,6 +52,7 @@
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://vodscribe.com/" />
   <meta property="og:image" content="https://vodscribe.com/og.jpg" />
+  <link rel="canonical" href="https://vodscribe.com/" />
   <meta name="twitter:card" content="summary_large_image" />
 </svelte:head>
 
@@ -71,7 +72,7 @@
         <span class="heart">❤︎</span> Support on Ko-fi
       </a>
     </div>
-    <p class="small muted">Free · Windows, macOS and Linux · Version {VERSION}</p>
+    <p class="small muted">Free for Windows, macOS and Linux</p>
   </section>
 
   <section class="demo">
@@ -96,30 +97,32 @@
   <section class="features">
     <div>
       <Icon name="search" size={22} />
-      <h3>Every word, searchable</h3>
+      <h2>Every word, searchable</h2>
       <p class="muted">
         Type a phrase to see every time it was said, across all your VODs. Click one to play from there.
       </p>
     </div>
     <div>
       <Icon name="shield" size={22} />
-      <h3>Stays on your computer</h3>
+      <h2>Stays on your computer</h2>
       <p class="muted">Transcribing happens on your own computer. No account, no uploads, nothing collected.</p>
     </div>
     <div>
       <Icon name="film" size={22} />
-      <h3>Kick, Twitch, YouTube and files</h3>
+      <h2>Kick, Twitch, YouTube and files</h2>
       <p class="muted">Paste a link or drop a video file. VODs queue up and transcribe one after another.</p>
     </div>
     <div>
       <Icon name="zap" size={22} />
-      <h3>Faster with a GPU</h3>
-      <p class="muted">Works on any recent computer. An NVIDIA graphics card makes it several times faster.</p>
+      <h2>Faster with a GPU</h2>
+      <p class="muted">
+        Works on any recent computer. On Windows and Linux, an NVIDIA graphics card makes it several times faster.
+      </p>
     </div>
   </section>
 
   <section class="download" id="download">
-    <h2>Download VODscribe {VERSION}</h2>
+    <h2>Download VODscribe</h2>
     <ul class="files">
       {#each DOWNLOADS as d (d.url)}
         <li class:mine={d.os === os}>
@@ -265,7 +268,7 @@
     color: var(--accent);
   }
 
-  .features h3 {
+  .features h2 {
     margin: 10px 0 6px;
     font-size: 16px;
   }

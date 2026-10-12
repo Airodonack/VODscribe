@@ -10,7 +10,7 @@
   import Icon from "./Icon.svelte";
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { demoOff, keysForApp } from "./demo";
+  import { DEMO, demoOff, keysForApp } from "./demo";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -170,7 +170,8 @@
 {:else}
   <div class="app">
     <Library {vods} {selectedId} onselect={select} onreorder={reorder} />
-    <main>
+    <!-- In the website's demo, the page has its own <main>. -->
+    <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
         <div class="search">
           <span class="search-icon muted"><Icon name="search" /></span>
@@ -271,7 +272,7 @@
           </div>
         {/if}
       </div>
-    </main>
+    </svelte:element>
   </div>
 {/if}
 
@@ -283,7 +284,7 @@
     height: var(--app-height, 100vh);
   }
 
-  main {
+  .main {
     display: flex;
     flex-direction: column;
     min-width: 0;

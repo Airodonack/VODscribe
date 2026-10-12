@@ -1,5 +1,8 @@
 <svelte:head>
   <title>Licenses · VODscribe</title>
+  <link rel="canonical" href="https://vodscribe.com/licenses" />
+  <meta property="og:title" content="Licenses · VODscribe" />
+  <meta property="og:image" content="https://vodscribe.com/og.jpg" />
   <meta name="description" content="The open-source software and models VODscribe is built on, and their licenses." />
 </svelte:head>
 

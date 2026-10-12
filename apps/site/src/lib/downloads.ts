@@ -1,10 +1,9 @@
 // The installers, on R2 under dl.vodscribe.com/releases/. Each release is
 // uploaded to releases/<version>/ and copied to releases/latest/ under these
-// names, so the buttons follow new releases without rebuilding the site.
+// names, so the buttons follow new releases without rebuilding the site (which
+// is why the site doesn't show a version number).
 
 const BASE = "https://dl.vodscribe.com/releases/latest";
-
-export const VERSION = __APP_VERSION__;
 
 export type Os = "windows" | "mac" | "linux";
 
@@ -21,6 +20,12 @@ export const DOWNLOADS: Download[] = [
     label: "Windows",
     detail: "64-bit installer (.exe)",
     url: `${BASE}/VODscribe-windows-x64-setup.exe`,
+  },
+  {
+    os: "windows",
+    label: "Windows · MSI",
+    detail: "For managed installs (.msi)",
+    url: `${BASE}/VODscribe-windows-x64.msi`,
   },
   {
     os: "mac",
@@ -48,6 +53,8 @@ export const DOWNLOADS: Download[] = [
 export function detectOs(): Os | null {
   const ua = navigator.userAgent;
   if (/Android|iPhone|iPad|iPod/i.test(ua)) return null;
+  // iPads say they're Macs, but have touch screens.
+  if (/Macintosh/i.test(ua) && navigator.maxTouchPoints > 1) return null;
   if (/Windows/i.test(ua)) return "windows";
   if (/Mac OS X|Macintosh/i.test(ua)) return "mac";
   if (/Linux|X11/i.test(ua)) return "linux";

@@ -11,15 +11,16 @@ export const DEMO = typeof __DEMO__ !== "undefined" && __DEMO__;
  * grayed out, with `message` on hover, and ignores clicks on it.
  */
 export function demoOff(message: string): Record<string, string> {
-  return DEMO ? { "data-demo": message, "aria-disabled": "true" } : {};
+  return DEMO ? { "data-demo": message, "aria-disabled": "true", "aria-description": message } : {};
 }
 
 /**
  * Whether a key press is meant for the app. In the demo, the page around it
- * keeps its keys (find, arrow-key scrolling) unless the pointer or focus is in the demo.
+ * keeps its keys (find, Space and arrows to scroll) until the visitor clicks
+ * into the demo or focuses something in it; the site marks that with data-active.
  */
 export function keysForApp(): boolean {
   if (!DEMO) return true;
   const root = document.querySelector("[data-demo-root]");
-  return !!root && (root.matches(":hover") || root.contains(document.activeElement));
+  return !!root && (root.hasAttribute("data-active") || root.contains(document.activeElement));
 }

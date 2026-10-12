@@ -13,7 +13,7 @@
     <span>VODscribe</span>
   </a>
   <nav>
-    <a href="/#download">Download</a>
+    <a class="download-link" href="/#download">Download</a>
     <a href={SUPPORT} target="_blank" rel="noopener">Support on Ko-fi</a>
   </nav>
 </header>
@@ -67,6 +67,12 @@
 
     nav {
       gap: 14px;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .download-link {
+      display: none;
     }
   }
 
