@@ -108,8 +108,9 @@ export const events = {
   setupProgress: (cb: (step: string, done: number, total: number | null) => void) =>
     listen<[string, number, number | null]>("setup-progress", (e) => cb(...e.payload)),
   setupDone: (cb: (error: string | null) => void) => listen<string | null>("setup-done", (e) => cb(e.payload)),
-  gpuProgress: (cb: (step: string, done: number, total: number) => void) =>
-    listen<[string, number, number]>("gpu-progress", (e) => cb(...e.payload)),
+  /** `done` / `total` span the whole add-on (for the bar); `fileDone` / `fileSize` the file under way. */
+  gpuProgress: (cb: (step: string, done: number, total: number, fileDone: number, fileSize: number) => void) =>
+    listen<[string, number, number, number, number]>("gpu-progress", (e) => cb(...e.payload)),
   gpuDone: (cb: (error: string | null) => void) => listen<string | null>("gpu-done", (e) => cb(e.payload)),
   ytDlpProgress: (cb: (step: string, done: number, total: number | null) => void) =>
     listen<[string, number, number | null]>("yt-dlp-progress", (e) => cb(...e.payload)),

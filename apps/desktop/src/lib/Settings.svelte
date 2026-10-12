@@ -12,7 +12,7 @@
   let cacheBytes = $state<number | null>(null);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
-  let step = $state<{ label: string; done: number; total: number } | null>(null);
+  let step = $state<{ label: string; done: number; total: number; fileDone: number; fileSize: number } | null>(null);
   let error = $state<string | null>(null);
   const unlisten: UnlistenFn[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -52,7 +52,11 @@
 
   onMount(async () => {
     device = (await api.getSettings()).device;
-    keep(await events.gpuProgress((label, done, total) => (step = { label, done, total })));
+    keep(
+      await events.gpuProgress(
+        (label, done, total, fileDone, fileSize) => (step = { label, done, total, fileDone, fileSize }),
+      ),
+    );
     keep(await events.ytDlpProgress((label, done) => (ytDlpStep = { label, done })));
     keep(
       await events.gpuDone((e) => {
@@ -170,8 +174,8 @@
           <!-- The exact component, for the people who chose the GPU add-on. -->
           <span class="muted step">
             {step?.label ?? "Downloading the GPU add-on"}…
-            {#if step?.label.startsWith("Downloading") && step.total}
-              <span class="mb">{mb(step.done)} / {mb(step.total)} MB</span>
+            {#if step?.label.startsWith("Downloading") && step.fileSize}
+              <span class="mb">{mb(step.fileDone)} / {mb(step.fileSize)} MB</span>
             {/if}
           </span>
           <Progress value={step && step.total ? step.done / step.total : 0} />
