@@ -93,6 +93,7 @@ fn dump_json(yt_dlp: &YtDlp, url: &str) -> Result<(Value, Vec<u8>)> {
 }
 
 const PROGRESS: &str = "[vodscribe]";
+const FILE: &str = "[vodscribe-file]";
 
 /// Downloads the smallest stream that carries audio, reporting a 0..1 fraction.
 /// Returns the path of the downloaded file. An interrupted download resumes,
@@ -117,7 +118,9 @@ pub fn download_audio(
         // Skip remuxing HLS downloads: only the audio is used, and ffmpeg reads the raw stream.
         .args(["--fixup", "never"])
         .args(["--progress-template", &template])
-        .args(["--print", "after_move:filepath", "-o"])
+        // A runaway download (a stream that never ends) stops instead of filling the disk.
+        .args(["--max-filesize", "40G"])
+        .args(["--print", &format!("after_move:{FILE}%(filepath)s"), "-o"])
         .arg(format!("{}.%(ext)s", out_stem.display()))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -153,8 +156,11 @@ pub fn download_audio(
             if let Some(f) = parse_progress(rest) {
                 on_progress(f);
             }
-        } else if Path::new(line.trim()).is_absolute() && Path::new(line.trim()).is_file() {
-            path = Some(PathBuf::from(line.trim()));
+        } else if let Some(file) = line.strip_prefix(FILE) {
+            let file = PathBuf::from(file.trim());
+            if file.parent() == out_stem.parent() && file.is_file() {
+                path = Some(file);
+            }
         } else {
             log.push(line);
         }

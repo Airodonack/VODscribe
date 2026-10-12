@@ -158,7 +158,8 @@ fn run_worker(
     if !spec.lib_dirs.is_empty() {
         let var = if cfg!(windows) { "PATH" } else { "LD_LIBRARY_PATH" };
         let existing = std::env::var_os(var).unwrap_or_default();
-        let paths = spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing));
+        // An empty entry would mean the working directory to the loader.
+        let paths = spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing)).filter(|p| !p.as_os_str().is_empty());
         cmd.env(var, std::env::join_paths(paths)?);
     }
     let mut child = cmd

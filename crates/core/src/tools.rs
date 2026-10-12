@@ -41,6 +41,9 @@ pub struct YtDlp {
 impl YtDlp {
     pub fn command(&self) -> Command {
         let mut cmd = command(&self.path);
+        // A yt-dlp.conf (user, system, or one planted in the working dir) could
+        // add --exec, browser cookies or output paths outside the work dir.
+        cmd.arg("--ignore-config");
         if let Some((name, path)) = &self.js_runtime {
             cmd.arg("--js-runtimes").arg(format!("{name}:{}", path.display()));
         }
@@ -115,9 +118,13 @@ pub fn sidecar(name: &str) -> Result<PathBuf> {
 }
 
 /// A `Command` that doesn't flash a console window on Windows.
+/// Runs in the program's own directory rather than wherever the app was launched
+/// from, so nothing in an untrusted working dir (configs, DLLs) gets picked up.
 pub fn command(program: &Path) -> Command {
-    #[allow(unused_mut)]
     let mut cmd = Command::new(program);
+    if let Some(dir) = program.parent().filter(|d| d.is_dir()) {
+        cmd.current_dir(dir);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
