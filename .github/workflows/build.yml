@@ -4,7 +4,8 @@ name: Build installers
 # default branch, so run it by hand on main now and then to keep the Rust cache warm.
 #
 # A v* tag also publishes the release (the publish and winget jobs). Secrets:
-#   TAURI_SIGNING_PRIVATE_KEY   signs update bundles (~/.tauri/vodscribe-updater.key)
+#   TAURI_SIGNING_PRIVATE_KEY   signs update bundles (~/.tauri/vodscribe-updater.key);
+#                               in the `release` environment, so only v* tags get it
 #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY
 #                               an R2 API token that can write the vodscribe bucket
 #   WINGET_TOKEN                optional: a GitHub token of the Airodonack account,
@@ -25,6 +26,10 @@ concurrency:
 jobs:
   build:
     timeout-minutes: 90
+    # The update signing key lives in the `release` environment, which only v*
+    # tags may use. Other runs (by hand) build without it and skip the signed
+    # update bundles.
+    environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     strategy:
       fail-fast: false
       matrix:
