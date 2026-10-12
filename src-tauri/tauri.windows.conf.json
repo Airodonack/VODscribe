@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/vodscribe-worker",
+      "binaries/vodscribe-worker-cuda"
+    ]
+  }
+}

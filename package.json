@@ -11,8 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri",
-    "dev:worker": "cargo build -p vodscribe-worker",
-    "build:worker-cuda": "sh scripts/build-cuda-worker.sh"
+    "dev:worker": "bash scripts/prepare-sidecars.sh debug"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
