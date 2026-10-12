@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
+  import Icon from "./Icon.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
 
@@ -90,113 +91,158 @@
     return null;
   });
   let busy = $derived(gpu?.gpu && gpu.installed && gpu.gpu.free_mb < gpu.min_free_mb);
+  let offerPack = $derived(gpu?.supported && gpu.worker && gpu.gpu);
 </script>
 
 <div class="settings">
-  <fieldset>
-    <legend>Transcribe with</legend>
-    <label>
-      <input type="radio" name="device" checked={device === "cpu"} onchange={() => choose("cpu")} />
-      <span>CPU</span>
-    </label>
-    <label class:disabled={blocker !== null}>
-      <input
-        type="radio"
-        name="device"
-        checked={device === "gpu"}
-        disabled={blocker !== null}
-        onchange={() => choose("gpu")}
-      />
-      <span>
-        GPU
-        {#if gpu?.gpu}<span class="muted">· {gpu.gpu.name}, {gb(gpu.gpu.free_mb)} free</span>{/if}
-      </span>
-    </label>
-    {#if blocker}
-      <p class="muted hint">{blocker}</p>
-    {:else if busy && gpu}
-      <p class="hint warn">
-        The GPU is busy. VODs will use the CPU until {gb(gpu.min_free_mb)} is free.
+  <section>
+    <span class="eyebrow">Transcribe with</span>
+    <div class="options" role="radiogroup" aria-label="Transcribe with">
+      <label class="option" class:checked={device === "cpu"}>
+        <input type="radio" name="device" checked={device === "cpu"} onchange={() => choose("cpu")} />
+        <span class="option-text">
+          <span class="option-title">CPU</span>
+          <span class="muted">Works on any computer.</span>
+        </span>
+      </label>
+      <label class="option" class:checked={device === "gpu"} class:disabled={blocker !== null}>
+        <input
+          type="radio"
+          name="device"
+          checked={device === "gpu"}
+          disabled={blocker !== null}
+          onchange={() => choose("gpu")}
+        />
+        <span class="option-text">
+          <span class="option-title">
+            GPU
+            {#if gpu?.gpu}<span class="muted detail">{gpu.gpu.name}, {gb(gpu.gpu.free_mb)} free</span>{/if}
+          </span>
+          <span class="muted">
+            {#if blocker}{blocker}{:else}NVIDIA only; several times faster than the CPU.{/if}
+          </span>
+        </span>
+      </label>
+    </div>
+    {#if busy && gpu}
+      <p class="hint warn-text">
+        <Icon name="warning" size={13} /> The GPU is busy. VODs use the CPU until {gb(gpu.min_free_mb)} is free.
       </p>
     {/if}
-  </fieldset>
 
-  {#if gpu?.supported && gpu.worker && gpu.gpu}
-    {#if step || gpu.installing}
-      <div class="progress">
-        <span class="muted">Downloading {step?.label ?? "GPU pack"}…</span>
-        <div class="bar"><div style:width="{step && step.total ? (step.done / step.total) * 100 : 0}%"></div></div>
-      </div>
-    {:else if !gpu.installed}
-      <button onclick={install}>Download GPU pack</button>
-    {:else}
-      <button class="link" onclick={remove}>Remove GPU pack</button>
+    {#if offerPack}
+      {#if step || gpu?.installing}
+        <div class="progress">
+          <span class="muted">Downloading {step?.label ?? "GPU pack"}…</span>
+          <div class="bar"><div style:width="{step && step.total ? (step.done / step.total) * 100 : 0}%"></div></div>
+        </div>
+      {:else if !gpu?.installed}
+        <button onclick={install}><Icon name="download" size={14} /> Download GPU pack</button>
+      {:else}
+        <button class="link" onclick={remove}>Remove GPU pack</button>
+      {/if}
     {/if}
-  {/if}
-  {#if error}<p class="error-text hint">{error}</p>{/if}
-  <p class="muted hint">Changes apply from the next VOD.</p>
+    {#if error}<p class="error-text hint">{error}</p>{/if}
+    <p class="muted hint">Changes apply from the next VOD.</p>
+  </section>
 
-  <div class="storage">
-    <span class="label">Storage</span>
+  <section>
+    <span class="eyebrow">Storage</span>
     <p class="muted hint">
-      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library isn't included.
+      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library and transcripts aren't included.
     </p>
-    <button class="danger" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
       {clearing ? "Clearing…" : "Clear downloads…"}
     </button>
-  </div>
+  </section>
 </div>
 
 <style>
   .settings {
-    padding: 14px;
+    display: grid;
+  }
+
+  section {
     display: grid;
     gap: 8px;
+    padding: 14px 16px;
+    justify-items: start;
   }
 
-  fieldset {
-    border: none;
-    margin: 0;
-    padding: 0;
+  section + section {
+    border-top: 1px solid var(--border);
+  }
+
+  .options {
     display: grid;
-    gap: 4px;
+    gap: 6px;
+    width: 100%;
   }
 
-  legend {
-    font-weight: 600;
-    font-size: 12px;
-    margin-bottom: 4px;
-  }
-
-  label {
+  .option {
     display: flex;
-    gap: 8px;
-    align-items: baseline;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 12px;
   }
 
-  label.disabled {
-    opacity: 0.6;
+  .option:hover:not(.disabled) {
+    background: var(--surface-2);
+  }
+
+  .option.checked {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .option.disabled {
+    cursor: default;
+    opacity: 0.65;
+  }
+
+  .option input {
+    margin: 2px 0 0;
+  }
+
+  .option-text {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .option-title {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .detail {
+    display: block;
+    font-weight: 400;
   }
 
   .hint {
     margin: 0;
     font-size: 12px;
-  }
-
-  .warn {
-    color: var(--danger);
+    display: flex;
+    gap: 5px;
+    align-items: center;
   }
 
   .progress {
     display: grid;
     gap: 4px;
     font-size: 12px;
+    width: 100%;
   }
 
   .bar {
     height: 4px;
     border-radius: 2px;
-    background: var(--border);
+    background: var(--surface-3);
     overflow: hidden;
   }
 
@@ -204,32 +250,5 @@
     height: 100%;
     background: var(--accent);
     transition: width 0.2s;
-  }
-
-  button {
-    justify-self: start;
-  }
-
-  .storage {
-    display: grid;
-    gap: 6px;
-    margin-top: 6px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
-  }
-
-  .label {
-    font-weight: 600;
-    font-size: 12px;
-  }
-
-  .danger {
-    color: var(--danger);
-    border-color: var(--danger);
-  }
-
-  .danger:hover:not(:disabled) {
-    background: var(--danger);
-    color: var(--surface);
   }
 </style>
