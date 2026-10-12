@@ -36,10 +36,10 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
         yt_dlp: tools::find_yt_dlp(&bin).is_some(),
         yt_dlp_managed: tools::managed_yt_dlp(&bin).is_file(),
         ffmpeg: tools::find_ffmpeg(&bin).is_some(),
-        ffmpeg_managed: bin.join(format!("ffmpeg{}", std::env::consts::EXE_SUFFIX)).is_file(),
+        ffmpeg_managed: deps::managed_path(&bin, "ffmpeg").is_file(),
         model: model::is_installed(&state.paths.model_dir(), &model::CPU_MODEL),
         js_runtime: tools::find_js_runtime(&bin).is_some(),
-        js_runtime_managed: bin.join(format!("deno{}", std::env::consts::EXE_SUFFIX)).is_file(),
+        js_runtime_managed: deps::managed_path(&bin, "deno").is_file(),
         can_install_tools: deps::ffmpeg().is_some() && deps::deno().is_some(),
         running: state.setup_running.load(Ordering::Relaxed),
     })

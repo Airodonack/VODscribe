@@ -28,7 +28,7 @@ fn yt_dlp_asset() -> Result<&'static str> {
 
 /// The yt-dlp binary the app manages inside `bin_dir`.
 pub fn managed_yt_dlp(bin_dir: &Path) -> PathBuf {
-    bin_dir.join(format!("yt-dlp{EXE}"))
+    crate::deps::managed_path(bin_dir, "yt-dlp")
 }
 
 /// A yt-dlp binary plus the JavaScript runtime it needs for YouTube, if one exists.
@@ -64,14 +64,14 @@ pub fn find_yt_dlp(bin_dir: &Path) -> Option<YtDlp> {
 /// yt-dlp solves YouTube's JavaScript challenges with an external runtime.
 pub fn find_js_runtime(bin_dir: &Path) -> Option<(&'static str, PathBuf)> {
     ["deno", "node", "bun"].into_iter().find_map(|name| {
-        let local = bin_dir.join(format!("{name}{EXE}"));
+        let local = crate::deps::managed_path(bin_dir, name);
         let path = if local.is_file() { local } else { which::which(name).ok()? };
         Some((name, path))
     })
 }
 
 pub fn find_ffmpeg(bin_dir: &Path) -> Option<PathBuf> {
-    let local = bin_dir.join(format!("ffmpeg{EXE}"));
+    let local = crate::deps::managed_path(bin_dir, "ffmpeg");
     if local.is_file() {
         return Some(local);
     }
@@ -127,12 +127,7 @@ pub fn install_yt_dlp(
         on_progress(Progress { done: n, file_done: n, ..Progress::step("Downloading yt-dlp") })
     })?;
     on_progress(Progress::step("yt-dlp matches its signed SHA‑256 · installing"));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
-    }
-    fs::rename(&new, &dest)?;
+    crate::deps::install_executable(&new, &dest)?;
     Ok((dest, true))
 }
 

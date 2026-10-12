@@ -164,9 +164,7 @@ struct Ctx {
 
 impl Ctx {
     fn emit_vod(&self, id: i64) {
-        if let Ok(Some(vod)) = self.db.vod(id) {
-            let _ = self.app.emit("vod", vod);
-        }
+        let _ = crate::emit_vod(&self.app, &self.db, id);
     }
 }
 

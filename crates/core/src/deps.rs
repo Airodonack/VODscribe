@@ -129,6 +129,22 @@ pub fn deno() -> Option<Dep> {
     })
 }
 
+/// Where the app keeps its own copy of program `name` (`ffmpeg`, `deno`).
+pub fn managed_path(bin_dir: &Path, name: &str) -> PathBuf {
+    bin_dir.join(format!("{name}{EXE}"))
+}
+
+/// Makes the downloaded program at `new` executable and moves it to `dest`,
+/// replacing any older copy in one step.
+pub fn install_executable(new: &Path, dest: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(new, fs::Permissions::from_mode(0o755))?;
+    }
+    fs::rename(new, dest).with_context(|| format!("install {}", dest.display()))
+}
+
 /// Downloads and checks `dep`, then unpacks just its program into `bin_dir`.
 pub fn install(
     dep: &Dep,
@@ -153,16 +169,9 @@ pub fn install(
     };
     net::download_verified(dep.url, &archive, Some(size), dep.sha256, cancel, |n| report(&step, n))?;
     report(&format!("{} matches its SHA‑256 · unpacking", dep.label), size);
-    let dest = bin_dir.join(format!("{}{EXE}", dep.name));
+    let dest = managed_path(bin_dir, dep.name);
     let new = dest.with_extension("new");
-    let result = unpack(dep, &archive, &new, cancel).and_then(|()| {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
-        }
-        fs::rename(&new, &dest).with_context(|| format!("install {}", dep.name))
-    });
+    let result = unpack(dep, &archive, &new, cancel).and_then(|()| install_executable(&new, &dest));
     // Nothing is left behind, whether it worked or not.
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_file(&new);
