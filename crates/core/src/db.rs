@@ -556,6 +556,47 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_jobs_return_to_their_queues() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let [down, trans, ready, done] = ["d", "t", "r", "x"].map(|id| db.add_vod(&info(id)).unwrap().0.id);
+        db.set_status(down, Status::Downloading, 0.4, None).unwrap();
+        db.set_status(trans, Status::Transcribing, 0.6, None).unwrap();
+        db.set_status(ready, Status::Ready, 0.0, None).unwrap();
+        db.set_status(done, Status::Done, 1.0, None).unwrap();
+        let status = |id| db.vod(id).unwrap().unwrap().status;
+
+        // A quit mid-stage: each VOD goes back to wait for the stage it was in.
+        db.requeue_interrupted().unwrap();
+        assert_eq!(
+            [status(down), status(trans), status(ready), status(done)],
+            [Status::Queued, Status::Ready, Status::Ready, Status::Done]
+        );
+
+        // "Free up space" deleted the audio: VODs waiting to transcribe must download again.
+        db.set_audio_path(ready, Some("/work/r.m4a")).unwrap();
+        db.forget_downloads().unwrap();
+        assert_eq!(db.audio_path(ready).unwrap(), None);
+        assert_eq!([status(trans), status(ready), status(done)], [Status::Queued, Status::Queued, Status::Done]);
+    }
+
+    #[test]
+    fn local_files_queue_separately() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let [link, file_a, file_b] = ["l", "a", "b"].map(|id| db.add_vod(&info(id)).unwrap().0.id);
+        db.set_source_path(file_a, "/videos/a.mp4").unwrap();
+        db.set_source_path(file_b, "/videos/b.mp4").unwrap();
+        // Bottom of the list first, as for links, but never a link.
+        db.reorder(&[file_a, file_b, link]).unwrap();
+        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, link);
+        assert_eq!(db.next_local_with_status(Status::Queued).unwrap().unwrap().id, file_b);
+        db.reorder(&[file_b, file_a, link]).unwrap();
+        assert_eq!(db.next_local_with_status(Status::Queued).unwrap().unwrap().id, file_a);
+        db.set_status(file_a, Status::Done, 1.0, None).unwrap();
+        db.set_status(file_b, Status::Done, 1.0, None).unwrap();
+        assert!(db.next_local_with_status(Status::Queued).unwrap().is_none());
+    }
+
+    #[test]
     fn index_and_search() {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let (vod, created) = db.add_vod(&info("a")).unwrap();
