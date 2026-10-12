@@ -237,9 +237,12 @@ pub(crate) async fn cache_size(state: State<'_, AppState>) -> CmdResult<u64> {
 /// transcripts and settings are kept; setup runs again afterwards.
 #[tauri::command]
 pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    if state.setup_running.load(Ordering::Relaxed) || state.gpu_installing.load(Ordering::Relaxed) {
+    // Claimed for the whole clear, so setup, a yt-dlp update or the GPU add-on
+    // can't start downloading into folders that are being deleted.
+    let claims = (Claim::take(&state.setup_running), Claim::take(&state.gpu_installing));
+    let (Some(_setup), Some(_gpu)) = claims else {
         return Err("Wait for the current download to finish first.".into());
-    }
+    };
     let app2 = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = app2.state::<AppState>();
@@ -254,4 +257,20 @@ pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> C
         let _ = app.emit("vod", vod);
     }
     Ok(())
+}
+
+/// A busy flag (`setup_running`, `gpu_installing`) held until dropped.
+struct Claim(Arc<AtomicBool>);
+
+impl Claim {
+    /// Sets `flag`, or returns None if something else already holds it.
+    fn take(flag: &Arc<AtomicBool>) -> Option<Self> {
+        (!flag.swap(true, Ordering::Relaxed)).then(|| Claim(flag.clone()))
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
+    }
 }
