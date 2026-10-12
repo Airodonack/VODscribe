@@ -5,10 +5,14 @@
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
   import Progress from "./Progress.svelte";
+  import Tip from "./Tip.svelte";
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
 
-  let progress = $state<Record<string, number>>({});
+  // Each step's fraction done, or null while its size is unknown (the video downloader's).
+  let progress = $state<Record<string, number | null>>({});
+  // The step under way, from the latest progress event.
+  let current = $state<string | null>(null);
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
@@ -18,10 +22,10 @@
   onMount(async () => {
     unlisten.push(
       await events.setupProgress((step, done, total) => {
-        const wasDone = (progress[step] ?? 0) >= 1;
-        progress[step] = total ? done / total : 0;
-        // Refresh as each download finishes, so it shows as installed and verified.
-        if (!wasDone && progress[step] >= 1) setTimeout(onchange, 300);
+        // A new step means the last one finished: refresh so it shows as done and checked.
+        if (current && current !== step) onchange();
+        current = step;
+        progress[step] = total ? done / total : null;
       }),
       await events.setupDone((e) => {
         error = e;
@@ -83,6 +87,8 @@
 
   async function start() {
     error = null;
+    progress = {};
+    current = null;
     await api.runSetup();
     onchange();
   }
@@ -99,7 +105,7 @@
   <ul class="card">
     {#each items as item, i (item.key)}
       <!-- Downloads run one at a time: only the one under way spins. -->
-      {@const busy = running && !item.done && item.downloads && (progress[item.key] ?? 0) > 0}
+      {@const busy = running && !item.done && item.downloads && current === item.key}
       <li>
         <span class="check" class:ok={item.done} class:busy class:bad={!item.done && !item.downloads && !item.optional}>
           {#if item.done}<Icon name="check" size={14} />{:else if busy}<span class="spin"
@@ -107,16 +113,18 @@
         </span>
         <div>
           <!-- The plain name for everyone; exact names and sources on hover. -->
-          <strong class="name-detail" title={item.details}>{item.name}</strong>
+          <Tip text={item.details}><strong class="name-detail">{item.name}</strong></Tip>
           <span class="muted">{item.what}</span>
           {#if item.done && item.managed}
-            <p class="verified" title={item.checked}>
-              <Icon name="shield" size={12} /> Downloaded and checked
+            <p class="verified">
+              <Tip text={item.checked}><Icon name="shield" size={12} /> Downloaded and checked</Tip>
             </p>
           {:else if item.done}
             <p class="detail muted">Using the one already installed on this computer.</p>
           {:else if busy}
-            <div class="bar"><Progress value={progress[item.key] ?? 0} /></div>
+            <div class="bar">
+              <Progress value={progress[item.key] ?? 0} indeterminate={progress[item.key] === null} />
+            </div>
           {:else if item.key === "ffmpeg" && !item.downloads}
             <p class="detail">
               Not installed yet.

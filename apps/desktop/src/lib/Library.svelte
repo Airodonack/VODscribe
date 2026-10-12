@@ -110,23 +110,30 @@
     if (picked) addItems(Array.isArray(picked) ? picked : [picked], true);
   }
 
-  // Dropping onto the window. Files (and, on Linux, links) arrive through the
-  // webview's drop event with their paths; links on other platforms arrive as
-  // an ordinary HTML drop of text.
+  // Dropping onto the window. Files arrive through the webview's drop event with
+  // their paths, and on Linux dropped links do too. Windows and macOS don't pass
+  // link drops to the app at all, so there links have to be pasted.
+  const linksDrop = !/Win|Mac/.test(navigator.platform);
   let dropping = $state(false);
+  // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
+  let draggingInside = false;
   function onDragOver(e: DragEvent) {
     const types = e.dataTransfer?.types ?? [];
-    if (!types.includes("text/uri-list") && !types.includes("text/plain")) return;
+    if (draggingInside || (!types.includes("text/uri-list") && !types.includes("text/plain"))) return;
     e.preventDefault();
     dropping = true;
   }
+  function onDragLeave(e: DragEvent) {
+    // dragleave fires for every element crossed; only leaving the window counts.
+    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) dropping = false;
+  }
   function onDrop(e: DragEvent) {
+    dropping = false;
     const data = e.dataTransfer;
-    if (!data) return;
+    if (!data || draggingInside) return;
     const text = data.getData("text/uri-list") || data.getData("text/plain");
     if (!text) return;
     e.preventDefault();
-    dropping = false;
     // uri-list lines starting with # are comments.
     // Text drops only ever add links; file paths come from real file drops.
     addItems(
@@ -145,11 +152,13 @@
     let unmounted = false;
     getCurrentWebview()
       .onDragDropEvent(({ payload }) => {
-        if (payload.type === "enter" || payload.type === "over") dropping = true;
-        else if (payload.type === "leave") dropping = false;
-        else {
+        if (payload.type === "enter") {
+          // macOS reports every drag, even ones with nothing the app can use.
+          dropping = payload.paths.length > 0 && !draggingInside;
+        } else if (payload.type === "leave") dropping = false;
+        else if (payload.type === "drop") {
           dropping = false;
-          addItems(payload.paths, true);
+          if (!draggingInside) addItems(payload.paths, true);
         }
       })
       .then(
@@ -184,10 +193,16 @@
   }
 </script>
 
-<svelte:window ondragover={onDragOver} ondrop={onDrop} ondragleave={(e) => !e.relatedTarget && (dropping = false)} />
+<svelte:window
+  ondragstart={() => (draggingInside = true)}
+  ondragend={() => (draggingInside = false)}
+  ondragover={onDragOver}
+  ondrop={onDrop}
+  ondragleave={onDragLeave}
+/>
 
 {#if dropping}
-  <div class="drop">Drop video files or VOD links to add them</div>
+  <div class="drop">{linksDrop ? "Drop video files or VOD links to add them" : "Drop video files to add them"}</div>
 {/if}
 
 <aside>
@@ -210,7 +225,9 @@
     <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
   </form>
   <p class="more muted">
-    or <button class="link" onclick={pickFiles} disabled={adding}>add video files…</button> or drop files and links anywhere
+    or <button class="link" onclick={pickFiles} disabled={adding}>add video files…</button> or drop {linksDrop
+      ? "files and links"
+      : "video files"} anywhere
   </p>
   {#if error}
     <p class="error-text add-error">{error}</p>

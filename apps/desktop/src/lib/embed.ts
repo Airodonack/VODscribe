@@ -196,7 +196,7 @@ function videoPlayer(
   time: number,
   play: boolean,
   attach: (video: HTMLVideoElement) => (() => void) | void,
-  onerror?: (message: string) => void,
+  onerror?: (message: string | null) => void,
 ): EmbeddedPlayer {
   const video = document.createElement("video");
   video.controls = true;
@@ -206,6 +206,8 @@ function videoPlayer(
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
     onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
   });
+  // A later successful play (after a retry or seek) clears an earlier error.
+  video.addEventListener("playing", () => onerror?.(null));
   el.appendChild(video);
   const detach = attach(video);
   if (play) video.play().catch(() => {});
@@ -227,22 +229,34 @@ function videoPlayer(
 }
 
 /** Kick has no VOD embed, so play its HLS stream in a plain <video>. */
-async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+async function kick(
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string | null) => void,
+): Promise<EmbeddedPlayer> {
   const variants = await api.kickStream(vod.url);
   // 720p is plenty for a preview pane and keeps bandwidth down.
   const pick = variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
   if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
-  return videoPlayer(el, time, play, (video) => {
-    if (!Hls.isSupported()) {
-      video.src = pick.url;
-      video.currentTime = time;
-      return;
-    }
-    const hls = new Hls({ startPosition: time });
-    hls.loadSource(pick.url);
-    hls.attachMedia(video);
-    return () => hls.destroy();
-  });
+  return videoPlayer(
+    el,
+    time,
+    play,
+    (video) => {
+      if (!Hls.isSupported()) {
+        video.src = pick.url;
+        video.currentTime = time;
+        return;
+      }
+      const hls = new Hls({ startPosition: time });
+      hls.loadSource(pick.url);
+      hls.attachMedia(video);
+      return () => hls.destroy();
+    },
+    onerror,
+  );
 }
 
 /** A file on this computer, streamed by the app's local media server. */
@@ -251,7 +265,7 @@ async function local(
   vod: Vod,
   time: number,
   play: boolean,
-  onerror?: (message: string) => void,
+  onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> {
   const src = await api.mediaUrl(vod.id);
   return videoPlayer(
@@ -271,7 +285,7 @@ type CreatePlayer = (
   vod: Vod,
   time: number,
   play: boolean,
-  onerror?: (message: string) => void,
+  onerror?: (message: string | null) => void,
 ) => Promise<EmbeddedPlayer>;
 
 const players: Record<string, CreatePlayer> = {
@@ -287,7 +301,7 @@ export function createPlayer(
   vod: Vod,
   time: number,
   play: boolean,
-  onerror?: (message: string) => void,
+  onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> | null {
   return players[vod.platform]?.(el, vod, time, play, onerror) ?? null;
 }

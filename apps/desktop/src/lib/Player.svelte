@@ -187,7 +187,9 @@
       <p class="error-text note">
         {error}
         {#if isLocal}
-          <button class="link" onclick={() => api.openFile(vod.id)}>Open it in your video player</button>
+          <button class="link" onclick={() => api.openFile(vod.id).catch((e) => (error = String(e)))}
+            >Open it in your video player</button
+          >
         {/if}
       </p>
     {/if}

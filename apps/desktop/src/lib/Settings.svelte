@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import { PRIVACY } from "./links";
   import Progress from "./Progress.svelte";
+  import Tip from "./Tip.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
 
@@ -183,11 +184,12 @@
       {:else if !gpu?.installed}
         <button onclick={install}><Icon name="download" size={14} /> Download GPU add-on (about 3 GB)</button>
       {:else}
-        <p
-          class="verified"
-          title="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
-        >
-          <Icon name="shield" size={12} /> GPU add-on installed and checked
+        <p class="verified">
+          <Tip
+            text="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
+          >
+            <Icon name="shield" size={12} /> GPU add-on installed and checked
+          </Tip>
         </p>
         <button class="link" onclick={remove}>Remove GPU add-on</button>
       {/if}

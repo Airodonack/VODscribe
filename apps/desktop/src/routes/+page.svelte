@@ -34,17 +34,20 @@
   let searchInput = $state<HTMLInputElement>();
   function onWindowKey(e: KeyboardEvent) {
     if (e.key === "Escape") showSettings = false;
-    if ((e.target as HTMLElement).closest("input, textarea, select, [contenteditable]")) return;
-    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
-    // "/" or Ctrl/Cmd+F jumps to search from anywhere.
-    if ((plain && e.key === "/") || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f")) {
+    if (e.isComposing) return;
+    const jump = () => {
       e.preventDefault();
       searchInput?.focus();
       searchInput?.select();
-      return;
-    }
-    // With no VOD open, typing starts a search. (With one open, letters are player shortcuts.)
-    if (!selected && plain && e.key.length === 1 && e.key !== " ") {
+    };
+    // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") return jump();
+    const target = e.target as HTMLElement;
+    if (target.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (plain && e.key === "/") return jump();
+    // With no player open, typing starts a search. (With one, letters are its shortcuts.)
+    if (!playing && !selected && plain && e.key.length === 1 && e.key !== " ") {
       e.preventDefault();
       query += e.key;
       searchInput?.focus();
