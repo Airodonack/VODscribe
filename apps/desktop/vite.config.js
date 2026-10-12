@@ -25,9 +25,8 @@ export default defineConfig(() => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`, and `tools`, whose Python
-      //    environment holds tens of thousands of files
-      ignored: ["**/src-tauri/**", "**/tools/**"],
+      // 3. tell Vite to ignore watching `src-tauri`
+      ignored: ["**/src-tauri/**"],
     },
   },
 }));

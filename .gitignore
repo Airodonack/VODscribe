@@ -1,8 +1,8 @@
 .DS_Store
 node_modules
-/build
-/.svelte-kit
-/package
+apps/*/build
+apps/*/.svelte-kit
+apps/*/package
 .env
 .env.*
 !.env.example
@@ -16,7 +16,7 @@ vite.config.ts.timestamp-*
 vodscribe-data/
 
 # Built by scripts/prepare-sidecars.sh
-/src-tauri/binaries/
+/apps/desktop/src-tauri/binaries/
 
 # Scratch files WebKitGTK writes to the working directory
 *.blob

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds the transcription workers and places them where Tauri's `externalBin`
-# expects them: src-tauri/binaries/<name>-<target-triple>[.exe]. Tauri copies
+# expects them: apps/desktop/src-tauri/binaries/<name>-<target-triple>[.exe]. Tauri copies
 # them next to the app executable, where the app looks for them.
 #
 #   scripts/prepare-sidecars.sh [debug|release]
@@ -15,11 +15,12 @@ flag=()
 triple="${TARGET_TRIPLE:-$(rustc -vV | sed -n 's/^host: //p')}"
 exe=""
 case "$triple" in *windows*) exe=".exe" ;; esac
-mkdir -p src-tauri/binaries
+out=apps/desktop/src-tauri/binaries
+mkdir -p "$out"
 
 # CPU worker: sherpa-onnx linked statically.
 cargo build "${flag[@]}" -p vodscribe-worker --target "$triple"
-cp "target/$triple/$profile/vodscribe-worker$exe" "src-tauri/binaries/vodscribe-worker-$triple$exe"
+cp "target/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-$triple$exe"
 
 # GPU worker: sherpa-onnx linked dynamically; the GPU pack supplies the CUDA
 # build at runtime. Built in its own target dir so its features don't mix
@@ -28,7 +29,7 @@ case "$triple" in
   x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc)
     cargo build "${flag[@]}" -p vodscribe-worker --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
-    cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "src-tauri/binaries/vodscribe-worker-cuda-$triple$exe"
+    cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-cuda-$triple$exe"
     ;;
 esac
-ls -la src-tauri/binaries
+ls -la "$out"

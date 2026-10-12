@@ -24,9 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Reads the pnpm version from package.json's packageManager field.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 12.11.2
 
       - uses: actions/setup-node@v4
         with:
@@ -56,7 +55,7 @@ jobs:
         run: scripts/prepare-sidecars.sh release
 
       - name: Build app and installers
-        run: pnpm tauri build --target ${{ matrix.target }}
+        run: pnpm --filter desktop tauri build --target ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
