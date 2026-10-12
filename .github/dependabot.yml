@@ -1,7 +1,31 @@
-# Keeps the commit-pinned GitHub Actions in build.yml up to date.
+# Monthly update PRs, one per ecosystem, so dependency security fixes aren't missed.
 version: 2
 updates:
+  # The commit-pinned GitHub Actions in build.yml.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+
+  # The Cargo workspace (crates/* and apps/desktop/src-tauri).
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      # Pinned exactly: scripts/prepare-sidecars.sh verifies this version's
+      # prebuilt libraries, so it's bumped by hand with new hashes.
+      - dependency-name: sherpa-onnx
+      - dependency-name: sherpa-onnx-sys
+
+  # The pnpm workspace (apps/*).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        patterns: ["*"]

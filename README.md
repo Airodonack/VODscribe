@@ -36,7 +36,7 @@ The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.v
 
 ## Development
 
-Prerequisites: Rust, Node and pnpm, plus [Tauri's system dependencies](https://tauri.app/start/prerequisites/) and ffmpeg. `pnpm dev` runs a bash script, so on Windows it needs Git Bash on `PATH`; release builds on Linux also need `patchelf`.
+Prerequisites: Rust (the version in `rust-toolchain.toml`, which rustup picks up), Node (`.nvmrc`) and pnpm, plus [Tauri's system dependencies](https://tauri.app/start/prerequisites/) and ffmpeg. `pnpm dev` runs a bash script, so on Windows it needs Git Bash on `PATH`; release builds on Linux also need `patchelf`.
 
 The JavaScript side is a pnpm workspace (`apps/*`) and the Rust side a Cargo workspace (`crates/*` and `apps/desktop/src-tauri`), both rooted here. From the repo root:
 

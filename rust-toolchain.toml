@@ -1,0 +1,4 @@
+# The Rust version everyone builds with, locally and in CI (build.yml installs
+# the same one). Bump it on purpose, and fix any new warnings in the same change.
+[toolchain]
+channel = "1.99.0"

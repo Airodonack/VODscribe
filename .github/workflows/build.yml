@@ -51,12 +51,13 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: lts/*
+          node-version-file: .nvmrc
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
-          toolchain: stable
+          # Keep in step with rust-toolchain.toml.
+          toolchain: "1.99.0"
           targets: ${{ matrix.target }}
 
       - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
