@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-install-gpu-pack"
+description = "Enables the install_gpu_pack command without any pre-configured scope."
+commands.allow = ["install_gpu_pack"]
+
+[[permission]]
+identifier = "deny-install-gpu-pack"
+description = "Denies the install_gpu_pack command without any pre-configured scope."
+commands.deny = ["install_gpu_pack"]

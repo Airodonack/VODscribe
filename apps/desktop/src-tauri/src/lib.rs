@@ -2,6 +2,9 @@
 //! `vods` (the library), `setup` (setup, settings, GPU pack, storage) and
 //! `thumbnails`; `worker` runs the download and transcription queue.
 
+// `tauri dev` serves the app from its dev server instead.
+#[cfg(not(dev))]
+mod app_server;
 mod media;
 mod setup;
 mod thumbnails;
@@ -72,6 +75,15 @@ pub fn run() {
             });
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+            // The window is created here rather than from the config, so release builds
+            // open it only once the app server is listening (see app_server.rs).
+            let window = app.config().app.windows.first().cloned().ok_or("no window configured")?;
+            #[cfg(not(dev))]
+            let window = tauri::utils::config::WindowConfig {
+                url: tauri::WebviewUrl::External(app_server::start(app.handle())?.parse()?),
+                ..window
+            };
+            tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

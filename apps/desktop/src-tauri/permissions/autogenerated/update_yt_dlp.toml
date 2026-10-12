@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-yt-dlp"
+description = "Enables the update_yt_dlp command without any pre-configured scope."
+commands.allow = ["update_yt_dlp"]
+
+[[permission]]
+identifier = "deny-update-yt-dlp"
+description = "Denies the update_yt_dlp command without any pre-configured scope."
+commands.deny = ["update_yt_dlp"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-vods"
+description = "Enables the list_vods command without any pre-configured scope."
+commands.allow = ["list_vods"]
+
+[[permission]]
+identifier = "deny-list-vods"
+description = "Denies the list_vods command without any pre-configured scope."
+commands.deny = ["list_vods"]

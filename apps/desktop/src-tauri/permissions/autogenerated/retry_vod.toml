@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-retry-vod"
+description = "Enables the retry_vod command without any pre-configured scope."
+commands.allow = ["retry_vod"]
+
+[[permission]]
+identifier = "deny-retry-vod"
+description = "Denies the retry_vod command without any pre-configured scope."
+commands.deny = ["retry_vod"]

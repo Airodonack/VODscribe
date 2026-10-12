@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kick-stream"
+description = "Enables the kick_stream command without any pre-configured scope."
+commands.allow = ["kick_stream"]
+
+[[permission]]
+identifier = "deny-kick-stream"
+description = "Denies the kick_stream command without any pre-configured scope."
+commands.deny = ["kick_stream"]

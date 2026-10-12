@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-vod"
+description = "Enables the delete_vod command without any pre-configured scope."
+commands.allow = ["delete_vod"]
+
+[[permission]]
+identifier = "deny-delete-vod"
+description = "Denies the delete_vod command without any pre-configured scope."
+commands.deny = ["delete_vod"]

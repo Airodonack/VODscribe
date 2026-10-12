@@ -1,0 +1,36 @@
+# Every command of the app, for the main window (capabilities/default.json).
+# Keep in step with COMMANDS in build.rs.
+[[set]]
+identifier = "app"
+description = "VODscribe's own commands."
+permissions = [
+  "allow-setup-status",
+  "allow-data-dir",
+  "allow-open-data-dir",
+  "allow-run-setup",
+  "allow-add-vod",
+  "allow-list-vods",
+  "allow-add-files",
+  "allow-show-file",
+  "allow-open-file",
+  "allow-media-url",
+  "allow-thumbnail",
+  "allow-reorder-vods",
+  "allow-delete-vod",
+  "allow-retry-vod",
+  "allow-pause-vod",
+  "allow-retranscribe-vod",
+  "allow-resume-vod",
+  "allow-cancel-vod",
+  "allow-search",
+  "allow-transcript",
+  "allow-update-yt-dlp",
+  "allow-kick-stream",
+  "allow-get-settings",
+  "allow-set-settings",
+  "allow-gpu-status",
+  "allow-install-gpu-pack",
+  "allow-remove-gpu-pack",
+  "allow-cache-size",
+  "allow-clear-cache",
+]

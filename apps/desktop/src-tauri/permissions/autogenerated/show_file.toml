@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-file"
+description = "Enables the show_file command without any pre-configured scope."
+commands.allow = ["show_file"]
+
+[[permission]]
+identifier = "deny-show-file"
+description = "Denies the show_file command without any pre-configured scope."
+commands.deny = ["show_file"]
