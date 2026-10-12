@@ -37,6 +37,8 @@
     error: "Failed",
   };
 
+  // Canceled by the user ("Canceled" in older libraries) rather than failed.
+  const stopped = $derived(vod.status === "error" && (vod.error === "Stopped" || vod.error === "Canceled"));
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(platformName[vod.platform] ?? vod.platform);
@@ -49,14 +51,16 @@
 
   function retranscribe() {
     if (
-      confirm(`Re-transcribe “${vod.title}”? Its current transcript is replaced; the audio may need to download again.`)
+      confirm(
+        `Transcribe “${vod.title}” again? Its current transcript will be replaced, and the audio may need to download again.`,
+      )
     ) {
       act(api.retranscribeVod(vod.id));
     }
   }
 
   function cancel() {
-    if (confirm(`Cancel “${vod.title}”? Its partial download and transcript will be discarded.`)) {
+    if (confirm(`Cancel “${vod.title}”? What's been downloaded and transcribed so far will be thrown away.`)) {
       act(api.cancelVod(vod.id));
     }
   }
@@ -88,21 +92,26 @@
 {#if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
     {#if vod.status !== "done"}
-      <span class="status" class:active class:error-text={vod.status === "error"}>
+      <span class="status" class:active class:error-text={vod.status === "error" && !stopped}>
         {#if active}<span class="pulse" aria-hidden="true"></span>{/if}
-        {#if vod.status === "error"}<Icon name="error" size={13} />{/if}
-        {statusLabel[vod.status]}{#if showBar}<span class="pct">{Math.round(vod.progress * 100)}%</span>{/if}
+        {#if vod.status === "error" && !stopped}<Icon name="error" size={13} />{/if}
+        {stopped ? "Stopped" : statusLabel[vod.status]}{#if showBar}<span class="pct"
+            >{Math.round(vod.progress * 100)}%</span
+          >{/if}
       </span>
     {/if}
     {#if showBar}
       <Progress value={vod.progress} paused={vod.status === "paused"} thin />
     {/if}
-    {#if vod.status === "error" && vod.error}
+    {#if vod.status === "error" && vod.error && !stopped}
       <span class="note error-text" title={vod.error}>{vod.error}</span>
     {:else if vod.outdated}
-      <span class="note warn-text" title="This transcript was made with a previous speech model.">
+      <span
+        class="note warn-text"
+        title="VODscribe's speech recognition has improved since this was made. Transcribe it again for a better transcript."
+      >
         <Icon name="warning" size={13} />
-        {vod.status === "done" ? "Older model; may be missing speech" : "Older model; resuming starts over"}
+        {vod.status === "done" ? "Made with an older version" : "Will restart with the newer version"}
       </span>
     {:else if vod.note}
       <span class="note muted" title={vod.note}>{vod.note}</span>
@@ -116,12 +125,12 @@
       <Icon name="redo" size={15} />
     </button>
   {:else if vod.status === "paused"}
-    <!-- Resuming an outdated transcript starts over, like Re-transcribe. -->
+    <!-- Resuming an outdated transcript starts over, like transcribing again. -->
     <button
       class="act"
       class:warn={vod.outdated}
       onclick={() => act(api.resumeVod(vod.id))}
-      title={vod.outdated ? "Resume (starts over with the current model)" : "Resume"}
+      title={vod.outdated ? "Resume (starts over with the newer version)" : "Resume"}
       aria-label="Resume"
     >
       <Icon name="play" size={15} />
@@ -141,8 +150,8 @@
       class="act"
       class:warn={vod.outdated}
       onclick={retranscribe}
-      title={vod.outdated ? "Re-transcribe with the current model" : "Re-transcribe"}
-      aria-label="Re-transcribe"
+      title={vod.outdated ? "Transcribe again with the newer version" : "Transcribe again"}
+      aria-label="Transcribe again"
     >
       <Icon name="redo" size={15} />
     </button>
@@ -264,14 +273,13 @@
     }
   }
 
+  /* Notes wrap, so an error reads in full. */
   .note {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 5px;
     min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.4;
   }
 
   .note :global(svg) {

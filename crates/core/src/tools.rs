@@ -86,7 +86,7 @@ fn signed_sha256(sums: &[u8], sig: &[u8], asset: &str) -> Result<String> {
     let (key, _) = SignedPublicKey::from_armor_single(YT_DLP_KEY.as_bytes())?;
     let sig = DetachedSignature::from_bytes(sig).context("read yt-dlp's checksum signature")?;
     sig.verify(&key, sums)
-        .context("yt-dlp's download couldn't be verified against its release signature, so it wasn't installed")?;
+        .context("The video downloader couldn't be checked, so it wasn't installed. Try again later.")?;
     std::str::from_utf8(sums)?
         .lines()
         .find_map(|line| {
@@ -141,7 +141,11 @@ pub fn update_yt_dlp(bin_dir: &Path) -> Result<String> {
     let (path, changed) = install_yt_dlp(bin_dir, &AtomicBool::new(false), |_, _| {})?;
     let out = command(&path).arg("--version").output().context("run yt-dlp --version")?;
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Ok(if changed { format!("Updated yt-dlp to {version}") } else { format!("yt-dlp is up to date ({version})") })
+    Ok(if changed {
+        format!("Updated the video downloader (version {version}).")
+    } else {
+        format!("The video downloader is up to date (version {version}).")
+    })
 }
 
 /// Reads a child's stream to the end on its own thread, so a chatty process
@@ -221,7 +225,7 @@ mod tests {
         let (path, changed) = install_yt_dlp(&dir, &AtomicBool::new(false), |_, _| {}).unwrap();
         assert!(changed && path.is_file());
         assert!(!install_yt_dlp(&dir, &AtomicBool::new(false), |_, _| {}).unwrap().1);
-        assert!(update_yt_dlp(&dir).unwrap().starts_with("yt-dlp is up to date"));
+        assert!(update_yt_dlp(&dir).unwrap().starts_with("The video downloader is up to date"));
     }
 
     /// The release published 2026.08.19: its checksum list and signature.

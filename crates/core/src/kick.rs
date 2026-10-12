@@ -30,7 +30,7 @@ pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
     }
     if status != 200 {
         let kind = json.pointer("/data/type").and_then(Value::as_str).unwrap_or("unknown error");
-        bail!("Kick returned {status} ({kind})");
+        bail!("Kick isn't responding right now ({status} {kind}). Try again later.");
     }
     parse_playback(&json, &slug, &id)
 }
@@ -65,7 +65,7 @@ fn parse_playback(json: &Value, slug: &str, id: &str) -> Result<(VodInfo, String
         .pointer("/playback_url/vod")
         .and_then(Value::as_str)
         .filter(|s| s.starts_with("https://"))
-        .context("Kick didn't return a playable stream. Subscriber-only VODs aren't supported.")?;
+        .context("Kick won't let VODscribe play this VOD. Subscriber-only VODs can't be added.")?;
     let info = VodInfo {
         platform: "kick".into(),
         platform_id: id.to_string(),
@@ -113,7 +113,7 @@ pub fn variants(url: &str) -> Result<Vec<Variant>> {
     let text = crate::net::get_bytes(&manifest, API_MAX_BYTES, &never)?;
     let variants = parse_master(&String::from_utf8_lossy(&text));
     if variants.is_empty() {
-        bail!("Kick's stream has no playable qualities");
+        bail!("Kick didn't offer a way to play this VOD.");
     }
     Ok(variants)
 }

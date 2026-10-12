@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api, events, type SetupStatus, type UnlistenFn } from "./api";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
   import Progress from "./Progress.svelte";
@@ -11,6 +12,8 @@
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
+  // Only the install steps for this computer are shown.
+  const os = /Win/.test(navigator.platform) ? "windows" : /Mac/.test(navigator.platform) ? "mac" : "linux";
 
   onMount(async () => {
     unlisten.push(
@@ -41,7 +44,7 @@
     <span class="name">VODscribe</span>
   </div>
   <h1>A couple of downloads, then you're set</h1>
-  <p class="muted lead">Everything runs on this computer: the audio, the transcripts and the speech model stay here.</p>
+  <p class="muted lead">VODscribe works on your computer, not in the cloud, so your VODs and transcripts stay here.</p>
 
   <ul class="card">
     <li>
@@ -49,14 +52,14 @@
         {#if status.model}<Icon name="check" size={14} />{:else if running}<span class="spin"></span>{:else}1{/if}
       </span>
       <div>
-        <strong>Speech model</strong>
-        <span class="muted">Parakeet TDT 0.6B v3, about 900 MB</span>
+        <strong>Speech recognition</strong>
+        <span class="muted">turns speech into text, about 900 MB</span>
         {#if status.model}
           <p
             class="verified"
-            title="Each file's SHA-256 is pinned in the app; a download that doesn't match is discarded."
+            title="VODscribe checked that this is exactly the file that was published, so it wasn't damaged or tampered with."
           >
-            <Icon name="shield" size={12} /> Verified against its published checksum
+            <Icon name="shield" size={12} /> Downloaded and checked
           </p>
         {/if}
         {#if running && !status.model}
@@ -69,14 +72,17 @@
         {#if status.yt_dlp}<Icon name="check" size={14} />{:else if running}<span class="spin"></span>{:else}2{/if}
       </span>
       <div>
-        <strong>yt-dlp</strong>
-        <span class="muted">fetches audio from Kick, Twitch and YouTube</span>
+        <strong>Video downloader</strong>
+        <span class="muted">gets the audio from Kick, Twitch and YouTube</span>
         {#if status.yt_dlp_managed}
-          <p class="verified" title="Its checksum list is signed by yt-dlp's release key, which is built into the app.">
-            <Icon name="shield" size={12} /> Signature verified
+          <p
+            class="verified"
+            title="VODscribe checked it against its makers' official signature, so it wasn't damaged or tampered with."
+          >
+            <Icon name="shield" size={12} /> Downloaded and checked
           </p>
         {:else if status.yt_dlp}
-          <p class="detail muted">Using the copy installed on this computer.</p>
+          <p class="detail muted">Using the one already installed on this computer.</p>
         {/if}
         {#if running && !status.yt_dlp}
           <div class="bar"><Progress value={progress["yt-dlp"] ?? 0} /></div>
@@ -89,12 +95,19 @@
       </span>
       <div>
         <strong>ffmpeg</strong>
-        <span class="muted">decodes audio</span>
+        <span class="muted">a free tool VODscribe uses to read audio</span>
         {#if !status.ffmpeg}
           <p class="detail">
-            Not found. Install it, then check again:
-            <code>sudo apt install ffmpeg</code>, <code>brew install ffmpeg</code> or
-            <code>winget install ffmpeg</code>.
+            Not installed yet.
+            {#if os === "windows"}
+              Open <strong>Terminal</strong> from the Start menu, type <code>winget install ffmpeg</code> and press Enter.
+            {:else if os === "mac"}
+              Open <strong>Terminal</strong>, type <code>brew install ffmpeg</code> and press Enter. (This uses
+              <a href="https://brew.sh" onclick={(e) => (e.preventDefault(), openUrl("https://brew.sh"))}>Homebrew</a>.)
+            {:else}
+              Install <strong>ffmpeg</strong> from your software center, or run <code>sudo apt install ffmpeg</code>.
+            {/if}
+            Then close and reopen VODscribe.
           </p>
         {/if}
       </div>
@@ -104,10 +117,14 @@
         {#if status.js_runtime}<Icon name="check" size={14} />{:else}–{/if}
       </span>
       <div>
-        <strong>JavaScript runtime</strong>
-        <span class="muted">optional; makes YouTube downloads reliable</span>
+        <strong>YouTube helper</strong>
+        <span class="muted">optional; some YouTube VODs need it</span>
         {#if !status.js_runtime}
-          <p class="detail muted">Install Deno or Node.js if YouTube links fail.</p>
+          <p class="detail muted">
+            If YouTube links fail to add, install
+            <a href="https://deno.com" onclick={(e) => (e.preventDefault(), openUrl("https://deno.com"))}>Deno</a> (free),
+            then reopen VODscribe.
+          </p>
         {/if}
       </div>
     </li>
@@ -256,6 +273,10 @@
     display: flex;
     gap: 6px;
     align-items: center;
+  }
+
+  .detail a {
+    color: var(--accent);
   }
 
   code {

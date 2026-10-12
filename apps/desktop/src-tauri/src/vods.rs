@@ -27,7 +27,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     let task_app = app.clone();
     let added = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Added> {
         let state = task_app.state::<AppState>();
-        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("yt-dlp isn't installed yet."))?;
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
         let info = fetch::probe(&yt_dlp, &url, &probe_path)?;
@@ -104,7 +104,7 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     if local::is_inside(path, &state.paths.root) || local::is_inside(path, &state.paths.local) {
         anyhow::bail!("{} is part of VODscribe's own data.", path.display());
     }
-    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("ffmpeg isn't installed."))?;
+    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
     let info = local::probe(&ffmpeg, path)?;
     let db = state.db.lock().unwrap();
     let (vod, created) = db.add_vod(&info)?;
@@ -187,7 +187,7 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     let db = state.db.lock().unwrap();
     match db.vod(id).map_err(err)? {
         Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
-        _ => return Err("Only finished VODs can be re-transcribed.".into()),
+        _ => return Err("Only finished VODs can be transcribed again.".into()),
     }
     db.atomically(|db| {
         db.clear_segments(id)?;

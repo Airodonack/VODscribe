@@ -17,7 +17,7 @@ pub const PLATFORM: &str = "local";
 /// Reads a file's details with ffmpeg, refusing anything without an audio track.
 /// The file's absolute path is its id, so adding it twice finds the first one.
 pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
-    let path = fs::canonicalize(path).with_context(|| format!("{} can't be read", path.display()))?;
+    let path = fs::canonicalize(path).with_context(|| format!("{} can't be opened.", path.display()))?;
     if !path.is_file() {
         bail!("{} isn't a file.", path.display());
     }

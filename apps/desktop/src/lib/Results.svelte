@@ -67,7 +67,7 @@
       <p>
         No matches for <strong>“{query}”</strong>{#if scope}{" "}in <strong>{scope.title}</strong>{/if}.
       </p>
-      <p class="muted">Search finds exact phrases, so fewer words match more.</p>
+      <p class="muted">Search looks for these exact words, in this order. Try fewer words.</p>
       {#if scope}
         <button onclick={onclearscope}>Search all VODs</button>
       {/if}

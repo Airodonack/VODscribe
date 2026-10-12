@@ -108,7 +108,8 @@ pub fn transcribe(
         if cancel.load(Ordering::Relaxed) {
             return Err(e);
         }
-        notice(format!("GPU transcription failed, so the rest of this VOD was transcribed on the CPU: {e:#}"));
+        eprintln!("GPU transcription failed: {e:#}");
+        notice("The graphics card ran into a problem, so the rest was transcribed with the processor.".into());
         used = fallback;
         db.set_model(vod.id, Some(used.model_id))?;
         attempt(used, db, report)?;

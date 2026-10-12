@@ -17,8 +17,6 @@
   const unlisten: UnlistenFn[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
 
-  const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
-
   async function refresh() {
     gpu = await api.gpuStatus();
     cacheBytes = await api.cacheSize();
@@ -28,10 +26,10 @@
     bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
 
   async function clearCache() {
-    const amount = cacheBytes ? `${size(cacheBytes)} of ` : "";
+    const amount = cacheBytes ? ` ${size(cacheBytes)}` : "";
     const ok = confirm(
-      `Delete ${amount}downloaded files? This removes the speech models, the GPU pack, yt-dlp and unfinished downloads. ` +
-        "Running jobs are paused. Your library and transcripts are kept, and setup downloads what's needed again.",
+      `Free up${amount}? This deletes the parts VODscribe downloaded to run, and any unfinished downloads. ` +
+        "Anything in progress is paused. Your library and transcripts are kept, and VODscribe downloads what it needs again.",
     );
     if (!ok) return;
     clearing = true;
@@ -105,7 +103,7 @@
   }
 
   async function remove() {
-    if (!confirm("Remove the GPU pack? Transcription will use the CPU.")) return;
+    if (!confirm("Remove the graphics card add-on? VODs will be transcribed with the processor.")) return;
     if (device === "gpu") await choose("cpu");
     await api.removeGpuPack().catch((e) => (error = String(e)));
     await refresh();
@@ -114,10 +112,10 @@
   // Why GPU can't be chosen right now, if it can't.
   let blocker = $derived.by(() => {
     if (!gpu) return "Checking…";
-    if (!gpu.supported) return "Not available on this operating system.";
-    if (!gpu.worker) return "This build doesn't include GPU support.";
-    if (!gpu.gpu) return "No NVIDIA GPU found.";
-    if (!gpu.installed) return "Needs the GPU pack, a one-time download of about 3 GB.";
+    if (!gpu.supported) return "Not available on this kind of computer.";
+    if (!gpu.worker) return "This version of VODscribe can't use graphics cards.";
+    if (!gpu.gpu) return "No NVIDIA graphics card found.";
+    if (!gpu.installed) return "Needs the graphics card add-on, a one-time download of about 3 GB.";
     return null;
   });
   let busy = $derived(gpu?.gpu && gpu.installed && gpu.gpu.free_mb < gpu.min_free_mb);
@@ -131,7 +129,7 @@
       <label class="option" class:checked={device === "cpu"}>
         <input type="radio" name="device" checked={device === "cpu"} onchange={() => choose("cpu")} />
         <span class="option-text">
-          <span class="option-title">CPU</span>
+          <span class="option-title">Processor <span class="muted">(CPU)</span></span>
           <span class="muted">Works on any computer.</span>
         </span>
       </label>
@@ -145,37 +143,37 @@
         />
         <span class="option-text">
           <span class="option-title">
-            GPU
-            {#if gpu?.gpu}<span class="muted detail">{gpu.gpu.name}, {gb(gpu.gpu.free_mb)} free</span>{/if}
+            Graphics card <span class="muted">(GPU)</span>
+            {#if gpu?.gpu}<span class="muted detail">{gpu.gpu.name}</span>{/if}
           </span>
           <span class="muted">
-            {#if blocker}{blocker}{:else}NVIDIA only; several times faster than the CPU.{/if}
+            {#if blocker}{blocker}{:else}NVIDIA only. Several times faster.{/if}
           </span>
         </span>
       </label>
     </div>
     {#if busy && gpu}
       <p class="hint warn-text">
-        <Icon name="warning" size={13} /> The GPU is busy. VODs use the CPU until {gb(gpu.min_free_mb)} is free.
+        <Icon name="warning" size={13} /> Your graphics card is busy with something else, so VODs use the processor for now.
       </p>
     {/if}
 
     {#if offerPack}
       {#if step || gpu?.installing}
         <div class="progress">
-          <span class="muted">Downloading {step?.label ?? "GPU pack"}…</span>
+          <span class="muted">Downloading the graphics card add-on…</span>
           <Progress value={step && step.total ? step.done / step.total : 0} />
         </div>
       {:else if !gpu?.installed}
-        <button onclick={install}><Icon name="download" size={14} /> Download GPU pack</button>
+        <button onclick={install}><Icon name="download" size={14} /> Download add-on (about 3 GB)</button>
       {:else}
         <p
           class="verified"
-          title="Each file's SHA-256 is pinned in the app; a download that doesn't match is discarded."
+          title="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
         >
-          <Icon name="shield" size={12} /> GPU pack installed, every file verified against its pinned checksum
+          <Icon name="shield" size={12} /> Add-on installed and checked
         </p>
-        <button class="link" onclick={remove}>Remove GPU pack</button>
+        <button class="link" onclick={remove}>Remove add-on</button>
       {/if}
     {/if}
     {#if error}<p class="error-text hint">{error}</p>{/if}
@@ -183,20 +181,22 @@
   </section>
 
   <section>
-    <span class="eyebrow">Downloader</span>
-    <p class="muted hint">If VODs from a site start failing to download, a newer yt-dlp usually fixes it.</p>
-    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update yt-dlp"}</button>
+    <span class="eyebrow">Video downloader</span>
+    <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
+    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update now"}</button>
     {#if ytDlpStatus}<p class="muted hint">{ytDlpStatus}</p>{/if}
   </section>
 
   <section>
     <span class="eyebrow">Privacy & security</span>
     <p class="hint">
-      Your transcripts, audio and searches stay on this computer. VODscribe has no account and no telemetry.
+      Your transcripts, audio and searches stay on this computer. There's no account, and VODscribe doesn't collect
+      anything about how you use it.
     </p>
     <p class="muted hint">
-      VODscribe contacts a video site when you add a VOD or press play. Everything it downloads to run (the speech
-      model, yt-dlp, the GPU pack) is checked against a published checksum or signature before it's used.
+      VODscribe only goes online to get the VODs you add, to play them, and to download the parts it needs to run. Those
+      parts are checked before they're used, to make sure they haven't been tampered with. Video files from your
+      computer never leave it.
     </p>
     {#if dataDir}
       <p class="muted hint">Your library is in:</p>
@@ -213,11 +213,11 @@
   <section>
     <span class="eyebrow">Storage</span>
     <p class="muted hint">
-      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library and transcripts aren't
-      included.
+      Downloaded parts and unfinished downloads{cacheBytes !== null ? ` use ${size(cacheBytes)}` : ""}. Your library and
+      transcripts aren't counted.
     </p>
     <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
-      {clearing ? "Clearing…" : "Clear downloads…"}
+      {clearing ? "Clearing…" : "Free up space…"}
     </button>
   </section>
 </div>

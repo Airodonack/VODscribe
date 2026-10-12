@@ -207,8 +207,7 @@ pub fn download_verified(
         let hash = hex(&hasher.finalize());
         if size.is_some_and(|size| len != size) || hash != sha256 {
             eprintln!("{}: got {len} bytes, sha256 {hash}", redact(url));
-            let name = dest.file_name().map_or_else(|| "The download".into(), |n| n.to_string_lossy().into_owned());
-            bail!("{name} didn't match its published checksum, so it wasn't kept. Try again.");
+            bail!("A download was damaged or changed on the way, so VODscribe threw it away. Try again.");
         }
         Ok(())
     })();

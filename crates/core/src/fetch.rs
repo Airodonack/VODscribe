@@ -187,17 +187,45 @@ fn parse_progress(rest: &str) -> Option<f64> {
     }
 }
 
-/// Reduces yt-dlp's stderr to its ERROR lines, which are the user-relevant part.
+/// Turns yt-dlp's stderr into a message for people: a plain sentence for the
+/// common failures, otherwise its ERROR lines (the full log goes to stderr).
 fn clean_error(stderr: &str) -> String {
-    let errors: Vec<&str> = stderr
-        .lines()
-        .filter_map(|l| l.strip_prefix("ERROR: "))
-        .collect();
-    if errors.is_empty() {
-        tools::last_lines(stderr, 3)
+    eprintln!("yt-dlp: {}", tools::last_lines(stderr, 10));
+    let errors: Vec<&str> = stderr.lines().filter_map(|l| l.strip_prefix("ERROR: ")).collect();
+    let raw = if errors.is_empty() { tools::last_lines(stderr, 3) } else { errors.join("\n") };
+    friendly(&raw).map_or_else(
+        // Drop yt-dlp's "[youtube] abc123: " prefix from what's left.
+        || {
+            let msg = raw.split_once("]").map_or(raw.as_str(), |(_, rest)| rest.trim_start());
+            let msg = msg.split_once(": ").filter(|(id, _)| !id.contains(' ')).map_or(msg, |(_, rest)| rest);
+            format!("Couldn't get this video: {msg}")
+        },
+        str::to_string,
+    )
+}
+
+fn friendly(error: &str) -> Option<&'static str> {
+    let e = error.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
+    Some(if has(&["unsupported url", "is not a valid url"]) {
+        "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
+    } else if has(&["private video", "video is private"]) {
+        "That video is private."
+    } else if has(&["members-only", "join this channel", "subscriber", "subscription"]) {
+        "That video is only for channel members or subscribers, so VODscribe can't get it."
+    } else if has(&["confirm your age", "age-restricted", "age restricted"]) {
+        "That video is age-restricted, so VODscribe can't get it."
+    } else if has(&["not a bot"]) {
+        "YouTube is asking to check that you're not a bot. Try again in a little while."
+    } else if has(&["unavailable", "has been removed", "does not exist", "404"]) {
+        "That video isn't available. It may have been deleted or made private."
+    } else if has(&["unable to download webpage", "timed out", "name resolution", "network is unreachable", "connection"]) {
+        "Couldn't connect. Check your internet connection and try again."
+    } else if has(&["requested format is not available"]) {
+        "That video has no audio VODscribe can download."
     } else {
-        errors.join("\n")
-    }
+        return None;
+    })
 }
 
 #[cfg(test)]
@@ -205,9 +233,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn errors_prefer_yt_dlps_error_lines() {
-        assert_eq!(clean_error("[info] x\nERROR: Video unavailable\nmore"), "Video unavailable");
-        assert_eq!(clean_error("one\ntwo\nthree\nfour\n"), "two\nthree\nfour");
+    fn errors_read_as_plain_sentences() {
+        assert_eq!(
+            clean_error("[info] x\nERROR: [youtube] abc123: Video unavailable\nmore"),
+            "That video isn't available. It may have been deleted or made private."
+        );
+        assert_eq!(clean_error("ERROR: [youtube] abc: Private video. Sign in"), "That video is private.");
+        assert_eq!(clean_error("ERROR: [twitch:vod] v12: Something odd happened"), "Couldn't get this video: Something odd happened");
+        assert_eq!(clean_error("one\ntwo\nthree\nfour\n"), "Couldn't get this video: two\nthree\nfour");
     }
 
     #[test]

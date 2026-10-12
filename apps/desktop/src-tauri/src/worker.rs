@@ -115,7 +115,7 @@ impl Worker {
         let deadline = Instant::now() + timeout;
         while !self.queue.lock().unwrap().jobs.is_empty() {
             if Instant::now() >= deadline {
-                anyhow::bail!("A job didn't stop in time. Try again.");
+                anyhow::bail!("Something was still running. Try again in a moment.");
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -250,6 +250,10 @@ fn finish(stage: Stage, ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<S
     Ok(())
 }
 
+/// The error note of a VOD the user stopped; the UI shows it as "Stopped", not "Failed".
+pub const STOPPED: &str = "Stopped";
+pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read audio.";
+
 /// Throws away a VOD's partial work, leaving it in the library as canceled.
 pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
     pipeline::remove_work_files(work_dir, vod_id);
@@ -257,7 +261,7 @@ pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
         db.clear_segments(vod_id)?;
         db.set_audio_path(vod_id, None)?;
         db.set_note(vod_id, None)?;
-        db.set_status(vod_id, Status::Error, 0.0, Some("Canceled"))
+        db.set_status(vod_id, Status::Error, 0.0, Some(STOPPED))
     })
 }
 
@@ -276,8 +280,8 @@ fn reporter<'a>(app: &'a AppHandle, vod_id: i64, progress: &'a mut f64) -> impl 
 
 fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
     let bin = ctx.paths.bin();
-    let yt_dlp = tools::find_yt_dlp(&bin).context("yt-dlp isn't installed.")?;
-    let ffmpeg = tools::find_ffmpeg(&bin).context("ffmpeg isn't installed.")?;
+    let yt_dlp = tools::find_yt_dlp(&bin).context("The video downloader isn't installed yet.")?;
+    let ffmpeg = tools::find_ffmpeg(&bin).context(NO_FFMPEG)?;
     let tools = pipeline::Tools { yt_dlp: &yt_dlp, ffmpeg: &ffmpeg };
     let app = ctx.app.clone();
     let audio = pipeline::download(&mut ctx.db, vod, &tools, &ctx.paths.work(), flag, reporter(&app, vod.id, progress))?;
@@ -294,7 +298,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
         ctx.db.set_status(vod.id, Status::Queued, 0.0, None)?;
         return Ok(());
     };
-    let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context("ffmpeg isn't installed.")?;
+    let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context(NO_FFMPEG)?;
     let (transcription, note) = plan_transcription(&ctx.paths)?;
     ctx.db.set_note(vod.id, note.as_deref())?;
     ctx.emit_vod(vod.id);
@@ -330,18 +334,18 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
         return Ok(cpu_only(None));
     }
     let pack = paths.gpu_pack();
-    let skip = |why: &str| Ok(cpu_only(Some(format!("Transcribed on the CPU: {why}."))));
+    let skip = |why: &str| Ok(cpu_only(Some(format!("Transcribed with the processor: {why}."))));
     if !gpu::is_installed(&pack) || !model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
-        return skip("the GPU pack isn't installed");
+        return skip("the graphics card add-on isn't installed");
     }
     let Ok(program) = tools::sidecar("vodscribe-worker-cuda") else {
-        return skip("the GPU worker is missing from this build");
+        return skip("this version of VODscribe can't use graphics cards");
     };
     let Some(info) = gpu::detect() else {
-        return skip("no NVIDIA GPU was found");
+        return skip("no NVIDIA graphics card was found");
     };
     let Some(batch) = gpu::batch_for_free_vram(info.free_mb) else {
-        return skip(&format!("the GPU was busy ({} MB free, {} MB needed)", info.free_mb, gpu::MIN_FREE_MB));
+        return skip("the graphics card was busy with something else");
     };
     let cuda = WorkerSpec {
         program,
@@ -351,5 +355,5 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
         batch,
         lib_dirs: vec![gpu::lib_dir(&pack)],
     };
-    Ok((Transcription { worker: cuda, fallback: Some(cpu) }, Some(format!("Transcribed on {}.", info.name))))
+    Ok((Transcription { worker: cuda, fallback: Some(cpu) }, Some("Transcribed with the graphics card.".into())))
 }
