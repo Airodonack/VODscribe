@@ -21,6 +21,18 @@ pub mod transcript;
 
 use std::path::PathBuf;
 
+/// Where a download is: the step ("Downloading <name>", then "<name> matches
+/// its SHA-256"), the bytes so far across the whole install (for a bar that
+/// only moves forward), and the bytes of the file under way.
+#[derive(Clone, Copy, Debug)]
+pub struct Progress<'a> {
+    pub step: &'a str,
+    pub done: u64,
+    pub total: u64,
+    pub file_done: u64,
+    pub file_size: u64,
+}
+
 /// The error a job ends with when it was told to stop (pause, cancel, delete).
 /// Check for it with `is_canceled` rather than by its message.
 #[derive(Debug)]

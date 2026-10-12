@@ -268,6 +268,7 @@
   .mb {
     font-family: var(--mono);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
   .verified {

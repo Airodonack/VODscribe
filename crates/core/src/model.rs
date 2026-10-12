@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result};
 
-use crate::net;
+use crate::{Progress, net};
 
 /// Where model files are served from, as `<base>/<model id>/<file>`: the
 /// `vodscribe` R2 bucket, on its custom domain.
@@ -29,6 +29,8 @@ pub struct ModelFile {
 
 pub struct ModelSpec {
     pub id: &'static str,
+    /// The exact model, for progress.
+    pub name: &'static str,
     pub files: &'static [ModelFile],
 }
 
@@ -41,6 +43,7 @@ impl ModelSpec {
 /// For the CPU: weight-only int8 with int8 math, within ~1% of fp32.
 pub const CPU_MODEL: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v3-int8wo",
+    name: "Parakeet TDT 0.6B v3 (int8)",
     files: &[
         ModelFile { name: "decoder.int8.onnx", size: 47233763, sha256: "1d9e0a3abd09af7e4ab9584d2b93b0e0430c0dadc0343502ac2e39b3d77ede3a" },
         ModelFile { name: "encoder.int8.onnx", size: 41894229, sha256: "c5a5164abc5ff7acb6fce27d307cee6592edd0f3ba3b93c1bf6be531f3d2d348" },
@@ -53,6 +56,7 @@ pub const CPU_MODEL: ModelSpec = ModelSpec {
 /// For NVIDIA GPUs: mixed-precision fp16, half the VRAM of fp32 at the same speed.
 pub const GPU_MODEL: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v3-fp16",
+    name: "Parakeet TDT 0.6B v3 (fp16)",
     files: &[
         ModelFile { name: "decoder.fp16.onnx", size: 23621639, sha256: "379bc61b3adb0e7bd1f0e73d5e663d554ec382a4e863ced2c2cc2dac71541cbd" },
         ModelFile { name: "encoder.fp16.onnx", size: 21835082, sha256: "7d92e4ed3b41543db59e795c32b24bce8dfc2d19ae19f332924624e98841b6d7" },
@@ -77,12 +81,12 @@ pub fn is_installed(dir: &Path, spec: &ModelSpec) -> bool {
 }
 
 /// Downloads the model's files, verifying each. Files finished by an earlier,
-/// interrupted attempt are kept. `on_progress` receives (bytes done, total).
+/// interrupted attempt are kept.
 pub fn install(
     models_root: &Path,
     spec: &ModelSpec,
     cancel: &AtomicBool,
-    mut on_progress: impl FnMut(u64, u64),
+    mut on_progress: impl FnMut(Progress),
 ) -> Result<PathBuf> {
     let dest = model_dir(models_root, spec);
     if is_installed(&dest, spec) {
@@ -96,13 +100,18 @@ pub fn install(
     let mut done = 0;
     for file in spec.files {
         let path = staging.join(file.name);
-        if !fs::metadata(&path).is_ok_and(|m| m.len() == file.size) {
+        let size = file.size;
+        if !fs::metadata(&path).is_ok_and(|m| m.len() == size) {
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
-            net::download_verified(&url, &path, Some(file.size), file.sha256, cancel, |n| on_progress(done + n, total))
-                .with_context(|| format!("download {}", file.name))?;
+            let step = format!("Downloading {} · {}", spec.name, file.name);
+            net::download_verified(&url, &path, Some(size), file.sha256, cancel, |n| {
+                on_progress(Progress { step: &step, done: done + n, total, file_done: n, file_size: size })
+            })
+            .with_context(|| format!("download {}", file.name))?;
         }
-        done += file.size;
-        on_progress(done, total);
+        done += size;
+        let step = format!("{} matches its SHA‑256", file.name);
+        on_progress(Progress { step: &step, done, total, file_done: size, file_size: size });
     }
 
     let _ = fs::remove_dir_all(&dest);

@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::{net, tools};
+use crate::{Progress, net, tools};
 
 /// Free VRAM needed before a job is sent to the GPU (the smallest batch).
 pub const MIN_FREE_MB: u64 = 3500;
@@ -173,19 +173,7 @@ pub fn download_size() -> u64 {
     platform().map_or(0, |p| p.sherpa.size + p.wheels.iter().map(|(_, w)| w.size).sum::<u64>())
 }
 
-/// Where an install is: the step, the bytes so far across the whole pack (for
-/// a bar that only moves forward), and the bytes of the file under way.
-#[derive(Clone, Copy, Debug)]
-pub struct Progress<'a> {
-    pub step: &'a str,
-    pub done: u64,
-    pub total: u64,
-    pub file_done: u64,
-    pub file_size: u64,
-}
-
-/// Downloads and unpacks the GPU pack. `on_progress` receives
-/// (step label, bytes done, bytes total) for each download in turn.
+/// Downloads and unpacks the GPU pack, reporting each download in turn.
 pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(Progress)) -> Result<()> {
     let platform = platform().context("GPU transcription isn't available on this platform")?;
     let staging = staging_dir(pack_dir);

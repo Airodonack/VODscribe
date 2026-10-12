@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
 
-use crate::net;
+use crate::{Progress, net};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
@@ -25,6 +25,8 @@ pub enum Archive {
 pub struct Dep {
     /// File name in the app's bin dir, without the platform's exe suffix.
     pub name: &'static str,
+    /// The exact program and version, for progress.
+    pub label: &'static str,
     pub url: &'static str,
     pub size: u64,
     pub sha256: &'static str,
@@ -39,6 +41,7 @@ pub fn ffmpeg() -> Option<Dep> {
     Some(match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Dep {
             name: "ffmpeg",
+            label: "FFmpeg 9.0.1",
             url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linux64-gpl-9.0.tar.xz",
             size: 126600656,
             sha256: "182c1b509720e939bb47bfb47dc29cc0c298640401128e3dce8627d10707eb5a",
@@ -47,6 +50,7 @@ pub fn ffmpeg() -> Option<Dep> {
         },
         ("linux", "aarch64") => Dep {
             name: "ffmpeg",
+            label: "FFmpeg 9.0.1",
             url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linuxarm64-gpl-9.0.tar.xz",
             size: 108761296,
             sha256: "e2dd447c8a47849c5812d87e54a47b20ae0f3603d38989440f4a5fe1af8755b1",
@@ -55,6 +59,7 @@ pub fn ffmpeg() -> Option<Dep> {
         },
         ("windows", "x86_64") => Dep {
             name: "ffmpeg",
+            label: "FFmpeg 9.0.1",
             url: "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-win64-gpl-9.0.zip",
             size: 169202846,
             sha256: "ec9db2cda1f5894ab95446076ad8bf49379db4b53c02e778ad3b49adf91fec83",
@@ -63,6 +68,7 @@ pub fn ffmpeg() -> Option<Dep> {
         },
         ("macos", "aarch64") => Dep {
             name: "ffmpeg",
+            label: "FFmpeg 9.0.2",
             url: "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
             size: 28395699,
             sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
@@ -71,6 +77,7 @@ pub fn ffmpeg() -> Option<Dep> {
         },
         ("macos", "x86_64") => Dep {
             name: "ffmpeg",
+            label: "FFmpeg 9.0.2",
             url: "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
             size: 33816391,
             sha256: "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
@@ -111,14 +118,18 @@ pub fn deno() -> Option<Dep> {
         ),
         _ => return None,
     };
-    Some(Dep { name: "deno", url, size, sha256, archive: Archive::Zip, member: if cfg!(windows) { "deno.exe" } else { "deno" } })
+    Some(Dep { name: "deno", label: "Deno 2.9.7", url, size, sha256, archive: Archive::Zip, member: if cfg!(windows) { "deno.exe" } else { "deno" } })
 }
 
 /// Downloads and checks `dep`, then unpacks just its program into `bin_dir`.
-pub fn install(dep: &Dep, bin_dir: &Path, cancel: &AtomicBool, on_progress: impl FnMut(u64)) -> Result<PathBuf> {
+pub fn install(dep: &Dep, bin_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(Progress)) -> Result<PathBuf> {
     fs::create_dir_all(bin_dir)?;
     let archive = bin_dir.join(format!("{}.download", dep.name));
-    net::download_verified(dep.url, &archive, Some(dep.size), dep.sha256, cancel, on_progress)?;
+    let size = dep.size;
+    let step = format!("Downloading {}", dep.label);
+    let mut report = |step: &str, n| on_progress(Progress { step, done: n, total: size, file_done: n, file_size: size });
+    net::download_verified(dep.url, &archive, Some(size), dep.sha256, cancel, |n| report(&step, n))?;
+    report(&format!("{} matches its SHA‑256 · unpacking", dep.label), size);
     let dest = bin_dir.join(format!("{}{EXE}", dep.name));
     let new = dest.with_extension("new");
     let result = unpack(dep, &archive, &new, cancel).and_then(|()| {

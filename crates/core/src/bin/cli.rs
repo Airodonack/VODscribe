@@ -18,8 +18,8 @@ fn main() -> Result<()> {
                 let (p, _) = tools::install_yt_dlp(&paths.bin(), &cancel, |_, _, _| {})?;
                 println!("installed {}", p.display());
             }
-            model::install(&paths.models(), &model::CPU_MODEL, &cancel, |n, total| {
-                eprint!("\rmodel {:.0}%", n as f64 / total as f64 * 100.0)
+            model::install(&paths.models(), &model::CPU_MODEL, &cancel, |p| {
+                eprint!("\rmodel {:.0}%", p.done as f64 / p.total as f64 * 100.0)
             })?;
             println!("\nready");
         }

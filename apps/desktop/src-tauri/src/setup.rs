@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
-use vodscribe_core::{deps, model, tools};
+use vodscribe_core::{Progress, deps, model, tools};
 
 use crate::{AppState, CmdResult, err};
 
@@ -59,32 +59,37 @@ pub(crate) async fn open_data_dir(app: AppHandle, state: State<'_, AppState>) ->
     app.opener().open_path(state.paths.root.display().to_string(), None::<String>).map_err(err)
 }
 
-/// Downloads yt-dlp and the speech model if missing. Progress arrives as
-/// `setup-progress` events and completion as `setup-done` (an error message or null).
+/// Downloads what's missing. Progress arrives as `setup-progress` events
+/// (item, step, done, total, file done, file size), where done / total span
+/// the item and the sizes are null while unknown (yt-dlp's), and completion as
+/// `setup-done` (an error message or null).
 #[tauri::command]
 pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
     spawn_install(app, state.setup_running.clone(), "setup-done", move |app, never| {
-        let progress = |step: &str, done: u64, total: Option<u64>| {
-            let _ = app.emit("setup-progress", (step, done, total));
+        let progress = |item: &str, p: Progress| {
+            let _ = app.emit("setup-progress", (item, p.step, p.done, p.total, p.file_done, p.file_size));
         };
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
-            tools::install_yt_dlp(&bin, never, |_, n, t| progress("yt-dlp", n, t))?;
+            // Its size isn't known until it arrives.
+            tools::install_yt_dlp(&bin, never, |step, n, _| {
+                let _ = app.emit("setup-progress", ("yt-dlp", step, n, None::<u64>, n, None::<u64>));
+            })?;
         }
         if tools::find_ffmpeg(&bin).is_none()
             && let Some(dep) = deps::ffmpeg()
         {
-            deps::install(&dep, &bin, never, |n| progress("ffmpeg", n, Some(dep.size)))?;
+            deps::install(&dep, &bin, never, |p| progress("ffmpeg", p))?;
         }
-        model::install(&paths.models(), &model::CPU_MODEL, never, |n, t| progress("model", n, Some(t)))?;
+        model::install(&paths.models(), &model::CPU_MODEL, never, |p| progress("model", p))?;
         model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
         app.state::<AppState>().worker.wake();
         // Last, since it's optional: only some YouTube VODs need it.
         // If it fails, setup still succeeded; YouTube links that need it will say so.
         if tools::find_js_runtime(&bin).is_none()
             && let Some(dep) = deps::deno()
-            && let Err(e) = deps::install(&dep, &bin, never, |n| progress("deno", n, Some(dep.size)))
+            && let Err(e) = deps::install(&dep, &bin, never, |p| progress("deno", p))
         {
             eprintln!("Deno wasn't installed: {e:#}");
         }
@@ -191,9 +196,8 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         if pack_needed {
             gpu::install(&paths.gpu_pack(), never, |p| progress(p.step, p.done, total, p.file_done, p.file_size))?;
         }
-        let model_label = "Downloading the GPU speech model (Parakeet TDT 0.6B v3, fp16)";
-        model::install(&paths.models(), &model::GPU_MODEL, never, |n, size| {
-            progress(model_label, pack_total + n, total, n, size)
+        model::install(&paths.models(), &model::GPU_MODEL, never, |p| {
+            progress(p.step, pack_total + p.done, total, p.file_done, p.file_size)
         })?;
         progress("Every file matches its SHA‑256", total, total, 0, 0);
         Ok(())

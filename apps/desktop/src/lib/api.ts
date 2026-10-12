@@ -105,8 +105,18 @@ export const events = {
   vodProgress: (cb: (id: number, status: Status, progress: number) => void) =>
     listen<[number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
-  setupProgress: (cb: (step: string, done: number, total: number | null) => void) =>
-    listen<[string, number, number | null]>("setup-progress", (e) => cb(...e.payload)),
+  /** `done` / `total` span the item (for the bar); `fileDone` / `fileSize` the file under way. Sizes are null while unknown. */
+  setupProgress: (
+    cb: (
+      item: string,
+      step: string,
+      done: number,
+      total: number | null,
+      fileDone: number,
+      fileSize: number | null,
+    ) => void,
+  ) =>
+    listen<[string, string, number, number | null, number, number | null]>("setup-progress", (e) => cb(...e.payload)),
   setupDone: (cb: (error: string | null) => void) => listen<string | null>("setup-done", (e) => cb(e.payload)),
   /** `done` / `total` span the whole add-on (for the bar); `fileDone` / `fileSize` the file under way. */
   gpuProgress: (cb: (step: string, done: number, total: number, fileDone: number, fileSize: number) => void) =>

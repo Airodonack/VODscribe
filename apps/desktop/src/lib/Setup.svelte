@@ -9,10 +9,16 @@
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
 
-  // Each step's fraction done, or null while its size is unknown (the video downloader's).
-  let progress = $state<Record<string, number | null>>({});
-  // The step under way, from the latest progress event.
+  // The item under way and its step, named like the Settings downloads:
+  // "Downloading <exact name>", then "<name> matches its SHA-256".
   let current = $state<string | null>(null);
+  let step = $state<{
+    label: string;
+    done: number;
+    total: number | null;
+    fileDone: number;
+    fileSize: number | null;
+  } | null>(null);
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
@@ -21,11 +27,11 @@
 
   onMount(async () => {
     unlisten.push(
-      await events.setupProgress((step, done, total) => {
-        // A new step means the last one finished: refresh so it shows as done and checked.
-        if (current && current !== step) onchange();
-        current = step;
-        progress[step] = total ? done / total : null;
+      await events.setupProgress((item, label, done, total, fileDone, fileSize) => {
+        // A new item means the last one finished: refresh so it shows as done and checked.
+        if (current && current !== item) onchange();
+        current = item;
+        step = { label, done, total, fileDone, fileSize };
       }),
       await events.setupDone((e) => {
         error = e;
@@ -35,6 +41,8 @@
   });
   onDestroy(() => unlisten.forEach((u) => u()));
 
+  const mb = (bytes: number) => Math.round(bytes / 1e6).toLocaleString();
+
   const CHECKED =
     "VODscribe checked that this is exactly the file that was published, so it wasn't damaged or tampered with.";
   let items = $derived([
@@ -42,7 +50,7 @@
       key: "yt-dlp",
       name: "Video downloader",
       what: "gets the audio from Kick, Twitch and YouTube",
-      details: "yt-dlp, from github.com/yt-dlp/yt-dlp.",
+      page: "https://github.com/yt-dlp/yt-dlp",
       checked: "VODscribe checked it against its makers' official signature, so it wasn't damaged or tampered with.",
       done: status.yt_dlp,
       managed: status.yt_dlp_managed,
@@ -53,8 +61,7 @@
       key: "ffmpeg",
       name: "Video reader",
       what: "opens videos so VODscribe can hear them",
-      details:
-        os === "mac" ? "FFmpeg 9.0, from ffmpeg.martin-riedl.de." : "FFmpeg 9.0, from github.com/BtbN/FFmpeg-Builds.",
+      page: os === "mac" ? "https://ffmpeg.martin-riedl.de" : "https://github.com/BtbN/FFmpeg-Builds",
       checked: CHECKED,
       done: status.ffmpeg,
       managed: status.ffmpeg_managed,
@@ -65,7 +72,7 @@
       key: "model",
       name: "Speech recognition",
       what: "turns speech into text, about 900 MB",
-      details: "NVIDIA's Parakeet TDT 0.6B v3 speech model, run with sherpa-onnx. From dl.vodscribe.com.",
+      page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
       checked: CHECKED,
       done: status.model,
       managed: true,
@@ -76,7 +83,7 @@
       key: "deno",
       name: "YouTube helper",
       what: "some YouTube VODs need it",
-      details: "Deno 2.9.7, a JavaScript runtime the video downloader uses for YouTube. From github.com/denoland/deno.",
+      page: "https://github.com/denoland/deno",
       checked: CHECKED,
       done: status.js_runtime,
       managed: status.js_runtime_managed,
@@ -87,7 +94,7 @@
 
   async function start() {
     error = null;
-    progress = {};
+    step = null;
     current = null;
     await api.runSetup();
     onchange();
@@ -112,8 +119,13 @@
             ></span>{:else if !item.downloads && !item.optional}<Icon name="x" size={14} />{:else}{i + 1}{/if}
         </span>
         <div>
-          <!-- The plain name for everyone; exact names and sources on hover. -->
-          <Tip text={item.details}><strong class="name-detail">{item.name}</strong></Tip>
+          <!-- The plain name for everyone; it links to where the part comes from. -->
+          <a
+            class="name-link"
+            href={item.page}
+            title={item.page}
+            onclick={(e) => (e.preventDefault(), openUrl(item.page))}><strong>{item.name}</strong></a
+          >
           <span class="muted">{item.what}</span>
           {#if item.done && item.managed}
             <p class="verified">
@@ -122,8 +134,22 @@
           {:else if item.done}
             <p class="detail muted">Using the one already installed on this computer.</p>
           {:else if busy}
-            <div class="bar">
-              <Progress value={progress[item.key] ?? 0} indeterminate={progress[item.key] === null} />
+            <div class="progress">
+              <!-- The exact component and its checks, as in Settings. -->
+              {#if step}
+                <span class="muted step">
+                  {step.label}…
+                  {#if step.label.startsWith("Downloading") && step.fileDone}
+                    <span class="mb"
+                      >{mb(step.fileDone)}{#if step.fileSize}&nbsp;/ {mb(step.fileSize)}{/if} MB</span
+                    >
+                  {/if}
+                </span>
+              {/if}
+              <Progress
+                value={step?.total ? step.done / step.total : 0}
+                indeterminate={step !== null && step.total === null}
+              />
             </div>
           {:else if item.key === "ffmpeg" && !item.downloads}
             <p class="detail">
@@ -275,8 +301,20 @@
     }
   }
 
-  .bar {
+  .progress {
+    display: grid;
+    gap: 5px;
     margin-top: 8px;
+  }
+
+  .step {
+    font-size: 12px;
+  }
+
+  .mb {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
 
   .actions {
@@ -290,11 +328,15 @@
     align-items: center;
   }
 
-  /* Hovering shows the exact name and source. */
-  .name-detail {
-    cursor: help;
-    text-decoration: underline dotted var(--border);
+  .name-link {
+    color: inherit;
+    text-decoration: underline var(--border);
     text-underline-offset: 3px;
+  }
+
+  .name-link:hover {
+    color: var(--accent);
+    text-decoration-color: currentColor;
   }
 
   .detail a {
