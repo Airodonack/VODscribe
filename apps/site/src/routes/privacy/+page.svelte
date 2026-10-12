@@ -47,6 +47,10 @@
       model (from dl.vodscribe.com). The optional GPU add-on comes from GitHub and NVIDIA's packages on PyPI. Every file is
       checked against a known fingerprint before it's used.
     </li>
+    <li>
+      <strong>Check for updates.</strong> Once a day it fetches a small file from dl.vodscribe.com that names the latest version.
+      Updates install only when you say so, and only if they're signed with VODscribe's key.
+    </li>
   </ul>
   <p>
     Those sites see what any website sees when you visit: your IP address and what was requested. dl.vodscribe.com is

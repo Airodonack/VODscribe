@@ -55,5 +55,12 @@
       "signingIdentity": "-"
     },
     "longDescription": "Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by phrase. Clicking a match plays the VOD from that moment. Transcription runs locally with NVIDIA's Parakeet model."
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREMkRENkU3QjRENUU5N0EKUldSNjZkVzA1OVl0VGFwTWtqS2xVYkxqYWU1SGdFeGZGWVh6K0FsOHlHa244Tk5DQVZrRjZKQXYK",
+      "endpoints": ["https://dl.vodscribe.com/releases/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

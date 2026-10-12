@@ -6,6 +6,7 @@
   import { PRIVACY } from "./links";
   import Progress from "./Progress.svelte";
   import Tip from "./Tip.svelte";
+  import { updates } from "./updates.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
 
@@ -215,15 +216,34 @@
   </section>
 
   <section>
+    <span class="eyebrow">Updates</span>
+    <p class="muted hint">VODscribe checks once a day, and asks before installing anything.</p>
+    {#if updates.available}
+      <button class="primary" onclick={() => updates.install()} disabled={updates.installing}>
+        {updates.installing ? "Updating…" : `Update to ${updates.available.version} and restart`}
+      </button>
+    {:else}
+      <button onclick={() => updates.check(true)} disabled={updates.checking}>
+        {updates.checking ? "Checking…" : "Check for updates"}
+      </button>
+    {/if}
+    {#if updates.error}
+      <p class="error-text hint">{updates.error}</p>
+    {:else if updates.status}
+      <p class="muted hint">{updates.status}</p>
+    {/if}
+  </section>
+
+  <section>
     <span class="eyebrow">Privacy & security</span>
     <p class="hint">
       Your transcripts, audio and searches stay on this computer. There's no account, and VODscribe doesn't collect
       anything about how you use it.
     </p>
     <p class="muted hint">
-      VODscribe only goes online to get the VODs you add, to play them, and to download the parts it needs to run. Those
-      parts are checked before they're used, to make sure they haven't been tampered with. Video files from your
-      computer never leave it.
+      VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, and to
+      check for updates. Those parts and updates are checked before they're used, to make sure they haven't been
+      tampered with. Video files from your computer never leave it.
     </p>
     {#if dataDir}
       <p class="muted hint">Your library is in:</p>

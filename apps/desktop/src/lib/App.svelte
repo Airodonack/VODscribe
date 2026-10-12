@@ -11,6 +11,7 @@
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { DEMO, demoOff, keysForApp } from "./demo";
+  import { updates } from "./updates.svelte";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -88,6 +89,7 @@
       loaded ? f(...args) : early.push(() => f(...args));
 
   onMount(async () => {
+    unlisten.push(updates.start());
     unlisten.push(
       await events.vod(
         afterLoad((vod) => {
@@ -147,6 +149,10 @@
     clearTimeout(timer);
     timer = setTimeout(runSearch, 120);
     return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    updates.busy = vods.some((v) => v.status === "downloading" || v.status === "transcribing");
   });
 
   function play(vodId: number, time: number) {

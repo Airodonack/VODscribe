@@ -11,6 +11,7 @@
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
   import { Reorder } from "./reorder.svelte";
+  import UpdateBanner from "./UpdateBanner.svelte";
   import VodRow from "./VodRow.svelte";
 
   let {
@@ -223,6 +224,8 @@
       Made by {AUTHOR}
     </button>
   </div>
+
+  <UpdateBanner />
 
   <form onsubmit={add}>
     <input

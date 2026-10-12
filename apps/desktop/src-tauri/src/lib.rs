@@ -45,6 +45,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
             let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);

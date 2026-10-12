@@ -24,6 +24,8 @@ export default defineConfig({
       "@tauri-apps/plugin-opener": here("src/lib/tauri/opener.ts"),
       "@tauri-apps/plugin-clipboard-manager": here("src/lib/tauri/clipboard.ts"),
       "@tauri-apps/plugin-dialog": here("src/lib/tauri/dialog.ts"),
+      "@tauri-apps/plugin-updater": here("src/lib/tauri/updater.ts"),
+      "@tauri-apps/plugin-process": here("src/lib/tauri/process.ts"),
     },
     // The app's components import Svelte from apps/desktop; there must be one copy.
     dedupe: ["svelte"],

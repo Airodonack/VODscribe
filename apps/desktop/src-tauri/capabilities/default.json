@@ -10,6 +10,8 @@
       "allow": [{ "url": "https://*" }]
     },
     "clipboard-manager:allow-write-text",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "updater:default",
+    "process:allow-restart"
   ]
 }
