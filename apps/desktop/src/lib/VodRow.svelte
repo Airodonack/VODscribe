@@ -3,6 +3,7 @@
   // row element itself (selection, dragging) belongs to Library, since
   // animate:flip has to sit directly inside its keyed list.
   import { api, type Vod } from "./api";
+  import { demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { formatTime, platformName } from "./platform";
   import Progress from "./Progress.svelte";
@@ -152,11 +153,18 @@
       onclick={retranscribe}
       title={vod.outdated ? "Transcribe again with the newer version" : "Transcribe again"}
       aria-label="Transcribe again"
+      {...demoOff("In the app, this transcribes the VOD again.")}
     >
       <Icon name="redo" size={15} />
     </button>
   {/if}
-  <button class="act" onclick={remove} title="Remove" aria-label="Remove">
+  <button
+    class="act"
+    onclick={remove}
+    title="Remove"
+    aria-label="Remove"
+    {...demoOff("In the app, this removes the VOD and its transcript.")}
+  >
     <Icon name="trash" size={15} />
   </button>
 </div>

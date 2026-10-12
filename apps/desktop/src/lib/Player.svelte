@@ -5,6 +5,7 @@
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
+  import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
   import { formatTime, platformName, watchUrl } from "./platform";
 
@@ -82,7 +83,7 @@
   const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (!active && (key === " " || key === "k")) {

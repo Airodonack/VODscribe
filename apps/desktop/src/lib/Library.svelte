@@ -6,6 +6,7 @@
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
+  import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
@@ -118,6 +119,8 @@
   // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
   let draggingInside = false;
   function onDragOver(e: DragEvent) {
+    // The demo's page is a website: nothing can be dropped on it.
+    if (DEMO) return;
     const types = e.dataTransfer?.types ?? [];
     if (draggingInside || (!types.includes("text/uri-list") && !types.includes("text/plain"))) return;
     e.preventDefault();
@@ -128,6 +131,7 @@
     if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) dropping = false;
   }
   function onDrop(e: DragEvent) {
+    if (DEMO) return;
     dropping = false;
     const data = e.dataTransfer;
     if (!data || draggingInside) return;
@@ -221,13 +225,30 @@
   </div>
 
   <form onsubmit={add}>
-    <input type="url" placeholder="Paste a VOD link…" bind:value={url} disabled={adding} aria-label="VOD link" />
-    <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
+    <input
+      type="url"
+      placeholder="Paste a VOD link…"
+      bind:value={url}
+      disabled={adding}
+      readonly={DEMO}
+      aria-label="VOD link"
+      {...demoOff("In the app, paste a Kick, Twitch or YouTube link here to transcribe it.")}
+    />
+    <button
+      class="primary"
+      disabled={adding || (!url.trim() && !DEMO)}
+      {...demoOff("In the app, paste a Kick, Twitch or YouTube link here to transcribe it.")}
+      >{adding ? "Adding…" : "Add"}</button
+    >
   </form>
   <p class="more muted">
-    or <button class="link" onclick={pickFiles} disabled={adding}>add video files…</button> or drop {linksDrop
-      ? "files and links"
-      : "video files"} anywhere
+    or <button
+      class="link"
+      onclick={pickFiles}
+      disabled={adding}
+      {...demoOff("In the app, you can transcribe video files from your computer too.")}>add video files…</button
+    >
+    or drop {linksDrop ? "files and links" : "video files"} anywhere
   </p>
   {#if error}
     <p class="error-text add-error">{error}</p>
