@@ -4,7 +4,7 @@
 
 <h1 align="center">VODscribe</h1>
 
-Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by phrase. Clicking a match plays the VOD from that moment. Everything runs locally: [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the audio, ffmpeg decodes it, and NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)) transcribes it.
+Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by phrase. Clicking a match plays the VOD from that moment. Transcription runs on your computer: [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the audio, ffmpeg decodes it, and NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)) transcribes it.
 
 ## Using it
 
@@ -12,10 +12,18 @@ On first run the app downloads yt-dlp and the speech model (about 900 MB, from `
 
 - **Library.** Paste a link in the sidebar. VODs download and transcribe in the background, one of each at a time, working up from the bottom of the list, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced. Drag a row to reorder the library (or `Alt+↑`/`↓` on a focused row); the lowest waiting VOD is processed next, and searches across the library list matches in the same order. New VODs go on top, so they wait their turn unless dragged down.
 - **Search.** Searches are exact phrases, so fewer words match more. With a VOD selected, the chip in the search field toggles between searching just that VOD and the whole library.
-- **Player.** Selecting a VOD opens its player; clicking a match or a transcript line jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
+- **Player.** Selecting a VOD shows its thumbnail; clicking it, a match or a transcript line loads the player and jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
 - **GPU.** NVIDIA GPU users can download an optional GPU pack (about 3 GB) from the settings. Transcription falls back to the CPU when the GPU is busy or has too little free memory.
 - **Older models.** When a release ships a new speech model, transcripts made with the previous one are marked. They still work; re-transcribing replaces them.
-- **Storage.** "Clear downloads" in the settings deletes everything that can be downloaded again (models, tools, the GPU pack, audio). The library and transcripts are kept.
+- **Storage.** "Clear downloads" in the settings deletes everything that can be downloaded again (models, tools, the GPU pack, audio). The library and transcripts are kept. Removing a VOD scrubs its transcript from the database file.
+
+### Privacy
+
+Audio, transcripts and searches stay on your computer; there's no account, telemetry or update check. The app contacts other servers only for these:
+
+- **Setup and updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key), the speech model from `dl.vodscribe.com`, and the optional GPU pack from GitHub and PyPI (each file pinned by SHA-256).
+- **Adding a VOD:** yt-dlp fetches its details and audio from the platform, and the app saves a copy of its thumbnail (asking Kick's API for one on Kick).
+- **Playing a VOD:** only after you click play or a timestamp, the platform's player loads (YouTube's privacy-enhanced `youtube-nocookie.com` embed, Twitch's player, or Kick's stream). YouTube and Twitch run in sandboxed frames with no access to the app.
 
 The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.vodscribe` on Linux, `~/Library/Application Support/app.vodscribe` on macOS and `%APPDATA%\app.vodscribe` on Windows. Downloads (`models`, `bin`, `gpu`, `work`) go in the same folder, except on Windows, where they go in `%LOCALAPPDATA%\app.vodscribe` so they don't roam.
 
