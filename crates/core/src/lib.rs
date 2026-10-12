@@ -9,6 +9,7 @@ pub mod db;
 pub mod fetch;
 pub mod gpu;
 pub mod kick;
+pub mod local;
 pub mod model;
 pub mod net;
 pub mod pipeline;

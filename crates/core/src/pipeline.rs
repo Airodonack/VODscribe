@@ -59,6 +59,10 @@ pub fn download(
     cancel: &AtomicBool,
     mut report: impl FnMut(Status, f64),
 ) -> Result<PathBuf> {
+    // A local file is transcribed where it is: there's nothing to download.
+    if let Some(source) = &vod.source_path {
+        return crate::local::source(source);
+    }
     fs::create_dir_all(work_dir)?;
     let info = info_path(work_dir, vod.id);
     let fresh = fs::metadata(&info)
@@ -222,6 +226,50 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
     use std::time::Instant;
+
+    /// Every path that cleans up after a VOD leaves a local file alone.
+    #[test]
+    fn local_files_survive_every_cleanup() {
+        let root = std::env::temp_dir().join(format!("vodscribe-local-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let paths = crate::Paths::new(root.join("data"));
+        paths.ensure().unwrap();
+        let mine = root.join("mine");
+        fs::create_dir_all(&mine).unwrap();
+        let source = mine.join("1.mp4");
+        fs::write(&source, b"the user's video").unwrap();
+
+        let mut db = Db::open(&paths.db()).unwrap();
+        let info = VodInfo {
+            platform: crate::local::PLATFORM.into(),
+            platform_id: source.to_string_lossy().into_owned(),
+            url: source.to_string_lossy().into_owned(),
+            title: "1".into(),
+            channel: None,
+            duration: Some(1.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0;
+        db.set_source_path(vod.id, &source.to_string_lossy()).unwrap();
+        let vod = db.vod(vod.id).unwrap().unwrap();
+
+        let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
+        let tools = Tools { yt_dlp: &yt_dlp, ffmpeg: Path::new("/nonexistent/ffmpeg") };
+        let audio = download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).unwrap();
+        assert_eq!(audio, source, "transcribed in place, not copied");
+        db.set_audio_path(vod.id, Some(&audio.to_string_lossy())).unwrap();
+
+        remove_work_files(&paths.work(), vod.id);
+        paths.clear_cache().unwrap();
+        db.forget_downloads().unwrap();
+        db.delete_vod(vod.id).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"the user's video");
+
+        fs::remove_file(&source).unwrap();
+        assert!(download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn a_stop_kills_a_quiet_worker_promptly() {

@@ -63,6 +63,8 @@ pub struct Vod {
     /// with the `thumbnail` command). `None` until fetched; `""` if the VOD has no
     /// usable image, so it isn't tried again.
     pub thumb: Option<String>,
+    /// For a file on this computer, its path. It's read in place, never changed.
+    pub source_path: Option<String>,
     /// Has transcript segments from a model this version no longer uses (or
     /// from before models were recorded). Finished VODs can be re-transcribed;
     /// unfinished ones start over when they resume.
@@ -148,11 +150,13 @@ UPDATE vods SET position = (
 const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 1);";
 /// v7: the file name of the VOD's local thumbnail (see `thumbs`).
 const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
+/// v8: for a file on this computer (see `local`), where it is.
+const MIGRATE_V8: &str = "ALTER TABLE vods ADD COLUMN source_path TEXT;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
-     note, model, thumb, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
+     note, model, thumb, source_path, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -173,6 +177,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         added_at: r.get("added_at")?,
         note: r.get("note")?,
         thumb: r.get("thumb")?,
+        source_path: r.get("source_path")?,
         outdated: {
             let model: Option<String> = r.get("model")?;
             let has_segments: bool = r.get("has_segments")?;
@@ -193,7 +198,7 @@ impl Db {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         // Migration n brings the schema to version n + 1; user_version is how many have run.
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7];
+        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             let latest = migrations.len();
@@ -290,6 +295,11 @@ impl Db {
 
     pub fn audio_path(&self, id: i64) -> Result<Option<String>> {
         Ok(self.conn.query_row("SELECT audio_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    pub fn set_source_path(&self, id: i64, path: &str) -> Result<()> {
+        self.conn.execute("UPDATE vods SET source_path = ?2 WHERE id = ?1", params![id, path])?;
+        Ok(())
     }
 
     pub fn set_audio_path(&self, id: i64, path: Option<&str>) -> Result<()> {
