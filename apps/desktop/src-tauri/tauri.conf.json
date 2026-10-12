@@ -51,6 +51,8 @@
     ],
     "shortDescription": "Searchable transcripts for Kick, Twitch and YouTube VODs",
     "category": "Video",
+    "publisher": "Airodonack",
+    "copyright": "© 2026 Airodonack",
     "macOS": {
       "signingIdentity": "-"
     },

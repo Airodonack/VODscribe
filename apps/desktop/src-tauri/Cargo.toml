@@ -1,6 +1,8 @@
 [package]
 name = "vodscribe"
 description = "Searchable transcripts for Kick, Twitch and YouTube VODs"
+# The .deb and .rpm list this as the maintainer.
+authors = ["Airodonack"]
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
