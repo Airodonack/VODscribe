@@ -149,32 +149,33 @@ const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES (
 /// v7: the file name of the VOD's local thumbnail (see `thumbs`).
 const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
 
+/// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model,
-     EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id), thumb";
+    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
+     note, model, thumb, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
-        id: r.get(0)?,
+        id: r.get("id")?,
         info: VodInfo {
-            platform: r.get(1)?,
-            platform_id: r.get(2)?,
-            url: r.get(3)?,
-            title: r.get(4)?,
-            channel: r.get(5)?,
-            duration: r.get(6)?,
-            thumbnail: r.get(7)?,
-            published: r.get(8)?,
+            platform: r.get("platform")?,
+            platform_id: r.get("platform_id")?,
+            url: r.get("url")?,
+            title: r.get("title")?,
+            channel: r.get("channel")?,
+            duration: r.get("duration")?,
+            thumbnail: r.get("thumbnail")?,
+            published: r.get("published")?,
         },
-        status: Status::parse(&r.get::<_, String>(9)?),
-        progress: r.get(10)?,
-        error: r.get(11)?,
-        added_at: r.get(12)?,
-        note: r.get(13)?,
-        thumb: r.get(16)?,
+        status: Status::parse(&r.get::<_, String>("status")?),
+        progress: r.get("progress")?,
+        error: r.get("error")?,
+        added_at: r.get("added_at")?,
+        note: r.get("note")?,
+        thumb: r.get("thumb")?,
         outdated: {
-            let model: Option<String> = r.get(14)?;
-            let has_segments: bool = r.get(15)?;
+            let model: Option<String> = r.get("model")?;
+            let has_segments: bool = r.get("has_segments")?;
             has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
         },
     })
