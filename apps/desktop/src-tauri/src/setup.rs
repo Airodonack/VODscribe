@@ -157,7 +157,7 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
 #[tauri::command]
 pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
     if state.gpu_installing.load(Ordering::Relaxed) {
-        return Err("The graphics card add-on is still downloading.".into());
+        return Err("The GPU add-on is still downloading.".into());
     }
     // A running transcription may have the pack's libraries loaded.
     if state.db.lock().unwrap().count_with_status(Status::Transcribing).map_err(err)? > 0 {

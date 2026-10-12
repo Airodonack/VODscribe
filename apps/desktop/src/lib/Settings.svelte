@@ -103,7 +103,7 @@
   }
 
   async function remove() {
-    if (!confirm("Remove the graphics card add-on? VODs will be transcribed with the processor.")) return;
+    if (!confirm("Remove the GPU add-on? VODs will be transcribed with the processor.")) return;
     if (device === "gpu") await choose("cpu");
     await api.removeGpuPack().catch((e) => (error = String(e)));
     await refresh();
@@ -115,7 +115,7 @@
     if (!gpu.supported) return "Not available on this kind of computer.";
     if (!gpu.worker) return "This version of VODscribe can't use graphics cards.";
     if (!gpu.gpu) return "No NVIDIA graphics card found.";
-    if (!gpu.installed) return "Needs the graphics card add-on, a one-time download of about 3 GB.";
+    if (!gpu.installed) return "Needs the GPU add-on, a one-time download of about 3 GB.";
     return null;
   });
   let busy = $derived(gpu?.gpu && gpu.installed && gpu.gpu.free_mb < gpu.min_free_mb);
@@ -161,19 +161,19 @@
     {#if offerPack}
       {#if step || gpu?.installing}
         <div class="progress">
-          <span class="muted">Downloading the graphics card add-on…</span>
+          <span class="muted">Downloading the GPU add-on…</span>
           <Progress value={step && step.total ? step.done / step.total : 0} />
         </div>
       {:else if !gpu?.installed}
-        <button onclick={install}><Icon name="download" size={14} /> Download add-on (about 3 GB)</button>
+        <button onclick={install}><Icon name="download" size={14} /> Download GPU add-on (about 3 GB)</button>
       {:else}
         <p
           class="verified"
           title="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
         >
-          <Icon name="shield" size={12} /> Add-on installed and checked
+          <Icon name="shield" size={12} /> GPU add-on installed and checked
         </p>
-        <button class="link" onclick={remove}>Remove add-on</button>
+        <button class="link" onclick={remove}>Remove GPU add-on</button>
       {/if}
     {/if}
     {#if error}<p class="error-text hint">{error}</p>{/if}
@@ -183,7 +183,7 @@
   <section>
     <span class="eyebrow">Video downloader</span>
     <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
-    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update now"}</button>
+    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update video downloader"}</button>
     {#if ytDlpStatus}<p class="muted hint">{ytDlpStatus}</p>{/if}
   </section>
 

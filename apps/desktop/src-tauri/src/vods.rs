@@ -90,7 +90,6 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     let state = app.state::<AppState>();
     state.worker.wake();
     for (vod, created) in &added {
-        allow_playback(&app, vod);
         let _ = app.emit("vod", vod);
         if *created {
             let (app, id) = (app.clone(), vod.id);
@@ -116,12 +115,14 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     Ok((db.vod(vod.id)?.unwrap_or(vod), created))
 }
 
-/// Lets the player's <video> read a local VOD's file through the asset
-/// protocol. Only files the user added are allowed, one by one.
-pub(crate) fn allow_playback(app: &AppHandle, vod: &Vod) {
-    if let Some(source) = &vod.source_path {
-        let _ = app.asset_protocol_scope().allow_file(source);
-    }
+/// Opens a local VOD's file in the system's video player, for formats the
+/// built-in player can't play. Takes the VOD's id, not a path.
+#[tauri::command]
+pub(crate) async fn open_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let source = state.db.lock().unwrap().vod(id).map_err(err)?.and_then(|v| v.source_path);
+    let source = source.ok_or("That VOD isn't a file on this computer.")?;
+    app.opener().open_path(source, None::<String>).map_err(err)
 }
 
 /// Shows a local VOD's file in the system file manager. Takes the VOD's id, not

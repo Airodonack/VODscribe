@@ -2,6 +2,7 @@
 //! `vods` (the library), `setup` (setup, settings, GPU pack, storage) and
 //! `thumbnails`; `worker` runs the download and transcription queue.
 
+mod media;
 mod setup;
 mod thumbnails;
 mod vods;
@@ -22,6 +23,7 @@ struct AppState {
     worker: Worker,
     setup_running: Arc<AtomicBool>,
     gpu_installing: Arc<AtomicBool>,
+    media: media::MediaServer,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -53,17 +55,19 @@ pub fn run() {
             }
             let db = Mutex::new(Db::open(&paths.db())?);
             let worker = Worker::start(app.handle().clone(), paths.clone())?;
+            let handle = app.handle().clone();
+            let media = media::MediaServer::start(move |id| {
+                let state = handle.state::<AppState>();
+                state.db.lock().unwrap().vod(id).ok().flatten().and_then(|v| v.source_path)
+            })?;
             app.manage(AppState {
                 paths,
                 db,
                 worker,
                 setup_running: Arc::new(AtomicBool::new(false)),
                 gpu_installing: Arc::new(AtomicBool::new(false)),
+                media,
             });
-            // Local files the user added stay playable across restarts.
-            if let Ok(vods) = app.state::<AppState>().db.lock().unwrap().vods() {
-                vods.iter().for_each(|vod| vods::allow_playback(app.handle(), vod));
-            }
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             Ok(())
@@ -77,6 +81,8 @@ pub fn run() {
             vods::list_vods,
             vods::add_files,
             vods::show_file,
+            vods::open_file,
+            media::media_url,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

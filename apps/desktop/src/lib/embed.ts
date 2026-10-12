@@ -5,7 +5,6 @@
 // seek(), so jumping between timestamps doesn't reload the player.
 
 import Hls from "hls.js";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { api, type Vod } from "./api";
 import { twitchId, twitchTime } from "./platform";
 
@@ -197,11 +196,16 @@ function videoPlayer(
   time: number,
   play: boolean,
   attach: (video: HTMLVideoElement) => (() => void) | void,
+  onerror?: (message: string) => void,
 ): EmbeddedPlayer {
   const video = document.createElement("video");
   video.controls = true;
   video.playsInline = true;
   video.style.cssText = "width: 100%; height: 100%; background: #000";
+  video.addEventListener("error", () => {
+    const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
+    onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
+  });
   el.appendChild(video);
   const detach = attach(video);
   if (play) video.play().catch(() => {});
@@ -241,17 +245,36 @@ async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Pro
   });
 }
 
-/** A file on this computer, read through the asset protocol (allowed per file by the app). */
-async function local(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
-  const path = vod.source_path;
-  if (!path) throw new Error("This VOD has no file.");
-  return videoPlayer(el, time, play, (video) => {
-    video.src = convertFileSrc(path);
-    video.currentTime = time;
-  });
+/** A file on this computer, streamed by the app's local media server. */
+async function local(
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string) => void,
+): Promise<EmbeddedPlayer> {
+  const src = await api.mediaUrl(vod.id);
+  return videoPlayer(
+    el,
+    time,
+    play,
+    (video) => {
+      video.src = src;
+      video.currentTime = time;
+    },
+    onerror,
+  );
 }
 
-const players: Record<string, (el: HTMLElement, vod: Vod, time: number, play: boolean) => Promise<EmbeddedPlayer>> = {
+type CreatePlayer = (
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string) => void,
+) => Promise<EmbeddedPlayer>;
+
+const players: Record<string, CreatePlayer> = {
   youtube,
   twitch,
   kick,
@@ -259,8 +282,14 @@ const players: Record<string, (el: HTMLElement, vod: Vod, time: number, play: bo
 };
 
 /** Creates a player inside `el`, or returns null if the platform has no VOD embed. */
-export function createPlayer(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> | null {
-  return players[vod.platform]?.(el, vod, time, play) ?? null;
+export function createPlayer(
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string) => void,
+): Promise<EmbeddedPlayer> | null {
+  return players[vod.platform]?.(el, vod, time, play, onerror) ?? null;
 }
 
 export const canEmbed = (vod: Vod) => Object.hasOwn(players, vod.platform);

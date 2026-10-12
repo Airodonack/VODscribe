@@ -336,7 +336,7 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
     let pack = paths.gpu_pack();
     let skip = |why: &str| Ok(cpu_only(Some(format!("Transcribed with the processor: {why}."))));
     if !gpu::is_installed(&pack) || !model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
-        return skip("the graphics card add-on isn't installed");
+        return skip("the GPU add-on isn't installed");
     }
     let Ok(program) = tools::sidecar("vodscribe-worker-cuda") else {
         return skip("this version of VODscribe can't use graphics cards");

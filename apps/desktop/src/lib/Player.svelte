@@ -46,7 +46,7 @@
     active = true;
     await tick();
     if (!host || destroyed) return;
-    createPlayer(host, vod, time, play)?.then(
+    createPlayer(host, vod, time, play, (e) => (error = e))?.then(
       (p) => {
         // Closed while loading: don't leave an invisible player running.
         if (destroyed) return p.destroy();
@@ -183,7 +183,14 @@
         {/if}
       </div>
     </div>
-    {#if error}<p class="error-text note">{error}</p>{/if}
+    {#if error}
+      <p class="error-text note">
+        {error}
+        {#if isLocal}
+          <button class="link" onclick={() => api.openFile(vod.id)}>Open it in your video player</button>
+        {/if}
+      </p>
+    {/if}
   {:else}
     <p class="muted note">
       {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(at.time)}.

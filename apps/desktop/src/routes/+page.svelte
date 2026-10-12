@@ -235,10 +235,10 @@
                   said into text on your computer, and then you can search every word.
                 </p>
               {:else}
-                <h2>Search every word</h2>
+                <h2>Search every VOD</h2>
                 <p class="muted">
                   Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left
-                  to read its transcript. Clicking a match plays the VOD from that moment.
+                  to read its transcript.
                 </p>
                 <p class="keys muted">
                   <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd
