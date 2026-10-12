@@ -44,6 +44,9 @@ impl YtDlp {
         // A yt-dlp.conf (user, system, or one planted in the working dir) could
         // add --exec, browser cookies or output paths outside the work dir.
         cmd.arg("--ignore-config");
+        // Python writes to a pipe in Windows' ANSI code page unless told otherwise,
+        // which mangles paths with characters outside it (a user named Jürgen).
+        cmd.env("PYTHONIOENCODING", "utf-8").env("PYTHONUTF8", "1");
         if let Some((name, path)) = &self.js_runtime {
             cmd.arg("--js-runtimes").arg(format!("{name}:{}", path.display()));
         }
@@ -171,7 +174,13 @@ pub fn send_lines(
 ) -> std::thread::JoinHandle<()> {
     use std::io::BufRead;
     std::thread::spawn(move || {
-        for line in std::io::BufReader::new(stream).lines().map_while(Result::ok) {
+        // Bytes that aren't UTF-8 (a program writing in Windows' code page) are
+        // replaced rather than ending the stream.
+        let mut reader = std::io::BufReader::new(stream);
+        let mut buf = Vec::new();
+        while matches!(reader.read_until(b'\n', &mut buf), Ok(n) if n > 0) {
+            let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
+            buf.clear();
             if tx.send(line).is_err() {
                 break;
             }
@@ -215,6 +224,16 @@ pub fn command(program: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lines_survive_bytes_that_arent_utf8() {
+        // "C:\\Users\\Jürgen" as Windows-1252 writes it, then a normal line.
+        let input: &[u8] = b"C:\\Users\\J\xfcrgen\\a.m4a\r\nnext\n";
+        let (tx, rx) = std::sync::mpsc::channel();
+        send_lines(input, tx).join().unwrap();
+        let lines: Vec<String> = rx.iter().collect();
+        assert_eq!(lines, ["C:\\Users\\J\u{fffd}rgen\\a.m4a", "next"]);
+    }
 
     #[test]
     fn keeps_the_last_non_blank_lines() {

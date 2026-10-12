@@ -168,7 +168,24 @@ pub fn download_audio(
     if !status.success() {
         bail!("{}", clean_error(&log.join("\n")));
     }
-    path.context("yt-dlp finished without producing a file")
+    // The printed path is the reliable way to find the file; if it got lost,
+    // the finished download is still the one file named after `out_stem`.
+    path.or_else(|| finished_file(out_stem)).context("yt-dlp finished without producing a file")
+}
+
+/// The finished download for `out_stem` (`<stem>.<ext>`), ignoring yt-dlp's
+/// partial and metadata files, if there's exactly one.
+fn finished_file(out_stem: &Path) -> Option<PathBuf> {
+    let (dir, stem) = (out_stem.parent()?, out_stem.file_name()?.to_str()?);
+    let mut found = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        p.is_file()
+            && name.strip_prefix(stem).and_then(|r| r.strip_prefix('.')).is_some_and(|ext| !ext.contains('.'))
+            && !name.ends_with(".part")
+            && !name.ends_with(".ytdl")
+    });
+    let file = found.next()?;
+    found.next().is_none().then_some(file)
 }
 
 fn parse_progress(rest: &str) -> Option<f64> {
@@ -261,6 +278,22 @@ fn friendly(msg: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_the_finished_download_without_its_printed_path() {
+        let dir = std::env::temp_dir().join(format!("vodscribe-finished-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stem = dir.join("12");
+        for name in ["12.info.json", "12.m4a.part", "123.m4a", "12.f251.webm"] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(finished_file(&stem), None, "nothing finished yet");
+        std::fs::write(dir.join("12.m4a"), b"x").unwrap();
+        assert_eq!(finished_file(&stem), Some(dir.join("12.m4a")));
+        std::fs::write(dir.join("12.webm"), b"x").unwrap();
+        assert_eq!(finished_file(&stem), None, "two candidates: don't guess");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn errors_read_as_plain_sentences() {
