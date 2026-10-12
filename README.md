@@ -1,4 +1,8 @@
-# VODscribe
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/app-icon.svg" width="96" height="96" alt="VODscribe logo">
+</p>
+
+<h1 align="center">VODscribe</h1>
 
 Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by phrase. Clicking a match plays the VOD from that moment. Everything runs locally: [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the audio, ffmpeg decodes it, and NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)) transcribes it.
 
