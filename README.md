@@ -48,6 +48,8 @@ VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vods
 
 The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; after changing it, run `pnpm tauri icon src-tauri/icons/app-icon.svg -o src-tauri/icons` from `apps/desktop` and copy the 32 px PNG to `static/favicon.png`.
 
+The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
+
 `scripts/reset-setup.sh` removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
 
 ## Building
