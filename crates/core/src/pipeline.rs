@@ -199,7 +199,7 @@ fn run_worker(
                 Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             };
             if cancel.load(Ordering::Relaxed) {
-                bail!("canceled");
+                return Err(crate::Canceled.into());
             }
             let Some(line) = line else { continue };
             let line: WorkerLine = serde_json::from_str(&line?).context("unreadable worker output")?;

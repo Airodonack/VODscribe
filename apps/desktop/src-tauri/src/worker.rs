@@ -238,6 +238,10 @@ fn finish(stage: Stage, ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<S
         (_, Some(Stop::Pause)) => ctx.db.set_status(vod.id, Status::Paused, progress, None)?,
         (_, Some(Stop::Cancel)) => discard(&ctx.db, &work, vod.id)?,
         (Ok(()), None) => {}
+        // Stopped without a recorded reason: keep the work, as a pause would.
+        (Err(e), None) if vodscribe_core::is_canceled(&e) => {
+            ctx.db.set_status(vod.id, Status::Paused, progress, None)?
+        }
         (Err(e), None) => {
             // The VOD may have been deleted while running; ignore that case.
             let _ = ctx.db.set_status(vod.id, Status::Error, 0.0, Some(&format!("{e:#}")));

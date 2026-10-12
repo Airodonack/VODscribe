@@ -43,7 +43,7 @@ pub fn decode(
     let result = (|| -> Result<()> {
         loop {
             if cancel.load(Ordering::Relaxed) {
-                bail!("canceled");
+                return Err(crate::Canceled.into());
             }
             let n = stdout.read(&mut buf)?;
             if n == 0 {

@@ -147,7 +147,7 @@ pub fn download_audio(
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
-            bail!("canceled");
+            return Err(crate::Canceled.into());
         }
         if line.is_empty() {
             continue;

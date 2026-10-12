@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::{net, tools};
@@ -197,7 +197,7 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
     if let Err(e) = result {
         let _ = fs::remove_dir_all(&staging);
         if cancel.load(Ordering::Relaxed) {
-            bail!("canceled");
+            return Err(crate::Canceled.into());
         }
         return Err(e);
     }

@@ -44,7 +44,7 @@ pub fn agent() -> &'static ureq::Agent {
 /// The error a canceled read returns. Not `ErrorKind::Interrupted`, which
 /// `io::copy` and other readers retry rather than stop on.
 fn canceled() -> io::Error {
-    io::Error::other("canceled")
+    io::Error::other(crate::Canceled)
 }
 
 /// Wraps a reader, reporting bytes read and aborting when `cancel` is set.
@@ -215,7 +215,7 @@ pub fn download_verified(
         Err(e) => {
             let _ = fs::remove_file(&part);
             if cancel.load(Ordering::Relaxed) {
-                bail!("canceled");
+                return Err(crate::Canceled.into());
             }
             Err(e)
         }
@@ -296,6 +296,7 @@ mod tests {
         let mut reader = ProgressReader::new(body, &cancel, |_| {});
         let err = io::copy(&mut reader, &mut io::sink()).unwrap_err();
         assert_eq!(err.to_string(), "canceled");
+        assert!(crate::is_canceled(&err.into()));
         assert!(started.elapsed() < Duration::from_secs(2), "took {:?}", started.elapsed());
     }
 }

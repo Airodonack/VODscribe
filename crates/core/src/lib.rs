@@ -19,6 +19,27 @@ pub mod transcript;
 
 use std::path::PathBuf;
 
+/// The error a job ends with when it was told to stop (pause, cancel, delete).
+/// Check for it with `is_canceled` rather than by its message.
+#[derive(Debug)]
+pub struct Canceled;
+
+impl std::fmt::Display for Canceled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("canceled")
+    }
+}
+
+impl std::error::Error for Canceled {}
+
+/// Whether `e` is, or was caused by, `Canceled`, including inside an I/O error.
+pub fn is_canceled(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.is::<Canceled>()
+            || c.downcast_ref::<std::io::Error>().and_then(|io| io.get_ref()).is_some_and(|inner| inner.is::<Canceled>())
+    })
+}
+
 /// Layout of the app's data. The library and settings live in `root`; what can be
 /// downloaded again (tools, models, the GPU pack, audio) lives in `local`, which is
 /// the same directory except on Windows, where `root` roams and `local` doesn't.
