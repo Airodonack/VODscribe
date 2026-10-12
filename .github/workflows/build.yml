@@ -1,12 +1,23 @@
 name: Build installers
 
+# Runs by hand or on a v* tag. Tag runs can only restore caches saved on the
+# default branch, so run it by hand on main now and then to keep the Rust cache warm.
 on:
   workflow_dispatch:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: read
+
+# A new run for the same ref replaces one in progress.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -68,3 +79,4 @@ jobs:
             target/${{ matrix.target }}/release/bundle/**/*-setup.exe
             target/${{ matrix.target }}/release/bundle/**/*.dmg
           if-no-files-found: error
+          retention-days: 14

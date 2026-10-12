@@ -30,6 +30,11 @@ case "$triple" in
     cargo build "${flag[@]}" -p vodscribe-worker --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
     cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-cuda-$triple$exe"
+    # The build bakes this machine's sherpa-onnx lib dir into the RUNPATH. Release
+    # binaries find the GPU pack's libs via LD_LIBRARY_PATH instead, so don't ship it.
+    if [ "$profile" = release ] && [[ "$triple" == *linux* ]]; then
+      patchelf --set-rpath '$ORIGIN' "$out/vodscribe-worker-cuda-$triple$exe"
+    fi
     ;;
 esac
 ls -la "$out"
