@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use tauri::State;
-use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Request, Response, Server, StatusCode};
 
-use crate::{AppState, CmdResult};
+use crate::{AppState, CmdResult, loopback};
 
 /// Requests served at once.
 const MAX_ACTIVE: usize = 32;
@@ -87,12 +87,7 @@ fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<R
     let header = |name: &'static str| {
         request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
     };
-    if !matches!(request.method(), Method::Get | Method::Head) {
-        return Err(405);
-    }
-    if header("Host").as_deref() != Some(host) {
-        return Err(403);
-    }
+    loopback::check(request, host)?;
     let id: i64 = request.url().strip_prefix(prefix).and_then(|id| id.parse().ok()).ok_or(404u16)?;
     let source = find(id).ok_or(404u16)?;
     let mut file = open_regular(Path::new(&source)).ok_or(404u16)?;

@@ -5,6 +5,7 @@
 // `tauri dev` serves the app from its dev server instead; tests still cover it.
 #[cfg(any(not(dev), test))]
 mod app_server;
+mod loopback;
 mod media;
 mod setup;
 mod thumbnails;

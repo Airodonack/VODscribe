@@ -15,16 +15,15 @@
 // Debug builds compile this only for its tests; `tauri dev` doesn't start it.
 #![cfg_attr(dev, allow(dead_code))]
 
-use std::io::ErrorKind;
-use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
-
-use anyhow::{Result, bail};
+use anyhow::Result;
 use tauri::{AppHandle, Manager, Runtime};
-use tiny_http::{Header, Method, Request, Response, Server};
+use tiny_http::{Header, Response, Server};
+
+use crate::loopback;
 
 /// The origin the app is served from, such as `http://localhost:41723`.
 pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
-    let (listeners, port) = bind_loopback()?;
+    let (listeners, port) = loopback::bind_both()?;
     let host = format!("localhost:{port}");
     for listener in listeners {
         let server = Server::from_listener(listener, None).map_err(|e| anyhow::anyhow!("start the app server: {e}"))?;
@@ -36,27 +35,9 @@ pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
     Ok(origin)
 }
 
-/// One free port on both 127.0.0.1 and [::1]. Webviews resolve `localhost` to
-/// either (often ::1 first), so the app holds both: otherwise another account
-/// on the computer could listen on the other one and get the app's commands.
-fn bind_loopback() -> Result<(Vec<TcpListener>, u16)> {
-    for _ in 0..20 {
-        let v4 = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = v4.local_addr()?.port();
-        match TcpListener::bind((Ipv6Addr::LOCALHOST, port)) {
-            Ok(v6) => return Ok((vec![v4, v6], port)),
-            // Taken on ::1, perhaps on purpose: try another port.
-            Err(e) if e.kind() == ErrorKind::AddrInUse => continue,
-            // No IPv6 here, so `localhost` can only mean 127.0.0.1.
-            Err(_) => return Ok((vec![v4], port)),
-        }
-    }
-    bail!("no free port for the app server")
-}
-
 fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<R>) {
     for request in server.incoming_requests() {
-        let allowed = accepts(&request, host);
+        let allowed = loopback::check(&request, host).is_ok();
         let path = request.url().split(['?', '#']).next().unwrap_or("/").to_string();
         let response = match allowed.then(|| assets.get(path)).flatten() {
             Some(asset) => {
@@ -75,13 +56,6 @@ fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<
     }
 }
 
-/// Whether to answer `request`: a GET or HEAD naming exactly this server's
-/// host, so a page reached through DNS rebinding (another Host) gets nothing.
-fn accepts(request: &Request, host: &str) -> bool {
-    matches!(request.method(), Method::Get | Method::Head)
-        && request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host)
-}
-
 fn header(name: &'static str, value: &str) -> Header {
     Header::from_bytes(name, value).expect("valid header")
 }
@@ -95,42 +69,4 @@ fn allow_commands<R: Runtime>(app: &AppHandle<R>, origin: &str) -> Result<()> {
     capability["remote"] = serde_json::json!({ "urls": [format!("{origin}/*")] });
     app.add_capability(capability.to_string())?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tiny_http::TestRequest;
-
-    fn request(method: Method, host: Option<&str>) -> Request {
-        let mut r = TestRequest::new().with_method(method).with_path("/");
-        if let Some(host) = host {
-            r = r.with_header(Header::from_bytes("Host", host).unwrap());
-        }
-        r.into()
-    }
-
-    #[test]
-    fn answers_only_its_own_host_and_reads() {
-        let host = "localhost:41723";
-        assert!(accepts(&request(Method::Get, Some(host)), host));
-        assert!(accepts(&request(Method::Head, Some(host)), host));
-        assert!(!accepts(&request(Method::Post, Some(host)), host));
-        assert!(!accepts(&request(Method::Get, Some("evil.example:41723")), host), "DNS rebinding");
-        assert!(!accepts(&request(Method::Get, Some("127.0.0.1:41723")), host), "another name for it");
-        assert!(!accepts(&request(Method::Get, Some("localhost:41724")), host));
-        assert!(!accepts(&request(Method::Get, None), host));
-    }
-
-    #[test]
-    fn holds_one_port_on_both_loopbacks() {
-        let (listeners, port) = bind_loopback().unwrap();
-        let addrs: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
-        assert!(addrs.iter().all(|a| a.port() == port && a.ip().is_loopback()));
-        assert!(addrs.iter().any(|a| a.is_ipv4()));
-        // Where there's IPv6, ::1 is held too, so nothing else can answer `localhost` there.
-        if TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_ok() {
-            assert!(addrs.iter().any(|a| a.is_ipv6()), "{addrs:?}");
-        }
-    }
 }
