@@ -64,8 +64,9 @@ impl Paths {
 
     /// Everything that can be downloaded again: models, tools, the GPU pack and
     /// in-flight downloads. The library and settings are not cache.
-    pub fn cache_dirs(&self) -> [PathBuf; 4] {
-        [self.models(), self.bin(), self.gpu_pack(), self.work()]
+    pub fn cache_dirs(&self) -> [PathBuf; 5] {
+        let gpu = self.gpu_pack();
+        [self.models(), self.bin(), gpu::staging_dir(&gpu), gpu, self.work()]
     }
 
     /// Bytes used by `cache_dirs`.
@@ -113,7 +114,7 @@ mod tests {
         }
         std::fs::write(paths.db(), b"library").unwrap();
         std::fs::write(paths.settings(), b"{}").unwrap();
-        assert_eq!(paths.cache_size(), 20);
+        assert_eq!(paths.cache_size(), 5 * paths.cache_dirs().len() as u64);
 
         paths.clear_cache().unwrap();
         assert_eq!(paths.cache_size(), 0);

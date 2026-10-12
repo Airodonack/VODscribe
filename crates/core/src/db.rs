@@ -306,6 +306,14 @@ impl Db {
         Ok(())
     }
 
+    /// Each segment's start time and text, without the per-word timings that
+    /// `segments` also parses. This is what the transcript view needs.
+    pub fn lines(&self, vod_id: i64) -> Result<Vec<(f64, String)>> {
+        let mut stmt = self.conn.prepare("SELECT start, text FROM segments WHERE vod_id = ?1 ORDER BY start")?;
+        let rows = stmt.query_map([vod_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn segments(&self, vod_id: i64) -> Result<Vec<Segment>> {
         let mut stmt =
             self.conn.prepare("SELECT start, end, text, words FROM segments WHERE vod_id = ?1 ORDER BY start")?;

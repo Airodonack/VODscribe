@@ -3,6 +3,7 @@
 
 import Hls from "hls.js";
 import { api, type Vod } from "./api";
+import { twitchId, twitchTime } from "./platform";
 
 export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
@@ -78,17 +79,12 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
   });
 }
 
-function twitchTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m${s % 60}s`;
-}
-
 async function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
   await loadScript("https://player.twitch.tv/js/embed/v1.js");
   return new Promise((resolve) => {
     const Player = window.Twitch.Player;
     const player = new Player(el, {
-      video: vod.platform_id.replace(/^v/, ""),
+      video: twitchId(vod),
       // Twitch refuses to play unless `parent` names the embedding page's host.
       parent: [location.hostname || "localhost"],
       time: twitchTime(time),

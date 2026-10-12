@@ -101,6 +101,11 @@ const WHEELS: [(&str, &str); 4] = [
     ("nvidia-cudnn-cu12", "9.19.0.56"),
 ];
 
+/// Where `install` assembles the pack before moving it into place.
+pub fn staging_dir(pack_dir: &Path) -> PathBuf {
+    pack_dir.with_extension("partial")
+}
+
 pub fn lib_dir(pack_dir: &Path) -> PathBuf {
     pack_dir.join("lib")
 }
@@ -117,7 +122,7 @@ pub fn is_installed(pack_dir: &Path) -> bool {
 /// (step label, bytes done, bytes total) for each download in turn.
 pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(&str, u64, u64)) -> Result<()> {
     let platform = platform().context("GPU transcription isn't available on this platform")?;
-    let staging = pack_dir.with_extension("partial");
+    let staging = staging_dir(pack_dir);
     let _ = fs::remove_dir_all(&staging);
     let libs = lib_dir(&staging);
     fs::create_dir_all(&libs)?;

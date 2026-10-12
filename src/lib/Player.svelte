@@ -51,6 +51,8 @@
     const start = untrack(() => at);
     createPlayer(target, vod, leadIn(start.time), start.play)?.then(
       (p) => {
+        // Closed while loading: don't leave an invisible player running.
+        if (destroyed) return p.destroy();
         player = p;
         if (pending) p.seek(leadIn(pending.time), pending.play);
       },
@@ -69,7 +71,11 @@
     else pending = { time, play };
   });
 
-  onDestroy(() => player?.destroy());
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+    player?.destroy();
+  });
 </script>
 
 <svelte:window onkeydown={onKey} />

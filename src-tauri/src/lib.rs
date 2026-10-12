@@ -246,8 +246,8 @@ struct Line {
 
 #[tauri::command]
 async fn transcript(state: State<'_, AppState>, vod_id: i64) -> CmdResult<Vec<Line>> {
-    let segments = state.db.lock().unwrap().segments(vod_id).map_err(err)?;
-    Ok(segments.into_iter().map(|s| Line { start: s.start, text: s.text }).collect())
+    let lines = state.db.lock().unwrap().lines(vod_id).map_err(err)?;
+    Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
 }
 
 #[tauri::command]

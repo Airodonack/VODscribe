@@ -9,13 +9,14 @@ export function formatTime(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
 
-/** 3725 -> "1h2m5s", the format Twitch uses in URLs. */
-function twitchTime(seconds: number): string {
+/** 3725 -> "1h2m5s", the format Twitch uses in URLs and its player. */
+export function twitchTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m${s % 60}s`;
 }
 
-const twitchId = (vod: Vod) => vod.platform_id.replace(/^v/, "");
+/** yt-dlp prefixes Twitch VOD ids with "v"; Twitch's URLs and player don't. */
+export const twitchId = (vod: Vod) => vod.platform_id.replace(/^v/, "");
 
 export const platformName: Record<string, string> = {
   youtube: "YouTube",
