@@ -20,8 +20,11 @@ import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-WORKER = os.environ.get("WORKER", str(REPO / "target/release/vodscribe-worker"))
-CUDA_WORKER = os.environ.get("CUDA_WORKER", str(REPO / "target/debug/vodscribe-worker-cuda"))
+# Where scripts/prepare-sidecars.sh puts the workers (Linux x86_64 names).
+BINARIES = REPO / "apps/desktop/src-tauri/binaries"
+WORKER = os.environ.get("WORKER", str(BINARIES / "vodscribe-worker-x86_64-unknown-linux-gnu"))
+CUDA_WORKER = os.environ.get("CUDA_WORKER", str(BINARIES / "vodscribe-worker-cuda-x86_64-unknown-linux-gnu"))
+# The app's GPU pack, on Linux.
 GPU_LIBS = os.environ.get("GPU_LIBS", str(Path.home() / ".local/share/app.vodscribe/gpu/lib"))
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 

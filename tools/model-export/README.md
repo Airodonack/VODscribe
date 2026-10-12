@@ -18,12 +18,12 @@ run() { distrobox enter vodscribe-export -- bash -c "cd $PWD && uv run $*"; }
 run export.py $W/models/fp32
 
 # 2. Smaller variants built from the fp32 export.
-run quantize.py $W/models/fp32 $W/models int8-pc int8-pc-safe fp16
+run quantize.py $W/models/fp32 $W/models int8-wo-fast fp16
 
 # 3. Score each variant against fp32 with VODscribe's own workers. Runs on the
 #    host; build the workers first (scripts/prepare-sidecars.sh).
 python3 evaluate.py $W/audio $W/models/fp32 \
-  int8-pc=$W/models/int8-pc int8-pc-safe=$W/models/int8-pc-safe fp16-gpu=$W/models/fp16:cuda:4
+  int8-wo-fast=$W/models/int8-wo-fast fp16-gpu=$W/models/fp16:cuda:4
 ```
 
 To ship new models, stage them, paste the printed pins into `crates/core/src/model.rs`, and upload:

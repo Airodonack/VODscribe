@@ -22,7 +22,8 @@ mkdir -p "$out"
 # reuses whatever it finds in its cache. Put a verified archive there first, and
 # drop any extraction not made from it, so the build unpacks the verified one.
 version=1.13.8
-cache=target/sherpa-onnx-prebuilt
+# sherpa-onnx's build script keeps its downloads under the Cargo target dir.
+cache="${CARGO_TARGET_DIR:-target}/sherpa-onnx-prebuilt"
 sha256() { { sha256sum "$1" 2>/dev/null || shasum -a 256 "$1"; } | awk '{print $1}'; }
 verified_prebuilt() {
   local name="sherpa-onnx-v$version-$1.tar.bz2"
@@ -52,15 +53,16 @@ case "$triple" in
 esac
 
 # CPU worker: sherpa-onnx linked statically.
-cargo build "${flag[@]}" -p vodscribe-worker --target "$triple"
-cp "target/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-$triple$exe"
+# ${flag[@]+...}: macOS's bash 3.2 treats an empty array as unset under set -u.
+cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --target "$triple"
+cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-$triple$exe"
 
 # GPU worker: sherpa-onnx linked dynamically; the GPU pack supplies the CUDA
 # build at runtime. Built in its own target dir so its features don't mix
 # with the static build.
 case "$triple" in
   x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc)
-    cargo build "${flag[@]}" -p vodscribe-worker --no-default-features --features shared \
+    cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
     cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-cuda-$triple$exe"
     # The build bakes this machine's sherpa-onnx lib dir into the RUNPATH. Release

@@ -7,7 +7,7 @@ case "$(uname -s)" in
   Darwin) data="$HOME/Library/Application Support/app.vodscribe" ;;
   *) echo "Unsupported OS; delete models/ and bin/ in the app data folder by hand." >&2; exit 1 ;;
 esac
-if pgrep -f '(^|/)vodscribe$|/vodscribe-worker' >/dev/null 2>&1; then
+if pgrep -f '(^|/)(vodscribe|VODscribe)$|/vodscribe-worker' >/dev/null 2>&1; then
   echo "VODscribe is running. Quit it first." >&2
   exit 1
 fi

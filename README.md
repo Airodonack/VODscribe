@@ -32,12 +32,11 @@ The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.v
 - `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.
 - `crates/worker`: `vodscribe-worker`, which transcribes one audio file in its own process and streams words back. It is built twice: statically linked for the CPU, and against sherpa-onnx's CUDA build for the GPU pack.
 - `apps/desktop`: the desktop app. `src` is the SvelteKit (Svelte 5) UI, built statically into the app; `src-tauri` is the Tauri shell, which provides the commands the UI calls and runs the queue. Icons are inline SVGs in `src/lib/Icon.svelte`; the logo is `src/lib/Logo.svelte`.
-- `apps/site`: the website, once it exists.
 - `tools/model-export`: exports and quantizes the speech models we ship, and publishes them. See its README.
 
 ## Development
 
-Prerequisites: Rust, Node and pnpm, plus [Tauri's system dependencies](https://tauri.app/start/prerequisites/) and ffmpeg.
+Prerequisites: Rust, Node and pnpm, plus [Tauri's system dependencies](https://tauri.app/start/prerequisites/) and ffmpeg. `pnpm dev` runs a bash script, so on Windows it needs Git Bash on `PATH`; release builds on Linux also need `patchelf`.
 
 The JavaScript side is a pnpm workspace (`apps/*`) and the Rust side a Cargo workspace (`crates/*` and `apps/desktop/src-tauri`), both rooted here. From the repo root:
 
@@ -45,6 +44,7 @@ The JavaScript side is a pnpm workspace (`apps/*`) and the Rust side a Cargo wor
 pnpm install
 pnpm dev          # the desktop app, via `tauri dev`
 pnpm check        # type-check every app
+pnpm --filter desktop format   # Prettier (lint checks without writing)
 ```
 
 Transcription runs in a separate `vodscribe-worker` process, bundled as a Tauri sidecar along with a CUDA build of it on Linux and Windows. `scripts/prepare-sidecars.sh` builds both into `apps/desktop/src-tauri/binaries/`. `pnpm dev` runs it automatically; run it yourself (`bash scripts/prepare-sidecars.sh [debug|release]`) before building the app with plain `cargo`.
@@ -62,7 +62,7 @@ The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; afte
 
 The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
 
-`scripts/reset-setup.sh` removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
+`scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
 
 ## Building
 

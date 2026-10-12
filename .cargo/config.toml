@@ -1,5 +1,6 @@
 # sherpa-onnx's prebuilt Windows libraries use the static C runtime (/MT), so
 # Rust binaries must too, or linking fails with runtime library mismatches.
+# CI sets RUSTFLAGS, which replaces these, so build.yml repeats the flag.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 [target.aarch64-pc-windows-msvc]
