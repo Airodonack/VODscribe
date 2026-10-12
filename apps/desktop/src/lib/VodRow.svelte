@@ -153,7 +153,7 @@
       onclick={retranscribe}
       title={vod.outdated ? "Transcribe again with the newer version" : "Transcribe again"}
       aria-label="Transcribe again"
-      {...demoOff("In the app, this transcribes the VOD again.")}
+      {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD again.")}
     >
       <Icon name="redo" size={15} />
     </button>
@@ -163,7 +163,7 @@
     onclick={remove}
     title="Remove"
     aria-label="Remove"
-    {...demoOff("In the app, this removes the VOD and its transcript.")}
+    {...demoOff("The web demo keeps its two VODs. In the app, this removes a VOD and its transcript.")}
   >
     <Icon name="trash" size={15} />
   </button>

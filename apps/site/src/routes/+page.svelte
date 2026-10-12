@@ -77,8 +77,11 @@
 
   <section class="demo">
     <p class="demo-intro">
-      <strong>This is the real app, running in your browser.</strong>
-      <span class="muted">Two VODs are already transcribed: search them, or pick one to read along and play.</span>
+      <strong>Try it here with two VODs that are already transcribed.</strong>
+      <span class="muted"
+        >Search them, or pick one to read along and play. To transcribe your own VODs, download the app: transcribing
+        runs on your computer, not on a server.</span
+      >
     </p>
     <div class="wide">
       <Demo />
@@ -279,6 +282,8 @@
 
   .download {
     max-width: 640px;
+    /* Room above the heading when "Get the app" scrolls here. */
+    scroll-margin-top: 32px;
     text-align: center;
   }
 

@@ -7,7 +7,7 @@
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
   import { os } from "./platform";
-  import { DEMO, demoOff } from "./demo";
+  import { DEMO, demoOff, getTheApp } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
@@ -203,6 +203,7 @@
     <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
       <Logo size={28} tile />
       <span class="name">VODscribe</span>
+      {#if DEMO}<span class="demo-tag">Demo</span>{/if}
       {#if version}<span class="version muted">v{version}</span>{/if}
       <Icon name="external" size={12} />
     </button>
@@ -216,26 +217,29 @@
   <form onsubmit={add}>
     <input
       type="url"
-      placeholder="Paste a VOD link…"
+      placeholder={DEMO ? "Add yours in the app" : "Paste a VOD link…"}
       bind:value={url}
       disabled={adding}
       readonly={DEMO}
       aria-label="VOD link"
-      {...demoOff("In the app, paste a Kick, Twitch or YouTube link here to transcribe it.")}
+      {...demoOff(
+        "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
+      )}
     />
-    <button
-      class="primary"
-      disabled={adding || (!url.trim() && !DEMO)}
-      {...demoOff("In the app, paste a Kick, Twitch or YouTube link here to transcribe it.")}
-      >{adding ? "Adding…" : "Add"}</button
-    >
+    {#if DEMO}
+      <!-- The one control in the demo that leads somewhere: the downloads. -->
+      <button type="button" class="primary" onclick={getTheApp}>Get the app</button>
+    {:else}
+      <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
+    {/if}
   </form>
   <p class="more muted">
     or <button
       class="link"
       onclick={pickFiles}
       disabled={adding}
-      {...demoOff("In the app, you can transcribe video files from your computer too.")}>add video files…</button
+      {...demoOff("The web demo can't transcribe. In the app, you can add video files from your computer too.")}
+      >add video files…</button
     >
     {#if !DEMO}or drop {linksDrop ? "files and links" : "video files"} anywhere{/if}
   </p>
@@ -436,5 +440,14 @@
 
   .empty {
     padding: 16px 12px;
+  }
+
+  .demo-tag {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 600;
   }
 </style>

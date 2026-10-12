@@ -24,3 +24,8 @@ export function keysForApp(): boolean {
   const root = document.querySelector("[data-demo-root]");
   return !!root && (root.hasAttribute("data-active") || root.contains(document.activeElement));
 }
+
+/** Asks the website around the demo to show its downloads (Demo.svelte listens). */
+export function getTheApp() {
+  window.dispatchEvent(new CustomEvent("vodscribe:get-app"));
+}

@@ -213,7 +213,9 @@
             class="icon"
             class:on={showSettings}
             onclick={() => (showSettings = !showSettings)}
-            {...demoOff("In the app: GPU speed-up, video downloader updates and storage.")}
+            {...demoOff(
+              "The web demo has no settings. In the app: GPU speed-up, video downloader updates and storage.",
+            )}
             aria-label="Settings"
             aria-expanded={showSettings}
             title="Settings"><Icon name="settings" size={18} /></button
