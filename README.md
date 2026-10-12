@@ -2,15 +2,24 @@
 
 Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by phrase. Clicking a match plays the VOD from that moment. Everything runs locally: [yt-dlp](https://github.com/yt-dlp/yt-dlp) fetches the audio, ffmpeg decodes it, and NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) (via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)) transcribes it.
 
+## Using it
+
+On first run the app downloads yt-dlp and the speech model (about 900 MB, from `dl.vodscribe.com`) into its data directory. ffmpeg must be installed separately. YouTube needs a JavaScript runtime for yt-dlp; Deno, Node or Bun on `PATH` is detected automatically.
+
+- **Library.** Paste a link in the sidebar. VODs download and transcribe in the background, one of each at a time, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced.
+- **Search.** Searches are exact phrases, so fewer words match more. With a VOD selected, the chip in the search field toggles between searching just that VOD and the whole library.
+- **Player.** Selecting a VOD opens its player; clicking a match or a transcript line jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
+- **GPU.** NVIDIA GPU users can download an optional GPU pack (about 3 GB) from the settings. Transcription falls back to the CPU when the GPU is busy or has too little free memory.
+- **Older models.** When a release ships a new speech model, transcripts made with the previous one are marked. They still work; re-transcribing replaces them.
+- **Storage.** "Clear downloads" in the settings deletes everything that can be downloaded again (models, tools, the GPU pack, audio). The library and transcripts are kept.
+
 ## Layout
 
 - `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.
 - `crates/worker`: `vodscribe-worker`, which transcribes one audio file in its own process and streams words back. It is built twice: statically linked for the CPU, and against sherpa-onnx's CUDA build for the GPU pack.
-- `apps/desktop`: the desktop app. `src` is the SvelteKit (Svelte 5) UI, built statically into the app; `src-tauri` is the Tauri shell, which provides the commands the UI calls and runs the queue (downloading one VOD while transcribing another).
+- `apps/desktop`: the desktop app. `src` is the SvelteKit (Svelte 5) UI, built statically into the app; `src-tauri` is the Tauri shell, which provides the commands the UI calls and runs the queue. Icons are inline SVGs in `src/lib/Icon.svelte`; the logo is `src/lib/Logo.svelte`.
 - `apps/site`: the website, once it exists.
 - `tools/model-export`: exports and quantizes the speech models we ship, and publishes them. See its README.
-
-On first run the app downloads yt-dlp and the speech model (about 900 MB, from `dl.vodscribe.com`) into its data directory. ffmpeg must be installed separately. YouTube needs a JavaScript runtime for yt-dlp; Deno, Node or Bun on `PATH` is detected automatically. NVIDIA GPU users can download an optional GPU pack (about 3 GB) from the settings.
 
 ## Development
 
@@ -34,3 +43,13 @@ VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vods
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- add <url>
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- search "some phrase"
 ```
+
+The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; after changing it, run `pnpm tauri icon src-tauri/icons/app-icon.svg -o src-tauri/icons` from `apps/desktop` and copy the 32 px PNG to `static/favicon.png`.
+
+`scripts/reset-setup.sh` removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
+
+## Building
+
+`pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. The GitHub Actions workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS (Intel and Apple Silicon) on a manual run or a `v*` tag, and uploads the unsigned bundles as artifacts.
+
+Speech models are served from Cloudflare R2 at `https://dl.vodscribe.com/models/<model id>/`, pinned by size and SHA-256 in `crates/core/src/model.rs`. `VODSCRIBE_MODELS_URL` overrides the base URL for testing.
