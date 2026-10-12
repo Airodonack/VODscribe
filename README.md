@@ -13,6 +13,8 @@ On first run the app downloads yt-dlp and the speech model (about 900 MB, from `
 - **Older models.** When a release ships a new speech model, transcripts made with the previous one are marked. They still work; re-transcribing replaces them.
 - **Storage.** "Clear downloads" in the settings deletes everything that can be downloaded again (models, tools, the GPU pack, audio). The library and transcripts are kept.
 
+The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.vodscribe` on Linux, `~/Library/Application Support/app.vodscribe` on macOS and `%APPDATA%\app.vodscribe` on Windows. Downloads (`models`, `bin`, `gpu`, `work`) go in the same folder, except on Windows, where they go in `%LOCALAPPDATA%\app.vodscribe` so they don't roam.
+
 ## Layout
 
 - `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.

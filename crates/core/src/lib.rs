@@ -18,15 +18,24 @@ pub mod transcript;
 
 use std::path::PathBuf;
 
-/// Layout of the app's data directory.
+/// Layout of the app's data. The library and settings live in `root`; what can be
+/// downloaded again (tools, models, the GPU pack, audio) lives in `local`, which is
+/// the same directory except on Windows, where `root` roams and `local` doesn't.
 #[derive(Clone, Debug)]
 pub struct Paths {
     pub root: PathBuf,
+    pub local: PathBuf,
 }
 
 impl Paths {
+    /// Everything in one directory.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let root = root.into();
+        Self { local: root.clone(), root }
+    }
+
+    pub fn split(root: impl Into<PathBuf>, local: impl Into<PathBuf>) -> Self {
+        Self { root: root.into(), local: local.into() }
     }
 
     pub fn db(&self) -> PathBuf {
@@ -34,11 +43,11 @@ impl Paths {
     }
 
     pub fn bin(&self) -> PathBuf {
-        self.root.join("bin")
+        self.local.join("bin")
     }
 
     pub fn models(&self) -> PathBuf {
-        self.root.join("models")
+        self.local.join("models")
     }
 
     pub fn settings(&self) -> PathBuf {
@@ -46,12 +55,12 @@ impl Paths {
     }
 
     pub fn gpu_pack(&self) -> PathBuf {
-        self.root.join("gpu")
+        self.local.join("gpu")
     }
 
     /// Scratch space for in-flight downloads.
     pub fn work(&self) -> PathBuf {
-        self.root.join("work")
+        self.local.join("work")
     }
 
     pub fn model_dir(&self) -> PathBuf {
@@ -93,7 +102,7 @@ impl Paths {
     }
 
     pub fn ensure(&self) -> std::io::Result<()> {
-        for dir in [self.root.clone(), self.bin(), self.models(), self.work()] {
+        for dir in [self.root.clone(), self.local.clone(), self.bin(), self.models(), self.work()] {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())
