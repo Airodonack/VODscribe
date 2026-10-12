@@ -78,7 +78,8 @@ fn main() -> Result<()> {
         ["search", query @ ..] => {
             let r = Db::open(&paths.db())?.search(&query.join(" "), None, 50)?;
             for h in r.hits {
-                let text: String = h.parts.iter().map(|p| if p.hit { format!("[{}]", p.text) } else { p.text.clone() }).collect();
+                let text: String =
+                    h.parts.iter().map(|p| if p.hit { format!("[{}]", p.text) } else { p.text.clone() }).collect();
                 println!("#{} {:>8.1}s  {text}", h.vod_id, h.time);
             }
         }

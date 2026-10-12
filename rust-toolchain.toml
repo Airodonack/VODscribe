@@ -2,3 +2,4 @@
 # the same one). Bump it on purpose, and fix any new warnings in the same change.
 [toolchain]
 channel = "1.99.0"
+components = ["rustfmt", "clippy"]

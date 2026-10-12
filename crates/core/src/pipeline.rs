@@ -76,9 +76,7 @@ pub fn download(
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info)?;
     }
-    fetch::download_audio(yt_dlp, &info, &work_dir.join(vod.id.to_string()), cancel, |f| {
-        report(Status::Downloading, f)
-    })
+    fetch::download_audio(yt_dlp, &info, &work_dir.join(vod.id.to_string()), cancel, |f| report(Status::Downloading, f))
 }
 
 /// Transcribes downloaded audio, writing segments to the index as they are
@@ -166,7 +164,8 @@ fn run_worker(
         let var = if cfg!(windows) { "PATH" } else { "LD_LIBRARY_PATH" };
         let existing = std::env::var_os(var).unwrap_or_default();
         // An empty entry would mean the working directory to the loader.
-        let paths = spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing)).filter(|p| !p.as_os_str().is_empty());
+        let paths =
+            spec.lib_dirs.iter().cloned().chain(std::env::split_paths(&existing)).filter(|p| !p.as_os_str().is_empty());
         cmd.env(var, std::env::join_paths(paths)?);
     }
     let mut child = cmd

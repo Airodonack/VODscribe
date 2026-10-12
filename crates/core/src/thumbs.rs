@@ -103,7 +103,8 @@ mod tests {
             fs::write(dir.join(name), b"x").unwrap();
         }
         remove(&dir, 1);
-        let mut left: Vec<String> = fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        let mut left: Vec<String> =
+            fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         left.sort();
         assert_eq!(left, ["1.part", "12-5.webp", "notes.txt"]);
         let _ = fs::remove_dir_all(&dir);

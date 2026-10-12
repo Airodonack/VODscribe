@@ -124,9 +124,8 @@ fn parse_master(text: &str) -> Vec<Variant> {
     while let Some(line) = lines.next() {
         let Some(attrs) = line.strip_prefix("#EXT-X-STREAM-INF:") else { continue };
         let Some(url) = lines.next().filter(|u| u.starts_with("https://")) else { continue };
-        let attr = |key: &str| {
-            attrs.split(',').find_map(|kv| kv.strip_prefix(key)).map(|v| v.trim_matches('"').to_string())
-        };
+        let attr =
+            |key: &str| attrs.split(',').find_map(|kv| kv.strip_prefix(key)).map(|v| v.trim_matches('"').to_string());
         let height = attr("RESOLUTION=").and_then(|r| r.split('x').nth(1)?.parse().ok()).unwrap_or(0);
         let name = attr("VIDEO=").unwrap_or_else(|| format!("{height}p"));
         out.push(Variant { name, height, url: url.to_string() });

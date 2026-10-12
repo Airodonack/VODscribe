@@ -151,7 +151,10 @@ mod tests {
             assert!(ok, "ffmpeg couldn't make {name}");
             out
         };
-        let video = make("clip.mp4", &["-f", "lavfi", "-i", "testsrc=d=2:s=160x90", "-f", "lavfi", "-i", "sine=d=2", "-shortest"]);
+        let video = make(
+            "clip.mp4",
+            &["-f", "lavfi", "-i", "testsrc=d=2:s=160x90", "-f", "lavfi", "-i", "sine=d=2", "-shortest"],
+        );
         let silent = make("silent.mp4", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90"]);
         // Real audio with a program's extension is still refused.
         let program = dir.join("clip.mp4.exe");
@@ -172,7 +175,11 @@ mod tests {
     #[test]
     fn refuses_programs_and_network_paths() {
         assert!(is_media(Path::new("/v/a.MP4")) && is_media(Path::new("C:\\v\\b.mkv")));
-        assert!(!is_media(Path::new("/v/clip.mp4.exe")) && !is_media(Path::new("/v/run.sh")) && !is_media(Path::new("/v/x")));
+        assert!(
+            !is_media(Path::new("/v/clip.mp4.exe"))
+                && !is_media(Path::new("/v/run.sh"))
+                && !is_media(Path::new("/v/x"))
+        );
         assert!(is_remote(Path::new("\\\\attacker\\share\\a.mp4")) && is_remote(Path::new("//host/a.mp4")));
         assert!(!is_remote(Path::new("/home/a.mp4")) && !is_remote(Path::new("C:\\a.mp4")));
         let err = probe(Path::new("/nonexistent/ffmpeg"), Path::new("\\\\attacker\\share\\a.mp4")).unwrap_err();

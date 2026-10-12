@@ -72,13 +72,21 @@ type Find = dyn Fn(i64) -> Option<String> + Send + Sync;
 fn serve(find: &Find, request: Request, host: &str, prefix: &str) {
     let response = match respond(find, &request, host, prefix) {
         Ok(response) => response,
-        Err(status) => Response::new(StatusCode(status), Vec::new(), Box::new(std::io::empty()) as Box<dyn Read + Send>, Some(0), None),
+        Err(status) => Response::new(
+            StatusCode(status),
+            Vec::new(),
+            Box::new(std::io::empty()) as Box<dyn Read + Send>,
+            Some(0),
+            None,
+        ),
     };
     let _ = request.respond(response);
 }
 
 fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<Response<Box<dyn Read + Send>>, u16> {
-    let header = |name: &'static str| request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string());
+    let header = |name: &'static str| {
+        request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
+    };
     if !matches!(request.method(), Method::Get | Method::Head) {
         return Err(405);
     }

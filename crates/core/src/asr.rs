@@ -60,11 +60,8 @@ impl Transcriber {
             file(&name)
         };
         let mut config = OfflineRecognizerConfig::default();
-        config.model_config.transducer = OfflineTransducerModelConfig {
-            encoder: part("encoder"),
-            decoder: part("decoder"),
-            joiner: part("joiner"),
-        };
+        config.model_config.transducer =
+            OfflineTransducerModelConfig { encoder: part("encoder"), decoder: part("decoder"), joiner: part("joiner") };
         config.model_config.tokens = file("tokens.txt");
         config.model_config.model_type = Some("nemo_transducer".into());
         config.model_config.num_threads = parallelism.threads as i32;

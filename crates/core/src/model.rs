@@ -45,11 +45,31 @@ pub const CPU_MODEL: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v3-int8wo",
     name: "Parakeet TDT 0.6B v3 (int8)",
     files: &[
-        ModelFile { name: "decoder.int8.onnx", size: 47233763, sha256: "1d9e0a3abd09af7e4ab9584d2b93b0e0430c0dadc0343502ac2e39b3d77ede3a" },
-        ModelFile { name: "encoder.int8.onnx", size: 41894229, sha256: "c5a5164abc5ff7acb6fce27d307cee6592edd0f3ba3b93c1bf6be531f3d2d348" },
-        ModelFile { name: "encoder.int8.weights", size: 854036480, sha256: "1ba8d31d5afa25fb26e84945f6758101d3b7b9f1cc20b3ee1878e674e031020f" },
-        ModelFile { name: "joiner.int8.onnx", size: 6549064, sha256: "48e276e539ef1e08e9c56a0ca13494a6b77206102b2a326cd145c2960daac4b1" },
-        ModelFile { name: "tokens.txt", size: 93939, sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+        ModelFile {
+            name: "decoder.int8.onnx",
+            size: 47233763,
+            sha256: "1d9e0a3abd09af7e4ab9584d2b93b0e0430c0dadc0343502ac2e39b3d77ede3a",
+        },
+        ModelFile {
+            name: "encoder.int8.onnx",
+            size: 41894229,
+            sha256: "c5a5164abc5ff7acb6fce27d307cee6592edd0f3ba3b93c1bf6be531f3d2d348",
+        },
+        ModelFile {
+            name: "encoder.int8.weights",
+            size: 854036480,
+            sha256: "1ba8d31d5afa25fb26e84945f6758101d3b7b9f1cc20b3ee1878e674e031020f",
+        },
+        ModelFile {
+            name: "joiner.int8.onnx",
+            size: 6549064,
+            sha256: "48e276e539ef1e08e9c56a0ca13494a6b77206102b2a326cd145c2960daac4b1",
+        },
+        ModelFile {
+            name: "tokens.txt",
+            size: 93939,
+            sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+        },
     ],
 };
 
@@ -58,11 +78,31 @@ pub const GPU_MODEL: ModelSpec = ModelSpec {
     id: "parakeet-tdt-0.6b-v3-fp16",
     name: "Parakeet TDT 0.6B v3 (fp16)",
     files: &[
-        ModelFile { name: "decoder.fp16.onnx", size: 23621639, sha256: "379bc61b3adb0e7bd1f0e73d5e663d554ec382a4e863ced2c2cc2dac71541cbd" },
-        ModelFile { name: "encoder.fp16.onnx", size: 21835082, sha256: "7d92e4ed3b41543db59e795c32b24bce8dfc2d19ae19f332924624e98841b6d7" },
-        ModelFile { name: "encoder.fp16.weights", size: 1218199040, sha256: "4c926a41b3e318fc0c554d69e31d6bb77593c189980981ab15da342c86cb75cc" },
-        ModelFile { name: "joiner.fp16.onnx", size: 12645840, sha256: "0785eecb0e428ae84b660da6c161696d0e5881008067f99edca0a9c7f5f7ed3a" },
-        ModelFile { name: "tokens.txt", size: 93939, sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d" },
+        ModelFile {
+            name: "decoder.fp16.onnx",
+            size: 23621639,
+            sha256: "379bc61b3adb0e7bd1f0e73d5e663d554ec382a4e863ced2c2cc2dac71541cbd",
+        },
+        ModelFile {
+            name: "encoder.fp16.onnx",
+            size: 21835082,
+            sha256: "7d92e4ed3b41543db59e795c32b24bce8dfc2d19ae19f332924624e98841b6d7",
+        },
+        ModelFile {
+            name: "encoder.fp16.weights",
+            size: 1218199040,
+            sha256: "4c926a41b3e318fc0c554d69e31d6bb77593c189980981ab15da342c86cb75cc",
+        },
+        ModelFile {
+            name: "joiner.fp16.onnx",
+            size: 12645840,
+            sha256: "0785eecb0e428ae84b660da6c161696d0e5881008067f99edca0a9c7f5f7ed3a",
+        },
+        ModelFile {
+            name: "tokens.txt",
+            size: 93939,
+            sha256: "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+        },
     ],
 };
 

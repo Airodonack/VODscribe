@@ -277,7 +277,8 @@ impl Db {
     }
 
     pub fn count_with_status(&self, status: Status) -> Result<usize> {
-        let n: i64 = self.conn.query_row("SELECT count(*) FROM vods WHERE status = ?1", [status.as_str()], |r| r.get(0))?;
+        let n: i64 =
+            self.conn.query_row("SELECT count(*) FROM vods WHERE status = ?1", [status.as_str()], |r| r.get(0))?;
         Ok(n as usize)
     }
 
@@ -317,7 +318,9 @@ impl Db {
 
     /// How far transcription got: the end of the last indexed segment.
     pub fn transcribed_until(&self, vod_id: i64) -> Result<f64> {
-        Ok(self.conn.query_row("SELECT coalesce(max(end), 0) FROM segments WHERE vod_id = ?1", [vod_id], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("SELECT coalesce(max(end), 0) FROM segments WHERE vod_id = ?1", [vod_id], |r| r.get(0))?)
     }
 
     pub fn set_status(&self, id: i64, status: Status, progress: f64, error: Option<&str>) -> Result<()> {
@@ -521,7 +524,9 @@ mod tests {
         assert_eq!(db.search(secret, None, 10).unwrap().hits.len(), 1);
         db.delete_vod(vod.id).unwrap();
         drop(db);
-        let bytes = [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()].concat();
+        let bytes =
+            [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()]
+                .concat();
         assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()), "deleted text still on disk");
         let _ = std::fs::remove_file(&path);
     }

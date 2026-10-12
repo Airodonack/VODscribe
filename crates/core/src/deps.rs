@@ -118,16 +118,30 @@ pub fn deno() -> Option<Dep> {
         ),
         _ => return None,
     };
-    Some(Dep { name: "deno", label: "Deno 2.9.7", url, size, sha256, archive: Archive::Zip, member: if cfg!(windows) { "deno.exe" } else { "deno" } })
+    Some(Dep {
+        name: "deno",
+        label: "Deno 2.9.7",
+        url,
+        size,
+        sha256,
+        archive: Archive::Zip,
+        member: if cfg!(windows) { "deno.exe" } else { "deno" },
+    })
 }
 
 /// Downloads and checks `dep`, then unpacks just its program into `bin_dir`.
-pub fn install(dep: &Dep, bin_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(Progress)) -> Result<PathBuf> {
+pub fn install(
+    dep: &Dep,
+    bin_dir: &Path,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(Progress),
+) -> Result<PathBuf> {
     fs::create_dir_all(bin_dir)?;
     let archive = bin_dir.join(format!("{}.download", dep.name));
     let size = dep.size;
     let step = format!("Downloading {}", dep.label);
-    let mut report = |step: &str, n| on_progress(Progress { step, done: n, total: size, file_done: n, file_size: size });
+    let mut report =
+        |step: &str, n| on_progress(Progress { step, done: n, total: size, file_done: n, file_size: size });
     net::download_verified(dep.url, &archive, Some(size), dep.sha256, cancel, |n| report(&step, n))?;
     report(&format!("{} matches its SHA‑256 · unpacking", dep.label), size);
     let dest = bin_dir.join(format!("{}{EXE}", dep.name));
@@ -154,7 +168,8 @@ fn unpack(dep: &Dep, archive: &Path, out: &Path, cancel: &AtomicBool) -> Result<
         Archive::Zip => {
             let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
             let index = (0..zip.len()).find(|&i| {
-                zip.by_index(i).is_ok_and(|f| f.is_file() && !f.is_symlink() && f.name().is_ok_and(|n| is_member(&n, dep.member)))
+                zip.by_index(i)
+                    .is_ok_and(|f| f.is_file() && !f.is_symlink() && f.name().is_ok_and(|n| is_member(&n, dep.member)))
             });
             match index {
                 Some(i) => {
@@ -228,7 +243,10 @@ mod tests {
         let never = AtomicBool::new(false);
         for dep in [ffmpeg().unwrap(), deno().unwrap()] {
             let path = install(&dep, &dir, &never, |_| {}).unwrap();
-            let out = std::process::Command::new(&path).arg(if dep.name == "deno" { "--version" } else { "-version" }).output().unwrap();
+            let out = std::process::Command::new(&path)
+                .arg(if dep.name == "deno" { "--version" } else { "-version" })
+                .output()
+                .unwrap();
             assert!(out.status.success(), "{} doesn't run", dep.name);
             assert!(fs::read_dir(&dir).unwrap().count() <= 2, "only the programs are left behind");
         }

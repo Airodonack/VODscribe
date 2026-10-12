@@ -27,7 +27,8 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     let task_app = app.clone();
     let added = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Added> {
         let state = task_app.state::<AppState>();
-        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin())
+            .ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
         let info = fetch::probe(&yt_dlp, &url, &probe_path)?;
@@ -260,7 +261,11 @@ pub(crate) struct SearchResponse {
 }
 
 #[tauri::command]
-pub(crate) async fn search(state: State<'_, AppState>, query: String, vod_id: Option<i64>) -> CmdResult<SearchResponse> {
+pub(crate) async fn search(
+    state: State<'_, AppState>,
+    query: String,
+    vod_id: Option<i64>,
+) -> CmdResult<SearchResponse> {
     let r = state.db.lock().unwrap().search(&query, vod_id, 500).map_err(err)?;
     Ok(SearchResponse { hits: r.hits, truncated: r.truncated })
 }
@@ -280,8 +285,5 @@ pub(crate) async fn transcript(state: State<'_, AppState>, vod_id: i64) -> CmdRe
 /// Playable quality levels for a Kick VOD; Kick has no embeddable VOD player.
 #[tauri::command]
 pub(crate) async fn kick_stream(url: String) -> CmdResult<Vec<vodscribe_core::kick::Variant>> {
-    tauri::async_runtime::spawn_blocking(move || vodscribe_core::kick::variants(&url))
-        .await
-        .map_err(err)?
-        .map_err(err)
+    tauri::async_runtime::spawn_blocking(move || vodscribe_core::kick::variants(&url)).await.map_err(err)?.map_err(err)
 }

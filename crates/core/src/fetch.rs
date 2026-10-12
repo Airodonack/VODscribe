@@ -43,9 +43,7 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
     if json.get("is_live").and_then(Value::as_bool) == Some(true) {
         bail!("That stream is still live. Add it once the VOD is available.");
     }
-    let published = s("upload_date")
-        .filter(|d| d.len() == 8)
-        .map(|d| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
+    let published = s("upload_date").filter(|d| d.len() == 8).map(|d| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
     Ok(VodInfo {
         platform: platform_of(&s("extractor_key").unwrap_or_default()),
         platform_id: s("id").context("yt-dlp returned no video id")?,
@@ -210,11 +208,7 @@ fn strip_tag(raw: &str) -> &str {
 fn friendly(msg: &str) -> Option<&'static str> {
     let m = msg.to_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| m.contains(w));
-    let status = m
-        .split("http error ")
-        .nth(1)
-        .and_then(|rest| rest.get(..3))
-        .and_then(|code| code.parse::<u16>().ok());
+    let status = m.split("http error ").nth(1).and_then(|rest| rest.get(..3)).and_then(|code| code.parse::<u16>().ok());
     Some(match status {
         Some(404 | 410) => "That video isn't available. It may have been deleted or made private.",
         Some(429) => "The site is limiting downloads right now. Try again in a little while.",
@@ -224,7 +218,14 @@ fn friendly(msg: &str) -> Option<&'static str> {
             "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
         }
         _ if has(&["private video", "video is private"]) => "That video is private.",
-        _ if has(&["members-only", "join this channel", "subscriber-only", "subscribers-only", "only available to subscribers"]) => {
+        _ if has(&[
+            "members-only",
+            "join this channel",
+            "subscriber-only",
+            "subscribers-only",
+            "only available to subscribers",
+        ]) =>
+        {
             "That video is only for channel members or subscribers, so VODscribe can't get it."
         }
         _ if has(&["confirm your age", "age-restricted", "age restricted"]) => {
@@ -232,10 +233,25 @@ fn friendly(msg: &str) -> Option<&'static str> {
         }
         _ if has(&["not a bot"]) => "YouTube is asking to check that you're not a bot. Try again in a little while.",
         _ if has(&["requested format is not available"]) => "That video has no audio VODscribe can download.",
-        _ if has(&["video unavailable", "video is unavailable", "has been removed", "does not exist", "no longer available"]) => {
+        _ if has(&[
+            "video unavailable",
+            "video is unavailable",
+            "has been removed",
+            "does not exist",
+            "no longer available",
+        ]) =>
+        {
             "That video isn't available. It may have been deleted or made private."
         }
-        _ if has(&["timed out", "name resolution", "failed to resolve", "network is unreachable", "connection refused", "connection reset"]) => {
+        _ if has(&[
+            "timed out",
+            "name resolution",
+            "failed to resolve",
+            "network is unreachable",
+            "connection refused",
+            "connection reset",
+        ]) =>
+        {
             "Couldn't connect. Check your internet connection and try again."
         }
         _ => return None,
@@ -253,7 +269,10 @@ mod tests {
             "That video isn't available. It may have been deleted or made private."
         );
         assert_eq!(clean_error("ERROR: [youtube] abc: Private video. Sign in"), "That video is private.");
-        assert_eq!(clean_error("ERROR: [twitch:vod] v12: Something odd happened"), "Couldn't get this video: Something odd happened");
+        assert_eq!(
+            clean_error("ERROR: [twitch:vod] v12: Something odd happened"),
+            "Couldn't get this video: Something odd happened"
+        );
         assert_eq!(clean_error("one\ntwo\nthree\nfour\n"), "Couldn't get this video: two\nthree\nfour");
         // A video id containing "404" isn't a 404, and the format error still reads right.
         assert_eq!(
@@ -261,7 +280,10 @@ mod tests {
             "That video has no audio VODscribe can download."
         );
         assert!(clean_error("ERROR: [youtube] x: HTTP Error 503: Service Unavailable").contains("having problems"));
-        assert!(clean_error("ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests").contains("limiting"));
+        assert!(
+            clean_error("ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests")
+                .contains("limiting")
+        );
         assert!(clean_error("ERROR: [youtube] x: HTTP Error 403: Forbidden").contains("refused"));
         // Only a leading tag is stripped.
         assert_eq!(

@@ -1,0 +1,4 @@
+# Wide lines and compact one-liners, as the code was written before rustfmt.
+# Run `cargo fmt --all`; CI and the pre-commit hook check it.
+max_width = 120
+use_small_heuristics = "Max"

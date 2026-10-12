@@ -50,7 +50,9 @@ impl std::error::Error for Canceled {}
 pub fn is_canceled(e: &anyhow::Error) -> bool {
     e.chain().any(|c| {
         c.is::<Canceled>()
-            || c.downcast_ref::<std::io::Error>().and_then(|io| io.get_ref()).is_some_and(|inner| inner.is::<Canceled>())
+            || c.downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .is_some_and(|inner| inner.is::<Canceled>())
     })
 }
 

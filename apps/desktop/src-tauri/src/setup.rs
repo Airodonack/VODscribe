@@ -137,9 +137,9 @@ async fn update_yt_dlp_now(app: AppHandle, state: State<'_, AppState>) -> CmdRes
             let _ = app.emit("yt-dlp-progress", (step, done, total));
         })
     })
-        .await
-        .map_err(err)?
-        .map_err(err)
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 #[tauri::command]

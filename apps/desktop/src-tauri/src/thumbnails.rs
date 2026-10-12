@@ -30,11 +30,11 @@ pub(crate) fn cache_thumbnail(app: &AppHandle, id: i64) {
         frame.ok().flatten().unwrap_or_default()
     } else {
         match vod.info.thumbnail.filter(|u| !u.is_empty()) {
-        None => String::new(),
-        Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
-            Ok(thumb) => thumb.unwrap_or_default(),
-            Err(_) => return,
-        },
+            None => String::new(),
+            Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
+                Ok(thumb) => thumb.unwrap_or_default(),
+                Err(_) => return,
+            },
         }
     };
     let db = state.db.lock().unwrap();
