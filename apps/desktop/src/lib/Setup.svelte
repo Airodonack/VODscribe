@@ -48,7 +48,7 @@
     {
       key: "ffmpeg",
       name: "Video reader",
-      what: "reads the sound from videos",
+      what: "opens videos so VODscribe can hear them",
       details:
         os === "mac" ? "FFmpeg 9.0, from ffmpeg.martin-riedl.de." : "FFmpeg 9.0, from github.com/BtbN/FFmpeg-Builds.",
       checked: CHECKED,
