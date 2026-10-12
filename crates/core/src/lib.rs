@@ -105,6 +105,12 @@ impl Paths {
         for dir in [self.root.clone(), self.local.clone(), self.bin(), self.models(), self.work()] {
             std::fs::create_dir_all(dir)?;
         }
+        // The library is private to this user: other accounts can't list or read it.
+        #[cfg(unix)]
+        for dir in [&self.root, &self.local] {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        }
         Ok(())
     }
 }
