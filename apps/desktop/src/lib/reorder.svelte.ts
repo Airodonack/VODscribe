@@ -4,7 +4,8 @@
 // The list reorders live as the dragged row passes its neighbours' midpoints,
 // and the dragged row follows the pointer. Layout positions come from
 // offsetTop, which ignores the transforms of rows that are still animating
-// (the list uses animate:flip). Items can be added or removed mid-drag: new
+// (the list uses animate:flip). offsetTop is measured from the nearest
+// positioned ancestor, so the list must be positioned (e.g. relative). Items can be added or removed mid-drag: new
 // ones go on top, as they do in the library.
 
 import { tick } from "svelte";
@@ -79,6 +80,8 @@ export class Reorder {
     const list = this.list;
     const row = this.rows[id];
     if (e.button !== 0 || this.ids().length < 2 || !list || !row) return;
+    if (row.offsetParent !== list)
+      console.warn("Reorder: the list must be positioned, or rows land in the wrong place");
     const startY = e.clientY;
     const grab = e.clientY - row.getBoundingClientRect().top;
     let pointerY = startY;

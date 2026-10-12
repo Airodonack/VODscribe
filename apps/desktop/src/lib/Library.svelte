@@ -212,6 +212,8 @@
   .list {
     overflow-y: auto;
     flex: 1;
+    /* Rows' offsetTop is measured from here; see Reorder. */
+    position: relative;
   }
 
   .vod {
