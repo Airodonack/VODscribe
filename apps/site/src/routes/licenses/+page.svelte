@@ -50,6 +50,10 @@
     </li>
     <li><strong>SQLite</strong> (public domain), which stores and searches transcripts.</li>
     <li><strong>hls.js</strong> (Apache 2.0), which plays Kick VODs.</li>
+    <li>
+      <strong>GStreamer</strong> and its plugins (LGPL), including FFmpeg's decoders (LGPL), which the Linux AppImage carries
+      to play video.
+    </li>
     <li>Icons from <strong>Lucide</strong> (ISC).</li>
     <li>And many Rust crates and npm packages, each under its own open-source license.</li>
   </ul>
