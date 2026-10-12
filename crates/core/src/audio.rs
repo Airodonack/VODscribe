@@ -28,13 +28,7 @@ pub fn decode(
         .spawn()
         .context("start ffmpeg")?;
 
-    // Drain stderr on its own thread so a chatty ffmpeg can't block on a full pipe.
-    let mut stderr = child.stderr.take().unwrap();
-    let stderr_thread = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stderr.read_to_string(&mut s);
-        s
-    });
+    let stderr_thread = tools::drain(child.stderr.take().unwrap());
 
     let mut stdout = child.stdout.take().unwrap();
     let mut buf = vec![0u8; 1 << 16];

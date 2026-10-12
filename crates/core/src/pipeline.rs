@@ -1,5 +1,4 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -171,24 +170,12 @@ fn run_worker(
         .with_context(|| format!("start {}", spec.program.display()))?;
 
     // sherpa-onnx logs to stderr; keep the tail for error messages.
-    let mut stderr = child.stderr.take().unwrap();
-    let stderr_thread = std::thread::spawn(move || {
-        let mut s = String::new();
-        let _ = stderr.read_to_string(&mut s);
-        s
-    });
+    let stderr_thread = tools::drain(child.stderr.take().unwrap());
 
-    // Read output on a thread and wake regularly, so a stop kills the worker
+    // Wake regularly while waiting for output, so a stop kills the worker
     // promptly instead of waiting for its next batch.
     let (tx, rx) = mpsc::channel();
-    let stdout = child.stdout.take().unwrap();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            if tx.send(line).is_err() {
-                return;
-            }
-        }
-    });
+    tools::send_lines(child.stdout.take().unwrap(), tx);
 
     let mut segmenter = Segmenter::new();
     let result = (|| -> Result<()> {
@@ -202,7 +189,7 @@ fn run_worker(
                 return Err(crate::Canceled.into());
             }
             let Some(line) = line else { continue };
-            let line: WorkerLine = serde_json::from_str(&line?).context("unreadable worker output")?;
+            let line: WorkerLine = serde_json::from_str(&line).context("unreadable worker output")?;
             if let Some(end) = line.end {
                 db.insert_segments(vod.id, &segmenter.push(line.words))?;
                 report(Status::Transcribing, fraction(end));
@@ -219,8 +206,7 @@ fn run_worker(
     let status = child.wait()?;
     let stderr = stderr_thread.join().unwrap_or_default();
     if !status.success() {
-        let tail: Vec<&str> = stderr.lines().rev().filter(|l| !l.trim().is_empty()).take(3).collect();
-        let msg = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+        let msg = tools::last_lines(&stderr, 3);
         bail!("{}", if msg.is_empty() { format!("worker exited with {status}") } else { msg });
     }
     if let Some(last) = segmenter.finish() {

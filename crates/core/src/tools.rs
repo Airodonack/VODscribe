@@ -143,6 +143,38 @@ pub fn update_yt_dlp(bin_dir: &Path) -> Result<String> {
     Ok(if changed { format!("Updated yt-dlp to {version}") } else { format!("yt-dlp is up to date ({version})") })
 }
 
+/// Reads a child's stream to the end on its own thread, so a chatty process
+/// can't block on a full pipe; join the handle for the text.
+pub fn drain(mut stream: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<String> {
+    std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = stream.read_to_string(&mut s);
+        s
+    })
+}
+
+/// Sends each line of a child's stream down `tx` from its own thread, so the
+/// reader can wait with a timeout (and notice a stop) instead of blocking.
+pub fn send_lines(
+    stream: impl std::io::Read + Send + 'static,
+    tx: std::sync::mpsc::Sender<String>,
+) -> std::thread::JoinHandle<()> {
+    use std::io::BufRead;
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stream).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    })
+}
+
+/// The last `n` non-blank lines of `text`, for error messages from a tool's log.
+pub fn last_lines(text: &str, n: usize) -> String {
+    let tail: Vec<&str> = text.lines().rev().filter(|l| !l.trim().is_empty()).take(n).collect();
+    tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+}
+
 /// A helper binary shipped next to the running executable, such as the worker.
 pub fn sidecar(name: &str) -> Result<PathBuf> {
     let exe = std::env::current_exe()?;
@@ -173,6 +205,12 @@ pub fn command(program: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_the_last_non_blank_lines() {
+        assert_eq!(last_lines("a\nb\n\nc\n  \n", 2), "b\nc");
+        assert_eq!(last_lines("", 3), "");
+    }
 
     /// Installs the latest release into $VODSCRIBE_TEST_BIN_DIR, then again (a no-op).
     #[test]

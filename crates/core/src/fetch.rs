@@ -1,10 +1,8 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::thread;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -131,8 +129,8 @@ pub fn download_audio(
     // Where progress lands depends on yt-dlp's flags, so read both streams.
     let (tx, rx) = mpsc::channel::<String>();
     let readers = [
-        spawn_line_reader(child.stdout.take().unwrap(), tx.clone()),
-        spawn_line_reader(child.stderr.take().unwrap(), tx),
+        tools::send_lines(child.stdout.take().unwrap(), tx.clone()),
+        tools::send_lines(child.stderr.take().unwrap(), tx),
     ];
 
     let mut path = None;
@@ -175,16 +173,6 @@ pub fn download_audio(
     path.context("yt-dlp finished without producing a file")
 }
 
-fn spawn_line_reader(stream: impl Read + Send + 'static, tx: mpsc::Sender<String>) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
-        for line in BufReader::new(stream).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    })
-}
-
 fn parse_progress(rest: &str) -> Option<f64> {
     let v: Vec<Option<f64>> = rest.split_whitespace().map(|s| s.parse().ok()).collect();
     let get = |i: usize| v.get(i).copied().flatten().filter(|x| *x > 0.0);
@@ -206,8 +194,7 @@ fn clean_error(stderr: &str) -> String {
         .filter_map(|l| l.strip_prefix("ERROR: "))
         .collect();
     if errors.is_empty() {
-        let tail: Vec<&str> = stderr.lines().rev().take(3).collect();
-        tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+        tools::last_lines(stderr, 3)
     } else {
         errors.join("\n")
     }
@@ -216,6 +203,12 @@ fn clean_error(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_prefer_yt_dlps_error_lines() {
+        assert_eq!(clean_error("[info] x\nERROR: Video unavailable\nmore"), "Video unavailable");
+        assert_eq!(clean_error("one\ntwo\nthree\nfour\n"), "two\nthree\nfour");
+    }
 
     #[test]
     fn progress_parsing() {
