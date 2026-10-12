@@ -37,19 +37,20 @@
 <div class="results">
   {#if hits.length > 0}
     <p class="summary muted">
-      <strong>{hits.length}{truncated ? "+" : ""}</strong> match{hits.length === 1 ? "" : "es"} for <strong>“{query}”</strong>
-      in {groups.length} VOD{groups.length === 1 ? "" : "s"}{#if truncated}. Showing the first {hits.length}; add a
-        word to narrow it down{/if}
+      <strong>{hits.length}{truncated ? "+" : ""}</strong> match{hits.length === 1 ? "" : "es"} for
+      <strong>“{query}”</strong>
+      in {groups.length} VOD{groups.length === 1 ? "" : "s"}{#if truncated}. Showing the first {hits.length}; add a word
+        to narrow it down{/if}
     </p>
   {/if}
   {#each groups as group (group.vodId)}
     <section>
       {#if !scope}
-      <h2>
-        {#if group.vod}<span class="platform {group.vod.platform}"></span>{/if}
-        <span class="title">{group.vod?.title ?? "Removed VOD"}</span>
-        <span class="n muted">{group.hits.length}</span>
-      </h2>
+        <h2>
+          {#if group.vod}<span class="platform {group.vod.platform}"></span>{/if}
+          <span class="title">{group.vod?.title ?? "Removed VOD"}</span>
+          <span class="n muted">{group.hits.length}</span>
+        </h2>
       {/if}
       {#each group.hits as hit (hit.segment_id)}
         <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>

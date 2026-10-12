@@ -161,7 +161,11 @@ function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise
     frame,
     TWITCH,
     (raw) => {
-      const data = raw as { namespace?: string; eventName?: string; params?: { currentTime?: number; playback?: string } };
+      const data = raw as {
+        namespace?: string;
+        eventName?: string;
+        params?: { currentTime?: number; playback?: string };
+      };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         if (typeof data.params?.currentTime === "number") clock.set(data.params.currentTime);
         if (data.params?.playback) clock.playing = ["Playing", "Buffering"].includes(data.params.playback);
@@ -190,8 +194,7 @@ function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise
 async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
   const variants = await api.kickStream(vod.url);
   // 720p is plenty for a preview pane and keeps bandwidth down.
-  const pick =
-    variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
+  const pick = variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
   if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
   const video = document.createElement("video");
   video.controls = true;

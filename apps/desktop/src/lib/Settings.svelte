@@ -177,7 +177,8 @@
   <section>
     <span class="eyebrow">Storage</span>
     <p class="muted hint">
-      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library and transcripts aren't included.
+      Downloaded files{cacheBytes !== null ? `: ${size(cacheBytes)}` : ""}. Your library and transcripts aren't
+      included.
     </p>
     <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
       {clearing ? "Clearing…" : "Clear downloads…"}

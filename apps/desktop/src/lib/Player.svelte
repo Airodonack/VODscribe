@@ -138,7 +138,8 @@
       title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
     >
     <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
-      Open on {site} <Icon name="external" size={12} />
+      Open on {site}
+      <Icon name="external" size={12} />
     </button>
     {#if canEmbed(vod)}
       <button
@@ -301,7 +302,6 @@
     background: #000;
   }
 
-
   .poster :global(img) {
     opacity: 0.85;
     transition: opacity 0.15s;
@@ -324,14 +324,15 @@
     padding-left: 4px;
     background: rgb(0 0 0 / 0.6);
     color: #fff;
-    transition: transform 0.15s, background 0.15s;
+    transition:
+      transform 0.15s,
+      background 0.15s;
   }
 
   .poster:hover .play {
     transform: scale(1.06);
     background: var(--accent);
   }
-
 
   .note {
     margin: 0;

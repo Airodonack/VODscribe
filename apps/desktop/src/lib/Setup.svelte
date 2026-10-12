@@ -39,9 +39,7 @@
     <span class="name">VODscribe</span>
   </div>
   <h1>A couple of downloads, then you're set</h1>
-  <p class="muted lead">
-    Everything runs on this computer: the audio, the transcripts and the speech model stay here.
-  </p>
+  <p class="muted lead">Everything runs on this computer: the audio, the transcripts and the speech model stay here.</p>
 
   <ul class="card">
     <li>
@@ -78,7 +76,8 @@
         {#if !status.ffmpeg}
           <p class="detail">
             Not found. Install it, then check again:
-            <code>sudo apt install ffmpeg</code>, <code>brew install ffmpeg</code> or <code>winget install ffmpeg</code>.
+            <code>sudo apt install ffmpeg</code>, <code>brew install ffmpeg</code> or
+            <code>winget install ffmpeg</code>.
           </p>
         {/if}
       </div>
@@ -124,7 +123,6 @@
     gap: 8px;
     margin-bottom: 22px;
   }
-
 
   .name {
     font-weight: 700;

@@ -57,7 +57,10 @@
   // VODs missing from `ids` (added since the reorder began) stay on top.
   function reorder(ids: number[]) {
     const listed = new Set(ids);
-    vods = [...vods.filter((v) => !listed.has(v.id)), ...ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined)];
+    vods = [
+      ...vods.filter((v) => !listed.has(v.id)),
+      ...ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined),
+    ];
     api.reorderVods(vods.map((v) => v.id)).catch(async (e) => {
       console.error("reorder failed", e);
       vods = await api.listVods();
@@ -76,22 +79,28 @@
 
   onMount(async () => {
     unlisten.push(
-      await events.vod(afterLoad((vod) => {
-        upsert(vod);
-        if (vod.status === "done") runSearch();
-      })),
-      await events.vodProgress(afterLoad((id, status, progress) => {
-        const vod = vods.find((v) => v.id === id);
-        if (vod) {
-          vod.status = status;
-          vod.progress = progress;
-        }
-      })),
-      await events.vodRemoved(afterLoad((id) => {
-        vods = vods.filter((v) => v.id !== id);
-        if (playing?.vodId === id) playing = null;
-        runSearch();
-      })),
+      await events.vod(
+        afterLoad((vod) => {
+          upsert(vod);
+          if (vod.status === "done") runSearch();
+        }),
+      ),
+      await events.vodProgress(
+        afterLoad((id, status, progress) => {
+          const vod = vods.find((v) => v.id === id);
+          if (vod) {
+            vod.status = status;
+            vod.progress = progress;
+          }
+        }),
+      ),
+      await events.vodRemoved(
+        afterLoad((id) => {
+          vods = vods.filter((v) => v.id !== id);
+          if (playing?.vodId === id) playing = null;
+          runSearch();
+        }),
+      ),
     );
     await refreshSetup();
     vods = await api.listVods();
@@ -217,31 +226,34 @@
           <Transcript vod={selected} onplay={play} />
         {:else}
           <div class="home">
-          <div class="empty">
-            <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
-            {#if vods.length === 0}
-              <h2>Your library is empty</h2>
-              <p class="muted">
-                Paste a Kick, Twitch or YouTube VOD link on the left. It downloads and transcribes on this computer, and
-                then every word in it is searchable here.
-              </p>
-            {:else}
-              <h2>Search every word</h2>
-              <p class="muted">
-                Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to
-                read its transcript. Clicking a match plays the VOD from that moment.
-              </p>
-              <p class="keys muted">
-                <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd>→</kbd> 5 s,
-                <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
-              </p>
-            {/if}
-          </div>
-          <button class="credit" onclick={() => openUrl(SUPPORT)}>
-            Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-              >Help cover hosting on Ko-fi</span
-            >
-          </button>
+            <div class="empty">
+              <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
+              {#if vods.length === 0}
+                <h2>Your library is empty</h2>
+                <p class="muted">
+                  Paste a Kick, Twitch or YouTube VOD link on the left. It downloads and transcribes on this computer,
+                  and then every word in it is searchable here.
+                </p>
+              {:else}
+                <h2>Search every word</h2>
+                <p class="muted">
+                  Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left
+                  to read its transcript. Clicking a match plays the VOD from that moment.
+                </p>
+                <p class="keys muted">
+                  <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd
+                    >→</kbd
+                  >
+                  5 s,
+                  <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
+                </p>
+              {/if}
+            </div>
+            <button class="credit" onclick={() => openUrl(SUPPORT)}>
+              Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
+                >Help cover hosting on Ko-fi</span
+              >
+            </button>
           </div>
         {/if}
       </div>

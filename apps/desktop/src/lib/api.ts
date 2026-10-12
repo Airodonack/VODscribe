@@ -110,7 +110,9 @@ const thumbUrls = new Map<string, Promise<string>>();
 export function thumbUrl(name: string): Promise<string> {
   let url = thumbUrls.get(name);
   if (!url) {
-    const type = { jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" }[name.split(".").pop() ?? ""];
+    const type = { jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" }[
+      name.split(".").pop() ?? ""
+    ];
     url = invoke<ArrayBuffer>("thumbnail", { name }).then((bytes) => URL.createObjectURL(new Blob([bytes], { type })));
     url.catch(() => thumbUrls.delete(name));
     thumbUrls.set(name, url);

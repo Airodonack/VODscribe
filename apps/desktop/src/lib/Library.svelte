@@ -58,7 +58,9 @@
   };
 
   function retranscribe(vod: Vod) {
-    if (confirm(`Re-transcribe “${vod.title}”? Its current transcript is replaced; the audio may need to download again.`)) {
+    if (
+      confirm(`Re-transcribe “${vod.title}”? Its current transcript is replaced; the audio may need to download again.`)
+    ) {
       act(api.retranscribeVod(vod.id));
     }
   }
@@ -76,10 +78,12 @@
     }
   }
 
-
   let version = $state<string | null>(null);
   onMount(() => {
-    getVersion().then((v) => (version = v || null), () => {});
+    getVersion().then(
+      (v) => (version = v || null),
+      () => {},
+    );
   });
 
   const toggle = (vod: Vod) => onselect(vod.id === selectedId ? null : vod.id);
@@ -271,7 +275,9 @@
               </span>
             {/if}
             {#if showBar}
-              <span class="bar" class:paused={vod.status === "paused"}><span style:width="{vod.progress * 100}%"></span></span>
+              <span class="bar" class:paused={vod.status === "paused"}
+                ><span style:width="{vod.progress * 100}%"></span></span
+              >
             {/if}
             {#if vod.status === "error" && vod.error}
               <span class="note error-text" title={vod.error}>{vod.error}</span>
@@ -404,7 +410,6 @@
     text-decoration: underline;
   }
 
-
   form {
     display: flex;
     gap: 6px;
@@ -458,7 +463,9 @@
   }
 
   .vod.selected.lifted {
-    box-shadow: inset 3px 0 var(--accent), var(--shadow);
+    box-shadow:
+      inset 3px 0 var(--accent),
+      var(--shadow);
   }
 
   :global(body.dragging),
@@ -507,7 +514,6 @@
   .thumb.kick {
     background: color-mix(in srgb, var(--kick) 20%, var(--surface-3));
   }
-
 
   .duration {
     position: absolute;
