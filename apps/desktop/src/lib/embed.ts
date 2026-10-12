@@ -1,4 +1,7 @@
-// Controllers for the platforms' official embed APIs. They give a real
+// Controllers for the platforms' players. YouTube and Twitch run in sandboxed
+// iframes on their own origins and are driven over postMessage, using the same
+// messages their embed scripts send, so no third-party script runs in the app's
+// window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
 import Hls from "hls.js";
@@ -13,104 +16,175 @@ export interface EmbeddedPlayer {
   destroy(): void;
 }
 
-const scripts = new Map<string, Promise<void>>();
+/** The players' position as last reported, advanced by the clock while playing. */
+class Clock {
+  private at = performance.now();
+  constructor(
+    private seconds: number,
+    public playing: boolean,
+  ) {}
+  set(seconds: number) {
+    this.seconds = seconds;
+    this.at = performance.now();
+  }
+  now() {
+    return this.seconds + (this.playing ? (performance.now() - this.at) / 1000 : 0);
+  }
+}
 
-function loadScript(src: string, ready?: (done: () => void) => void): Promise<void> {
-  let p = scripts.get(src);
-  if (!p) {
-    p = new Promise<void>((resolve, reject) => {
-      const el = document.createElement("script");
-      el.src = src;
-      el.async = true;
-      el.onerror = () => {
-        scripts.delete(src);
-        reject(new Error(`Couldn't load ${src}`));
-      };
-      el.onload = () => (ready ? ready(resolve) : resolve());
-      document.head.appendChild(el);
+function sandboxedFrame(el: HTMLElement, src: string): HTMLIFrameElement {
+  const frame = document.createElement("iframe");
+  // Scripts run on the player's own origin; it can't navigate the app or open windows.
+  frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation");
+  frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
+  frame.setAttribute("allowfullscreen", "");
+  frame.referrerPolicy = "strict-origin-when-cross-origin";
+  frame.style.cssText = "width: 100%; height: 100%; border: 0";
+  frame.src = src;
+  el.appendChild(frame);
+  return frame;
+}
+
+/**
+ * Listens for messages from `frame` (and only it), and resolves with `player`
+ * once `isReady` sees a ready message, or after a timeout so commands still go
+ * through if the ready message never comes.
+ */
+function connect(
+  frame: HTMLIFrameElement,
+  origin: string,
+  onMessage: (data: unknown) => boolean,
+  player: (cleanup: () => void) => EmbeddedPlayer,
+  onStart?: () => () => void,
+): Promise<EmbeddedPlayer> {
+  return new Promise((resolve) => {
+    let done = false;
+    const stopStart = onStart?.();
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timeout);
+      stopStart?.();
+      resolve(p);
+    };
+    const listener = (e: MessageEvent) => {
+      if (e.source !== frame.contentWindow || e.origin !== origin) return;
+      if (onMessage(e.data)) finish();
+    };
+    const timeout = setTimeout(finish, 10_000);
+    window.addEventListener("message", listener);
+    const p = player(() => {
+      window.removeEventListener("message", listener);
+      clearTimeout(timeout);
+      stopStart?.();
+      frame.remove();
     });
-    scripts.set(src, p);
-  }
-  return p;
-}
-
-/* eslint-disable @typescript-eslint/no-explicit-any */
-declare global {
-  interface Window {
-    YT?: any;
-    Twitch?: any;
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-function loadYouTube(): Promise<void> {
-  return loadScript("https://www.youtube.com/iframe_api", (done) => {
-    if (window.YT?.Player) done();
-    else window.onYouTubeIframeAPIReady = done;
   });
 }
 
-async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
-  await loadYouTube();
-  return new Promise((resolve) => {
-    const player = new window.YT.Player(el, {
-      host: "https://www.youtube-nocookie.com",
-      videoId: vod.platform_id,
-      width: "100%",
-      height: "100%",
-      playerVars: { start: Math.floor(time), autoplay: play ? 1 : 0, playsinline: 1, rel: 0 },
-      events: {
-        onReady: () =>
-          resolve({
-            seek(seconds, play) {
-              player.seekTo(seconds, true);
-              if (play) player.playVideo();
-            },
-            time: () => player.getCurrentTime(),
-            togglePlay() {
-              // State 1 is "playing".
-              if (player.getPlayerState() === 1) player.pauseVideo();
-              else player.playVideo();
-            },
-            destroy: () => player.destroy(),
-          }),
+const YOUTUBE = "https://www.youtube-nocookie.com";
+
+function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    origin: location.origin,
+    start: String(Math.floor(time)),
+    autoplay: play ? "1" : "0",
+    playsinline: "1",
+    rel: "0",
+  });
+  const frame = sandboxedFrame(el, `${YOUTUBE}/embed/${encodeURIComponent(vod.platform_id)}?${params}`);
+  const clock = new Clock(time, play);
+  const post = (message: object) =>
+    frame.contentWindow?.postMessage(JSON.stringify({ ...message, id: 1, channel: "widget" }), YOUTUBE);
+  const command = (func: string, args: unknown[] = []) => post({ event: "command", func, args });
+
+  return connect(
+    frame,
+    YOUTUBE,
+    (raw) => {
+      let data: { event?: string; info?: { currentTime?: number; playerState?: number } };
+      try {
+        data = typeof raw === "string" ? JSON.parse(raw) : (raw as typeof data);
+      } catch {
+        return false;
+      }
+      if (typeof data.info?.currentTime === "number") clock.set(data.info.currentTime);
+      // State 1 is "playing", 3 is "buffering".
+      if (typeof data.info?.playerState === "number") clock.playing = [1, 3].includes(data.info.playerState);
+      return data.event === "onReady" || data.event === "initialDelivery";
+    },
+    (cleanup) => ({
+      seek(seconds, play) {
+        command("seekTo", [seconds, true]);
+        if (play) command("playVideo");
+        clock.set(seconds);
       },
-    });
-  });
+      time: () => clock.now(),
+      togglePlay() {
+        command(clock.playing ? "pauseVideo" : "playVideo");
+        clock.set(clock.now());
+        clock.playing = !clock.playing;
+      },
+      destroy: cleanup,
+    }),
+    // The player only reports to a page that has said it's listening.
+    () => {
+      const timer = setInterval(() => post({ event: "listening" }), 250);
+      return () => clearInterval(timer);
+    },
+  );
 }
 
-async function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
-  await loadScript("https://player.twitch.tv/js/embed/v1.js");
-  return new Promise((resolve) => {
-    const Player = window.Twitch.Player;
-    const player = new Player(el, {
-      video: twitchId(vod),
-      // Twitch refuses to play unless `parent` names the embedding page's host.
-      parent: [location.hostname || "localhost"],
-      time: twitchTime(time),
-      autoplay: play,
-      width: "100%",
-      height: "100%",
-    });
-    player.addEventListener(Player.READY, () =>
-      resolve({
-        seek(seconds, play) {
-          player.seek(seconds);
-          if (play) player.play();
-        },
-        time: () => player.getCurrentTime(),
-        togglePlay() {
-          if (player.isPaused()) player.play();
-          else player.pause();
-        },
-        destroy: () => {
-          el.innerHTML = "";
-        },
-      }),
-    );
+const TWITCH = "https://player.twitch.tv";
+// From Twitch's embed script (player.twitch.tv/js/embed/v1.js).
+const TWITCH_PROXY = "twitch-embed-player-proxy";
+const TWITCH_PAUSE = 2;
+const TWITCH_PLAY = 3;
+const TWITCH_SEEK = 4;
+
+function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+  const params = new URLSearchParams({
+    video: twitchId(vod),
+    // Twitch refuses to play unless `parent` names the embedding page's host.
+    parent: location.hostname || "localhost",
+    referrer: location.href,
+    time: twitchTime(time),
+    autoplay: String(play),
   });
+  const frame = sandboxedFrame(el, `${TWITCH}/?${params}`);
+  const clock = new Clock(time, play);
+  const command = (eventName: number, params: unknown = null) =>
+    frame.contentWindow?.postMessage({ eventName, params, namespace: TWITCH_PROXY }, TWITCH);
+
+  return connect(
+    frame,
+    TWITCH,
+    (raw) => {
+      const data = raw as { namespace?: string; eventName?: string; params?: { currentTime?: number; playback?: string } };
+      if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
+        if (typeof data.params?.currentTime === "number") clock.set(data.params.currentTime);
+        if (data.params?.playback) clock.playing = ["Playing", "Buffering"].includes(data.params.playback);
+        return true;
+      }
+      return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
+    },
+    (cleanup) => ({
+      seek(seconds, play) {
+        command(TWITCH_SEEK, seconds);
+        if (play) command(TWITCH_PLAY);
+        clock.set(seconds);
+      },
+      time: () => clock.now(),
+      togglePlay() {
+        command(clock.playing ? TWITCH_PAUSE : TWITCH_PLAY);
+        clock.set(clock.now());
+        clock.playing = !clock.playing;
+      },
+      destroy: cleanup,
+    }),
+  );
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 /** Kick has no VOD embed, so play its HLS stream in a plain <video>. */
 async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {

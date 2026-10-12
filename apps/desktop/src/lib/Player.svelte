@@ -1,8 +1,8 @@
 <script lang="ts">
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { onDestroy, onMount, untrack } from "svelte";
-  import type { Vod } from "./api";
+  import { onDestroy, tick, untrack } from "svelte";
+  import { thumbSrc, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
   import { formatTime, platformName, watchUrl } from "./platform";
@@ -29,6 +29,11 @@
 
   let host = $state<HTMLDivElement>();
   let player: EmbeddedPlayer | null = null;
+  // The player loads on demand: until then the VOD's (local) thumbnail stands in,
+  // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
+  let active = $state(untrack(() => at.play));
+  let posterBroken = $state(false);
+  const poster = $derived(thumbSrc(vod));
   // A jump requested while the player is still loading, applied once it's ready.
   let pending: { time: number; play: boolean } | null = null;
 
@@ -38,9 +43,15 @@
   const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (!player || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod)) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (!active && (key === " " || key === "k")) {
+      activate(at.time);
+      e.preventDefault();
+      return;
+    }
+    if (!player) return;
     if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
       player.seek(Math.max(0, player.time() + step), false);
@@ -56,14 +67,18 @@
   let error = $state<string | null>(null);
   const site = $derived(platformName[vod.platform] ?? "site");
 
-  onMount(() => {
-    if (!host) return;
-    // The embed APIs replace the element they're given, so give them one Svelte doesn't own.
+  let started = false;
+  async function activate(time: number, play = true) {
+    if (started) return;
+    started = true;
+    active = true;
+    await tick();
+    if (!host || destroyed) return;
+    // The players replace what they're given, so give them an element Svelte doesn't own.
     const target = document.createElement("div");
     target.style.cssText = "width: 100%; height: 100%";
     host.appendChild(target);
-    const start = untrack(() => at);
-    createPlayer(target, vod, start.time, start.play)?.then(
+    createPlayer(target, vod, time, play)?.then(
       (p) => {
         // Closed while loading: don't leave an invisible player running.
         if (destroyed) return p.destroy();
@@ -72,7 +87,9 @@
       },
       (e) => (error = String(e)),
     );
-  });
+  }
+  // Opened by a jump (a search result or transcript line): start straight away.
+  untrack(() => at.play && canEmbed(vod) && activate(at.time));
 
   let first = true;
   $effect(() => {
@@ -81,9 +98,10 @@
       first = false;
       return;
     }
+    collapsed = false;
+    if (!started) return void activate(time, true);
     if (player) player.seek(time, play);
     else pending = { time, play };
-    collapsed = false;
   });
 
   let destroyed = false;
@@ -151,7 +169,18 @@
   {/if}
   {#if canEmbed(vod)}
     <div class="stage" class:collapsed>
-      <div class="frame" bind:this={host}></div>
+      <div class="frame">
+        {#if active}
+          <div class="host" bind:this={host}></div>
+        {:else}
+          <button class="poster" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
+            {#if poster && !posterBroken}
+              <img src={poster} alt="" onerror={() => (posterBroken = true)} />
+            {/if}
+            <span class="play"><Icon name="play" size={26} /></span>
+          </button>
+        {/if}
+      </div>
     </div>
     {#if error}<p class="error-text note">{error}</p>{/if}
   {:else}
@@ -259,6 +288,61 @@
     aspect-ratio: 16 / 9;
     max-height: 44vh;
     margin: 0 auto;
+  }
+
+  .host {
+    width: 100%;
+    height: 100%;
+  }
+
+  .poster {
+    position: relative;
+    display: flex;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: #000;
+    overflow: hidden;
+  }
+
+  .poster:hover:not(:disabled) {
+    background: #000;
+  }
+
+  .poster img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.85;
+    transition: opacity 0.15s;
+  }
+
+  .poster:hover img {
+    opacity: 1;
+  }
+
+  .play {
+    position: relative;
+    margin: auto;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-left: 4px;
+    background: rgb(0 0 0 / 0.6);
+    color: #fff;
+    transition: transform 0.15s, background 0.15s;
+  }
+
+  .poster:hover .play {
+    transform: scale(1.06);
+    background: var(--accent);
   }
 
   .frame :global(iframe) {

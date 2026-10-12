@@ -22,13 +22,16 @@
     "security": {
       "csp": {
         "default-src": "'self'",
-        "script-src": "'self' https://www.youtube.com https://player.twitch.tv",
+        "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
         "img-src": "'self' data: thumb: http://thumb.localhost",
-        "media-src": "'self' blob: https:",
-        "connect-src": "'self' ipc: http://ipc.localhost https:",
-        "frame-src": "https://www.youtube-nocookie.com https://www.youtube.com https://player.twitch.tv",
-        "worker-src": "'self' blob:"
+        "media-src": "'self' blob: https://*.cloudfront.net https://*.kick.com",
+        "connect-src": "'self' ipc: http://ipc.localhost https://*.cloudfront.net https://*.kick.com",
+        "frame-src": "https://www.youtube-nocookie.com https://player.twitch.tv",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
       },
       "devCsp": null,
       "dangerousDisableAssetCspModification": ["style-src"]
