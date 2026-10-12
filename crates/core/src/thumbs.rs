@@ -61,7 +61,7 @@ fn image_ext(bytes: &[u8]) -> Option<&'static str> {
 }
 
 /// The MIME type for a thumbnail file name this module wrote, or None for
-/// anything else (so the app's `thumb:` scheme serves nothing else).
+/// anything else (so the app serves nothing else as a thumbnail).
 pub fn mime(name: &str) -> Option<&'static str> {
     let (stem, ext) = name.split_once('.')?;
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());

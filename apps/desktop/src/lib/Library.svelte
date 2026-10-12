@@ -3,10 +3,11 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
-  import { api, thumbSrc, type Vod } from "./api";
+  import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
+  import Thumb from "./Thumb.svelte";
   import { formatTime, platformName } from "./platform";
 
   let {
@@ -68,9 +69,6 @@
     }
   }
 
-  // Thumbnails that fail to load fall back to the platform tile.
-  // Keyed by URL, so a new thumbnail for the same VOD gets its own chance.
-  let broken = $state(new Set<string>());
 
   let version = $state<string | null>(null);
   onMount(() => {
@@ -214,7 +212,6 @@
       {@const active = vod.status === "downloading" || vod.status === "transcribing"}
       {@const showBar = active || (vod.status === "paused" && vod.progress > 0)}
       {@const platform = platformName[vod.platform] ?? vod.platform}
-      {@const thumb = thumbSrc(vod)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
       <div
         class="vod"
@@ -239,20 +236,9 @@
           title={vods.length > 1 ? "Drag to reorder (Alt+↑/↓)" : undefined}
         >
           <span class="thumb {vod.platform}">
-            {#if thumb && !broken.has(thumb)}
-              <img
-                src={thumb}
-                alt=""
-                draggable="false"
-                loading="lazy"
-                onerror={() => {
-                  broken.add(thumb);
-                  broken = new Set(broken);
-                }}
-              />
-            {:else}
-              <Icon name="play" size={14} />
-            {/if}
+            <!-- The platform tile shows until (and unless) the thumbnail covers it. -->
+            <Icon name="play" size={14} />
+            {#if vod.thumb}<Thumb name={vod.thumb} />{/if}
             {#if vod.duration}<span class="duration">{formatTime(vod.duration)}</span>{/if}
           </span>
           <span class="text">
@@ -514,13 +500,6 @@
     background: color-mix(in srgb, var(--kick) 20%, var(--surface-3));
   }
 
-  .thumb img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
 
   .duration {
     position: absolute;

@@ -2,8 +2,9 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
-  import { thumbSrc, type Vod } from "./api";
+  import type { Vod } from "./api";
   import Icon from "./Icon.svelte";
+  import Thumb from "./Thumb.svelte";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
   import { formatTime, platformName, watchUrl } from "./platform";
 
@@ -32,8 +33,6 @@
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
   let active = $state(untrack(() => at.play));
-  let posterBroken = $state(false);
-  const poster = $derived(thumbSrc(vod));
   // A jump requested while the player is still loading, applied once it's ready.
   let pending: { time: number; play: boolean } | null = null;
 
@@ -174,9 +173,7 @@
           <div class="host" bind:this={host}></div>
         {:else}
           <button class="poster" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
-            {#if poster && !posterBroken}
-              <img src={poster} alt="" onerror={() => (posterBroken = true)} />
-            {/if}
+            {#if vod.thumb}<Thumb name={vod.thumb} />{/if}
             <span class="play"><Icon name="play" size={26} /></span>
           </button>
         {/if}
@@ -311,22 +308,19 @@
     background: #000;
   }
 
-  .poster img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+
+  .poster :global(img) {
     opacity: 0.85;
     transition: opacity 0.15s;
   }
 
-  .poster:hover img {
+  .poster:hover :global(img) {
     opacity: 1;
   }
 
   .play {
     position: relative;
+    z-index: 1;
     margin: auto;
     width: 64px;
     height: 64px;

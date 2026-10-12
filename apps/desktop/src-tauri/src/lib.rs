@@ -125,6 +125,16 @@ async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     Ok(added)
 }
 
+/// A thumbnail's bytes, by the file name in `Vod::thumb`, and nothing else.
+#[tauri::command]
+async fn thumbnail(state: State<'_, AppState>, name: String) -> CmdResult<tauri::ipc::Response> {
+    if thumbs::mime(&name).is_none() {
+        return Err("not a thumbnail".into());
+    }
+    let bytes = std::fs::read(state.paths.thumbs().join(&name)).map_err(err)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[tauri::command]
 async fn list_vods(state: State<'_, AppState>) -> CmdResult<Vec<Vod>> {
     state.db.lock().unwrap().vods().map_err(err)
@@ -426,27 +436,11 @@ fn cache_missing_thumbnails(app: AppHandle) {
     }
 }
 
-/// Serves `thumb:<name>` from the thumbnails directory, and nothing else.
-fn serve_thumb(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
-    let name = path.trim_start_matches('/');
-    let found = thumbs::mime(name).and_then(|mime| {
-        let state = app.try_state::<AppState>()?;
-        Some((mime, std::fs::read(state.paths.thumbs().join(name)).ok()?))
-    });
-    let resp = tauri::http::Response::builder();
-    match found {
-        Some((mime, bytes)) => resp.header("Content-Type", mime).body(bytes),
-        None => resp.status(404).body(Vec::new()),
-    }
-    .expect("static response")
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .register_uri_scheme_protocol("thumb", |ctx, request| serve_thumb(ctx.app_handle(), request.uri().path()))
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
             let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
@@ -473,6 +467,7 @@ pub fn run() {
             run_setup,
             add_vod,
             list_vods,
+            thumbnail,
             reorder_vods,
             delete_vod,
             retry_vod,

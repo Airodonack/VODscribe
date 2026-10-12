@@ -24,7 +24,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: thumb: http://thumb.localhost",
+        "img-src": "'self' data: blob:",
         "media-src": "'self' blob: https://*.cloudfront.net https://*.kick.com",
         "connect-src": "'self' ipc: http://ipc.localhost https://*.cloudfront.net https://*.kick.com",
         "frame-src": "https://www.youtube-nocookie.com https://player.twitch.tv",

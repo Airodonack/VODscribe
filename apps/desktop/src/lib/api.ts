@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Status = "queued" | "downloading" | "ready" | "transcribing" | "paused" | "done" | "error";
@@ -12,7 +12,7 @@ export interface Vod {
   channel: string | null;
   duration: number | null;
   thumbnail: string | null;
-  /** Local copy of the thumbnail; see `thumbSrc`. */
+  /** File name of the local thumbnail copy ("" if there's none); see `thumbUrl`. */
   thumb: string | null;
   published: string | null;
   status: Status;
@@ -101,5 +101,19 @@ export const events = {
 
 export type { UnlistenFn };
 
-/** The URL of a VOD's local thumbnail, served by the app's `thumb:` scheme. */
-export const thumbSrc = (vod: Vod) => (vod.thumb ? convertFileSrc(vod.thumb, "thumb") : null);
+const thumbUrls = new Map<string, Promise<string>>();
+
+/**
+ * A blob URL for a VOD's local thumbnail. The bytes come over IPC rather than a
+ * custom URL scheme, which WebKitGTK won't load into the dev server's http page.
+ */
+export function thumbUrl(name: string): Promise<string> {
+  let url = thumbUrls.get(name);
+  if (!url) {
+    const type = { jpg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif" }[name.split(".").pop() ?? ""];
+    url = invoke<ArrayBuffer>("thumbnail", { name }).then((bytes) => URL.createObjectURL(new Blob([bytes], { type })));
+    url.catch(() => thumbUrls.delete(name));
+    thumbUrls.set(name, url);
+  }
+  return url;
+}
