@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
+  import { Reorder } from "./reorder.svelte";
   import Thumb from "./Thumb.svelte";
   import { formatTime, platformName } from "./platform";
 
@@ -95,107 +96,16 @@
     toggle(vod);
   }
 
-  // Dragging a row (anywhere but its action buttons) reorders the library.
-  // The list reorders live as the row passes its neighbours' midpoints; the
-  // dragged row follows the pointer. Layout positions come from offsetTop,
-  // which ignores the transforms of rows that are still animating.
-  let list: HTMLElement;
-  const rows: Record<number, HTMLElement> = {};
-  let drag = $state<{ id: number; order: number[]; moved: boolean; dy: number } | null>(null);
+  // Dragging a row (anywhere but its action buttons) or Alt+↑/↓ reorders the library.
+  const reorder = new Reorder(
+    () => vods.map((v) => v.id),
+    (ids) => onreorder(ids),
+  );
   let byId = $derived(new Map(vods.map((v) => [v.id, v])));
-  let shown = $derived(drag?.moved ? drag.order.map((id) => byId.get(id)).filter((v) => v !== undefined) : vods);
-  let suppressClick = false;
+  let shown = $derived(reorder.order.map((id) => byId.get(id)).filter((v) => v !== undefined));
 
-  /** `order` minus VODs removed since the drag began, plus any added (on top, as in the library). */
-  function reconcile(order: number[]) {
-    const kept = order.filter((id) => byId.has(id));
-    return [...vods.map((v) => v.id).filter((id) => !kept.includes(id)), ...kept];
-  }
-
-  function startDrag(e: PointerEvent, vod: Vod) {
-    if (e.button !== 0 || vods.length < 2 || (e.target as HTMLElement).closest(".actions")) return;
-    const startY = e.clientY;
-    const grab = e.clientY - rows[vod.id].getBoundingClientRect().top;
-    let pointerY = startY;
-    let frame = 0;
-    drag = { id: vod.id, order: vods.map((v) => v.id), moved: false, dy: 0 };
-
-    // Where the pointer is, in the list's content coordinates.
-    const contentY = () => pointerY - list.getBoundingClientRect().top + list.scrollTop;
-
-    function step() {
-      if (!drag) return;
-      // VODs can be added or removed mid-drag: new ones go on top, as they do in the library.
-      const order = reconcile(drag.order);
-      if (order.length !== drag.order.length || order.some((id, i) => id !== drag!.order[i])) drag.order = order;
-      const self = rows[drag.id];
-      if (!byId.has(drag.id) || !self) return end();
-
-      const box = list.getBoundingClientRect();
-      const edge = 36;
-      if (pointerY < box.top + edge) list.scrollTop -= Math.ceil((box.top + edge - pointerY) / 4);
-      else if (pointerY > box.bottom - edge) list.scrollTop += Math.ceil((pointerY - box.bottom + edge) / 4);
-
-      const y = contentY();
-      const i = drag.order.indexOf(drag.id);
-      // Rows that haven't rendered yet have no midpoint, so they're never swapped with.
-      const mid = (id: number) => (rows[id] ? rows[id].offsetTop + rows[id].offsetHeight / 2 : NaN);
-      const top = y - grab;
-      const bottom = top + self.offsetHeight;
-      const o = drag.order;
-      if (i > 0 && top < mid(o[i - 1])) {
-        [o[i - 1], o[i]] = [o[i], o[i - 1]];
-      } else if (i < o.length - 1 && bottom > mid(o[i + 1])) {
-        [o[i + 1], o[i]] = [o[i], o[i + 1]];
-      }
-      tick().then(() => {
-        const el = drag && rows[drag.id];
-        if (drag && el) drag.dy = y - grab - el.offsetTop;
-      });
-      frame = requestAnimationFrame(step);
-    }
-
-    function move(e: PointerEvent) {
-      pointerY = e.clientY;
-      if (drag && !drag.moved && Math.abs(pointerY - startY) > 4) {
-        drag.moved = true;
-        document.body.classList.add("dragging");
-        frame = requestAnimationFrame(step);
-      }
-    }
-
-    function end() {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      document.body.classList.remove("dragging");
-      if (drag?.moved) {
-        // The click that ends a drag shouldn't select the row.
-        suppressClick = true;
-        setTimeout(() => (suppressClick = false));
-        const order = reconcile(drag.order);
-        if (order.some((id, i) => id !== vods[i]?.id)) onreorder(order);
-      }
-      drag = null;
-    }
-
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-  }
-
-  // Alt+↑/↓ on a row moves it, for the keyboard.
   function onRowKey(e: KeyboardEvent, vod: Vod) {
-    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-    e.preventDefault();
-    const order = vods.map((v) => v.id);
-    const i = order.indexOf(vod.id);
-    const j = e.key === "ArrowUp" ? i - 1 : i + 1;
-    if (j < 0 || j >= order.length) return;
-    [order[i], order[j]] = [order[j], order[i]];
-    onreorder(order);
-    tick().then(() => rows[vod.id]?.querySelector<HTMLElement>(".main")?.focus());
+    if (reorder.key(e, vod.id)) tick().then(() => reorder.rows[vod.id]?.querySelector<HTMLElement>(".main")?.focus());
   }
 </script>
 
@@ -222,7 +132,7 @@
     <p class="error-text add-error">{error}</p>
   {/if}
 
-  <div class="list" bind:this={list}>
+  <div class="list" bind:this={reorder.list}>
     {#each shown as vod (vod.id)}
       {@const active = vod.status === "downloading" || vod.status === "transcribing"}
       {@const showBar = active || (vod.status === "paused" && vod.progress > 0)}
@@ -231,18 +141,15 @@
       <div
         class="vod"
         class:selected={vod.id === selectedId}
-        class:lifted={drag?.moved && drag.id === vod.id}
-        style:transform={drag?.moved && drag.id === vod.id ? `translateY(${drag.dy}px)` : null}
-        bind:this={rows[vod.id]}
-        animate:flip={{ duration: drag?.id === vod.id ? 0 : 150 }}
-        onclickcapture={(e) => {
-          if (suppressClick) {
-            e.stopPropagation();
-            e.preventDefault();
-          }
-        }}
+        class:lifted={reorder.lifted(vod.id)}
+        style:transform={reorder.transform(vod.id)}
+        bind:this={reorder.rows[vod.id]}
+        animate:flip={{ duration: reorder.flipDuration(vod.id) }}
+        onclickcapture={reorder.clickCapture}
         onclick={(e) => onRowClick(e, vod)}
-        onpointerdown={(e) => startDrag(e, vod)}
+        onpointerdown={(e) => {
+          if (!(e.target as HTMLElement).closest(".actions")) reorder.start(e, vod.id);
+        }}
       >
         <button
           class="main"
