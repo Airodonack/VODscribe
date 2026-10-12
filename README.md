@@ -10,7 +10,7 @@ Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by 
 
 On first run the app downloads yt-dlp and the speech model (about 900 MB, from `dl.vodscribe.com`) into its data directory. ffmpeg must be installed separately. YouTube needs a JavaScript runtime for yt-dlp; Deno, Node or Bun on `PATH` is detected automatically.
 
-- **Library.** Paste a link in the sidebar. VODs download and transcribe in the background, one of each at a time, working up from the bottom of the list, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced. Drag a row to reorder the library (or `Alt+↑`/`↓` on a focused row); the lowest waiting VOD is processed next, and searches across the library list matches in the same order. New VODs go on top, so they wait their turn unless dragged down.
+- **Library.** Paste a link in the sidebar, or drop links and video or audio files anywhere on the window ("add video files…" opens a file picker). Files are transcribed where they are; the app never copies, moves or deletes them. Dropping links doesn't work on Windows yet, where pasting does. VODs download and transcribe in the background, one of each at a time, working up from the bottom of the list, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced. Drag a row to reorder the library (or `Alt+↑`/`↓` on a focused row); the lowest waiting VOD is processed next, and searches across the library list matches in the same order. New VODs go on top, so they wait their turn unless dragged down.
 - **Search.** Searches are exact phrases, so fewer words match more. With a VOD selected, the chip in the search field toggles between searching just that VOD and the whole library.
 - **Player.** Selecting a VOD shows its thumbnail; clicking it, a match or a transcript line loads the player and jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
 - **GPU.** NVIDIA GPU users can download an optional GPU pack (about 3 GB) from the settings. Transcription falls back to the CPU when the GPU is busy or has too little free memory.
@@ -22,14 +22,14 @@ On first run the app downloads yt-dlp and the speech model (about 900 MB, from `
 Audio, transcripts and searches stay on your computer; there's no account, telemetry or update check. The app contacts other servers only for these:
 
 - **Setup and updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key), the speech model from `dl.vodscribe.com`, and the optional GPU pack from GitHub and PyPI (each file pinned by SHA-256).
-- **Adding a VOD:** yt-dlp fetches its details and audio from the platform, and the app saves a copy of its thumbnail (asking Kick's API for one on Kick).
+- **Adding a VOD:** yt-dlp fetches its details and audio from the platform, and the app saves a copy of its thumbnail. Local files are read in place, and nothing about them is sent anywhere.
 - **Playing a VOD:** only after you click play or a timestamp, the platform's player loads (YouTube's privacy-enhanced `youtube-nocookie.com` embed, Twitch's player, or Kick's stream). YouTube and Twitch run in sandboxed frames with no access to the app.
 
 The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.vodscribe` on Linux, `~/Library/Application Support/app.vodscribe` on macOS and `%APPDATA%\app.vodscribe` on Windows. Downloads (`models`, `bin`, `gpu`, `work`) go in the same folder, except on Windows, where they go in `%LOCALAPPDATA%\app.vodscribe` so they don't roam.
 
 ## Layout
 
-- `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.
+- `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API, and `local.rs` for files on this computer), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.
 - `crates/worker`: `vodscribe-worker`, which transcribes one audio file in its own process and streams words back. It is built twice: statically linked for the CPU, and against sherpa-onnx's CUDA build for the GPU pack.
 - `apps/desktop`: the desktop app. `src` is the SvelteKit (Svelte 5) UI, built statically into the app; `src-tauri` is the Tauri shell, which provides the commands the UI calls and runs the queue. Icons are inline SVGs in `src/lib/Icon.svelte`; the logo is `src/lib/Logo.svelte`.
 - `tools/model-export`: exports and quantizes the speech models we ship, and publishes them. See its README.
@@ -55,6 +55,7 @@ Core tests and the CLI:
 cargo test -p vodscribe-core
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- setup
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- add <url>
+VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- add-file <path>
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- search "some phrase"
 ```
 

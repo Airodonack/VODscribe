@@ -23,13 +23,22 @@ fn main() -> Result<()> {
             })?;
             println!("\nready");
         }
-        ["add", url] => {
+        ["add" | "add-file", source] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
             let ffmpeg = tools::find_ffmpeg(&paths.bin()).context("ffmpeg not found")?;
             let mut db = Db::open(&paths.db())?;
-            let info = fetch::probe(&yt_dlp, url, &pipeline::info_path(&paths.work(), 0))?;
-            let (vod, _) = db.add_vod(&info)?;
-            std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
+            let vod = if args[0] == "add-file" {
+                // A file on this computer, transcribed where it is.
+                let info = vodscribe_core::local::probe(&ffmpeg, std::path::Path::new(source))?;
+                let (vod, _) = db.add_vod(&info)?;
+                db.set_source_path(vod.id, &info.url)?;
+                db.vod(vod.id)?.context("just added")?
+            } else {
+                let info = fetch::probe(&yt_dlp, source, &pipeline::info_path(&paths.work(), 0))?;
+                let (vod, _) = db.add_vod(&info)?;
+                std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
+                vod
+            };
             println!("#{} {} ({:?}s)", vod.id, vod.info.title, vod.info.duration);
             let t = Instant::now();
             let transcription = pipeline::Transcription {
