@@ -115,7 +115,7 @@ impl Worker {
         let deadline = Instant::now() + timeout;
         while !self.queue.lock().unwrap().jobs.is_empty() {
             if Instant::now() >= deadline {
-                anyhow::bail!("a job didn't stop in time; try again");
+                anyhow::bail!("A job didn't stop in time. Try again.");
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -249,10 +249,12 @@ fn finish(stage: Stage, ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<S
 /// Throws away a VOD's partial work, leaving it in the library as canceled.
 pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
     pipeline::remove_work_files(work_dir, vod_id);
-    db.clear_segments(vod_id)?;
-    db.set_audio_path(vod_id, None)?;
-    db.set_note(vod_id, None)?;
-    db.set_status(vod_id, Status::Error, 0.0, Some("Canceled"))
+    db.atomically(|db| {
+        db.clear_segments(vod_id)?;
+        db.set_audio_path(vod_id, None)?;
+        db.set_note(vod_id, None)?;
+        db.set_status(vod_id, Status::Error, 0.0, Some("Canceled"))
+    })
 }
 
 /// A progress reporter that throttles events and remembers the last value.
@@ -270,8 +272,8 @@ fn reporter<'a>(app: &'a AppHandle, vod_id: i64, progress: &'a mut f64) -> impl 
 
 fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
     let bin = ctx.paths.bin();
-    let yt_dlp = tools::find_yt_dlp(&bin).context("yt-dlp is missing")?;
-    let ffmpeg = tools::find_ffmpeg(&bin).context("ffmpeg is missing")?;
+    let yt_dlp = tools::find_yt_dlp(&bin).context("yt-dlp isn't installed.")?;
+    let ffmpeg = tools::find_ffmpeg(&bin).context("ffmpeg isn't installed.")?;
     let tools = pipeline::Tools { yt_dlp: &yt_dlp, ffmpeg: &ffmpeg };
     let app = ctx.app.clone();
     let audio = pipeline::download(&mut ctx.db, vod, &tools, &ctx.paths.work(), flag, reporter(&app, vod.id, progress))?;
@@ -288,27 +290,24 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
         ctx.db.set_status(vod.id, Status::Queued, 0.0, None)?;
         return Ok(());
     };
-    let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context("ffmpeg is missing")?;
+    let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context("ffmpeg isn't installed.")?;
     let (transcription, note) = plan_transcription(&ctx.paths)?;
     ctx.db.set_note(vod.id, note.as_deref())?;
     ctx.emit_vod(vod.id);
 
-    let (app, paths) = (ctx.app.clone(), ctx.paths.clone());
+    let app = ctx.app.clone();
     let mut report = reporter(&app, vod.id, progress);
+    // The pipeline holds the stage's connection, so notices go through a second one.
+    let notes = Db::open(&ctx.paths.db())?;
     pipeline::transcribe(&mut ctx.db, vod, &ffmpeg, &audio, &transcription, flag, &mut report, &mut |notice| {
-        let _ = db_note(&paths, vod.id, &notice);
-        if let Ok(Some(v)) = Db::open(&paths.db()).and_then(|d| d.vod(vod.id)) {
+        let _ = notes.set_note(vod.id, Some(&notice));
+        if let Ok(Some(v)) = notes.vod(vod.id) {
             let _ = app.emit("vod", v);
         }
     })?;
     pipeline::remove_work_files(&ctx.paths.work(), vod.id);
     ctx.db.set_audio_path(vod.id, None)?;
     Ok(())
-}
-
-/// Writes a note through a separate connection, since the pipeline holds the worker's.
-fn db_note(paths: &Paths, vod_id: i64, note: &str) -> Result<()> {
-    Db::open(&paths.db())?.set_note(vod_id, Some(note))
 }
 
 /// Picks the worker for the next job. GPU is used only when selected, installed

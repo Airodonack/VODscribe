@@ -52,29 +52,39 @@ async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupStatus> {
 /// `setup-progress` events and completion as `setup-done` (an error message or null).
 #[tauri::command]
 async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    if state.setup_running.swap(true, Ordering::Relaxed) {
-        return Ok(());
-    }
     let paths = state.paths.clone();
-    let running = state.setup_running.clone();
-    std::thread::spawn(move || {
-        let never = AtomicBool::new(false);
+    spawn_install(app, state.setup_running.clone(), "setup-done", move |app, never| {
         let progress = |step: &str, done: u64, total: Option<u64>| {
             let _ = app.emit("setup-progress", (step, done, total));
         };
-        let result = (|| -> anyhow::Result<()> {
-            if tools::find_yt_dlp(&paths.bin()).is_none() {
-                tools::install_yt_dlp(&paths.bin(), &never, |n, t| progress("yt-dlp", n, t))?;
-            }
-            model::install(&paths.models(), &model::CPU_MODEL, &never, |n, t| progress("model", n, Some(t)))?;
-            model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
-            Ok(())
-        })();
-        running.store(false, Ordering::Relaxed);
-        let _ = app.emit("setup-done", result.err().map(err));
+        if tools::find_yt_dlp(&paths.bin()).is_none() {
+            tools::install_yt_dlp(&paths.bin(), never, |n, t| progress("yt-dlp", n, t))?;
+        }
+        model::install(&paths.models(), &model::CPU_MODEL, never, |n, t| progress("model", n, Some(t)))?;
+        model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
         app.state::<AppState>().worker.wake();
+        Ok(())
     });
     Ok(())
+}
+
+/// Runs a long download on its own thread, one at a time per `running` flag,
+/// then clears the flag and emits `done_event` with an error message or null.
+fn spawn_install(
+    app: AppHandle,
+    running: Arc<AtomicBool>,
+    done_event: &'static str,
+    install: impl FnOnce(&AppHandle, &AtomicBool) -> anyhow::Result<()> + Send + 'static,
+) {
+    if running.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    std::thread::spawn(move || {
+        // These downloads can't be canceled.
+        let result = install(&app, &AtomicBool::new(false));
+        running.store(false, Ordering::Relaxed);
+        let _ = app.emit(done_event, result.err().map(err));
+    });
 }
 
 #[derive(Serialize)]
@@ -92,7 +102,7 @@ async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     let task_app = app.clone();
     let added = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Added> {
         let state = task_app.state::<AppState>();
-        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("yt-dlp isn't installed yet"))?;
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("yt-dlp isn't installed yet."))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
         let info = fetch::probe(&yt_dlp, &url, &probe_path)?;
@@ -129,7 +139,7 @@ async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
 #[tauri::command]
 async fn thumbnail(state: State<'_, AppState>, name: String) -> CmdResult<tauri::ipc::Response> {
     if thumbs::mime(&name).is_none() {
-        return Err("not a thumbnail".into());
+        return Err("Not a thumbnail.".into());
     }
     let bytes = std::fs::read(state.paths.thumbs().join(&name)).map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
@@ -197,10 +207,13 @@ async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -
         Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
         _ => return Err("Only finished VODs can be re-transcribed.".into()),
     }
-    db.clear_segments(id).map_err(err)?;
-    db.set_model(id, None).map_err(err)?;
-    db.set_note(id, None).map_err(err)?;
-    requeue(&db, id).map_err(err)?;
+    db.atomically(|db| {
+        db.clear_segments(id)?;
+        db.set_model(id, None)?;
+        db.set_note(id, None)?;
+        requeue(db, id)
+    })
+    .map_err(err)?;
     emit_vod(&app, &db, id)?;
     state.worker.wake();
     Ok(())
@@ -329,25 +342,16 @@ async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatus> {
 /// (step, done, total) and completion as `gpu-done` (an error message or null).
 #[tauri::command]
 async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
-    if state.gpu_installing.swap(true, Ordering::Relaxed) {
-        return Ok(());
-    }
     let paths = state.paths.clone();
-    let installing = state.gpu_installing.clone();
-    std::thread::spawn(move || {
-        let never = AtomicBool::new(false);
+    spawn_install(app, state.gpu_installing.clone(), "gpu-done", move |app, never| {
         let progress = |step: &str, done: u64, total: u64| {
             let _ = app.emit("gpu-progress", (step, done, total));
         };
-        let result = (|| -> anyhow::Result<()> {
-            if !gpu::is_installed(&paths.gpu_pack()) {
-                gpu::install(&paths.gpu_pack(), &never, progress)?;
-            }
-            model::install(&paths.models(), &model::GPU_MODEL, &never, |n, t| progress("GPU speech model", n, t))?;
-            Ok(())
-        })();
-        installing.store(false, Ordering::Relaxed);
-        let _ = app.emit("gpu-done", result.err().map(err));
+        if !gpu::is_installed(&paths.gpu_pack()) {
+            gpu::install(&paths.gpu_pack(), never, progress)?;
+        }
+        model::install(&paths.models(), &model::GPU_MODEL, never, |n, t| progress("GPU speech model", n, t))?;
+        Ok(())
     });
     Ok(())
 }
@@ -356,6 +360,10 @@ async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResu
 async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
     if state.gpu_installing.load(Ordering::Relaxed) {
         return Err("The GPU pack is still downloading.".into());
+    }
+    // A running transcription may have the pack's libraries loaded.
+    if state.db.lock().unwrap().count_with_status(Status::Transcribing).map_err(err)? > 0 {
+        return Err("Wait for the current transcription to finish, or pause it, first.".into());
     }
     gpu::uninstall(&state.paths.gpu_pack()).map_err(err)?;
     gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)

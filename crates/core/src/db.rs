@@ -234,6 +234,14 @@ impl Db {
         Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Runs `f`'s writes as one transaction: all of them happen, or none do.
+    pub fn atomically<T>(&self, f: impl FnOnce(&Db) -> Result<T>) -> Result<T> {
+        let tx = self.conn.unchecked_transaction()?;
+        let out = f(self)?;
+        tx.commit()?;
+        Ok(out)
+    }
+
     /// Puts the library in the order of `ids`, which should list every VOD.
     pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
         let tx = self.conn.transaction()?;
