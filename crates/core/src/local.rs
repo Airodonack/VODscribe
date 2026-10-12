@@ -14,10 +14,39 @@ use crate::tools;
 /// The `platform` of a local file's VOD.
 pub const PLATFORM: &str = "local";
 
+/// The file types VODscribe adds and plays. Anything else is refused, so a
+/// program can't be added (and later "opened", which would run it).
+pub const MEDIA_EXTENSIONS: &[&str] =
+    &["mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "flv", "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"];
+
+/// Whether `path` has one of the `MEDIA_EXTENSIONS`.
+pub fn is_media(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Network shares and device paths (\\server\share, \\?\UNC\, \\.\): opening
+/// one can make Windows sign in to someone else's server with the user's credentials.
+fn is_remote(path: &Path) -> bool {
+    let p = path.to_string_lossy();
+    p.starts_with("\\\\") || p.starts_with("//")
+}
+
 /// Reads a file's details with ffmpeg, refusing anything without an audio track.
 /// The file's absolute path is its id, so adding it twice finds the first one.
 pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
-    let path = fs::canonicalize(path).with_context(|| format!("{} can't be opened.", path.display()))?;
+    if is_remote(path) {
+        bail!("{} is on another computer. Copy it to this one first.", path.display());
+    }
+    if !is_media(path) {
+        bail!("{} isn't a video or audio file VODscribe can use.", path.display());
+    }
+    // dunce gives plain C:\ paths on Windows, not \\?\C:\.
+    let path = dunce::canonicalize(path).with_context(|| format!("{} can't be opened.", path.display()))?;
+    if !is_media(&path) {
+        bail!("{} isn't a video or audio file VODscribe can use.", path.display());
+    }
     if !path.is_file() {
         bail!("{} isn't a file.", path.display());
     }
@@ -70,7 +99,7 @@ pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Opti
 
 /// Whether `path` is inside `dir`, such as a file in the app's own data folder.
 pub fn is_inside(path: &Path, dir: &Path) -> bool {
-    let (Ok(path), Ok(dir)) = (fs::canonicalize(path), fs::canonicalize(dir)) else { return false };
+    let (Ok(path), Ok(dir)) = (dunce::canonicalize(path), dunce::canonicalize(dir)) else { return false };
     path.starts_with(dir)
 }
 
@@ -124,6 +153,10 @@ mod tests {
         };
         let video = make("clip.mp4", &["-f", "lavfi", "-i", "testsrc=d=2:s=160x90", "-f", "lavfi", "-i", "sine=d=2", "-shortest"]);
         let silent = make("silent.mp4", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90"]);
+        // Real audio with a program's extension is still refused.
+        let program = dir.join("clip.mp4.exe");
+        fs::copy(&video, &program).unwrap();
+        assert!(probe(&ffmpeg, &program).unwrap_err().to_string().contains("isn't a video or audio file"));
 
         let info = probe(&ffmpeg, &video).unwrap();
         assert_eq!((info.platform.as_str(), info.title.as_str()), (PLATFORM, "clip"));
@@ -134,6 +167,16 @@ mod tests {
         let name = thumbnail(&ffmpeg, &video, &thumbs, 7, info.duration).unwrap().unwrap();
         assert!(name.starts_with("7-") && crate::thumbs::mime(&name) == Some("image/jpeg"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuses_programs_and_network_paths() {
+        assert!(is_media(Path::new("/v/a.MP4")) && is_media(Path::new("C:\\v\\b.mkv")));
+        assert!(!is_media(Path::new("/v/clip.mp4.exe")) && !is_media(Path::new("/v/run.sh")) && !is_media(Path::new("/v/x")));
+        assert!(is_remote(Path::new("\\\\attacker\\share\\a.mp4")) && is_remote(Path::new("//host/a.mp4")));
+        assert!(!is_remote(Path::new("/home/a.mp4")) && !is_remote(Path::new("C:\\a.mp4")));
+        let err = probe(Path::new("/nonexistent/ffmpeg"), Path::new("\\\\attacker\\share\\a.mp4")).unwrap_err();
+        assert!(err.to_string().contains("another computer"), "{err}");
     }
 
     #[test]

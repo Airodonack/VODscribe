@@ -100,11 +100,13 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
 }
 
 fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
-    if local::is_inside(path, &state.paths.root) || local::is_inside(path, &state.paths.local) {
+    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
+    // probe refuses network paths and non-media files before touching them.
+    let info = local::probe(&ffmpeg, path)?;
+    let canonical = Path::new(&info.url);
+    if local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local) {
         anyhow::bail!("{} is part of VODscribe's own data.", path.display());
     }
-    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
-    let info = local::probe(&ffmpeg, path)?;
     let db = state.db.lock().unwrap();
     let (vod, created) = db.add_vod(&info)?;
     if created {
@@ -122,6 +124,10 @@ pub(crate) async fn open_file(app: AppHandle, state: State<'_, AppState>, id: i6
     use tauri_plugin_opener::OpenerExt;
     let source = state.db.lock().unwrap().vod(id).map_err(err)?.and_then(|v| v.source_path);
     let source = source.ok_or("That VOD isn't a file on this computer.")?;
+    // Opening a program would run it, so only ever open media files.
+    if !local::is_media(Path::new(&source)) {
+        return Err("Only video and audio files can be opened.".into());
+    }
     app.opener().open_path(source, None::<String>).map_err(err)
 }
 

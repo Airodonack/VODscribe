@@ -44,34 +44,44 @@
   }
 
   /**
-   * Adds what was dropped or picked: links go through the same check as a pasted
-   * link (yt-dlp's probe), files are probed with ffmpeg. Errors are collected.
+   * Adds what was dropped or picked. Links go through the same check as a pasted
+   * link (yt-dlp's probe); files, only accepted from a real file drop or the file
+   * picker (`allowFiles`), are probed with ffmpeg. Adds queue up, and the errors
+   * of everything added together are shown together once the queue is done.
    */
-  async function addItems(items: string[]) {
+  let queue: Promise<void> = Promise.resolve();
+  let queued = 0;
+  let queuedErrors: string[] = [];
+  function addItems(items: string[], allowFiles: boolean) {
     const links: string[] = [];
     const files: string[] = [];
     const errors: string[] = [];
     for (const item of items.map((i) => i.trim()).filter(Boolean)) {
-      if (/^https?:\/\//i.test(item)) links.push(item);
-      else if (/^file:\/\//i.test(item)) files.push(decodeURIComponent(new URL(item).pathname));
-      else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(item) && !/^[a-z]:[\\/]/i.test(item))
-        errors.push(`${item} isn't a web link.`);
-      else files.push(item);
+      const link = item.match(/https?:\/\/\S+/i)?.[0];
+      if (link) links.push(link);
+      else if (allowFiles) files.push(item);
+      else errors.push(`“${item.length > 80 ? item.slice(0, 80) + "…" : item}” isn't a link.`);
     }
     if (!links.length && !files.length && !errors.length) return;
+    if (queued++ === 0) queuedErrors = [];
+    queuedErrors.push(...errors);
     adding = true;
     error = null;
-    for (const link of links) {
-      await api.addVod(link).catch((e) => errors.push(String(e)));
-    }
-    if (files.length) {
-      await api.addFiles(files).then(
-        (r) => errors.push(...r.errors),
-        (e) => errors.push(String(e)),
-      );
-    }
-    adding = false;
-    error = errors.length ? errors.join("\n") : null;
+    queue = queue
+      .then(async () => {
+        for (const link of links) await api.addVod(link).catch((e) => queuedErrors.push(String(e)));
+        if (files.length) {
+          await api.addFiles(files).then(
+            (r) => queuedErrors.push(...r.errors),
+            (e) => queuedErrors.push(String(e)),
+          );
+        }
+      })
+      .finally(() => {
+        if (--queued > 0) return;
+        adding = false;
+        error = queuedErrors.length ? queuedErrors.join("\n") : null;
+      });
   }
 
   const MEDIA = [
@@ -97,7 +107,7 @@
       directory: false,
       filters: [{ name: "Video and audio", extensions: MEDIA }],
     }).catch(() => null);
-    if (picked) addItems(Array.isArray(picked) ? picked : [picked]);
+    if (picked) addItems(Array.isArray(picked) ? picked : [picked], true);
   }
 
   // Dropping onto the window. Files (and, on Linux, links) arrive through the
@@ -118,7 +128,11 @@
     e.preventDefault();
     dropping = false;
     // uri-list lines starting with # are comments.
-    addItems(text.split(/\r?\n/).filter((l) => !l.startsWith("#")));
+    // Text drops only ever add links; file paths come from real file drops.
+    addItems(
+      text.split(/\r?\n/).filter((l) => !l.startsWith("#")),
+      false,
+    );
   }
 
   let version = $state<string | null>(null);
@@ -135,7 +149,7 @@
         else if (payload.type === "leave") dropping = false;
         else {
           dropping = false;
-          addItems(payload.paths);
+          addItems(payload.paths, true);
         }
       })
       .then(

@@ -11,12 +11,16 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use tauri::State;
-use tiny_http::{Header, Request, Response, Server, StatusCode};
+use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::{AppState, CmdResult};
+
+/// Requests served at once.
+const MAX_ACTIVE: usize = 32;
 
 pub(crate) struct MediaServer {
     /// `http://127.0.0.1:<port>`
@@ -35,11 +39,21 @@ impl MediaServer {
         let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
         let origin = format!("http://127.0.0.1:{port}");
         let (host, prefix) = (format!("127.0.0.1:{port}"), format!("/{token}/"));
+        let active = Arc::new(AtomicUsize::new(0));
         std::thread::Builder::new().name("media".into()).spawn(move || {
             for request in server.incoming_requests() {
-                let (find, host, prefix) = (find.clone(), host.clone(), prefix.clone());
-                // A video streams for a long time; don't hold up other requests.
-                std::thread::spawn(move || serve(&*find, request, &host, &prefix));
+                // A video streams for a long time, so each request gets a thread,
+                // up to a limit that a player seeking around never reaches.
+                if active.fetch_add(1, Ordering::SeqCst) >= MAX_ACTIVE {
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    let _ = request.respond(Response::empty(503));
+                    continue;
+                }
+                let (find, host, prefix, active) = (find.clone(), host.clone(), prefix.clone(), active.clone());
+                std::thread::spawn(move || {
+                    serve(&*find, request, &host, &prefix);
+                    active.fetch_sub(1, Ordering::SeqCst);
+                });
             }
         })?;
         Ok(Self { origin, token })
@@ -65,18 +79,24 @@ fn serve(find: &Find, request: Request, host: &str, prefix: &str) {
 
 fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<Response<Box<dyn Read + Send>>, u16> {
     let header = |name: &'static str| request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string());
+    if !matches!(request.method(), Method::Get | Method::Head) {
+        return Err(405);
+    }
     if header("Host").as_deref() != Some(host) {
         return Err(403);
     }
     let id: i64 = request.url().strip_prefix(prefix).and_then(|id| id.parse().ok()).ok_or(404u16)?;
     let source = find(id).ok_or(404u16)?;
-    let mut file = File::open(&source).map_err(|_| 404u16)?;
+    let mut file = open_regular(Path::new(&source)).ok_or(404u16)?;
     let size = file.metadata().map_err(|_| 500u16)?.len();
 
     let (start, end) = match header("Range").as_deref().map(|r| parse_range(r, size)) {
         None => (0, size.saturating_sub(1)),
         Some(Some(range)) => range,
-        Some(None) => return Err(416),
+        Some(None) => {
+            let range = Header::from_bytes("Content-Range", format!("bytes */{size}")).unwrap();
+            return Ok(Response::new(StatusCode(416), vec![range], Box::new(std::io::empty()), Some(0), None));
+        }
     };
     let len = if size == 0 { 0 } else { end - start + 1 };
     file.seek(SeekFrom::Start(start)).map_err(|_| 500u16)?;
@@ -96,6 +116,26 @@ fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<R
     // chunked encoding, and without a length the player can't seek or show a
     // timeline.
     Ok(Response::new(StatusCode(status), headers, body, Some(len as usize), None).with_chunked_threshold(usize::MAX))
+}
+
+/// Opens `path` only if it's a regular file and not a symlink, and (on Unix)
+/// only if the file opened is the one checked, so swapping the file for a link
+/// to something else between the check and the open doesn't work.
+fn open_regular(path: &Path) -> Option<File> {
+    let checked = std::fs::symlink_metadata(path).ok()?;
+    if !checked.file_type().is_file() {
+        return None;
+    }
+    let file = File::open(path).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let opened = file.metadata().ok()?;
+        if (opened.dev(), opened.ino()) != (checked.dev(), checked.ino()) {
+            return None;
+        }
+    }
+    Some(file)
 }
 
 /// A single `bytes=` range within a file of `size` bytes, as (first, last).
@@ -153,6 +193,17 @@ mod tests {
         (head, out[split + 4..].to_vec())
     }
 
+    /// Sends a raw request line and returns the whole response.
+    fn raw(origin: &str, line: &str) -> String {
+        use std::io::Write;
+        let addr = origin.strip_prefix("http://").unwrap();
+        let mut conn = std::net::TcpStream::connect(addr).unwrap();
+        conn.write_all(format!("{line}\r\nHost: {addr}\r\n\r\n").as_bytes()).unwrap();
+        let mut out = Vec::new();
+        conn.read_to_end(&mut out).unwrap();
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
     /// The response headers for `path`.
     fn head_of(origin: &str, path: &str) -> String {
         use std::io::Write;
@@ -185,7 +236,21 @@ mod tests {
 
         assert!(get(&media.origin, &format!("/{}/8", media.token), None, None).0.contains("404"), "not a local VOD");
         assert!(get(&media.origin, "/wrongtoken/7", None, None).0.contains("404"), "wrong token");
+        let (status, _) = get(&media.origin, &ok, None, Some("bytes=200000-"));
+        assert!(status.contains("416"), "{status}");
+        let post = raw(&media.origin, &format!("POST {ok} HTTP/1.0"));
+        assert!(post.lines().next().unwrap().contains("405"), "{post}");
         assert!(get(&media.origin, &ok, Some("evil.example"), None).0.contains("403"), "other host");
+        // Swapped for a link to another file: refused.
+        #[cfg(unix)]
+        {
+            let secret = path.with_extension("secret");
+            std::fs::write(&secret, b"secret").unwrap();
+            std::fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&secret, &path).unwrap();
+            assert!(get(&media.origin, &ok, None, None).0.contains("404"), "symlink");
+            let _ = std::fs::remove_file(&secret);
+        }
         let _ = std::fs::remove_file(&path);
     }
 
