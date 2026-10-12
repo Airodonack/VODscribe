@@ -41,6 +41,10 @@
   </ul>
 
   <h2>Built into the app</h2>
+  <p>
+    The full list, with every license's text, is in the app's install folder as <code>THIRD-PARTY-NOTICES.txt</code>,
+    and <a href="/third-party-notices.txt">here</a>.
+  </p>
   <ul>
     <li>
       <strong>sherpa-onnx</strong> (Apache 2.0) and <strong>ONNX Runtime</strong> (MIT), which run the speech model.

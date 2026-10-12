@@ -3,7 +3,7 @@
   import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
-  import { PRIVACY } from "./links";
+  import { LICENSES, PRIVACY } from "./links";
   import Progress from "./Progress.svelte";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
@@ -254,6 +254,7 @@
       <button class="link" onclick={() => openUrl(PRIVACY)}
         >More about privacy <Icon name="external" size={12} /></button
       >
+      <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
     </div>
   </section>
 

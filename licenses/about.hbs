@@ -1,0 +1,18 @@
+VODscribe third-party notices
+=============================
+
+VODscribe includes the open-source software below, each used under the license
+that follows its name. The software VODscribe downloads when it runs (yt-dlp,
+FFmpeg, Deno, the speech model and the GPU add-on) is listed at
+https://vodscribe.com/licenses.
+
+Rust crates
+
+{{#each licenses}}
+------------------------------------------------------------------------------
+{{{name}}}
+Used by: {{#each used_by}}{{crate.name}} {{crate.version}}{{#unless @last}}, {{/unless}}{{/each}}
+
+{{{text}}}
+
+{{/each}}

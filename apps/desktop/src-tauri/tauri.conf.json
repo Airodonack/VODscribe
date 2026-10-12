@@ -49,6 +49,7 @@
     "externalBin": [
       "binaries/vodscribe-worker"
     ],
+    "resources": ["THIRD-PARTY-NOTICES.txt"],
     "shortDescription": "Searchable transcripts for Kick, Twitch and YouTube VODs",
     "category": "Video",
     "publisher": "Airodonack",
