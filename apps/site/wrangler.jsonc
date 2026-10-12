@@ -3,6 +3,9 @@
 {
   "name": "vodscribe-site",
   "compatibility_date": "2026-10-01",
+  // Lets `wrangler preview` (Cloudflare's default command for non-main
+  // branches) upload a preview of each branch. Empty: everything else applies as is.
+  "previews": {},
   "assets": {
     "directory": "./build",
     "not_found_handling": "404-page",
