@@ -19,10 +19,6 @@
   // A jump requested while the player is still loading, applied once it's ready.
   let pending: { time: number; play: boolean } | null = null;
 
-  // Jumps land a little early: word timestamps and the players' seeking are
-  // both slightly imprecise, and a cut-off first word is worse than a beat of lead-in.
-  const LEAD_IN = 1;
-  const leadIn = (t: number) => Math.max(0, t - LEAD_IN);
 
   // Keyboard control for whichever player is open. Keys pressed while the
   // player's own iframe has focus go to that player instead.
@@ -54,12 +50,12 @@
     target.style.cssText = "width: 100%; height: 100%";
     host.appendChild(target);
     const start = untrack(() => at);
-    createPlayer(target, vod, leadIn(start.time), start.play)?.then(
+    createPlayer(target, vod, start.time, start.play)?.then(
       (p) => {
         // Closed while loading: don't leave an invisible player running.
         if (destroyed) return p.destroy();
         player = p;
-        if (pending) p.seek(leadIn(pending.time), pending.play);
+        if (pending) p.seek(pending.time, pending.play);
       },
       (e) => (error = String(e)),
     );
@@ -72,7 +68,7 @@
       first = false;
       return;
     }
-    if (player) player.seek(leadIn(time), play);
+    if (player) player.seek(time, play);
     else pending = { time, play };
     collapsed = false;
   });

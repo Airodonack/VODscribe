@@ -19,6 +19,9 @@
   let selected = $derived(selectedId === null ? undefined : vodsById.get(selectedId));
 
   let query = $state("");
+  // With a VOD selected, searches cover just it unless the scope chip is toggled to all.
+  let scopeAll = $state(false);
+  let scopeId = $derived(scopeAll ? null : selectedId);
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);
 
@@ -84,7 +87,7 @@
       return;
     }
     try {
-      const r = await api.search(q, selectedId);
+      const r = await api.search(q, scopeId);
       if (mine === seq) {
         results = r;
         searchError = null;
@@ -96,7 +99,7 @@
 
   $effect(() => {
     void query;
-    void selectedId;
+    void scopeId;
     clearTimeout(timer);
     timer = setTimeout(runSearch, 120);
   });
@@ -132,12 +135,15 @@
           <span class="search-icon muted"><Icon name="search" /></span>
           <input type="search" placeholder="Search for a phrase…" bind:value={query} aria-label="Search" />
           {#if selected}
-            <span class="scope" title={`Only searching “${selected.title}”`}>
-              <span class="scope-title">This VOD only</span>
-              <button class="scope-clear" onclick={() => (selectedId = null)} aria-label="Search all VODs" title="Search all VODs">
-                <Icon name="x" size={13} />
-              </button>
-            </span>
+            <button
+              class="scope"
+              class:all={scopeAll}
+              onclick={() => (scopeAll = !scopeAll)}
+              aria-pressed={!scopeAll}
+              title={scopeAll ? `Click to search only “${selected.title}”` : "Click to search all VODs"}
+            >
+              {scopeAll ? "All VODs" : "This VOD"}
+            </button>
           {/if}
         </div>
         <div class="settings-anchor" bind:this={settingsEl}>
@@ -177,9 +183,9 @@
             truncated={results.truncated}
             vods={vodsById}
             query={query.trim()}
-            scope={selected}
+            scope={scopeAll ? undefined : selected}
             onplay={play}
-            onclearscope={() => (selectedId = null)}
+            onclearscope={() => (scopeAll = true)}
           />
         {:else if selected}
           <Transcript vod={selected} onplay={play} />
@@ -253,45 +259,33 @@
     font-size: 15px;
   }
 
-  /* The VOD a search is limited to, shown as a chip inside the field. */
+  /* Toggles whether a search covers the selected VOD or all of them. */
   .scope {
     position: absolute;
     right: 34px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
     height: 24px;
-    padding: 0 4px 0 9px;
+    padding: 0 10px;
+    border: 1px solid transparent;
     border-radius: 12px;
     background: var(--accent-soft);
     color: var(--text);
     font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .scope-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
     font-weight: 600;
   }
 
-  .scope-clear {
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
-    background: none;
-    color: var(--muted);
+  .scope:hover:not(:disabled) {
+    background: var(--accent-soft);
+    border-color: var(--accent);
   }
 
-  .scope-clear:hover {
-    background: var(--surface);
-    color: var(--text);
+  .scope.all {
+    background: var(--surface-2);
+    color: var(--muted);
+    font-weight: 500;
   }
 
   .search:has(.scope) input {
-    padding-right: 160px;
+    padding-right: 130px;
   }
 
   .settings-anchor {
