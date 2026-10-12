@@ -63,6 +63,21 @@ export interface SetupStatus {
   running: boolean;
 }
 
+/** Where a download is (crates/core `Progress`). Sizes are null while unknown. */
+export interface DownloadProgress {
+  /** "Downloading <exact name>", then "<name> matches its SHA-256". */
+  step: string;
+  /** Bytes so far across the whole install, and its size. */
+  done: number;
+  total: number | null;
+  /** Bytes of the file under way, and its size. */
+  file_done: number;
+  file_size: number | null;
+  /** Which of the install's files this is, from 1, out of how many. */
+  part: number;
+  parts: number;
+}
+
 export interface Line {
   start: number;
   text: string;
@@ -105,25 +120,16 @@ export const events = {
   vodProgress: (cb: (id: number, status: Status, progress: number) => void) =>
     listen<[number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
-  /** `done` / `total` span the item (for the bar); `fileDone` / `fileSize` the file under way. Sizes are null while unknown. */
-  setupProgress: (
-    cb: (
-      item: string,
-      step: string,
-      done: number,
-      total: number | null,
-      fileDone: number,
-      fileSize: number | null,
-    ) => void,
-  ) =>
-    listen<[string, string, number, number | null, number, number | null]>("setup-progress", (e) => cb(...e.payload)),
+  /** Which setup item ("yt-dlp", "ffmpeg", "model", "deno") and where its download is. */
+  setupProgress: (cb: (item: string, progress: DownloadProgress) => void) =>
+    listen<DownloadProgress & { item: string }>("setup-progress", (e) => cb(e.payload.item, e.payload)),
   setupDone: (cb: (error: string | null) => void) => listen<string | null>("setup-done", (e) => cb(e.payload)),
-  /** `done` / `total` span the whole add-on (for the bar); `fileDone` / `fileSize` the file under way. */
-  gpuProgress: (cb: (step: string, done: number, total: number, fileDone: number, fileSize: number) => void) =>
-    listen<[string, number, number, number, number]>("gpu-progress", (e) => cb(...e.payload)),
+  /** Where the GPU add-on's download is, counted across the pack and its model. */
+  gpuProgress: (cb: (progress: DownloadProgress) => void) =>
+    listen<DownloadProgress>("gpu-progress", (e) => cb(e.payload)),
   gpuDone: (cb: (error: string | null) => void) => listen<string | null>("gpu-done", (e) => cb(e.payload)),
-  ytDlpProgress: (cb: (step: string, done: number, total: number | null) => void) =>
-    listen<[string, number, number | null]>("yt-dlp-progress", (e) => cb(...e.payload)),
+  ytDlpProgress: (cb: (progress: DownloadProgress) => void) =>
+    listen<DownloadProgress>("yt-dlp-progress", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

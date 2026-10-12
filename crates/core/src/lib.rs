@@ -21,16 +21,30 @@ pub mod transcript;
 
 use std::path::PathBuf;
 
-/// Where a download is: the step ("Downloading <name>", then "<name> matches
-/// its SHA-256"), the bytes so far across the whole install (for a bar that
-/// only moves forward), and the bytes of the file under way.
-#[derive(Clone, Copy, Debug)]
+/// Where a download is, as the app shows it.
+#[derive(Clone, Copy, Debug, serde::Serialize)]
 pub struct Progress<'a> {
+    /// "Downloading <name>", then "<name> matches its SHA-256".
     pub step: &'a str,
+    /// Bytes so far across the whole install, for a bar that only moves
+    /// forward, and the install's size if known.
     pub done: u64,
-    pub total: u64,
+    pub total: Option<u64>,
+    /// Bytes of the file under way, and its size if known.
     pub file_done: u64,
-    pub file_size: u64,
+    pub file_size: Option<u64>,
+    /// Which of the install's files this is, from 1, out of how many. Shown as
+    /// "(2 of 5)", so a run of small downloads doesn't look like one repeating.
+    pub part: usize,
+    pub parts: usize,
+}
+
+impl<'a> Progress<'a> {
+    /// A step of a single-file install with no bytes to count yet, such as
+    /// checking a signature.
+    pub fn step(step: &'a str) -> Self {
+        Progress { step, done: 0, total: None, file_done: 0, file_size: None, part: 1, parts: 1 }
+    }
 }
 
 /// The error a job ends with when it was told to stop (pause, cancel, delete).

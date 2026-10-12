@@ -59,23 +59,26 @@ pub(crate) async fn open_data_dir(app: AppHandle, state: State<'_, AppState>) ->
     app.opener().open_path(state.paths.root.display().to_string(), None::<String>).map_err(err)
 }
 
+/// A `setup-progress` event: which item, and its `Progress`.
+#[derive(Clone, Serialize)]
+struct ItemProgress<'a> {
+    item: &'a str,
+    #[serde(flatten)]
+    progress: Progress<'a>,
+}
+
 /// Downloads what's missing. Progress arrives as `setup-progress` events
-/// (item, step, done, total, file done, file size), where done / total span
-/// the item and the sizes are null while unknown (yt-dlp's), and completion as
-/// `setup-done` (an error message or null).
+/// (`ItemProgress`), and completion as `setup-done` (an error message or null).
 #[tauri::command]
 pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
     spawn_install(app, state.setup_running.clone(), "setup-done", move |app, never| {
-        let progress = |item: &str, p: Progress| {
-            let _ = app.emit("setup-progress", (item, p.step, p.done, p.total, p.file_done, p.file_size));
+        let progress = |item: &str, progress: Progress| {
+            let _ = app.emit("setup-progress", ItemProgress { item, progress });
         };
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
-            // Its size isn't known until it arrives.
-            tools::install_yt_dlp(&bin, never, |step, n, _| {
-                let _ = app.emit("setup-progress", ("yt-dlp", step, n, None::<u64>, n, None::<u64>));
-            })?;
+            tools::install_yt_dlp(&bin, never, |p| progress("yt-dlp", p))?;
         }
         if tools::find_ffmpeg(&bin).is_none()
             && let Some(dep) = deps::ffmpeg()
@@ -118,7 +121,7 @@ pub(crate) fn spawn_install(
 }
 
 #[tauri::command]
-/// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (step, done, total).
+/// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (`Progress`).
 pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     // Setup installs yt-dlp too; the two mustn't write the same file at once.
     if state.setup_running.swap(true, Ordering::Relaxed) {
@@ -133,8 +136,8 @@ pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) ->
 async fn update_yt_dlp_now(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     let bin = state.paths.bin();
     tauri::async_runtime::spawn_blocking(move || {
-        tools::update_yt_dlp(&bin, |step, done, total| {
-            let _ = app.emit("yt-dlp-progress", (step, done, total));
+        tools::update_yt_dlp(&bin, |p| {
+            let _ = app.emit("yt-dlp-progress", p);
         })
     })
     .await
@@ -179,27 +182,35 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
     })
 }
 
-/// Downloads the GPU pack. Progress arrives as `gpu-progress` events
-/// (step, done, total) and completion as `gpu-done` (an error message or null).
+/// Downloads the GPU pack and model. Progress arrives as `gpu-progress` events
+/// (`Progress`) and completion as `gpu-done` (an error message or null).
 #[tauri::command]
 pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
     spawn_install(app, state.gpu_installing.clone(), "gpu-done", move |app, never| {
-        // (step, done of total across everything, done of the current file's size)
-        let progress = |step: &str, done: u64, total: u64, file_done: u64, file_size: u64| {
-            let _ = app.emit("gpu-progress", (step, done, total, file_done, file_size));
+        let progress = |p: Progress| {
+            let _ = app.emit("gpu-progress", p);
         };
-        // One count across the pack and the model, so the bar only moves forward.
+        // One count of bytes and of files across the pack and the model, so the
+        // bar only moves forward and the files read "(1 of 10)" to "(10 of 10)".
         let pack_needed = !gpu::is_installed(&paths.gpu_pack());
-        let pack_total = if pack_needed { gpu::download_size() } else { 0 };
-        let total = pack_total + model::GPU_MODEL.total_bytes();
+        let (pack_total, pack_parts) = if pack_needed { (gpu::download_size(), gpu::download_parts()) } else { (0, 0) };
+        let total_bytes = pack_total + model::GPU_MODEL.total_bytes();
+        let total = Some(total_bytes);
+        let parts = pack_parts + model::GPU_MODEL.files.len();
         if pack_needed {
-            gpu::install(&paths.gpu_pack(), never, |p| progress(p.step, p.done, total, p.file_done, p.file_size))?;
+            gpu::install(&paths.gpu_pack(), never, |p| progress(Progress { total, parts, ..p }))?;
         }
         model::install(&paths.models(), &model::GPU_MODEL, never, |p| {
-            progress(p.step, pack_total + p.done, total, p.file_done, p.file_size)
+            progress(Progress { done: pack_total + p.done, total, part: pack_parts + p.part, parts, ..p })
         })?;
-        progress("Every file matches its SHA‑256", total, total, 0, 0);
+        progress(Progress {
+            done: total_bytes,
+            total,
+            part: parts,
+            parts,
+            ..Progress::step("Every file matches its SHA‑256")
+        });
         Ok(())
     });
     Ok(())

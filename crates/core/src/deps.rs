@@ -140,8 +140,17 @@ pub fn install(
     let archive = bin_dir.join(format!("{}.download", dep.name));
     let size = dep.size;
     let step = format!("Downloading {}", dep.label);
-    let mut report =
-        |step: &str, n| on_progress(Progress { step, done: n, total: size, file_done: n, file_size: size });
+    let mut report = |step: &str, n| {
+        on_progress(Progress {
+            step,
+            done: n,
+            total: Some(size),
+            file_done: n,
+            file_size: Some(size),
+            part: 1,
+            parts: 1,
+        })
+    };
     net::download_verified(dep.url, &archive, Some(size), dep.sha256, cancel, |n| report(&step, n))?;
     report(&format!("{} matches its SHA‑256 · unpacking", dep.label), size);
     let dest = bin_dir.join(format!("{}{EXE}", dep.name));

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
+  import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
   import { LICENSES, PRIVACY } from "./links";
-  import Progress from "./Progress.svelte";
+  import DownloadStep from "./DownloadStep.svelte";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
 
@@ -14,7 +14,7 @@
   let cacheBytes = $state<number | null>(null);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
-  let step = $state<{ label: string; done: number; total: number; fileDone: number; fileSize: number } | null>(null);
+  let step = $state<DownloadProgress | null>(null);
   let error = $state<string | null>(null);
   const unlisten: UnlistenFn[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
@@ -54,12 +54,8 @@
 
   onMount(async () => {
     device = (await api.getSettings()).device;
-    keep(
-      await events.gpuProgress(
-        (label, done, total, fileDone, fileSize) => (step = { label, done, total, fileDone, fileSize }),
-      ),
-    );
-    keep(await events.ytDlpProgress((label, done) => (ytDlpStep = { label, done })));
+    keep(await events.gpuProgress((progress) => (step = progress)));
+    keep(await events.ytDlpProgress((progress) => (ytDlpStep = progress)));
     keep(
       await events.gpuDone((e) => {
         step = null;
@@ -77,8 +73,6 @@
     unlisten.forEach((u) => u());
   });
 
-  const mb = (bytes: number) => Math.round(bytes / 1e6).toLocaleString();
-
   let dataDir = $state<string | null>(null);
   api.dataDir().then(
     (d) => (dataDir = d),
@@ -94,7 +88,7 @@
   let updating = $state(false);
   let ytDlpStatus = $state<string | null>(null);
   // The step under way, named like the GPU add-on's: signature check, download, install.
-  let ytDlpStep = $state<{ label: string; done: number } | null>(null);
+  let ytDlpStep = $state<DownloadProgress | null>(null);
   async function updateYtDlp() {
     updating = true;
     ytDlpStatus = null;
@@ -174,13 +168,7 @@
       {#if step || gpu?.installing}
         <div class="progress">
           <!-- The exact component, for the people who chose the GPU add-on. -->
-          <span class="muted step">
-            {step?.label ?? "Downloading the GPU add-on"}…
-            {#if step?.label.startsWith("Downloading") && step.fileSize}
-              <span class="mb">{mb(step.fileDone)} / {mb(step.fileSize)} MB</span>
-            {/if}
-          </span>
-          <Progress value={step && step.total ? step.done / step.total : 0} />
+          <DownloadStep progress={step} waiting="Downloading the GPU add-on" />
         </div>
       {:else if !gpu?.installed}
         <button onclick={install}><Icon name="download" size={14} /> Download GPU add-on (about 3 GB)</button>
@@ -204,12 +192,7 @@
     <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
     <button onclick={updateYtDlp} disabled={updating}>{updating ? "Updating…" : "Update video downloader"}</button>
     {#if updating && ytDlpStep}
-      <span class="muted step">
-        {ytDlpStep.label}…
-        {#if ytDlpStep.label.startsWith("Downloading") && ytDlpStep.done}
-          <span class="mb">{mb(ytDlpStep.done)} MB</span>
-        {/if}
-      </span>
+      <DownloadStep progress={ytDlpStep} bar={false} />
     {:else if ytDlpStatus}
       <p class="muted hint step">{ytDlpStatus}</p>
     {/if}
@@ -286,12 +269,6 @@
 
   .step {
     font-size: 12px;
-  }
-
-  .mb {
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
 
   .verified {

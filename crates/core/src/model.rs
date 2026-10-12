@@ -138,20 +138,38 @@ pub fn install(
     let total = spec.total_bytes();
     let base = base_url();
     let mut done = 0;
-    for file in spec.files {
+    let parts = spec.files.len();
+    for (i, file) in spec.files.iter().enumerate() {
+        let part = i + 1;
         let path = staging.join(file.name);
         let size = file.size;
         if !fs::metadata(&path).is_ok_and(|m| m.len() == size) {
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
             let step = format!("Downloading {} · {}", spec.name, file.name);
             net::download_verified(&url, &path, Some(size), file.sha256, cancel, |n| {
-                on_progress(Progress { step: &step, done: done + n, total, file_done: n, file_size: size })
+                on_progress(Progress {
+                    step: &step,
+                    done: done + n,
+                    total: Some(total),
+                    file_done: n,
+                    file_size: Some(size),
+                    part,
+                    parts,
+                })
             })
             .with_context(|| format!("download {}", file.name))?;
         }
         done += size;
         let step = format!("{} matches its SHA‑256", file.name);
-        on_progress(Progress { step: &step, done, total, file_done: size, file_size: size });
+        on_progress(Progress {
+            step: &step,
+            done,
+            total: Some(total),
+            file_done: size,
+            file_size: Some(size),
+            part,
+            parts,
+        });
     }
 
     let _ = fs::remove_dir_all(&dest);

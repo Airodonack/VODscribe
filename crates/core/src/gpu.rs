@@ -70,6 +70,7 @@ pub fn supported() -> bool {
 
 /// A download pinned by size and SHA-256, so a replaced release asset or
 /// wheel is refused rather than loaded into the GPU worker.
+#[derive(Clone, Copy)]
 struct Pinned {
     url: &'static str,
     size: u64,
@@ -197,6 +198,11 @@ pub fn download_size() -> u64 {
     platform().map_or(0, |p| p.sherpa.size + p.wheels.iter().map(|(_, w)| w.size).sum::<u64>())
 }
 
+/// How many files the GPU pack downloads.
+pub fn download_parts() -> usize {
+    platform().map_or(0, |p| 1 + p.wheels.len())
+}
+
 /// Downloads and unpacks the GPU pack, reporting each download in turn.
 pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(Progress)) -> Result<()> {
     let platform = platform().context("GPU transcription isn't available on this platform")?;
@@ -212,27 +218,28 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         // Progress reads "Downloading <name>" while bytes arrive (the SHA-256 is
         // computed as they do), then "<name> matches its SHA-256" while unpacking.
         // Progress counts across every file, so the bar never moves backwards.
-        let total = download_size();
+        let (total, parts) = (download_size(), download_parts());
         let mut offset = 0;
         let label = "ONNX Runtime 1.28 with CUDA (sherpa-onnx 1.13.8)";
         let downloading = format!("Downloading {label}");
-        let mut report = |step: &str, done: u64, file_done: u64, file_size: u64| {
-            on_progress(Progress { step, done, total, file_done, file_size })
+        let mut report = |step: &str, done: u64, file_done: u64, file_size: u64, part: usize| {
+            on_progress(Progress { step, done, total: Some(total), file_done, file_size: Some(file_size), part, parts })
         };
-        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| report(&downloading, n, n, size))?;
+        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| report(&downloading, n, n, size, 1))?;
         offset += size;
-        report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size);
+        report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size, 1);
         extract_tar_libs(&archive, &libs, platform.lib_exts)?;
         fs::remove_file(&archive)?;
 
-        for (label, Pinned { url, size, sha256 }) in platform.wheels {
+        for (i, (label, Pinned { url, size, sha256 })) in platform.wheels.iter().copied().enumerate() {
+            let part = i + 2;
             let wheel = staging.join("wheel.whl");
             let downloading = format!("Downloading {label}");
             net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| {
-                report(&downloading, offset + n, n, size)
+                report(&downloading, offset + n, n, size, part)
             })?;
             offset += size;
-            report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size);
+            report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size, part);
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }
@@ -344,8 +351,9 @@ mod tests {
         let dir = PathBuf::from(std::env::var("VODSCRIBE_TEST_PACK_DIR").expect("set VODSCRIBE_TEST_PACK_DIR"));
         let mut last = 0;
         install(&dir, &AtomicBool::new(false), |p| {
-            assert!(p.done >= last && p.done <= p.total, "progress went from {last} to {} of {}", p.done, p.total);
-            assert!(p.file_done <= p.file_size);
+            let total = p.total.unwrap();
+            assert!(p.done >= last && p.done <= total, "progress went from {last} to {} of {total}", p.done);
+            assert!(p.file_done <= p.file_size.unwrap());
             last = p.done;
         })
         .unwrap();

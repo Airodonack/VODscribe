@@ -15,11 +15,11 @@ fn main() -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["setup"] => {
             if tools::find_yt_dlp(&paths.bin()).is_none() {
-                let (p, _) = tools::install_yt_dlp(&paths.bin(), &cancel, |_, _, _| {})?;
+                let (p, _) = tools::install_yt_dlp(&paths.bin(), &cancel, |_| {})?;
                 println!("installed {}", p.display());
             }
             model::install(&paths.models(), &model::CPU_MODEL, &cancel, |p| {
-                eprint!("\rmodel {:.0}%", p.done as f64 / p.total as f64 * 100.0)
+                eprint!("\rmodel {:.0}%", p.done as f64 / p.total.unwrap_or(1) as f64 * 100.0)
             })?;
             println!("\nready");
         }

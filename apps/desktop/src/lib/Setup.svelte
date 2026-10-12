@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { api, events, type SetupStatus, type UnlistenFn } from "./api";
+  import { api, events, type DownloadProgress, type SetupStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
-  import Progress from "./Progress.svelte";
+  import DownloadStep from "./DownloadStep.svelte";
   import Tip from "./Tip.svelte";
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
@@ -12,13 +12,7 @@
   // The item under way and its step, named like the Settings downloads:
   // "Downloading <exact name>", then "<name> matches its SHA-256".
   let current = $state<string | null>(null);
-  let step = $state<{
-    label: string;
-    done: number;
-    total: number | null;
-    fileDone: number;
-    fileSize: number | null;
-  } | null>(null);
+  let step = $state<DownloadProgress | null>(null);
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
@@ -27,11 +21,11 @@
 
   onMount(async () => {
     unlisten.push(
-      await events.setupProgress((item, label, done, total, fileDone, fileSize) => {
+      await events.setupProgress((item, progress) => {
         // A new item means the last one finished: refresh so it shows as done and checked.
         if (current && current !== item) onchange();
         current = item;
-        step = { label, done, total, fileDone, fileSize };
+        step = progress;
       }),
       await events.setupDone((e) => {
         error = e;
@@ -40,8 +34,6 @@
     );
   });
   onDestroy(() => unlisten.forEach((u) => u()));
-
-  const mb = (bytes: number) => Math.round(bytes / 1e6).toLocaleString();
 
   const CHECKED =
     "VODscribe checked that this is exactly the file that was published, so it wasn't damaged or tampered with.";
@@ -136,20 +128,7 @@
           {:else if busy}
             <div class="progress">
               <!-- The exact component and its checks, as in Settings. -->
-              {#if step}
-                <span class="muted step">
-                  {step.label}…
-                  {#if step.label.startsWith("Downloading") && step.fileDone}
-                    <span class="mb"
-                      >{mb(step.fileDone)}{#if step.fileSize}&nbsp;/ {mb(step.fileSize)}{/if} MB</span
-                    >
-                  {/if}
-                </span>
-              {/if}
-              <Progress
-                value={step?.total ? step.done / step.total : 0}
-                indeterminate={step !== null && step.total === null}
-              />
+              <DownloadStep progress={step} />
             </div>
           {:else if item.key === "ffmpeg" && !item.downloads}
             <p class="detail">
@@ -305,16 +284,6 @@
     display: grid;
     gap: 5px;
     margin-top: 8px;
-  }
-
-  .step {
-    font-size: 12px;
-  }
-
-  .mb {
-    font-family: var(--mono);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
 
   .actions {
