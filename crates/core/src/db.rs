@@ -236,9 +236,9 @@ impl Db {
         Ok(())
     }
 
-    /// The oldest VOD with `status`, which is the next one for that stage.
+    /// The highest VOD in the library with `status`, which is the next one for that stage.
     pub fn next_with_status(&self, status: Status) -> Result<Option<Vod>> {
-        let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE status = ?1 ORDER BY added_at, id LIMIT 1");
+        let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE status = ?1 ORDER BY position, id DESC LIMIT 1");
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
     }
 
@@ -478,6 +478,9 @@ mod tests {
         assert_eq!(ids(&db), [a, b]);
         let c = db.add_vod(&info("c")).unwrap().0.id;
         assert_eq!(ids(&db), [c, a, b], "added on top");
+        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, c, "the queue follows the library");
+        db.reorder(&[b, c, a]).unwrap();
+        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, b);
     }
 
     #[test]
