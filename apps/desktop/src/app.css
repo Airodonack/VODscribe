@@ -262,6 +262,10 @@ kbd {
   background: var(--kick);
 }
 
+.platform.local::before {
+  background: var(--muted);
+}
+
 /* Rows in the transcript and results: a timestamp and text, clickable. */
 .row {
   display: flex;

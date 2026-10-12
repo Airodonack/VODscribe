@@ -1,5 +1,7 @@
 <script lang="ts">
   import { getVersion } from "@tauri-apps/api/app";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
@@ -41,12 +43,109 @@
     }
   }
 
+  /**
+   * Adds what was dropped or picked: links go through the same check as a pasted
+   * link (yt-dlp's probe), files are probed with ffmpeg. Errors are collected.
+   */
+  async function addItems(items: string[]) {
+    const links: string[] = [];
+    const files: string[] = [];
+    const errors: string[] = [];
+    for (const item of items.map((i) => i.trim()).filter(Boolean)) {
+      if (/^https?:\/\//i.test(item)) links.push(item);
+      else if (/^file:\/\//i.test(item)) files.push(decodeURIComponent(new URL(item).pathname));
+      else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(item) && !/^[a-z]:[\\/]/i.test(item))
+        errors.push(`${item} isn't a web link.`);
+      else files.push(item);
+    }
+    if (!links.length && !files.length && !errors.length) return;
+    adding = true;
+    error = null;
+    for (const link of links) {
+      await api.addVod(link).catch((e) => errors.push(String(e)));
+    }
+    if (files.length) {
+      await api.addFiles(files).then(
+        (r) => errors.push(...r.errors),
+        (e) => errors.push(String(e)),
+      );
+    }
+    adding = false;
+    error = errors.length ? errors.join("\n") : null;
+  }
+
+  const MEDIA = [
+    "mp4",
+    "mkv",
+    "webm",
+    "mov",
+    "avi",
+    "m4v",
+    "ts",
+    "flv",
+    "mp3",
+    "m4a",
+    "wav",
+    "flac",
+    "ogg",
+    "opus",
+    "aac",
+  ];
+  async function pickFiles() {
+    const picked = await open({
+      multiple: true,
+      directory: false,
+      filters: [{ name: "Video and audio", extensions: MEDIA }],
+    }).catch(() => null);
+    if (picked) addItems(Array.isArray(picked) ? picked : [picked]);
+  }
+
+  // Dropping onto the window. Files (and, on Linux, links) arrive through the
+  // webview's drop event with their paths; links on other platforms arrive as
+  // an ordinary HTML drop of text.
+  let dropping = $state(false);
+  function onDragOver(e: DragEvent) {
+    const types = e.dataTransfer?.types ?? [];
+    if (!types.includes("text/uri-list") && !types.includes("text/plain")) return;
+    e.preventDefault();
+    dropping = true;
+  }
+  function onDrop(e: DragEvent) {
+    const data = e.dataTransfer;
+    if (!data) return;
+    const text = data.getData("text/uri-list") || data.getData("text/plain");
+    if (!text) return;
+    e.preventDefault();
+    dropping = false;
+    // uri-list lines starting with # are comments.
+    addItems(text.split(/\r?\n/).filter((l) => !l.startsWith("#")));
+  }
+
   let version = $state<string | null>(null);
   onMount(() => {
     getVersion().then(
       (v) => (version = v || null),
       () => {},
     );
+    let stop: (() => void) | undefined;
+    let unmounted = false;
+    getCurrentWebview()
+      .onDragDropEvent(({ payload }) => {
+        if (payload.type === "enter" || payload.type === "over") dropping = true;
+        else if (payload.type === "leave") dropping = false;
+        else {
+          dropping = false;
+          addItems(payload.paths);
+        }
+      })
+      .then(
+        (u) => (unmounted ? u() : (stop = u)),
+        () => {},
+      );
+    return () => {
+      unmounted = true;
+      stop?.();
+    };
   });
 
   const toggle = (vod: Vod) => onselect(vod.id === selectedId ? null : vod.id);
@@ -71,6 +170,12 @@
   }
 </script>
 
+<svelte:window ondragover={onDragOver} ondrop={onDrop} ondragleave={(e) => !e.relatedTarget && (dropping = false)} />
+
+{#if dropping}
+  <div class="drop">Drop video files or VOD links to add them</div>
+{/if}
+
 <aside>
   <!-- Two sibling buttons, since buttons can't nest: the site link fills the
        header and the credit sits on top of it, under the name. -->
@@ -90,6 +195,9 @@
     <input type="url" placeholder="Paste a VOD link…" bind:value={url} disabled={adding} aria-label="VOD link" />
     <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
   </form>
+  <p class="more muted">
+    or <button class="link" onclick={pickFiles} disabled={adding}>add video files…</button> or drop files and links anywhere
+  </p>
   {#if error}
     <p class="error-text add-error">{error}</p>
   {/if}
@@ -197,8 +305,34 @@
   form {
     display: flex;
     gap: 6px;
-    padding: 10px 12px;
+    padding: 10px 12px 4px;
+  }
+
+  .more {
+    margin: 0;
+    padding: 0 12px 9px;
+    font-size: 12px;
     border-bottom: 1px solid var(--border);
+  }
+
+  .more .link {
+    color: var(--accent);
+  }
+
+  .drop {
+    position: fixed;
+    inset: 8px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--accent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+    pointer-events: none;
   }
 
   .add-error {

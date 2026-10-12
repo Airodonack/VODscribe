@@ -2,7 +2,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
-  import type { Vod } from "./api";
+  import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
@@ -29,6 +29,7 @@
   }
 
   const site = $derived(platformName[vod.platform] ?? "site");
+  const isLocal = $derived(vod.source_path !== null);
   let error = $state<string | null>(null);
 
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
@@ -115,7 +116,9 @@
         {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
-      {#if at.time > 0}
+      {#if at.time > 0 && isLocal}
+        <span class="stamp"><span class="time">{formatTime(at.time)}</span></span>
+      {:else if at.time > 0}
         <button
           class="stamp"
           class:copied={copied === "ok"}
@@ -137,10 +140,16 @@
       aria-label="Keyboard shortcuts"
       title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
     >
-    <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
-      Open on {site}
-      <Icon name="external" size={12} />
-    </button>
+    {#if isLocal}
+      <button class="link open" onclick={() => api.showFile(vod.id).catch((e) => (error = String(e)))}>
+        Show in folder
+      </button>
+    {:else}
+      <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
+        Open on {site}
+        <Icon name="external" size={12} />
+      </button>
+    {/if}
     {#if canEmbed(vod)}
       <button
         class="icon"

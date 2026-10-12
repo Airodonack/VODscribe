@@ -22,6 +22,7 @@ export const platformName: Record<string, string> = {
   youtube: "YouTube",
   twitch: "Twitch",
   kick: "Kick",
+  local: "Local file",
 };
 
 /** Link to the VOD on its own site, at `time`. */

@@ -5,6 +5,7 @@
 // seek(), so jumping between timestamps doesn't reload the player.
 
 import Hls from "hls.js";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { api, type Vod } from "./api";
 import { twitchId, twitchTime } from "./platform";
 
@@ -190,27 +191,19 @@ function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise
   );
 }
 
-/** Kick has no VOD embed, so play its HLS stream in a plain <video>. */
-async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
-  const variants = await api.kickStream(vod.url);
-  // 720p is plenty for a preview pane and keeps bandwidth down.
-  const pick = variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
-  if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
+/** A plain <video> in `el`. `attach` points it at its source and returns any cleanup. */
+function videoPlayer(
+  el: HTMLElement,
+  time: number,
+  play: boolean,
+  attach: (video: HTMLVideoElement) => (() => void) | void,
+): EmbeddedPlayer {
   const video = document.createElement("video");
   video.controls = true;
   video.playsInline = true;
   video.style.cssText = "width: 100%; height: 100%; background: #000";
   el.appendChild(video);
-
-  let hls: Hls | null = null;
-  if (Hls.isSupported()) {
-    hls = new Hls({ startPosition: time });
-    hls.loadSource(pick.url);
-    hls.attachMedia(video);
-  } else {
-    video.src = pick.url;
-    video.currentTime = time;
-  }
+  const detach = attach(video);
   if (play) video.play().catch(() => {});
   return {
     seek(seconds, play) {
@@ -223,16 +216,46 @@ async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Pro
       else video.pause();
     },
     destroy() {
-      hls?.destroy();
+      detach?.();
       video.remove();
     },
   };
+}
+
+/** Kick has no VOD embed, so play its HLS stream in a plain <video>. */
+async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+  const variants = await api.kickStream(vod.url);
+  // 720p is plenty for a preview pane and keeps bandwidth down.
+  const pick = variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
+  if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
+  return videoPlayer(el, time, play, (video) => {
+    if (!Hls.isSupported()) {
+      video.src = pick.url;
+      video.currentTime = time;
+      return;
+    }
+    const hls = new Hls({ startPosition: time });
+    hls.loadSource(pick.url);
+    hls.attachMedia(video);
+    return () => hls.destroy();
+  });
+}
+
+/** A file on this computer, read through the asset protocol (allowed per file by the app). */
+async function local(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+  const path = vod.source_path;
+  if (!path) throw new Error("This VOD has no file.");
+  return videoPlayer(el, time, play, (video) => {
+    video.src = convertFileSrc(path);
+    video.currentTime = time;
+  });
 }
 
 const players: Record<string, (el: HTMLElement, vod: Vod, time: number, play: boolean) => Promise<EmbeddedPlayer>> = {
   youtube,
   twitch,
   kick,
+  local,
 };
 
 /** Creates a player inside `el`, or returns null if the platform has no VOD embed. */

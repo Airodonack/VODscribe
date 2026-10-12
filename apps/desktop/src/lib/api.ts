@@ -14,6 +14,8 @@ export interface Vod {
   thumbnail: string | null;
   /** File name of the local thumbnail copy ("" if there's none); see `thumbUrl`. */
   thumb: string | null;
+  /** For a file on this computer, its path; such VODs have platform "local". */
+  source_path: string | null;
   published: string | null;
   status: Status;
   progress: number;
@@ -68,6 +70,8 @@ export const api = {
   dataDir: () => invoke<string>("data_dir"),
   openDataDir: () => invoke<void>("open_data_dir"),
   addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),
+  addFiles: (paths: string[]) => invoke<{ vods: Vod[]; errors: string[] }>("add_files", { paths }),
+  showFile: (id: number) => invoke<void>("show_file", { id }),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
