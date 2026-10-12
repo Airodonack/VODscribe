@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-extensions"
+description = "Enables the media_extensions command without any pre-configured scope."
+commands.allow = ["media_extensions"]
+
+[[permission]]
+identifier = "deny-media-extensions"
+description = "Denies the media_extensions command without any pre-configured scope."
+commands.deny = ["media_extensions"]

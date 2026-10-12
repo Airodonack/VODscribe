@@ -14,16 +14,37 @@ use crate::tools;
 /// The `platform` of a local file's VOD.
 pub const PLATFORM: &str = "local";
 
-/// The file types VODscribe adds and plays. Anything else is refused, so a
-/// program can't be added (and later "opened", which would run it).
-pub const MEDIA_EXTENSIONS: &[&str] =
-    &["mp4", "m4v", "mkv", "webm", "mov", "avi", "ts", "flv", "mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"];
+/// The file types VODscribe adds and plays, by extension, with the media type
+/// the player is told. Anything else is refused, so a program can't be added
+/// (and later "opened", which would run it). The app's file picker and its
+/// media server use this list too.
+pub const MEDIA_TYPES: &[(&str, &str)] = &[
+    ("mp4", "video/mp4"),
+    ("m4v", "video/mp4"),
+    ("mkv", "video/x-matroska"),
+    ("webm", "video/webm"),
+    ("mov", "video/quicktime"),
+    ("avi", "video/x-msvideo"),
+    ("ts", "video/mp2t"),
+    ("flv", "video/x-flv"),
+    ("mp3", "audio/mpeg"),
+    ("m4a", "audio/mp4"),
+    ("aac", "audio/mp4"),
+    ("wav", "audio/wav"),
+    ("flac", "audio/flac"),
+    ("ogg", "audio/ogg"),
+    ("opus", "audio/ogg"),
+];
 
-/// Whether `path` has one of the `MEDIA_EXTENSIONS`.
+/// The media type of `path` by its extension, if it's one of `MEDIA_TYPES`.
+pub fn media_type(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    MEDIA_TYPES.iter().find(|(e, _)| *e == ext).map(|(_, mime)| *mime)
+}
+
+/// Whether `path` has one of the `MEDIA_TYPES` extensions.
 pub fn is_media(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+    media_type(path).is_some()
 }
 
 /// Network shares and device paths (\\server\share, \\?\UNC\, \\.\): opening

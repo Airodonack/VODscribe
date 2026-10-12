@@ -86,28 +86,12 @@
       });
   }
 
-  const MEDIA = [
-    "mp4",
-    "mkv",
-    "webm",
-    "mov",
-    "avi",
-    "m4v",
-    "ts",
-    "flv",
-    "mp3",
-    "m4a",
-    "wav",
-    "flac",
-    "ogg",
-    "opus",
-    "aac",
-  ];
   async function pickFiles() {
+    const extensions = await api.mediaExtensions().catch(() => []);
     const picked = await open({
       multiple: true,
       directory: false,
-      filters: [{ name: "Video and audio", extensions: MEDIA }],
+      filters: [{ name: "Video and audio", extensions }],
     }).catch(() => null);
     if (picked) addItems(Array.isArray(picked) ? picked : [picked], true);
   }

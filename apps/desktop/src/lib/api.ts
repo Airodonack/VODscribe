@@ -90,6 +90,8 @@ export const api = {
   openDataDir: () => invoke<void>("open_data_dir"),
   addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),
   addFiles: (paths: string[]) => invoke<{ vods: Vod[]; errors: string[] }>("add_files", { paths }),
+  /** The file extensions VODscribe accepts, for the file picker. */
+  mediaExtensions: () => invoke<string[]>("media_extensions"),
   showFile: (id: number) => invoke<void>("show_file", { id }),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   mediaUrl: (id: number) => invoke<string>("media_url", { id }),

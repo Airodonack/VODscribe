@@ -142,6 +142,12 @@ pub(crate) async fn open_file(app: AppHandle, state: State<'_, AppState>, id: i6
     app.opener().open_path(source, None::<String>).map_err(err)
 }
 
+/// The file extensions VODscribe accepts, for the file picker.
+#[tauri::command]
+pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
+    Ok(local::MEDIA_TYPES.iter().map(|(ext, _)| *ext).collect())
+}
+
 /// Shows a local VOD's file in the system file manager. Takes the VOD's id, not
 /// a path, so the UI can't point it anywhere else.
 #[tauri::command]

@@ -11,6 +11,7 @@ permissions = [
   "allow-add-vod",
   "allow-list-vods",
   "allow-add-files",
+  "allow-media-extensions",
   "allow-show-file",
   "allow-open-file",
   "allow-media-url",

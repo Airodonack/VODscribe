@@ -162,21 +162,7 @@ fn parse_range(header: &str, size: u64) -> Option<(u64, u64)> {
 }
 
 fn content_type(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-        Some("mp4" | "m4v") => "video/mp4",
-        Some("webm") => "video/webm",
-        Some("mkv") => "video/x-matroska",
-        Some("mov") => "video/quicktime",
-        Some("ts") => "video/mp2t",
-        Some("avi") => "video/x-msvideo",
-        Some("flv") => "video/x-flv",
-        Some("mp3") => "audio/mpeg",
-        Some("m4a" | "aac") => "audio/mp4",
-        Some("wav") => "audio/wav",
-        Some("ogg" | "opus") => "audio/ogg",
-        Some("flac") => "audio/flac",
-        _ => "application/octet-stream",
-    }
+    vodscribe_core::local::media_type(path).unwrap_or("application/octet-stream")
 }
 
 #[cfg(test)]

@@ -104,6 +104,7 @@ pub fn run() {
             vods::add_vod,
             vods::list_vods,
             vods::add_files,
+            vods::media_extensions,
             vods::show_file,
             vods::open_file,
             media::media_url,
