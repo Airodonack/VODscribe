@@ -16,6 +16,7 @@ const commands: Record<string, (args: Args) => unknown> = {
     js_runtime: true,
     js_runtime_managed: true,
     can_install_tools: true,
+    model_bytes: 949_807_475,
     running: false,
   }),
   list_vods: () => backend.listVods(),

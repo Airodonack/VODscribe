@@ -26,6 +26,8 @@ pub(crate) struct SetupStatus {
     js_runtime_managed: bool,
     /// Setup can download ffmpeg and Deno on this platform.
     can_install_tools: bool,
+    /// Bytes of the speech model setup downloads.
+    model_bytes: u64,
     running: bool,
 }
 
@@ -41,6 +43,7 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
         js_runtime: tools::find_js_runtime(&bin).is_some(),
         js_runtime_managed: deps::managed_path(&bin, "deno").is_file(),
         can_install_tools: deps::ffmpeg().is_some() && deps::deno().is_some(),
+        model_bytes: model::CPU_MODEL.total_bytes(),
         running: state.setup_running.load(Ordering::Relaxed),
     })
 }
@@ -166,6 +169,8 @@ pub(crate) struct GpuStatus {
     worker: bool,
     gpu: Option<GpuInfo>,
     min_free_mb: u64,
+    /// Bytes the add-on downloads: the pack and the GPU speech model.
+    download_bytes: u64,
 }
 
 #[tauri::command]
@@ -179,6 +184,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
         worker: tools::sidecar("vodscribe-worker-cuda").is_ok(),
         gpu,
         min_free_mb: gpu::MIN_FREE_MB,
+        download_bytes: gpu::download_size() + model::GPU_MODEL.total_bytes(),
     })
 }
 

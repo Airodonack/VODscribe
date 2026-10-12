@@ -40,6 +40,8 @@ export interface GpuStatus {
   worker: boolean;
   gpu: { name: string; total_mb: number; free_mb: number } | null;
   min_free_mb: number;
+  /** Bytes the add-on downloads. */
+  download_bytes: number;
 }
 
 export interface SearchHit {
@@ -58,6 +60,8 @@ export interface SetupStatus {
   js_runtime_managed: boolean;
   /** Setup can download ffmpeg and Deno on this platform. */
   can_install_tools: boolean;
+  /** Bytes of the speech model setup downloads. */
+  model_bytes: number;
   model: boolean;
   js_runtime: boolean;
   running: boolean;

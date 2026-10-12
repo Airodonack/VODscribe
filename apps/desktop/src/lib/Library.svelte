@@ -6,6 +6,7 @@
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
+  import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
@@ -99,7 +100,7 @@
   // Dropping onto the window. Files arrive through the webview's drop event with
   // their paths, and on Linux dropped links do too. Windows and macOS don't pass
   // link drops to the app at all, so there links have to be pasted.
-  const linksDrop = !/Win|Mac/.test(navigator.platform);
+  const linksDrop = os === "linux";
   let dropping = $state(false);
   // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
   let draggingInside = false;

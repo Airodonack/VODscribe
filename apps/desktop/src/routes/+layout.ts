@@ -1,5 +1,3 @@
-// Tauri doesn't have a Node.js server to do proper SSR
-// so we use adapter-static with a fallback to index.html to put the site in SPA mode
-// See: https://svelte.dev/docs/kit/single-page-apps
-// See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
+// The app is a single page that runs only in the window: Tauri has no server
+// to render it, so it's built with a fallback index.html (svelte.config.js).
 export const ssr = false;

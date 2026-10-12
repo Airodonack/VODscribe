@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import { LICENSES, PRIVACY } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
+  import { formatBytes } from "./platform";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
 
@@ -24,11 +25,8 @@
     cacheBytes = await api.cacheSize();
   }
 
-  const size = (bytes: number) =>
-    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
-
   async function clearCache() {
-    const amount = cacheBytes ? ` ${size(cacheBytes)}` : "";
+    const amount = cacheBytes ? ` ${formatBytes(cacheBytes)}` : "";
     const ok = confirm(
       `Free up${amount}? This deletes the parts VODscribe downloaded to run, and any unfinished downloads. ` +
         "Anything in progress is paused. Your library and transcripts are kept, and VODscribe downloads what it needs again.",
@@ -121,7 +119,7 @@
     if (!gpu.supported) return "Not available on this kind of computer.";
     if (!gpu.worker) return "This version of VODscribe can't use graphics cards.";
     if (!gpu.gpu) return "No NVIDIA graphics card found.";
-    if (!gpu.installed) return "Needs the GPU add-on, a one-time download of about 3 GB.";
+    if (!gpu.installed) return `Needs the GPU add-on, a one-time download of about ${formatBytes(gpu.download_bytes)}.`;
     return null;
   });
   let busy = $derived(gpu?.gpu && gpu.installed && gpu.gpu.free_mb < gpu.min_free_mb);
@@ -171,7 +169,11 @@
           <DownloadStep progress={step} waiting="Downloading the GPU add-on" />
         </div>
       {:else if !gpu?.installed}
-        <button onclick={install}><Icon name="download" size={14} /> Download GPU add-on (about 3 GB)</button>
+        <button onclick={install}
+          ><Icon name="download" size={14} /> Download GPU add-on (about {formatBytes(
+            gpu?.download_bytes ?? 0,
+          )})</button
+        >
       {:else}
         <p class="verified">
           <Tip
@@ -244,8 +246,8 @@
   <section>
     <span class="eyebrow">Storage</span>
     <p class="muted hint">
-      Downloaded parts and unfinished downloads{cacheBytes !== null ? ` use ${size(cacheBytes)}` : ""}. Your library and
-      transcripts aren't counted.
+      Downloaded parts and unfinished downloads{cacheBytes !== null ? ` use ${formatBytes(cacheBytes)}` : ""}. Your
+      library and transcripts aren't counted.
     </p>
     <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
       {clearing ? "Clearing…" : "Free up space…"}

@@ -11,6 +11,7 @@
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { DEMO, demoOff, keysForApp } from "./demo";
+  import { os } from "./platform";
   import { updates } from "./updates.svelte";
 
   let setup = $state<SetupStatus | null>(null);
@@ -31,10 +32,10 @@
   let showSettings = $state(false);
   let settingsEl = $state<HTMLElement>();
 
-  // Close the settings panel on Escape or a click outside it.
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
-  const searchKey = /Mac/.test(navigator.platform) ? "⌘F" : "Ctrl+F";
+  const searchKey = os === "mac" ? "⌘F" : "Ctrl+F";
+  // Escape, or a click outside it, closes the settings panel.
   function onWindowKey(e: KeyboardEvent) {
     if (!keysForApp()) return;
     if (e.key === "Escape") showSettings = false;

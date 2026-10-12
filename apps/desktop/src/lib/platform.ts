@@ -1,5 +1,18 @@
 import type { Vod } from "./api";
 
+/** This computer's OS, for shortcuts, drops and install instructions. */
+export const os: "windows" | "mac" | "linux" =
+  typeof navigator === "undefined" || !/Win|Mac/.test(navigator.platform)
+    ? "linux"
+    : /Win/.test(navigator.platform)
+      ? "windows"
+      : "mac";
+
+/** 3.4e9 -> "3.4 GB", 9.5e8 -> "950 MB" */
+export function formatBytes(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
 /** 3725 -> "1:02:05", 65 -> "1:05" */
 export function formatTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));

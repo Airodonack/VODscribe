@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
   import DownloadStep from "./DownloadStep.svelte";
+  import { formatBytes, os } from "./platform";
   import Tip from "./Tip.svelte";
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
@@ -16,8 +17,7 @@
   let error = $state<string | null>(null);
   let running = $derived(status.running);
   const unlisten: UnlistenFn[] = [];
-  // Only the install steps for this computer are shown.
-  const os = /Win/.test(navigator.platform) ? "windows" : /Mac/.test(navigator.platform) ? "mac" : "linux";
+  // Only the install steps for this computer are shown (os, from platform.ts).
 
   onMount(async () => {
     unlisten.push(
@@ -63,7 +63,7 @@
     {
       key: "model",
       name: "Speech recognition",
-      what: "turns speech into text, about 900 MB",
+      what: `turns speech into text, about ${formatBytes(status.model_bytes)}`,
       page: "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
       checked: CHECKED,
       done: status.model,
