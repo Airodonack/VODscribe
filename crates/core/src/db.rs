@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::Serialize;
 
@@ -192,6 +192,10 @@ fn now() -> i64 {
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_inner(path).with_context(|| format!("open the library at {}", path.display()))
+    }
+
+    fn open_inner(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
@@ -203,6 +207,10 @@ impl Db {
             let pending = migrations[version as usize..].join("\n");
             let latest = migrations.len();
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {latest}; COMMIT;"))?;
+        } else if version as usize > migrations.len() {
+            // A newer VODscribe made this library (the user went back a version).
+            // Migrations so far only add, so carry on rather than refuse to start.
+            eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
         Ok(Self { conn })
     }

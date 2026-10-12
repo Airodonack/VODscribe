@@ -21,7 +21,11 @@ pub struct Settings {
 impl Settings {
     /// Missing or unreadable settings fall back to defaults.
     pub fn load(path: &Path) -> Self {
-        fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+        let Ok(text) = fs::read_to_string(path) else { return Self::default() };
+        serde_json::from_str(&text).unwrap_or_else(|e| {
+            eprintln!("{}: unreadable, using the defaults: {e}", path.display());
+            Self::default()
+        })
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
