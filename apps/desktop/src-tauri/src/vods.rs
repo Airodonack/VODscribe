@@ -36,8 +36,13 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
         let db = state.db.lock().unwrap();
         let (mut vod, created) = db.add_vod(&info)?;
         if created {
-            // Hand the resolved info to the worker so it doesn't probe again.
-            std::fs::rename(&probe_path, pipeline::info_path(&state.paths.work(), vod.id))?;
+            // Hand the resolved info to the worker so it doesn't probe again. Only a
+            // shortcut: if the file can't be moved (a virus scanner holding it, say),
+            // the worker probes again, and the VOD, already saved, must still be
+            // shown and queued.
+            if std::fs::rename(&probe_path, pipeline::info_path(&state.paths.work(), vod.id)).is_err() {
+                let _ = std::fs::remove_file(&probe_path);
+            }
         } else {
             let _ = std::fs::remove_file(&probe_path);
             if vod.status == Status::Error {
