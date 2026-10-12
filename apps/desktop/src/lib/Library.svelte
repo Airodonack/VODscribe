@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
+  import Logo from "./Logo.svelte";
   import { formatTime, platformName } from "./platform";
 
   let {
@@ -71,7 +72,7 @@
 
 <aside>
   <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
+    <Logo size={22} tile />
     <span class="name">VODscribe</span>
   </div>
 
@@ -143,18 +144,44 @@
 
         <div class="actions">
           {#if vod.status === "error"}
-            <button class="link" onclick={() => api.retryVod(vod.id)}>Retry</button>
+            <button class="act" onclick={() => api.retryVod(vod.id)} title="Retry" aria-label="Retry">
+              <Icon name="redo" size={15} />
+            </button>
           {:else if vod.status === "paused"}
             <!-- Resuming an outdated transcript starts over, like Re-transcribe. -->
-            <button class="link" class:warn={vod.outdated} onclick={() => api.resumeVod(vod.id)}>Resume</button>
-            <button class="link" onclick={() => cancel(vod)}>Cancel</button>
+            <button
+              class="act"
+              class:warn={vod.outdated}
+              onclick={() => api.resumeVod(vod.id)}
+              title={vod.outdated ? "Resume (starts over with the current model)" : "Resume"}
+              aria-label="Resume"
+            >
+              <Icon name="play" size={15} />
+            </button>
+            <button class="act" onclick={() => cancel(vod)} title="Cancel" aria-label="Cancel">
+              <Icon name="x" size={15} />
+            </button>
           {:else if vod.status !== "done"}
-            <button class="link" onclick={() => api.pauseVod(vod.id)}>Pause</button>
-            <button class="link" onclick={() => cancel(vod)}>Cancel</button>
+            <button class="act" onclick={() => api.pauseVod(vod.id)} title="Pause" aria-label="Pause">
+              <Icon name="pause" size={15} />
+            </button>
+            <button class="act" onclick={() => cancel(vod)} title="Cancel" aria-label="Cancel">
+              <Icon name="x" size={15} />
+            </button>
           {:else}
-            <button class="link" class:warn={vod.outdated} onclick={() => retranscribe(vod)}>Re-transcribe</button>
+            <button
+              class="act"
+              class:warn={vod.outdated}
+              onclick={() => retranscribe(vod)}
+              title={vod.outdated ? "Re-transcribe with the current model" : "Re-transcribe"}
+              aria-label="Re-transcribe"
+            >
+              <Icon name="redo" size={15} />
+            </button>
           {/if}
-          <button class="link" onclick={() => remove(vod)}>Remove</button>
+          <button class="act" onclick={() => remove(vod)} title="Remove" aria-label="Remove">
+            <Icon name="trash" size={15} />
+          </button>
         </div>
       </div>
     {:else}
@@ -181,12 +208,6 @@
     border-bottom: 1px solid var(--border);
   }
 
-  .mark {
-    width: 14px;
-    height: 14px;
-    border-radius: 4px;
-    background: linear-gradient(135deg, var(--accent), #a78bfa);
-  }
 
   .name {
     font-weight: 700;
@@ -395,8 +416,35 @@
 
   .actions {
     display: flex;
-    gap: 12px;
-    margin-top: 6px;
+    gap: 2px;
+    justify-content: flex-end;
+    margin-top: 4px;
+    margin-right: -6px;
+  }
+
+  .act {
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted);
+    border-radius: var(--radius-sm);
+    opacity: 0.75;
+  }
+
+  .vod:hover .act,
+  .vod.selected .act {
+    opacity: 1;
+  }
+
+  .act:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .act.warn {
+    color: var(--warn);
   }
 
   .empty {
