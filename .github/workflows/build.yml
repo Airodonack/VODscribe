@@ -98,6 +98,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          # The AppImage tool bundles every library the programs need, but the GPU
+          # worker's comes later with the GPU add-on (prepare-sidecars.sh).
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: libsherpa-onnx-c-api.so
         run: |
           # Signed update bundles need the updater key, so they're only made where it's set.
           args=()
