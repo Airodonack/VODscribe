@@ -209,15 +209,17 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
 
 fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
     let bin = ctx.paths.bin();
-    if tools::find_yt_dlp(&bin).is_none() || tools::find_ffmpeg(&bin).is_none() {
+    if tools::find_ffmpeg(&bin).is_none() {
         return Ok(None);
     }
+    // Without the video downloader, only local files can be fetched; online VODs wait.
+    let has_yt_dlp = tools::find_yt_dlp(&bin).is_some();
     match stage {
         Stage::Download => {
             if ctx.db.count_with_status(Status::Ready)? >= MAX_READY {
                 return Ok(None);
             }
-            ctx.db.next_with_status(Status::Queued)
+            if has_yt_dlp { ctx.db.next_with_status(Status::Queued) } else { ctx.db.next_local_with_status(Status::Queued) }
         }
         Stage::Transcribe => {
             if !model::is_installed(&ctx.paths.model_dir(), &model::CPU_MODEL) {
@@ -280,9 +282,10 @@ fn reporter<'a>(app: &'a AppHandle, vod_id: i64, progress: &'a mut f64) -> impl 
 
 fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
     let bin = ctx.paths.bin();
-    let yt_dlp = tools::find_yt_dlp(&bin).context("The video downloader isn't installed yet.")?;
+    // Local files don't need the video downloader; pipeline::download asks for it otherwise.
+    let yt_dlp = tools::find_yt_dlp(&bin);
     let ffmpeg = tools::find_ffmpeg(&bin).context(NO_FFMPEG)?;
-    let tools = pipeline::Tools { yt_dlp: &yt_dlp, ffmpeg: &ffmpeg };
+    let tools = pipeline::Tools { yt_dlp: yt_dlp.as_ref(), ffmpeg: &ffmpeg };
     let app = ctx.app.clone();
     let audio = pipeline::download(&mut ctx.db, vod, &tools, &ctx.paths.work(), flag, reporter(&app, vod.id, progress))?;
     ctx.db.set_audio_path(vod.id, Some(&audio.to_string_lossy()))?;

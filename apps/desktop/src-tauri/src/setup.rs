@@ -81,10 +81,12 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
         model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
         app.state::<AppState>().worker.wake();
         // Last, since it's optional: only some YouTube VODs need it.
+        // If it fails, setup still succeeded; YouTube links that need it will say so.
         if tools::find_js_runtime(&bin).is_none()
             && let Some(dep) = deps::deno()
+            && let Err(e) = deps::install(&dep, &bin, never, |n| progress("deno", n, Some(dep.size)))
         {
-            deps::install(&dep, &bin, never, |n| progress("deno", n, Some(dep.size)))?;
+            eprintln!("Deno wasn't installed: {e:#}");
         }
         Ok(())
     });
@@ -113,6 +115,17 @@ pub(crate) fn spawn_install(
 #[tauri::command]
 /// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (step, done, total).
 pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
+    // Setup installs yt-dlp too; the two mustn't write the same file at once.
+    if state.setup_running.swap(true, Ordering::Relaxed) {
+        return Err("Setup is still downloading. Try again when it's done.".into());
+    }
+    let running = state.setup_running.clone();
+    let result = update_yt_dlp_now(app, state).await;
+    running.store(false, Ordering::Relaxed);
+    result
+}
+
+async fn update_yt_dlp_now(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     let bin = state.paths.bin();
     tauri::async_runtime::spawn_blocking(move || {
         tools::update_yt_dlp(&bin, |step, done, total| {

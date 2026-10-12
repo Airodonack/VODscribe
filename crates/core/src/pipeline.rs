@@ -18,7 +18,8 @@ use crate::transcript::{Segmenter, Word};
 const INFO_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 
 pub struct Tools<'a> {
-    pub yt_dlp: &'a YtDlp,
+    /// Not needed for local files.
+    pub yt_dlp: Option<&'a YtDlp>,
     pub ffmpeg: &'a Path,
 }
 
@@ -71,10 +72,11 @@ pub fn download(
 
     db.set_status(vod.id, Status::Downloading, 0.0, None)?;
     report(Status::Downloading, 0.0);
+    let yt_dlp = tools.yt_dlp.context("The video downloader isn't installed yet.")?;
     if !fresh {
-        fetch::probe(tools.yt_dlp, &vod.info.url, &info)?;
+        fetch::probe(yt_dlp, &vod.info.url, &info)?;
     }
-    fetch::download_audio(tools.yt_dlp, &info, &work_dir.join(vod.id.to_string()), cancel, |f| {
+    fetch::download_audio(yt_dlp, &info, &work_dir.join(vod.id.to_string()), cancel, |f| {
         report(Status::Downloading, f)
     })
 }
@@ -256,7 +258,7 @@ mod tests {
         let vod = db.vod(vod.id).unwrap().unwrap();
 
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
-        let tools = Tools { yt_dlp: &yt_dlp, ffmpeg: Path::new("/nonexistent/ffmpeg") };
+        let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
         let audio = download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).unwrap();
         assert_eq!(audio, source, "transcribed in place, not copied");
         db.set_audio_path(vod.id, Some(&audio.to_string_lossy())).unwrap();

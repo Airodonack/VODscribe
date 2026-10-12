@@ -268,6 +268,14 @@ impl Db {
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
     }
 
+    /// Like `next_with_status`, but only VODs that are files on this computer.
+    pub fn next_local_with_status(&self, status: Status) -> Result<Option<Vod>> {
+        let sql = format!(
+            "SELECT {VOD_COLUMNS} FROM vods WHERE status = ?1 AND source_path IS NOT NULL ORDER BY position DESC, id LIMIT 1"
+        );
+        Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
+    }
+
     pub fn count_with_status(&self, status: Status) -> Result<usize> {
         let n: i64 = self.conn.query_row("SELECT count(*) FROM vods WHERE status = ?1", [status.as_str()], |r| r.get(0))?;
         Ok(n as usize)

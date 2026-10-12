@@ -193,38 +193,52 @@ fn clean_error(stderr: &str) -> String {
     eprintln!("yt-dlp: {}", tools::last_lines(stderr, 10));
     let errors: Vec<&str> = stderr.lines().filter_map(|l| l.strip_prefix("ERROR: ")).collect();
     let raw = if errors.is_empty() { tools::last_lines(stderr, 3) } else { errors.join("\n") };
-    friendly(&raw).map_or_else(
-        // Drop yt-dlp's "[youtube] abc123: " prefix from what's left.
-        || {
-            let msg = raw.split_once("]").map_or(raw.as_str(), |(_, rest)| rest.trim_start());
-            let msg = msg.split_once(": ").filter(|(id, _)| !id.contains(' ')).map_or(msg, |(_, rest)| rest);
-            format!("Couldn't get this video: {msg}")
-        },
-        str::to_string,
-    )
+    let msg = strip_tag(&raw);
+    friendly(msg).map_or_else(|| format!("Couldn't get this video: {msg}"), str::to_string)
 }
 
-fn friendly(error: &str) -> Option<&'static str> {
-    let e = error.to_lowercase();
-    let has = |words: &[&str]| words.iter().any(|w| e.contains(w));
-    Some(if has(&["unsupported url", "is not a valid url"]) {
-        "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
-    } else if has(&["private video", "video is private"]) {
-        "That video is private."
-    } else if has(&["members-only", "join this channel", "subscriber", "subscription"]) {
-        "That video is only for channel members or subscribers, so VODscribe can't get it."
-    } else if has(&["confirm your age", "age-restricted", "age restricted"]) {
-        "That video is age-restricted, so VODscribe can't get it."
-    } else if has(&["not a bot"]) {
-        "YouTube is asking to check that you're not a bot. Try again in a little while."
-    } else if has(&["unavailable", "has been removed", "does not exist", "404"]) {
-        "That video isn't available. It may have been deleted or made private."
-    } else if has(&["unable to download webpage", "timed out", "name resolution", "network is unreachable", "connection"]) {
-        "Couldn't connect. Check your internet connection and try again."
-    } else if has(&["requested format is not available"]) {
-        "That video has no audio VODscribe can download."
-    } else {
-        return None;
+/// Drops yt-dlp's "[extractor] video-id: " prefix, when the message starts with one.
+fn strip_tag(raw: &str) -> &str {
+    let Some(rest) = raw.strip_prefix('[').and_then(|r| r.split_once("] ")).map(|(_, rest)| rest) else {
+        return raw;
+    };
+    rest.split_once(": ").filter(|(id, _)| !id.contains(' ')).map_or(rest, |(_, msg)| msg)
+}
+
+/// A plain sentence for the failures people actually hit, from the message
+/// with its "[extractor] id:" prefix already removed.
+fn friendly(msg: &str) -> Option<&'static str> {
+    let m = msg.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| m.contains(w));
+    let status = m
+        .split("http error ")
+        .nth(1)
+        .and_then(|rest| rest.get(..3))
+        .and_then(|code| code.parse::<u16>().ok());
+    Some(match status {
+        Some(404 | 410) => "That video isn't available. It may have been deleted or made private.",
+        Some(429) => "The site is limiting downloads right now. Try again in a little while.",
+        Some(403) => "The site refused the download. Updating the video downloader in Settings often fixes this.",
+        Some(500..=599) => "The site is having problems right now. Try again later.",
+        _ if has(&["unsupported url", "is not a valid url"]) => {
+            "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
+        }
+        _ if has(&["private video", "video is private"]) => "That video is private.",
+        _ if has(&["members-only", "join this channel", "subscriber-only", "subscribers-only", "only available to subscribers"]) => {
+            "That video is only for channel members or subscribers, so VODscribe can't get it."
+        }
+        _ if has(&["confirm your age", "age-restricted", "age restricted"]) => {
+            "That video is age-restricted, so VODscribe can't get it."
+        }
+        _ if has(&["not a bot"]) => "YouTube is asking to check that you're not a bot. Try again in a little while.",
+        _ if has(&["requested format is not available"]) => "That video has no audio VODscribe can download.",
+        _ if has(&["video unavailable", "video is unavailable", "has been removed", "does not exist", "no longer available"]) => {
+            "That video isn't available. It may have been deleted or made private."
+        }
+        _ if has(&["timed out", "name resolution", "failed to resolve", "network is unreachable", "connection refused", "connection reset"]) => {
+            "Couldn't connect. Check your internet connection and try again."
+        }
+        _ => return None,
     })
 }
 
@@ -241,6 +255,19 @@ mod tests {
         assert_eq!(clean_error("ERROR: [youtube] abc: Private video. Sign in"), "That video is private.");
         assert_eq!(clean_error("ERROR: [twitch:vod] v12: Something odd happened"), "Couldn't get this video: Something odd happened");
         assert_eq!(clean_error("one\ntwo\nthree\nfour\n"), "Couldn't get this video: two\nthree\nfour");
+        // A video id containing "404" isn't a 404, and the format error still reads right.
+        assert_eq!(
+            clean_error("ERROR: [twitch:vod] v2404123: Requested format is not available"),
+            "That video has no audio VODscribe can download."
+        );
+        assert!(clean_error("ERROR: [youtube] x: HTTP Error 503: Service Unavailable").contains("having problems"));
+        assert!(clean_error("ERROR: [youtube] x: Unable to download webpage: HTTP Error 429: Too Many Requests").contains("limiting"));
+        assert!(clean_error("ERROR: [youtube] x: HTTP Error 403: Forbidden").contains("refused"));
+        // Only a leading tag is stripped.
+        assert_eq!(
+            clean_error("ERROR: unable to open for writing: [Errno 28] No space left on device"),
+            "Couldn't get this video: unable to open for writing: [Errno 28] No space left on device"
+        );
     }
 
     #[test]

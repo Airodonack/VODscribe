@@ -120,15 +120,25 @@ pub fn install(dep: &Dep, bin_dir: &Path, cancel: &AtomicBool, on_progress: impl
     let archive = bin_dir.join(format!("{}.download", dep.name));
     net::download_verified(dep.url, &archive, Some(dep.size), dep.sha256, cancel, on_progress)?;
     let dest = bin_dir.join(format!("{}{EXE}", dep.name));
-    let result = unpack(dep, &archive, &dest);
+    let new = dest.with_extension("new");
+    let result = unpack(dep, &archive, &new, cancel).and_then(|()| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
+        }
+        fs::rename(&new, &dest).with_context(|| format!("install {}", dep.name))
+    });
+    // Nothing is left behind, whether it worked or not.
     let _ = fs::remove_file(&archive);
+    let _ = fs::remove_file(&new);
     result?;
     Ok(dest)
 }
 
-fn unpack(dep: &Dep, archive: &Path, dest: &Path) -> Result<()> {
-    let new = dest.with_extension("new");
-    let _ = fs::remove_file(&new);
+/// Writes the program from `archive` to `out`.
+fn unpack(dep: &Dep, archive: &Path, out: &Path, cancel: &AtomicBool) -> Result<()> {
+    let _ = fs::remove_file(out);
     let found = match dep.archive {
         Archive::Zip => {
             let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
@@ -137,42 +147,38 @@ fn unpack(dep: &Dep, archive: &Path, dest: &Path) -> Result<()> {
             });
             match index {
                 Some(i) => {
-                    io::copy(&mut zip.by_index(i)?, &mut File::create(&new)?)?;
+                    io::copy(&mut zip.by_index(i)?, &mut File::create(out)?)?;
                     true
                 }
                 None => false,
             }
         }
-        Archive::TarXz => {
-            // Decompress to a temporary tar first; the xz decoder writes rather than reads.
-            let tar_path = archive.with_extension("tar");
-            let result = (|| -> Result<bool> {
-                lzma_rs::xz_decompress(&mut BufReader::new(File::open(archive)?), &mut File::create(&tar_path)?)
-                    .map_err(|e| anyhow::anyhow!("unpack {}: {e}", dep.name))?;
-                let mut tar = tar::Archive::new(File::open(&tar_path)?);
-                for entry in tar.entries()? {
-                    let mut entry = entry?;
-                    let path = entry.path()?.to_string_lossy().into_owned();
-                    if entry.header().entry_type().is_file() && is_member(&path, dep.member) {
-                        io::copy(&mut entry, &mut File::create(&new)?)?;
-                        return Ok(true);
-                    }
+        // The xz decoder writes rather than reads, so it runs on its own thread
+        // into a pipe the tar reader reads from; nothing is unpacked to disk but
+        // the program, and reading stops as soon as it's found.
+        Archive::TarXz => std::thread::scope(|scope| -> Result<bool> {
+            let (reader, mut writer) = io::pipe()?;
+            let input = File::open(archive)?;
+            scope.spawn(move || {
+                let mut input = BufReader::new(net::ProgressReader::new(input, cancel, |_| {}));
+                // Fails with a broken pipe once the reader has what it needs; that's fine.
+                let _ = lzma_rs::xz_decompress(&mut input, &mut writer);
+            });
+            let mut tar = tar::Archive::new(reader);
+            for entry in tar.entries()? {
+                let mut entry = entry?;
+                let path = entry.path()?.to_string_lossy().into_owned();
+                if entry.header().entry_type().is_file() && is_member(&path, dep.member) {
+                    io::copy(&mut entry, &mut File::create(out)?)?;
+                    return Ok(true);
                 }
-                Ok(false)
-            })();
-            let _ = fs::remove_file(&tar_path);
-            result?
-        }
+            }
+            Ok(false)
+        })?,
     };
     if !found {
         bail!("{} wasn't where expected in its download", dep.name);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&new, fs::Permissions::from_mode(0o755))?;
-    }
-    fs::rename(&new, dest).with_context(|| format!("install {}", dep.name))?;
     Ok(())
 }
 

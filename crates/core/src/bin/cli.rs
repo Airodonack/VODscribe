@@ -24,7 +24,7 @@ fn main() -> Result<()> {
             println!("\nready");
         }
         ["add" | "add-file", source] => {
-            let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
+            let yt_dlp = tools::find_yt_dlp(&paths.bin());
             let ffmpeg = tools::find_ffmpeg(&paths.bin()).context("ffmpeg not found")?;
             let mut db = Db::open(&paths.db())?;
             let vod = if args[0] == "add-file" {
@@ -34,7 +34,8 @@ fn main() -> Result<()> {
                 db.set_source_path(vod.id, &info.url)?;
                 db.vod(vod.id)?.context("just added")?
             } else {
-                let info = fetch::probe(&yt_dlp, source, &pipeline::info_path(&paths.work(), 0))?;
+                let yt_dlp = yt_dlp.as_ref().context("run `setup` first")?;
+                let info = fetch::probe(yt_dlp, source, &pipeline::info_path(&paths.work(), 0))?;
                 let (vod, _) = db.add_vod(&info)?;
                 std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
                 vod
@@ -52,7 +53,7 @@ fn main() -> Result<()> {
                 },
                 fallback: None,
             };
-            let tools = pipeline::Tools { yt_dlp: &yt_dlp, ffmpeg: &ffmpeg };
+            let tools = pipeline::Tools { yt_dlp: yt_dlp.as_ref(), ffmpeg: &ffmpeg };
             let mut report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
             let audio = pipeline::download(&mut db, &vod, &tools, &paths.work(), &cancel, &mut report)?;
             pipeline::transcribe(&mut db, &vod, &ffmpeg, &audio, &transcription, &cancel, &mut report, &mut |n| {

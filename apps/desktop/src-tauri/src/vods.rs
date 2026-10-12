@@ -108,10 +108,15 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
         anyhow::bail!("{} is part of VODscribe's own data.", path.display());
     }
     let db = state.db.lock().unwrap();
-    let (vod, created) = db.add_vod(&info)?;
-    if created {
-        db.set_source_path(vod.id, &info.url)?;
-    } else if vod.status == Status::Error {
+    // One transaction, so a file never shows up as an online VOD with a path for a link.
+    let (vod, created) = db.atomically(|db| {
+        let (vod, created) = db.add_vod(&info)?;
+        if created {
+            db.set_source_path(vod.id, &info.url)?;
+        }
+        Ok((vod, created))
+    })?;
+    if !created && vod.status == Status::Error {
         requeue(&db, vod.id)?;
     }
     Ok((db.vod(vod.id)?.unwrap_or(vod), created))
