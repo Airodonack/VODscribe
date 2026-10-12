@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { api, events, type SetupStatus, type UnlistenFn } from "./api";
   import Icon from "./Icon.svelte";
+  import Logo from "./Logo.svelte";
 
   let { status, onchange }: { status: SetupStatus; onchange: () => void } = $props();
 
@@ -34,7 +35,7 @@
 
 <div class="setup">
   <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
+    <Logo size={26} tile />
     <span class="name">VODscribe</span>
   </div>
   <h1>A couple of downloads, then you're set</h1>
@@ -124,12 +125,6 @@
     margin-bottom: 22px;
   }
 
-  .mark {
-    width: 16px;
-    height: 16px;
-    border-radius: 5px;
-    background: linear-gradient(135deg, var(--accent), #a78bfa);
-  }
 
   .name {
     font-weight: 700;
