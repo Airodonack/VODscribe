@@ -36,6 +36,12 @@ export const DOWNLOADS: Download[] = [
     url: `${BASE}/VODscribe-linux-x64.AppImage`,
   },
   { os: "linux", label: "Linux · Debian and Ubuntu", detail: "Package (.deb)", url: `${BASE}/VODscribe-linux-x64.deb` },
+  {
+    os: "linux",
+    label: "Linux · Fedora and openSUSE",
+    detail: "Package (.rpm)",
+    url: `${BASE}/VODscribe-linux-x64.rpm`,
+  },
 ];
 
 /** This visitor's OS, or null for phones and anything else. */
