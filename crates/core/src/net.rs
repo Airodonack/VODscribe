@@ -14,6 +14,12 @@ const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often a waiting download checks for cancellation.
 const CANCEL_POLL: Duration = Duration::from_millis(250);
 
+/// Whether `e` is the server saying the resource doesn't exist or isn't
+/// available (a 4xx status), as opposed to a failure worth retrying.
+pub fn is_client_error(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| matches!(c.downcast_ref::<ureq::Error>(), Some(ureq::Error::StatusCode(400..=499))))
+}
+
 /// `url` without its query string, which can hold signed tokens, for error messages.
 fn redact(url: &str) -> &str {
     url.split_once('?').map_or(url, |(base, _)| base)

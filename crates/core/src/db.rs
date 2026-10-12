@@ -59,6 +59,8 @@ pub struct Vod {
     pub error: Option<String>,
     pub added_at: i64,
     pub note: Option<String>,
+    /// File name of the local thumbnail copy, served to the UI as `thumb:<name>`.
+    pub thumb: Option<String>,
     /// Has transcript segments from a model this version no longer uses (or
     /// from before models were recorded). Finished VODs can be re-transcribed;
     /// unfinished ones start over when they resume.
@@ -89,7 +91,7 @@ pub struct Db {
     conn: Connection,
 }
 
-const SCHEMA_VERSION: i32 = 6;
+const SCHEMA_VERSION: i32 = 7;
 
 const SCHEMA: &str = r#"
 CREATE TABLE vods (
@@ -138,6 +140,8 @@ const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
 /// v6: deleting a transcript removes its words from the search index right away,
 /// rather than leaving them in index pages until a merge.
 const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 1);";
+/// v7: the file name of the VOD's local thumbnail (see `thumbs`).
+const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
 /// v5: the library's order, which the user can rearrange. Starts newest first.
 const MIGRATE_V5: &str = "
 ALTER TABLE vods ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
@@ -147,7 +151,7 @@ UPDATE vods SET position = (
 
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model,
-     EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id)";
+     EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id), thumb";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -167,6 +171,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         error: r.get(11)?,
         added_at: r.get(12)?,
         note: r.get(13)?,
+        thumb: r.get(16)?,
         outdated: {
             let model: Option<String> = r.get(14)?;
             let has_segments: bool = r.get(15)?;
@@ -186,7 +191,7 @@ impl Db {
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6];
+        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
@@ -300,6 +305,11 @@ impl Db {
 
     pub fn set_model(&self, id: i64, model: Option<&str>) -> Result<()> {
         self.conn.execute("UPDATE vods SET model = ?2 WHERE id = ?1", params![id, model])?;
+        Ok(())
+    }
+
+    pub fn set_thumb(&self, id: i64, thumb: &str) -> Result<()> {
+        self.conn.execute("UPDATE vods SET thumb = ?2 WHERE id = ?1", params![id, thumb])?;
         Ok(())
     }
 

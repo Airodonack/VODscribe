@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchHit, Status, Vod};
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
-use vodscribe_core::{Paths, fetch, model, pipeline, tools};
+use vodscribe_core::{Paths, fetch, model, pipeline, thumbs, tools};
 
 use worker::{Stop, Worker};
 
@@ -118,6 +118,10 @@ async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     let state = app.state::<AppState>();
     state.worker.wake();
     let _ = app.emit("vod", &added.vod);
+    if added.created {
+        let (app, id) = (app.clone(), added.vod.id);
+        std::thread::spawn(move || cache_thumbnail(&app, id));
+    }
     Ok(added)
 }
 
@@ -145,6 +149,7 @@ async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdR
     if running {
         delete_row().map_err(err)?;
     }
+    thumbs::remove(&state.paths.thumbs(), id);
     let _ = app.emit("vod-removed", id);
     Ok(())
 }
@@ -377,23 +382,63 @@ async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()
     Ok(())
 }
 
-/// Kick VODs added before the app resolved their poster image have none;
-/// fetch it once, in the background. VODs without one (deleted, or Kick has no
-/// poster) get an empty thumbnail so they aren't asked about again; network
-/// failures are retried on the next launch.
-fn backfill_kick_thumbnails(app: AppHandle) {
+/// Saves a local copy of VOD `id`'s thumbnail, asking Kick for a poster first
+/// if a Kick VOD doesn't have one. A VOD with no usable image gets an empty
+/// `thumb` so it isn't tried again; network failures are retried next launch.
+fn cache_thumbnail(app: &AppHandle, id: i64) {
     let state = app.state::<AppState>();
-    let missing: Vec<Vod> = match state.db.lock().unwrap().vods() {
-        Ok(vods) => vods.into_iter().filter(|v| v.info.platform == "kick" && v.info.thumbnail.is_none()).collect(),
-        Err(_) => return,
+    let Ok(Some(vod)) = state.db.lock().unwrap().vod(id) else { return };
+    let mut url = vod.info.thumbnail.clone();
+    if url.is_none() && vod.info.platform == "kick" {
+        let Ok(poster) = vodscribe_core::kick::poster(&vod.info.url) else { return };
+        let poster = poster.unwrap_or_default();
+        let _ = state.db.lock().unwrap().set_thumbnail(id, &poster);
+        url = Some(poster);
+    }
+    let thumb = match url.filter(|u| !u.is_empty()) {
+        None => String::new(),
+        Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
+            Ok(thumb) => thumb.unwrap_or_default(),
+            Err(_) => return,
+        },
     };
-    for vod in missing {
-        let Ok(poster) = vodscribe_core::kick::poster(&vod.info.url) else { continue };
-        let thumbnail = poster.unwrap_or_default();
-        if state.db.lock().unwrap().set_thumbnail(vod.id, &thumbnail).is_ok() {
-            let _ = emit_vod(&app, &state.db.lock().unwrap(), vod.id);
+    let db = state.db.lock().unwrap();
+    if db.set_thumb(id, &thumb).is_ok() {
+        let _ = emit_vod(app, &db, id);
+    }
+}
+
+/// Fills in local thumbnails for VODs that don't have one yet, such as those
+/// added before thumbnails were stored locally.
+fn cache_missing_thumbnails(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let dir = state.paths.thumbs();
+    let Ok(vods) = state.db.lock().unwrap().vods() else { return };
+    for vod in vods {
+        let missing = match vod.thumb.as_deref() {
+            None => true,
+            Some("") => false,
+            Some(name) => !dir.join(name).is_file(),
+        };
+        if missing {
+            cache_thumbnail(&app, vod.id);
         }
     }
+}
+
+/// Serves `thumb:<name>` from the thumbnails directory, and nothing else.
+fn serve_thumb(app: &AppHandle, path: &str) -> tauri::http::Response<Vec<u8>> {
+    let name = path.trim_start_matches('/');
+    let found = thumbs::mime(name).and_then(|mime| {
+        let state = app.try_state::<AppState>()?;
+        Some((mime, std::fs::read(state.paths.thumbs().join(name)).ok()?))
+    });
+    let resp = tauri::http::Response::builder();
+    match found {
+        Some((mime, bytes)) => resp.header("Content-Type", mime).body(bytes),
+        None => resp.status(404).body(Vec::new()),
+    }
+    .expect("static response")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -401,6 +446,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .register_uri_scheme_protocol("thumb", |ctx, request| serve_thumb(ctx.app_handle(), request.uri().path()))
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
             let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
@@ -419,7 +465,7 @@ pub fn run() {
                 gpu_installing: Arc::new(AtomicBool::new(false)),
             });
             let handle = app.handle().clone();
-            std::thread::spawn(move || backfill_kick_thumbnails(handle));
+            std::thread::spawn(move || cache_missing_thumbnails(handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

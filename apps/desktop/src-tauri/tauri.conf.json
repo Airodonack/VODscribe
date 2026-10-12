@@ -24,7 +24,7 @@
         "default-src": "'self'",
         "script-src": "'self' https://www.youtube.com https://player.twitch.tv",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: https:",
+        "img-src": "'self' data: thumb: http://thumb.localhost",
         "media-src": "'self' blob: https:",
         "connect-src": "'self' ipc: http://ipc.localhost https:",
         "frame-src": "https://www.youtube-nocookie.com https://www.youtube.com https://player.twitch.tv",

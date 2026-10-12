@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Status = "queued" | "downloading" | "ready" | "transcribing" | "paused" | "done" | "error";
@@ -12,6 +12,8 @@ export interface Vod {
   channel: string | null;
   duration: number | null;
   thumbnail: string | null;
+  /** Local copy of the thumbnail; see `thumbSrc`. */
+  thumb: string | null;
   published: string | null;
   status: Status;
   progress: number;
@@ -98,3 +100,6 @@ export const events = {
 };
 
 export type { UnlistenFn };
+
+/** The URL of a VOD's local thumbnail, served by the app's `thumb:` scheme. */
+export const thumbSrc = (vod: Vod) => (vod.thumb ? convertFileSrc(vod.thumb, "thumb") : null);

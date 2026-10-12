@@ -3,7 +3,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
-  import { api, type Vod } from "./api";
+  import { api, thumbSrc, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
@@ -213,6 +213,7 @@
       {@const active = vod.status === "downloading" || vod.status === "transcribing"}
       {@const showBar = active || (vod.status === "paused" && vod.progress > 0)}
       {@const platform = platformName[vod.platform] ?? vod.platform}
+      {@const thumb = thumbSrc(vod)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
       <div
         class="vod"
@@ -237,9 +238,9 @@
           title={vods.length > 1 ? "Drag to reorder (Alt+↑/↓)" : undefined}
         >
           <span class="thumb {vod.platform}">
-            {#if vod.thumbnail && !broken.has(vod.id)}
+            {#if thumb && !broken.has(vod.id)}
               <img
-                src={vod.thumbnail}
+                src={thumb}
                 alt=""
                 draggable="false"
                 loading="lazy"

@@ -13,6 +13,7 @@ pub mod model;
 pub mod net;
 pub mod pipeline;
 pub mod settings;
+pub mod thumbs;
 pub mod tools;
 pub mod transcript;
 
@@ -56,6 +57,11 @@ impl Paths {
 
     pub fn gpu_pack(&self) -> PathBuf {
         self.local.join("gpu")
+    }
+
+    /// Local copies of VOD thumbnails. Part of the library, so not cache.
+    pub fn thumbs(&self) -> PathBuf {
+        self.local.join("thumbs")
     }
 
     /// Scratch space for in-flight downloads.
@@ -102,7 +108,7 @@ impl Paths {
     }
 
     pub fn ensure(&self) -> std::io::Result<()> {
-        for dir in [self.root.clone(), self.local.clone(), self.bin(), self.models(), self.work()] {
+        for dir in [self.root.clone(), self.local.clone(), self.bin(), self.models(), self.work(), self.thumbs()] {
             std::fs::create_dir_all(dir)?;
         }
         // The library is private to this user: other accounts can't list or read it.
