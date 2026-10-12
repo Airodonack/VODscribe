@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { SearchHit, Vod } from "./api";
-  import { formatTime } from "./platform";
+  import { formatTime, platformName } from "./platform";
+  import Icon from "./Icon.svelte";
 
   let {
     hits,
@@ -36,19 +37,20 @@
 <div class="results">
   {#if hits.length > 0}
     <p class="summary muted">
-      {hits.length}{truncated ? "+" : ""} match{hits.length === 1 ? "" : "es"} in {groups.length} VOD{groups.length === 1
-        ? ""
-        : "s"}{#if truncated}. Showing the first {hits.length}; refine the phrase to narrow it down{/if}
+      <strong>{hits.length}{truncated ? "+" : ""}</strong> match{hits.length === 1 ? "" : "es"} for <strong>“{query}”</strong>
+      in {groups.length} VOD{groups.length === 1 ? "" : "s"}{#if truncated}. Showing the first {hits.length}; add a
+        word to narrow it down{/if}
     </p>
   {/if}
   {#each groups as group (group.vodId)}
     <section>
       <h2>
-        {group.vod?.title ?? "Removed VOD"}
-        <span class="muted">{group.hits.length}</span>
+        {#if group.vod}<span class="platform {group.vod.platform}"></span>{/if}
+        <span class="title">{group.vod?.title ?? "Removed VOD"}</span>
+        <span class="n muted">{group.hits.length}</span>
       </h2>
       {#each group.hits as hit (hit.segment_id)}
-        <button class="hit" onclick={() => onplay(hit.vod_id, hit.time)}>
+        <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>
           <span class="time">{formatTime(hit.time)}</span>
           <span class="text">
             {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
@@ -58,27 +60,42 @@
     </section>
   {:else}
     <div class="none">
+      <span class="glyph muted"><Icon name="search" size={22} /></span>
       <p>
         No matches for <strong>“{query}”</strong>{#if scope}{" "}in <strong>{scope.title}</strong>{/if}.
       </p>
+      <p class="muted">Search finds exact phrases, so fewer words match more.</p>
       {#if scope}
         <button onclick={onclearscope}>Search all VODs</button>
       {/if}
-      <p class="muted">Search finds exact phrases, so fewer words match more.</p>
     </div>
   {/each}
 </div>
 
 <style>
   .results {
-    padding: 8px 16px 32px;
+    padding: 10px 20px 32px;
+    max-width: 960px;
+  }
+
+  .none {
+    margin: 10vh auto;
+    max-width: 420px;
+    text-align: center;
   }
 
   .none p {
     margin: 0 0 10px;
   }
 
-  .none button {
+  .glyph {
+    display: inline-flex;
+    width: 44px;
+    height: 44px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--surface-2);
     margin-bottom: 10px;
   }
 
@@ -87,34 +104,40 @@
     margin: 4px 0 12px;
   }
 
+  .summary strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
   section {
     margin-bottom: 20px;
   }
 
   h2 {
-    font-size: 13px;
-    margin: 0 0 4px;
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     gap: 8px;
     align-items: baseline;
+    margin: 0 -20px 4px;
+    padding: 6px 20px;
+    font-size: 13px;
+    background: var(--bg);
   }
 
-  .hit {
-    display: flex;
-    gap: 12px;
-    width: 100%;
-    text-align: left;
-    border: none;
-    background: none;
-    border-radius: 6px;
-    padding: 6px 8px;
-    margin: 0 -8px;
-    width: calc(100% + 16px);
+  h2 .title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .time {
-    flex: none;
-    min-width: 56px;
-    padding-top: 1px;
+  .n {
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .text {
+    min-width: 0;
   }
 </style>

@@ -2,6 +2,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, onMount, untrack } from "svelte";
   import type { Vod } from "./api";
+  import Icon from "./Icon.svelte";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
   import { formatTime, platformName, watchUrl } from "./platform";
 
@@ -83,14 +84,26 @@
 <section>
   <div class="head">
     <div class="info">
-      <strong>{vod.title}</strong>
+      <strong title={vod.title}>{vod.title}</strong>
       {#if at.time > 0}<span class="time">{formatTime(at.time)}</span>{/if}
     </div>
-    <button class="link" onclick={() => openUrl(watchUrl(vod, at.time))}>Open on {site}</button>
-    <button class="link" onclick={onclose} aria-label="Close player">Close</button>
+    <span
+      class="keys muted"
+      title="Space or K: play/pause · ← →: 5 s (Shift: 1 s) · J L: 10 s"
+      aria-label="Keyboard shortcuts: Space or K play/pause, arrows 5 seconds, Shift and arrows 1 second, J and L 10 seconds"
+      ><Icon name="keyboard" size={15} /></span
+    >
+    <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
+      Open on {site} <Icon name="external" size={12} />
+    </button>
+    <button class="icon close" onclick={onclose} aria-label="Close player" title="Close player">
+      <Icon name="x" size={16} />
+    </button>
   </div>
   {#if canEmbed(vod)}
-    <div class="frame" bind:this={host}></div>
+    <div class="stage">
+      <div class="frame" bind:this={host}></div>
+    </div>
     {#if error}<p class="error-text note">{error}</p>{/if}
   {:else}
     <p class="muted note">
@@ -108,8 +121,8 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 8px 16px;
+    gap: 12px;
+    padding: 6px 10px 6px 16px;
   }
 
   .info {
@@ -126,11 +139,30 @@
     text-overflow: ellipsis;
   }
 
+  .keys {
+    display: flex;
+    cursor: help;
+  }
+
+  .open {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .close {
+    width: 28px;
+    height: 28px;
+  }
+
+  .stage {
+    background: var(--stage);
+  }
+
   .frame {
     aspect-ratio: 16 / 9;
-    max-height: 45vh;
+    max-height: 44vh;
     margin: 0 auto;
-    background: #000;
   }
 
   .frame :global(iframe) {
