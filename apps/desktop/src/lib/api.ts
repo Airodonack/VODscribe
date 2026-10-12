@@ -63,6 +63,7 @@ export const api = {
   runSetup: () => invoke<void>("run_setup"),
   addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),
   listVods: () => invoke<Vod[]>("list_vods"),
+  reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),

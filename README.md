@@ -6,7 +6,7 @@ Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by 
 
 On first run the app downloads yt-dlp and the speech model (about 900 MB, from `dl.vodscribe.com`) into its data directory. ffmpeg must be installed separately. YouTube needs a JavaScript runtime for yt-dlp; Deno, Node or Bun on `PATH` is detected automatically.
 
-- **Library.** Paste a link in the sidebar. VODs download and transcribe in the background, one of each at a time, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced.
+- **Library.** Paste a link in the sidebar. VODs download and transcribe in the background, one of each at a time, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced. Drag a row to reorder the library (or `Alt+↑`/`↓` on a focused row); searches across the library list matches in the same order.
 - **Search.** Searches are exact phrases, so fewer words match more. With a VOD selected, the chip in the search field toggles between searching just that VOD and the whole library.
 - **Player.** Selecting a VOD opens its player; clicking a match or a transcript line jumps there. The player can be collapsed to leave more room for the transcript, and clicking the timestamp in its header copies a link to that moment on the VOD's site. Keyboard: `Space` or `K` plays and pauses, `←`/`→` scrub 5 s (1 s with `Shift`), `J`/`L` 10 s.
 - **GPU.** NVIDIA GPU users can download an optional GPU pack (about 3 GB) from the settings. Transcription falls back to the CPU when the GPU is busy or has too little free memory.

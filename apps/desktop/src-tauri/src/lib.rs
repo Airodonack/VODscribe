@@ -127,6 +127,11 @@ async fn list_vods(state: State<'_, AppState>) -> CmdResult<Vec<Vod>> {
 }
 
 #[tauri::command]
+async fn reorder_vods(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
+    state.db.lock().unwrap().reorder(&ids).map_err(err)
+}
+
+#[tauri::command]
 async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // A running stage removes the files once its process has stopped.
     let delete_row = || state.db.lock().unwrap().delete_vod(id);
@@ -419,6 +424,7 @@ pub fn run() {
             run_setup,
             add_vod,
             list_vods,
+            reorder_vods,
             delete_vod,
             retry_vod,
             pause_vod,

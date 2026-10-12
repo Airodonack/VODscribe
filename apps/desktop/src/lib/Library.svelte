@@ -1,7 +1,8 @@
 <script lang="ts">
   import { getVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
@@ -11,7 +12,13 @@
     vods,
     selectedId,
     onselect,
-  }: { vods: Vod[]; selectedId: number | null; onselect: (id: number | null) => void } = $props();
+    onreorder,
+  }: {
+    vods: Vod[];
+    selectedId: number | null;
+    onselect: (id: number | null) => void;
+    onreorder: (ids: number[]) => void;
+  } = $props();
 
   let url = $state("");
   let adding = $state(false);
@@ -77,6 +84,95 @@
     if ((e.target as HTMLElement).closest("button")) return;
     toggle(vod);
   }
+
+  // Dragging a row (anywhere but its action buttons) reorders the library.
+  // The list reorders live as the row passes its neighbours' midpoints; the
+  // dragged row follows the pointer. Layout positions come from offsetTop,
+  // which ignores the transforms of rows that are still animating.
+  let list: HTMLElement;
+  const rows: Record<number, HTMLElement> = {};
+  let drag = $state<{ id: number; order: number[]; moved: boolean; dy: number } | null>(null);
+  let byId = $derived(new Map(vods.map((v) => [v.id, v])));
+  let shown = $derived(drag?.moved ? drag.order.map((id) => byId.get(id)).filter((v) => v !== undefined) : vods);
+  let suppressClick = false;
+
+  function startDrag(e: PointerEvent, vod: Vod) {
+    if (e.button !== 0 || vods.length < 2 || (e.target as HTMLElement).closest(".actions")) return;
+    const startY = e.clientY;
+    const grab = e.clientY - rows[vod.id].getBoundingClientRect().top;
+    let pointerY = startY;
+    let frame = 0;
+    drag = { id: vod.id, order: vods.map((v) => v.id), moved: false, dy: 0 };
+
+    // Where the pointer is, in the list's content coordinates.
+    const contentY = () => pointerY - list.getBoundingClientRect().top + list.scrollTop;
+
+    function step() {
+      if (!drag) return;
+      const box = list.getBoundingClientRect();
+      const edge = 36;
+      if (pointerY < box.top + edge) list.scrollTop -= Math.ceil((box.top + edge - pointerY) / 4);
+      else if (pointerY > box.bottom - edge) list.scrollTop += Math.ceil((pointerY - box.bottom + edge) / 4);
+
+      const y = contentY();
+      const order = drag.order;
+      const i = order.indexOf(drag.id);
+      const mid = (id: number) => rows[id].offsetTop + rows[id].offsetHeight / 2;
+      const top = y - grab;
+      const bottom = top + rows[drag.id].offsetHeight;
+      if (i > 0 && top < mid(order[i - 1])) {
+        [order[i - 1], order[i]] = [order[i], order[i - 1]];
+      } else if (i < order.length - 1 && bottom > mid(order[i + 1])) {
+        [order[i + 1], order[i]] = [order[i], order[i + 1]];
+      }
+      tick().then(() => {
+        if (drag) drag.dy = y - grab - rows[drag.id].offsetTop;
+      });
+      frame = requestAnimationFrame(step);
+    }
+
+    function move(e: PointerEvent) {
+      pointerY = e.clientY;
+      if (drag && !drag.moved && Math.abs(pointerY - startY) > 4) {
+        drag.moved = true;
+        document.body.classList.add("dragging");
+        frame = requestAnimationFrame(step);
+      }
+    }
+
+    function end() {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      document.body.classList.remove("dragging");
+      if (drag?.moved) {
+        // The click that ends a drag shouldn't select the row.
+        suppressClick = true;
+        setTimeout(() => (suppressClick = false));
+        const order = drag.order.filter((id) => byId.has(id));
+        if (order.some((id, i) => id !== vods[i]?.id)) onreorder(order);
+      }
+      drag = null;
+    }
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  // Alt+↑/↓ on a row moves it, for the keyboard.
+  function onRowKey(e: KeyboardEvent, vod: Vod) {
+    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    e.preventDefault();
+    const order = vods.map((v) => v.id);
+    const i = order.indexOf(vod.id);
+    const j = e.key === "ArrowUp" ? i - 1 : i + 1;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    onreorder(order);
+    tick().then(() => rows[vod.id]?.querySelector<HTMLElement>(".main")?.focus());
+  }
 </script>
 
 <aside>
@@ -94,19 +190,40 @@
     <p class="error-text add-error">{addError}</p>
   {/if}
 
-  <div class="list">
-    {#each vods as vod (vod.id)}
+  <div class="list" bind:this={list}>
+    {#each shown as vod (vod.id)}
       {@const active = vod.status === "downloading" || vod.status === "transcribing"}
       {@const showBar = active || (vod.status === "paused" && vod.progress > 0)}
       {@const platform = platformName[vod.platform] ?? vod.platform}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-      <div class="vod" class:selected={vod.id === selectedId} onclick={(e) => onRowClick(e, vod)}>
-        <button class="main" onclick={() => toggle(vod)}>
+      <div
+        class="vod"
+        class:selected={vod.id === selectedId}
+        class:lifted={drag?.moved && drag.id === vod.id}
+        style:transform={drag?.moved && drag.id === vod.id ? `translateY(${drag.dy}px)` : null}
+        bind:this={rows[vod.id]}
+        animate:flip={{ duration: drag?.id === vod.id ? 0 : 150 }}
+        onclickcapture={(e) => {
+          if (suppressClick) {
+            e.stopPropagation();
+            e.preventDefault();
+          }
+        }}
+        onclick={(e) => onRowClick(e, vod)}
+        onpointerdown={(e) => startDrag(e, vod)}
+      >
+        <button
+          class="main"
+          onclick={() => toggle(vod)}
+          onkeydown={(e) => onRowKey(e, vod)}
+          title={vods.length > 1 ? "Drag to reorder (Alt+↑/↓)" : undefined}
+        >
           <span class="thumb {vod.platform}">
             {#if vod.thumbnail && !broken.has(vod.id)}
               <img
                 src={vod.thumbnail}
                 alt=""
+                draggable="false"
                 loading="lazy"
                 onerror={() => {
                   broken.add(vod.id);
@@ -261,7 +378,11 @@
   }
 
   .vod {
+    position: relative;
     cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    background: var(--surface);
     padding: 10px 12px 9px;
     border-bottom: 1px solid var(--border);
     transition: background 0.1s;
@@ -274,6 +395,27 @@
   .vod.selected {
     background: var(--accent-soft);
     box-shadow: inset 3px 0 var(--accent);
+  }
+
+  /* Opaque so the rows it passes over don't show through. */
+  .vod.selected.lifted {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  }
+
+  .vod.lifted {
+    z-index: 1;
+    cursor: grabbing;
+    transition: none;
+    box-shadow: var(--shadow);
+  }
+
+  .vod.selected.lifted {
+    box-shadow: inset 3px 0 var(--accent), var(--shadow);
+  }
+
+  :global(body.dragging),
+  :global(body.dragging *) {
+    cursor: grabbing !important;
   }
 
   .main {

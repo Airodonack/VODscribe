@@ -52,6 +52,12 @@
     else vods.unshift(vod);
   }
 
+  function reorder(ids: number[]) {
+    vods = ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined);
+    api.reorderVods(ids);
+    runSearch();
+  }
+
   onMount(async () => {
     unlisten.push(
       await events.vod((vod) => {
@@ -128,7 +134,7 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {vods} {selectedId} onselect={select} />
+    <Library {vods} {selectedId} onselect={select} onreorder={reorder} />
     <main>
       <div class="toolbar">
         <div class="search">

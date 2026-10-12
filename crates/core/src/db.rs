@@ -89,7 +89,7 @@ pub struct Db {
     conn: Connection,
 }
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE vods (
@@ -135,6 +135,12 @@ const MIGRATE_V2: &str = "ALTER TABLE vods ADD COLUMN note TEXT;";
 const MIGRATE_V3: &str = "ALTER TABLE vods ADD COLUMN audio_path TEXT;";
 /// v4: the speech model that produced the transcript.
 const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
+/// v5: the library's order, which the user can rearrange. Starts newest first.
+const MIGRATE_V5: &str = "
+ALTER TABLE vods ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+UPDATE vods SET position = (
+    SELECT count(*) FROM vods AS v WHERE v.added_at > vods.added_at OR (v.added_at = vods.added_at AND v.id > vods.id)
+);";
 
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model,
@@ -176,7 +182,7 @@ impl Db {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4];
+        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
@@ -189,9 +195,10 @@ impl Db {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
             return Ok((existing, false));
         }
+        // New VODs go to the top of the library.
         self.conn.execute(
-            "INSERT INTO vods (platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9)",
+            "INSERT INTO vods (platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(position), 0) - 1 FROM vods))",
             params![
                 info.platform, info.platform_id, info.url, info.title, info.channel,
                 info.duration, info.thumbnail, info.published, now()
@@ -211,9 +218,22 @@ impl Db {
     }
 
     pub fn vods(&self) -> Result<Vec<Vod>> {
-        let sql = format!("SELECT {VOD_COLUMNS} FROM vods ORDER BY added_at DESC, id DESC");
+        let sql = format!("SELECT {VOD_COLUMNS} FROM vods ORDER BY position, id DESC");
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Puts the library in the order of `ids`, which should list every VOD.
+    pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare("UPDATE vods SET position = ?2 WHERE id = ?1")?;
+            for (i, id) in ids.iter().enumerate() {
+                stmt.execute(params![id, i as i64])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// The oldest VOD with `status`, which is the next one for that stage.
@@ -334,7 +354,7 @@ impl Db {
     }
 
     /// Phrase search. The last term matches as a prefix so results update while typing.
-    /// Hits are ordered by VOD (newest first), then by time within the VOD.
+    /// Hits are ordered by VOD, in library order, then by time within the VOD.
     pub fn search(&self, query: &str, vod_id: Option<i64>, limit: usize) -> Result<SearchResults> {
         let q = terms(query);
         if q.is_empty() {
@@ -347,7 +367,7 @@ impl Db {
              JOIN segments s ON s.id = f.rowid
              JOIN vods v ON v.id = s.vod_id
              WHERE segments_fts MATCH ?1 AND (?2 IS NULL OR s.vod_id = ?2)
-             ORDER BY v.added_at DESC, v.id DESC, s.start
+             ORDER BY v.position, v.id DESC, s.start
              LIMIT ?3",
         )?;
         let rows = stmt.query_map(params![fts, vod_id, limit as i64 + 1], |r| {
@@ -429,6 +449,10 @@ mod tests {
         }
         let mut db = Db::open(&path).unwrap();
         let vod = db.vods().unwrap().remove(0);
+        db.conn.execute("UPDATE vods SET position = 5", []).unwrap();
+        let later = db.add_vod(&info("later")).unwrap().0;
+        assert_eq!(db.vods().unwrap()[0].id, later.id, "added on top of migrated VODs");
+        db.delete_vod(later.id).unwrap();
         assert_eq!(vod.note, None);
         assert!(!vod.outdated, "no transcript yet");
         db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: "hi".into(), words: Vec::new() }]).unwrap();
@@ -441,6 +465,19 @@ mod tests {
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
         drop(db);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn keeps_the_library_order() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let a = db.add_vod(&info("a")).unwrap().0.id;
+        let b = db.add_vod(&info("b")).unwrap().0.id;
+        let ids = |db: &Db| db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>();
+        assert_eq!(ids(&db), [b, a], "newest first");
+        db.reorder(&[a, b]).unwrap();
+        assert_eq!(ids(&db), [a, b]);
+        let c = db.add_vod(&info("c")).unwrap().0.id;
+        assert_eq!(ids(&db), [c, a, b], "added on top");
     }
 
     #[test]
