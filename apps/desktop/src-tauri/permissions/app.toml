@@ -1,5 +1,5 @@
+# Written by build.rs from the commands in src/lib.rs; don't edit.
 # Every command of the app, for the main window (capabilities/default.json).
-# Keep in step with COMMANDS in build.rs.
 [[set]]
 identifier = "app"
 description = "VODscribe's own commands."
