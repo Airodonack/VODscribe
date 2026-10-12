@@ -124,7 +124,7 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
 
     let result = (|| -> Result<()> {
         // sherpa-onnx + ONNX Runtime with the CUDA provider: stream the archive, keep the libraries.
-        let (body, len) = net::get(platform.sherpa_url)?;
+        let (body, len) = net::get(platform.sherpa_url, cancel)?;
         let total = len.unwrap_or(0);
         let reader = net::ProgressReader::new(body, cancel, |n| on_progress("ONNX Runtime (CUDA)", n, total));
         let mut archive = tar::Archive::new(bzip2::read::BzDecoder::new(reader));
@@ -137,7 +137,7 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         }
 
         for (name, version) in WHEELS {
-            let (url, size) = wheel_url(name, version, platform.wheel_tag)?;
+            let (url, size) = wheel_url(name, version, platform.wheel_tag, cancel)?;
             let wheel = staging.join(format!("{name}.whl"));
             net::download(&url, &wheel, cancel, |n, _| on_progress(name, n, size))?;
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
@@ -173,8 +173,8 @@ fn keep_lib<'a>(path: &'a Path, exts: &[&str]) -> Option<&'a str> {
     (is_lib && !name.contains("tensorrt")).then_some(name)
 }
 
-fn wheel_url(name: &str, version: &str, tag: &str) -> Result<(String, u64)> {
-    let (mut body, _) = net::get(&format!("https://pypi.org/pypi/{name}/{version}/json"))?;
+fn wheel_url(name: &str, version: &str, tag: &str, cancel: &AtomicBool) -> Result<(String, u64)> {
+    let (mut body, _) = net::get(&format!("https://pypi.org/pypi/{name}/{version}/json"), cancel)?;
     let mut text = String::new();
     body.read_to_string(&mut text)?;
     let json: Value = serde_json::from_str(&text)?;

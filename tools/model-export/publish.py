@@ -7,6 +7,11 @@ Reads a Cloudflare API token with R2 write access from
 ~/.config/cloudflare/r2_token (or $CLOUDFLARE_R2_TOKEN_FILE) and derives S3
 credentials from it, as Cloudflare documents: access key id = the token's id,
 secret = SHA-256 of the token's value. Large files go up in multipart uploads.
+
+Published files must never change, since released apps pin them by hash (the
+bucket also has a lock on models/). A file that is already in the bucket is
+skipped if its content matches and refused if it doesn't: ship changed models
+under a new model id.
 """
 
 import hashlib
@@ -18,8 +23,34 @@ from pathlib import Path
 
 import boto3
 from boto3.s3.transfer import TransferConfig
+from botocore.exceptions import ClientError
 
 BUCKET = "vodscribe"
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def remote_sha256(s3, key: str) -> str | None:
+    """The object's SHA-256, or None if it doesn't exist. Uses the hash stored
+    at upload when present, and otherwise hashes the object's content."""
+    try:
+        head = s3.head_object(Bucket=BUCKET, Key=key)
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+    if stored := head.get("Metadata", {}).get("sha256"):
+        return stored
+    h = hashlib.sha256()
+    for chunk in s3.get_object(Bucket=BUCKET, Key=key)["Body"].iter_chunks(1 << 20):
+        h.update(chunk)
+    return h.hexdigest()
 
 
 def main() -> None:
@@ -44,8 +75,16 @@ def main() -> None:
 
     for path in sorted(p for p in dist.rglob("*") if p.is_file()):
         key = f"models/{path.relative_to(dist).as_posix()}"
+        local = sha256_file(path)
+        remote = remote_sha256(s3, key)
+        if remote == local:
+            print(f"unchanged {key}", flush=True)
+            continue
+        if remote is not None:
+            sys.exit(f"{key} is already published with different content; ship changes under a new model id")
         content_type = "text/plain; charset=utf-8" if path.suffix == ".txt" else "application/octet-stream"
-        s3.upload_file(str(path), BUCKET, key, ExtraArgs={"ContentType": content_type}, Config=config)
+        extra = {"ContentType": content_type, "Metadata": {"sha256": local}}
+        s3.upload_file(str(path), BUCKET, key, ExtraArgs=extra, Config=config)
         size = s3.head_object(Bucket=BUCKET, Key=key)["ContentLength"]
         if size != path.stat().st_size:
             sys.exit(f"{key}: uploaded {size} bytes, expected {path.stat().st_size}")

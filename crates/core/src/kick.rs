@@ -29,7 +29,8 @@ pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
         "video_session": {},
         "user_session": { "non_personalised_ads": true },
     });
-    let mut resp = ureq::post(format!("https://web.kick.com/api/v1/stream/{id}/playback"))
+    let mut resp = crate::net::agent()
+        .post(format!("https://web.kick.com/api/v1/stream/{id}/playback"))
         .header("Content-Type", "application/json")
         .config()
         .http_status_as_error(false)
@@ -83,7 +84,8 @@ pub struct Variant {
 /// per-quality playlists and segments do, so the UI can play those directly.
 pub fn variants(url: &str) -> Result<Vec<Variant>> {
     let (_, manifest) = resolve(url)?;
-    let (mut body, _) = crate::net::get(&manifest)?;
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let (mut body, _) = crate::net::get(&manifest, &never)?;
     let mut text = String::new();
     std::io::Read::read_to_string(&mut body, &mut text)?;
     let variants = parse_master(&text);

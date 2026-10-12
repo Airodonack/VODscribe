@@ -92,11 +92,12 @@ pub fn install(
     fs::create_dir_all(&staging)?;
 
     let total = spec.total_bytes();
+    let base = base_url();
     let mut done = 0;
     for file in spec.files {
         let path = staging.join(file.name);
         if !fs::metadata(&path).is_ok_and(|m| m.len() == file.size) {
-            let url = format!("{}/{}/{}", base_url().trim_end_matches('/'), spec.id, file.name);
+            let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
             download_verified(&url, &path, file, cancel, |n| on_progress(done + n, total))
                 .with_context(|| format!("download {}", file.name))?;
         }
@@ -118,7 +119,7 @@ fn download_verified(
 ) -> Result<()> {
     let part = dest.with_extension("part");
     let result = (|| -> Result<()> {
-        let (body, _) = net::get(url)?;
+        let (body, _) = net::get(url, cancel)?;
         let mut reader = net::ProgressReader::new(body, cancel, on_progress);
         let mut out = File::create(&part)?;
         let mut hasher = Sha256::new();
@@ -128,7 +129,7 @@ fn download_verified(
             let n = match reader.read(&mut buf) {
                 Ok(0) => break,
                 Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted && !cancel.load(Ordering::Relaxed) => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
             };
             hasher.update(&buf[..n]);
