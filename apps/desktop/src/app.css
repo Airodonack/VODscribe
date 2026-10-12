@@ -1,36 +1,54 @@
 :root {
-  --bg: #f6f6f4;
+  --bg: #f4f4f2;
   --surface: #ffffff;
-  --surface-2: #efefec;
-  --border: #e0e0dc;
-  --text: #1c1c1a;
-  --muted: #6b6b66;
+  --surface-2: #ebebe7;
+  --surface-3: #e1e1dc;
+  --border: #e2e2dd;
+  --text: #1b1b19;
+  --muted: #6d6d67;
   --accent: #4f46e5;
   --accent-text: #ffffff;
+  --accent-soft: #eceafc;
   --mark: #fde68a;
-  --mark-text: #1c1c1a;
-  --danger: #c2410c;
+  --mark-text: #1b1b19;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --danger: #c81e1e;
+  --danger-soft: #fee2e2;
   --ok: #15803d;
+  --stage: #0d0d0c;
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.14), 0 1px 3px rgb(0 0 0 / 0.08);
   --radius: 8px;
+  --radius-sm: 5px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  --youtube: #ff0033;
+  --twitch: #9146ff;
+  --kick: #53fc18;
   color-scheme: light dark;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #131312;
+    --bg: #141413;
     --surface: #1c1c1b;
-    --surface-2: #262624;
-    --border: #2f2f2d;
-    --text: #ececea;
-    --muted: #9a9a94;
-    --accent: #818cf8;
-    --accent-text: #131312;
-    --mark: #854d0e;
+    --surface-2: #262625;
+    --surface-3: #31312f;
+    --border: #2d2d2b;
+    --text: #ecece9;
+    --muted: #9b9b95;
+    --accent: #8b93ff;
+    --accent-text: #141413;
+    --accent-soft: #272a4a;
+    --mark: #7a4a0c;
     --mark-text: #fef3c7;
-    --danger: #fb923c;
+    --warn: #f5b041;
+    --warn-soft: #3a2a0c;
+    --danger: #f87171;
+    --danger-soft: #3f1d1d;
     --ok: #4ade80;
+    --stage: #000000;
+    --shadow: 0 12px 32px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
   }
 }
 
@@ -46,6 +64,7 @@ body {
   color: var(--text);
   font: 14px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
 
 button,
@@ -54,12 +73,28 @@ input {
   color: inherit;
 }
 
+/* Keyboard focus is visible; mouse focus isn't. */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   cursor: pointer;
   border: 1px solid var(--border);
   background: var(--surface);
   border-radius: var(--radius);
   padding: 6px 12px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
@@ -80,15 +115,17 @@ button.primary {
 
 button.primary:hover:not(:disabled) {
   background: var(--accent);
-  filter: brightness(1.1);
+  filter: brightness(1.08);
 }
 
+/* Inline, text-like actions. */
 button.link {
   border: none;
   background: none;
   padding: 0;
   color: var(--muted);
   font-size: 12px;
+  border-radius: 3px;
 }
 
 button.link:hover:not(:disabled) {
@@ -97,19 +134,64 @@ button.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
+button.link.warn {
+  color: var(--warn);
+}
+
+button.link.danger {
+  color: var(--danger);
+}
+
+/* Square icon-only buttons. */
+button.icon {
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+}
+
+button.icon:hover:not(:disabled),
+button.icon.on {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+button.danger-outline {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+button.danger-outline:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
 input[type="text"],
 input[type="search"],
 input[type="url"] {
   width: 100%;
-  padding: 8px 12px;
+  padding: 7px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   outline: none;
+  min-width: 0;
+}
+
+input::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
 }
 
 input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+input[type="search"]::-webkit-search-cancel-button {
+  cursor: pointer;
 }
 
 mark {
@@ -117,6 +199,25 @@ mark {
   color: var(--mark-text);
   border-radius: 2px;
   padding: 0 1px;
+}
+
+code,
+kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .muted {
@@ -132,4 +233,87 @@ mark {
 
 .error-text {
   color: var(--danger);
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+/* Small uppercase section label. */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* A dot colored by platform, placed before its name. */
+.platform::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: 0;
+  background: var(--muted);
+}
+
+.platform.youtube::before {
+  background: var(--youtube);
+}
+
+.platform.twitch::before {
+  background: var(--twitch);
+}
+
+.platform.kick::before {
+  background: var(--kick);
+}
+
+/* Rows in the transcript and results: a timestamp and text, clickable. */
+.row {
+  display: flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  gap: 14px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  margin: 0 -10px;
+  width: calc(100% + 20px);
+  white-space: normal;
+  line-height: 1.5;
+}
+
+.row:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.row .time {
+  flex: none;
+  min-width: 56px;
+  padding-top: 2px;
+  text-align: right;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: padding-box;
 }

@@ -8,6 +8,7 @@
   import Settings from "$lib/Settings.svelte";
   import Setup from "$lib/Setup.svelte";
   import Transcript from "$lib/Transcript.svelte";
+  import Icon from "$lib/Icon.svelte";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -126,22 +127,28 @@
   <div class="app">
     <Library {vods} {selectedId} onselect={select} />
     <main>
-      <div class="search">
-        <input type="search" placeholder="Search for a phrase…" bind:value={query} />
-        {#if selected}
-          <span class="scope">
-            in <strong>{selected.title}</strong>
-            <button class="link" onclick={() => (selectedId = null)} aria-label="Search all VODs">✕</button>
-          </span>
-        {/if}
+      <div class="toolbar">
+        <div class="search">
+          <span class="search-icon muted"><Icon name="search" /></span>
+          <input type="search" placeholder="Search for a phrase…" bind:value={query} aria-label="Search" />
+          {#if selected}
+            <span class="scope" title={selected.title}>
+              <span class="scope-in">in</span>
+              <span class="scope-title">{selected.title}</span>
+              <button class="scope-clear" onclick={() => (selectedId = null)} aria-label="Search all VODs" title="Search all VODs">
+                <Icon name="x" size={13} />
+              </button>
+            </span>
+          {/if}
+        </div>
         <div class="settings-anchor" bind:this={settingsEl}>
           <button
-            class="gear"
+            class="icon"
             class:on={showSettings}
             onclick={() => (showSettings = !showSettings)}
             aria-label="Settings"
             aria-expanded={showSettings}
-            title="Settings">⚙</button
+            title="Settings"><Icon name="settings" size={18} /></button
           >
           {#if showSettings}
             <div class="popover" role="dialog" aria-label="Settings">
@@ -178,11 +185,24 @@
         {:else if selected}
           <Transcript vod={selected} onplay={play} />
         {:else}
-          <div class="empty muted">
+          <div class="empty">
+            <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
             {#if vods.length === 0}
-              <p>Add a VOD on the left. Once it's transcribed, every word in it is searchable here.</p>
+              <h2>Your library is empty</h2>
+              <p class="muted">
+                Paste a Kick, Twitch or YouTube VOD link on the left. It downloads and transcribes on this computer, and
+                then every word in it is searchable here.
+              </p>
             {:else}
-              <p>Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to read its transcript.</p>
+              <h2>Search every word</h2>
+              <p class="muted">
+                Type a phrase to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to
+                read its transcript. Clicking a match plays the VOD from that moment.
+              </p>
+              <p class="keys muted">
+                <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd>→</kbd> 5 s,
+                <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
+              </p>
             {/if}
           </div>
         {/if}
@@ -194,7 +214,7 @@
 <style>
   .app {
     display: grid;
-    grid-template-columns: minmax(260px, 320px) 1fr;
+    grid-template-columns: minmax(280px, 340px) 1fr;
     height: 100vh;
   }
 
@@ -205,57 +225,95 @@
     min-height: 0;
   }
 
-  .search {
+  .toolbar {
     display: flex;
-    gap: 12px;
+    gap: 8px;
     align-items: center;
-    padding: 12px 16px;
+    padding: 10px 14px 10px 16px;
     border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .search {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 11px;
+    display: flex;
+    pointer-events: none;
   }
 
   .search input {
-    flex: 1;
+    padding-left: 34px;
     font-size: 15px;
+  }
+
+  /* The VOD a search is limited to, shown as a chip inside the field. */
+  .scope {
+    position: absolute;
+    right: 34px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 45%;
+    height: 24px;
+    padding: 0 4px 0 9px;
+    border-radius: 12px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .scope-in {
+    color: var(--muted);
+  }
+
+  .scope-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 600;
+  }
+
+  .scope-clear {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+  }
+
+  .scope-clear:hover {
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .search:has(.scope) input {
+    padding-right: calc(45% + 44px);
   }
 
   .settings-anchor {
     position: relative;
   }
 
-  .gear {
-    padding: 6px 10px;
-  }
-
-  .gear.on {
-    background: var(--surface-2);
-  }
-
   .popover {
     position: absolute;
-    top: calc(100% + 6px);
+    top: calc(100% + 8px);
     right: 0;
     z-index: 10;
-    width: 320px;
+    width: 340px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
-  }
-
-  .scope {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    max-width: 40%;
-    font-size: 12px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  .scope strong {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--text);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
   }
 
   .body {
@@ -264,10 +322,36 @@
   }
 
   .empty {
-    max-width: 420px;
-    margin: 15vh auto;
+    max-width: 440px;
+    margin: 14vh auto;
     text-align: center;
     padding: 0 16px;
+  }
+
+  .glyph {
+    display: inline-flex;
+    width: 56px;
+    height: 56px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+    margin-bottom: 14px;
+  }
+
+  .empty h2 {
+    margin: 0 0 6px;
+    font-size: 17px;
+  }
+
+  .empty p {
+    margin: 0 0 12px;
+  }
+
+  .keys {
+    font-size: 12px;
+    margin-top: 20px;
+    line-height: 2;
   }
 
   .pad {
