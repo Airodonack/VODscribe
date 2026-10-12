@@ -87,6 +87,15 @@ It deploys from this repo through Cloudflare's Git integration: build command `p
 
 ## Building
 
-`pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. The GitHub Actions workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS (Intel and Apple Silicon) on a manual run or a `v*` tag, and uploads the unsigned bundles as artifacts.
+`pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. The GitHub Actions workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS (Intel and Apple Silicon) on a manual run or a `v*` tag, and uploads the bundles as artifacts. macOS bundles are ad-hoc signed; nothing is signed with a paid certificate yet.
+
+## Releasing
+
+1. Bump `version` in the root `Cargo.toml` and commit.
+2. Tag it with the release notes as the message: `git tag -a v0.2.0 -m "What changed"`, then push the tag.
+
+The tag's build signs the update bundles (`TAURI_SIGNING_PRIVATE_KEY`), then `scripts/release.py` gives every file a stable name and writes `latest.json`, and the publish job uploads them to R2: `releases/<version>/` for the updater and winget, `releases/latest/` for the website's buttons, and `releases/latest.json` last. The app checks that manifest at launch and daily, and installs an update only when the user says so, and only if it's signed with the key whose public half is in `tauri.conf.json`. Keep the private key (`~/.tauri/vodscribe-updater.key`) backed up: without it, installed copies can't be updated.
+
+The winget job then submits the new version to `microsoft/winget-pkgs` as `Airodonack.VODscribe`, once `WINGET_TOKEN` (a classic token of the Airodonack GitHub account, with `public_repo`) is set. The workflow's header lists every secret.
 
 Speech models are served from Cloudflare R2 at `https://dl.vodscribe.com/models/<model id>/`, pinned by size and SHA-256 in `crates/core/src/model.rs`. `VODSCRIBE_MODELS_URL` overrides the base URL in debug builds, for testing.
