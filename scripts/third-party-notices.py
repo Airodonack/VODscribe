@@ -57,6 +57,12 @@ def package_dir(name: str) -> Path:
 
 
 def js_section() -> str:
+    # Every runtime dependency of the app ends up in its JavaScript, so each
+    # must be listed (with whatever else the bundle pulls in, like svelte).
+    deps = json.loads((ROOT / "apps/desktop/package.json").read_text()).get("dependencies", {})
+    missing = sorted(set(deps) - set(JS_PACKAGES))
+    if missing:
+        sys.exit(f"add {', '.join(missing)} to JS_PACKAGES in scripts/third-party-notices.py")
     parts = ["\nJavaScript packages in the app's interface\n"]
     tauri_mit = (package_dir("@tauri-apps/api") / "LICENSE-MIT").read_text()
     for name in JS_PACKAGES:
