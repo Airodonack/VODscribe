@@ -19,13 +19,6 @@
     return () => wide.removeEventListener("change", load);
   });
 
-  // The demo's "Get the app" button (getTheApp in demo.ts) brings up the downloads.
-  onMount(() => {
-    const show = () => document.getElementById("download")?.scrollIntoView({ behavior: "smooth" });
-    addEventListener("vodscribe:get-app", show);
-    return () => removeEventListener("vodscribe:get-app", show);
-  });
-
   // Keys (Space, arrows, Ctrl+F) go to the demo only after a click into it,
   // and back to the page after a click outside (keysForApp in demo.ts).
   let active = $state(false);
@@ -67,7 +60,7 @@
 </script>
 
 <div class="examples">
-  <span class="muted">Try searching</span>
+  <span class="muted">Suggested searches</span>
   {#each EXAMPLES as phrase (phrase)}
     <button class="chip" onclick={() => tryPhrase(phrase)} disabled={!App}>{phrase}</button>
   {/each}

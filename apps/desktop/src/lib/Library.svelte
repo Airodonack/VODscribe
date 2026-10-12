@@ -7,7 +7,7 @@
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
   import { os } from "./platform";
-  import { DEMO, demoOff, getTheApp } from "./demo";
+  import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
@@ -203,7 +203,6 @@
     <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
       <Logo size={28} tile />
       <span class="name">VODscribe</span>
-      {#if DEMO}<span class="demo-tag">Demo</span>{/if}
       {#if version}<span class="version muted">v{version}</span>{/if}
       <Icon name="external" size={12} />
     </button>
@@ -217,7 +216,7 @@
   <form onsubmit={add}>
     <input
       type="url"
-      placeholder={DEMO ? "Add yours in the app" : "Paste a VOD link…"}
+      placeholder="Paste a VOD link…"
       bind:value={url}
       disabled={adding}
       readonly={DEMO}
@@ -226,12 +225,13 @@
         "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
       )}
     />
-    {#if DEMO}
-      <!-- The one control in the demo that leads somewhere: the downloads. -->
-      <button type="button" class="primary" onclick={getTheApp}>Get the app</button>
-    {:else}
-      <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
-    {/if}
+    <button
+      class="primary"
+      disabled={adding || (!url.trim() && !DEMO)}
+      {...demoOff(
+        "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
+      )}>{adding ? "Adding…" : "Add"}</button
+    >
   </form>
   <p class="more muted">
     or <button
@@ -440,14 +440,5 @@
 
   .empty {
     padding: 16px 12px;
-  }
-
-  .demo-tag {
-    padding: 1px 6px;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: 11px;
-    font-weight: 600;
   }
 </style>
