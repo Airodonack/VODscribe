@@ -11,17 +11,20 @@
   // (segments are indexed as they are produced).
   let vodId = $derived(vod.id);
   let step = $derived(vod.status === "transcribing" ? Math.floor(vod.progress * 20) : vod.status);
+  // Only the latest request's answer counts, so a slow older reload can't win.
+  let seq = 0;
   $effect(() => {
     const id = vodId;
     void step;
+    const mine = ++seq;
     api.transcript(id).then(
       (l) => {
-        if (id !== vod.id) return;
+        if (mine !== seq) return;
         lines = l;
         error = null;
       },
       (e) => {
-        if (id === vod.id) error = String(e);
+        if (mine === seq) error = String(e);
       },
     );
   });

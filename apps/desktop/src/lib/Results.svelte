@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { SearchHit, Vod } from "./api";
-  import { formatTime, platformName } from "./platform";
+  import { formatTime } from "./platform";
   import Icon from "./Icon.svelte";
 
   let {

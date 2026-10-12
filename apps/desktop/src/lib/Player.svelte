@@ -28,14 +28,53 @@
     copiedTimer = setTimeout(() => (copied = null), 1500);
   }
 
-  let host = $state<HTMLDivElement>();
-  let player: EmbeddedPlayer | null = null;
+  const site = $derived(platformName[vod.platform] ?? "site");
+  let error = $state<string | null>(null);
+
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
-  let active = $state(untrack(() => at.play));
+  let active = $state(false);
+  let host = $state<HTMLDivElement>();
+  let player: EmbeddedPlayer | null = null;
   // A jump requested while the player is still loading, applied once it's ready.
   let pending: { time: number; play: boolean } | null = null;
+  let destroyed = false;
 
+  async function activate(time: number, play = true) {
+    if (active) return;
+    active = true;
+    await tick();
+    if (!host || destroyed) return;
+    createPlayer(host, vod, time, play)?.then(
+      (p) => {
+        // Closed while loading: don't leave an invisible player running.
+        if (destroyed) return p.destroy();
+        player = p;
+        if (pending) p.seek(pending.time, pending.play);
+      },
+      (e) => (error = String(e)),
+    );
+  }
+
+  // Opened by a jump (a search result or transcript line): start straight away.
+  // Later jumps arrive as a new `at` object.
+  let handled = untrack(() => at);
+  if (handled.play && untrack(() => canEmbed(vod))) activate(handled.time);
+  $effect(() => {
+    if (at === handled) return;
+    handled = at;
+    const { time, play } = at;
+    collapsed = false;
+    if (!active) activate(time, play);
+    else if (player) player.seek(time, play);
+    else pending = { time, play };
+  });
+
+  onDestroy(() => {
+    destroyed = true;
+    clearTimeout(copiedTimer);
+    player?.destroy();
+  });
 
   // Keyboard control for whichever player is open. Keys pressed while the
   // player's own iframe has focus go to that player instead.
@@ -63,51 +102,6 @@
     }
     e.preventDefault();
   }
-  let error = $state<string | null>(null);
-  const site = $derived(platformName[vod.platform] ?? "site");
-
-  let started = false;
-  async function activate(time: number, play = true) {
-    if (started) return;
-    started = true;
-    active = true;
-    await tick();
-    if (!host || destroyed) return;
-    // The players replace what they're given, so give them an element Svelte doesn't own.
-    const target = document.createElement("div");
-    target.style.cssText = "width: 100%; height: 100%";
-    host.appendChild(target);
-    createPlayer(target, vod, time, play)?.then(
-      (p) => {
-        // Closed while loading: don't leave an invisible player running.
-        if (destroyed) return p.destroy();
-        player = p;
-        if (pending) p.seek(pending.time, pending.play);
-      },
-      (e) => (error = String(e)),
-    );
-  }
-  // Opened by a jump (a search result or transcript line): start straight away.
-  untrack(() => at.play && canEmbed(vod) && activate(at.time));
-
-  let first = true;
-  $effect(() => {
-    const { time, play } = at;
-    if (first) {
-      first = false;
-      return;
-    }
-    collapsed = false;
-    if (!started) return void activate(time, true);
-    if (player) player.seek(time, play);
-    else pending = { time, play };
-  });
-
-  let destroyed = false;
-  onDestroy(() => {
-    destroyed = true;
-    player?.destroy();
-  });
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -136,7 +130,7 @@
       {/if}
     </div>
     <button
-      class="icon keys"
+      class="icon"
       class:on={showKeys}
       onclick={() => (showKeys = !showKeys)}
       aria-expanded={showKeys}
@@ -260,7 +254,6 @@
     margin-left: 2px;
   }
 
-  .keys,
   .head .icon {
     width: 28px;
     height: 28px;
@@ -339,12 +332,6 @@
     background: var(--accent);
   }
 
-  .frame :global(iframe) {
-    width: 100%;
-    height: 100%;
-    border: 0;
-    display: block;
-  }
 
   .note {
     margin: 0;

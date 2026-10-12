@@ -27,7 +27,6 @@
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);
 
-  // `at` is replaced on every jump; the player seeks rather than reloading.
   let showSettings = $state(false);
   let settingsEl = $state<HTMLElement>();
 
@@ -39,6 +38,7 @@
     if (showSettings && settingsEl && !settingsEl.contains(e.target as Node)) showSettings = false;
   }
 
+  // `at` is replaced on every jump; the player seeks rather than reloading.
   let playing = $state<{ vodId: number; at: { time: number; play: boolean } } | null>(null);
   let playingVod = $derived(playing ? vodsById.get(playing.vodId) : undefined);
 
@@ -127,6 +127,7 @@
     void scopeId;
     clearTimeout(timer);
     timer = setTimeout(runSearch, 120);
+    return () => clearTimeout(timer);
   });
 
   function play(vodId: number, time: number) {

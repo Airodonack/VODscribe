@@ -24,20 +24,27 @@
 
   let url = $state("");
   let adding = $state(false);
-  let addError = $state<string | null>(null);
+  // The last failed action (adding a link, or a row's button), shown under the form.
+  let error = $state<string | null>(null);
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
     adding = true;
-    addError = null;
+    error = null;
     try {
       await api.addVod(url);
       url = "";
     } catch (e) {
-      addError = String(e);
+      error = String(e);
     } finally {
       adding = false;
     }
+  }
+
+  /** Runs a row action, showing its error if it fails. */
+  function act(action: Promise<unknown>) {
+    error = null;
+    action.catch((e) => (error = String(e)));
   }
 
   const statusLabel: Record<Vod["status"], string> = {
@@ -52,20 +59,20 @@
 
   function retranscribe(vod: Vod) {
     if (confirm(`Re-transcribe “${vod.title}”? Its current transcript is replaced; the audio may need to download again.`)) {
-      api.retranscribeVod(vod.id);
+      act(api.retranscribeVod(vod.id));
     }
   }
 
   function cancel(vod: Vod) {
     if (confirm(`Cancel “${vod.title}”? Its partial download and transcript will be discarded.`)) {
-      api.cancelVod(vod.id);
+      act(api.cancelVod(vod.id));
     }
   }
 
   function remove(vod: Vod) {
     if (confirm(`Remove “${vod.title}” and its transcript?`)) {
       if (selectedId === vod.id) onselect(null);
-      api.deleteVod(vod.id);
+      act(api.deleteVod(vod.id));
     }
   }
 
@@ -95,6 +102,12 @@
   let shown = $derived(drag?.moved ? drag.order.map((id) => byId.get(id)).filter((v) => v !== undefined) : vods);
   let suppressClick = false;
 
+  /** `order` minus VODs removed since the drag began, plus any added (on top, as in the library). */
+  function reconcile(order: number[]) {
+    const kept = order.filter((id) => byId.has(id));
+    return [...vods.map((v) => v.id).filter((id) => !kept.includes(id)), ...kept];
+  }
+
   function startDrag(e: PointerEvent, vod: Vod) {
     if (e.button !== 0 || vods.length < 2 || (e.target as HTMLElement).closest(".actions")) return;
     const startY = e.clientY;
@@ -109,8 +122,7 @@
     function step() {
       if (!drag) return;
       // VODs can be added or removed mid-drag: new ones go on top, as they do in the library.
-      const order = drag.order.filter((id) => byId.has(id));
-      order.unshift(...vods.filter((v) => !order.includes(v.id)).map((v) => v.id));
+      const order = reconcile(drag.order);
       if (order.length !== drag.order.length || order.some((id, i) => id !== drag!.order[i])) drag.order = order;
       const self = rows[drag.id];
       if (!byId.has(drag.id) || !self) return end();
@@ -158,8 +170,7 @@
         // The click that ends a drag shouldn't select the row.
         suppressClick = true;
         setTimeout(() => (suppressClick = false));
-        const order = drag.order.filter((id) => byId.has(id));
-        order.unshift(...vods.filter((v) => !order.includes(v.id)).map((v) => v.id));
+        const order = reconcile(drag.order);
         if (order.some((id, i) => id !== vods[i]?.id)) onreorder(order);
       }
       drag = null;
@@ -203,8 +214,8 @@
     <input type="url" placeholder="Paste a VOD link…" bind:value={url} disabled={adding} aria-label="VOD link" />
     <button class="primary" disabled={adding || !url.trim()}>{adding ? "Adding…" : "Add"}</button>
   </form>
-  {#if addError}
-    <p class="error-text add-error">{addError}</p>
+  {#if error}
+    <p class="error-text add-error">{error}</p>
   {/if}
 
   <div class="list" bind:this={list}>
@@ -277,7 +288,7 @@
 
         <div class="actions">
           {#if vod.status === "error"}
-            <button class="act" onclick={() => api.retryVod(vod.id)} title="Retry" aria-label="Retry">
+            <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
               <Icon name="redo" size={15} />
             </button>
           {:else if vod.status === "paused"}
@@ -285,7 +296,7 @@
             <button
               class="act"
               class:warn={vod.outdated}
-              onclick={() => api.resumeVod(vod.id)}
+              onclick={() => act(api.resumeVod(vod.id))}
               title={vod.outdated ? "Resume (starts over with the current model)" : "Resume"}
               aria-label="Resume"
             >
@@ -295,7 +306,7 @@
               <Icon name="x" size={15} />
             </button>
           {:else if vod.status !== "done"}
-            <button class="act" onclick={() => api.pauseVod(vod.id)} title="Pause" aria-label="Pause">
+            <button class="act" onclick={() => act(api.pauseVod(vod.id))} title="Pause" aria-label="Pause">
               <Icon name="pause" size={15} />
             </button>
             <button class="act" onclick={() => cancel(vod)} title="Cancel" aria-label="Cancel">
@@ -362,6 +373,9 @@
   .name {
     margin: 0 0 15px 4px;
     color: var(--text);
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.01em;
   }
 
   .version {
@@ -390,12 +404,6 @@
     text-decoration: underline;
   }
 
-
-  .name {
-    font-weight: 700;
-    font-size: 15px;
-    letter-spacing: -0.01em;
-  }
 
   form {
     display: flex;
@@ -583,16 +591,13 @@
     align-items: center;
     gap: 5px;
     min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .note :global(svg) {
     flex: none;
-  }
-
-  .note {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .bar {

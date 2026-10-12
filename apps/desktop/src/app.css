@@ -12,7 +12,6 @@
   --mark: #fde68a;
   --mark-text: #1b1b19;
   --warn: #b45309;
-  --warn-soft: #fef3c7;
   --danger: #c81e1e;
   --danger-soft: #fee2e2;
   --ok: #15803d;
@@ -43,7 +42,6 @@
     --mark: #7a4a0c;
     --mark-text: #fef3c7;
     --warn: #f5b041;
-    --warn-soft: #3a2a0c;
     --danger: #f87171;
     --danger-soft: #3f1d1d;
     --ok: #4ade80;
@@ -132,14 +130,6 @@ button.link:hover:not(:disabled) {
   background: none;
   color: var(--text);
   text-decoration: underline;
-}
-
-button.link.warn {
-  color: var(--warn);
-}
-
-button.link.danger {
-  color: var(--danger);
 }
 
 /* Square icon-only buttons. */

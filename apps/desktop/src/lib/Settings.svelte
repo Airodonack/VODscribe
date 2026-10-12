@@ -71,7 +71,22 @@
 
   async function choose(d: Device) {
     device = d;
-    await api.setSettings({ device: d });
+    await api.setSettings({ device: d }).catch((e) => (error = String(e)));
+  }
+
+  // Platforms change often enough that an old yt-dlp stops working.
+  let updating = $state(false);
+  let ytDlpStatus = $state<string | null>(null);
+  async function updateYtDlp() {
+    updating = true;
+    ytDlpStatus = null;
+    try {
+      ytDlpStatus = await api.updateYtDlp();
+    } catch (e) {
+      ytDlpStatus = String(e);
+    } finally {
+      updating = false;
+    }
   }
 
   async function install() {
@@ -150,6 +165,13 @@
     {/if}
     {#if error}<p class="error-text hint">{error}</p>{/if}
     <p class="muted hint">Changes apply from the next VOD.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Downloader</span>
+    <p class="muted hint">If VODs from a site start failing to download, a newer yt-dlp usually fixes it.</p>
+    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update yt-dlp"}</button>
+    {#if ytDlpStatus}<p class="muted hint">{ytDlpStatus}</p>{/if}
   </section>
 
   <section>

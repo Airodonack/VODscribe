@@ -192,6 +192,7 @@ async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Pro
   // 720p is plenty for a preview pane and keeps bandwidth down.
   const pick =
     variants.filter((v) => v.height <= 720).sort((a, b) => b.height - a.height)[0] ?? variants[0];
+  if (!pick) throw new Error("Kick didn't return a playable stream for this VOD.");
   const video = document.createElement("video");
   video.controls = true;
   video.playsInline = true;
@@ -225,20 +226,15 @@ async function kick(el: HTMLElement, vod: Vod, time: number, play: boolean): Pro
   };
 }
 
+const players: Record<string, (el: HTMLElement, vod: Vod, time: number, play: boolean) => Promise<EmbeddedPlayer>> = {
+  youtube,
+  twitch,
+  kick,
+};
+
 /** Creates a player inside `el`, or returns null if the platform has no VOD embed. */
 export function createPlayer(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> | null {
-  switch (vod.platform) {
-    case "youtube":
-      return youtube(el, vod, time, play);
-    case "twitch":
-      return twitch(el, vod, time, play);
-    case "kick":
-      return kick(el, vod, time, play);
-    default:
-      return null;
-  }
+  return players[vod.platform]?.(el, vod, time, play) ?? null;
 }
 
-export function canEmbed(vod: Vod): boolean {
-  return vod.platform === "youtube" || vod.platform === "twitch" || vod.platform === "kick";
-}
+export const canEmbed = (vod: Vod) => Object.hasOwn(players, vod.platform);
