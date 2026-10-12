@@ -12,12 +12,15 @@
 //! web page can't reach it through DNS rebinding. The pages get the app's
 //! commands through a capability limited to this exact origin.
 
+// Debug builds compile this only for its tests; `tauri dev` doesn't start it.
+#![cfg_attr(dev, allow(dead_code))]
+
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
 
 use anyhow::{Result, bail};
 use tauri::{AppHandle, Manager, Runtime};
-use tiny_http::{Header, Method, Response, Server};
+use tiny_http::{Header, Method, Request, Response, Server};
 
 /// The origin the app is served from, such as `http://localhost:41723`.
 pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
@@ -53,8 +56,7 @@ fn bind_loopback() -> Result<(Vec<TcpListener>, u16)> {
 
 fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<R>) {
     for request in server.incoming_requests() {
-        let allowed = matches!(request.method(), Method::Get | Method::Head)
-            && request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host);
+        let allowed = accepts(&request, host);
         let path = request.url().split(['?', '#']).next().unwrap_or("/").to_string();
         let response = match allowed.then(|| assets.get(path)).flatten() {
             Some(asset) => {
@@ -73,6 +75,13 @@ fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<
     }
 }
 
+/// Whether to answer `request`: a GET or HEAD naming exactly this server's
+/// host, so a page reached through DNS rebinding (another Host) gets nothing.
+fn accepts(request: &Request, host: &str) -> bool {
+    matches!(request.method(), Method::Get | Method::Head)
+        && request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host)
+}
+
 fn header(name: &'static str, value: &str) -> Header {
     Header::from_bytes(name, value).expect("valid header")
 }
@@ -86,4 +95,42 @@ fn allow_commands<R: Runtime>(app: &AppHandle<R>, origin: &str) -> Result<()> {
     capability["remote"] = serde_json::json!({ "urls": [format!("{origin}/*")] });
     app.add_capability(capability.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tiny_http::TestRequest;
+
+    fn request(method: Method, host: Option<&str>) -> Request {
+        let mut r = TestRequest::new().with_method(method).with_path("/");
+        if let Some(host) = host {
+            r = r.with_header(Header::from_bytes("Host", host).unwrap());
+        }
+        r.into()
+    }
+
+    #[test]
+    fn answers_only_its_own_host_and_reads() {
+        let host = "localhost:41723";
+        assert!(accepts(&request(Method::Get, Some(host)), host));
+        assert!(accepts(&request(Method::Head, Some(host)), host));
+        assert!(!accepts(&request(Method::Post, Some(host)), host));
+        assert!(!accepts(&request(Method::Get, Some("evil.example:41723")), host), "DNS rebinding");
+        assert!(!accepts(&request(Method::Get, Some("127.0.0.1:41723")), host), "another name for it");
+        assert!(!accepts(&request(Method::Get, Some("localhost:41724")), host));
+        assert!(!accepts(&request(Method::Get, None), host));
+    }
+
+    #[test]
+    fn holds_one_port_on_both_loopbacks() {
+        let (listeners, port) = bind_loopback().unwrap();
+        let addrs: Vec<_> = listeners.iter().map(|l| l.local_addr().unwrap()).collect();
+        assert!(addrs.iter().all(|a| a.port() == port && a.ip().is_loopback()));
+        assert!(addrs.iter().any(|a| a.is_ipv4()));
+        // Where there's IPv6, ::1 is held too, so nothing else can answer `localhost` there.
+        if TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).is_ok() {
+            assert!(addrs.iter().any(|a| a.is_ipv6()), "{addrs:?}");
+        }
+    }
 }

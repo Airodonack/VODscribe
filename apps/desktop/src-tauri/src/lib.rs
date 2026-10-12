@@ -2,8 +2,8 @@
 //! `vods` (the library), `setup` (setup, settings, GPU pack, storage) and
 //! `thumbnails`; `worker` runs the download and transcription queue.
 
-// `tauri dev` serves the app from its dev server instead.
-#[cfg(not(dev))]
+// `tauri dev` serves the app from its dev server instead; tests still cover it.
+#[cfg(any(not(dev), test))]
 mod app_server;
 mod media;
 mod setup;
