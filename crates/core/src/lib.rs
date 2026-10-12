@@ -6,6 +6,7 @@
 pub mod asr;
 pub mod audio;
 pub mod db;
+pub mod deps;
 pub mod fetch;
 pub mod gpu;
 pub mod kick;

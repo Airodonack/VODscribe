@@ -19,6 +19,7 @@ path = "src/bin/cli.rs"
 [dependencies]
 anyhow = "1.0.104"
 bzip2 = "0.6.1"
+lzma-rs = "0.3"
 pgp = "0.21"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
