@@ -89,7 +89,7 @@ pub struct Db {
     conn: Connection,
 }
 
-const SCHEMA_VERSION: i32 = 5;
+const SCHEMA_VERSION: i32 = 6;
 
 const SCHEMA: &str = r#"
 CREATE TABLE vods (
@@ -135,6 +135,9 @@ const MIGRATE_V2: &str = "ALTER TABLE vods ADD COLUMN note TEXT;";
 const MIGRATE_V3: &str = "ALTER TABLE vods ADD COLUMN audio_path TEXT;";
 /// v4: the speech model that produced the transcript.
 const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
+/// v6: deleting a transcript removes its words from the search index right away,
+/// rather than leaving them in index pages until a merge.
+const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 1);";
 /// v5: the library's order, which the user can rearrange. Starts newest first.
 const MIGRATE_V5: &str = "
 ALTER TABLE vods ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
@@ -180,9 +183,10 @@ impl Db {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
+        // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5];
+        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
@@ -311,6 +315,9 @@ impl Db {
 
     pub fn delete_vod(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
+        // Copy the change into the main file and empty the WAL, which still holds the old pages.
+        // Another connection reading at the time can keep it from finishing; that's fine.
+        let _ = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
         Ok(())
     }
 
@@ -465,6 +472,23 @@ mod tests {
         db.set_note(vod.id, Some("ran on CPU")).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
         drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn deleted_transcripts_leave_the_file() {
+        let path = std::env::temp_dir().join(format!("vodscribe-delete-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut db = Db::open(&path).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0;
+        let secret = "zanzibarquokka";
+        db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: secret.into(), words: words(secret, 0.0) }])
+            .unwrap();
+        assert_eq!(db.search(secret, None, 10).unwrap().hits.len(), 1);
+        db.delete_vod(vod.id).unwrap();
+        drop(db);
+        let bytes = [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()].concat();
+        assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()), "deleted text still on disk");
         let _ = std::fs::remove_file(&path);
     }
 
