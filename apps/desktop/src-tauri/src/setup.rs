@@ -210,10 +210,17 @@ pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()>
     if state.gpu_installing.load(Ordering::Relaxed) {
         return Err("The GPU add-on is still downloading.".into());
     }
-    // A running transcription may have the pack's libraries loaded.
-    if state.db.lock().unwrap().count_with_status(Status::Transcribing).map_err(err)? > 0 {
-        return Err("Wait for the current transcription to finish, or pause it, first.".into());
+    // A transcription may have the pack's libraries loaded, including one the
+    // transcribe stage has picked but not yet marked as transcribing. Nothing
+    // new starts until the pack is gone.
+    let (_held, running) = state.worker.hold_starts();
+    let db = state.db.lock().unwrap();
+    for id in running {
+        if matches!(db.vod(id).map_err(err)?.map(|v| v.status), Some(Status::Ready | Status::Transcribing)) {
+            return Err("Wait for the current transcription to finish, or pause it, first.".into());
+        }
     }
+    drop(db);
     gpu::uninstall(&state.paths.gpu_pack()).map_err(err)?;
     gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)
 }

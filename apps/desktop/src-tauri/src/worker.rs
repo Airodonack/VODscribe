@@ -122,6 +122,16 @@ impl Worker {
         Ok(hold)
     }
 
+    /// Stops new jobs from starting, without touching running ones, until the
+    /// guard is dropped. Also returns the VODs the stages are working on, so
+    /// the caller can check what's running with nothing new slipping in.
+    pub fn hold_starts(&self) -> (Hold<'_>, Vec<i64>) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.held = true;
+        let running = queue.jobs.iter().map(|j| j.vod_id).collect();
+        (Hold(self), running)
+    }
+
     /// Applies `reason` to a VOD. If a stage is running it, the stage is told
     /// to stop and finishes the stop itself; otherwise `idle` runs, with the
     /// queue locked so no stage can start the VOD meanwhile. Returns whether a
