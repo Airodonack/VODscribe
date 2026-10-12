@@ -44,10 +44,15 @@
     }
   }
 
+  // The popover can close before this async setup finishes; anything set up
+  // after that is torn down straight away.
+  let destroyed = false;
+  const keep = (u: UnlistenFn) => (destroyed ? u() : unlisten.push(u));
+
   onMount(async () => {
     device = (await api.getSettings()).device;
-    unlisten.push(
-      await events.gpuProgress((label, done, total) => (step = { label, done, total })),
+    keep(await events.gpuProgress((label, done, total) => (step = { label, done, total })));
+    keep(
       await events.gpuDone((e) => {
         step = null;
         error = e;
@@ -56,9 +61,10 @@
     );
     await refresh();
     // Free VRAM changes as other programs use the GPU.
-    timer = setInterval(refresh, 5000);
+    if (!destroyed) timer = setInterval(refresh, 5000);
   });
   onDestroy(() => {
+    destroyed = true;
     clearInterval(timer);
     unlisten.forEach((u) => u());
   });
@@ -70,7 +76,7 @@
 
   async function install() {
     error = null;
-    await api.installGpuPack();
+    await api.installGpuPack().catch((e) => (error = String(e)));
     await refresh();
   }
 

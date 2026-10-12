@@ -109,24 +109,33 @@
 
     function step() {
       if (!drag) return;
+      // VODs can be added or removed mid-drag: new ones go on top, as they do in the library.
+      const order = drag.order.filter((id) => byId.has(id));
+      order.unshift(...vods.filter((v) => !order.includes(v.id)).map((v) => v.id));
+      if (order.length !== drag.order.length || order.some((id, i) => id !== drag!.order[i])) drag.order = order;
+      const self = rows[drag.id];
+      if (!byId.has(drag.id) || !self) return end();
+
       const box = list.getBoundingClientRect();
       const edge = 36;
       if (pointerY < box.top + edge) list.scrollTop -= Math.ceil((box.top + edge - pointerY) / 4);
       else if (pointerY > box.bottom - edge) list.scrollTop += Math.ceil((pointerY - box.bottom + edge) / 4);
 
       const y = contentY();
-      const order = drag.order;
-      const i = order.indexOf(drag.id);
-      const mid = (id: number) => rows[id].offsetTop + rows[id].offsetHeight / 2;
+      const i = drag.order.indexOf(drag.id);
+      // Rows that haven't rendered yet have no midpoint, so they're never swapped with.
+      const mid = (id: number) => (rows[id] ? rows[id].offsetTop + rows[id].offsetHeight / 2 : NaN);
       const top = y - grab;
-      const bottom = top + rows[drag.id].offsetHeight;
-      if (i > 0 && top < mid(order[i - 1])) {
-        [order[i - 1], order[i]] = [order[i], order[i - 1]];
-      } else if (i < order.length - 1 && bottom > mid(order[i + 1])) {
-        [order[i + 1], order[i]] = [order[i], order[i + 1]];
+      const bottom = top + self.offsetHeight;
+      const o = drag.order;
+      if (i > 0 && top < mid(o[i - 1])) {
+        [o[i - 1], o[i]] = [o[i], o[i - 1]];
+      } else if (i < o.length - 1 && bottom > mid(o[i + 1])) {
+        [o[i + 1], o[i]] = [o[i], o[i + 1]];
       }
       tick().then(() => {
-        if (drag) drag.dy = y - grab - rows[drag.id].offsetTop;
+        const el = drag && rows[drag.id];
+        if (drag && el) drag.dy = y - grab - el.offsetTop;
       });
       frame = requestAnimationFrame(step);
     }
@@ -151,6 +160,7 @@
         suppressClick = true;
         setTimeout(() => (suppressClick = false));
         const order = drag.order.filter((id) => byId.has(id));
+        order.unshift(...vods.filter((v) => !order.includes(v.id)).map((v) => v.id));
         if (order.some((id, i) => id !== vods[i]?.id)) onreorder(order);
       }
       drag = null;

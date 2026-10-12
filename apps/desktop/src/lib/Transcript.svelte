@@ -16,9 +16,13 @@
     void step;
     api.transcript(id).then(
       (l) => {
-        if (id === vod.id) lines = l;
+        if (id !== vod.id) return;
+        lines = l;
+        error = null;
       },
-      (e) => (error = String(e)),
+      (e) => {
+        if (id === vod.id) error = String(e);
+      },
     );
   });
 </script>

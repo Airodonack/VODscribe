@@ -16,13 +16,15 @@
   let showKeys = $state(false);
 
   // Clicking the timestamp copies a link to that moment on the VOD's site.
-  let copied = $state(false);
+  let copied = $state<"ok" | "failed" | null>(null);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyLink() {
-    await writeText(watchUrl(vod, at.time));
-    copied = true;
+    copied = await writeText(watchUrl(vod, at.time)).then(
+      () => "ok" as const,
+      (e) => (console.error("copy failed", e), "failed" as const),
+    );
     clearTimeout(copiedTimer);
-    copiedTimer = setTimeout(() => (copied = false), 1500);
+    copiedTimer = setTimeout(() => (copied = null), 1500);
   }
 
   let host = $state<HTMLDivElement>();
@@ -37,7 +39,7 @@
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (!player || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (target?.closest("input, textarea, select, [contenteditable]")) return;
+    if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
@@ -103,10 +105,16 @@
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if at.time > 0}
-        <button class="stamp" class:copied onclick={copyLink} title="Copy a link to this moment">
+        <button
+          class="stamp"
+          class:copied={copied === "ok"}
+          class:failed={copied === "failed"}
+          onclick={copyLink}
+          title="Copy a link to this moment"
+        >
           <span class="time">{formatTime(at.time)}</span>
-          <Icon name={copied ? "check" : "copy"} size={12} />
-          {#if copied}<span class="copied-text">Copied</span>{/if}
+          <Icon name={copied === "ok" ? "check" : copied === "failed" ? "error" : "copy"} size={12} />
+          {#if copied}<span class="copied-text">{copied === "ok" ? "Copied" : "Couldn't copy"}</span>{/if}
         </button>
       {/if}
     </div>
@@ -206,6 +214,10 @@
 
   .stamp.copied {
     color: var(--ok);
+  }
+
+  .stamp.failed {
+    color: var(--danger);
   }
 
   .sep {

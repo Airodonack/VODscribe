@@ -52,9 +52,14 @@
     else vods.unshift(vod);
   }
 
+  // VODs missing from `ids` (added since the reorder began) stay on top.
   function reorder(ids: number[]) {
-    vods = ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined);
-    api.reorderVods(ids);
+    const listed = new Set(ids);
+    vods = [...vods.filter((v) => !listed.has(v.id)), ...ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined)];
+    api.reorderVods(vods.map((v) => v.id)).catch(async (e) => {
+      console.error("reorder failed", e);
+      vods = await api.listVods();
+    });
     runSearch();
   }
 
@@ -90,6 +95,7 @@
     const q = query.trim();
     if (!q) {
       results = null;
+      searchError = null;
       return;
     }
     try {
