@@ -94,22 +94,22 @@ fn platform() -> Option<Platform> {
                 sha256: "2132af1ae8c84c84f86ac091e4311839287851d2bf5e660332ebce3898a1e0b2",
             },
             wheels: [
-                ("CUDA runtime", Pinned {
+                ("CUDA runtime 12.8", Pinned {
                     url: "https://files.pythonhosted.org/packages/0d/9b/a997b638fcd068ad6e4d53b8551a7d30fe8b404d6f1804abf1df69838932/nvidia_cuda_runtime_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
                     size: 954765,
                     sha256: "adade8dcbd0edf427b7204d480d6066d33902cab2a4707dcfc48a2d0fd44ab90",
                 }),
-                ("cuBLAS", Pinned {
+                ("cuBLAS 12.8", Pinned {
                     url: "https://files.pythonhosted.org/packages/dc/61/e24b560ab2e2eaeb3c839129175fb330dfcfc29e5203196e5541a4c44682/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl",
                     size: 594346921,
                     sha256: "8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142",
                 }),
-                ("cuRAND", Pinned {
+                ("cuRAND 10.3", Pinned {
                     url: "https://files.pythonhosted.org/packages/fb/aa/6584b56dc84ebe9cf93226a5cde4d99080c8e90ab40f0c27bda7a0f29aa1/nvidia_curand_cu12-10.3.9.90-py3-none-manylinux_2_27_x86_64.whl",
                     size: 63619976,
                     sha256: "b32331d4f4df5d6eefa0554c565b626c7216f87a06a4f56fab27c3b68a830ec9",
                 }),
-                ("cuDNN", Pinned {
+                ("cuDNN 9.19", Pinned {
                     url: "https://files.pythonhosted.org/packages/c5/41/65225d42fba06fb3dd3972485ea258e7dd07a40d6e01c95da6766ad87354/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_x86_64.whl",
                     size: 657906812,
                     sha256: "ac6ad90a075bb33a94f2b4cf4622eac13dd4dc65cf6dd9c7572a318516a36625",
@@ -124,22 +124,22 @@ fn platform() -> Option<Platform> {
                 sha256: "066c5b54dbafaa1388001a9c9837ac1374dbba6d6678f193ca06aa0d8e94d8c3",
             },
             wheels: [
-                ("CUDA runtime", Pinned {
+                ("CUDA runtime 12.8", Pinned {
                     url: "https://files.pythonhosted.org/packages/30/a5/a515b7600ad361ea14bfa13fb4d6687abf500adc270f19e89849c0590492/nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.whl",
                     size: 944318,
                     sha256: "c0c6027f01505bfed6c3b21ec546f69c687689aad5f1a377554bc6ca4aa993a8",
                 }),
-                ("cuBLAS", Pinned {
+                ("cuBLAS 12.8", Pinned {
                     url: "https://files.pythonhosted.org/packages/70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl",
                     size: 567544208,
                     sha256: "47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af",
                 }),
-                ("cuRAND", Pinned {
+                ("cuRAND 10.3", Pinned {
                     url: "https://files.pythonhosted.org/packages/b9/75/70c05b2f3ed5be3bb30b7102b6eb78e100da4bbf6944fd6725c012831cab/nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl",
                     size: 62765309,
                     sha256: "f149a8ca457277da854f89cf282d6ef43176861926c7ac85b2a0fbd237c587ec",
                 }),
-                ("cuDNN", Pinned {
+                ("cuDNN 9.19", Pinned {
                     url: "https://files.pythonhosted.org/packages/a7/a5/48f07449fc9c6cc146dcafe6149fa5d69630137d2ec5b7d9e09f255fadd7/nvidia_cudnn_cu12-9.19.0.56-py3-none-win_amd64.whl",
                     size: 644003014,
                     sha256: "cec70596b9ce878fab83810c3f5a2e606d35f510e5fee579759e4cbc68a23750",
@@ -181,13 +181,20 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         // Each download is verified before anything is unpacked from it.
         let Pinned { url, size, sha256 } = platform.sherpa;
         let archive = staging.join("sherpa-onnx.tar.bz2");
-        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress("ONNX Runtime (CUDA)", n, size))?;
+        // Progress reads "Downloading <name>" while bytes arrive (the SHA-256 is
+        // computed as they do), then "<name> matches its SHA-256" while unpacking.
+        let label = "ONNX Runtime 1.28 with CUDA (sherpa-onnx 1.13.8)";
+        let downloading = format!("Downloading {label}");
+        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
+        on_progress(&format!("{label} matches its SHA-256 · unpacking"), size, size);
         extract_tar_libs(&archive, &libs, platform.lib_exts)?;
         fs::remove_file(&archive)?;
 
         for (label, Pinned { url, size, sha256 }) in platform.wheels {
             let wheel = staging.join("wheel.whl");
-            net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| on_progress(label, n, size))?;
+            let downloading = format!("Downloading {label}");
+            net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
+            on_progress(&format!("{label} matches its SHA-256 · unpacking"), size, size);
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }

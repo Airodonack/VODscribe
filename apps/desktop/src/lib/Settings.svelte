@@ -70,6 +70,8 @@
     unlisten.forEach((u) => u());
   });
 
+  const mb = (bytes: number) => Math.round(bytes / 1e6);
+
   let dataDir = $state<string | null>(null);
   api.dataDir().then(
     (d) => (dataDir = d),
@@ -161,7 +163,13 @@
     {#if offerPack}
       {#if step || gpu?.installing}
         <div class="progress">
-          <span class="muted">Downloading the GPU add-on…</span>
+          <!-- The exact component, for the people who chose the GPU add-on. -->
+          <span class="muted step">
+            {step?.label ?? "Downloading the GPU add-on"}…
+            {#if step?.label.startsWith("Downloading") && step.total}
+              <span class="mb">{mb(step.done)} / {mb(step.total)} MB</span>
+            {/if}
+          </span>
           <Progress value={step && step.total ? step.done / step.total : 0} />
         </div>
       {:else if !gpu?.installed}
@@ -232,6 +240,15 @@
     gap: 8px;
     padding: 14px 16px;
     justify-items: start;
+  }
+
+  .step {
+    font-size: 12px;
+  }
+
+  .mb {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
   }
 
   .verified {

@@ -168,7 +168,9 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         if !gpu::is_installed(&paths.gpu_pack()) {
             gpu::install(&paths.gpu_pack(), never, progress)?;
         }
-        model::install(&paths.models(), &model::GPU_MODEL, never, |n, t| progress("GPU speech model", n, t))?;
+        let model_label = "Downloading the GPU speech model (Parakeet TDT 0.6B v3, fp16)";
+        model::install(&paths.models(), &model::GPU_MODEL, never, |n, t| progress(model_label, n, t))?;
+        progress("Every file matches its SHA-256", 1, 1);
         Ok(())
     });
     Ok(())
