@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["setup"] => {
             if tools::find_yt_dlp(&paths.bin()).is_none() {
-                let p = tools::install_yt_dlp(&paths.bin(), &cancel, |_, _| {})?;
+                let (p, _) = tools::install_yt_dlp(&paths.bin(), &cancel, |_, _| {})?;
                 println!("installed {}", p.display());
             }
             model::install(&paths.models(), &model::CPU_MODEL, &cancel, |n, total| {

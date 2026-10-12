@@ -7,11 +7,17 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use sha2::{Digest, Sha256};
 
 /// A download that receives nothing for this long has stalled.
 const STALL_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often a waiting download checks for cancellation.
 const CANCEL_POLL: Duration = Duration::from_millis(250);
+
+/// `url` without its query string, which can hold signed tokens, for error messages.
+fn redact(url: &str) -> &str {
+    url.split_once('?').map_or(url, |(base, _)| base)
+}
 
 /// The shared HTTP client. Connecting and receiving headers time out; the
 /// body has a generous overall limit, since stalls are caught by `get`.
@@ -22,6 +28,8 @@ pub fn agent() -> &'static ureq::Agent {
             .timeout_connect(Some(Duration::from_secs(30)))
             .timeout_recv_response(Some(Duration::from_secs(60)))
             .timeout_recv_body(Some(Duration::from_secs(6 * 60 * 60)))
+            // Tests serve plain HTTP from localhost.
+            .https_only(!cfg!(test))
             .build()
             .into()
     })
@@ -63,7 +71,7 @@ impl<R: Read, F: FnMut(u64)> Read for ProgressReader<'_, R, F> {
 /// known. Reads fail when `cancel` is set (within `CANCEL_POLL`) or when no
 /// data arrives for `STALL_TIMEOUT`, rather than blocking on a dead connection.
 pub fn get<'a>(url: &str, cancel: &'a AtomicBool) -> Result<(impl Read + 'a, Option<u64>)> {
-    let resp = agent().get(url).call().with_context(|| format!("GET {url}"))?;
+    let resp = agent().get(url).call().with_context(|| format!("GET {}", redact(url)))?;
     let len = resp.body().content_length();
     let mut body = resp.into_body().into_reader();
 
@@ -157,7 +165,7 @@ pub fn download(
         if cancel.load(Ordering::Relaxed) {
             bail!("canceled");
         }
-        return Err(e).with_context(|| format!("download {url}"));
+        return Err(e).with_context(|| format!("download {}", redact(url)));
     }
     out.flush()?;
     drop(out);
@@ -165,10 +173,61 @@ pub fn download(
     Ok(())
 }
 
+/// Downloads `url` to `dest`, checking it against a pinned SHA-256 (and size,
+/// when known). Nothing appears at `dest` unless it matches. `on_progress`
+/// receives bytes so far.
+pub fn download_verified(
+    url: &str,
+    dest: &Path,
+    size: Option<u64>,
+    sha256: &str,
+    cancel: &AtomicBool,
+    on_progress: impl FnMut(u64),
+) -> Result<()> {
+    let part = dest.with_extension("part");
+    let result = (|| -> Result<()> {
+        let (body, _) = get(url, cancel)?;
+        let mut reader = ProgressReader::new(body, cancel, on_progress);
+        let mut out = File::create(&part)?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1 << 16];
+        let mut len = 0u64;
+        loop {
+            let n = match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            };
+            hasher.update(&buf[..n]);
+            out.write_all(&buf[..n])?;
+            len += n as u64;
+            if size.is_some_and(|size| len > size) {
+                break;
+            }
+        }
+        out.flush()?;
+        let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if size.is_some_and(|size| len != size) || hash != sha256 {
+            bail!("the download was corrupted ({len} bytes, sha256 {hash}); try again");
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => Ok(fs::rename(&part, dest)?),
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            if cancel.load(Ordering::Relaxed) {
+                bail!("canceled");
+            }
+            Err(e)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use std::net::TcpListener;
     use std::sync::Arc;
 

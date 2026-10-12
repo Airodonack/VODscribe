@@ -4,14 +4,13 @@
 //! GPU worker binary ships with the app and loads its libraries from there.
 
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::{net, tools};
 
@@ -69,10 +68,19 @@ pub fn supported() -> bool {
     platform().is_some()
 }
 
+/// A download pinned by size and SHA-256, so a replaced release asset or
+/// wheel is refused rather than loaded into the GPU worker.
+struct Pinned {
+    url: &'static str,
+    size: u64,
+    sha256: &'static str,
+}
+
 struct Platform {
-    sherpa_url: &'static str,
-    /// The wheel platform tag to pick from PyPI.
-    wheel_tag: &'static str,
+    /// sherpa-onnx + ONNX Runtime built with the CUDA provider.
+    sherpa: Pinned,
+    /// NVIDIA's CUDA 12 / cuDNN 9 runtime wheels from PyPI, labelled for progress.
+    wheels: [(&'static str, Pinned); 4],
     /// Library file extensions to keep.
     lib_exts: &'static [&'static str],
 }
@@ -80,26 +88,68 @@ struct Platform {
 fn platform() -> Option<Platform> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("linux", "x86_64") => Some(Platform {
-            sherpa_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-linux-x64-gpu.tar.bz2",
-            wheel_tag: "manylinux",
+            sherpa: Pinned {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-linux-x64-gpu.tar.bz2",
+                size: 393010348,
+                sha256: "2132af1ae8c84c84f86ac091e4311839287851d2bf5e660332ebce3898a1e0b2",
+            },
+            wheels: [
+                ("CUDA runtime", Pinned {
+                    url: "https://files.pythonhosted.org/packages/0d/9b/a997b638fcd068ad6e4d53b8551a7d30fe8b404d6f1804abf1df69838932/nvidia_cuda_runtime_cu12-12.8.90-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+                    size: 954765,
+                    sha256: "adade8dcbd0edf427b7204d480d6066d33902cab2a4707dcfc48a2d0fd44ab90",
+                }),
+                ("cuBLAS", Pinned {
+                    url: "https://files.pythonhosted.org/packages/dc/61/e24b560ab2e2eaeb3c839129175fb330dfcfc29e5203196e5541a4c44682/nvidia_cublas_cu12-12.8.4.1-py3-none-manylinux_2_27_x86_64.whl",
+                    size: 594346921,
+                    sha256: "8ac4e771d5a348c551b2a426eda6193c19aa630236b418086020df5ba9667142",
+                }),
+                ("cuRAND", Pinned {
+                    url: "https://files.pythonhosted.org/packages/fb/aa/6584b56dc84ebe9cf93226a5cde4d99080c8e90ab40f0c27bda7a0f29aa1/nvidia_curand_cu12-10.3.9.90-py3-none-manylinux_2_27_x86_64.whl",
+                    size: 63619976,
+                    sha256: "b32331d4f4df5d6eefa0554c565b626c7216f87a06a4f56fab27c3b68a830ec9",
+                }),
+                ("cuDNN", Pinned {
+                    url: "https://files.pythonhosted.org/packages/c5/41/65225d42fba06fb3dd3972485ea258e7dd07a40d6e01c95da6766ad87354/nvidia_cudnn_cu12-9.19.0.56-py3-none-manylinux_2_27_x86_64.whl",
+                    size: 657906812,
+                    sha256: "ac6ad90a075bb33a94f2b4cf4622eac13dd4dc65cf6dd9c7572a318516a36625",
+                }),
+            ],
             lib_exts: &[".so"],
         }),
         ("windows", "x86_64") => Some(Platform {
-            sherpa_url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda.tar.bz2",
-            wheel_tag: "win_amd64",
+            sherpa: Pinned {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-12.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda.tar.bz2",
+                size: 595017373,
+                sha256: "066c5b54dbafaa1388001a9c9837ac1374dbba6d6678f193ca06aa0d8e94d8c3",
+            },
+            wheels: [
+                ("CUDA runtime", Pinned {
+                    url: "https://files.pythonhosted.org/packages/30/a5/a515b7600ad361ea14bfa13fb4d6687abf500adc270f19e89849c0590492/nvidia_cuda_runtime_cu12-12.8.90-py3-none-win_amd64.whl",
+                    size: 944318,
+                    sha256: "c0c6027f01505bfed6c3b21ec546f69c687689aad5f1a377554bc6ca4aa993a8",
+                }),
+                ("cuBLAS", Pinned {
+                    url: "https://files.pythonhosted.org/packages/70/61/7d7b3c70186fb651d0fbd35b01dbfc8e755f69fd58f817f3d0f642df20c3/nvidia_cublas_cu12-12.8.4.1-py3-none-win_amd64.whl",
+                    size: 567544208,
+                    sha256: "47e9b82132fa8d2b4944e708049229601448aaad7e6f296f630f2d1a32de35af",
+                }),
+                ("cuRAND", Pinned {
+                    url: "https://files.pythonhosted.org/packages/b9/75/70c05b2f3ed5be3bb30b7102b6eb78e100da4bbf6944fd6725c012831cab/nvidia_curand_cu12-10.3.9.90-py3-none-win_amd64.whl",
+                    size: 62765309,
+                    sha256: "f149a8ca457277da854f89cf282d6ef43176861926c7ac85b2a0fbd237c587ec",
+                }),
+                ("cuDNN", Pinned {
+                    url: "https://files.pythonhosted.org/packages/a7/a5/48f07449fc9c6cc146dcafe6149fa5d69630137d2ec5b7d9e09f255fadd7/nvidia_cudnn_cu12-9.19.0.56-py3-none-win_amd64.whl",
+                    size: 644003014,
+                    sha256: "cec70596b9ce878fab83810c3f5a2e606d35f510e5fee579759e4cbc68a23750",
+                }),
+            ],
             lib_exts: &[".dll"],
         }),
         _ => None,
     }
 }
-
-/// NVIDIA runtime wheels, pinned to a set known to work together.
-const WHEELS: [(&str, &str); 4] = [
-    ("nvidia-cuda-runtime-cu12", "12.8.90"),
-    ("nvidia-cublas-cu12", "12.8.4.1"),
-    ("nvidia-curand-cu12", "10.3.9.90"),
-    ("nvidia-cudnn-cu12", "9.19.0.56"),
-];
 
 /// Where `install` assembles the pack before moving it into place.
 pub fn staging_dir(pack_dir: &Path) -> PathBuf {
@@ -128,23 +178,16 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
     fs::create_dir_all(&libs)?;
 
     let result = (|| -> Result<()> {
-        // sherpa-onnx + ONNX Runtime with the CUDA provider: stream the archive, keep the libraries.
-        let (body, len) = net::get(platform.sherpa_url, cancel)?;
-        let total = len.unwrap_or(0);
-        let reader = net::ProgressReader::new(body, cancel, |n| on_progress("ONNX Runtime (CUDA)", n, total));
-        let mut archive = tar::Archive::new(bzip2::read::BzDecoder::new(reader));
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            if let Some(name) = keep_lib(&path, platform.lib_exts) {
-                entry.unpack(libs.join(name))?;
-            }
-        }
+        // Each download is verified before anything is unpacked from it.
+        let Pinned { url, size, sha256 } = platform.sherpa;
+        let archive = staging.join("sherpa-onnx.tar.bz2");
+        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress("ONNX Runtime (CUDA)", n, size))?;
+        extract_tar_libs(&archive, &libs, platform.lib_exts)?;
+        fs::remove_file(&archive)?;
 
-        for (name, version) in WHEELS {
-            let (url, size) = wheel_url(name, version, platform.wheel_tag, cancel)?;
-            let wheel = staging.join(format!("{name}.whl"));
-            net::download(&url, &wheel, cancel, |n, _| on_progress(name, n, size))?;
+        for (label, Pinned { url, size, sha256 }) in platform.wheels {
+            let wheel = staging.join("wheel.whl");
+            net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| on_progress(label, n, size))?;
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }
@@ -178,33 +221,51 @@ fn keep_lib<'a>(path: &'a Path, exts: &[&str]) -> Option<&'a str> {
     (is_lib && !name.contains("tensorrt")).then_some(name)
 }
 
-fn wheel_url(name: &str, version: &str, tag: &str, cancel: &AtomicBool) -> Result<(String, u64)> {
-    let (mut body, _) = net::get(&format!("https://pypi.org/pypi/{name}/{version}/json"), cancel)?;
-    let mut text = String::new();
-    body.read_to_string(&mut text)?;
-    let json: Value = serde_json::from_str(&text)?;
-    let files = json["urls"].as_array().context("unexpected PyPI response")?;
-    let file = files
-        .iter()
-        .find(|f| {
-            let fname = f["filename"].as_str().unwrap_or_default();
-            fname.ends_with(".whl") && fname.contains(tag) && (tag != "manylinux" || fname.contains("x86_64"))
-        })
-        .with_context(|| format!("no {tag} wheel for {name} {version}"))?;
-    Ok((file["url"].as_str().context("wheel has no URL")?.to_string(), file["size"].as_u64().unwrap_or(0)))
+/// Creates `path` afresh, so an earlier entry can't redirect the write elsewhere.
+fn create_fresh(path: &Path) -> io::Result<File> {
+    let _ = fs::remove_file(path);
+    fs::OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// Unpacks the libraries from the sherpa-onnx archive into `dest`: regular files,
+/// plus symlinks between libraries in the same directory (libfoo.so -> libfoo.so.1).
+/// Hard links, devices and links pointing elsewhere are skipped.
+fn extract_tar_libs(archive: &Path, dest: &Path, exts: &[&str]) -> Result<()> {
+    let mut tar = tar::Archive::new(bzip2::read::BzDecoder::new(File::open(archive)?));
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        let Some(name) = keep_lib(&path, exts) else { continue };
+        let kind = entry.header().entry_type();
+        if kind.is_file() {
+            io::copy(&mut entry, &mut create_fresh(&dest.join(name))?)?;
+        } else if kind.is_symlink() {
+            let Some(target) = entry.link_name()?.map(|t| t.into_owned()) else { continue };
+            let bare = target.components().count() == 1 && target.file_name().is_some();
+            if bare {
+                let link = dest.join(name);
+                let _ = fs::remove_file(&link);
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&target, &link)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn extract_wheel_libs(wheel: &Path, dest: &Path, exts: &[&str]) -> Result<()> {
     let mut zip = zip::ZipArchive::new(File::open(wheel)?)?;
     for i in 0..zip.len() {
         let mut file = zip.by_index(i)?;
+        if !file.is_file() || file.is_symlink() {
+            continue;
+        }
         let Some(path) = file.enclosed_name() else { continue };
         if !path.starts_with("nvidia") {
             continue;
         }
         if let Some(name) = keep_lib(&path, exts) {
-            let mut out = File::create(dest.join(name))?;
-            io::copy(&mut file, &mut out)?;
+            io::copy(&mut file, &mut create_fresh(&dest.join(name))?)?;
         }
     }
     Ok(())
@@ -228,6 +289,21 @@ mod tests {
         assert_eq!(batch_for_free_vram(6000), Some(4));
         assert_eq!(batch_for_free_vram(3500), Some(1));
         assert_eq!(batch_for_free_vram(3499), None);
+    }
+
+    /// Downloads the real pack (~1.7 GB) into $VODSCRIBE_TEST_PACK_DIR, checking the
+    /// pinned hashes and the unpacked libraries: `cargo test -p vodscribe-core -- --ignored`.
+    #[test]
+    #[ignore]
+    fn installs_the_pinned_pack() {
+        let dir = PathBuf::from(std::env::var("VODSCRIBE_TEST_PACK_DIR").expect("set VODSCRIBE_TEST_PACK_DIR"));
+        install(&dir, &AtomicBool::new(false), |_, _, _| {}).unwrap();
+        assert!(is_installed(&dir));
+        let names: Vec<String> =
+            fs::read_dir(lib_dir(&dir)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        for want in ["onnxruntime", "cudnn", "cublas", "cudart", "curand"] {
+            assert!(names.iter().any(|n| n.contains(want)), "no {want} library in {names:?}");
+        }
     }
 
     #[test]

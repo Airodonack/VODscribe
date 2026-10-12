@@ -2,13 +2,11 @@
 //! tools/model-export and served from VODscribe's model bucket. Every file is
 //! pinned by size and SHA-256.
 
-use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
-use anyhow::{Context, Result, bail};
-use sha2::{Digest, Sha256};
+use anyhow::{Context, Result};
 
 use crate::net;
 
@@ -17,8 +15,10 @@ use crate::net;
 const MODELS_BASE_URL: &str = "https://dl.vodscribe.com/models";
 
 /// Overrides the base URL, e.g. to test against a local server.
+/// `VODSCRIBE_MODELS_URL` overrides the server in debug builds, for testing.
 fn base_url() -> String {
-    std::env::var("VODSCRIBE_MODELS_URL").unwrap_or_else(|_| MODELS_BASE_URL.to_string())
+    let dev = cfg!(debug_assertions).then(|| std::env::var("VODSCRIBE_MODELS_URL").ok()).flatten();
+    dev.unwrap_or_else(|| MODELS_BASE_URL.to_string())
 }
 
 pub struct ModelFile {
@@ -98,7 +98,7 @@ pub fn install(
         let path = staging.join(file.name);
         if !fs::metadata(&path).is_ok_and(|m| m.len() == file.size) {
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
-            download_verified(&url, &path, file, cancel, |n| on_progress(done + n, total))
+            net::download_verified(&url, &path, Some(file.size), file.sha256, cancel, |n| on_progress(done + n, total))
                 .with_context(|| format!("download {}", file.name))?;
         }
         done += file.size;
@@ -108,51 +108,6 @@ pub fn install(
     let _ = fs::remove_dir_all(&dest);
     fs::rename(&staging, &dest)?;
     Ok(dest)
-}
-
-fn download_verified(
-    url: &str,
-    dest: &Path,
-    file: &ModelFile,
-    cancel: &AtomicBool,
-    on_progress: impl FnMut(u64),
-) -> Result<()> {
-    let part = dest.with_extension("part");
-    let result = (|| -> Result<()> {
-        let (body, _) = net::get(url, cancel)?;
-        let mut reader = net::ProgressReader::new(body, cancel, on_progress);
-        let mut out = File::create(&part)?;
-        let mut hasher = Sha256::new();
-        let mut buf = vec![0u8; 1 << 16];
-        let mut len = 0u64;
-        loop {
-            let n = match reader.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e.into()),
-            };
-            hasher.update(&buf[..n]);
-            out.write_all(&buf[..n])?;
-            len += n as u64;
-        }
-        out.flush()?;
-        let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        if len != file.size || hash != file.sha256 {
-            bail!("the download was corrupted ({len} bytes, sha256 {hash}); try again");
-        }
-        Ok(())
-    })();
-    match result {
-        Ok(()) => Ok(fs::rename(&part, dest)?),
-        Err(e) => {
-            let _ = fs::remove_file(&part);
-            if cancel.load(Ordering::Relaxed) {
-                bail!("canceled");
-            }
-            Err(e)
-        }
-    }
 }
 
 /// Deletes model dirs that aren't in `keep`, such as the sherpa-onnx int8
