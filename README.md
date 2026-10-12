@@ -19,9 +19,10 @@ On first run the app downloads what it needs into its data directory: yt-dlp, ff
 
 ### Privacy
 
-Audio, transcripts and searches stay on your computer; there's no account, telemetry or update check. The app contacts other servers only for these:
+Audio, transcripts and searches stay on your computer; there's no account or telemetry. The app contacts other servers only for these:
 
-- **Setup and updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key); ffmpeg and Deno from their builders' GitHub releases or site, the speech model from `dl.vodscribe.com`, and the optional GPU add-on from GitHub and PyPI (each file pinned by SHA-256).
+- **App updates:** at launch and once a day, the app fetches `dl.vodscribe.com/releases/latest.json`, which names the newest version. Updates install only when the user agrees, and only if signed with VODscribe's update key.
+- **Setup and tool updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key); ffmpeg and Deno from their builders' GitHub releases or site, the speech model from `dl.vodscribe.com`, and the optional GPU add-on from GitHub and PyPI (each file pinned by SHA-256).
 - **Adding a VOD:** yt-dlp fetches its details and audio from the platform, and the app saves a copy of its thumbnail. Local files are read in place, and nothing about them is sent anywhere.
 - **Playing a VOD:** only after you click play or a timestamp, the platform's player loads (YouTube's privacy-enhanced `youtube-nocookie.com` embed, Twitch's player, or Kick's stream). YouTube and Twitch run in sandboxed frames with no access to the app.
 
