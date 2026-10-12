@@ -92,7 +92,8 @@
     const picked = await open({
       multiple: true,
       directory: false,
-      filters: [{ name: "Video and audio", extensions }],
+      // No list (it failed to load) means no filter: an empty one would hide every file.
+      filters: extensions.length ? [{ name: "Video and audio", extensions }] : [],
     }).catch(() => null);
     if (picked) addItems(Array.isArray(picked) ? picked : [picked], true);
   }

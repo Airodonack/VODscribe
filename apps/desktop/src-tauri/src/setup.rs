@@ -184,7 +184,13 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
         worker: tools::sidecar("vodscribe-worker-cuda").is_ok(),
         gpu,
         min_free_mb: gpu::MIN_FREE_MB,
-        download_bytes: gpu::download_size() + model::GPU_MODEL.total_bytes(),
+        // Only what's missing, such as just the pack after an update changes it.
+        download_bytes: if gpu::is_installed(&pack) { 0 } else { gpu::download_size() }
+            + if model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL) {
+                0
+            } else {
+                model::GPU_MODEL.total_bytes()
+            },
     })
 }
 
@@ -201,9 +207,15 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         // bar only moves forward and the files read "(1 of 10)" to "(10 of 10)".
         let pack_needed = !gpu::is_installed(&paths.gpu_pack());
         let (pack_total, pack_parts) = if pack_needed { (gpu::download_size(), gpu::download_parts()) } else { (0, 0) };
-        let total_bytes = pack_total + model::GPU_MODEL.total_bytes();
+        // The model counts only if it's missing too; install returns at once if not.
+        let (model_total, model_parts) = if model::is_installed(&paths.gpu_model_dir(), &model::GPU_MODEL) {
+            (0, 0)
+        } else {
+            (model::GPU_MODEL.total_bytes(), model::GPU_MODEL.files.len())
+        };
+        let total_bytes = pack_total + model_total;
         let total = Some(total_bytes);
-        let parts = pack_parts + model::GPU_MODEL.files.len();
+        let parts = pack_parts + model_parts;
         if pack_needed {
             gpu::install(&paths.gpu_pack(), never, |p| progress(Progress { total, parts, ..p }))?;
         }
