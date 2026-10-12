@@ -2,13 +2,13 @@
   import { onMount } from "svelte";
   import Icon from "$desktop/Icon.svelte";
   import Demo from "$lib/Demo.svelte";
-  import { DOWNLOADS, detectOs, type Os } from "$lib/downloads";
+  import { DOWNLOADS, detectOs, primaryDownload, type Os } from "$lib/downloads";
   import { SUPPORT } from "$lib/links";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
   onMount(() => (os = detectOs()));
-  let primary = $derived(DOWNLOADS.find((d) => d.os === os));
+  let primary = $derived(os ? primaryDownload(os) : undefined);
 
   const FAQ = [
     {

@@ -1,14 +1,12 @@
 {
   "productName": "vodscribe",
   "bundle": {
+    "targets": ["deb", "rpm"],
     "externalBin": [
       "binaries/vodscribe-worker",
       "binaries/vodscribe-worker-cuda"
     ],
     "linux": {
-      "appimage": {
-        "bundleMediaFramework": true
-      },
       "deb": {
         "desktopTemplate": "linux/vodscribe.desktop"
       },

@@ -25,8 +25,10 @@ from pathlib import Path
 BASE = "https://dl.vodscribe.com/releases"
 WINGET_ID = "Airodonack.VODscribe"
 
-# (artifact, file name suffix, stable name, updater platforms). The first platform
-# for each OS without an installer suffix is the default the updater falls back to.
+# (artifact, file name suffix, stable name, updater platforms). Windows and macOS
+# also get a plain platform the updater falls back to. Linux doesn't: each package
+# finds its own format, and anything else (such as an AppImage from 0.1.0) gets no
+# update rather than a package it can't install.
 FILES = [
     ("x86_64-pc-windows-msvc", "_x64-setup.exe", "VODscribe-windows-x64-setup.exe", ["windows-x86_64-nsis", "windows-x86_64"]),
     ("x86_64-pc-windows-msvc", ".msi", "VODscribe-windows-x64.msi", ["windows-x86_64-msi"]),
@@ -34,7 +36,6 @@ FILES = [
     ("aarch64-apple-darwin", ".app.tar.gz", "VODscribe-macos-arm64.app.tar.gz", ["darwin-aarch64-app", "darwin-aarch64"]),
     ("x86_64-apple-darwin", ".dmg", "VODscribe-macos-x64.dmg", []),
     ("x86_64-apple-darwin", ".app.tar.gz", "VODscribe-macos-x64.app.tar.gz", ["darwin-x86_64-app", "darwin-x86_64"]),
-    ("x86_64-unknown-linux-gnu", ".AppImage", "VODscribe-linux-x64.AppImage", ["linux-x86_64-appimage", "linux-x86_64"]),
     ("x86_64-unknown-linux-gnu", ".deb", "VODscribe-linux-x64.deb", ["linux-x86_64-deb"]),
     ("x86_64-unknown-linux-gnu", ".rpm", "VODscribe-linux-x64.rpm", ["linux-x86_64-rpm"]),
 ]
