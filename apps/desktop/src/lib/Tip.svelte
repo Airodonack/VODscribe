@@ -43,15 +43,14 @@
     line-height: 1.4;
     white-space: normal;
     box-shadow: var(--shadow);
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.12s;
     pointer-events: none;
+    /* Not just invisible but out of the layout while hidden, so a tip near the
+       edge of a scrolling panel (Settings) doesn't widen it. */
+    display: none;
   }
 
   .tip-anchor:hover .tip,
   .target:focus + .tip {
-    opacity: 1;
-    visibility: visible;
+    display: block;
   }
 </style>

@@ -277,6 +277,8 @@
 
   section {
     display: grid;
+    /* One column as wide as the panel, so a long row wraps instead of widening it. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     padding: 14px 16px;
     justify-items: start;
@@ -308,8 +310,9 @@
 
   .row-buttons {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 14px;
+    gap: 8px 14px;
   }
 
   section + section {
