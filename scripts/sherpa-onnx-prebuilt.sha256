@@ -1,0 +1,8 @@
+# SHA-256 of the sherpa-onnx prebuilt libraries the worker links, from the
+# v1.13.8 GitHub release. prepare-sidecars.sh refuses archives that don't match.
+3892d184be41027e18165e67f549cd4e4cdd8dcd73ac5579e97afd55e14e30b6  sherpa-onnx-v1.13.8-linux-x64-shared-lib.tar.bz2
+e1fdc5b67530e15741ef897fa5ffff297056f3bf0c6d829a27af9225a4c4b5a6  sherpa-onnx-v1.13.8-linux-x64-static-lib.tar.bz2
+9091bf160dc7fdacedbc906b212badf53c2993f4e5277a0e03998e96c31d60da  sherpa-onnx-v1.13.8-osx-arm64-static-lib.tar.bz2
+a3f88da3e54c850a12d61431e73f8affcd1f13738b75b768847dd79541835b4b  sherpa-onnx-v1.13.8-osx-x64-static-lib.tar.bz2
+b8eedf41bd6d3779218887b48367bb7a3ece5aaa7667f01f69ee823a12b0a9e7  sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-lib.tar.bz2
+56ffcf3c454c1f14f7bc9887286cc8143e7e542dc632804e1c447d5f8d534eaf  sherpa-onnx-v1.13.8-win-x64-static-MT-Release-lib.tar.bz2

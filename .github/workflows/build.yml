@@ -33,21 +33,33 @@ jobs:
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Map the runner's paths out of panic messages and debug info in the binaries.
+      # RUSTFLAGS replaces .cargo/config.toml's target flags, so repeat crt-static.
+      - name: Remap build paths
+        shell: bash
+        run: |
+          home="$HOME" work="$PWD"
+          if [[ "$RUNNER_OS" == Windows ]]; then home=$(cygpath -w "$HOME") work=$(cygpath -w "$PWD"); fi
+          flags="--remap-path-prefix=$home=~ --remap-path-prefix=$work=."
+          if [[ "${{ matrix.target }}" == *windows* ]]; then flags="$flags -C target-feature=+crt-static"; fi
+          echo "RUSTFLAGS=$flags" >> "$GITHUB_ENV"
 
       # Reads the pnpm version from package.json's packageManager field.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: lts/*
           cache: pnpm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: ${{ matrix.target }}
 
@@ -68,7 +80,7 @@ jobs:
       - name: Build app and installers
         run: pnpm --filter desktop tauri build --target ${{ matrix.target }}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vodscribe-${{ matrix.target }}
           path: |
