@@ -1,5 +1,5 @@
 //! Speech models: Parakeet TDT 0.6B v3, exported and quantized by
-//! tools/model-export and served from vodscribe's model bucket. Every file is
+//! tools/model-export and served from VODscribe's model bucket. Every file is
 //! pinned by size and SHA-256.
 
 use std::fs::{self, File};

@@ -1,4 +1,4 @@
-//! Everything vodscribe does that isn't UI: fetching VOD audio with yt-dlp,
+//! Everything VODscribe does that isn't UI: fetching VOD audio with yt-dlp,
 //! decoding it with ffmpeg, transcribing it with Parakeet (via sherpa-onnx)
 //! and indexing the transcript in SQLite for phrase search.
 

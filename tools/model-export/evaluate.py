@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scores model variants by running vodscribe's own worker over a set of clips.
+"""Scores model variants by running VODscribe's own worker over a set of clips.
 
 usage: evaluate.py AUDIO_DIR REFERENCE_DIR CANDIDATE...
 

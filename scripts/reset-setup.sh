@@ -8,7 +8,7 @@ case "$(uname -s)" in
   *) echo "Unsupported OS; delete models/ and bin/ in the app data folder by hand." >&2; exit 1 ;;
 esac
 if pgrep -f 'target/(debug|release)/vodscribe$|/vodscribe-worker' >/dev/null 2>&1; then
-  echo "vodscribe is running. Quit it first." >&2
+  echo "VODscribe is running. Quit it first." >&2
   exit 1
 fi
 for dir in models bin; do

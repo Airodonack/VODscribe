@@ -115,7 +115,7 @@
 <svelte:window onkeydown={onWindowKey} onclick={onWindowClick} />
 
 <svelte:head>
-  <title>vodscribe</title>
+  <title>VODscribe</title>
 </svelte:head>
 
 {#if setup === null}

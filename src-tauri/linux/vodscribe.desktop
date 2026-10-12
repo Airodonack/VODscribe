@@ -1,0 +1,19 @@
+# Desktop entry for the .deb and .rpm (Tauri's default template, with the
+# display name fixed). Tauri names Linux packages after productName in
+# kebab-case, which would turn "VODscribe" into "vo-dscribe", so
+# tauri.linux.conf.json keeps productName lowercase and the name users see
+# comes from here.
+[Desktop Entry]
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name=VODscribe
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}

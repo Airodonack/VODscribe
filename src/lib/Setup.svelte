@@ -32,7 +32,7 @@
 </script>
 
 <div class="setup">
-  <h1>Set up vodscribe</h1>
+  <h1>Set up VODscribe</h1>
   <p class="muted">Everything runs on this computer. Two downloads are needed once.</p>
 
   <ul>

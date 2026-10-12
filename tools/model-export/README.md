@@ -1,6 +1,6 @@
 # Model export
 
-vodscribe uses NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), converted to ONNX in [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s layout. We build the model files ourselves instead of using sherpa-onnx's published int8 release, because that release silently drops stretches of speech on stream audio.
+VODscribe uses NVIDIA's [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), converted to ONNX in [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s layout. We build the model files ourselves instead of using sherpa-onnx's published int8 release, because that release silently drops stretches of speech on stream audio.
 
 ## Steps
 
@@ -20,7 +20,7 @@ run export.py $W/models/fp32
 # 2. Smaller variants built from the fp32 export.
 run quantize.py $W/models/fp32 $W/models int8-pc int8-pc-safe fp16
 
-# 3. Score each variant against fp32 with vodscribe's own workers. Runs on the
+# 3. Score each variant against fp32 with VODscribe's own workers. Runs on the
 #    host; build the workers first (scripts/prepare-sidecars.sh).
 python3 evaluate.py $W/audio $W/models/fp32 \
   int8-pc=$W/models/int8-pc int8-pc-safe=$W/models/int8-pc-safe fp16-gpu=$W/models/fp16:cuda:4

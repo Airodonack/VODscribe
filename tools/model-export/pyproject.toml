@@ -1,7 +1,7 @@
 [project]
 name = "vodscribe-model-export"
 version = "0.1.0"
-description = "Exports and quantizes Parakeet TDT 0.6B v3 for vodscribe"
+description = "Exports and quantizes Parakeet TDT 0.6B v3 for VODscribe"
 requires-python = "==3.12.*"
 dependencies = [
     "nemo-toolkit[asr]",
