@@ -205,7 +205,7 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
         let finished = {
             let mut queue = ctx.queue.lock().unwrap();
             let stop = *reason.lock().unwrap();
-            let finished = finish(stage, &ctx, &vod, result, stop, progress);
+            let finished = finish(stage, &ctx.db, &ctx.paths.work(), vod.id, result, stop, progress);
             queue.jobs.retain(|j| j.vod_id != vod.id);
             finished
         };
@@ -245,22 +245,27 @@ fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
 }
 
 /// Records how a job ended: success, a stop the user asked for, or an error.
-fn finish(stage: Stage, ctx: &Ctx, vod: &Vod, result: Result<()>, stop: Option<Stop>, progress: f64) -> Result<()> {
-    let work = ctx.paths.work();
+fn finish(
+    stage: Stage,
+    db: &Db,
+    work: &std::path::Path,
+    vod_id: i64,
+    result: Result<()>,
+    stop: Option<Stop>,
+    progress: f64,
+) -> Result<()> {
     match (result, stop) {
-        (_, Some(Stop::Delete)) => pipeline::remove_work_files(&work, vod.id),
+        (_, Some(Stop::Delete)) => pipeline::remove_work_files(work, vod_id),
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
-        (_, Some(Stop::Pause)) => ctx.db.set_status(vod.id, Status::Paused, progress, None)?,
-        (_, Some(Stop::Cancel)) => discard(&ctx.db, &work, vod.id)?,
+        (_, Some(Stop::Pause)) => db.set_status(vod_id, Status::Paused, progress, None)?,
+        (_, Some(Stop::Cancel)) => discard(db, work, vod_id)?,
         (Ok(()), None) => {}
         // Stopped without a recorded reason: keep the work, as a pause would.
-        (Err(e), None) if vodscribe_core::is_canceled(&e) => {
-            ctx.db.set_status(vod.id, Status::Paused, progress, None)?
-        }
+        (Err(e), None) if vodscribe_core::is_canceled(&e) => db.set_status(vod_id, Status::Paused, progress, None)?,
         (Err(e), None) => {
             // The VOD may have been deleted while running; ignore that case.
-            let _ = ctx.db.set_status(vod.id, Status::Error, 0.0, Some(&format!("{e:#}")));
+            let _ = db.set_status(vod_id, Status::Error, 0.0, Some(&format!("{e:#}")));
         }
     }
     Ok(())
@@ -374,4 +379,95 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
         lib_dirs: vec![gpu::lib_dir(&pack)],
     };
     Ok((Transcription { worker: cuda, fallback: Some(cpu) }, Some("Transcribed with the graphics card.".into())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vodscribe_core::fetch::VodInfo;
+
+    /// A library with one VOD in `status`, and a work dir holding its audio.
+    fn setup(status: Status) -> (Db, std::path::PathBuf, i64) {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let id = db.add_vod(&info).unwrap().0.id;
+        db.set_status(id, status, 0.5, None).unwrap();
+        let work = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), rand_suffix()));
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
+        db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
+        (db, work, id)
+    }
+
+    fn rand_suffix() -> u64 {
+        use std::sync::atomic::AtomicU64;
+        static N: AtomicU64 = AtomicU64::new(0);
+        N.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn status(db: &Db, id: i64) -> (Status, Option<String>) {
+        let vod = db.vod(id).unwrap().unwrap();
+        (vod.status, vod.error)
+    }
+
+    #[test]
+    fn a_pause_keeps_the_work() {
+        let (db, work, id) = setup(Status::Downloading);
+        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4).unwrap();
+        assert_eq!(status(&db, id).0, Status::Paused);
+        assert_eq!(db.vod(id).unwrap().unwrap().progress, 0.4);
+        assert!(work.join(format!("{id}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_cancel_discards_the_work_and_says_stopped() {
+        let (db, work, id) = setup(Status::Transcribing);
+        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+            .unwrap();
+        assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
+        assert_eq!(db.audio_path(id).unwrap(), None);
+        assert!(!work.join(format!("{id}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_delete_only_cleans_up_files() {
+        let (db, work, id) = setup(Status::Downloading);
+        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Delete), 0.4).unwrap();
+        assert!(!work.join(format!("{id}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_transcript_that_finished_before_the_stop_is_kept() {
+        let (db, work, id) = setup(Status::Done);
+        for stop in [Stop::Pause, Stop::Cancel] {
+            finish(Stage::Transcribe, &db, &work, id, Ok(()), Some(stop), 1.0).unwrap();
+            assert_eq!(status(&db, id), (Status::Done, None));
+        }
+    }
+
+    #[test]
+    fn a_stop_with_no_reason_is_a_pause_and_a_failure_is_an_error() {
+        let (db, work, id) = setup(Status::Downloading);
+        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), None, 0.3).unwrap();
+        assert_eq!(status(&db, id).0, Status::Paused);
+        finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("HTTP 404")), None, 0.3).unwrap();
+        assert_eq!(status(&db, id), (Status::Error, Some("HTTP 404".into())));
+    }
+
+    #[test]
+    fn a_vod_deleted_while_running_is_no_error() {
+        let (db, work, id) = setup(Status::Downloading);
+        db.delete_vod(id).unwrap();
+        finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("gone")), None, 0.3).unwrap();
+        assert!(db.vod(id).unwrap().is_none());
+    }
 }
