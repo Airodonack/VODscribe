@@ -132,9 +132,8 @@
           <span class="search-icon muted"><Icon name="search" /></span>
           <input type="search" placeholder="Search for a phrase…" bind:value={query} aria-label="Search" />
           {#if selected}
-            <span class="scope" title={selected.title}>
-              <span class="scope-in">in</span>
-              <span class="scope-title">{selected.title}</span>
+            <span class="scope" title={`Only searching “${selected.title}”`}>
+              <span class="scope-title">This VOD only</span>
               <button class="scope-clear" onclick={() => (selectedId = null)} aria-label="Search all VODs" title="Search all VODs">
                 <Icon name="x" size={13} />
               </button>
@@ -165,7 +164,7 @@
 
       {#if playing && playingVod}
         {#key playing.vodId}
-          <Player vod={playingVod} at={playing.at} onclose={() => (playing = null)} />
+          <Player vod={playingVod} at={playing.at} />
         {/key}
       {/if}
 
@@ -261,7 +260,6 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    max-width: 45%;
     height: 24px;
     padding: 0 4px 0 9px;
     border-radius: 12px;
@@ -269,10 +267,6 @@
     color: var(--text);
     font-size: 12px;
     white-space: nowrap;
-  }
-
-  .scope-in {
-    color: var(--muted);
   }
 
   .scope-title {
@@ -297,7 +291,7 @@
   }
 
   .search:has(.scope) input {
-    padding-right: calc(45% + 44px);
+    padding-right: 160px;
   }
 
   .settings-anchor {

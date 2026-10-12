@@ -58,13 +58,21 @@
 
   // Thumbnails that fail to load fall back to the platform tile.
   let broken = $state(new Set<number>());
+
+  const toggle = (vod: Vod) => onselect(vod.id === selectedId ? null : vod.id);
+
+  // The whole row selects, except its action buttons (and the main button,
+  // which handles itself so it also works from the keyboard).
+  function onRowClick(e: MouseEvent, vod: Vod) {
+    if ((e.target as HTMLElement).closest("button")) return;
+    toggle(vod);
+  }
 </script>
 
 <aside>
   <div class="brand">
     <span class="mark" aria-hidden="true"></span>
     <span class="name">VODscribe</span>
-    {#if vods.length > 0}<span class="count muted">{vods.length}</span>{/if}
   </div>
 
   <form onsubmit={add}>
@@ -80,8 +88,9 @@
       {@const active = vod.status === "downloading" || vod.status === "transcribing"}
       {@const showBar = active || (vod.status === "paused" && vod.progress > 0)}
       {@const platform = platformName[vod.platform] ?? vod.platform}
-      <div class="vod" class:selected={vod.id === selectedId}>
-        <button class="main" onclick={() => onselect(vod.id === selectedId ? null : vod.id)}>
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="vod" class:selected={vod.id === selectedId} onclick={(e) => onRowClick(e, vod)}>
+        <button class="main" onclick={() => toggle(vod)}>
           <span class="thumb {vod.platform}">
             {#if vod.thumbnail && !broken.has(vod.id)}
               <img
@@ -185,12 +194,6 @@
     letter-spacing: -0.01em;
   }
 
-  .count {
-    margin-left: auto;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-  }
-
   form {
     display: flex;
     gap: 6px;
@@ -212,6 +215,7 @@
   }
 
   .vod {
+    cursor: pointer;
     padding: 10px 12px 9px;
     border-bottom: 1px solid var(--border);
     transition: background 0.1s;

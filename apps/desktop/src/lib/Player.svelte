@@ -8,7 +8,11 @@
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
   // jump, so jumping to the same timestamp twice still seeks.
-  let { vod, at, onclose }: { vod: Vod; at: { time: number; play: boolean }; onclose: () => void } = $props();
+  let { vod, at }: { vod: Vod; at: { time: number; play: boolean } } = $props();
+
+  // Collapsing hides the video but keeps the player loaded; a jump reopens it.
+  let collapsed = $state(false);
+  let showKeys = $state(false);
 
   let host = $state<HTMLDivElement>();
   let player: EmbeddedPlayer | null = null;
@@ -70,6 +74,7 @@
     }
     if (player) player.seek(leadIn(time), play);
     else pending = { time, play };
+    collapsed = false;
   });
 
   let destroyed = false;
@@ -85,23 +90,46 @@
   <div class="head">
     <div class="info">
       <strong title={vod.title}>{vod.title}</strong>
+      <span class="meta muted">
+        <span class="platform {vod.platform}">{site}</span>
+        {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
+        {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
+      </span>
       {#if at.time > 0}<span class="time">{formatTime(at.time)}</span>{/if}
     </div>
-    <span
-      class="keys muted"
-      title="Space or K: play/pause · ← →: 5 s (Shift: 1 s) · J L: 10 s"
-      aria-label="Keyboard shortcuts: Space or K play/pause, arrows 5 seconds, Shift and arrows 1 second, J and L 10 seconds"
-      ><Icon name="keyboard" size={15} /></span
+    <button
+      class="icon keys"
+      class:on={showKeys}
+      onclick={() => (showKeys = !showKeys)}
+      aria-expanded={showKeys}
+      aria-label="Keyboard shortcuts"
+      title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
     >
     <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
       Open on {site} <Icon name="external" size={12} />
     </button>
-    <button class="icon close" onclick={onclose} aria-label="Close player" title="Close player">
-      <Icon name="x" size={16} />
-    </button>
+    {#if canEmbed(vod)}
+      <button
+        class="icon"
+        onclick={() => (collapsed = !collapsed)}
+        aria-expanded={!collapsed}
+        aria-label={collapsed ? "Show player" : "Hide player"}
+        title={collapsed ? "Show player" : "Hide player"}
+      >
+        <Icon name={collapsed ? "chevron-down" : "chevron-up"} size={16} />
+      </button>
+    {/if}
   </div>
+  {#if showKeys}
+    <p class="legend muted">
+      <kbd>Space</kbd> or <kbd>K</kbd> play/pause <span class="sep">·</span>
+      <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
+      <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
+      <kbd>J</kbd><kbd>L</kbd> 10 s
+    </p>
+  {/if}
   {#if canEmbed(vod)}
-    <div class="stage">
+    <div class="stage" class:collapsed>
       <div class="frame" bind:this={host}></div>
     </div>
     {#if error}<p class="error-text note">{error}</p>{/if}
@@ -121,7 +149,7 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     padding: 6px 10px 6px 16px;
   }
 
@@ -134,14 +162,36 @@
   }
 
   .info strong {
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
 
-  .keys {
-    display: flex;
-    cursor: help;
+  .meta {
+    flex: none;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .sep {
+    margin: 0 4px;
+  }
+
+  .legend {
+    margin: 0;
+    padding: 0 16px 8px;
+    font-size: 12px;
+  }
+
+  .legend kbd + kbd {
+    margin-left: 2px;
+  }
+
+  .keys,
+  .head .icon {
+    width: 28px;
+    height: 28px;
   }
 
   .open {
@@ -150,13 +200,13 @@
     gap: 4px;
   }
 
-  .close {
-    width: 28px;
-    height: 28px;
-  }
-
   .stage {
     background: var(--stage);
+  }
+
+  /* Hidden, not unmounted: the player keeps its state and keeps playing. */
+  .stage.collapsed {
+    display: none;
   }
 
   .frame {

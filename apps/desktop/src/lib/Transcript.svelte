@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, type Line, type Vod } from "./api";
-  import { formatTime, platformName } from "./platform";
+  import { formatTime } from "./platform";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -24,20 +24,14 @@
 </script>
 
 <div class="transcript">
-  <header>
+  <p class="status muted">
     <span class="eyebrow">Transcript</span>
-    <h2>{vod.title}</h2>
-    <p class="meta muted">
-      <span class="platform {vod.platform}">{platformName[vod.platform] ?? vod.platform}</span>
-      {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
-      {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
-      {#if vod.status === "transcribing"}
-        <span class="sep">·</span>Transcribing, {Math.round(vod.progress * 100)}%; new lines appear as they're produced
-      {:else if lines.length > 0}
-        <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
-      {/if}
-    </p>
-  </header>
+    {#if vod.status === "transcribing"}
+      <span class="sep">·</span>{Math.round(vod.progress * 100)}% done; new lines appear as they're produced
+    {:else if lines.length > 0}
+      <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
+    {/if}
+  </p>
   {#if error}
     <p class="error-text">{error}</p>
   {:else if lines.length === 0}
@@ -55,22 +49,12 @@
 
 <style>
   .transcript {
-    padding: 14px 20px 32px;
+    padding: 10px 20px 32px;
     max-width: 960px;
   }
 
-  header {
-    margin-bottom: 14px;
-  }
-
-  h2 {
-    font-size: 16px;
-    margin: 2px 0 2px;
-    line-height: 1.3;
-  }
-
-  .meta {
-    margin: 0;
+  .status {
+    margin: 0 0 8px;
     font-size: 12px;
   }
 

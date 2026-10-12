@@ -44,11 +44,13 @@
   {/if}
   {#each groups as group (group.vodId)}
     <section>
+      {#if !scope}
       <h2>
         {#if group.vod}<span class="platform {group.vod.platform}"></span>{/if}
         <span class="title">{group.vod?.title ?? "Removed VOD"}</span>
         <span class="n muted">{group.hits.length}</span>
       </h2>
+      {/if}
       {#each group.hits as hit (hit.segment_id)}
         <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>
           <span class="time">{formatTime(hit.time)}</span>
