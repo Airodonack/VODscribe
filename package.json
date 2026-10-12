@@ -7,6 +7,9 @@
   "scripts": {
     "dev": "pnpm --filter desktop tauri dev",
     "tauri": "pnpm --filter desktop tauri",
-    "check": "pnpm --recursive check"
+    "check": "pnpm --recursive check",
+    "format": "pnpm --recursive format",
+    "lint": "pnpm --recursive lint",
+    "site": "pnpm --filter site dev"
   }
 }

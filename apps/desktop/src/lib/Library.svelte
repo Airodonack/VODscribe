@@ -248,7 +248,7 @@
       disabled={adding}
       {...demoOff("In the app, you can transcribe video files from your computer too.")}>add video files…</button
     >
-    or drop {linksDrop ? "files and links" : "video files"} anywhere
+    {#if !DEMO}or drop {linksDrop ? "files and links" : "video files"} anywhere{/if}
   </p>
   {#if error}
     <p class="error-text add-error">{error}</p>

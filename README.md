@@ -43,9 +43,10 @@ The JavaScript side is a pnpm workspace (`apps/*`) and the Rust side a Cargo wor
 ```sh
 pnpm install
 pnpm dev          # the desktop app, via `tauri dev`
+pnpm site         # the website, apps/site, at localhost:5173
 pnpm check        # type-check every app
-pnpm --filter desktop format   # Prettier (lint checks without writing)
-cargo fmt --all                # rustfmt, with the settings in rustfmt.toml
+pnpm format       # Prettier, every app (`pnpm lint` checks without writing)
+cargo fmt --all   # rustfmt, with the settings in rustfmt.toml
 ```
 
 Code is formatted with rustfmt and Prettier, and CI refuses code that isn't (`.github/workflows/check.yml` on every push, and again before release builds). Run `git config core.hooksPath .githooks` once per clone, so `.githooks/pre-commit` refuses an unformatted commit before CI does. Claude Code formats each file it edits by itself, through the hook in `.claude/settings.json`.
@@ -67,6 +68,22 @@ The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; afte
 The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
 
 `scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU pack stay.
+
+## Website
+
+`apps/site` is vodscribe.com: a landing page whose live demo is the app itself. It imports the desktop app's components (`$desktop`, `apps/desktop/src/lib`), and `vite.config.ts` swaps the Tauri modules they call for stand-ins (`apps/site/src/lib/tauri/`) that answer from transcripts in `static/demo/`, with the same phrase search as the app. With `__DEMO__` defined, controls that only work in the app gray out and explain themselves on hover (`apps/desktop/src/lib/demo.ts`); mark new ones with `demoOff`.
+
+The demo's VODs are transcribed with the CLI into a fresh library, then exported:
+
+```sh
+export VODSCRIBE_DATA=/tmp/demo
+vodscribe-cli add <url>          # for each VOD; `setup` first, or link bin/ and models/ from an existing library
+python3 apps/site/scripts/export-demo.py /tmp/demo/library.sqlite
+```
+
+`pnpm --filter site build` prerenders every page into `apps/site/build`, with a content security policy that SvelteKit writes into each page and response headers in `static/_headers`. The download buttons link to `dl.vodscribe.com/releases/latest/` (`src/lib/downloads.ts`), so each release has to be uploaded there under those names.
+
+It deploys from this repo through Cloudflare's Git integration: build command `pnpm install --frozen-lockfile && pnpm --filter site build`, with `apps/site/build` as the output directory on Pages. On Workers, `apps/site/wrangler.jsonc` sets the same directory and serves `404.html` for missing pages.
 
 ## Building
 

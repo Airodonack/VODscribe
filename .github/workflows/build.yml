@@ -78,7 +78,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo fmt --all --check
-          pnpm --filter desktop lint
+          pnpm lint
 
       - name: Build transcription workers
         shell: bash

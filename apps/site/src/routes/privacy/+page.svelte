@@ -1,0 +1,67 @@
+<script lang="ts">
+  import { SUPPORT } from "$lib/links";
+</script>
+
+<svelte:head>
+  <title>Privacy · VODscribe</title>
+  <meta
+    name="description"
+    content="What VODscribe and vodscribe.com do with your data: nothing leaves your computer."
+  />
+</svelte:head>
+
+<article class="prose">
+  <h1>Privacy</h1>
+  <p class="muted">Last updated October 12, 2026</p>
+
+  <p>
+    VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
+    collects anything about you or how you use them.
+  </p>
+
+  <h2>The app</h2>
+  <ul>
+    <li>
+      Your library, transcripts and searches are stored only on your computer, in VODscribe's data folder (Settings
+      shows where). Video files you add from your computer are read where they are, and never copied or uploaded.
+    </li>
+    <li>VODscribe has no analytics, telemetry or crash reporting.</li>
+  </ul>
+  <p>It goes online only to:</p>
+  <ul>
+    <li>
+      <strong>Get the VODs you add.</strong> It downloads their details and audio from Kick, Twitch or YouTube, the way your
+      browser would.
+    </li>
+    <li>
+      <strong>Play them.</strong> YouTube and Twitch VODs play in those sites' own players, which load only when you play
+      one. YouTube's player is its privacy-enhanced version (youtube-nocookie.com).
+    </li>
+    <li>
+      <strong>Download what it needs to run.</strong> On first run, and when you ask: the video downloader (yt-dlp, from GitHub),
+      the video reader (FFmpeg, from GitHub or ffmpeg.martin-riedl.de), the YouTube helper (Deno, from GitHub) and the speech
+      model (from dl.vodscribe.com). The optional GPU add-on comes from GitHub and NVIDIA's packages on PyPI. Every file is
+      checked against a known fingerprint before it's used.
+    </li>
+  </ul>
+  <p>
+    Those sites see what any website sees when you visit: your IP address and what was requested. dl.vodscribe.com is
+    hosted by Cloudflare and keeps no logs of its own.
+  </p>
+
+  <h2>This website</h2>
+  <p>
+    vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
+    like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
+    when you play a VOD.
+  </p>
+
+  <h2>Donations</h2>
+  <p>
+    Support goes through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>, under its own privacy policy. I see
+    what Ko-fi shows creators: the name and message you choose to leave.
+  </p>
+
+  <h2>Questions</h2>
+  <p>Send a message through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>.</p>
+</article>

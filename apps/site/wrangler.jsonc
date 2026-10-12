@@ -1,0 +1,10 @@
+// For deploying to Cloudflare Workers (static assets only, no code). Cloudflare
+// Pages ignores this file and uses its dashboard settings instead (see README).
+{
+  "name": "vodscribe-site",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./build",
+    "not_found_handling": "404-page",
+  },
+}

@@ -38,4 +38,4 @@ jobs:
       - run: cargo fmt --all --check
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter desktop lint
+      - run: pnpm lint

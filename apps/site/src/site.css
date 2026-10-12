@@ -1,0 +1,40 @@
+/* The site uses the app's styles (apps/desktop/src/app.css), which are made
+   for a fixed window: the page scrolls here. */
+html,
+body {
+  height: auto;
+  overflow: visible;
+  overflow-x: hidden;
+}
+
+body {
+  font-size: 15px;
+}
+
+a {
+  color: var(--accent);
+}
+
+/* Text pages: privacy, licenses. */
+.prose {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 24px 64px;
+  line-height: 1.65;
+}
+
+.prose h1 {
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 16px 0 8px;
+}
+
+.prose h2 {
+  font-size: 19px;
+  margin: 36px 0 8px;
+}
+
+.prose li + li {
+  margin-top: 6px;
+}

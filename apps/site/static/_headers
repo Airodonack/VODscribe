@@ -1,0 +1,11 @@
+# Cloudflare response headers. The content security policy is a <meta> tag
+# SvelteKit writes into each page (svelte.config.js).
+/*
+  X-Frame-Options: DENY
+  Content-Security-Policy: frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+
+/demo/*
+  Cache-Control: public, max-age=3600
