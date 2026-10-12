@@ -378,7 +378,9 @@ async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()
 }
 
 /// Kick VODs added before the app resolved their poster image have none;
-/// fetch it once, in the background.
+/// fetch it once, in the background. VODs without one (deleted, or Kick has no
+/// poster) get an empty thumbnail so they aren't asked about again; network
+/// failures are retried on the next launch.
 fn backfill_kick_thumbnails(app: AppHandle) {
     let state = app.state::<AppState>();
     let missing: Vec<Vod> = match state.db.lock().unwrap().vods() {
@@ -386,8 +388,8 @@ fn backfill_kick_thumbnails(app: AppHandle) {
         Err(_) => return,
     };
     for vod in missing {
-        let Ok((info, _)) = vodscribe_core::kick::resolve(&vod.info.url) else { continue };
-        let Some(thumbnail) = info.thumbnail else { continue };
+        let Ok(poster) = vodscribe_core::kick::poster(&vod.info.url) else { continue };
+        let thumbnail = poster.unwrap_or_default();
         if state.db.lock().unwrap().set_thumbnail(vod.id, &thumbnail).is_ok() {
             let _ = emit_vod(&app, &state.db.lock().unwrap(), vod.id);
         }

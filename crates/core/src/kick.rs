@@ -24,6 +24,31 @@ pub fn parse_vod_url(url: &str) -> Option<(String, String)> {
 /// Resolves a Kick VOD to its metadata and a (short-lived, signed) HLS manifest URL.
 pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
     let (slug, id) = parse_vod_url(url).context("not a Kick VOD link")?;
+    let (status, json) = playback(&id)?;
+    if status == 404 {
+        bail!("Kick says this VOD doesn't exist. It may have been deleted or made private.");
+    }
+    if status != 200 {
+        let kind = json.pointer("/data/type").and_then(Value::as_str).unwrap_or("unknown error");
+        bail!("Kick returned {status} ({kind})");
+    }
+    parse_playback(&json, &slug, &id)
+}
+
+/// Just the poster image, which Kick also returns for VODs that can't be played
+/// (subscriber-only). `None` when Kick has none or the VOD is gone; an error
+/// only for failures worth retrying later (network, rate limits, server errors).
+pub fn poster(url: &str) -> Result<Option<String>> {
+    let Some((_, id)) = parse_vod_url(url) else { return Ok(None) };
+    let (status, json) = playback(&id)?;
+    if status == 429 || status >= 500 {
+        bail!("Kick returned {status}");
+    }
+    Ok(json.pointer("/playback_url/thumbnail").and_then(Value::as_str).and_then(poster_url))
+}
+
+/// The playback endpoint's status and JSON body.
+fn playback(id: &str) -> Result<(u16, Value)> {
     let body = json!({
         "video_player": { "player": {} },
         "video_session": {},
@@ -39,15 +64,7 @@ pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
         .context("contact Kick")?;
     let status = resp.status().as_u16();
     let text = resp.body_mut().read_to_string().unwrap_or_default();
-    let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-    if status == 404 {
-        bail!("Kick says this VOD doesn't exist. It may have been deleted or made private.");
-    }
-    if status != 200 {
-        let kind = json.pointer("/data/type").and_then(Value::as_str).unwrap_or("unknown error");
-        bail!("Kick returned {status} ({kind})");
-    }
-    parse_playback(&json, &slug, &id)
+    Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
 }
 
 fn parse_playback(json: &Value, slug: &str, id: &str) -> Result<(VodInfo, String)> {
