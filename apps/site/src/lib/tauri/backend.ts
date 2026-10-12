@@ -3,6 +3,7 @@
 // the app (crates/core: db.rs `search`, transcript.rs `terms` and `find_phrase`).
 
 import type { Line, SearchHit, Vod } from "$desktop/api";
+import { findPhrase, highlight, terms } from "./search";
 
 /** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
 type Segment = [text: string, start: number, wordStarts: number[]];
@@ -66,47 +67,6 @@ function segments(vodId: number): Promise<Indexed[]> {
 
 export async function transcript(vodId: number): Promise<Line[]> {
   return (await segments(vodId)).map(({ start, text }) => ({ start, text }));
-}
-
-/** Lowercased alphanumeric runs with accents removed, like the app's `terms`. */
-function terms(text: string): string[] {
-  return text
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
-}
-
-/** Inclusive word-index ranges where `query` occurs; its last term matches as a prefix. */
-function findPhrase(words: Word[], query: string[]): [number, number][] {
-  const flat = words.flatMap((w, i) => w.terms.map((t) => [t, i] as const));
-  const hits: [number, number][] = [];
-  const n = query.length;
-  for (let i = 0; i + n <= flat.length;) {
-    const matched = query.every((q, j) => (j === n - 1 ? flat[i + j][0].startsWith(q) : flat[i + j][0] === q));
-    if (matched) {
-      hits.push([flat[i][1], flat[i + n - 1][1]]);
-      i += n;
-    } else i += 1;
-  }
-  return hits;
-}
-
-/** Text runs with the matched ranges marked; spaces stay out of the marks, as in the app. */
-function highlight(words: Word[], ranges: [number, number][]): SearchHit["parts"] {
-  const parts: SearchHit["parts"] = [];
-  words.forEach((w, i) => {
-    const hit = ranges.some(([a, b]) => i >= a && i <= b);
-    const sep = i === 0 ? "" : " ";
-    const last = parts.at(-1);
-    if (last && last.hit === hit) last.text += sep + w.text;
-    else if (last && hit) {
-      last.text += sep;
-      parts.push({ text: w.text, hit });
-    } else parts.push({ text: sep + w.text, hit });
-  });
-  return parts;
 }
 
 const LIMIT = 500;

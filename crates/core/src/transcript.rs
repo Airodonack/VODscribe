@@ -134,6 +134,24 @@ pub fn find_phrase(words: &[Word], query: &[String], last_is_prefix: bool) -> Ve
 mod tests {
     use super::*;
 
+    /// The cases the website's demo search is tested against too
+    /// (apps/site/src/lib/tauri/search.test.mjs), so the two stay the same.
+    #[test]
+    fn shared_phrase_search_cases() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            about: String,
+            words: Vec<String>,
+            query: String,
+            ranges: Vec<(usize, usize)>,
+        }
+        let cases: Vec<Case> = serde_json::from_str(include_str!("../tests/phrase-search.json")).unwrap();
+        for c in cases {
+            let words: Vec<Word> = c.words.into_iter().map(|text| Word { text, start: 0.0, end: 0.0 }).collect();
+            assert_eq!(find_phrase(&words, &terms(&c.query), true), c.ranges, "{}", c.about);
+        }
+    }
+
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
     }

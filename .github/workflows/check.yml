@@ -51,6 +51,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm check
+      # The demo's search against the cases the Rust search is tested with.
+      - run: node --test apps/site/src/lib/tauri/search.test.mjs
       # Also catches app code the website's demo stand-ins don't provide.
       - run: pnpm --filter site build
 
