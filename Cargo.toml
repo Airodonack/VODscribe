@@ -14,3 +14,8 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# A copy of sherpa-onnx-sys that can link sherpa-onnx's builds without
+# text-to-speech (and its GPL-3.0 espeak-ng); see third_party/README.md.
+[patch.crates-io]
+sherpa-onnx-sys = { path = "third_party/sherpa-onnx-sys" }

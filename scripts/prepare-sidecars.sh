@@ -62,12 +62,14 @@ lib_dir() {
   esac
 }
 # The static libraries for the CPU worker, and the shared ones the GPU worker links against.
+# The "no-tts" builds leave out text-to-speech, which would bring in espeak-ng (GPL-3.0);
+# third_party/sherpa-onnx-sys links them.
 shared=""
 case "$triple" in
-  x86_64-unknown-linux-gnu) static=linux-x64-static-lib shared=linux-x64-shared-lib ;;
-  x86_64-pc-windows-msvc) static=win-x64-static-MT-Release-lib shared=win-x64-shared-MT-Release-lib ;;
-  x86_64-apple-darwin) static=osx-x64-static-lib ;;
-  aarch64-apple-darwin) static=osx-arm64-static-lib ;;
+  x86_64-unknown-linux-gnu) static=linux-x64-static-no-tts-lib shared=linux-x64-shared-no-tts-lib ;;
+  x86_64-pc-windows-msvc) static=win-x64-static-MT-Release-no-tts-lib shared=win-x64-shared-MT-Release-no-tts-lib ;;
+  x86_64-apple-darwin) static=osx-x64-static-no-tts-lib ;;
+  aarch64-apple-darwin) static=osx-arm64-static-no-tts-lib ;;
   *) echo "no pinned sherpa-onnx libraries for $triple" >&2; exit 1 ;;
 esac
 verified_prebuilt "$static"
