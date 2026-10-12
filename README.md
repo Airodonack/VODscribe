@@ -8,7 +8,7 @@ Paste a Kick, Twitch or YouTube VOD link and get a transcript you can search by 
 
 ## Using it
 
-On first run the app downloads yt-dlp and the speech model (about 900 MB, from `dl.vodscribe.com`) into its data directory. ffmpeg must be installed separately. YouTube needs a JavaScript runtime for yt-dlp; Deno, Node or Bun on `PATH` is detected automatically.
+On first run the app downloads what it needs into its data directory: yt-dlp, ffmpeg (FFmpeg 9.0 from BtbN's builds on Linux and Windows, Martin Riedl's on macOS), the speech model (about 900 MB, from `dl.vodscribe.com`) and Deno, which yt-dlp needs for some YouTube VODs. Each is checked before use: yt-dlp against its signed checksums, the rest against SHA-256 sums pinned in the app (`crates/core/src/deps.rs`, `model.rs`). Copies of ffmpeg, Deno, Node or Bun already on `PATH` are used instead of downloading.
 
 - **Library.** Paste a link in the sidebar, or drop links and video or audio files anywhere on the window ("add video files…" opens a file picker). Files are transcribed where they are; the app never copies, moves or deletes them. Dropping links doesn't work on Windows yet, where pasting does. VODs download and transcribe in the background, one of each at a time, working up from the bottom of the list, and can be paused, resumed, cancelled or removed from their row. The transcript is searchable while it is still being produced. Drag a row to reorder the library (or `Alt+↑`/`↓` on a focused row); the lowest waiting VOD is processed next, and searches across the library list matches in the same order. New VODs go on top, so they wait their turn unless dragged down.
 - **Search.** Searches are exact phrases, so fewer words match more. With a VOD selected, the chip in the search field toggles between searching just that VOD and the whole library.
@@ -21,7 +21,7 @@ On first run the app downloads yt-dlp and the speech model (about 900 MB, from `
 
 Audio, transcripts and searches stay on your computer; there's no account, telemetry or update check. The app contacts other servers only for these:
 
-- **Setup and updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key), the speech model from `dl.vodscribe.com`, and the optional GPU pack from GitHub and PyPI (each file pinned by SHA-256).
+- **Setup and updates:** yt-dlp from its GitHub releases (checked against the yt-dlp signing key); ffmpeg and Deno from their builders' GitHub releases or site, the speech model from `dl.vodscribe.com`, and the optional GPU add-on from GitHub and PyPI (each file pinned by SHA-256).
 - **Adding a VOD:** yt-dlp fetches its details and audio from the platform, and the app saves a copy of its thumbnail. Local files are read in place, and nothing about them is sent anywhere.
 - **Playing a VOD:** only after you click play or a timestamp, the platform's player loads (YouTube's privacy-enhanced `youtube-nocookie.com` embed, Twitch's player, or Kick's stream). YouTube and Twitch run in sandboxed frames with no access to the app.
 

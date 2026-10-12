@@ -54,6 +54,10 @@ export interface SetupStatus {
   /** yt-dlp is the app's own copy, verified when downloaded (not one found on PATH). */
   yt_dlp_managed: boolean;
   ffmpeg: boolean;
+  ffmpeg_managed: boolean;
+  js_runtime_managed: boolean;
+  /** Setup can download ffmpeg and Deno on this platform. */
+  can_install_tools: boolean;
   model: boolean;
   js_runtime: boolean;
   running: boolean;

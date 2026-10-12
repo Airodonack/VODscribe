@@ -31,6 +31,56 @@
   });
   onDestroy(() => unlisten.forEach((u) => u()));
 
+  const CHECKED =
+    "VODscribe checked that this is exactly the file that was published, so it wasn't damaged or tampered with.";
+  let items = $derived([
+    {
+      key: "yt-dlp",
+      name: "Video downloader",
+      what: "gets the audio from Kick, Twitch and YouTube",
+      details: "yt-dlp, from github.com/yt-dlp/yt-dlp.",
+      checked: "VODscribe checked it against its makers' official signature, so it wasn't damaged or tampered with.",
+      done: status.yt_dlp,
+      managed: status.yt_dlp_managed,
+      downloads: true,
+      optional: false,
+    },
+    {
+      key: "ffmpeg",
+      name: "Video reader",
+      what: "reads the sound from videos",
+      details:
+        os === "mac" ? "FFmpeg 9.0, from ffmpeg.martin-riedl.de." : "FFmpeg 9.0, from github.com/BtbN/FFmpeg-Builds.",
+      checked: CHECKED,
+      done: status.ffmpeg,
+      managed: status.ffmpeg_managed,
+      downloads: status.can_install_tools,
+      optional: false,
+    },
+    {
+      key: "model",
+      name: "Speech recognition",
+      what: "turns speech into text, about 900 MB",
+      details: "NVIDIA's Parakeet TDT 0.6B v3 speech model, run with sherpa-onnx. From dl.vodscribe.com.",
+      checked: CHECKED,
+      done: status.model,
+      managed: true,
+      downloads: true,
+      optional: false,
+    },
+    {
+      key: "deno",
+      name: "YouTube helper",
+      what: "some YouTube VODs need it",
+      details: "Deno 2.9.7, a JavaScript runtime the video downloader uses for YouTube. From github.com/denoland/deno.",
+      checked: CHECKED,
+      done: status.js_runtime,
+      managed: status.js_runtime_managed,
+      downloads: status.can_install_tools,
+      optional: true,
+    },
+  ]);
+
   async function start() {
     error = null;
     await api.runSetup();
@@ -47,87 +97,44 @@
   <p class="muted lead">VODscribe works on your computer, not in the cloud, so your VODs and transcripts stay here.</p>
 
   <ul class="card">
-    <li>
-      <span class="check" class:ok={status.model} class:busy={running && !status.model}>
-        {#if status.model}<Icon name="check" size={14} />{:else if running}<span class="spin"></span>{:else}1{/if}
-      </span>
-      <div>
-        <strong>Speech recognition</strong>
-        <span class="muted">turns speech into text, about 900 MB</span>
-        {#if status.model}
-          <p
-            class="verified"
-            title="VODscribe checked that this is exactly the file that was published, so it wasn't damaged or tampered with."
-          >
-            <Icon name="shield" size={12} /> Downloaded and checked
-          </p>
-        {/if}
-        {#if running && !status.model}
-          <div class="bar"><Progress value={progress.model ?? 0} /></div>
-        {/if}
-      </div>
-    </li>
-    <li>
-      <span class="check" class:ok={status.yt_dlp} class:busy={running && !status.yt_dlp}>
-        {#if status.yt_dlp}<Icon name="check" size={14} />{:else if running}<span class="spin"></span>{:else}2{/if}
-      </span>
-      <div>
-        <strong>Video downloader</strong>
-        <span class="muted">gets the audio from Kick, Twitch and YouTube</span>
-        {#if status.yt_dlp_managed}
-          <p
-            class="verified"
-            title="VODscribe checked it against its makers' official signature, so it wasn't damaged or tampered with."
-          >
-            <Icon name="shield" size={12} /> Downloaded and checked
-          </p>
-        {:else if status.yt_dlp}
-          <p class="detail muted">Using the one already installed on this computer.</p>
-        {/if}
-        {#if running && !status.yt_dlp}
-          <div class="bar"><Progress value={progress["yt-dlp"] ?? 0} /></div>
-        {/if}
-      </div>
-    </li>
-    <li>
-      <span class="check" class:ok={status.ffmpeg} class:bad={!status.ffmpeg}>
-        {#if status.ffmpeg}<Icon name="check" size={14} />{:else}<Icon name="x" size={14} />{/if}
-      </span>
-      <div>
-        <strong>ffmpeg</strong>
-        <span class="muted">a free tool VODscribe uses to read audio</span>
-        {#if !status.ffmpeg}
-          <p class="detail">
-            Not installed yet.
-            {#if os === "windows"}
-              Open <strong>Terminal</strong> from the Start menu, type <code>winget install ffmpeg</code> and press Enter.
-            {:else if os === "mac"}
-              Open <strong>Terminal</strong>, type <code>brew install ffmpeg</code> and press Enter. (This uses
-              <a href="https://brew.sh" onclick={(e) => (e.preventDefault(), openUrl("https://brew.sh"))}>Homebrew</a>.)
-            {:else}
-              Install <strong>ffmpeg</strong> from your software center, or run <code>sudo apt install ffmpeg</code>.
-            {/if}
-            Then close and reopen VODscribe.
-          </p>
-        {/if}
-      </div>
-    </li>
-    <li>
-      <span class="check" class:ok={status.js_runtime}>
-        {#if status.js_runtime}<Icon name="check" size={14} />{:else}–{/if}
-      </span>
-      <div>
-        <strong>YouTube helper</strong>
-        <span class="muted">optional; some YouTube VODs need it</span>
-        {#if !status.js_runtime}
-          <p class="detail muted">
-            If YouTube links fail to add, install
-            <a href="https://deno.com" onclick={(e) => (e.preventDefault(), openUrl("https://deno.com"))}>Deno</a> (free),
-            then reopen VODscribe.
-          </p>
-        {/if}
-      </div>
-    </li>
+    {#each items as item, i (item.key)}
+      <!-- Downloads run one at a time: only the one under way spins. -->
+      {@const busy = running && !item.done && item.downloads && (progress[item.key] ?? 0) > 0}
+      <li>
+        <span class="check" class:ok={item.done} class:busy class:bad={!item.done && !item.downloads && !item.optional}>
+          {#if item.done}<Icon name="check" size={14} />{:else if busy}<span class="spin"
+            ></span>{:else if !item.downloads && !item.optional}<Icon name="x" size={14} />{:else}{i + 1}{/if}
+        </span>
+        <div>
+          <!-- The plain name for everyone; exact names and sources on hover. -->
+          <strong class="name-detail" title={item.details}>{item.name}</strong>
+          <span class="muted">{item.what}</span>
+          {#if item.done && item.managed}
+            <p class="verified" title={item.checked}>
+              <Icon name="shield" size={12} /> Downloaded and checked
+            </p>
+          {:else if item.done}
+            <p class="detail muted">Using the one already installed on this computer.</p>
+          {:else if busy}
+            <div class="bar"><Progress value={progress[item.key] ?? 0} /></div>
+          {:else if item.key === "ffmpeg" && !item.downloads}
+            <p class="detail">
+              Not installed yet.
+              {#if os === "windows"}
+                Open <strong>Terminal</strong> from the Start menu, type <code>winget install ffmpeg</code> and press Enter.
+              {:else if os === "mac"}
+                Open <strong>Terminal</strong>, type <code>brew install ffmpeg</code> and press Enter. (This uses
+                <a href="https://brew.sh" onclick={(e) => (e.preventDefault(), openUrl("https://brew.sh"))}>Homebrew</a
+                >.)
+              {:else}
+                Install <strong>ffmpeg</strong> from your software center, or run <code>sudo apt install ffmpeg</code>.
+              {/if}
+              Then close and reopen VODscribe.
+            </p>
+          {/if}
+        </div>
+      </li>
+    {/each}
   </ul>
 
   {#if error}
@@ -135,7 +142,7 @@
   {/if}
 
   <div class="actions">
-    {#if !status.model || !status.yt_dlp}
+    {#if items.some((item) => !item.done && item.downloads)}
       <button class="primary" onclick={start} disabled={running}>
         {#if running}Downloading…{:else}<Icon name="download" size={15} /> Download{/if}
       </button>
@@ -273,6 +280,13 @@
     display: flex;
     gap: 6px;
     align-items: center;
+  }
+
+  /* Hovering shows the exact name and source. */
+  .name-detail {
+    cursor: help;
+    text-decoration: underline dotted var(--border);
+    text-underline-offset: 3px;
   }
 
   .detail a {

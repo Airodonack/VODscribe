@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
-use vodscribe_core::{model, tools};
+use vodscribe_core::{deps, model, tools};
 
 use crate::{AppState, CmdResult, err};
 
@@ -19,8 +19,13 @@ pub(crate) struct SetupStatus {
     /// yt-dlp is the app's own copy, verified when downloaded, rather than one found on PATH.
     yt_dlp_managed: bool,
     ffmpeg: bool,
+    /// ffmpeg is the app's own checked copy (in its bin dir).
+    ffmpeg_managed: bool,
     model: bool,
     js_runtime: bool,
+    js_runtime_managed: bool,
+    /// Setup can download ffmpeg and Deno on this platform.
+    can_install_tools: bool,
     running: bool,
 }
 
@@ -31,8 +36,11 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
         yt_dlp: tools::find_yt_dlp(&bin).is_some(),
         yt_dlp_managed: tools::managed_yt_dlp(&bin).is_file(),
         ffmpeg: tools::find_ffmpeg(&bin).is_some(),
+        ffmpeg_managed: bin.join(format!("ffmpeg{}", std::env::consts::EXE_SUFFIX)).is_file(),
         model: model::is_installed(&state.paths.model_dir(), &model::CPU_MODEL),
         js_runtime: tools::find_js_runtime(&bin).is_some(),
+        js_runtime_managed: bin.join(format!("deno{}", std::env::consts::EXE_SUFFIX)).is_file(),
+        can_install_tools: deps::ffmpeg().is_some() && deps::deno().is_some(),
         running: state.setup_running.load(Ordering::Relaxed),
     })
 }
@@ -60,12 +68,24 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
         let progress = |step: &str, done: u64, total: Option<u64>| {
             let _ = app.emit("setup-progress", (step, done, total));
         };
-        if tools::find_yt_dlp(&paths.bin()).is_none() {
-            tools::install_yt_dlp(&paths.bin(), never, |n, t| progress("yt-dlp", n, t))?;
+        let bin = paths.bin();
+        if tools::find_yt_dlp(&bin).is_none() {
+            tools::install_yt_dlp(&bin, never, |n, t| progress("yt-dlp", n, t))?;
+        }
+        if tools::find_ffmpeg(&bin).is_none()
+            && let Some(dep) = deps::ffmpeg()
+        {
+            deps::install(&dep, &bin, never, |n| progress("ffmpeg", n, Some(dep.size)))?;
         }
         model::install(&paths.models(), &model::CPU_MODEL, never, |n, t| progress("model", n, Some(t)))?;
         model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
         app.state::<AppState>().worker.wake();
+        // Last, since it's optional: only some YouTube VODs need it.
+        if tools::find_js_runtime(&bin).is_none()
+            && let Some(dep) = deps::deno()
+        {
+            deps::install(&dep, &bin, never, |n| progress("deno", n, Some(dep.size)))?;
+        }
         Ok(())
     });
     Ok(())
