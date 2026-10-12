@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { getVersion } from "@tauri-apps/api/app";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { onMount } from "svelte";
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
@@ -60,6 +63,12 @@
   // Thumbnails that fail to load fall back to the platform tile.
   let broken = $state(new Set<number>());
 
+  const SITE = "https://vodscribe.com";
+  let version = $state<string | null>(null);
+  onMount(() => {
+    getVersion().then((v) => (version = v || null), () => {});
+  });
+
   const toggle = (vod: Vod) => onselect(vod.id === selectedId ? null : vod.id);
 
   // The whole row selects, except its action buttons (and the main button,
@@ -71,10 +80,11 @@
 </script>
 
 <aside>
-  <div class="brand">
+  <button class="brand" onclick={() => openUrl(SITE)} title="vodscribe.com">
     <Logo size={22} tile />
     <span class="name">VODscribe</span>
-  </div>
+    {#if version}<span class="version muted">v{version}</span>{/if}
+  </button>
 
   <form onsubmit={add}>
     <input type="url" placeholder="Paste a VOD link…" bind:value={url} disabled={adding} aria-label="VOD link" />
@@ -202,10 +212,25 @@
   .brand {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 8px;
     height: 53px;
     padding: 0 14px;
+    border: none;
     border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: var(--surface);
+    color: var(--text);
+  }
+
+  .brand:hover:not(:disabled) {
+    background: var(--bg);
+  }
+
+  .version {
+    margin-left: auto;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
 
 
