@@ -2,7 +2,8 @@ name: Checks
 
 # On every push and pull request: the workflows themselves (actionlint, which
 # also runs shellcheck on their scripts), formatting (the same check as
-# .githooks/pre-commit), and the third-party notices. Nothing is built.
+# .githooks/pre-commit), type checks and the website build, the third-party
+# notices, and the core's lints and tests.
 on:
   push:
   pull_request:
@@ -49,6 +50,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      - run: pnpm check
+      # Also catches app code the website's demo stand-ins don't provide.
+      - run: pnpm --filter site build
 
       # cargo-about v0.9.2, pinned by SHA-256. Fails on a dependency whose license
       # isn't accepted in licenses/about.toml, or a notices file left out of date.
@@ -60,3 +64,22 @@ jobs:
           tar xzf "$tarball"
           cargo fetch --locked
           CARGO_ABOUT="$PWD/cargo-about-0.9.2-x86_64-unknown-linux-musl/cargo-about" python3 scripts/third-party-notices.py --check
+
+  # The core's tests and lints. The desktop app and the worker need system
+  # libraries and sherpa-onnx, so the release build (build.yml) covers those.
+  rust:
+    timeout-minutes: 20
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          # Keep in step with rust-toolchain.toml.
+          toolchain: "1.99.0"
+          components: clippy
+
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - run: cargo clippy --locked -p vodscribe-core --all-targets -- -D warnings
+      - run: cargo test --locked -p vodscribe-core
