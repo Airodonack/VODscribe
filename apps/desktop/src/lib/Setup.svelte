@@ -15,7 +15,10 @@
   onMount(async () => {
     unlisten.push(
       await events.setupProgress((step, done, total) => {
+        const wasDone = (progress[step] ?? 0) >= 1;
         progress[step] = total ? done / total : 0;
+        // Refresh as each download finishes, so it shows as installed and verified.
+        if (!wasDone && progress[step] >= 1) setTimeout(onchange, 300);
       }),
       await events.setupDone((e) => {
         error = e;
@@ -48,6 +51,14 @@
       <div>
         <strong>Speech model</strong>
         <span class="muted">Parakeet TDT 0.6B v3, about 900 MB</span>
+        {#if status.model}
+          <p
+            class="verified"
+            title="Each file's SHA-256 is pinned in the app; a download that doesn't match is discarded."
+          >
+            <Icon name="shield" size={12} /> Verified against its published checksum
+          </p>
+        {/if}
         {#if running && !status.model}
           <div class="bar"><Progress value={progress.model ?? 0} /></div>
         {/if}
@@ -60,6 +71,13 @@
       <div>
         <strong>yt-dlp</strong>
         <span class="muted">fetches audio from Kick, Twitch and YouTube</span>
+        {#if status.yt_dlp_managed}
+          <p class="verified" title="Its checksum list is signed by yt-dlp's release key, which is built into the app.">
+            <Icon name="shield" size={12} /> Signature verified
+          </p>
+        {:else if status.yt_dlp}
+          <p class="detail muted">Using the copy installed on this computer.</p>
+        {/if}
         {#if running && !status.yt_dlp}
           <div class="bar"><Progress value={progress["yt-dlp"] ?? 0} /></div>
         {/if}
@@ -165,6 +183,15 @@
 
   li strong {
     margin-right: 6px;
+  }
+
+  .verified {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 3px 0 0;
+    font-size: 12px;
+    color: var(--ok);
   }
 
   .detail {

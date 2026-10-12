@@ -85,7 +85,8 @@ fn signed_sha256(sums: &[u8], sig: &[u8], asset: &str) -> Result<String> {
     use pgp::composed::{Deserializable, DetachedSignature, SignedPublicKey};
     let (key, _) = SignedPublicKey::from_armor_single(YT_DLP_KEY.as_bytes())?;
     let sig = DetachedSignature::from_bytes(sig).context("read yt-dlp's checksum signature")?;
-    sig.verify(&key, sums).context("yt-dlp's checksum list isn't signed by the yt-dlp release key")?;
+    sig.verify(&key, sums)
+        .context("yt-dlp's download couldn't be verified against its release signature, so it wasn't installed")?;
     std::str::from_utf8(sums)?
         .lines()
         .find_map(|line| {

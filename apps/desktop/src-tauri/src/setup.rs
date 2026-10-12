@@ -16,6 +16,8 @@ use crate::{AppState, CmdResult, err};
 #[derive(Serialize)]
 pub(crate) struct SetupStatus {
     yt_dlp: bool,
+    /// yt-dlp is the app's own copy, verified when downloaded, rather than one found on PATH.
+    yt_dlp_managed: bool,
     ffmpeg: bool,
     model: bool,
     js_runtime: bool,
@@ -27,11 +29,26 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
     let bin = state.paths.bin();
     Ok(SetupStatus {
         yt_dlp: tools::find_yt_dlp(&bin).is_some(),
+        yt_dlp_managed: tools::managed_yt_dlp(&bin).is_file(),
         ffmpeg: tools::find_ffmpeg(&bin).is_some(),
         model: model::is_installed(&state.paths.model_dir(), &model::CPU_MODEL),
         js_runtime: tools::find_js_runtime(&bin).is_some(),
         running: state.setup_running.load(Ordering::Relaxed),
     })
+}
+
+/// Where the library and settings live, for the privacy section in Settings.
+#[tauri::command]
+pub(crate) async fn data_dir(state: State<'_, AppState>) -> CmdResult<String> {
+    Ok(state.paths.root.display().to_string())
+}
+
+/// Opens the data folder in the system file manager. It takes no path, so the
+/// UI can't use it to open anything else.
+#[tauri::command]
+pub(crate) async fn open_data_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener().open_path(state.paths.root.display().to_string(), None::<String>).map_err(err)
 }
 
 /// Downloads yt-dlp and the speech model if missing. Progress arrives as

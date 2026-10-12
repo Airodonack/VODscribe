@@ -62,7 +62,7 @@
   }
 
   function remove() {
-    if (confirm(`Remove “${vod.title}” and its transcript?`)) {
+    if (confirm(`Remove “${vod.title}”? Its transcript and any downloaded audio are erased from this computer.`)) {
       onremove();
       act(api.deleteVod(vod.id));
     }

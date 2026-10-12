@@ -343,6 +343,8 @@
     right: 0;
     z-index: 10;
     width: 340px;
+    max-height: calc(100vh - 80px);
+    overflow-y: auto;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 10px;

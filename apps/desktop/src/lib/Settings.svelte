@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type GpuStatus, type UnlistenFn } from "./api";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
+  import { PRIVACY } from "./links";
   import Progress from "./Progress.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
@@ -69,6 +71,12 @@
     clearInterval(timer);
     unlisten.forEach((u) => u());
   });
+
+  let dataDir = $state<string | null>(null);
+  api.dataDir().then(
+    (d) => (dataDir = d),
+    () => {},
+  );
 
   async function choose(d: Device) {
     device = d;
@@ -161,6 +169,12 @@
       {:else if !gpu?.installed}
         <button onclick={install}><Icon name="download" size={14} /> Download GPU pack</button>
       {:else}
+        <p
+          class="verified"
+          title="Each file's SHA-256 is pinned in the app; a download that doesn't match is discarded."
+        >
+          <Icon name="shield" size={12} /> GPU pack installed, every file verified against its pinned checksum
+        </p>
         <button class="link" onclick={remove}>Remove GPU pack</button>
       {/if}
     {/if}
@@ -173,6 +187,27 @@
     <p class="muted hint">If VODs from a site start failing to download, a newer yt-dlp usually fixes it.</p>
     <button onclick={updateYtDlp} disabled={updating}>{updating ? "Checking…" : "Update yt-dlp"}</button>
     {#if ytDlpStatus}<p class="muted hint">{ytDlpStatus}</p>{/if}
+  </section>
+
+  <section>
+    <span class="eyebrow">Privacy & security</span>
+    <p class="hint">
+      Your transcripts, audio and searches stay on this computer. VODscribe has no account and no telemetry.
+    </p>
+    <p class="muted hint">
+      VODscribe contacts a video site when you add a VOD or press play. Everything it downloads to run (the speech
+      model, yt-dlp, the GPU pack) is checked against a published checksum or signature before it's used.
+    </p>
+    {#if dataDir}
+      <p class="muted hint">Your library is in:</p>
+      <code class="path">{dataDir}</code>
+    {/if}
+    <div class="row-buttons">
+      <button onclick={() => api.openDataDir().catch((e) => (error = String(e)))}>Open folder</button>
+      <button class="link" onclick={() => openUrl(PRIVACY)}
+        >More about privacy <Icon name="external" size={12} /></button
+      >
+    </div>
   </section>
 
   <section>
@@ -197,6 +232,26 @@
     gap: 8px;
     padding: 14px 16px;
     justify-items: start;
+  }
+
+  .verified {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--ok);
+  }
+
+  .path {
+    font-size: 11px;
+    word-break: break-all;
+  }
+
+  .row-buttons {
+    display: flex;
+    align-items: center;
+    gap: 14px;
   }
 
   section + section {

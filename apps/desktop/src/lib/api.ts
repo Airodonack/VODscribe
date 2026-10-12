@@ -49,6 +49,8 @@ export interface SearchHit {
 
 export interface SetupStatus {
   yt_dlp: boolean;
+  /** yt-dlp is the app's own copy, verified when downloaded (not one found on PATH). */
+  yt_dlp_managed: boolean;
   ffmpeg: boolean;
   model: boolean;
   js_runtime: boolean;
@@ -63,6 +65,8 @@ export interface Line {
 export const api = {
   setupStatus: () => invoke<SetupStatus>("setup_status"),
   runSetup: () => invoke<void>("run_setup"),
+  dataDir: () => invoke<string>("data_dir"),
+  openDataDir: () => invoke<void>("open_data_dir"),
   addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
