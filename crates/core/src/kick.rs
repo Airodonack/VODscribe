@@ -35,17 +35,8 @@ pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
     parse_playback(&json, &slug, &id)
 }
 
-/// Just the poster image, which Kick also returns for VODs that can't be played
-/// (subscriber-only). `None` when Kick has none or the VOD is gone; an error
-/// only for failures worth retrying later (network, rate limits, server errors).
-pub fn poster(url: &str) -> Result<Option<String>> {
-    let Some((_, id)) = parse_vod_url(url) else { return Ok(None) };
-    let (status, json) = playback(&id)?;
-    if status == 429 || status >= 500 {
-        bail!("Kick returned {status}");
-    }
-    Ok(json.pointer("/playback_url/thumbnail").and_then(Value::as_str).and_then(poster_url))
-}
+/// Kick's API responses and master playlists are a few KB.
+const API_MAX_BYTES: u64 = 1 << 20;
 
 /// The playback endpoint's status and JSON body.
 fn playback(id: &str) -> Result<(u16, Value)> {
@@ -63,7 +54,7 @@ fn playback(id: &str) -> Result<(u16, Value)> {
         .send(body.to_string())
         .context("contact Kick")?;
     let status = resp.status().as_u16();
-    let text = resp.body_mut().read_to_string().unwrap_or_default();
+    let text = resp.body_mut().with_config().limit(API_MAX_BYTES).read_to_string().unwrap_or_default();
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
 }
 
@@ -119,10 +110,8 @@ pub struct Variant {
 pub fn variants(url: &str) -> Result<Vec<Variant>> {
     let (_, manifest) = resolve(url)?;
     let never = std::sync::atomic::AtomicBool::new(false);
-    let (mut body, _) = crate::net::get(&manifest, &never)?;
-    let mut text = String::new();
-    std::io::Read::read_to_string(&mut body, &mut text)?;
-    let variants = parse_master(&text);
+    let text = crate::net::get_bytes(&manifest, API_MAX_BYTES, &never)?;
+    let variants = parse_master(&String::from_utf8_lossy(&text));
     if variants.is_empty() {
         bail!("Kick's stream has no playable qualities");
     }
@@ -134,7 +123,7 @@ fn parse_master(text: &str) -> Vec<Variant> {
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
         let Some(attrs) = line.strip_prefix("#EXT-X-STREAM-INF:") else { continue };
-        let Some(url) = lines.next().filter(|u| u.starts_with("http")) else { continue };
+        let Some(url) = lines.next().filter(|u| u.starts_with("https://")) else { continue };
         let attr = |key: &str| {
             attrs.split(',').find_map(|kv| kv.strip_prefix(key)).map(|v| v.trim_matches('"').to_string())
         };

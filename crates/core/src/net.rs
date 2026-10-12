@@ -48,7 +48,7 @@ fn canceled() -> io::Error {
 }
 
 /// Wraps a reader, reporting bytes read and aborting when `cancel` is set.
-pub struct ProgressReader<'a, R, F> {
+pub(crate) struct ProgressReader<'a, R, F> {
     inner: R,
     read: u64,
     on_progress: F,
@@ -56,7 +56,7 @@ pub struct ProgressReader<'a, R, F> {
 }
 
 impl<'a, R: Read, F: FnMut(u64)> ProgressReader<'a, R, F> {
-    pub fn new(inner: R, cancel: &'a AtomicBool, on_progress: F) -> Self {
+    pub(crate) fn new(inner: R, cancel: &'a AtomicBool, on_progress: F) -> Self {
         Self { inner, read: 0, on_progress, cancel }
     }
 }
@@ -153,30 +153,21 @@ impl Read for GuardedReader<'_> {
     }
 }
 
-/// Downloads `url` to `dest` via a `.part` file, so an interrupted download never
-/// leaves a truncated file at `dest`. `on_progress` receives (bytes, total).
-pub fn download(
-    url: &str,
-    dest: &Path,
-    cancel: &AtomicBool,
-    mut on_progress: impl FnMut(u64, Option<u64>),
-) -> Result<()> {
-    let (body, total) = get(url, cancel)?;
-    let part = dest.with_extension("part");
-    let mut reader = ProgressReader::new(body, cancel, |n| on_progress(n, total));
-    let mut out = File::create(&part).with_context(|| format!("create {}", part.display()))?;
-    if let Err(e) = io::copy(&mut reader, &mut out) {
-        drop(out);
-        let _ = fs::remove_file(&part);
-        if cancel.load(Ordering::Relaxed) {
-            bail!("canceled");
-        }
-        return Err(e).with_context(|| format!("download {}", redact(url)));
+/// The body at `url`, which must be at most `max` bytes (for small files such
+/// as playlists and checksum lists, read into memory).
+pub fn get_bytes(url: &str, max: u64, cancel: &AtomicBool) -> Result<Vec<u8>> {
+    let (body, _) = get(url, cancel)?;
+    let mut bytes = Vec::new();
+    body.take(max + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max {
+        bail!("{} is larger than expected", redact(url));
     }
-    out.flush()?;
-    drop(out);
-    fs::rename(&part, dest)?;
-    Ok(())
+    Ok(bytes)
+}
+
+/// Lowercase hex, as SHA-256 sums are written.
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Downloads `url` to `dest`, checking it against a pinned SHA-256 (and size,
@@ -213,7 +204,7 @@ pub fn download_verified(
             }
         }
         out.flush()?;
-        let hash: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let hash = hex(&hasher.finalize());
         if size.is_some_and(|size| len != size) || hash != sha256 {
             bail!("the download was corrupted ({len} bytes, sha256 {hash}); try again");
         }
@@ -255,6 +246,29 @@ mod tests {
             }
         });
         format!("http://{addr}/file")
+    }
+
+    #[test]
+    fn verified_downloads_keep_only_matching_files() {
+        let never = AtomicBool::new(false);
+        let dir = std::env::temp_dir().join(format!("vodscribe-verify-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("file");
+        let good = hex(&Sha256::digest(b"hello world"));
+        let bad = hex(&Sha256::digest(b"something else"));
+        assert!(download_verified(&serve(b"hello world", false), &dest, Some(11), &bad, &never, |_| {}).is_err());
+        assert!(download_verified(&serve(b"hello world", false), &dest, Some(5), &good, &never, |_| {}).is_err());
+        assert!(!dest.exists() && !dest.with_extension("part").exists(), "a mismatch leaves nothing behind");
+        download_verified(&serve(b"hello world", false), &dest, Some(11), &good, &never, |_| {}).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"hello world");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn small_bodies_have_a_limit() {
+        let never = AtomicBool::new(false);
+        assert_eq!(get_bytes(&serve(b"hello", false), 5, &never).unwrap(), b"hello");
+        assert!(get_bytes(&serve(b"hello world", false), 5, &never).is_err());
     }
 
     #[test]

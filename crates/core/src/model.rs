@@ -14,8 +14,8 @@ use crate::net;
 /// `vodscribe` R2 bucket, on its custom domain.
 const MODELS_BASE_URL: &str = "https://dl.vodscribe.com/models";
 
-/// Overrides the base URL, e.g. to test against a local server.
-/// `VODSCRIBE_MODELS_URL` overrides the server in debug builds, for testing.
+/// `VODSCRIBE_MODELS_URL` overrides the server in debug builds, e.g. to test
+/// against a local one.
 fn base_url() -> String {
     let dev = cfg!(debug_assertions).then(|| std::env::var("VODSCRIBE_MODELS_URL").ok()).flatten();
     dev.unwrap_or_else(|| MODELS_BASE_URL.to_string())

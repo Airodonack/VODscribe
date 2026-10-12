@@ -392,20 +392,12 @@ async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()
     Ok(())
 }
 
-/// Saves a local copy of VOD `id`'s thumbnail, asking Kick for a poster first
-/// if a Kick VOD doesn't have one. A VOD with no usable image gets an empty
-/// `thumb` so it isn't tried again; network failures are retried next launch.
+/// Saves a local copy of VOD `id`'s thumbnail. A VOD with no usable image gets
+/// an empty `thumb` so it isn't tried again; network failures are retried next launch.
 fn cache_thumbnail(app: &AppHandle, id: i64) {
     let state = app.state::<AppState>();
     let Ok(Some(vod)) = state.db.lock().unwrap().vod(id) else { return };
-    let mut url = vod.info.thumbnail.clone();
-    if url.is_none() && vod.info.platform == "kick" {
-        let Ok(poster) = vodscribe_core::kick::poster(&vod.info.url) else { return };
-        let poster = poster.unwrap_or_default();
-        let _ = state.db.lock().unwrap().set_thumbnail(id, &poster);
-        url = Some(poster);
-    }
-    let thumb = match url.filter(|u| !u.is_empty()) {
+    let thumb = match vod.info.thumbnail.filter(|u| !u.is_empty()) {
         None => String::new(),
         Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
             Ok(thumb) => thumb.unwrap_or_default(),

@@ -21,7 +21,7 @@ pub fn decode(
     let mut child = tools::command(ffmpeg)
         .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-ss", &format!("{start:.3}"), "-i"])
         .arg(input)
-        .args(["-vn", "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"])
+        .args(["-vn", "-ac", "1", "-ar", &SAMPLE_RATE.to_string(), "-f", "s16le", "pipe:1"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -55,9 +55,9 @@ pub fn decode(
                 samples.push(i16::from_le_bytes([lo, bytes[0]]) as f32 / 32768.0);
                 bytes = &bytes[1..];
             }
-            let mut pairs = bytes.chunks_exact(2);
-            samples.extend(pairs.by_ref().map(|p| i16::from_le_bytes([p[0], p[1]]) as f32 / 32768.0));
-            pending = pairs.remainder().first().copied();
+            let (pairs, rest) = bytes.as_chunks::<2>();
+            samples.extend(pairs.iter().map(|p| i16::from_le_bytes(*p) as f32 / 32768.0));
+            pending = rest.first().copied();
             on_samples(&samples)?;
         }
     })();

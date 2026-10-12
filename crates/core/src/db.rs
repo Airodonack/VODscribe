@@ -59,7 +59,9 @@ pub struct Vod {
     pub error: Option<String>,
     pub added_at: i64,
     pub note: Option<String>,
-    /// File name of the local thumbnail copy, served to the UI as `thumb:<name>`.
+    /// File name of the local thumbnail copy in `Paths::thumbs` (the UI fetches it
+    /// with the `thumbnail` command). `None` until fetched; `""` if the VOD has no
+    /// usable image, so it isn't tried again.
     pub thumb: Option<String>,
     /// Has transcript segments from a model this version no longer uses (or
     /// from before models were recorded). Finished VODs can be re-transcribed;
@@ -90,8 +92,6 @@ pub struct SearchResults {
 pub struct Db {
     conn: Connection,
 }
-
-const SCHEMA_VERSION: i32 = 7;
 
 const SCHEMA: &str = r#"
 CREATE TABLE vods (
@@ -137,17 +137,17 @@ const MIGRATE_V2: &str = "ALTER TABLE vods ADD COLUMN note TEXT;";
 const MIGRATE_V3: &str = "ALTER TABLE vods ADD COLUMN audio_path TEXT;";
 /// v4: the speech model that produced the transcript.
 const MIGRATE_V4: &str = "ALTER TABLE vods ADD COLUMN model TEXT;";
-/// v6: deleting a transcript removes its words from the search index right away,
-/// rather than leaving them in index pages until a merge.
-const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 1);";
-/// v7: the file name of the VOD's local thumbnail (see `thumbs`).
-const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
 /// v5: the library's order, which the user can rearrange. Starts newest first.
 const MIGRATE_V5: &str = "
 ALTER TABLE vods ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
 UPDATE vods SET position = (
     SELECT count(*) FROM vods AS v WHERE v.added_at > vods.added_at OR (v.added_at = vods.added_at AND v.id > vods.id)
 );";
+/// v6: deleting a transcript removes its words from the search index right away,
+/// rather than leaving them in index pages until a merge.
+const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 1);";
+/// v7: the file name of the VOD's local thumbnail (see `thumbs`).
+const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
 
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at, note, model,
@@ -191,10 +191,12 @@ impl Db {
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        // Migration n brings the schema to version n + 1; user_version is how many have run.
         let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
-            conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"))?;
+            let latest = migrations.len();
+            conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {latest}; COMMIT;"))?;
         }
         Ok(Self { conn })
     }
@@ -310,11 +312,6 @@ impl Db {
 
     pub fn set_thumb(&self, id: i64, thumb: &str) -> Result<()> {
         self.conn.execute("UPDATE vods SET thumb = ?2 WHERE id = ?1", params![id, thumb])?;
-        Ok(())
-    }
-
-    pub fn set_thumbnail(&self, id: i64, thumbnail: &str) -> Result<()> {
-        self.conn.execute("UPDATE vods SET thumbnail = ?2 WHERE id = ?1", params![id, thumbnail])?;
         Ok(())
     }
 
@@ -500,6 +497,14 @@ mod tests {
         let bytes = [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()].concat();
         assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()), "deleted text still on disk");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn status_names_round_trip() {
+        use Status::*;
+        for status in [Queued, Downloading, Ready, Transcribing, Paused, Done, Error] {
+            assert_eq!(Status::parse(status.as_str()), status);
+        }
     }
 
     #[test]

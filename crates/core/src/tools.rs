@@ -95,13 +95,8 @@ fn signed_sha256(sums: &[u8], sig: &[u8], asset: &str) -> Result<String> {
         .with_context(|| format!("yt-dlp's checksum list has no entry for {asset}"))
 }
 
-fn fetch_small(url: &str, cancel: &AtomicBool) -> Result<Vec<u8>> {
-    use std::io::Read;
-    let (body, _) = net::get(url, cancel)?;
-    let mut buf = Vec::new();
-    body.take(1 << 20).read_to_end(&mut buf)?;
-    Ok(buf)
-}
+/// Checksum lists and their signatures are a few KB.
+const SUMS_MAX_BYTES: u64 = 1 << 20;
 
 /// Downloads the latest yt-dlp release into `bin_dir`, verified against the
 /// release's checksum list, which must carry the yt-dlp signing key's signature.
@@ -113,8 +108,8 @@ pub fn install_yt_dlp(
 ) -> Result<(PathBuf, bool)> {
     fs::create_dir_all(bin_dir)?;
     let asset = yt_dlp_asset()?;
-    let sums = fetch_small(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS"), cancel)?;
-    let sig = fetch_small(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS.sig"), cancel)?;
+    let sums = net::get_bytes(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS"), SUMS_MAX_BYTES, cancel)?;
+    let sig = net::get_bytes(&format!("{YT_DLP_RELEASE}/SHA2-256SUMS.sig"), SUMS_MAX_BYTES, cancel)?;
     let sha256 = signed_sha256(&sums, &sig, asset)?;
 
     let dest = managed_yt_dlp(bin_dir);
@@ -136,7 +131,7 @@ fn file_sha256(path: &Path) -> Option<String> {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(fs::read(path).ok()?);
-    Some(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Some(net::hex(&hasher.finalize()))
 }
 
 /// Updates the managed yt-dlp the same verified way it was installed (rather

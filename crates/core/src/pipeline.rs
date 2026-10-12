@@ -14,7 +14,8 @@ use crate::fetch;
 use crate::tools::{self, YtDlp};
 use crate::transcript::{Segmenter, Word};
 
-/// Stream URLs in a saved info JSON expire (YouTube's after about 6 hours).
+/// Stream URLs in a saved info JSON expire (YouTube's after about 6 hours, others
+/// sooner), so a download that starts later than this probes the VOD again.
 const INFO_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 
 pub struct Tools<'a> {

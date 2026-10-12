@@ -44,8 +44,7 @@ fn main() -> Result<()> {
                 fallback: None,
             };
             let tools = pipeline::Tools { yt_dlp: &yt_dlp, ffmpeg: &ffmpeg };
-            let report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
-            let mut report = report;
+            let mut report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
             let audio = pipeline::download(&mut db, &vod, &tools, &paths.work(), &cancel, &mut report)?;
             pipeline::transcribe(&mut db, &vod, &ffmpeg, &audio, &transcription, &cancel, &mut report, &mut |n| {
                 eprintln!("\n{n}")
@@ -55,7 +54,10 @@ fn main() -> Result<()> {
         }
         ["probe", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
-            let info = fetch::probe(&yt_dlp, url, &paths.work().join("probe.json"))?;
+            let probe_path = paths.work().join("probe.json");
+            let info = fetch::probe(&yt_dlp, url, &probe_path);
+            let _ = std::fs::remove_file(&probe_path);
+            let info = info?;
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
         ["list"] => {

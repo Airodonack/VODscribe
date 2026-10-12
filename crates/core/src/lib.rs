@@ -59,7 +59,8 @@ impl Paths {
         self.local.join("gpu")
     }
 
-    /// Local copies of VOD thumbnails. Part of the library, so not cache.
+    /// Local copies of VOD thumbnails. They could be fetched again, but they belong
+    /// with the library, so Clear downloads (`cache_dirs`) leaves them.
     pub fn thumbs(&self) -> PathBuf {
         self.local.join("thumbs")
     }
