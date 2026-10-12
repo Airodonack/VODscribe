@@ -76,7 +76,7 @@ def main(artifacts: Path, version: str, out: Path) -> None:
     manifest = {
         "version": version,
         "notes": notes(version),
-        "pub_date": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platforms": platforms,
     }
     (out / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")

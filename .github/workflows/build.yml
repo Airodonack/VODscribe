@@ -46,11 +46,13 @@ jobs:
       # RUSTFLAGS replaces .cargo/config.toml's target flags, so repeat crt-static.
       - name: Remap build paths
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           home="$HOME" work="$PWD"
           if [[ "$RUNNER_OS" == Windows ]]; then home=$(cygpath -w "$HOME") work=$(cygpath -w "$PWD"); fi
           flags="--remap-path-prefix=$home=~ --remap-path-prefix=$work=."
-          if [[ "${{ matrix.target }}" == *windows* ]]; then flags="$flags -C target-feature=+crt-static"; fi
+          if [[ "$TARGET" == *windows* ]]; then flags="$flags -C target-feature=+crt-static"; fi
           echo "RUSTFLAGS=$flags" >> "$GITHUB_ENV"
 
       # Reads the pnpm version from package.json's packageManager field.
@@ -132,7 +134,7 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
