@@ -65,10 +65,27 @@ fn parse_playback(json: &Value, slug: &str, id: &str) -> Result<(VodInfo, String
         title: text("video_title").unwrap_or_else(|| "Untitled".into()),
         channel: text("video_series").or_else(|| Some(slug.to_string())),
         duration: session("video_duration").and_then(Value::as_f64).filter(|d| *d > 0.0),
-        thumbnail: None,
+        thumbnail: json.pointer("/playback_url/thumbnail").and_then(Value::as_str).and_then(poster_url),
         published: None,
     };
     Ok((info, manifest.to_string()))
+}
+
+/// The VOD's poster image, derived from the thumbnail sprite-sheet URL the
+/// playback API returns. The sheet lives at
+/// `.../ivs/v1/<account>/<channel key>/<date parts>/<video key>/media/thumbnails/...`
+/// and Kick serves the poster at
+/// `images.kick.com/video_thumbnails/<channel key>/<video key>/<height>.webp`.
+pub fn poster_url(sheet: &str) -> Option<String> {
+    let (_, rest) = sheet.split_once("/ivs/v1/")?;
+    let mut parts = rest.split('/');
+    let _account = parts.next()?;
+    let channel_key = parts.next()?;
+    let parts: Vec<&str> = parts.collect();
+    let media = parts.iter().position(|p| *p == "media")?;
+    let video_key = parts[..media].last()?;
+    (!channel_key.is_empty() && !video_key.is_empty())
+        .then(|| format!("https://images.kick.com/video_thumbnails/{channel_key}/{video_key}/360.webp"))
 }
 
 /// One quality level of a VOD's HLS stream.
@@ -151,5 +168,16 @@ mod tests {
 
         let empty = json!({ "playback_url": { "vod": "" }, "video_session": {} });
         assert!(parse_playback(&empty, "barky", "abc").is_err());
+    }
+
+    #[test]
+    fn derives_the_poster_from_the_sprite_sheet() {
+        let sheet = "https://stream.kick.com/3c81249a5ce0/ivs/v1/196233775518/SvN6unb8Sp4d/2026/9/17/19/27/UiUoaT51vf1v/media/thumbnails/thumbnail-sheet-{index}.webp";
+        assert_eq!(
+            poster_url(sheet).as_deref(),
+            Some("https://images.kick.com/video_thumbnails/SvN6unb8Sp4d/UiUoaT51vf1v/360.webp")
+        );
+        assert_eq!(poster_url("https://stream.kick.com/x/other/path.webp"), None);
+        assert_eq!(poster_url("https://stream.kick.com/x/ivs/v1/1/ch/nomedia.webp"), None);
     }
 }

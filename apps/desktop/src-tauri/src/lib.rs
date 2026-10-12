@@ -372,6 +372,23 @@ async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()
     Ok(())
 }
 
+/// Kick VODs added before the app resolved their poster image have none;
+/// fetch it once, in the background.
+fn backfill_kick_thumbnails(app: AppHandle) {
+    let state = app.state::<AppState>();
+    let missing: Vec<Vod> = match state.db.lock().unwrap().vods() {
+        Ok(vods) => vods.into_iter().filter(|v| v.info.platform == "kick" && v.info.thumbnail.is_none()).collect(),
+        Err(_) => return,
+    };
+    for vod in missing {
+        let Ok((info, _)) = vodscribe_core::kick::resolve(&vod.info.url) else { continue };
+        let Some(thumbnail) = info.thumbnail else { continue };
+        if state.db.lock().unwrap().set_thumbnail(vod.id, &thumbnail).is_ok() {
+            let _ = emit_vod(&app, &state.db.lock().unwrap(), vod.id);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -392,6 +409,8 @@ pub fn run() {
                 setup_running: Arc::new(AtomicBool::new(false)),
                 gpu_installing: Arc::new(AtomicBool::new(false)),
             });
+            let handle = app.handle().clone();
+            std::thread::spawn(move || backfill_kick_thumbnails(handle));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

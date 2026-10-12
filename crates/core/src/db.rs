@@ -278,6 +278,11 @@ impl Db {
         Ok(())
     }
 
+    pub fn set_thumbnail(&self, id: i64, thumbnail: &str) -> Result<()> {
+        self.conn.execute("UPDATE vods SET thumbnail = ?2 WHERE id = ?1", params![id, thumbnail])?;
+        Ok(())
+    }
+
     pub fn set_note(&self, id: i64, note: Option<&str>) -> Result<()> {
         self.conn.execute("UPDATE vods SET note = ?2 WHERE id = ?1", params![id, note])?;
         Ok(())
