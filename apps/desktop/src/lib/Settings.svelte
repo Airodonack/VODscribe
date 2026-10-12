@@ -71,7 +71,7 @@
     unlisten.forEach((u) => u());
   });
 
-  const mb = (bytes: number) => Math.round(bytes / 1e6);
+  const mb = (bytes: number) => Math.round(bytes / 1e6).toLocaleString();
 
   let dataDir = $state<string | null>(null);
   api.dataDir().then(

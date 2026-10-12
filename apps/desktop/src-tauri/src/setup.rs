@@ -170,12 +170,16 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         let progress = |step: &str, done: u64, total: u64| {
             let _ = app.emit("gpu-progress", (step, done, total));
         };
-        if !gpu::is_installed(&paths.gpu_pack()) {
-            gpu::install(&paths.gpu_pack(), never, progress)?;
+        // One count across the pack and the model, so the bar only moves forward.
+        let pack_needed = !gpu::is_installed(&paths.gpu_pack());
+        let pack_total = if pack_needed { gpu::download_size() } else { 0 };
+        let total = pack_total + model::GPU_MODEL.total_bytes();
+        if pack_needed {
+            gpu::install(&paths.gpu_pack(), never, |step, done, _| progress(step, done, total))?;
         }
         let model_label = "Downloading the GPU speech model (Parakeet TDT 0.6B v3, fp16)";
-        model::install(&paths.models(), &model::GPU_MODEL, never, |n, t| progress(model_label, n, t))?;
-        progress("Every file matches its SHA‑256", 1, 1);
+        model::install(&paths.models(), &model::GPU_MODEL, never, |n, _| progress(model_label, pack_total + n, total))?;
+        progress("Every file matches its SHA‑256", total, total);
         Ok(())
     });
     Ok(())

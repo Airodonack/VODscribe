@@ -168,6 +168,11 @@ pub fn is_installed(pack_dir: &Path) -> bool {
     fs::read_to_string(marker(pack_dir)).is_ok_and(|v| v.trim() == PACK_VERSION)
 }
 
+/// Bytes `install` downloads on this platform (0 where there's no pack).
+pub fn download_size() -> u64 {
+    platform().map_or(0, |p| p.sherpa.size + p.wheels.iter().map(|(_, w)| w.size).sum::<u64>())
+}
+
 /// Downloads and unpacks the GPU pack. `on_progress` receives
 /// (step label, bytes done, bytes total) for each download in turn.
 pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut(&str, u64, u64)) -> Result<()> {
@@ -183,18 +188,25 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         let archive = staging.join("sherpa-onnx.tar.bz2");
         // Progress reads "Downloading <name>" while bytes arrive (the SHA-256 is
         // computed as they do), then "<name> matches its SHA-256" while unpacking.
+        // Progress counts across every file, so the bar never moves backwards.
+        let total = download_size();
+        let mut offset = 0;
         let label = "ONNX Runtime 1.28 with CUDA (sherpa-onnx 1.13.8)";
         let downloading = format!("Downloading {label}");
-        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
-        on_progress(&format!("{label} matches its SHA‑256 · unpacking"), size, size);
+        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| on_progress(&downloading, n, total))?;
+        offset += size;
+        on_progress(&format!("{label} matches its SHA‑256 · unpacking"), offset, total);
         extract_tar_libs(&archive, &libs, platform.lib_exts)?;
         fs::remove_file(&archive)?;
 
         for (label, Pinned { url, size, sha256 }) in platform.wheels {
             let wheel = staging.join("wheel.whl");
             let downloading = format!("Downloading {label}");
-            net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| on_progress(&downloading, n, size))?;
-            on_progress(&format!("{label} matches its SHA‑256 · unpacking"), size, size);
+            net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| {
+                on_progress(&downloading, offset + n, total)
+            })?;
+            offset += size;
+            on_progress(&format!("{label} matches its SHA‑256 · unpacking"), offset, total);
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }
@@ -304,7 +316,13 @@ mod tests {
     #[ignore]
     fn installs_the_pinned_pack() {
         let dir = PathBuf::from(std::env::var("VODSCRIBE_TEST_PACK_DIR").expect("set VODSCRIBE_TEST_PACK_DIR"));
-        install(&dir, &AtomicBool::new(false), |_, _, _| {}).unwrap();
+        let mut last = 0;
+        install(&dir, &AtomicBool::new(false), |_, done, total| {
+            assert!(done >= last && done <= total, "progress went from {last} to {done} of {total}");
+            last = done;
+        })
+        .unwrap();
+        assert_eq!(last, download_size());
         assert!(is_installed(&dir));
         let names: Vec<String> =
             fs::read_dir(lib_dir(&dir)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
