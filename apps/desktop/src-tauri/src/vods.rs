@@ -1,12 +1,13 @@
 //! Commands on the library: adding, ordering and controlling VODs, and reading
 //! their transcripts.
 
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchHit, Status, Vod};
-use vodscribe_core::{fetch, pipeline, thumbs, tools};
+use vodscribe_core::{fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
@@ -57,6 +58,80 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
         std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
     }
     Ok(added)
+}
+
+#[derive(Serialize)]
+pub(crate) struct AddedFiles {
+    vods: Vec<Vod>,
+    /// One message per file that couldn't be added.
+    errors: Vec<String>,
+}
+
+/// Adds video or audio files on this computer, dropped on the window or picked
+/// with the file dialog. They're transcribed in place and never modified.
+#[tauri::command]
+pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<AddedFiles> {
+    let task_app = app.clone();
+    let (added, errors) = tauri::async_runtime::spawn_blocking(move || {
+        let state = task_app.state::<AppState>();
+        let mut added = Vec::new();
+        let mut errors = Vec::new();
+        for path in paths {
+            match add_file(&state, Path::new(&path)) {
+                Ok(vod) => added.push(vod),
+                Err(e) => errors.push(format!("{e:#}")),
+            }
+        }
+        (added, errors)
+    })
+    .await
+    .map_err(err)?;
+
+    let state = app.state::<AppState>();
+    state.worker.wake();
+    for (vod, created) in &added {
+        allow_playback(&app, vod);
+        let _ = app.emit("vod", vod);
+        if *created {
+            let (app, id) = (app.clone(), vod.id);
+            std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
+        }
+    }
+    Ok(AddedFiles { vods: added.into_iter().map(|(v, _)| v).collect(), errors })
+}
+
+fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
+    if local::is_inside(path, &state.paths.root) || local::is_inside(path, &state.paths.local) {
+        anyhow::bail!("{} is part of VODscribe's own data.", path.display());
+    }
+    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!("ffmpeg isn't installed."))?;
+    let info = local::probe(&ffmpeg, path)?;
+    let db = state.db.lock().unwrap();
+    let (vod, created) = db.add_vod(&info)?;
+    if created {
+        db.set_source_path(vod.id, &info.url)?;
+    } else if vod.status == Status::Error {
+        requeue(&db, vod.id)?;
+    }
+    Ok((db.vod(vod.id)?.unwrap_or(vod), created))
+}
+
+/// Lets the player's <video> read a local VOD's file through the asset
+/// protocol. Only files the user added are allowed, one by one.
+pub(crate) fn allow_playback(app: &AppHandle, vod: &Vod) {
+    if let Some(source) = &vod.source_path {
+        let _ = app.asset_protocol_scope().allow_file(source);
+    }
+}
+
+/// Shows a local VOD's file in the system file manager. Takes the VOD's id, not
+/// a path, so the UI can't point it anywhere else.
+#[tauri::command]
+pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let source = state.db.lock().unwrap().vod(id).map_err(err)?.and_then(|v| v.source_path);
+    let source = source.ok_or("That VOD isn't a file on this computer.")?;
+    app.opener().reveal_item_in_dir(source).map_err(err)
 }
 
 #[tauri::command]

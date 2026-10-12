@@ -42,6 +42,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
             let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
@@ -59,6 +60,10 @@ pub fn run() {
                 setup_running: Arc::new(AtomicBool::new(false)),
                 gpu_installing: Arc::new(AtomicBool::new(false)),
             });
+            // Local files the user added stay playable across restarts.
+            if let Ok(vods) = app.state::<AppState>().db.lock().unwrap().vods() {
+                vods.iter().for_each(|vod| vods::allow_playback(app.handle(), vod));
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             Ok(())
@@ -70,6 +75,8 @@ pub fn run() {
             setup::run_setup,
             vods::add_vod,
             vods::list_vods,
+            vods::add_files,
+            vods::show_file,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

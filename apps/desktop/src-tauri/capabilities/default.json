@@ -9,6 +9,7 @@
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://*" }]
     },
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-open"
   ]
 }
