@@ -41,6 +41,9 @@
   let chatProgress = $state<number | null>(null);
   let chatOpen = $state(read(CHAT_OPEN) !== "false");
   let hasChat = $derived(vod.platform !== "local" && vod.chat !== undefined);
+  // A video that wasn't a livestream has no chat: its toggle is grayed out and the column stays shut.
+  let chatStatus = $derived(vod.chat);
+  let noChat = $derived(chatStatus === "none");
 
   function read(key: string): string | null {
     try {
@@ -56,7 +59,8 @@
   // top of the view where it was, rather than jumping to another time.
   function toggleChat() {
     const scroller = root.closest<HTMLElement>(".body");
-    const top = scroller?.getBoundingClientRect().top ?? 0;
+    // The view starts below the header, which stays at the top.
+    const top = root.querySelector(".head")?.getBoundingClientRect().bottom ?? 0;
     // The first line that starts in view: one cut off at the top may shrink out of sight.
     const anchor = [...root.querySelectorAll<HTMLElement>(".line[data-start]")].find(
       (el) => el.getBoundingClientRect().top >= top,
@@ -76,12 +80,19 @@
     if (same) scroller.scrollTop += same.getBoundingClientRect().top - top - offset;
   }
 
+  // Depends only on which VOD and its chat status (both derived, so they change
+  // only when their values do): the VOD itself is replaced on every update, and
+  // reloading then would empty the column and throw the scroll position.
   let chatSeq = 0;
+  let chatOf: number | null = null;
   $effect(() => {
     const id = vodId;
-    const status = vod.chat;
+    const status = chatStatus;
     const mine = ++chatSeq;
-    chat = [];
+    if (chatOf !== id) {
+      chatOf = id;
+      chat = [];
+    }
     chatError = null;
     if (status !== "done") return;
     api.chat(id).then(
@@ -127,7 +138,7 @@
     expanded.clear();
   });
 
-  let showChat = $derived(hasChat && chatOpen);
+  let showChat = $derived(hasChat && chatOpen && !noChat);
   let play = (time: number) => onplay(vod.id, time);
 </script>
 
@@ -161,12 +172,17 @@
         </span>
         <button
           class="chat-toggle"
-          class:on={chatOpen}
+          class:on={showChat}
           onclick={toggleChat}
-          aria-expanded={chatOpen}
-          title={chatOpen ? "Hide chat" : "Show chat beside the transcript"}
+          disabled={noChat}
+          aria-expanded={showChat}
+          title={noChat
+            ? "This video has no chat replay (it wasn't a livestream)"
+            : showChat
+              ? "Hide chat"
+              : "Show chat beside the transcript"}
         >
-          <Icon name="message" size={14} /> Chat <Icon name={chatOpen ? "chevron-up" : "chevron-down"} size={14} />
+          <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
         </button>
       </div>
     {/if}
@@ -226,12 +242,18 @@
     max-width: 1320px;
   }
 
+  /* Stays at the top while scrolling, so chat can be shown or hidden from anywhere. */
   .head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin: 0 0 8px;
+    margin: -10px -20px 8px;
+    padding: 10px 20px 6px;
+    background: var(--bg);
   }
 
   .status {
@@ -252,6 +274,10 @@
     gap: 5px;
     font-size: 12px;
     padding: 3px 8px;
+  }
+
+  .chat-toggle:disabled {
+    opacity: 0.5;
   }
 
   .chat-toggle.on {
