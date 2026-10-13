@@ -168,8 +168,54 @@
   });
 
   function play(vodId: number, time: number) {
+    keepPressedInPlace();
     if (playing?.vodId === vodId) playing.at = { time, play: true };
     else playing = { vodId, at: { time, play: true } };
+  }
+
+  // Starting the player can move what was clicked: the player opens or
+  // reappears above the list, swaps its poster for the video, and its frame
+  // taking focus can scroll the page. For a moment after a click, each frame
+  // (before it's painted) scrolls the list back so the clicked line stays put,
+  // unless the user scrolls meanwhile.
+  let body = $state<HTMLElement>();
+  let pressed: { el: HTMLElement; at: number } | null = null;
+  $effect(() => {
+    const list = body;
+    if (!list) return;
+    const remember = (e: PointerEvent) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>("button");
+      pressed = el ? { el, at: performance.now() } : null;
+    };
+    list.addEventListener("pointerdown", remember);
+    return () => list.removeEventListener("pointerdown", remember);
+  });
+  function keepPressedInPlace() {
+    const list = body;
+    const p = pressed;
+    pressed = null;
+    if (!list || !p || performance.now() - p.at > 1000 || !list.contains(p.el)) return;
+    const el = p.el;
+    const top = el.getBoundingClientRect().top;
+    const until = performance.now() + 1000;
+    let stop = false;
+    const userScrolled = () => (stop = true);
+    list.addEventListener("wheel", userScrolled, { passive: true });
+    list.addEventListener("keydown", userScrolled);
+    const step = () => {
+      if (!stop && el.isConnected) {
+        // The app's page never scrolls (the website's demo is part of one that does).
+        if (!DEMO && document.scrollingElement) document.scrollingElement.scrollTop = 0;
+        const moved = el.getBoundingClientRect().top - top;
+        if (Math.abs(moved) >= 1) list.scrollTop += moved;
+      }
+      if (!stop && performance.now() < until) requestAnimationFrame(step);
+      else {
+        list.removeEventListener("wheel", userScrolled);
+        list.removeEventListener("keydown", userScrolled);
+      }
+    };
+    requestAnimationFrame(step);
   }
 
   // Selecting a VOD opens its player paused at the start, ready to jump around.
@@ -234,7 +280,7 @@
         {/key}
       {/if}
 
-      <div class="body">
+      <div class="body" bind:this={body}>
         {#if searchError}
           <p class="error-text pad">{searchError}</p>
         {:else if results}

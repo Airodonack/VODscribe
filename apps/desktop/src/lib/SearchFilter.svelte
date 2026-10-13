@@ -53,7 +53,7 @@
     aria-expanded={open}
     title="Change what this searches"
   >
-    <Icon name="filter" size={14} /> Filter <span class="bar"></span><span class="summary">{scope}, {looking}</span>
+    <Icon name="filter" size={14} /> From <span class="bar"></span><span class="summary">{scope}, {looking}</span>
   </button>
   {#if open}
     <div class="popover" role="dialog" aria-label="Search filter">
