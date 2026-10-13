@@ -28,6 +28,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
   self_updatable: () => true,
+  chat: () => [],
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
