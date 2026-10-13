@@ -17,7 +17,9 @@
     sources = $bindable(),
     selected,
   }: {
-    /** Search every VOD rather than just the selected one. */
+    /** Search every VOD rather than just the selected one. Set by choosing All
+     *  VODs, it stays set as other VODs are picked (shown with a lock), until
+     *  This VOD is chosen again. */
     scopeAll: boolean;
     sources: Sources;
     /** The selected VOD, which a search can be limited to. */
@@ -53,7 +55,11 @@
     aria-expanded={open}
     title="Change what this searches"
   >
-    <Icon name="filter" size={14} /> From <span class="bar"></span><span class="summary">{scope}, {looking}</span>
+    <Icon name="filter" size={14} /> From <span class="bar"></span><span class="summary"
+      >{#if scopeAll}<span class="lock" title="Stays on All VODs when you pick a VOD"
+          ><Icon name="lock" size={11} /></span
+        >{/if}{scope}, {looking}</span
+    >
   </button>
   {#if open}
     <div class="popover" role="dialog" aria-label="Search filter">
@@ -70,7 +76,12 @@
           {#if selected}<span class="muted detail">{selected.title}</span>{/if}
         </button>
         <button class:on={!selected || scopeAll} aria-pressed={!selected || scopeAll} onclick={() => (scopeAll = true)}>
-          <span class="label">All VODs</span>
+          <span class="label"
+            >All VODs{#if scopeAll}<span class="lock"><Icon name="lock" size={11} /></span>{/if}</span
+          >
+          <span class="muted detail wrap">
+            {scopeAll ? "Locked: stays on when you pick a VOD" : "Choose it to keep it on when you pick a VOD"}
+          </span>
         </button>
       </div>
       <p class="eyebrow">Look through</p>
@@ -165,6 +176,15 @@
   .label {
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .lock {
+    margin: 0 4px;
+    color: var(--accent);
+  }
+
+  .detail.wrap {
+    white-space: normal;
   }
 
   .detail {
