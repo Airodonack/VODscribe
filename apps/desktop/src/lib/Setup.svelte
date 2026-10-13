@@ -159,7 +159,12 @@
         {#if running}Downloading…{:else}<Icon name="download" size={15} /> Download{/if}
       </button>
     {/if}
-    <button onclick={onchange} disabled={running}>Check again</button>
+    {#if running}
+      <!-- What's finished stays; Download picks up the rest later. -->
+      <button onclick={() => api.cancelSetup()}>Cancel</button>
+    {:else}
+      <button onclick={onchange}>Check again</button>
+    {/if}
   </div>
 </div>
 

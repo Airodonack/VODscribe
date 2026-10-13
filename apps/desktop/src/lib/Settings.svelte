@@ -167,6 +167,7 @@
         <div class="progress">
           <!-- The exact component, for the people who chose the GPU add-on. -->
           <DownloadStep progress={step} waiting="Downloading the GPU add-on" />
+          <button class="link cancel" onclick={() => api.cancelGpuInstall()}>Cancel</button>
         </div>
       {:else if !gpu?.installed}
         <button onclick={install}
@@ -362,5 +363,9 @@
     gap: 4px;
     font-size: 12px;
     width: 100%;
+  }
+
+  .progress .cancel {
+    justify-self: start;
   }
 </style>

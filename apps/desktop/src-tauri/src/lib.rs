@@ -12,8 +12,7 @@ mod thumbnails;
 mod vods;
 mod worker;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::Db;
@@ -25,8 +24,9 @@ struct AppState {
     paths: Paths,
     db: Mutex<Db>,
     worker: Worker,
-    setup_running: Arc<AtomicBool>,
-    gpu_installing: Arc<AtomicBool>,
+    /// First-run setup's downloads, and the GPU add-on's.
+    setup: setup::Install,
+    gpu: setup::Install,
     media: media::MediaServer,
 }
 
@@ -76,14 +76,7 @@ pub fn run() {
                 let state = handle.state::<AppState>();
                 state.db.lock().unwrap().vod(id).ok().flatten().and_then(|v| v.source_path)
             })?;
-            app.manage(AppState {
-                paths,
-                db,
-                worker,
-                setup_running: Arc::new(AtomicBool::new(false)),
-                gpu_installing: Arc::new(AtomicBool::new(false)),
-                media,
-            });
+            app.manage(AppState { paths, db, worker, setup: setup::Install::new(), gpu: setup::Install::new(), media });
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             // The window is created here rather than from the config, so release builds
@@ -102,6 +95,7 @@ pub fn run() {
             setup::data_dir,
             setup::open_data_dir,
             setup::run_setup,
+            setup::cancel_setup,
             vods::add_vod,
             vods::list_vods,
             vods::add_files,
@@ -125,6 +119,7 @@ pub fn run() {
             setup::set_settings,
             setup::gpu_status,
             setup::install_gpu_pack,
+            setup::cancel_gpu_install,
             setup::remove_gpu_pack,
             setup::cache_size,
             setup::clear_cache,

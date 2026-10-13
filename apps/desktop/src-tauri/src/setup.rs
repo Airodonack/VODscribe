@@ -44,7 +44,7 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
         js_runtime_managed: deps::managed_path(&bin, "deno").is_file(),
         can_install_tools: deps::ffmpeg().is_some() && deps::deno().is_some(),
         model_bytes: model::CPU_MODEL.total_bytes(),
-        running: state.setup_running.load(Ordering::Relaxed),
+        running: state.setup.running(),
     })
 }
 
@@ -75,27 +75,27 @@ struct ItemProgress<'a> {
 #[tauri::command]
 pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    spawn_install(app, state.setup_running.clone(), "setup-done", move |app, never| {
+    state.setup.spawn(app, "setup-done", move |app, cancel| {
         let progress = |item: &str, progress: Progress| {
             let _ = app.emit("setup-progress", ItemProgress { item, progress });
         };
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
-            tools::install_yt_dlp(&bin, never, |p| progress("yt-dlp", p))?;
+            tools::install_yt_dlp(&bin, cancel, |p| progress("yt-dlp", p))?;
         }
         if tools::find_ffmpeg(&bin).is_none()
             && let Some(dep) = deps::ffmpeg()
         {
-            deps::install(&dep, &bin, never, |p| progress("ffmpeg", p))?;
+            deps::install(&dep, &bin, cancel, |p| progress("ffmpeg", p))?;
         }
-        model::install(&paths.models(), &model::CPU_MODEL, never, |p| progress("model", p))?;
+        model::install(&paths.models(), &model::CPU_MODEL, cancel, |p| progress("model", p))?;
         model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
         app.state::<AppState>().worker.wake();
         // Last, since it's optional: only some YouTube VODs need it.
         // If it fails, setup still succeeded; YouTube links that need it will say so.
         if tools::find_js_runtime(&bin).is_none()
             && let Some(dep) = deps::deno()
-            && let Err(e) = deps::install(&dep, &bin, never, |p| progress("deno", p))
+            && let Err(e) = deps::install(&dep, &bin, cancel, |p| progress("deno", p))
         {
             eprintln!("Deno wasn't installed: {e:#}");
         }
@@ -104,36 +104,60 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
     Ok(())
 }
 
-/// Runs a long download on its own thread, one at a time per `running` flag,
-/// then clears the flag and emits `done_event` with an error message or null.
-pub(crate) fn spawn_install(
-    app: AppHandle,
+/// A long download's flags: `running` while it's under way (one at a time) and
+/// `cancel`, which `cancel()` sets to stop it. Canceling isn't an error: the
+/// done event carries null, and whatever was finished stays installed.
+pub(crate) struct Install {
     running: Arc<AtomicBool>,
-    done_event: &'static str,
-    install: impl FnOnce(&AppHandle, &AtomicBool) -> anyhow::Result<()> + Send + 'static,
-) {
-    if running.swap(true, Ordering::Relaxed) {
-        return;
+    cancel: Arc<AtomicBool>,
+}
+
+impl Install {
+    pub(crate) fn new() -> Self {
+        Self { running: Arc::new(AtomicBool::new(false)), cancel: Arc::new(AtomicBool::new(false)) }
     }
-    std::thread::spawn(move || {
-        // These downloads can't be canceled.
-        let result = install(&app, &AtomicBool::new(false));
-        running.store(false, Ordering::Relaxed);
-        let _ = app.emit(done_event, result.err().map(err));
-    });
+
+    pub(crate) fn running(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+    }
+
+    /// Stops the download under way, if any; it ends within a moment.
+    pub(crate) fn cancel(&self) {
+        if self.running() {
+            self.cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Runs `install` on its own thread, unless one is already running, then
+    /// clears `running` and emits `done_event` with an error message or null.
+    pub(crate) fn spawn(
+        &self,
+        app: AppHandle,
+        done_event: &'static str,
+        install: impl FnOnce(&AppHandle, &AtomicBool) -> anyhow::Result<()> + Send + 'static,
+    ) {
+        if self.running.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let (running, cancel) = (self.running.clone(), self.cancel.clone());
+        cancel.store(false, Ordering::Relaxed);
+        std::thread::spawn(move || {
+            let result = install(&app, &cancel);
+            running.store(false, Ordering::Relaxed);
+            let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
+            let _ = app.emit(done_event, error);
+        });
+    }
 }
 
 #[tauri::command]
 /// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (`Progress`).
 pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     // Setup installs yt-dlp too; the two mustn't write the same file at once.
-    if state.setup_running.swap(true, Ordering::Relaxed) {
+    let Some(_setup) = Claim::take(&state.setup.running) else {
         return Err("Setup is still downloading. Try again when it's done.".into());
-    }
-    let running = state.setup_running.clone();
-    let result = update_yt_dlp_now(app, state).await;
-    running.store(false, Ordering::Relaxed);
-    result
+    };
+    update_yt_dlp_now(app, state).await
 }
 
 async fn update_yt_dlp_now(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
@@ -180,7 +204,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
     Ok(GpuStatus {
         supported: gpu::supported(),
         installed: gpu::is_installed(&pack) && model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL),
-        installing: state.gpu_installing.load(Ordering::Relaxed),
+        installing: state.gpu.running(),
         worker: tools::sidecar("vodscribe-worker-cuda").is_ok(),
         gpu,
         min_free_mb: gpu::MIN_FREE_MB,
@@ -199,7 +223,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
 #[tauri::command]
 pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    spawn_install(app, state.gpu_installing.clone(), "gpu-done", move |app, never| {
+    state.gpu.spawn(app, "gpu-done", move |app, cancel| {
         let progress = |p: Progress| {
             let _ = app.emit("gpu-progress", p);
         };
@@ -217,9 +241,9 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
         let total = Some(total_bytes);
         let parts = pack_parts + model_parts;
         if pack_needed {
-            gpu::install(&paths.gpu_pack(), never, |p| progress(Progress { total, parts, ..p }))?;
+            gpu::install(&paths.gpu_pack(), cancel, |p| progress(Progress { total, parts, ..p }))?;
         }
-        model::install(&paths.models(), &model::GPU_MODEL, never, |p| {
+        model::install(&paths.models(), &model::GPU_MODEL, cancel, |p| {
             progress(Progress { done: pack_total + p.done, total, part: pack_parts + p.part, parts, ..p })
         })?;
         progress(Progress {
@@ -234,9 +258,23 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
     Ok(())
 }
 
+/// Stops setup's downloads; what already finished stays installed.
+#[tauri::command]
+pub(crate) async fn cancel_setup(state: State<'_, AppState>) -> CmdResult<()> {
+    state.setup.cancel();
+    Ok(())
+}
+
+/// Stops the GPU add-on's download.
+#[tauri::command]
+pub(crate) async fn cancel_gpu_install(state: State<'_, AppState>) -> CmdResult<()> {
+    state.gpu.cancel();
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
-    if state.gpu_installing.load(Ordering::Relaxed) {
+    if state.gpu.running() {
         return Err("The GPU add-on is still downloading.".into());
     }
     // A transcription may have the pack's libraries loaded, including one the
@@ -268,7 +306,7 @@ pub(crate) async fn cache_size(state: State<'_, AppState>) -> CmdResult<u64> {
 pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     // Claimed for the whole clear, so setup, a yt-dlp update or the GPU add-on
     // can't start downloading into folders that are being deleted.
-    let claims = (Claim::take(&state.setup_running), Claim::take(&state.gpu_installing));
+    let claims = (Claim::take(&state.setup.running), Claim::take(&state.gpu.running));
     let (Some(_setup), Some(_gpu)) = claims else {
         return Err("Wait for the current download to finish first.".into());
     };
@@ -288,7 +326,7 @@ pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> C
     Ok(())
 }
 
-/// A busy flag (`setup_running`, `gpu_installing`) held until dropped.
+/// A busy flag (an `Install`'s `running`) held until dropped.
 struct Claim(Arc<AtomicBool>);
 
 impl Claim {
