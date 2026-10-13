@@ -27,8 +27,30 @@
   // With a VOD selected, searches cover just it unless the filter is set to all VODs.
   let scopeAll = $state(false);
   let scopeId = $derived(scopeAll ? null : selectedId);
-  // What a search looks through. More filters join these as the search grows.
-  let sources = $state<Sources>({ audio: true, chat: true });
+  // What a search looks through, remembered across launches. Both are on at
+  // first, so chat search is there to be found. More filters join these as
+  // the search grows; the scope isn't kept, since it follows the selection.
+  const SOURCES = "vodscribe.searchSources";
+  let sources = $state<Sources>(savedSources());
+  function savedSources(): Sources {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SOURCES) ?? "null");
+      const audio = saved?.audio !== false;
+      const chat = saved?.chat !== false;
+      // Never neither, whatever was saved.
+      return audio || chat ? { audio, chat } : { audio: true, chat: true };
+    } catch {
+      return { audio: true, chat: true };
+    }
+  }
+  $effect(() => {
+    const value = JSON.stringify({ audio: sources.audio, chat: sources.chat });
+    try {
+      localStorage.setItem(SOURCES, value);
+    } catch {
+      // Not remembered, which is fine.
+    }
+  });
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);
 
