@@ -37,8 +37,13 @@
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
-      a: "On the issue tracker, or by email to airodonack@proton.me. Both are read by the person who makes VODscribe.",
+      a: "On the issue tracker, which the person who makes VODscribe reads.",
       link: { text: "Open the issue tracker", href: "https://github.com/Airodonack/VODscribe/issues" },
+    },
+    {
+      q: "Can I see the code?",
+      a: "Yes. VODscribe is source-available under the Functional Source License: read it, build it, change it for yourself; just don't sell a competing product from it. Each version becomes Apache 2.0 two years after release.",
+      link: { text: "See the code on GitHub", href: "https://github.com/Airodonack/VODscribe" },
     },
   ];
 </script>

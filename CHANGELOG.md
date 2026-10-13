@@ -8,6 +8,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The GPU add-on is smaller: it now contains only ONNX Runtime and NVIDIA's libraries, since the speech-recognition library ships with the app. It downloads again once after updating.
 - Settings has a Help section with where to report problems, and the website answers the same question.
 - Under the hood: a weekly check that every file setup downloads is still available where it's expected.
+- VODscribe's code is public, under the Functional Source License (source-available; Apache 2.0 two years after each release).
 
 ## 0.1.2 — 2026-10-12
 

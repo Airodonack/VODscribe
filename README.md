@@ -94,6 +94,10 @@ It deploys from this repo through Cloudflare's Git integration: build command `p
 
 `pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. The GitHub Actions workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS (Intel and Apple Silicon) on a manual run or a `v*` tag, and uploads the bundles as artifacts. macOS bundles are ad-hoc signed; nothing is signed with a paid certificate yet.
 
+## License
+
+VODscribe is source-available under the [Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md): use, read, change and redistribute it for anything except a competing product, and each version becomes Apache 2.0 two years after its release. The third-party software it's built on keeps its own licenses (`THIRD-PARTY-NOTICES.txt`, and the website's licenses page). [CONTRIBUTING.md](CONTRIBUTING.md) covers changes and [SECURITY.md](SECURITY.md) vulnerability reports.
+
 ## Releasing
 
 1. Write the release's entry in `CHANGELOG.md` as you go (the heading says "(unreleased)" until then; CI checks that the version in `Cargo.toml` has one).

@@ -1,9 +1,6 @@
 # Reporting a security problem
 
-If you find a vulnerability in VODscribe, please report it privately rather than in a public issue, so a fix can ship before the details are out:
-
-- [GitHub's private vulnerability reporting](https://github.com/Airodonack/VODscribe/security/advisories/new), or
-- email `airodonack@proton.me`.
+If you find a vulnerability in VODscribe, please report it privately rather than in a public issue, so a fix can ship before the details are out: use [GitHub's private vulnerability reporting](https://github.com/Airodonack/VODscribe/security/advisories/new) for this repository.
 
 Expect a reply within a few days. Fixes go out as a normal release, which installed copies offer to update to; the release notes credit the reporter unless they'd rather not be named.
 
