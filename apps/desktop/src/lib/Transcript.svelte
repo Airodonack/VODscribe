@@ -3,6 +3,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import { api, events, type ChatLine, type Line, type Vod } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
+  import Minimap from "./Minimap.svelte";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
 
@@ -161,100 +162,208 @@
     return () => io.disconnect();
   });
   let play = (time: number) => onplay(vod.id, time);
+
+  // The minimap at the right edge (Minimap.svelte): chat activity over the
+  // whole VOD, or speech when there's no chat, as tall as the visible area.
+  let scroller = $state<HTMLElement | null>(null);
+  let railHeight = $state(0);
+  $effect(() => {
+    const s = root.closest<HTMLElement>(".body");
+    scroller = s;
+    if (!s) return;
+    const ro = new ResizeObserver(() => (railHeight = s.clientHeight));
+    ro.observe(s);
+    return () => ro.disconnect();
+  });
+  let mapTimes = $derived(chat.length > 0 ? chat.map((m) => m.time) : lines.map((l) => l.start));
+  let mapLabel = $derived(chat.length > 0 ? "How busy chat was over the VOD" : "Speech over the VOD");
+  let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0, chat.at(-1)?.time ?? 0));
+  let showMap = $derived(lines.length > 0 && mapDuration > 0);
+
+  /** Where the view starts: below the header, which stays at the top. */
+  const viewTop = () => root.querySelector(".head")?.getBoundingClientRect().bottom ?? 0;
+  /** When row `i` starts; the row of chat before the first line starts at 0. */
+  const rowStart = (i: number) => rows[i]?.line?.start ?? 0;
+
+  /** The first of `els` (in page order) for which `past` holds, or els.length. */
+  function firstWhere(els: NodeListOf<HTMLElement>, past: (el: HTMLElement) => boolean): number {
+    let lo = 0;
+    let hi = els.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (past(els[mid])) hi = mid;
+      else lo = mid + 1;
+    }
+    return lo;
+  }
+
+  // The part of the VOD in view, kept up to date as the list scrolls or grows.
+  let view = $state<{ from: number; to: number } | null>(null);
+  function updateView() {
+    if (!scroller || !showMap) return (view = null);
+    const els = root.querySelectorAll<HTMLElement>(".line");
+    const top = viewTop();
+    const bottom = scroller.getBoundingClientRect().bottom;
+    const first = Math.min(
+      firstWhere(els, (el) => el.getBoundingClientRect().bottom > top),
+      els.length - 1,
+    );
+    const after = firstWhere(els, (el) => el.getBoundingClientRect().top >= bottom);
+    const end = after < rows.length ? rowStart(after) : mapDuration;
+    view = { from: rowStart(first) / mapDuration, to: Math.min(1, end / mapDuration) };
+  }
+  $effect(() => {
+    const s = scroller;
+    void rows;
+    void shown;
+    void railHeight;
+    if (!s) return;
+    let frame = 0;
+    const later = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateView);
+    };
+    later();
+    s.addEventListener("scroll", later, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      s.removeEventListener("scroll", later);
+    };
+  });
+
+  /** Scrolls the row being said at `time` to the top of the view. */
+  function seek(time: number) {
+    if (!scroller) return;
+    let lo = 0;
+    let hi = rows.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (rowStart(mid) <= time) lo = mid;
+      else hi = mid - 1;
+    }
+    if (lo >= shown) flushSync(() => (shown = lo + PAGE));
+    const el = root.querySelectorAll<HTMLElement>(".line")[lo];
+    if (el) scroller.scrollTop += el.getBoundingClientRect().top - viewTop();
+  }
 </script>
 
-<div class="transcript" class:with-chat={showChat} bind:this={root}>
-  <div class="head">
-    <p class="status muted">
-      <span class="eyebrow">Transcript</span>
-      {#if vod.status === "transcribing"}
-        <span class="sep">·</span>{Math.round(vod.progress * 100)}% done; new lines appear as they're produced
-      {:else if lines.length > 0}
-        <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
-      {/if}
-    </p>
-    {#if hasChat}
-      <div class="chat-head">
-        <span class="muted chat-status">
-          {#if vod.chat === "pending"}
-            Fetching chat{chatProgress !== null ? ` · ${Math.round(chatProgress * 100)}%` : "…"}
-          {:else if vod.chat === "none"}
-            No chat replay
-          {:else if vod.chat === "failed"}
-            <span class="error-text">Couldn't fetch chat</span>
-            <button class="link" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
-              >Try again</button
-            >
-          {:else if chatError}
-            <span class="error-text">{chatError}</span>
-          {:else}
-            {chat.length.toLocaleString()} message{chat.length === 1 ? "" : "s"}
-          {/if}
-        </span>
-        <button
-          class="chat-toggle"
-          class:on={showChat}
-          onclick={toggleChat}
-          disabled={noChat}
-          aria-expanded={showChat}
-          title={noChat
-            ? "This video has no chat replay (it wasn't a livestream)"
-            : showChat
-              ? "Hide chat"
-              : "Show chat beside the transcript"}
-        >
-          <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
-        </button>
-      </div>
-    {/if}
-  </div>
-  {#if error}
-    <p class="error-text">{error}</p>
-  {:else if lines.length === 0}
-    <p class="muted">
-      {vod.status === "done" ? "No speech was found in this VOD." : "The transcript appears here as it is produced."}
-    </p>
-  {/if}
-  {#each rows.slice(0, shown) as row, r (r)}
-    <div class="line" data-start={row.line?.start}>
-      {#if row.line}
-        {@const line = row.line}
-        <button class="row" onclick={() => play(line.start)}>
-          <span class="time">{formatTime(line.start)}</span>
-          <span>{line.text}</span>
-        </button>
-      {:else}
-        <span></span>
-      {/if}
-      {#if showChat}
-        <div class="chat">
-          {#each expanded.has(r) ? row.chat : row.chat.slice(0, SHOWN) as message, m (m)}
-            <ChatMessage {message} onplay={play} />
-          {/each}
-          {#if row.chat.length > SHOWN && !expanded.has(r)}
-            <button class="link more" onclick={() => expanded.add(r)}>{row.chat.length - SHOWN} more</button>
-          {/if}
+<div class="layout">
+  <div class="transcript" id="transcript" class:with-chat={showChat} bind:this={root}>
+    <div class="head">
+      <p class="status muted">
+        <span class="eyebrow">Transcript</span>
+        {#if vod.status === "transcribing"}
+          <span class="sep">·</span>{Math.round(vod.progress * 100)}% done; new lines appear as they're produced
+        {:else if lines.length > 0}
+          <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
+        {/if}
+      </p>
+      {#if hasChat}
+        <div class="chat-head">
+          <span class="muted chat-status">
+            {#if vod.chat === "pending"}
+              Fetching chat{chatProgress !== null ? ` · ${Math.round(chatProgress * 100)}%` : "…"}
+            {:else if vod.chat === "none"}
+              No chat replay
+            {:else if vod.chat === "failed"}
+              <span class="error-text">Couldn't fetch chat</span>
+              <button class="link" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
+                >Try again</button
+              >
+            {:else if chatError}
+              <span class="error-text">{chatError}</span>
+            {:else}
+              {chat.length.toLocaleString()} message{chat.length === 1 ? "" : "s"}
+            {/if}
+          </span>
+          <button
+            class="chat-toggle"
+            class:on={showChat}
+            onclick={toggleChat}
+            disabled={noChat}
+            aria-expanded={showChat}
+            title={noChat
+              ? "This video has no chat replay (it wasn't a livestream)"
+              : showChat
+                ? "Hide chat"
+                : "Show chat beside the transcript"}
+          >
+            <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
+          </button>
         </div>
       {/if}
     </div>
-  {/each}
-  {#if showChat && lines.length === 0 && chat.length > 0}
-    <div class="line">
-      <span></span>
-      <div class="chat">
-        {#each chat.slice(0, shown) as message, m (m)}
-          <ChatMessage {message} onplay={play} />
-        {/each}
+    {#if error}
+      <p class="error-text">{error}</p>
+    {:else if lines.length === 0}
+      <p class="muted">
+        {vod.status === "done" ? "No speech was found in this VOD." : "The transcript appears here as it is produced."}
+      </p>
+    {/if}
+    {#each rows.slice(0, shown) as row, r (r)}
+      <div class="line" data-start={row.line?.start}>
+        {#if row.line}
+          {@const line = row.line}
+          <button class="row" onclick={() => play(line.start)}>
+            <span class="time">{formatTime(line.start)}</span>
+            <span>{line.text}</span>
+          </button>
+        {:else}
+          <span></span>
+        {/if}
+        {#if showChat}
+          <div class="chat">
+            {#each expanded.has(r) ? row.chat : row.chat.slice(0, SHOWN) as message, m (m)}
+              <ChatMessage {message} onplay={play} />
+            {/each}
+            {#if row.chat.length > SHOWN && !expanded.has(r)}
+              <button class="link more" onclick={() => expanded.add(r)}>{row.chat.length - SHOWN} more</button>
+            {/if}
+          </div>
+        {/if}
       </div>
+    {/each}
+    {#if showChat && lines.length === 0 && chat.length > 0}
+      <div class="line">
+        <span></span>
+        <div class="chat">
+          {#each chat.slice(0, shown) as message, m (m)}
+            <ChatMessage {message} onplay={play} />
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if shown < Math.max(rows.length, showChat && lines.length === 0 ? chat.length : 0)}
+      <div class="more-rows" bind:this={sentinel}></div>
+    {/if}
+  </div>
+  {#if showMap}
+    <div class="rail" style:height="{railHeight}px">
+      <Minimap times={mapTimes} duration={mapDuration} {view} label={mapLabel} onseek={seek} />
     </div>
-  {/if}
-  {#if shown < Math.max(rows.length, showChat && lines.length === 0 ? chat.length : 0)}
-    <div class="more-rows" bind:this={sentinel}></div>
   {/if}
 </div>
 
 <style>
+  .layout {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .rail {
+    position: sticky;
+    top: 0;
+    flex: none;
+    width: 48px;
+    margin-left: auto;
+    padding: 8px 6px;
+    box-sizing: border-box;
+    border-left: 1px solid var(--border);
+  }
+
   .transcript {
+    flex: 1 1 auto;
+    min-width: 0;
     padding: 10px 20px 32px;
     max-width: 960px;
     /* toggleChat keeps the view in place itself; the browser's own scroll
