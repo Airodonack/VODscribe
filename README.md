@@ -96,8 +96,9 @@ It deploys from this repo through Cloudflare's Git integration: build command `p
 
 ## Releasing
 
-1. Bump `version` in the root `Cargo.toml` and commit.
-2. Tag it with the release notes as the message: `git tag -a v0.2.0 -m "What changed"`, then push the tag.
+1. Write the release's entry in `CHANGELOG.md` as you go (the heading says "(unreleased)" until then; CI checks that the version in `Cargo.toml` has one).
+2. Bump `version` in the root `Cargo.toml`, date the changelog heading, and commit.
+3. Tag it (`git tag v0.2.0`) and push the tag. The entry becomes the release notes in `latest.json`; the tag build fails if it's missing or still marked unreleased.
 
 The tag's build signs the update bundles (`TAURI_SIGNING_PRIVATE_KEY`), then `scripts/release.py` gives every file a stable name and writes `latest.json`, and the publish job uploads them to R2: `releases/<version>/` for the updater and winget, `releases/latest/` for the website's buttons, and `releases/latest.json` last. The app checks that manifest at launch and daily, and installs an update only when the user says so, and only if it's signed with the key whose public half is in `tauri.conf.json`. Keep the private key (`~/.tauri/vodscribe-updater.key`) backed up: without it, installed copies can't be updated.
 

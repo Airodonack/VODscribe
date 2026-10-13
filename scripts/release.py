@@ -9,16 +9,20 @@ actions/download-artifact writes them). Writes into <out dir>:
                (VODscribe-windows-x64-setup.exe, ...), which the website links
                to under releases/latest/ and the updater under releases/<version>/
   latest.json  the updater's manifest (plugins.updater in tauri.conf.json):
-               every platform's versioned URL and signature
+               every platform's versioned URL and signature, and the release
+               notes from CHANGELOG.md's entry for the version
   winget/      the winget-pkgs manifests for this version
 
-Fails if an expected file is missing, so a release never goes out half-built.
+Fails if an expected file is missing, so a release never goes out half-built,
+or if CHANGELOG.md has no dated entry for the version.
+
+    python3 scripts/release.py --check        the Cargo.toml version has an entry (CI)
+    python3 scripts/release.py --notes <ver>  print that version's notes
 """
 
 import datetime
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -48,12 +52,36 @@ def find(artifacts: Path, target: str, suffix: str) -> Path:
     return matches[0]
 
 
+CHANGELOG = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+
+
+def changelog_entry(version: str) -> tuple[str, bool]:
+    """CHANGELOG.md's entry for `version`: its text and whether it's marked unreleased.
+
+    Entries start `## <version>`; the text runs to the next `## `. Exits if there's none.
+    """
+    text = CHANGELOG.read_text()
+    for section in text.split("\n## ")[1:]:
+        heading, _, body = section.partition("\n")
+        if heading.split()[0] == version:
+            return body.strip(), "(unreleased)" in heading
+    sys.exit(f"CHANGELOG.md has no entry for {version}: add a '## {version}' section with what changed")
+
+
 def notes(version: str) -> str:
-    """The tag's message, which becomes the release notes the app can show."""
-    out = subprocess.run(
-        ["git", "tag", "-l", "--format=%(contents)", f"v{version}"], capture_output=True, text=True, check=False
-    )
-    return out.stdout.strip()
+    """The changelog entry, which becomes the release notes in latest.json."""
+    body, unreleased = changelog_entry(version)
+    if unreleased:
+        sys.exit(f"CHANGELOG.md still marks {version} as unreleased: date the heading before tagging")
+    if not body:
+        sys.exit(f"CHANGELOG.md's entry for {version} is empty")
+    return body
+
+
+def cargo_version() -> str:
+    """The workspace version from the root Cargo.toml."""
+    text = (CHANGELOG.parent / "Cargo.toml").read_text()
+    return text.split("[workspace.package]")[1].split("version = \"")[1].split('"')[0]
 
 
 def main(artifacts: Path, version: str, out: Path) -> None:
@@ -127,4 +155,10 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+    if sys.argv[1:] == ["--check"]:
+        # For CI: the version being worked on has a changelog entry (unreleased or dated).
+        changelog_entry(cargo_version())
+    elif sys.argv[1:2] == ["--notes"]:
+        print(notes(sys.argv[2]))
+    else:
+        main(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
