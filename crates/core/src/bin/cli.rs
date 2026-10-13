@@ -74,10 +74,16 @@ fn main() -> Result<()> {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("yt-dlp not found; run setup")?;
             let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"))?;
             let started = Instant::now();
-            let messages =
-                chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &cancel, |f| eprint!("\rchat {:.0}%", f * 100.0))?;
+            let mut store = chat::MemoryChat::default();
+            let found = chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &mut store, &cancel, |f| {
+                eprint!("\rchat {:.0}%", f * 100.0)
+            })?;
             eprintln!();
-            let Some(messages) = messages else { bail!("no chat replay for this VOD") };
+            if !found {
+                bail!("no chat replay for this VOD");
+            }
+            let mut messages = store.messages;
+            messages.sort_by(|a, b| a.time.total_cmp(&b.time));
             for m in messages.iter().take(5).chain(messages.iter().rev().take(5).rev()) {
                 println!("{:>9.1}  {}: {}", m.time, m.author, m.text());
             }

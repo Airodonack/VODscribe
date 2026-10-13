@@ -32,6 +32,10 @@ pub struct ChatMessage {
     /// text instead, in whatever currency it was.
     #[serde(default)]
     pub amount: Option<f64>,
+    /// When the event happened, if not when the message was sent: a Kick resub
+    /// celebration can be shared long after the sub (see `resubs_announced`).
+    #[serde(default)]
+    pub event_time: Option<f64>,
 }
 
 /// What a chat message is: someone writing, or an event the site posts in
@@ -107,29 +111,119 @@ impl ChatMessage {
     }
 }
 
-/// A VOD's chat, oldest first. `None` when the site has no chat replay for it
-/// (a file on this computer, another site, or a YouTube video that wasn't a
-/// livestream). Reports a 0..1 fraction while it pages through.
+/// Where a VOD's chat goes as it's fetched, a batch at a time, so it can be
+/// shown while the rest arrives, and where the fetch has got to, so one that's
+/// interrupted (quitting, a network error) carries on from there.
+pub trait ChatStore {
+    /// Where an interrupted fetch got to, if one did (a position `save` was given).
+    fn resume(&mut self) -> Result<Option<f64>>;
+    /// Forgets every saved message and position, to start over.
+    fn clear(&mut self) -> Result<()>;
+    /// Forgets the saved messages from `time` (seconds into the VOD) on.
+    fn drop_from(&mut self, time: f64) -> Result<()>;
+    /// Saves `messages` and that the fetch has reached `position`, together.
+    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()>;
+    /// The saved subs, as (id, message), for `resubs_announced`.
+    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>>;
+    /// Makes these saved messages plain messages.
+    fn demote(&mut self, ids: &[i64]) -> Result<()>;
+}
+
+/// Fetches a VOD's chat into `store`, carrying on from where an interrupted
+/// fetch got to. False when the site has no chat replay for it (a file on this
+/// computer, another site, or a YouTube video that wasn't a livestream).
+/// Reports a 0..1 fraction while it pages through.
+#[allow(clippy::too_many_arguments)]
 pub fn fetch(
     info: &VodInfo,
     yt_dlp: Option<&YtDlp>,
     work_dir: &Path,
     vod_id: i64,
+    store: &mut dyn ChatStore,
     cancel: &AtomicBool,
     mut on_progress: impl FnMut(f64),
-) -> Result<Option<Vec<ChatMessage>>> {
-    let mut messages = match info.platform.as_str() {
-        "kick" => Some(fetch_kick(info, cancel, &mut on_progress)?),
-        "twitch" => Some(fetch_twitch(info, cancel, &mut on_progress)?),
+) -> Result<bool> {
+    match info.platform.as_str() {
+        "kick" => fetch_kick(info, store, cancel, &mut on_progress)?,
+        "twitch" => fetch_twitch(info, store, cancel, &mut on_progress)?,
         "youtube" => {
-            fetch_youtube(info, yt_dlp.context("The video downloader isn't installed yet.")?, work_dir, vod_id)?
+            let yt_dlp = yt_dlp.context("The video downloader isn't installed yet.")?;
+            // yt-dlp hands over the whole chat at the end, so there's nothing to carry on from.
+            let Some(messages) = fetch_youtube(info, yt_dlp, work_dir, vod_id)? else { return Ok(false) };
+            store.clear()?;
+            store.save(&messages, 0.0)?;
         }
-        _ => None,
-    };
-    if let Some(messages) = &mut messages {
-        messages.sort_by(|a, b| a.time.total_cmp(&b.time));
+        _ => return Ok(false),
     }
-    Ok(messages)
+    Ok(true)
+}
+
+/// A `ChatStore` in memory, for the developer CLI and tests.
+#[derive(Default, Debug)]
+pub struct MemoryChat {
+    pub messages: Vec<ChatMessage>,
+    pub position: Option<f64>,
+}
+
+impl ChatStore for MemoryChat {
+    fn resume(&mut self) -> Result<Option<f64>> {
+        Ok(self.position)
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.messages.clear();
+        self.position = None;
+        Ok(())
+    }
+
+    fn drop_from(&mut self, time: f64) -> Result<()> {
+        self.messages.retain(|m| m.time < time);
+        Ok(())
+    }
+
+    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()> {
+        self.messages.extend_from_slice(messages);
+        self.position = Some(position);
+        Ok(())
+    }
+
+    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>> {
+        let subs = self.messages.iter().enumerate().filter(|(_, m)| m.kind == Kind::Sub);
+        Ok(subs.map(|(i, m)| (i as i64, m.clone())).collect())
+    }
+
+    fn demote(&mut self, ids: &[i64]) -> Result<()> {
+        for &id in ids {
+            self.messages[id as usize].kind = Kind::Message;
+        }
+        Ok(())
+    }
+}
+
+/// Collects messages and saves them every so often, rather than page by page.
+struct Batch {
+    messages: Vec<ChatMessage>,
+    since: std::time::Instant,
+}
+
+impl Batch {
+    const SIZE: usize = 500;
+    const EVERY: Duration = Duration::from_secs(1);
+
+    fn new() -> Self {
+        Batch { messages: Vec::new(), since: std::time::Instant::now() }
+    }
+
+    /// Saves what's collected if there's enough or it's been a while (or `now`),
+    /// with `position`, which must be where the fetch carries on after them.
+    fn save(&mut self, store: &mut dyn ChatStore, position: f64, now: bool) -> Result<()> {
+        if now || self.messages.len() >= Self::SIZE || self.since.elapsed() >= Self::EVERY {
+            store.save(&self.messages, position)?;
+            self.messages.clear();
+            self.since = std::time::Instant::now();
+        }
+        Ok(())
+    }
 }
 
 /// Kick and Twitch API pages are a few tens of KB.
@@ -183,38 +277,70 @@ fn host(url: &str) -> &str {
 // of 25. The history is the whole channel's, so the VOD's span is worked out
 // from when it started (see `kick::chat_origin`) and its length.
 
-fn fetch_kick(info: &VodInfo, cancel: &AtomicBool, on_progress: &mut dyn FnMut(f64)) -> Result<Vec<ChatMessage>> {
+// Saved as it goes, with the next page's cursor as the position: a page holds
+// only messages older than its cursor, so carrying on from it repeats none.
+
+fn fetch_kick(
+    info: &VodInfo,
+    store: &mut dyn ChatStore,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(f64),
+) -> Result<()> {
     let origin = kick::chat_origin(&info.platform_id)?;
     let duration = info.duration.filter(|d| *d > 0.0).context("Kick didn't say how long this VOD is.")?;
-    let end = origin.start + duration;
-    let mut cursor = (end * 1e6) as i64;
-    let mut out = Vec::new();
-    // Each celebration message's place in `out`, and when its sub happened (in the VOD).
-    let mut celebrations = Vec::new();
+    let page = |cursor: i64| {
+        let url = format!("https://web.kick.com/api/v1/chat/{}/history?cursor={cursor}", origin.channel);
+        parse_kick_page(&api(&url, None, &[], cancel)?)
+    };
+    kick_into(store, origin.start, duration, page, on_progress)
+}
+
+/// Pages back through Kick's history into `store` (see `fetch_kick`); `page`
+/// gets the page before a cursor. Apart, so tests can page through their own.
+#[allow(clippy::type_complexity)]
+fn kick_into(
+    store: &mut dyn ChatStore,
+    start: f64,
+    duration: f64,
+    mut page: impl FnMut(i64) -> Result<(Vec<(f64, String, ChatMessage, Option<f64>)>, Option<i64>)>,
+    on_progress: &mut dyn FnMut(f64),
+) -> Result<()> {
+    let end = start + duration;
+    let mut cursor = match store.resume()? {
+        Some(position) => position as i64,
+        None => {
+            store.clear()?;
+            (end * 1e6) as i64
+        }
+    };
+    let mut batch = Batch::new();
     let mut seen = HashSet::new();
     loop {
-        let url = format!("https://web.kick.com/api/v1/chat/{}/history?cursor={cursor}", origin.channel);
-        let page = api(&url, None, &[], cancel)?;
-        let (messages, next) = parse_kick_page(&page)?;
-        let mut oldest = end;
+        let (messages, next) = page(cursor)?;
+        let mut oldest = (cursor as f64 / 1e6).min(end);
         for (at, id, msg, subbed_at) in messages {
             oldest = oldest.min(at);
-            if at >= origin.start && at <= end && seen.insert(id) {
-                if let Some(subbed_at) = subbed_at {
-                    celebrations.push((out.len(), subbed_at - origin.start));
-                }
-                out.push(ChatMessage { time: at - origin.start, ..msg });
+            if at >= start && at <= end && seen.insert(id) {
+                let event_time = subbed_at.map(|t| t - start);
+                batch.messages.push(ChatMessage { time: at - start, event_time, ..msg });
             }
         }
         on_progress(((end - oldest) / duration).clamp(0.0, 1.0));
         // Stop at the VOD's start, or when the history runs out or stops moving back.
         match next {
-            Some(next) if next < cursor && oldest >= origin.start => cursor = next,
-            _ => break,
+            Some(next) if next < cursor && oldest >= start => {
+                cursor = next;
+                batch.save(store, next as f64, false)?;
+            }
+            _ => {
+                batch.save(store, cursor as f64, true)?;
+                break;
+            }
         }
     }
-    count_each_sub_once(&mut out, &celebrations);
-    Ok(out)
+    let announced = resubs_announced(&store.subs()?);
+    store.demote(&announced)?;
+    Ok(())
 }
 
 /// A history page's messages, as (Unix time, id, message with time 0, and for
@@ -241,6 +367,7 @@ fn parse_kick_page(page: &Value) -> Result<(Vec<(f64, String, ChatMessage, Optio
             parts: kick_parts(content),
             kind,
             amount,
+            event_time: None,
         };
         out.push((at, id.to_string(), msg, subbed_at.filter(|_| kind == Kind::Sub)));
     }
@@ -278,21 +405,22 @@ fn leading_number(text: &str) -> Option<f64> {
 }
 
 /// A resub can show twice on Kick: KickBot's announcement when it happens, and
-/// the subscriber's celebration message, which they may send much later. When
-/// KickBot announced it (`celebrations` holds each celebration's index and when
-/// its sub happened), the celebration stays in chat as a plain message.
-fn count_each_sub_once(messages: &mut [ChatMessage], celebrations: &[(usize, f64)]) {
-    let announced: Vec<(String, f64)> = messages
+/// the subscriber's celebration message, which they may send much later (its
+/// `event_time` is when the sub happened). Of `subs`, the celebrations KickBot
+/// announced, which should stay in chat as plain messages.
+pub fn resubs_announced(subs: &[(i64, ChatMessage)]) -> Vec<i64> {
+    let announced: Vec<(String, f64)> = subs
         .iter()
-        .filter(|m| m.kind == Kind::Sub && m.author.eq_ignore_ascii_case("KickBot"))
-        .map(|m| (m.text().to_lowercase(), m.time))
+        .filter(|(_, m)| m.author.eq_ignore_ascii_case("KickBot"))
+        .map(|(_, m)| (m.text().to_lowercase(), m.time))
         .collect();
-    for &(i, subbed_at) in celebrations {
-        let who = format!("@{} ", messages[i].author.to_lowercase());
-        if announced.iter().any(|(text, at)| (at - subbed_at).abs() < 120.0 && text.contains(&who)) {
-            messages[i].kind = Kind::Message;
-        }
-    }
+    subs.iter()
+        .filter_map(|(id, m)| {
+            let subbed_at = m.event_time?;
+            let who = format!("@{} ", m.author.to_lowercase());
+            announced.iter().any(|(text, at)| (at - subbed_at).abs() < 120.0 && text.contains(&who)).then_some(*id)
+        })
+        .collect()
 }
 
 /// Splits Kick's `[emote:<id>:<name>]` codes out of a message.
@@ -341,33 +469,75 @@ const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { com
         message { userColor fragments { text emote { emoteID } } } } }
     pageInfo { hasNextPage } } } }";
 
-fn fetch_twitch(info: &VodInfo, cancel: &AtomicBool, on_progress: &mut dyn FnMut(f64)) -> Result<Vec<ChatMessage>> {
+// Saved as it goes, with the next offset as the position. The next page starts
+// at that second again, so carrying on drops what was saved from it first.
+
+fn fetch_twitch(
+    info: &VodInfo,
+    store: &mut dyn ChatStore,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(f64),
+) -> Result<()> {
     let id = info.platform_id.trim_start_matches('v');
-    let duration = info.duration.filter(|d| *d > 0.0);
-    let mut offset = 0i64;
-    let mut out = Vec::new();
+    let page = |offset: i64| {
+        let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
+        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?)
+    };
+    twitch_into(store, info.duration.filter(|d| *d > 0.0), page, on_progress)
+}
+
+/// Pages through Twitch's comments into `store` (see `fetch_twitch`); `page`
+/// gets the page from an offset. Apart, so tests can page through their own.
+#[allow(clippy::type_complexity)]
+fn twitch_into(
+    store: &mut dyn ChatStore,
+    duration: Option<f64>,
+    mut page: impl FnMut(i64) -> Result<(Vec<(String, ChatMessage)>, bool)>,
+    on_progress: &mut dyn FnMut(f64),
+) -> Result<()> {
+    let mut offset = match store.resume()? {
+        Some(position) => {
+            store.drop_from(position)?;
+            position as i64
+        }
+        None => {
+            store.clear()?;
+            0
+        }
+    };
+    let mut batch = Batch::new();
     let mut seen = HashSet::new();
     loop {
-        let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
-        let page = api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?;
-        let (messages, more) = parse_twitch_page(&page)?;
+        let (messages, more) = page(offset)?;
         let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
+        // A page that ends in the second it started from may not have held all
+        // of that second's messages; that's rare, and moving on keeps this finite.
+        let next = if last > offset { last } else { offset + 1 };
         for (id, msg) in messages {
             if seen.insert(id) {
-                out.push(msg);
+                // Saved now only if before the next page's second, which that page brings again.
+                batch.messages.push(msg);
             }
         }
         if let Some(d) = duration {
             on_progress((last as f64 / d).clamp(0.0, 1.0));
         }
         if !more {
+            batch.save(store, next as f64, true)?;
             break;
         }
-        // A page that ends in the second it started from may not have held all
-        // of that second's messages; that's rare, and moving on keeps this finite.
-        offset = if last > offset { last } else { offset + 1 };
+        // Keep the next second's messages for the batch after, so a save's position
+        // is never in the middle of what it saved.
+        let carry: Vec<ChatMessage> = {
+            let (keep, carry): (Vec<_>, Vec<_>) = batch.messages.drain(..).partition(|m| (m.time as i64) < next);
+            batch.messages = keep;
+            carry
+        };
+        batch.save(store, next as f64, false)?;
+        batch.messages.splice(0..0, carry);
+        offset = next;
     }
-    Ok(out)
+    Ok(())
 }
 
 fn parse_twitch_page(page: &Value) -> Result<(Vec<(String, ChatMessage)>, bool)> {
@@ -400,6 +570,7 @@ fn parse_twitch_page(page: &Value) -> Result<(Vec<(String, ChatMessage)>, bool)>
             parts,
             kind: Kind::Message,
             amount: None,
+            event_time: None,
         };
         (msg.kind, msg.amount) = twitch_event(&msg.author, &msg.text());
         out.push((id.to_string(), msg));
@@ -576,6 +747,7 @@ fn parse_youtube(text: &str) -> Vec<ChatMessage> {
                 parts,
                 kind,
                 amount: None,
+                event_time: None,
             };
             // "Sent 5 … gift memberships": how many.
             if kind == Kind::Gift {
@@ -771,19 +943,111 @@ mod tests {
             parts: vec![ChatPart::Text { text: text.into() }],
             kind,
             amount: None,
+            event_time: None,
         };
-        let mut chat = vec![
-            msg(7194.0, "KickBot", "@Ari_letric has subbed for 15 months!", Kind::Sub),
-            msg(7211.0, "KickBot", "@blixtyyy has subbed for 15 months!", Kind::Sub),
+        let celebrated = |time, author, text, subbed_at| ChatMessage {
+            event_time: Some(subbed_at),
+            ..msg(time, author, text, Kind::Sub)
+        };
+        let subs = vec![
+            (1, msg(7194.0, "KickBot", "@Ari_letric has subbed for 15 months!", Kind::Sub)),
+            (2, msg(7211.0, "KickBot", "@blixtyyy has subbed for 15 months!", Kind::Sub)),
             // Shared an hour after the sub KickBot announced.
-            msg(11017.0, "Ari_letric", "oh wow", Kind::Sub),
+            (3, celebrated(11017.0, "Ari_letric", "oh wow", 7194.0)),
             // Never announced (the channel has KickBot's announcements off, say).
-            msg(23814.0, "tetraspis", "been at it for ages", Kind::Sub),
+            (4, celebrated(23814.0, "tetraspis", "been at it for ages", 23000.0)),
         ];
-        count_each_sub_once(&mut chat, &[(2, 7194.0), (3, 23000.0)]);
-        let subs: Vec<_> = chat.iter().filter(|m| m.kind == Kind::Sub).map(|m| m.time).collect();
-        assert_eq!(subs, [7194.0, 7211.0, 23814.0]);
-        assert_eq!(chat.len(), 4, "the celebration stays in chat");
+        assert_eq!(resubs_announced(&subs), [3]);
+    }
+
+    /// A message `n` of a fake chat, `per_second` to a second.
+    fn fake(n: usize, per_second: usize) -> (String, ChatMessage) {
+        let text = format!("message {n}");
+        let msg = ChatMessage {
+            time: (n / per_second) as f64,
+            author: "v".into(),
+            color: None,
+            parts: vec![ChatPart::Text { text }],
+            kind: Kind::Message,
+            amount: None,
+            event_time: None,
+        };
+        (n.to_string(), msg)
+    }
+
+    /// The store's messages, by their text, in time order.
+    fn saved(store: &MemoryChat) -> Vec<String> {
+        let mut m = store.messages.clone();
+        m.sort_by(|a, b| {
+            a.time.total_cmp(&b.time).then(a.text().len().cmp(&b.text().len())).then(a.text().cmp(&b.text()))
+        });
+        m.iter().map(|m| m.text()).collect()
+    }
+
+    #[test]
+    fn a_twitch_fetch_carries_on_where_it_stopped() {
+        // 3,000 messages, 7 a second; pages of 100 from an offset, as Twitch serves them.
+        let all: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
+        let page = |offset: i64| {
+            let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).cloned().collect();
+            let more = from.len() > 100;
+            Ok((from.into_iter().take(100).collect::<Vec<_>>(), more))
+        };
+        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), position: None });
+
+        // Fails partway (the network drops), after some batches were saved.
+        let mut store = MemoryChat::default();
+        let mut calls = 0;
+        let failing = |offset: i64| {
+            calls += 1;
+            if calls > 20 { anyhow::bail!("network down") } else { page(offset) }
+        };
+        assert!(twitch_into(&mut store, Some(430.0), failing, &mut |_| {}).is_err());
+        let partial = store.messages.len();
+        assert!((1000..3000).contains(&partial), "saved {partial} before failing");
+        assert!(store.position.is_some());
+
+        // Carrying on ends with every message, once.
+        twitch_into(&mut store, Some(430.0), page, &mut |_| {}).unwrap();
+        assert_eq!(saved(&store), expected);
+    }
+
+    #[test]
+    fn a_kick_fetch_carries_on_where_it_stopped() {
+        // 3,000 messages over 500 s from Unix time 1000, paged back 25 at a time by cursor, as Kick serves them.
+        let start = 1000.0;
+        // Kick's cursors are to the microsecond, so no two messages share one.
+        let all: Vec<_> = (0..3000)
+            .map(|n| {
+                let (id, m) = fake(n, 1);
+                (id, ChatMessage { time: n as f64 / 6.0, ..m })
+            })
+            .collect();
+        let page = |cursor: i64| {
+            let mut older: Vec<_> =
+                all.iter().filter(|(_, m)| ((start + m.time) * 1e6) < cursor as f64).cloned().collect();
+            older.sort_by(|a, b| {
+                b.1.time.total_cmp(&a.1.time).then(b.0.parse::<usize>().unwrap().cmp(&a.0.parse().unwrap()))
+            });
+            let page: Vec<_> = older.into_iter().take(25).collect();
+            let next = page.last().map(|(_, m)| ((start + m.time) * 1e6) as i64);
+            let rows =
+                page.into_iter().map(|(id, m)| (start + m.time, id, ChatMessage { time: 0.0, ..m }, None)).collect();
+            Ok((rows, next))
+        };
+        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), position: None });
+
+        let mut store = MemoryChat::default();
+        let mut calls = 0;
+        let failing = |cursor: i64| {
+            calls += 1;
+            if calls > 60 { anyhow::bail!("network down") } else { page(cursor) }
+        };
+        assert!(kick_into(&mut store, start, 500.0, failing, &mut |_| {}).is_err());
+        assert!(store.position.is_some() && !store.messages.is_empty() && store.messages.len() < 3000);
+
+        kick_into(&mut store, start, 500.0, page, &mut |_| {}).unwrap();
+        assert_eq!(saved(&store), expected);
     }
 
     #[test]

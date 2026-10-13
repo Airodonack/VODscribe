@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{ChatLine, ChatStatus};
+use vodscribe_core::db::{ChatLine, ChatStatus, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
 use vodscribe_core::{chat, emotes, tools};
 
@@ -60,19 +60,30 @@ fn fetch(app: &AppHandle, id: i64) {
     *state.chat.current.lock().unwrap() = Some((id, flag.clone()));
     let yt_dlp = tools::find_yt_dlp(&state.paths.bin());
     let mut shown = -1;
-    let result = chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &flag, |f| {
+    // Saved a batch at a time, so the view can show chat as it arrives
+    // (`chat-saved`) and an interrupted fetch carries on where it got to.
+    let mut store = LibraryChat {
+        db: &state.db,
+        vod_id: id,
+        on_save: Box::new(|_| {
+            let _ = app.emit("chat-saved", id);
+        }),
+    };
+    let result = chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &mut store, &flag, |f| {
         let percent = (f * 100.0) as i32;
         if percent != shown {
             shown = percent;
             let _ = app.emit("chat-progress", (id, f));
         }
     });
+    drop(store);
     *state.chat.current.lock().unwrap() = None;
-    let mut db = state.db.lock().unwrap();
-    // The VOD may have been deleted meanwhile, which is no error.
+    let db = state.db.lock().unwrap();
+    // The VOD may have been deleted meanwhile, which is no error. A failure
+    // keeps what was saved, and where it got to, for the next try.
     let saved = match result {
-        Ok(Some(messages)) => db.set_chat(id, &messages),
-        Ok(None) => db.set_chat_status(id, ChatStatus::None, None),
+        Ok(true) => db.finish_chat(id),
+        Ok(false) => db.set_chat_status(id, ChatStatus::None, None),
         Err(e) if vodscribe_core::is_canceled(&e) => return,
         Err(e) => {
             eprintln!("chat for VOD {id}: {e:#}");

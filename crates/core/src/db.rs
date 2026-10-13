@@ -265,6 +265,11 @@ const MIGRATE_V10: &str = "
 ALTER TABLE chat ADD COLUMN kind TEXT NOT NULL DEFAULT 'message';
 ALTER TABLE chat ADD COLUMN amount REAL;
 UPDATE vods SET chat = NULL WHERE chat = 'done';";
+/// v11: chat saved as it's fetched: where an unfinished fetch got to (see
+/// `chat::ChatStore`), and when a message's event happened, if not when it was sent.
+const MIGRATE_V11: &str = "
+ALTER TABLE vods ADD COLUMN chat_resume REAL;
+ALTER TABLE chat ADD COLUMN event_time REAL;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -327,6 +332,7 @@ impl Db {
             MIGRATE_V8,
             MIGRATE_V9,
             MIGRATE_V10,
+            MIGRATE_V11,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -533,20 +539,96 @@ impl Db {
 
     /// Replaces VOD `vod_id`'s chat with `messages` and records it as fetched.
     pub fn set_chat(&mut self, vod_id: i64, messages: &[ChatMessage]) -> Result<()> {
+        self.clear_chat(vod_id)?;
+        self.add_chat(vod_id, messages, 0.0)?;
+        self.finish_chat(vod_id)
+    }
+
+    /// Where an unfinished fetch of VOD `vod_id`'s chat got to (see `chat::ChatStore`).
+    pub fn chat_resume(&self, vod_id: i64) -> Result<Option<f64>> {
+        Ok(self
+            .conn
+            .query_row("SELECT chat_resume FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
+    /// Forgets VOD `vod_id`'s chat and where a fetch of it got to.
+    pub fn clear_chat(&self, vod_id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM chat WHERE vod_id = ?1", [vod_id])?;
+        self.conn.execute("UPDATE vods SET chat_resume = NULL WHERE id = ?1", [vod_id])?;
+        Ok(())
+    }
+
+    /// Forgets VOD `vod_id`'s chat messages from `time` on.
+    pub fn drop_chat_from(&self, vod_id: i64, time: f64) -> Result<()> {
+        self.conn.execute("DELETE FROM chat WHERE vod_id = ?1 AND time >= ?2", params![vod_id, time])?;
+        Ok(())
+    }
+
+    /// Adds `messages` to VOD `vod_id`'s chat and records that its fetch reached `position`, together.
+    pub fn add_chat(&mut self, vod_id: i64, messages: &[ChatMessage], position: f64) -> Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute("DELETE FROM chat WHERE vod_id = ?1", [vod_id])?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount, event_time)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?;
             for m in messages {
                 let parts = serde_json::to_string(&m.parts)?;
-                stmt.execute(params![vod_id, m.time, m.author, m.color, m.text(), parts, m.kind.as_str(), m.amount])?;
+                let kind = m.kind.as_str();
+                stmt.execute(params![
+                    vod_id,
+                    m.time,
+                    m.author,
+                    m.color,
+                    m.text(),
+                    parts,
+                    kind,
+                    m.amount,
+                    m.event_time
+                ])?;
             }
         }
-        tx.execute("UPDATE vods SET chat = 'done', chat_error = NULL WHERE id = ?1", [vod_id])?;
+        tx.execute("UPDATE vods SET chat_resume = ?2 WHERE id = ?1", params![vod_id, position])?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Records VOD `vod_id`'s chat as fetched in full.
+    pub fn finish_chat(&self, vod_id: i64) -> Result<()> {
+        self.conn
+            .execute("UPDATE vods SET chat = 'done', chat_error = NULL, chat_resume = NULL WHERE id = ?1", [vod_id])?;
+        Ok(())
+    }
+
+    /// VOD `vod_id`'s subs, as (id, message).
+    pub fn chat_subs(&self, vod_id: i64) -> Result<Vec<(i64, ChatMessage)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, time, author, text, amount, event_time FROM chat WHERE vod_id = ?1 AND kind = 'sub' ORDER BY time",
+        )?;
+        let rows = stmt.query_map([vod_id], |r| {
+            Ok((
+                r.get(0)?,
+                ChatMessage {
+                    time: r.get(1)?,
+                    author: r.get(2)?,
+                    color: None,
+                    parts: vec![ChatPart::Text { text: r.get(3)? }],
+                    kind: Kind::Sub,
+                    amount: r.get(4)?,
+                    event_time: r.get(5)?,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Makes these chat messages plain messages.
+    pub fn demote_chat(&self, ids: &[i64]) -> Result<()> {
+        for id in ids {
+            self.conn.execute("UPDATE chat SET kind = 'message' WHERE id = ?1", [id])?;
+        }
         Ok(())
     }
 
@@ -683,6 +765,43 @@ impl Db {
         let truncated = found.len() > limit;
         let hits = found.into_iter().take(limit).map(|(_, _, hit)| hit).collect();
         Ok(SearchResults { hits, truncated })
+    }
+}
+
+/// A VOD's chat in the library, as `chat::fetch` saves it. Holds the library's
+/// lock only while it reads or writes, not while the fetch waits on the network.
+pub struct LibraryChat<'a> {
+    pub db: &'a std::sync::Mutex<Db>,
+    pub vod_id: i64,
+    /// Told after each batch is saved, with how many messages it had.
+    pub on_save: Box<dyn FnMut(usize) + 'a>,
+}
+
+impl crate::chat::ChatStore for LibraryChat<'_> {
+    fn resume(&mut self) -> Result<Option<f64>> {
+        self.db.lock().unwrap().chat_resume(self.vod_id)
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.db.lock().unwrap().clear_chat(self.vod_id)
+    }
+
+    fn drop_from(&mut self, time: f64) -> Result<()> {
+        self.db.lock().unwrap().drop_chat_from(self.vod_id, time)
+    }
+
+    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()> {
+        self.db.lock().unwrap().add_chat(self.vod_id, messages, position)?;
+        (self.on_save)(messages.len());
+        Ok(())
+    }
+
+    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>> {
+        self.db.lock().unwrap().chat_subs(self.vod_id)
+    }
+
+    fn demote(&mut self, ids: &[i64]) -> Result<()> {
+        self.db.lock().unwrap().demote_chat(ids)
     }
 }
 
@@ -910,6 +1029,7 @@ mod tests {
             parts: vec![ChatPart::Text { text: text.into() }],
             kind: Kind::Message,
             amount: None,
+            event_time: None,
         }
     }
 
