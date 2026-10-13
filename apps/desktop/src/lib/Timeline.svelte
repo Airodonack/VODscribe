@@ -24,6 +24,26 @@
   let elsewhere = $derived(layers.list.length - mine.length);
   let shown = $derived(layers.shownFor(vod));
 
+  // The panel is placed against the window, not inside the scrolling
+  // transcript area, which would cut it off: below the button when there's
+  // room, otherwise above it (over the player), and scrolling within that.
+  const ROOM = 280;
+  let place = $state<{ top?: number; bottom?: number; right: number; maxHeight: number } | null>(null);
+  function fit() {
+    if (!open || !anchor) return;
+    const box = anchor.getBoundingClientRect();
+    const right = window.innerWidth - box.right;
+    const below = window.innerHeight - box.bottom - 16;
+    const above = box.top - 16;
+    place =
+      below >= ROOM || below >= above
+        ? { top: box.bottom + 8, right, maxHeight: below - 8 }
+        : { bottom: window.innerHeight - box.top + 8, right, maxHeight: above - 8 };
+  }
+  $effect(() => {
+    if (open) fit();
+  });
+
   function onWindowClick(e: MouseEvent) {
     if (open && anchor && !anchor.contains(e.target as Node)) open = false;
   }
@@ -58,7 +78,12 @@
   }
 </script>
 
-<svelte:window onclick={onWindowClick} onkeydown={(e) => e.key === "Escape" && (open = false)} />
+<svelte:window
+  onclick={onWindowClick}
+  onkeydown={(e) => e.key === "Escape" && (open = false)}
+  onresize={fit}
+  onscrollcapture={fit}
+/>
 
 <div class="anchor" bind:this={anchor}>
   <button
@@ -75,7 +100,15 @@
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   {#if open}
-    <div class="popover" role="dialog" aria-label="Timeline layers">
+    <div
+      class="popover"
+      role="dialog"
+      aria-label="Timeline layers"
+      style:top={place?.top !== undefined ? `${place.top}px` : null}
+      style:bottom={place?.bottom !== undefined ? `${place.bottom}px` : null}
+      style:right="{place?.right ?? 0}px"
+      style:max-height="{place?.maxHeight ?? 0}px"
+    >
       <p class="intro muted">
         Words and emotes to look for in chat. Up to {MAX_VISIBLE} show on the timeline at once, and their messages are highlighted.
       </p>
@@ -178,12 +211,9 @@
   }
 
   .popover {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
+    position: fixed;
     z-index: 10;
     width: 340px;
-    max-height: calc(var(--app-height, 100vh) - 140px);
     overflow-y: auto;
     padding: 12px;
     background: var(--surface);
