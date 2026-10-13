@@ -24,8 +24,9 @@ struct AppState {
     paths: Paths,
     db: Mutex<Db>,
     worker: Worker,
-    /// First-run setup's downloads, and the GPU add-on's.
+    /// First-run setup's downloads.
     setup: setup::Install,
+    /// The GPU add-on's download.
     gpu: setup::Install,
     media: media::MediaServer,
 }

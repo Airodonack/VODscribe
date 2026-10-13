@@ -106,7 +106,8 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
 
 /// A long download's flags: `running` while it's under way (one at a time) and
 /// `cancel`, which `cancel()` sets to stop it. Canceling isn't an error: the
-/// done event carries null, and whatever was finished stays installed.
+/// done event carries null. Tools and model files that finished stay; the GPU
+/// pack starts over, since its parts are only kept together.
 pub(crate) struct Install {
     running: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
@@ -121,7 +122,8 @@ impl Install {
         self.running.load(Ordering::Relaxed)
     }
 
-    /// Stops the download under way, if any; it ends within a moment.
+    /// Stops the download under way; it ends within a moment. With none running
+    /// this sets nothing, so a click can't carry over into the next download.
     pub(crate) fn cancel(&self) {
         if self.running() {
             self.cancel.store(true, Ordering::Relaxed);
@@ -129,18 +131,21 @@ impl Install {
     }
 
     /// Runs `install` on its own thread, unless one is already running, then
-    /// clears `running` and emits `done_event` with an error message or null.
+    /// clears `running` and emits `done_event` with an error message, or null
+    /// when it finished or was canceled.
     pub(crate) fn spawn(
         &self,
         app: AppHandle,
         done_event: &'static str,
         install: impl FnOnce(&AppHandle, &AtomicBool) -> anyhow::Result<()> + Send + 'static,
     ) {
+        // Cleared before `running` is set, so a cancel that lands as this
+        // starts is kept rather than wiped.
+        self.cancel.store(false, Ordering::Relaxed);
         if self.running.swap(true, Ordering::Relaxed) {
             return;
         }
         let (running, cancel) = (self.running.clone(), self.cancel.clone());
-        cancel.store(false, Ordering::Relaxed);
         std::thread::spawn(move || {
             let result = install(&app, &cancel);
             running.store(false, Ordering::Relaxed);

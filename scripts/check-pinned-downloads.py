@@ -22,51 +22,79 @@ ROOT = Path(__file__).resolve().parent.parent
 CORE = ROOT / "crates" / "core" / "src"
 SHERPA_RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
 YT_DLP_LATEST = "https://github.com/yt-dlp/yt-dlp/releases/latest/download"
+# A pinned SHA-256 as the sources write it; one per download.
+HASH = re.compile(r'"[0-9a-f]{64}"')
 
 
 def pinned() -> list[tuple[str, int | None]]:
-    """Every pinned URL and its size, if one is pinned next to it."""
-    urls: list[tuple[str, int | None]] = []
+    """Every pinned URL and its size, if one is pinned next to it.
+
+    Each source's count is checked against its number of pinned SHA-256s, so a
+    change to how the pins are written fails here rather than quietly shrinking
+    the list.
+    """
+    pins: list[tuple[str, int | None]] = []
     # deps.rs and gpu.rs: `url: "...", size: N` or, in a tuple, `"...", N`.
     for file in ("deps.rs", "gpu.rs"):
         text = (CORE / file).read_text()
-        for url, size in re.findall(r'"(https://[^"]+)",\s*(?:size:\s*)?(\d+)', text):
-            urls.append((url, int(size)))
+        found = re.findall(r'"(https://[^"]+)",\s*(?:size:\s*)?(\d+)', text)
+        expect(file, len(found), len(HASH.findall(text)))
+        pins += [(url, int(size)) for url, size in found]
     # model.rs: files under each model id, served from MODELS_BASE_URL.
     text = (CORE / "model.rs").read_text()
     base = re.findall(r'MODELS_BASE_URL: &str = "([^"]+)"', text)[0]
+    count = 0
     # Each `id: "<model>"` starts a model; its files follow until the next.
     for block in re.split(r'\bid: (?=")', text)[1:]:
         model = block.split('"')[1]
         for name, size in re.findall(r'name: "([^"]+)",\s*size: (\d+)', block):
-            urls.append((f"{base}/{model}/{name}", int(size)))
+            pins.append((f"{base}/{model}/{name}", int(size)))
+            count += 1
+    expect("model.rs", count, len(HASH.findall(text)))
     # The sidecar build's sherpa-onnx prebuilts, from the pinned list.
-    for line in (ROOT / "scripts" / "sherpa-onnx-prebuilt.sha256").read_text().splitlines():
-        if line.startswith("#") or not line.strip():
-            continue
-        name = line.split()[1]
+    lines = (ROOT / "scripts" / "sherpa-onnx-prebuilt.sha256").read_text().splitlines()
+    names = [line.split()[1] for line in lines if line.strip() and not line.startswith("#")]
+    expect("sherpa-onnx-prebuilt.sha256", len(names), 6)
+    for name in names:
         version = name.split("-v")[1].split("-")[0]
-        urls.append((f"{SHERPA_RELEASES}/v{version}/{name}", None))
+        pins.append((f"{SHERPA_RELEASES}/v{version}/{name}", None))
     # yt-dlp is installed from its latest release, so only its checksum list is fixed.
-    urls.append((f"{YT_DLP_LATEST}/SHA2-256SUMS", None))
-    return urls
+    pins.append((f"{YT_DLP_LATEST}/SHA2-256SUMS", None))
+    return pins
+
+
+def expect(source: str, found: int, pinned_hashes: int) -> None:
+    if found != pinned_hashes or found == 0:
+        sys.exit(f"{source}: found {found} download URLs but {pinned_hashes} pinned hashes; did its layout change?")
+
+
+class HeadAcrossRedirects(urllib.request.HTTPRedirectHandler):
+    """Keeps HEAD through redirects; urllib's default would follow them with GET,
+    and GitHub and PyPI redirect every download to a storage host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.method = "HEAD"
+        return new
+
+
+OPENER = urllib.request.build_opener(HeadAcrossRedirects)
 
 
 def head(url: str) -> tuple[int, int | None]:
-    """The final status after redirects and the Content-Length, if given."""
+    """The final status after redirects and the Content-Length, if given and sane."""
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "vodscribe-pin-check"})
     try:
-        with urllib.request.urlopen(req, timeout=30) as res:
-            length = res.headers.get("Content-Length")
-            return res.status, int(length) if length else None
+        with OPENER.open(req, timeout=30) as res:
+            length = res.headers.get("Content-Length", "")
+            return res.status, int(length) if length.isdigit() else None
     except urllib.error.HTTPError as e:
         return e.code, None
 
 
 def main() -> None:
     urls = pinned()
-    if len(urls) < 30:
-        sys.exit(f"only {len(urls)} pinned downloads found; did the source layout change?")
     failures = []
     for url, size in urls:
         try:

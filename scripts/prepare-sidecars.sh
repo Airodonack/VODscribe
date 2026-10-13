@@ -84,9 +84,9 @@ cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/vodscribe-worker$exe" "$out/vod
 # with the app (apps/desktop/src-tauri/lib, a bundle resource) and the GPU pack
 # supplies ONNX Runtime with CUDA at runtime. Built in its own target dir so
 # its features don't mix with the static build.
-lib=apps/desktop/src-tauri/lib
 case "$triple" in
   x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc)
+    lib=apps/desktop/src-tauri/lib
     SHERPA_ONNX_LIB_DIR=$(lib_dir "$shared") cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker \
       --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
@@ -103,4 +103,5 @@ case "$triple" in
     fi
     ;;
 esac
-ls -la "$out" "$lib" 2>/dev/null || ls -la "$out"
+ls -la "$out"
+[ ! -d "${lib:-}" ] || ls -la "$lib"

@@ -14,7 +14,7 @@ actions/download-artifact writes them). Writes into <out dir>:
   winget/      the winget-pkgs manifests for this version
 
 Fails if an expected file is missing, so a release never goes out half-built,
-or if CHANGELOG.md has no dated entry for the version.
+or if CHANGELOG.md has no entry for the version, or one still marked unreleased.
 
     python3 scripts/release.py --check        the Cargo.toml version has an entry (CI)
     python3 scripts/release.py --notes <ver>  print that version's notes
@@ -23,6 +23,7 @@ or if CHANGELOG.md has no dated entry for the version.
 import datetime
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -52,25 +53,25 @@ def find(artifacts: Path, target: str, suffix: str) -> Path:
     return matches[0]
 
 
-CHANGELOG = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+ROOT = Path(__file__).resolve().parent.parent
+CHANGELOG = ROOT / "CHANGELOG.md"
 
 
-def changelog_entry(version: str) -> tuple[str, bool]:
-    """CHANGELOG.md's entry for `version`: its text and whether it's marked unreleased.
+def changelog_entry(changelog: str, version: str) -> tuple[str, bool]:
+    """The changelog's entry for `version`: its text and whether it's marked unreleased.
 
     Entries start `## <version>`; the text runs to the next `## `. Exits if there's none.
     """
-    text = CHANGELOG.read_text()
-    for section in text.split("\n## ")[1:]:
+    for section in ("\n" + changelog).split("\n## ")[1:]:
         heading, _, body = section.partition("\n")
         if heading.split()[0] == version:
             return body.strip(), "(unreleased)" in heading
     sys.exit(f"CHANGELOG.md has no entry for {version}: add a '## {version}' section with what changed")
 
 
-def notes(version: str) -> str:
+def notes(changelog: str, version: str) -> str:
     """The changelog entry, which becomes the release notes in latest.json."""
-    body, unreleased = changelog_entry(version)
+    body, unreleased = changelog_entry(changelog, version)
     if unreleased:
         sys.exit(f"CHANGELOG.md still marks {version} as unreleased: date the heading before tagging")
     if not body:
@@ -78,13 +79,15 @@ def notes(version: str) -> str:
     return body
 
 
-def cargo_version() -> str:
+def cargo_version(cargo_toml: str) -> str:
     """The workspace version from the root Cargo.toml."""
-    text = (CHANGELOG.parent / "Cargo.toml").read_text()
-    return text.split("[workspace.package]")[1].split("version = \"")[1].split('"')[0]
+    table = cargo_toml.split("[workspace.package]")[1]
+    return re.search(r'^version = "([^"]+)"', table, re.M).group(1)
 
 
 def main(artifacts: Path, version: str, out: Path) -> None:
+    # Before any file is written, so a missing entry fails at once.
+    release_notes = notes(CHANGELOG.read_text(), version)
     files = out / "files"
     files.mkdir(parents=True)
     platforms: dict[str, dict[str, str]] = {}
@@ -104,7 +107,7 @@ def main(artifacts: Path, version: str, out: Path) -> None:
 
     manifest = {
         "version": version,
-        "notes": notes(version),
+        "notes": release_notes,
         "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platforms": platforms,
     }
@@ -157,8 +160,10 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
         # For CI: the version being worked on has a changelog entry (unreleased or dated).
-        changelog_entry(cargo_version())
-    elif sys.argv[1:2] == ["--notes"]:
-        print(notes(sys.argv[2]))
-    else:
+        changelog_entry(CHANGELOG.read_text(), cargo_version((ROOT / "Cargo.toml").read_text()))
+    elif len(sys.argv) == 3 and sys.argv[1] == "--notes":
+        print(notes(CHANGELOG.read_text(), sys.argv[2]))
+    elif len(sys.argv) == 4:
         main(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+    else:
+        sys.exit(__doc__)

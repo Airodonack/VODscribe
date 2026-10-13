@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn takes_only_onnxruntime_from_the_sherpa_archive() {
+    fn tells_onnxruntime_libraries_by_name() {
         assert!(is_onnxruntime("libonnxruntime.so"));
         assert!(is_onnxruntime("libonnxruntime_providers_cuda.so"));
         assert!(is_onnxruntime("onnxruntime_providers_shared.dll"));

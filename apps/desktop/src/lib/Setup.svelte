@@ -127,7 +127,7 @@
           {:else if busy}
             <div class="progress">
               <!-- The exact component and its checks, as in Settings. -->
-              <DownloadStep progress={step} oncancel={() => api.cancelSetup()} />
+              <DownloadStep progress={step} oncancel={() => api.cancelSetup().catch((e) => (error = String(e)))} />
             </div>
           {:else if item.key === "ffmpeg" && !item.downloads}
             <p class="detail">

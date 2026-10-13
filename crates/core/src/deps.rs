@@ -175,6 +175,10 @@ pub fn install(
     // Nothing is left behind, whether it worked or not.
     let _ = fs::remove_file(&archive);
     let _ = fs::remove_file(&new);
+    // A cancel during the unpack surfaces as a short read; report it as the cancel it was.
+    if result.is_err() && cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(crate::Canceled.into());
+    }
     result?;
     Ok(dest)
 }

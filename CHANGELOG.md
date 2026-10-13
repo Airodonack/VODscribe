@@ -4,7 +4,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.1.3 (unreleased)
 
-- Setup and the GPU add-on downloads have a Cancel button. What was already downloaded stays.
+- Setup and the GPU add-on downloads have a Cancel button. Tools and model files that finished stay; the GPU add-on's own pack starts over.
 - The GPU add-on is smaller: it now contains only ONNX Runtime and NVIDIA's libraries, since the speech-recognition library ships with the app. It downloads again once after updating.
 - Settings has a Help section with where to report problems, and the website answers the same question.
 - Under the hood: a weekly check that every file setup downloads is still available where it's expected.

@@ -90,7 +90,7 @@ export interface Line {
 export const api = {
   setupStatus: () => invoke<SetupStatus>("setup_status"),
   runSetup: () => invoke<void>("run_setup"),
-  /** Stops setup's downloads; what already finished stays. `setupDone` then fires with null. */
+  /** Stops setup's downloads; tools and model files that finished stay. `setupDone` then fires with null. */
   cancelSetup: () => invoke<void>("cancel_setup"),
   dataDir: () => invoke<string>("data_dir"),
   openDataDir: () => invoke<void>("open_data_dir"),
@@ -118,7 +118,7 @@ export const api = {
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),
-  /** Stops the GPU add-on's download; `gpuDone` then fires with null. */
+  /** Stops the GPU add-on's download (its pack starts over next time); `gpuDone` then fires with null. */
   cancelGpuInstall: () => invoke<void>("cancel_gpu_install"),
   removeGpuPack: () => invoke<void>("remove_gpu_pack"),
   cacheSize: () => invoke<number>("cache_size"),

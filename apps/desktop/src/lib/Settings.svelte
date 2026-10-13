@@ -163,10 +163,15 @@
     {/if}
 
     {#if offerPack}
-      {#if step || gpu?.installing}
+      <!-- Not while clearing: that holds the add-on's busy flag without downloading. -->
+      {#if (step || gpu?.installing) && !clearing}
         <div class="progress">
           <!-- The exact component, for the people who chose the GPU add-on. -->
-          <DownloadStep progress={step} waiting="Downloading the GPU add-on" oncancel={() => api.cancelGpuInstall()} />
+          <DownloadStep
+            progress={step}
+            waiting="Downloading the GPU add-on"
+            oncancel={() => api.cancelGpuInstall().catch((e) => (error = String(e)))}
+          />
         </div>
       {:else if !gpu?.installed}
         <button onclick={install}

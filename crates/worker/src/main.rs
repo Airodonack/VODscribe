@@ -69,8 +69,43 @@ fn emit(value: serde_json::Value) -> Result<()> {
     Ok(())
 }
 
+/// On Windows the GPU worker imports onnxruntime.dll by name, and Windows
+/// searches System32 before PATH, where Windows 11 keeps an old copy of its
+/// own. That copy has no CUDA provider, so the model would quietly run on the
+/// CPU under a "graphics card" note. Fails instead, so the app falls back to
+/// the CPU worker and says so.
+#[cfg(windows)]
+fn check_onnxruntime_is_the_pack_copy() -> Result<()> {
+    use std::os::windows::ffi::OsStringExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetModuleHandleW(name: *const u16) -> *mut std::ffi::c_void;
+        fn GetModuleFileNameW(module: *mut std::ffi::c_void, out: *mut u16, len: u32) -> u32;
+    }
+    let name: Vec<u16> = "onnxruntime.dll".encode_utf16().chain([0]).collect();
+    let mut buf = vec![0u16; 32768];
+    // SAFETY: a NUL-terminated name and a buffer of the length passed.
+    let len = unsafe {
+        let module = GetModuleHandleW(name.as_ptr());
+        if module.is_null() {
+            return Ok(());
+        }
+        GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32)
+    };
+    let path = std::ffi::OsString::from_wide(&buf[..len as usize]).to_string_lossy().to_lowercase();
+    let windows = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()).to_lowercase();
+    if path.starts_with(&windows) {
+        anyhow::bail!("Windows' own ONNX Runtime ({path}) was loaded instead of the GPU add-on's");
+    }
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let args = parse_args()?;
+    #[cfg(windows)]
+    if args.provider == Provider::Cuda {
+        check_onnxruntime_is_the_pack_copy()?;
+    }
     let parallelism = match args.provider {
         Provider::Cpu => Parallelism { batch: args.batch, ..Parallelism::auto() },
         // One decode at a time keeps the GPU busy; extra CPU threads only feed it.

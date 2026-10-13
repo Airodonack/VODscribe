@@ -339,10 +339,12 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
 
 /// The `lib` folder the installer ships: the no-tts sherpa-onnx library the GPU
 /// worker links (the GPU add-on supplies only ONNX Runtime and the CUDA libraries).
+/// None if it's missing; the worker then fails to start and the CPU takes the job.
 fn bundled_lib_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
     let dir = app.path().resource_dir().ok()?.join("lib");
     if !dir.is_dir() {
         eprintln!("bundled library folder missing: {}", dir.display());
+        return None;
     }
     Some(dir)
 }
