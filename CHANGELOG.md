@@ -2,11 +2,6 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.1.4 (unreleased)
-
-- Downloaded installers carry the version in their file name, like VODscribe-0.1.4-windows-x64-setup.exe.
-- A copy that wasn't installed from a package (built from source, say) says so when asked to check for updates, instead of an error about platforms.
-
 ## 0.1.3 — 2026-10-13
 
 - Setup and the GPU add-on downloads have a Cancel button. Tools and model files that finished stay; the GPU add-on's own pack starts over.
@@ -15,6 +10,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Under the hood: a weekly check that every file setup downloads is still available where it's expected.
 - A YouTube download that the site refused is tried again from a fresh lookup before it's reported, since YouTube sometimes refuses the first.
 - VODscribe's code is public, under the Functional Source License (source-available; Apache 2.0 two years after each release).
+- Downloaded installers carry the version in their file name, like VODscribe-0.1.3-windows-x64-setup.exe.
+- A copy that wasn't installed from a package (built from source, say) says so when asked to check for updates, instead of an error about platforms.
 
 ## 0.1.2 — 2026-10-12
 

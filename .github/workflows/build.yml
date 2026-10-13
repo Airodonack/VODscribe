@@ -40,8 +40,9 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
-          # Intel Macs, cross-compiled on Apple Silicon runners.
-          - os: macos-latest
+          # Intel Macs, built on Intel runners: a separate pool from the Apple
+          # Silicon ones, which at times can't take a job at all.
+          - os: macos-15-intel
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
