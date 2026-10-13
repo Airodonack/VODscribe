@@ -35,17 +35,23 @@
     const right = window.innerWidth - box.right;
     const below = window.innerHeight - box.bottom - 16;
     const above = box.top - 16;
+    // Too little room either side (a short window): as tall as the window, over the button.
+    const least = 160;
     place =
-      below >= ROOM || below >= above
+      below >= ROOM || (below >= above && below >= least)
         ? { top: box.bottom + 8, right, maxHeight: below - 8 }
-        : { bottom: window.innerHeight - box.top + 8, right, maxHeight: above - 8 };
+        : above >= least
+          ? { bottom: window.innerHeight - box.top + 8, right, maxHeight: above - 8 }
+          : { top: 8, right, maxHeight: window.innerHeight - 16 };
   }
   $effect(() => {
     if (open) fit();
   });
 
+  // By the click's path when it happened: removing a pill takes its button out
+  // of the page before this runs, and that's still a click inside.
   function onWindowClick(e: MouseEvent) {
-    if (open && anchor && !anchor.contains(e.target as Node)) open = false;
+    if (open && anchor && !e.composedPath().includes(anchor)) open = false;
   }
 
   function addTerm(layer: Layer, input: HTMLInputElement) {
@@ -117,7 +123,17 @@
         {@const isShown = shown.includes(layer)}
         <section class="layer" class:hidden={!isShown}>
           <div class="top">
-            <span class="swatch" style:background={layer.color}></span>
+            <label class="swatch" style:background={layer.color} title="Change the color">
+              <input
+                type="color"
+                value={layer.color}
+                oninput={(e) => {
+                  layer.color = e.currentTarget.value;
+                  layers.save();
+                }}
+                aria-label="{layer.name}'s color"
+              />
+            </label>
             <input
               class="name"
               bind:value={layer.name}
@@ -243,11 +259,31 @@
     gap: 6px;
   }
 
+  /* The layer's color, opening the system color picker. */
   .swatch {
+    position: relative;
     flex: none;
-    width: 10px;
-    height: 10px;
-    border-radius: 3px;
+    width: 14px;
+    height: 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 15%, transparent);
+  }
+
+  .swatch:hover {
+    outline: 2px solid var(--border);
+    outline-offset: 1px;
+  }
+
+  .swatch input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    border: none;
+    padding: 0;
   }
 
   .name {
