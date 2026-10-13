@@ -70,6 +70,8 @@ The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; afte
 
 The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
 
+`scripts/check-pinned-downloads.py` sends a HEAD request for every pinned download (tools, the GPU add-on, the models, the sidecar prebuilts) and fails if one is gone or a different size; the Pinned downloads workflow runs it weekly, since a vanished build would otherwise break setup for new users silently.
+
 `scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU add-on stay.
 
 ## Website
