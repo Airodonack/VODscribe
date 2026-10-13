@@ -2,6 +2,10 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.1.4 (unreleased)
+
+- Downloaded installers carry the version in their file name, like VODscribe-0.1.4-windows-x64-setup.exe.
+
 ## 0.1.3 — 2026-10-13
 
 - Setup and the GPU add-on downloads have a Cancel button. Tools and model files that finished stay; the GPU add-on's own pack starts over.
