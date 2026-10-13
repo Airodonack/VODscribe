@@ -139,6 +139,27 @@
   });
 
   let showChat = $derived(hasChat && chatOpen && !noChat);
+
+  // Rows are added as the end comes into view, so a long VOD with a busy chat
+  // opens at once rather than laying out every row first.
+  const PAGE = 200;
+  let shown = $state(PAGE);
+  let sentinel = $state<HTMLElement>();
+  $effect(() => {
+    void vodId;
+    shown = PAGE;
+  });
+  $effect(() => {
+    void shown;
+    if (!sentinel) return;
+    // Made again after each page, since the end may still be in view.
+    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && (shown += PAGE), {
+      root: root.closest(".body"),
+      rootMargin: "0px 0px 1500px 0px",
+    });
+    io.observe(sentinel);
+    return () => io.disconnect();
+  });
   let play = (time: number) => onplay(vod.id, time);
 </script>
 
@@ -194,7 +215,7 @@
       {vod.status === "done" ? "No speech was found in this VOD." : "The transcript appears here as it is produced."}
     </p>
   {/if}
-  {#each rows as row, r (r)}
+  {#each rows.slice(0, shown) as row, r (r)}
     <div class="line" data-start={row.line?.start}>
       {#if row.line}
         {@const line = row.line}
@@ -221,11 +242,14 @@
     <div class="line">
       <span></span>
       <div class="chat">
-        {#each chat as message, m (m)}
+        {#each chat.slice(0, shown) as message, m (m)}
           <ChatMessage {message} onplay={play} />
         {/each}
       </div>
     </div>
+  {/if}
+  {#if shown < Math.max(rows.length, showChat && lines.length === 0 ? chat.length : 0)}
+    <div class="more-rows" bind:this={sentinel}></div>
   {/if}
 </div>
 
@@ -315,5 +339,9 @@
 
   .more {
     margin: 0 8px 4px;
+  }
+
+  .more-rows {
+    height: 1px;
   }
 </style>

@@ -9,6 +9,7 @@
     vods,
     query,
     scope,
+    columns,
     onplay,
     onclearscope,
   }: {
@@ -18,6 +19,8 @@
     query: string;
     /** The VOD the search is limited to, if any. */
     scope: Vod | undefined;
+    /** Audio and chat matches side by side, as beside the transcript. */
+    columns: boolean;
     onplay: (vodId: number, time: number) => void;
     onclearscope: () => void;
   } = $props();
@@ -32,9 +35,41 @@
     }
     return out;
   });
+
+  // In columns, each audio match with the chat matches from its time until the
+  // next audio match's (hits are in time order within a VOD). Chat matches
+  // before the first audio match get a row of their own.
+  interface Row {
+    audio: SearchHit | null;
+    chat: SearchHit[];
+  }
+  function rowsOf(hits: SearchHit[]): Row[] {
+    const rows: Row[] = [];
+    for (const hit of hits) {
+      if (hit.source === "speech") rows.push({ audio: hit, chat: [] });
+      else {
+        if (rows.length === 0) rows.push({ audio: null, chat: [] });
+        rows[rows.length - 1].chat.push(hit);
+      }
+    }
+    return rows;
+  }
+  const key = (hit: SearchHit) => `${hit.source}-${hit.id}`;
 </script>
 
-<div class="results">
+{#snippet match(hit: SearchHit)}
+  <button class="row" class:from-chat={hit.source === "chat"} onclick={() => onplay(hit.vod_id, hit.time)}>
+    <span class="time">{formatTime(hit.time)}</span>
+    <span class="text">
+      {#if hit.source === "chat"}{#if !columns}<span class="said-in" title="Written in chat"
+            ><Icon name="message" size={12} /></span
+          >{/if}<span class="author" style:--author={hit.color}>{hit.author}</span>{/if}
+      {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
+    </span>
+  </button>
+{/snippet}
+
+<div class="results" class:columns>
   {#if hits.length > 0}
     <p class="summary muted">
       <strong>{hits.length}{truncated ? "+" : ""}</strong> match{hits.length === 1 ? "" : "es"} for
@@ -42,6 +77,12 @@
       in {groups.length} VOD{groups.length === 1 ? "" : "s"}{#if truncated}. Showing the first {hits.length}; add a word
         to narrow it down{/if}
     </p>
+    {#if columns}
+      <div class="line heads">
+        <span class="eyebrow">Audio</span>
+        <span class="eyebrow chat-head">Chat</span>
+      </div>
+    {/if}
   {/if}
   {#each groups as group (group.vodId)}
     <section>
@@ -52,17 +93,18 @@
           <span class="n muted">{group.hits.length}</span>
         </h2>
       {/if}
-      {#each group.hits as hit (`${hit.source}-${hit.id}`)}
-        <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>
-          <span class="time">{formatTime(hit.time)}</span>
-          <span class="text" class:chat={hit.source === "chat"}>
-            {#if hit.source === "chat"}<span class="said-in" title="Written in chat"
-                ><Icon name="message" size={12} /></span
-              ><span class="author" style:--author={hit.color}>{hit.author}</span>{/if}
-            {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
-          </span>
-        </button>
-      {/each}
+      {#if columns}
+        {#each rowsOf(group.hits) as row (row.audio ? key(row.audio) : `lead-${group.vodId}`)}
+          <div class="line">
+            {#if row.audio}{@render match(row.audio)}{:else}<span></span>{/if}
+            <div class="chat">
+              {#each row.chat as hit (key(hit))}{@render match(hit)}{/each}
+            </div>
+          </div>
+        {/each}
+      {:else}
+        {#each group.hits as hit (key(hit))}{@render match(hit)}{/each}
+      {/if}
     </section>
   {:else}
     <div class="none">
@@ -142,8 +184,33 @@
     min-width: 0;
   }
 
-  .text.chat {
+  .row.from-chat .text {
     font-size: 13px;
+  }
+
+  .results.columns {
+    max-width: 1320px;
+  }
+
+  /* As beside the transcript (Transcript.svelte). */
+  .line {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 16px;
+  }
+
+  .chat {
+    border-left: 1px solid var(--border);
+    padding-left: 18px;
+    min-width: 0;
+  }
+
+  .heads {
+    margin-bottom: 4px;
+  }
+
+  .heads .chat-head {
+    padding-left: 17px;
   }
 
   .said-in {
