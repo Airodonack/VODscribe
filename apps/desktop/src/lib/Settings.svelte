@@ -22,6 +22,9 @@
 
   async function refresh() {
     gpu = await api.gpuStatus();
+    // Opened partway through a download: start from where it is, not a blank
+    // bar until the next progress event (which can be a while between files).
+    if (gpu.installing && !step && gpu.progress) step = gpu.progress;
     cacheBytes = await api.cacheSize();
   }
 

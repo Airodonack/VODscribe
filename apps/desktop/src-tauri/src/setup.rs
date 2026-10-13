@@ -1,8 +1,8 @@
 //! Commands for what the app needs to run: first-run setup, settings, the GPU
 //! pack and downloaded files.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -85,10 +85,8 @@ struct ItemProgress<'a> {
 #[tauri::command]
 pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    state.setup.spawn(app, "setup-done", move |app, cancel| {
-        let progress = |item: &str, progress: Progress| {
-            let _ = app.emit("setup-progress", ItemProgress { item, progress });
-        };
+    state.setup.spawn(app, "setup-progress", "setup-done", move |app, cancel, report| {
+        let progress = |item: &str, progress: Progress| report.send(ItemProgress { item, progress });
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
             tools::install_yt_dlp(&bin, cancel, |p| progress("yt-dlp", p))?;
@@ -121,15 +119,43 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
 pub(crate) struct Install {
     running: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    /// The latest progress event's payload while running (see `Reporter`).
+    last: Arc<Mutex<Option<serde_json::Value>>>,
+}
+
+/// Sends a running install's progress events, keeping the latest, so a panel
+/// opened partway through (Settings closes and reopens) shows where it is
+/// rather than waiting for the next event, which can be a while between files.
+pub(crate) struct Reporter {
+    app: AppHandle,
+    event: &'static str,
+    last: Arc<Mutex<Option<serde_json::Value>>>,
+}
+
+impl Reporter {
+    pub(crate) fn send(&self, payload: impl Serialize) {
+        let Ok(value) = serde_json::to_value(payload) else { return };
+        *self.last.lock().unwrap() = Some(value.clone());
+        let _ = self.app.emit(self.event, value);
+    }
 }
 
 impl Install {
     pub(crate) fn new() -> Self {
-        Self { running: Arc::new(AtomicBool::new(false)), cancel: Arc::new(AtomicBool::new(false)) }
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            cancel: Arc::new(AtomicBool::new(false)),
+            last: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub(crate) fn running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    /// The latest progress the running install reported, if any.
+    pub(crate) fn progress(&self) -> Option<serde_json::Value> {
+        self.last.lock().unwrap().clone()
     }
 
     /// Stops the download under way; it ends within a moment. With none running
@@ -140,14 +166,15 @@ impl Install {
         }
     }
 
-    /// Runs `install` on its own thread, unless one is already running, then
-    /// clears `running` and emits `done_event` with an error message, or null
-    /// when it finished or was canceled.
+    /// Runs `install` on its own thread, unless one is already running, with a
+    /// `Reporter` for its `progress_event`s. Then clears `running` and emits
+    /// `done_event` with an error message, or null when it finished or was canceled.
     pub(crate) fn spawn(
         &self,
         app: AppHandle,
+        progress_event: &'static str,
         done_event: &'static str,
-        install: impl FnOnce(&AppHandle, &AtomicBool) -> anyhow::Result<()> + Send + 'static,
+        install: impl FnOnce(&AppHandle, &AtomicBool, &Reporter) -> anyhow::Result<()> + Send + 'static,
     ) {
         // Cleared before `running` is set, so a cancel that lands as this
         // starts is kept rather than wiped.
@@ -155,9 +182,12 @@ impl Install {
         if self.running.swap(true, Ordering::Relaxed) {
             return;
         }
-        let (running, cancel) = (self.running.clone(), self.cancel.clone());
+        *self.last.lock().unwrap() = None;
+        let (running, cancel, last) = (self.running.clone(), self.cancel.clone(), self.last.clone());
         std::thread::spawn(move || {
-            let result = install(&app, &cancel);
+            let report = Reporter { app: app.clone(), event: progress_event, last: last.clone() };
+            let result = install(&app, &cancel, &report);
+            *last.lock().unwrap() = None;
             running.store(false, Ordering::Relaxed);
             let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
             let _ = app.emit(done_event, error);
@@ -204,6 +234,8 @@ pub(crate) struct GpuStatus {
     supported: bool,
     installed: bool,
     installing: bool,
+    /// While installing, the latest `gpu-progress` event's payload.
+    progress: Option<serde_json::Value>,
     /// The GPU worker binary is part of this build.
     worker: bool,
     gpu: Option<GpuInfo>,
@@ -220,6 +252,7 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
         supported: gpu::supported(),
         installed: gpu::is_installed(&pack) && model::is_installed(&state.paths.gpu_model_dir(), &model::GPU_MODEL),
         installing: state.gpu.running(),
+        progress: state.gpu.progress(),
         worker: tools::sidecar("vodscribe-worker-cuda").is_ok(),
         gpu,
         min_free_mb: gpu::MIN_FREE_MB,
@@ -238,10 +271,8 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
 #[tauri::command]
 pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    state.gpu.spawn(app, "gpu-done", move |app, cancel| {
-        let progress = |p: Progress| {
-            let _ = app.emit("gpu-progress", p);
-        };
+    state.gpu.spawn(app, "gpu-progress", "gpu-done", move |_, cancel, report| {
+        let progress = |p: Progress| report.send(p);
         // One count of bytes and of files across the pack and the model, so the
         // bar only moves forward and the files read "(1 of 10)" to "(10 of 10)".
         let pack_needed = !gpu::is_installed(&paths.gpu_pack());

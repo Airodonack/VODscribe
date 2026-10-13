@@ -39,6 +39,8 @@ export interface GpuStatus {
   supported: boolean;
   installed: boolean;
   installing: boolean;
+  /** While installing, the latest progress (as the last `gpuProgress` event had it). */
+  progress: DownloadProgress | null;
   worker: boolean;
   gpu: { name: string; total_mb: number; free_mb: number } | null;
   min_free_mb: number;
