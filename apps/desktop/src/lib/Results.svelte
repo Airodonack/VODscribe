@@ -52,7 +52,7 @@
           <span class="n muted">{group.hits.length}</span>
         </h2>
       {/if}
-      {#each group.hits as hit (hit.segment_id)}
+      {#each group.hits as hit (`${hit.source}-${hit.id}`)}
         <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>
           <span class="time">{formatTime(hit.time)}</span>
           <span class="text">

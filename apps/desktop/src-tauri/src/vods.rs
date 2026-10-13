@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Db, SearchHit, Status, Vod};
+use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::{fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
@@ -275,9 +275,9 @@ pub(crate) struct SearchResponse {
 pub(crate) async fn search(
     state: State<'_, AppState>,
     query: String,
-    vod_id: Option<i64>,
+    filter: SearchFilter,
 ) -> CmdResult<SearchResponse> {
-    let r = state.db.lock().unwrap().search(&query, vod_id, 500).map_err(err)?;
+    let r = state.db.lock().unwrap().search(&query, &filter, 500).map_err(err)?;
     Ok(SearchResponse { hits: r.hits, truncated: r.truncated })
 }
 

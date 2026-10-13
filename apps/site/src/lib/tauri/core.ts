@@ -3,6 +3,7 @@
 // their controls are grayed out (apps/desktop/src/lib/demo.ts).
 
 import * as backend from "./backend";
+import type { SearchFilter } from "desktop/lib/api.ts";
 
 type Args = Record<string, unknown>;
 
@@ -22,7 +23,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   }),
   list_vods: () => backend.listVods(),
   reorder_vods: ({ ids }) => backend.reorder(ids as number[]),
-  search: ({ query, vodId }) => backend.search(query as string, (vodId as number | null) ?? null),
+  search: ({ query, filter }) => backend.search(query as string, (filter as SearchFilter | undefined)?.vodId ?? null),
   transcript: ({ vodId }) => backend.transcript(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),

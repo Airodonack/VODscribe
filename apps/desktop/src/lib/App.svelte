@@ -140,7 +140,7 @@
       return;
     }
     try {
-      const r = await api.search(q, scopeId);
+      const r = await api.search(q, { vodId: scopeId });
       if (mine === seq) {
         results = r;
         searchError = null;

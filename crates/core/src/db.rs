@@ -3,8 +3,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use crate::chat::{ChatMessage, ChatPart};
 use crate::fetch::VodInfo;
 use crate::transcript::{Segment, Word, find_phrase, terms};
 
@@ -69,6 +70,75 @@ pub struct Vod {
     /// from before models were recorded). Finished VODs can be re-transcribed;
     /// unfinished ones start over when they resume.
     pub outdated: bool,
+    pub chat: ChatStatus,
+}
+
+/// Where a VOD's chat replay is.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChatStatus {
+    /// Not fetched yet (or fetching).
+    Pending,
+    Done,
+    /// The site has no chat replay for this VOD.
+    None,
+    /// Fetching failed; `chat_error` says why, and it's tried again later.
+    Failed,
+}
+
+impl ChatStatus {
+    fn as_str(self) -> Option<&'static str> {
+        match self {
+            ChatStatus::Pending => None,
+            ChatStatus::Done => Some("done"),
+            ChatStatus::None => Some("none"),
+            ChatStatus::Failed => Some("failed"),
+        }
+    }
+
+    fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("done") => ChatStatus::Done,
+            Some("none") => ChatStatus::None,
+            Some("failed") => ChatStatus::Failed,
+            _ => ChatStatus::Pending,
+        }
+    }
+}
+
+/// What a search looks through. New kinds of filter go here as fields, with
+/// defaults that leave a search unfiltered by them.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SearchFilter {
+    /// Only this VOD.
+    pub vod_id: Option<i64>,
+    /// What was said (the transcript).
+    pub speech: bool,
+    /// What chat wrote.
+    pub chat: bool,
+}
+
+impl Default for SearchFilter {
+    fn default() -> Self {
+        SearchFilter { vod_id: None, speech: true, chat: true }
+    }
+}
+
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Source {
+    Speech,
+    Chat,
+}
+
+/// A chat message as the transcript view shows it.
+#[derive(Serialize, Clone, Debug)]
+pub struct ChatLine {
+    pub time: f64,
+    pub author: String,
+    pub color: Option<String>,
+    pub parts: Vec<ChatPart>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -80,10 +150,16 @@ pub struct TextPart {
 #[derive(Serialize, Clone, Debug)]
 pub struct SearchHit {
     pub vod_id: i64,
-    pub segment_id: i64,
-    /// Start of the matched phrase itself, or of the segment if it couldn't be located.
+    pub source: Source,
+    /// The segment's or chat message's id; unique within its source.
+    pub id: i64,
+    /// Start of the matched phrase itself, or of the segment if it couldn't be
+    /// located. For chat, when the message was sent.
     pub time: f64,
     pub parts: Vec<TextPart>,
+    /// For chat, who wrote it, and their name color.
+    pub author: Option<String>,
+    pub color: Option<String>,
 }
 
 pub struct SearchResults {
@@ -152,11 +228,37 @@ const MIGRATE_V6: &str = "INSERT INTO segments_fts (segments_fts, rank) VALUES (
 const MIGRATE_V7: &str = "ALTER TABLE vods ADD COLUMN thumb TEXT;";
 /// v8: for a file on this computer (see `local`), where it is.
 const MIGRATE_V8: &str = "ALTER TABLE vods ADD COLUMN source_path TEXT;";
+/// v9: chat replays (see `chat`), searchable like the transcript, and whether
+/// each VOD's has been fetched.
+const MIGRATE_V9: &str = "
+ALTER TABLE vods ADD COLUMN chat TEXT;
+ALTER TABLE vods ADD COLUMN chat_error TEXT;
+CREATE TABLE chat (
+    id INTEGER PRIMARY KEY,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    time REAL NOT NULL,
+    author TEXT NOT NULL,
+    color TEXT,
+    text TEXT NOT NULL,
+    parts TEXT NOT NULL
+);
+CREATE INDEX chat_by_vod ON chat (vod_id, time);
+CREATE VIRTUAL TABLE chat_fts USING fts5 (
+    text, content = 'chat', content_rowid = 'id',
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+CREATE TRIGGER chat_ai AFTER INSERT ON chat BEGIN
+    INSERT INTO chat_fts (rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER chat_ad AFTER DELETE ON chat BEGIN
+    INSERT INTO chat_fts (chat_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+INSERT INTO chat_fts (chat_fts, rank) VALUES ('secure-delete', 1);";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
-     note, model, thumb, source_path, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
+     note, model, thumb, source_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -183,6 +285,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             let has_segments: bool = r.get("has_segments")?;
             has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
         },
+        chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
     })
 }
 
@@ -202,7 +305,8 @@ impl Db {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         // Migration n brings the schema to version n + 1; user_version is how many have run.
-        let migrations = [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8];
+        let migrations =
+            [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8, MIGRATE_V9];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             let latest = migrations.len();
@@ -406,36 +510,123 @@ impl Db {
         Ok(out)
     }
 
+    /// Replaces VOD `vod_id`'s chat with `messages` and records it as fetched.
+    pub fn set_chat(&mut self, vod_id: i64, messages: &[ChatMessage]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM chat WHERE vod_id = ?1", [vod_id])?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for m in messages {
+                stmt.execute(params![vod_id, m.time, m.author, m.color, m.text(), serde_json::to_string(&m.parts)?])?;
+            }
+        }
+        tx.execute("UPDATE vods SET chat = 'done', chat_error = NULL WHERE id = ?1", [vod_id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Records that VOD `vod_id` has no chat replay (`ChatStatus::None`), that
+    /// fetching it failed (`Failed`, with why), or that it should be fetched again (`Pending`).
+    pub fn set_chat_status(&self, vod_id: i64, status: ChatStatus, error: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET chat = ?2, chat_error = ?3 WHERE id = ?1",
+            params![vod_id, status.as_str(), error],
+        )?;
+        Ok(())
+    }
+
+    /// VODs whose chat hasn't been fetched (or failed), in library order.
+    pub fn chat_pending(&self) -> Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM vods WHERE chat IS NULL OR chat = 'failed' ORDER BY position, id DESC")?;
+        Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// VOD `vod_id`'s chat, oldest first.
+    pub fn chat(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
+        let mut stmt =
+            self.conn.prepare("SELECT time, author, color, parts FROM chat WHERE vod_id = ?1 ORDER BY time, id")?;
+        let rows = stmt.query_map([vod_id], |r| {
+            Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (time, author, color, parts) = row?;
+            out.push(ChatLine { time, author, color, parts: serde_json::from_str(&parts)? });
+        }
+        Ok(out)
+    }
+
     /// Phrase search. The last term matches as a prefix so results update while typing.
     /// Hits are ordered by VOD, in library order, then by time within the VOD.
-    pub fn search(&self, query: &str, vod_id: Option<i64>, limit: usize) -> Result<SearchResults> {
+    pub fn search(&self, query: &str, filter: &SearchFilter, limit: usize) -> Result<SearchResults> {
         let q = terms(query);
-        if q.is_empty() {
+        if q.is_empty() || !(filter.speech || filter.chat) {
             return Ok(SearchResults { hits: Vec::new(), truncated: false });
         }
         // Terms are alphanumeric only, so quoting them can't inject FTS syntax.
         let fts = format!("\"{}\"*", q.join(" "));
-        let mut stmt = self.conn.prepare(
-            "SELECT s.id, s.vod_id, s.start, s.words FROM segments_fts f
-             JOIN segments s ON s.id = f.rowid
-             JOIN vods v ON v.id = s.vod_id
-             WHERE segments_fts MATCH ?1 AND (?2 IS NULL OR s.vod_id = ?2)
-             ORDER BY v.position, v.id DESC, s.start
-             LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(params![fts, vod_id, limit as i64 + 1], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, String>(3)?))
-        })?;
-        let mut hits = Vec::new();
-        for row in rows {
-            let (segment_id, vod_id, start, words) = row?;
-            let words: Vec<Word> = serde_json::from_str(&words)?;
-            let ranges = find_phrase(&words, &q, true);
-            let time = ranges.first().map_or(start, |&(i, _)| words[i].start);
-            hits.push(SearchHit { vod_id, segment_id, time, parts: highlight(&words, &ranges) });
+        // (library position, VOD id, hit), to merge the sources in order.
+        let mut found: Vec<(i64, i64, SearchHit)> = Vec::new();
+        if filter.speech {
+            let mut stmt = self.conn.prepare(
+                "SELECT s.id, s.vod_id, s.start, s.words, v.position FROM segments_fts f
+                 JOIN segments s ON s.id = f.rowid
+                 JOIN vods v ON v.id = s.vod_id
+                 WHERE segments_fts MATCH ?1 AND (?2 IS NULL OR s.vod_id = ?2)
+                 ORDER BY v.position, v.id DESC, s.start
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![fts, filter.vod_id, limit as i64 + 1], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, String>(3)?, r.get(4)?))
+            })?;
+            for row in rows {
+                let (id, vod_id, start, words, position) = row?;
+                let words: Vec<Word> = serde_json::from_str(&words)?;
+                let ranges = find_phrase(&words, &q, true);
+                let time = ranges.first().map_or(start, |&(i, _)| words[i].start);
+                let parts = highlight(&words, &ranges);
+                let hit = SearchHit { vod_id, source: Source::Speech, id, time, parts, author: None, color: None };
+                found.push((position, vod_id, hit));
+            }
         }
-        let truncated = hits.len() > limit;
-        hits.truncate(limit);
+        if filter.chat {
+            let mut stmt = self.conn.prepare(
+                "SELECT c.id, c.vod_id, c.time, c.text, c.author, c.color, v.position FROM chat_fts f
+                 JOIN chat c ON c.id = f.rowid
+                 JOIN vods v ON v.id = c.vod_id
+                 WHERE chat_fts MATCH ?1 AND (?2 IS NULL OR c.vod_id = ?2)
+                 ORDER BY v.position, v.id DESC, c.time
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![fts, filter.vod_id, limit as i64 + 1], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, f64>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Option<String>>(5)?,
+                    r.get(6)?,
+                ))
+            })?;
+            for row in rows {
+                let (id, vod_id, time, text, author, color, position) = row?;
+                // Chat has no word timings; every word is at the message's time.
+                let words: Vec<Word> =
+                    text.split_whitespace().map(|w| Word { text: w.to_string(), start: time, end: time }).collect();
+                let parts = highlight(&words, &find_phrase(&words, &q, true));
+                let hit = SearchHit { vod_id, source: Source::Chat, id, time, parts, author: Some(author), color };
+                found.push((position, vod_id, hit));
+            }
+        }
+        // The same order as each query: library position, newest VOD first, then time.
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.time.total_cmp(&b.2.time)));
+        let truncated = found.len() > limit;
+        let hits = found.into_iter().take(limit).map(|(_, _, hit)| hit).collect();
         Ok(SearchResults { hits, truncated })
     }
 }
@@ -529,7 +720,8 @@ mod tests {
         let secret = "zanzibarquokka";
         db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: secret.into(), words: words(secret, 0.0) }])
             .unwrap();
-        assert_eq!(db.search(secret, None, 10).unwrap().hits.len(), 1);
+        db.set_chat(vod.id, &[message(0.0, "v", &format!("chat{secret}"))]).unwrap();
+        assert_eq!(db.search(secret, &SearchFilter::default(), 10).unwrap().hits.len(), 1);
         db.delete_vod(vod.id).unwrap();
         drop(db);
         let bytes =
@@ -616,17 +808,99 @@ mod tests {
         segs.extend(seg.push(words("That was a clutch play, honestly.", 10.0)));
         db.insert_segments(vod.id, &segs).unwrap();
 
-        let r = db.search("CLUTCH play", None, 10).unwrap();
+        let r = db.search("CLUTCH play", &SearchFilter::default(), 10).unwrap();
         assert_eq!(r.hits.len(), 1);
         assert_eq!(r.hits[0].time, 13.0);
         let parts: Vec<_> = r.hits[0].parts.iter().map(|p| (p.text.as_str(), p.hit)).collect();
         assert_eq!(parts, [("That was a ", false), ("clutch play,", true), (" honestly.", false)]);
 
-        assert_eq!(db.search("welc", None, 10).unwrap().hits.len(), 1, "prefix match");
-        assert!(db.search("play clutch", None, 10).unwrap().hits.is_empty(), "phrase order");
-        assert!(db.search("\" OR *", None, 10).unwrap().hits.is_empty(), "no FTS syntax injection");
+        assert_eq!(db.search("welc", &SearchFilter::default(), 10).unwrap().hits.len(), 1, "prefix match");
+        assert!(db.search("play clutch", &SearchFilter::default(), 10).unwrap().hits.is_empty(), "phrase order");
+        assert!(db.search("\" OR *", &SearchFilter::default(), 10).unwrap().hits.is_empty(), "no FTS syntax injection");
 
         db.delete_vod(vod.id).unwrap();
-        assert!(db.search("clutch", None, 10).unwrap().hits.is_empty(), "cascade clears index");
+        assert!(db.search("clutch", &SearchFilter::default(), 10).unwrap().hits.is_empty(), "cascade clears index");
+    }
+
+    fn message(time: f64, author: &str, text: &str) -> ChatMessage {
+        ChatMessage {
+            time,
+            author: author.into(),
+            color: Some("#ff0000".into()),
+            parts: vec![ChatPart::Text { text: text.into() }],
+        }
+    }
+
+    #[test]
+    fn stores_and_searches_chat() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let a = db.add_vod(&info("a")).unwrap().0.id;
+        let b = db.add_vod(&info("b")).unwrap().0.id;
+        assert_eq!(db.vod(a).unwrap().unwrap().chat, ChatStatus::Pending);
+        assert_eq!(db.chat_pending().unwrap(), [b, a], "library order");
+
+        let mut seg = Segmenter::new();
+        let mut segs = seg.push(words("what a clutch play", 20.0));
+        segs.extend(seg.finish());
+        db.insert_segments(a, &segs).unwrap();
+        let emote =
+            ChatPart::Emote { name: "barkylove".into(), url: "https://files.kick.com/emotes/1/fullsize".into() };
+        let chat = [
+            message(25.0, "viewer", "CLUTCH PLAY!!"),
+            ChatMessage { parts: vec![emote.clone()], ..message(5.0, "fan", "") },
+        ];
+        db.set_chat(a, &chat).unwrap();
+        db.set_chat(b, &[message(1.0, "other", "clutch play elsewhere")]).unwrap();
+        assert_eq!(db.vod(a).unwrap().unwrap().chat, ChatStatus::Done);
+        assert!(db.chat_pending().unwrap().is_empty());
+
+        let lines = db.chat(a).unwrap();
+        assert_eq!(lines.iter().map(|l| l.time).collect::<Vec<_>>(), [5.0, 25.0], "oldest first");
+        assert_eq!(lines[0].parts, [emote]);
+
+        let search = |filter: SearchFilter| {
+            let hits = db.search("clutch play", &filter, 10).unwrap().hits;
+            hits.into_iter().map(|h| (h.vod_id, h.source, h.time)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            search(SearchFilter::default()),
+            [(b, Source::Chat, 1.0), (a, Source::Speech, 22.0), (a, Source::Chat, 25.0)],
+            "library order (newest on top), then time"
+        );
+        assert_eq!(search(SearchFilter { chat: false, ..Default::default() }), [(a, Source::Speech, 22.0)]);
+        assert_eq!(
+            search(SearchFilter { speech: false, vod_id: Some(a), ..Default::default() }),
+            [(a, Source::Chat, 25.0)]
+        );
+        assert!(search(SearchFilter { speech: false, chat: false, ..Default::default() }).is_empty());
+        let hit = db.search("barkylove", &SearchFilter::default(), 10).unwrap().hits.remove(0);
+        assert_eq!((hit.author.as_deref(), hit.color.as_deref()), (Some("fan"), Some("#ff0000")));
+        let parts: Vec<_> = db
+            .search("clutch", &SearchFilter { speech: false, vod_id: Some(a), ..Default::default() }, 10)
+            .unwrap()
+            .hits[0]
+            .parts
+            .iter()
+            .map(|p| (p.text.clone(), p.hit))
+            .collect();
+        assert_eq!(parts, [("CLUTCH".to_string(), true), (" PLAY!!".to_string(), false)]);
+
+        // Fetching again replaces the chat; a failure is retried; deleting the VOD clears it.
+        db.set_chat(a, &[message(30.0, "viewer", "gg")]).unwrap();
+        assert_eq!(db.chat(a).unwrap().len(), 1);
+        db.set_chat_status(b, ChatStatus::Failed, Some("Kick isn't responding")).unwrap();
+        assert_eq!(db.chat_pending().unwrap(), [b]);
+        db.delete_vod(a).unwrap();
+        assert!(db.search("gg", &SearchFilter::default(), 10).unwrap().hits.is_empty());
+    }
+
+    #[test]
+    fn a_chat_search_is_limited_too() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let a = db.add_vod(&info("a")).unwrap().0.id;
+        let chat: Vec<_> = (0..5).map(|i| message(i as f64, "v", "hype")).collect();
+        db.set_chat(a, &chat).unwrap();
+        let r = db.search("hype", &SearchFilter::default(), 3).unwrap();
+        assert_eq!((r.hits.len(), r.truncated), (3, true));
     }
 }

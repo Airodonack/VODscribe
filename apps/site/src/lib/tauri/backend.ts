@@ -82,9 +82,12 @@ export async function search(query: string, vodId: number | null) {
       if (ranges.length === 0) continue;
       hits.push({
         vod_id: vod.id,
-        segment_id: seg.id,
+        source: "speech",
+        id: seg.id,
         time: seg.words[ranges[0][0]].start,
         parts: highlight(seg.words, ranges),
+        author: null,
+        color: null,
       });
       if (hits.length > LIMIT) return { hits: hits.slice(0, LIMIT), truncated: true };
     }

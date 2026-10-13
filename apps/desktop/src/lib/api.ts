@@ -46,9 +46,23 @@ export interface GpuStatus {
 
 export interface SearchHit {
   vod_id: number;
-  segment_id: number;
+  /** What was said, or what chat wrote. */
+  source: "speech" | "chat";
+  /** The segment's or chat message's id; unique within its source. */
+  id: number;
   time: number;
   parts: { text: string; hit: boolean }[];
+  /** For chat, who wrote it, and their name color. */
+  author: string | null;
+  color: string | null;
+}
+
+/** What a search looks through (crates/core `SearchFilter`). Fields left out don't filter. */
+export interface SearchFilter {
+  /** Only this VOD. */
+  vodId?: number | null;
+  speech?: boolean;
+  chat?: boolean;
 }
 
 export interface SetupStatus {
@@ -111,8 +125,8 @@ export const api = {
   retranscribeVod: (id: number) => invoke<void>("retranscribe_vod", { id }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
-  search: (query: string, vodId: number | null) =>
-    invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, vodId }),
+  search: (query: string, filter: SearchFilter) =>
+    invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
   updateYtDlp: () => invoke<string>("update_yt_dlp"),
   kickStream: (url: string) => invoke<{ name: string; height: number; url: string }[]>("kick_stream", { url }),
