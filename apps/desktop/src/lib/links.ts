@@ -7,4 +7,3 @@ export const AUTHOR = "Airodonack";
 export const SUPPORT = "https://ko-fi.com/airodonack";
 /** Bug reports and ideas; a public tracker, no account needed to read it. */
 export const ISSUES = "https://github.com/Airodonack/VODscribe/issues";
-export const EMAIL = "airodonack@proton.me";

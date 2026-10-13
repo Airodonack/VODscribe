@@ -127,7 +127,7 @@
           {:else if busy}
             <div class="progress">
               <!-- The exact component and its checks, as in Settings. -->
-              <DownloadStep progress={step} />
+              <DownloadStep progress={step} oncancel={() => api.cancelSetup()} />
             </div>
           {:else if item.key === "ffmpeg" && !item.downloads}
             <p class="detail">
@@ -159,12 +159,7 @@
         {#if running}Downloading…{:else}<Icon name="download" size={15} /> Download{/if}
       </button>
     {/if}
-    {#if running}
-      <!-- What's finished stays; Download picks up the rest later. -->
-      <button onclick={() => api.cancelSetup()}>Cancel</button>
-    {:else}
-      <button onclick={onchange}>Check again</button>
-    {/if}
+    <button onclick={onchange} disabled={running}>Check again</button>
   </div>
 </div>
 

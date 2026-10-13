@@ -3,7 +3,7 @@
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
-  import { EMAIL, ISSUES, LICENSES, PRIVACY } from "./links";
+  import { ISSUES, LICENSES, PRIVACY } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
   import { formatBytes } from "./platform";
   import Tip from "./Tip.svelte";
@@ -166,8 +166,7 @@
       {#if step || gpu?.installing}
         <div class="progress">
           <!-- The exact component, for the people who chose the GPU add-on. -->
-          <DownloadStep progress={step} waiting="Downloading the GPU add-on" />
-          <button class="link cancel" onclick={() => api.cancelGpuInstall()}>Cancel</button>
+          <DownloadStep progress={step} waiting="Downloading the GPU add-on" oncancel={() => api.cancelGpuInstall()} />
         </div>
       {:else if !gpu?.installed}
         <button onclick={install}
@@ -237,22 +236,13 @@
     {/if}
     <div class="row-buttons">
       <button onclick={() => api.openDataDir().catch((e) => (error = String(e)))}>Open folder</button>
+    </div>
+    <div class="row-buttons">
       <button class="link" onclick={() => openUrl(PRIVACY)}
         >More about privacy <Icon name="external" size={12} /></button
       >
       <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
     </div>
-  </section>
-
-  <section>
-    <span class="eyebrow">Help</span>
-    <p class="muted hint">
-      Something broken, or an idea? Say so on the issue tracker, or email <code class="path">{EMAIL}</code>. Both are
-      read by the person who makes VODscribe.
-    </p>
-    <button class="link" onclick={() => openUrl(ISSUES)}
-      >Report a problem or suggest something <Icon name="external" size={12} /></button
-    >
   </section>
 
   <section>
@@ -264,6 +254,14 @@
     <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
       {clearing ? "Clearing…" : "Free up space…"}
     </button>
+  </section>
+
+  <section>
+    <span class="eyebrow">Help</span>
+    <p class="muted hint">Something broken? Got an idea?</p>
+    <button class="link" onclick={() => openUrl(ISSUES)}
+      >Report a problem or suggest something <Icon name="external" size={12} /></button
+    >
   </section>
 </div>
 
@@ -374,9 +372,5 @@
     gap: 4px;
     font-size: 12px;
     width: 100%;
-  }
-
-  .progress .cancel {
-    justify-self: start;
   }
 </style>
