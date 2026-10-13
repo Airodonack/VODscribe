@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{ChatLine, ChatStatus};
+use vodscribe_core::layers::{self, Layer};
 use vodscribe_core::{chat, emotes, tools};
 
 use crate::{AppState, CmdResult, emit_vod, err};
@@ -105,4 +106,26 @@ pub(crate) async fn emote(state: State<'_, AppState>, url: String) -> CmdResult<
     let (bytes, _) =
         tauri::async_runtime::spawn_blocking(move || emotes::get(&url, &dir)).await.map_err(err)?.map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// The timeline layers (see `layers`), or the starting ones.
+#[tauri::command]
+pub(crate) async fn get_layers(state: State<'_, AppState>) -> CmdResult<Vec<Layer>> {
+    Ok(layers::load(&state.paths.layers()))
+}
+
+#[tauri::command]
+pub(crate) async fn set_layers(state: State<'_, AppState>, layers: Vec<Layer>) -> CmdResult<()> {
+    layers::save(&state.paths.layers(), &layers).map_err(err)
+}
+
+/// For each list of terms, the ids of VOD `vod_id`'s chat messages that contain any of them.
+#[tauri::command]
+pub(crate) async fn chat_matches(
+    state: State<'_, AppState>,
+    vod_id: i64,
+    terms: Vec<Vec<String>>,
+) -> CmdResult<Vec<Vec<i64>>> {
+    let db = state.db.lock().unwrap();
+    terms.iter().map(|t| db.chat_matches(vod_id, t).map_err(err)).collect()
 }

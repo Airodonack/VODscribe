@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-matches"
+description = "Enables the chat_matches command without any pre-configured scope."
+commands.allow = ["chat_matches"]
+
+[[permission]]
+identifier = "deny-chat-matches"
+description = "Denies the chat_matches command without any pre-configured scope."
+commands.deny = ["chat_matches"]

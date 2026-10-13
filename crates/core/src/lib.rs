@@ -12,6 +12,7 @@ pub mod emotes;
 pub mod fetch;
 pub mod gpu;
 pub mod kick;
+pub mod layers;
 pub mod local;
 pub mod model;
 pub mod net;
@@ -106,6 +107,11 @@ impl Paths {
 
     pub fn settings(&self) -> PathBuf {
         self.root.join("settings.json")
+    }
+
+    /// Timeline layers (see `layers`).
+    pub fn layers(&self) -> PathBuf {
+        self.root.join("layers.json")
     }
 
     pub fn gpu_pack(&self) -> PathBuf {

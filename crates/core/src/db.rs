@@ -135,6 +135,8 @@ pub enum Source {
 /// A chat message as the transcript view shows it.
 #[derive(Serialize, Clone, Debug)]
 pub struct ChatLine {
+    /// Unique in the library; what `chat_matches` returns.
+    pub id: i64,
     pub time: f64,
     pub author: String,
     pub color: Option<String>,
@@ -548,16 +550,44 @@ impl Db {
     /// VOD `vod_id`'s chat, oldest first.
     pub fn chat(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
         let mut stmt =
-            self.conn.prepare("SELECT time, author, color, parts FROM chat WHERE vod_id = ?1 ORDER BY time, id")?;
+            self.conn.prepare("SELECT id, time, author, color, parts FROM chat WHERE vod_id = ?1 ORDER BY time, id")?;
         let rows = stmt.query_map([vod_id], |r| {
-            Ok((r.get::<_, f64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, f64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+            ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (time, author, color, parts) = row?;
-            out.push(ChatLine { time, author, color, parts: serde_json::from_str(&parts)? });
+            let (id, time, author, color, parts) = row?;
+            out.push(ChatLine { id, time, author, color, parts: serde_json::from_str(&parts)? });
         }
         Ok(out)
+    }
+
+    /// The ids of VOD `vod_id`'s chat messages that contain any of `terms`, each
+    /// a whole word or phrase (an emote by its name), matched as search matches
+    /// words: ignoring case and accents. For a timeline layer (see `layers`).
+    pub fn chat_matches(&self, vod_id: i64, terms: &[String]) -> Result<Vec<i64>> {
+        // Terms are alphanumeric only, so quoting them can't inject FTS syntax.
+        let phrases: Vec<String> = terms
+            .iter()
+            .map(|t| crate::transcript::terms(t))
+            .filter(|t| !t.is_empty())
+            .map(|t| format!("\"{}\"", t.join(" ")))
+            .collect();
+        if phrases.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id FROM chat_fts f JOIN chat c ON c.id = f.rowid
+             WHERE chat_fts MATCH ?1 AND c.vod_id = ?2 ORDER BY c.time, c.id",
+        )?;
+        let ids = stmt.query_map(params![phrases.join(" OR "), vod_id], |r| r.get(0))?;
+        Ok(ids.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Phrase search. The last term matches as a prefix so results update while typing.
@@ -884,6 +914,18 @@ mod tests {
             .map(|p| (p.text.clone(), p.hit))
             .collect();
         assert_eq!(parts, [("CLUTCH".to_string(), true), (" PLAY!!".to_string(), false)]);
+
+        // Layers match whole words and phrases, in any of their terms.
+        let times = |terms: &[&str]| {
+            let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
+            let found = db.chat_matches(a, &terms).unwrap();
+            lines.iter().filter(|l| found.contains(&l.id)).map(|l| l.time).collect::<Vec<_>>()
+        };
+        assert_eq!(times(&["clutch play"]), [25.0]);
+        assert_eq!(times(&["BARKYLOVE", "nothing"]), [5.0], "an emote by name, any case");
+        assert_eq!(times(&["clut"]), Vec::<f64>::new(), "whole words, not prefixes");
+        assert_eq!(times(&["play", "barkylove"]), [5.0, 25.0]);
+        assert_eq!(times(&["\" OR *", ""]), Vec::<f64>::new(), "no FTS syntax injection");
 
         // Fetching again replaces the chat; a failure is retried; deleting the VOD clears it.
         db.set_chat(a, &[message(30.0, "viewer", "gg")]).unwrap();
