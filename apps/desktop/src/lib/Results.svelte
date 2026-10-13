@@ -55,7 +55,10 @@
       {#each group.hits as hit (`${hit.source}-${hit.id}`)}
         <button class="row" onclick={() => onplay(hit.vod_id, hit.time)}>
           <span class="time">{formatTime(hit.time)}</span>
-          <span class="text">
+          <span class="text" class:chat={hit.source === "chat"}>
+            {#if hit.source === "chat"}<span class="said-in" title="Written in chat"
+                ><Icon name="message" size={12} /></span
+              ><span class="author" style:--author={hit.color}>{hit.author}</span>{/if}
             {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
           </span>
         </button>
@@ -137,5 +140,21 @@
 
   .text {
     min-width: 0;
+  }
+
+  .text.chat {
+    font-size: 13px;
+  }
+
+  .said-in {
+    color: var(--muted);
+    margin-right: 6px;
+  }
+
+  /* As in chat beside the transcript (ChatMessage.svelte). */
+  .author {
+    font-weight: 600;
+    margin-right: 6px;
+    color: color-mix(in srgb, var(--author, var(--muted)) 65%, var(--text));
   }
 </style>

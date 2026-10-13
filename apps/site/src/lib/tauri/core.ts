@@ -23,7 +23,11 @@ const commands: Record<string, (args: Args) => unknown> = {
   }),
   list_vods: () => backend.listVods(),
   reorder_vods: ({ ids }) => backend.reorder(ids as number[]),
-  search: ({ query, filter }) => backend.search(query as string, (filter as SearchFilter | undefined)?.vodId ?? null),
+  // The demo has no chat, so leaving out what was said leaves nothing.
+  search: ({ query, filter }) => {
+    const f = (filter ?? {}) as SearchFilter;
+    return f.speech === false ? { hits: [], truncated: false } : backend.search(query as string, f.vodId ?? null);
+  },
   transcript: ({ vodId }) => backend.transcript(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),

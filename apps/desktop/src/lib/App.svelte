@@ -26,6 +26,8 @@
   // With a VOD selected, searches cover just it unless the scope chip is toggled to all.
   let scopeAll = $state(false);
   let scopeId = $derived(scopeAll ? null : selectedId);
+  // What a search looks through. More filters join these as the search grows.
+  let sources = $state({ speech: true, chat: true });
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);
 
@@ -140,7 +142,7 @@
       return;
     }
     try {
-      const r = await api.search(q, { vodId: scopeId });
+      const r = await api.search(q, { vodId: scopeId, ...sources });
       if (mine === seq) {
         results = r;
         searchError = null;
@@ -153,6 +155,8 @@
   $effect(() => {
     void query;
     void scopeId;
+    void sources.speech;
+    void sources.chat;
     clearTimeout(timer);
     timer = setTimeout(runSearch, 120);
     return () => clearTimeout(timer);
@@ -207,6 +211,19 @@
               {scopeAll ? "All VODs" : "This VOD"}
             </button>
           {/if}
+        </div>
+        <div class="sources" role="group" aria-label="Search in">
+          {#each [["speech", "Said", "What was said in the VODs"], ["chat", "Chat", "What chat wrote"]] as const as [key, label, what] (key)}
+            <button
+              class:on={sources[key]}
+              aria-pressed={sources[key]}
+              disabled={sources[key] && !sources[key === "speech" ? "chat" : "speech"]}
+              title={sources[key]
+                ? `Searching ${what.toLowerCase()}; click to leave it out`
+                : `Click to search ${what.toLowerCase()} too`}
+              onclick={() => (sources[key] = !sources[key])}>{label}</button
+            >
+          {/each}
         </div>
         <div class="settings-anchor" bind:this={settingsEl}>
           <button
@@ -333,6 +350,33 @@
   .search input {
     padding-left: 34px;
     font-size: 15px;
+  }
+
+  /* What a search looks through: what was said, what chat wrote. */
+  .sources {
+    display: flex;
+    flex: none;
+    gap: 4px;
+  }
+
+  .sources button {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 13px;
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid transparent;
+  }
+
+  .sources button.on {
+    color: var(--text);
+    font-weight: 600;
+    background: var(--accent-soft);
+  }
+
+  .sources button:hover {
+    border-color: var(--accent);
   }
 
   /* Toggles whether a search covers the selected VOD or all of them. */
