@@ -82,6 +82,14 @@ fn main() -> Result<()> {
                 println!("{:>9.1}  {}: {}", m.time, m.author, m.text());
             }
             println!("{} messages in {:.1?}", messages.len(), started.elapsed());
+            let mut kinds = std::collections::BTreeMap::new();
+            for m in &messages {
+                *kinds.entry(m.kind.as_str()).or_insert(0) += 1;
+            }
+            println!("{kinds:?}");
+            for m in messages.iter().filter(|m| m.kind != chat::Kind::Message).take(8) {
+                println!("{:>9.1}  {:?} {:?}  {}: {}", m.time, m.kind, m.amount, m.author, m.text());
+            }
         }
         ["list"] => {
             for v in Db::open(&paths.db())?.vods()? {

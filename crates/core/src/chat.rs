@@ -25,6 +25,48 @@ pub struct ChatMessage {
     /// The author's name color, as `#rrggbb`, if the site gives one.
     pub color: Option<String>,
     pub parts: Vec<ChatPart>,
+    #[serde(default)]
+    pub kind: Kind,
+    /// For a gift, how many subs; for a tip, how many bits or KICKs. A Super
+    /// Chat's amount is in its text instead, in whatever currency it was.
+    #[serde(default)]
+    pub amount: Option<f64>,
+}
+
+/// What a chat message is: someone writing, or an event the site posts in
+/// chat. Recognized from how each site words them (see `twitch_event`,
+/// `kick_event` and `parse_youtube`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    #[default]
+    Message,
+    /// A subscription or YouTube membership, new or renewed.
+    Sub,
+    /// Subs or memberships given to others.
+    Gift,
+    /// Bits (Twitch), KICKs (Kick), a Super Chat or Super Sticker (YouTube).
+    Tip,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Message => "message",
+            Kind::Sub => "sub",
+            Kind::Gift => "gift",
+            Kind::Tip => "tip",
+        }
+    }
+
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "sub" => Kind::Sub,
+            "gift" => Kind::Gift,
+            "tip" => Kind::Tip,
+            _ => Kind::Message,
+        }
+    }
 }
 
 /// A run of a message: text, or an emote shown as an image.
@@ -146,15 +188,20 @@ fn fetch_kick(info: &VodInfo, cancel: &AtomicBool, on_progress: &mut dyn FnMut(f
     let end = origin.start + duration;
     let mut cursor = (end * 1e6) as i64;
     let mut out = Vec::new();
+    // Each celebration message's place in `out`, and when its sub happened (in the VOD).
+    let mut celebrations = Vec::new();
     let mut seen = HashSet::new();
     loop {
         let url = format!("https://web.kick.com/api/v1/chat/{}/history?cursor={cursor}", origin.channel);
         let page = api(&url, None, &[], cancel)?;
         let (messages, next) = parse_kick_page(&page)?;
         let mut oldest = end;
-        for (at, id, msg) in messages {
+        for (at, id, msg, subbed_at) in messages {
             oldest = oldest.min(at);
             if at >= origin.start && at <= end && seen.insert(id) {
+                if let Some(subbed_at) = subbed_at {
+                    celebrations.push((out.len(), subbed_at - origin.start));
+                }
                 out.push(ChatMessage { time: at - origin.start, ..msg });
             }
         }
@@ -165,12 +212,14 @@ fn fetch_kick(info: &VodInfo, cancel: &AtomicBool, on_progress: &mut dyn FnMut(f
             _ => break,
         }
     }
+    count_each_sub_once(&mut out, &celebrations);
     Ok(out)
 }
 
-/// A history page's messages, as (Unix time, id, message with time 0), and the cursor for the page before it.
+/// A history page's messages, as (Unix time, id, message with time 0, and for
+/// a celebration, when its sub happened), and the cursor for the page before it.
 #[allow(clippy::type_complexity)]
-fn parse_kick_page(page: &Value) -> Result<(Vec<(f64, String, ChatMessage)>, Option<i64>)> {
+fn parse_kick_page(page: &Value) -> Result<(Vec<(f64, String, ChatMessage, Option<f64>)>, Option<i64>)> {
     let data = page.get("data").context("unreadable chat from Kick")?;
     let mut out = Vec::new();
     for m in data.get("messages").and_then(Value::as_array).into_iter().flatten() {
@@ -179,16 +228,70 @@ fn parse_kick_page(page: &Value) -> Result<(Vec<(f64, String, ChatMessage)>, Opt
         else {
             continue;
         };
+        let author = s("/sender/username").unwrap_or("?");
+        let metadata = s("/metadata").and_then(|m| serde_json::from_str::<Value>(m).ok());
+        let celebration = metadata.as_ref().and_then(|m| m.pointer("/celebration/type")?.as_str());
+        let subbed_at = metadata.as_ref().and_then(|m| parse_time(m.pointer("/celebration/created_at")?.as_str()?));
+        let (kind, amount) = kick_event(author, content, celebration);
         let msg = ChatMessage {
             time: 0.0,
-            author: s("/sender/username").unwrap_or("?").to_string(),
+            author: author.to_string(),
             color: s("/sender/identity/color").filter(|c| is_color(c)).map(str::to_string),
             parts: kick_parts(content),
+            kind,
+            amount,
         };
-        out.push((at, id.to_string(), msg));
+        out.push((at, id.to_string(), msg, subbed_at.filter(|_| kind == Kind::Sub)));
     }
     let next = data.get("cursor").and_then(|c| c.as_str()?.parse().ok().or(c.as_i64()));
     Ok((out, next))
+}
+
+/// What a Kick message is. Events come as KickBot's announcements, when the
+/// channel has them on ("@name has subbed for 15 months!", "@name just gifted
+/// 1,000 KICKs!"), and as a resubscriber's own message, marked as a celebration.
+fn kick_event(author: &str, content: &str, celebration: Option<&str>) -> (Kind, Option<f64>) {
+    if celebration == Some("subscription_renewed") {
+        return (Kind::Sub, None);
+    }
+    if !author.eq_ignore_ascii_case("KickBot") {
+        return (Kind::Message, None);
+    }
+    let after = |marker: &str| content.split_once(marker).map(|(_, rest)| leading_number(rest));
+    if let Some(Some(n)) = after(" just gifted ").filter(|_| content.contains(" KICKs")) {
+        return (Kind::Tip, Some(n));
+    }
+    if let Some(n) = after(" gifted ").filter(|_| content.contains(" sub")) {
+        return (Kind::Gift, n.or(Some(1.0)));
+    }
+    if content.contains(" has subbed") || content.contains(" just subscribed") || content.contains(" has subscribed") {
+        return (Kind::Sub, None);
+    }
+    (Kind::Message, None)
+}
+
+/// The number at the start of `text`, allowing thousands separators ("1,000").
+fn leading_number(text: &str) -> Option<f64> {
+    let digits: String = text.chars().take_while(|c| c.is_ascii_digit() || *c == ',').filter(|c| *c != ',').collect();
+    digits.parse().ok()
+}
+
+/// A resub can show twice on Kick: KickBot's announcement when it happens, and
+/// the subscriber's celebration message, which they may send much later. When
+/// KickBot announced it (`celebrations` holds each celebration's index and when
+/// its sub happened), the celebration stays in chat as a plain message.
+fn count_each_sub_once(messages: &mut [ChatMessage], celebrations: &[(usize, f64)]) {
+    let announced: Vec<(String, f64)> = messages
+        .iter()
+        .filter(|m| m.kind == Kind::Sub && m.author.eq_ignore_ascii_case("KickBot"))
+        .map(|m| (m.text().to_lowercase(), m.time))
+        .collect();
+    for &(i, subbed_at) in celebrations {
+        let who = format!("@{} ", messages[i].author.to_lowercase());
+        if announced.iter().any(|(text, at)| (at - subbed_at).abs() < 120.0 && text.contains(&who)) {
+            messages[i].kind = Kind::Message;
+        }
+    }
 }
 
 /// Splits Kick's `[emote:<id>:<name>]` codes out of a message.
@@ -289,16 +392,90 @@ fn parse_twitch_page(page: &Value) -> Result<(Vec<(String, ChatMessage)>, bool)>
                 None => push_text(&mut parts, text),
             }
         }
-        let msg = ChatMessage {
+        let mut msg = ChatMessage {
             time,
             author: n.pointer("/commenter/displayName").and_then(Value::as_str).unwrap_or("?").to_string(),
             color: n.pointer("/message/userColor").and_then(Value::as_str).filter(|c| is_color(c)).map(str::to_string),
             parts,
+            kind: Kind::Message,
+            amount: None,
         };
+        (msg.kind, msg.amount) = twitch_event(&msg.author, &msg.text());
         out.push((id.to_string(), msg));
     }
     let more = video.pointer("/comments/pageInfo/hasNextPage").and_then(Value::as_bool).unwrap_or(false);
     Ok((out, more))
+}
+
+/// Twitch's own cheermotes: a cheer is one of these and a number of bits
+/// ("Cheer100"). Many emotes also end in digits (Squid1, MercyWing1), so only
+/// these count; a channel's own cheermotes aren't recognized.
+const CHEERMOTES: &[&str] = &[
+    "cheer",
+    "doodlecheer",
+    "biblethump",
+    "cheerwhal",
+    "corgo",
+    "scoops",
+    "uni",
+    "showlove",
+    "party",
+    "seemsgood",
+    "pride",
+    "kappa",
+    "frankerz",
+    "heyguys",
+    "dansgame",
+    "elegiggle",
+    "trihard",
+    "kreygasm",
+    "4head",
+    "swiftrage",
+    "notlikethis",
+    "failfish",
+    "vohiyo",
+    "pjsalt",
+    "mrdestructoid",
+    "bday",
+    "ripcheer",
+    "shamrock",
+    "bitboss",
+    "streamlabs",
+    "muxy",
+    "holidaycheer",
+    "goal",
+    "anon",
+    "charity",
+];
+
+/// What a Twitch comment by `author` is. Subs and gifts are posted in the
+/// subscriber's name and start with it ("name subscribed at Tier 1. …", "name
+/// is gifting 5 Tier 1 Subs to …"); cheers are cheermotes in the text.
+fn twitch_event(author: &str, text: &str) -> (Kind, Option<f64>) {
+    if let Some((first, rest)) = text.split_once(' ')
+        && first.eq_ignore_ascii_case(author)
+    {
+        if rest.starts_with("subscribed at Tier ") || rest.starts_with("subscribed with Prime") {
+            return (Kind::Sub, None);
+        }
+        if let Some(gifting) = rest.strip_prefix("is gifting ") {
+            return (Kind::Gift, leading_number(gifting).or(Some(1.0)));
+        }
+        if rest.starts_with("gifted a Tier ") {
+            return (Kind::Gift, Some(1.0));
+        }
+    }
+    let bits: f64 = text
+        .split_whitespace()
+        .filter_map(|word| {
+            let split = word.find(|c: char| c.is_ascii_digit())?;
+            let (name, n) = word.split_at(split);
+            (CHEERMOTES.contains(&name.to_lowercase().as_str()) && n.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| n.parse::<f64>().ok())
+                .flatten()
+        })
+        .sum();
+    if bits > 0.0 { (Kind::Tip, Some(bits)) } else { (Kind::Message, None) }
 }
 
 /// Twitch emote ids are digits, or `emotesv2_` and hex.
@@ -340,12 +517,37 @@ fn parse_youtube(text: &str) -> Vec<ChatMessage> {
         let Some(ms) = replay["videoOffsetTimeMsec"].as_str().and_then(|s| s.parse::<f64>().ok()) else { continue };
         for action in replay["actions"].as_array().into_iter().flatten() {
             let item = &action["addChatItemAction"]["item"];
-            let Some(r) = item.get("liveChatTextMessageRenderer").or_else(|| item.get("liveChatPaidMessageRenderer"))
-            else {
+            // Which kind of item, where its text is, and anything to say before that.
+            let (kind, r, runs, lead) = if let Some(r) = item.get("liveChatTextMessageRenderer") {
+                (Kind::Message, r, r.pointer("/message/runs"), None)
+            } else if let Some(r) = item.get("liveChatPaidMessageRenderer") {
+                (Kind::Tip, r, r.pointer("/message/runs"), simple_text(r, "/purchaseAmountText"))
+            } else if let Some(r) = item.get("liveChatPaidStickerRenderer") {
+                let amount = simple_text(r, "/purchaseAmountText").unwrap_or_default();
+                (Kind::Tip, r, None, Some(format!("{amount} Super Sticker").trim().to_string()))
+            } else if let Some(r) = item.get("liveChatMembershipItemRenderer") {
+                // "Welcome to …!" for a new member, "Member for 6 months" for a milestone.
+                (
+                    Kind::Sub,
+                    r,
+                    r.pointer("/message/runs"),
+                    runs_text(r, "/headerSubtext").or_else(|| runs_text(r, "/headerPrimaryText")),
+                )
+            } else if let Some(r) = item.pointer(
+                "/liveChatSponsorshipsGiftPurchaseAnnouncementRenderer/header/liveChatSponsorshipsHeaderRenderer",
+            ) {
+                (Kind::Gift, r, None, runs_text(r, "/primaryText"))
+            } else {
                 continue;
             };
             let mut parts = Vec::new();
-            for run in r.pointer("/message/runs").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(lead) = lead.filter(|l| !l.is_empty()) {
+                push_text(&mut parts, &lead);
+                if runs.is_some() {
+                    push_text(&mut parts, " ");
+                }
+            }
+            for run in runs.and_then(Value::as_array).into_iter().flatten() {
                 if let Some(text) = run["text"].as_str() {
                     push_text(&mut parts, text);
                 } else if let Some(emoji) = run.get("emoji") {
@@ -363,15 +565,37 @@ fn parse_youtube(text: &str) -> Vec<ChatMessage> {
             if parts.is_empty() {
                 continue;
             }
-            out.push(ChatMessage {
+            let mut msg = ChatMessage {
                 time: ms / 1000.0,
-                author: r.pointer("/authorName/simpleText").and_then(Value::as_str).unwrap_or("?").to_string(),
+                author: simple_text(r, "/authorName").unwrap_or_else(|| "?".into()),
                 color: None,
                 parts,
-            });
+                kind,
+                amount: None,
+            };
+            // "Sent 5 … gift memberships": how many.
+            if kind == Kind::Gift {
+                msg.amount = msg.text().split_whitespace().find_map(leading_number).or(Some(1.0));
+            }
+            out.push(msg);
         }
     }
     out
+}
+
+/// YouTube's `{ "simpleText": … }` at `path` in `r`.
+fn simple_text(r: &Value, path: &str) -> Option<String> {
+    r.pointer(path)?.get("simpleText")?.as_str().map(str::to_string)
+}
+
+/// YouTube's `{ "runs": [{ "text": … }, …] }` (or a simpleText) at `path` in `r`, joined.
+fn runs_text(r: &Value, path: &str) -> Option<String> {
+    let v = r.pointer(path)?;
+    if let Some(s) = v.get("simpleText").and_then(Value::as_str) {
+        return Some(s.to_string());
+    }
+    let runs = v.get("runs")?.as_array()?;
+    Some(runs.iter().filter_map(|r| r["text"].as_str()).collect())
 }
 
 fn is_color(c: &str) -> bool {
@@ -460,7 +684,7 @@ mod tests {
         let (messages, next) = parse_kick_page(&page).unwrap();
         assert_eq!(next, Some(1790631366565505));
         assert_eq!(messages.len(), 2);
-        let (at, id, m) = &messages[0];
+        let (at, id, m, _) = &messages[0];
         assert_eq!(
             (*at, id.as_str(), m.author.as_str(), m.color.as_deref()),
             (1790631001.0, "a", "sunkai", Some("#F2708A"))
@@ -488,6 +712,102 @@ mod tests {
 
         let refused = json!({ "errors": [{ "message": "failed integrity check" }], "data": null });
         assert!(parse_twitch_page(&refused).unwrap_err().to_string().contains("integrity"));
+    }
+
+    #[test]
+    fn recognizes_twitch_events() {
+        let event = |t: &str| twitch_event(t.split(' ').next().unwrap(), t);
+        assert_eq!(event("mairimyarel subscribed at Tier 1. They've subscribed for 8 months!"), (Kind::Sub, None));
+        assert_eq!(event("neezydagod subscribed with Prime. They've subscribed for 44 months!"), (Kind::Sub, None));
+        assert_eq!(event("someone is gifting 50 Tier 1 Subs to KaiCenat's community!"), (Kind::Gift, Some(50.0)));
+        assert_eq!(event("someone gifted a Tier 1 sub to friend!"), (Kind::Gift, Some(1.0)));
+        assert_eq!(twitch_event("Mairimyarel", "mairimyarel subscribed at Tier 1."), (Kind::Sub, None), "any case");
+        assert_eq!(
+            twitch_event("viewer", "I subscribed at Tier 1 yesterday"),
+            (Kind::Message, None),
+            "only the subscriber's own notice"
+        );
+        assert_eq!(twitch_event("kai", "Cheer100 Hi, Kai! How’re you? cheer50"), (Kind::Tip, Some(150.0)));
+        assert_eq!(
+            twitch_event("v", "Squid1 Squid2 Squid3 Squid4 MercyWing1"),
+            (Kind::Message, None),
+            "emotes, not cheers"
+        );
+        assert_eq!(twitch_event("v", "cheer up everyone"), (Kind::Message, None));
+    }
+
+    #[test]
+    fn recognizes_kick_events() {
+        assert_eq!(kick_event("KickBot", "@Ari_letric has subbed for 15 months!", None), (Kind::Sub, None));
+        assert_eq!(kick_event("KickBot", "@mazzahh just gifted 1,000 KICKs!", None), (Kind::Tip, Some(1000.0)));
+        assert_eq!(
+            kick_event("KickBot", "@someone just gifted 5 subs to the community!", None),
+            (Kind::Gift, Some(5.0))
+        );
+        assert_eq!(
+            kick_event("KickBot", "If you enjoy the content and would like to offer further support", None),
+            (Kind::Message, None)
+        );
+        assert_eq!(kick_event("viewer", "has subbed lol", None), (Kind::Message, None), "only KickBot announces");
+        assert_eq!(kick_event("Ari_letric", "oh wow", Some("subscription_renewed")), (Kind::Sub, None));
+
+        // A resub as both the celebration and KickBot's line counts once.
+        let msg = |time: f64, author: &str, text: &str, kind: Kind| ChatMessage {
+            time,
+            author: author.into(),
+            color: None,
+            parts: vec![ChatPart::Text { text: text.into() }],
+            kind,
+            amount: None,
+        };
+        let mut chat = vec![
+            msg(7194.0, "KickBot", "@Ari_letric has subbed for 15 months!", Kind::Sub),
+            msg(7211.0, "KickBot", "@blixtyyy has subbed for 15 months!", Kind::Sub),
+            // Shared an hour after the sub KickBot announced.
+            msg(11017.0, "Ari_letric", "oh wow", Kind::Sub),
+            // Never announced (the channel has KickBot's announcements off, say).
+            msg(23814.0, "tetraspis", "been at it for ages", Kind::Sub),
+        ];
+        count_each_sub_once(&mut chat, &[(2, 7194.0), (3, 23000.0)]);
+        let subs: Vec<_> = chat.iter().filter(|m| m.kind == Kind::Sub).map(|m| m.time).collect();
+        assert_eq!(subs, [7194.0, 7211.0, 23814.0]);
+        assert_eq!(chat.len(), 4, "the celebration stays in chat");
+    }
+
+    #[test]
+    fn reads_youtube_events() {
+        let line = |offset: &str, item: Value| {
+            json!({ "replayChatItemAction": { "videoOffsetTimeMsec": offset,
+                "actions": [{ "addChatItemAction": { "item": item } }] } })
+            .to_string()
+        };
+        let text = [
+            line("1000", json!({ "liveChatPaidMessageRenderer": {
+                "authorName": { "simpleText": "@fan" }, "purchaseAmountText": { "simpleText": "$5.00" },
+                "message": { "runs": [{ "text": "love the stream" }] } } })),
+            line("2000", json!({ "liveChatPaidStickerRenderer": {
+                "authorName": { "simpleText": "@fan" }, "purchaseAmountText": { "simpleText": "¥500" } } })),
+            line("3000", json!({ "liveChatMembershipItemRenderer": {
+                "authorName": { "simpleText": "@new" }, "headerSubtext": { "runs": [{ "text": "Welcome to " }, { "text": "Channel" }, { "text": "!" }] } } })),
+            line("4000", json!({ "liveChatMembershipItemRenderer": {
+                "authorName": { "simpleText": "@old" }, "headerPrimaryText": { "runs": [{ "text": "Member for " }, { "text": "6" }, { "text": " months" }] },
+                "message": { "runs": [{ "text": "half a year!" }] } } })),
+            line("5000", json!({ "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer": { "header": { "liveChatSponsorshipsHeaderRenderer": {
+                "authorName": { "simpleText": "@generous" }, "primaryText": { "runs": [{ "text": "Sent " }, { "text": "5" }, { "text": " Channel gift memberships" }] } } } } })),
+        ]
+        .join("\n");
+        let messages = parse_youtube(&text);
+        let seen: Vec<_> = messages.iter().map(|m| (m.author.as_str(), m.kind, m.amount, m.text())).collect();
+        assert_eq!(
+            seen,
+            [
+                ("@fan", Kind::Tip, None, "$5.00 love the stream".to_string()),
+                ("@fan", Kind::Tip, None, "¥500 Super Sticker".to_string()),
+                ("@new", Kind::Sub, None, "Welcome to Channel!".to_string()),
+                ("@old", Kind::Sub, None, "Member for 6 months half a year!".to_string()),
+                ("@generous", Kind::Gift, Some(5.0), "Sent 5 Channel gift memberships".to_string()),
+            ]
+        );
     }
 
     #[test]

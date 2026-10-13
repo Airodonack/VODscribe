@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::chat::{ChatMessage, ChatPart};
+use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
 use crate::transcript::{Segment, Word, find_phrase, terms};
 
@@ -141,6 +141,8 @@ pub struct ChatLine {
     pub author: String,
     pub color: Option<String>,
     pub parts: Vec<ChatPart>,
+    pub kind: Kind,
+    pub amount: Option<f64>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -256,6 +258,13 @@ CREATE TRIGGER chat_ad AFTER DELETE ON chat BEGIN
     INSERT INTO chat_fts (chat_fts, rowid, text) VALUES ('delete', old.id, old.text);
 END;
 INSERT INTO chat_fts (chat_fts, rank) VALUES ('secure-delete', 1);";
+/// v10: what each chat message is (a sub, a gift, a tip, or just a message;
+/// see `chat::Kind`), and how much. Chat fetched before has neither, so it's
+/// fetched again.
+const MIGRATE_V10: &str = "
+ALTER TABLE chat ADD COLUMN kind TEXT NOT NULL DEFAULT 'message';
+ALTER TABLE chat ADD COLUMN amount REAL;
+UPDATE vods SET chat = NULL WHERE chat = 'done';";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -307,8 +316,18 @@ impl Db {
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         // Migration n brings the schema to version n + 1; user_version is how many have run.
-        let migrations =
-            [SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8, MIGRATE_V9];
+        let migrations = [
+            SCHEMA,
+            MIGRATE_V2,
+            MIGRATE_V3,
+            MIGRATE_V4,
+            MIGRATE_V5,
+            MIGRATE_V6,
+            MIGRATE_V7,
+            MIGRATE_V8,
+            MIGRATE_V9,
+            MIGRATE_V10,
+        ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
             let latest = migrations.len();
@@ -518,10 +537,12 @@ impl Db {
         tx.execute("DELETE FROM chat WHERE vod_id = ?1", [vod_id])?;
         {
             let mut stmt = tx.prepare(
-                "INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
             for m in messages {
-                stmt.execute(params![vod_id, m.time, m.author, m.color, m.text(), serde_json::to_string(&m.parts)?])?;
+                let parts = serde_json::to_string(&m.parts)?;
+                stmt.execute(params![vod_id, m.time, m.author, m.color, m.text(), parts, m.kind.as_str(), m.amount])?;
             }
         }
         tx.execute("UPDATE vods SET chat = 'done', chat_error = NULL WHERE id = ?1", [vod_id])?;
@@ -549,8 +570,9 @@ impl Db {
 
     /// VOD `vod_id`'s chat, oldest first.
     pub fn chat(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
-        let mut stmt =
-            self.conn.prepare("SELECT id, time, author, color, parts FROM chat WHERE vod_id = ?1 ORDER BY time, id")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, time, author, color, parts, kind, amount FROM chat WHERE vod_id = ?1 ORDER BY time, id",
+        )?;
         let rows = stmt.query_map([vod_id], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -558,12 +580,15 @@ impl Db {
                 r.get::<_, String>(2)?,
                 r.get::<_, Option<String>>(3)?,
                 r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<f64>>(6)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (id, time, author, color, parts) = row?;
-            out.push(ChatLine { id, time, author, color, parts: serde_json::from_str(&parts)? });
+            let (id, time, author, color, parts, kind, amount) = row?;
+            let parts = serde_json::from_str(&parts)?;
+            out.push(ChatLine { id, time, author, color, parts, kind: Kind::parse(&kind), amount });
         }
         Ok(out)
     }
@@ -742,6 +767,31 @@ mod tests {
     }
 
     #[test]
+    fn chat_from_before_kinds_is_fetched_again() {
+        let path = std::env::temp_dir().join(format!("vodscribe-migrate-v10-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA, MIGRATE_V2, MIGRATE_V3, MIGRATE_V4, MIGRATE_V5, MIGRATE_V6, MIGRATE_V7, MIGRATE_V8, MIGRATE_V9,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 9;", before.join("\n"))).unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (platform, platform_id, url, title, status, added_at, chat) VALUES
+                     ('kick', 'a', 'u', 't', 'done', 0, 'done'), ('local', 'b', 'u', 't', 'done', 0, 'none');
+                 INSERT INTO chat (vod_id, time, author, text, parts) VALUES (1, 1.0, 'v', 'hi', '[]');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let chat: Vec<_> = db.vods().unwrap().iter().map(|v| v.chat).collect();
+        assert!(chat.contains(&ChatStatus::Pending) && chat.contains(&ChatStatus::None));
+        assert_eq!(db.chat(1).unwrap()[0].kind, Kind::Message, "kept until fetched again");
+        drop(db);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn deleted_transcripts_leave_the_file() {
         let path = std::env::temp_dir().join(format!("vodscribe-delete-{}.sqlite", std::process::id()));
         let _ = std::fs::remove_file(&path);
@@ -858,6 +908,8 @@ mod tests {
             author: author.into(),
             color: Some("#ff0000".into()),
             parts: vec![ChatPart::Text { text: text.into() }],
+            kind: Kind::Message,
+            amount: None,
         }
     }
 
@@ -886,6 +938,7 @@ mod tests {
 
         let lines = db.chat(a).unwrap();
         assert_eq!(lines.iter().map(|l| l.time).collect::<Vec<_>>(), [5.0, 25.0], "oldest first");
+        assert_eq!(lines[1].kind, Kind::Message);
         assert_eq!(lines[0].parts, [emote]);
 
         let search = |filter: SearchFilter| {
