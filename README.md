@@ -66,7 +66,7 @@ VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vods
 VODSCRIBE_DATA=./vodscribe-data cargo run --release -p vodscribe-core --bin vodscribe-cli -- search "some phrase"
 ```
 
-The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; after changing it, run `pnpm tauri icon src-tauri/icons/app-icon.svg -o src-tauri/icons` from `apps/desktop` and copy the 32 px PNG to `static/favicon.png`. macOS icons follow Apple's grid (a smaller rounded square with a shadow), so `icon.icns` comes from `app-icon-macos.svg` instead: generate into a temporary directory with `pnpm tauri icon src-tauri/icons/app-icon-macos.svg -o /tmp/mac-icons` and copy just its `icon.icns` over. Keep the two SVGs' glyphs in sync.
+The app icon is generated from `apps/desktop/src-tauri/icons/app-icon.svg`; after changing it, run `pnpm tauri icon src-tauri/icons/app-icon.svg -o src-tauri/icons` from `apps/desktop` and copy the 32 px PNG to `static/favicon.png`, and `icons/icon.ico` to `apps/site/static/favicon.ico` for the website. macOS icons follow Apple's grid (a smaller rounded square with a shadow), so `icon.icns` comes from `app-icon-macos.svg` instead: generate into a temporary directory with `pnpm tauri icon src-tauri/icons/app-icon-macos.svg -o /tmp/mac-icons` and copy just its `icon.icns` over. Keep the two SVGs' glyphs in sync.
 
 The app's content security policy is in `tauri.conf.json` (`app.security.csp`). It only applies to built apps, not `pnpm dev`, so a new external script, frame or image host needs adding there or it will work in development and break in release.
 
