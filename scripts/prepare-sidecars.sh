@@ -80,15 +80,22 @@ verified_prebuilt "$static"
 SHERPA_ONNX_LIB_DIR=$(lib_dir "$static") cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker --target "$triple"
 cp "${CARGO_TARGET_DIR:-target}/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-$triple$exe"
 
-# GPU worker: sherpa-onnx linked dynamically; the GPU pack supplies the CUDA
-# build at runtime. Built in its own target dir so its features don't mix
-# with the static build.
+# GPU worker: sherpa-onnx linked dynamically. The no-tts shared library ships
+# with the app (apps/desktop/src-tauri/lib, a bundle resource) and the GPU pack
+# supplies ONNX Runtime with CUDA at runtime. Built in its own target dir so
+# its features don't mix with the static build.
+lib=apps/desktop/src-tauri/lib
 case "$triple" in
   x86_64-unknown-linux-gnu | x86_64-pc-windows-msvc)
     SHERPA_ONNX_LIB_DIR=$(lib_dir "$shared") cargo build ${flag[@]+"${flag[@]}"} -p vodscribe-worker \
       --no-default-features --features shared \
       --target "$triple" --target-dir target/cuda
     cp "target/cuda/$triple/$profile/vodscribe-worker$exe" "$out/vodscribe-worker-cuda-$triple$exe"
+    mkdir -p "$lib"
+    case "$triple" in
+      *linux*) cp "$(lib_dir "$shared")/libsherpa-onnx-c-api.so" "$lib/" ;;
+      *) cp "$(lib_dir "$shared")/sherpa-onnx-c-api.dll" "$lib/" ;;
+    esac
     # The build bakes this machine's sherpa-onnx lib dir into the RUNPATH. Release
     # binaries find the GPU pack's libs via LD_LIBRARY_PATH instead, so don't ship it.
     if [ "$profile" = release ] && [[ "$triple" == *linux* ]]; then
@@ -96,4 +103,4 @@ case "$triple" in
     fi
     ;;
 esac
-ls -la "$out"
+ls -la "$out" "$lib" 2>/dev/null || ls -la "$out"

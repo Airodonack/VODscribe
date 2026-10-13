@@ -6,6 +6,7 @@
       "binaries/vodscribe-worker",
       "binaries/vodscribe-worker-cuda"
     ],
+    "resources": ["THIRD-PARTY-NOTICES.txt", "lib/libsherpa-onnx-c-api.so"],
     "linux": {
       "deb": {
         "desktopTemplate": "linux/vodscribe.desktop"

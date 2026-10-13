@@ -1,7 +1,11 @@
-//! Optional NVIDIA GPU transcription. The "GPU pack" is sherpa-onnx's CUDA
-//! build plus NVIDIA's redistributable CUDA 12 and cuDNN 9 runtime libraries
-//! (from their official PyPI wheels), downloaded into the app's data dir. The
-//! GPU worker binary ships with the app and loads its libraries from there.
+//! Optional NVIDIA GPU transcription. The "GPU pack" is ONNX Runtime with its
+//! CUDA provider (from sherpa-onnx's CUDA release) plus NVIDIA's redistributable
+//! CUDA 12 and cuDNN 9 runtime libraries (from their official PyPI wheels),
+//! downloaded into the app's data dir. The GPU worker binary and the sherpa-onnx
+//! library it links ship with the app; only the libraries below come from the
+//! pack. sherpa-onnx's own library in that release is its full build, with the
+//! GPL-3.0 espeak-ng compiled in, so it's left out and the app's no-tts build
+//! is used instead.
 
 use std::fs::{self, File};
 use std::io;
@@ -30,7 +34,7 @@ pub fn batch_for_free_vram(free_mb: u64) -> Option<usize> {
 }
 
 /// Bump when the pack's contents change, so existing installs are refreshed.
-const PACK_VERSION: &str = "1";
+const PACK_VERSION: &str = "2";
 
 #[derive(Serialize, Clone, Debug)]
 pub struct GpuInfo {
@@ -279,15 +283,22 @@ fn create_fresh(path: &Path) -> io::Result<File> {
     fs::OpenOptions::new().write(true).create_new(true).open(path)
 }
 
-/// Unpacks the libraries from the sherpa-onnx archive into `dest`: regular files,
-/// plus symlinks between libraries in the same directory (libfoo.so -> libfoo.so.1).
-/// Hard links, devices and links pointing elsewhere are skipped.
+/// Whether a library from the sherpa-onnx archive is ONNX Runtime (the runtime
+/// itself and its CUDA provider), the only part of that archive the pack uses.
+fn is_onnxruntime(name: &str) -> bool {
+    name.contains("onnxruntime")
+}
+
+/// Unpacks the ONNX Runtime libraries from the sherpa-onnx archive into `dest`:
+/// regular files, plus symlinks between libraries in the same directory
+/// (libfoo.so -> libfoo.so.1). Hard links, devices and links pointing elsewhere
+/// are skipped, as is sherpa-onnx's own library (the app ships its no-tts build).
 fn extract_tar_libs(archive: &Path, dest: &Path, exts: &[&str]) -> Result<()> {
     let mut tar = tar::Archive::new(bzip2::read::BzDecoder::new(File::open(archive)?));
     for entry in tar.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
-        let Some(name) = keep_lib(&path, exts) else { continue };
+        let Some(name) = keep_lib(&path, exts).filter(|n| is_onnxruntime(n)) else { continue };
         let kind = entry.header().entry_type();
         if kind.is_file() {
             io::copy(&mut entry, &mut create_fresh(&dest.join(name))?)?;
@@ -366,6 +377,16 @@ mod tests {
         for want in ["onnxruntime", "cudnn", "cublas", "cudart", "curand"] {
             assert!(names.iter().any(|n| n.contains(want)), "no {want} library in {names:?}");
         }
+        assert!(!names.iter().any(|n| n.contains("sherpa")), "sherpa-onnx's own library in {names:?}");
+    }
+
+    #[test]
+    fn takes_only_onnxruntime_from_the_sherpa_archive() {
+        assert!(is_onnxruntime("libonnxruntime.so"));
+        assert!(is_onnxruntime("libonnxruntime_providers_cuda.so"));
+        assert!(is_onnxruntime("onnxruntime_providers_shared.dll"));
+        assert!(!is_onnxruntime("libsherpa-onnx-c-api.so"));
+        assert!(!is_onnxruntime("sherpa-onnx-cxx-api.dll"));
     }
 
     #[test]

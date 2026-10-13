@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
@@ -320,7 +320,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
         return Ok(());
     };
     let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context(NO_FFMPEG)?;
-    let (transcription, note) = plan_transcription(&ctx.paths)?;
+    let (transcription, note) = plan_transcription(&ctx.paths, bundled_lib_dir(&ctx.app))?;
     ctx.db.set_note(vod.id, note.as_deref())?;
     ctx.emit_vod(vod.id);
 
@@ -337,9 +337,23 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
     Ok(())
 }
 
+/// The `lib` folder the installer ships: the no-tts sherpa-onnx library the GPU
+/// worker links (the GPU add-on supplies only ONNX Runtime and the CUDA libraries).
+fn bundled_lib_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().resource_dir().ok()?.join("lib");
+    if !dir.is_dir() {
+        eprintln!("bundled library folder missing: {}", dir.display());
+    }
+    Some(dir)
+}
+
 /// Picks the worker for the next job. GPU is used only when selected, installed
-/// and free enough; otherwise the CPU runs it and the note says why.
-fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> {
+/// and free enough; otherwise the CPU runs it and the note says why. The GPU
+/// worker searches `bundled_libs` before the add-on's folder.
+fn plan_transcription(
+    paths: &Paths,
+    bundled_libs: Option<std::path::PathBuf>,
+) -> Result<(Transcription, Option<String>)> {
     let cpu = WorkerSpec {
         program: tools::sidecar("vodscribe-worker").context("transcription worker")?,
         model_id: model::CPU_MODEL.id,
@@ -372,7 +386,7 @@ fn plan_transcription(paths: &Paths) -> Result<(Transcription, Option<String>)> 
         model_dir: paths.gpu_model_dir(),
         provider: "cuda",
         batch,
-        lib_dirs: vec![gpu::lib_dir(&pack)],
+        lib_dirs: bundled_libs.into_iter().chain([gpu::lib_dir(&pack)]).collect(),
     };
     Ok((Transcription { worker: cuda, fallback: Some(cpu) }, Some("Transcribed with the graphics card.".into())))
 }

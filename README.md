@@ -31,7 +31,7 @@ The library (`library.sqlite`) and `settings.json` live in `~/.local/share/app.v
 ## Layout
 
 - `crates/core`: the pipeline, with no UI. It covers fetching (`fetch.rs`, plus `kick.rs` for Kick's current VOD API, and `local.rs` for files on this computer), the queue's download and transcription stages (`pipeline.rs`), speech recognition (`asr.rs`), words and segments (`transcript.rs`), the SQLite FTS5 index (`db.rs`), model downloads (`model.rs`) and the optional GPU pack (`gpu.rs`). It also includes `vodscribe-cli` for testing without the app.
-- `crates/worker`: `vodscribe-worker`, which transcribes one audio file in its own process and streams words back. It is built twice: statically linked for the CPU, and against sherpa-onnx's CUDA build for the GPU pack.
+- `crates/worker`: `vodscribe-worker`, which transcribes one audio file in its own process and streams words back. It is built twice: statically linked for the CPU, and against sherpa-onnx's shared no-tts library for the GPU, which ships with the app (`apps/desktop/src-tauri/lib`, a bundle resource) while the GPU add-on supplies only ONNX Runtime with CUDA and NVIDIA's libraries. sherpa-onnx's CUDA release includes its full build with the GPL-3.0 espeak-ng, which is why that library isn't taken from it.
 - `apps/desktop`: the desktop app. `src` is the SvelteKit (Svelte 5) UI, built statically into the app; `src-tauri` is the Tauri shell, which provides the commands the UI calls and runs the queue. Icons are inline SVGs in `src/lib/Icon.svelte`; the logo is `src/lib/Logo.svelte`.
 - `tools/model-export`: exports and quantizes the speech models we ship, and publishes them. See its README.
 

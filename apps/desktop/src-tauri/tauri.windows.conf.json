@@ -3,6 +3,7 @@
     "externalBin": [
       "binaries/vodscribe-worker",
       "binaries/vodscribe-worker-cuda"
-    ]
+    ],
+    "resources": ["THIRD-PARTY-NOTICES.txt", "lib/sherpa-onnx-c-api.dll"]
   }
 }

@@ -16,6 +16,7 @@ vodscribe-data/
 
 # Built by scripts/prepare-sidecars.sh
 /apps/desktop/src-tauri/binaries/
+/apps/desktop/src-tauri/lib/
 
 # Scratch files WebKitGTK writes to the working directory
 *.blob
