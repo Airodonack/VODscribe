@@ -76,7 +76,17 @@ pub fn download(
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info)?;
     }
-    fetch::download_audio(yt_dlp, &info, &work_dir.join(vod.id.to_string()), cancel, |f| report(Status::Downloading, f))
+    let out = work_dir.join(vod.id.to_string());
+    match fetch::download_audio(yt_dlp, &info, &out, cancel, |f| report(Status::Downloading, f)) {
+        // The probe's media URLs are tied to a session the site may have soured on
+        // (YouTube answers 403 past the first kilobyte of such URLs); a new probe
+        // is a new session, so try once more from one before giving up.
+        Err(e) if fetch::is_refused(&e) => {
+            fetch::probe(yt_dlp, &vod.info.url, &info)?;
+            fetch::download_audio(yt_dlp, &info, &out, cancel, |f| report(Status::Downloading, f))
+        }
+        result => result,
+    }
 }
 
 /// Transcribes downloaded audio, writing segments to the index as they are

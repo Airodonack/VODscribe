@@ -220,6 +220,16 @@ fn strip_tag(raw: &str) -> &str {
     rest.split_once(": ").filter(|(id, _)| !id.contains(' ')).map_or(rest, |(_, msg)| msg)
 }
 
+/// yt-dlp got an HTTP 403 for the media. YouTube ties its media URLs to the
+/// session that produced them and sometimes limits a session to tiny ranges,
+/// so a download that was refused usually works from a fresh probe.
+pub const REFUSED: &str = "The site refused the download. Updating the video downloader in Settings often fixes this.";
+
+/// Whether `e` is the media being refused (`REFUSED`), which a new probe may fix.
+pub fn is_refused(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.to_string() == REFUSED)
+}
+
 /// A plain sentence for the failures people actually hit, from the message
 /// with its "[extractor] id:" prefix already removed.
 fn friendly(msg: &str) -> Option<&'static str> {
@@ -229,7 +239,7 @@ fn friendly(msg: &str) -> Option<&'static str> {
     Some(match status {
         Some(404 | 410) => "That video isn't available. It may have been deleted or made private.",
         Some(429) => "The site is limiting downloads right now. Try again in a little while.",
-        Some(403) => "The site refused the download. Updating the video downloader in Settings often fixes this.",
+        Some(403) => REFUSED,
         Some(500..=599) => "The site is having problems right now. Try again later.",
         _ if has(&["unsupported url", "is not a valid url"]) => {
             "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
@@ -278,6 +288,14 @@ fn friendly(msg: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_403_reads_as_refused_through_context() {
+        let e =
+            anyhow::anyhow!("{}", clean_error("ERROR: [youtube] abc: HTTP Error 403: Forbidden")).context("download");
+        assert!(is_refused(&e));
+        assert!(!is_refused(&anyhow::anyhow!("{}", clean_error("ERROR: [youtube] abc: HTTP Error 404: Not Found"))));
+    }
 
     #[test]
     fn finds_the_finished_download_without_its_printed_path() {
