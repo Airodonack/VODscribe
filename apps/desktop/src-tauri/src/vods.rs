@@ -60,6 +60,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     state.worker.wake();
     let _ = app.emit("vod", &added.vod);
     if added.created {
+        state.chat.push(added.vod.id);
         let (app, id) = (app.clone(), added.vod.id);
         std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
     }
@@ -98,6 +99,8 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     for (vod, created) in &added {
         let _ = app.emit("vod", vod);
         if *created {
+            // A file has no chat; the queue records that.
+            state.chat.push(vod.id);
             let (app, id) = (app.clone(), vod.id);
             std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
         }
@@ -182,6 +185,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     if running {
         delete_row().map_err(err)?;
     }
+    state.chat.stop(id);
     thumbs::remove(&state.paths.thumbs(), id);
     let _ = app.emit("vod-removed", id);
     Ok(())

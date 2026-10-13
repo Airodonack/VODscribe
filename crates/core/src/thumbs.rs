@@ -50,7 +50,19 @@ pub fn remove(dir: &Path, id: i64) {
     }
 }
 
-fn image_ext(bytes: &[u8]) -> Option<&'static str> {
+/// The extensions `image_ext` gives, each with its MIME type in `ext_mime`.
+pub(crate) const IMAGE_EXTS: [&str; 4] = ["jpg", "png", "webp", "gif"];
+
+pub(crate) fn ext_mime(ext: &str) -> &'static str {
+    match ext {
+        "jpg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        _ => "image/gif",
+    }
+}
+
+pub(crate) fn image_ext(bytes: &[u8]) -> Option<&'static str> {
     match bytes {
         [0xFF, 0xD8, 0xFF, ..] => Some("jpg"),
         [0x89, b'P', b'N', b'G', ..] => Some("png"),
@@ -69,13 +81,7 @@ pub fn mime(name: &str) -> Option<&'static str> {
     if !stem.split('-').all(digits) || stem.split('-').count() > 2 {
         return None;
     }
-    Some(match ext {
-        "jpg" => "image/jpeg",
-        "png" => "image/png",
-        "webp" => "image/webp",
-        "gif" => "image/gif",
-        _ => return None,
-    })
+    IMAGE_EXTS.contains(&ext).then(|| ext_mime(ext))
 }
 
 #[cfg(test)]

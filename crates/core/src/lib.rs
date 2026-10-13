@@ -8,6 +8,7 @@ pub mod audio;
 pub mod chat;
 pub mod db;
 pub mod deps;
+pub mod emotes;
 pub mod fetch;
 pub mod gpu;
 pub mod kick;
@@ -117,6 +118,11 @@ impl Paths {
         self.local.join("thumbs")
     }
 
+    /// Chat emote images (see `emotes`).
+    pub fn emotes(&self) -> PathBuf {
+        self.local.join("emotes")
+    }
+
     /// Scratch space for in-flight downloads.
     pub fn work(&self) -> PathBuf {
         self.local.join("work")
@@ -130,11 +136,11 @@ impl Paths {
         model::model_dir(&self.models(), &model::GPU_MODEL)
     }
 
-    /// Everything that can be downloaded again: models, tools, the GPU pack and
-    /// in-flight downloads. The library and settings are not cache.
-    pub fn cache_dirs(&self) -> [PathBuf; 5] {
+    /// Everything that can be downloaded again: models, tools, the GPU pack,
+    /// emote images and in-flight downloads. The library and settings are not cache.
+    pub fn cache_dirs(&self) -> [PathBuf; 6] {
         let gpu = self.gpu_pack();
-        [self.models(), self.bin(), gpu::staging_dir(&gpu), gpu, self.work()]
+        [self.models(), self.bin(), gpu::staging_dir(&gpu), gpu, self.emotes(), self.work()]
     }
 
     /// Bytes used by `cache_dirs`.

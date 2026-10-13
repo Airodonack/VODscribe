@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-emote"
+description = "Enables the emote command without any pre-configured scope."
+commands.allow = ["emote"]
+
+[[permission]]
+identifier = "deny-emote"
+description = "Denies the emote command without any pre-configured scope."
+commands.deny = ["emote"]

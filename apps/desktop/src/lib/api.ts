@@ -25,6 +25,8 @@ export interface Vod {
   note: string | null;
   /** Has transcript from a model this version no longer uses; unfinished ones start over on resume. */
   outdated: boolean;
+  /** Where its chat replay is: not fetched yet (or fetching), fetched, none on the site, or failed. */
+  chat: "pending" | "done" | "none" | "failed";
 }
 
 export type Device = "cpu" | "gpu";
@@ -101,6 +103,18 @@ export interface Line {
   text: string;
 }
 
+/** A run of a chat message (crates/core `ChatPart`). */
+export type ChatPart = { type: "text"; text: string } | { type: "emote"; name: string; url: string };
+
+export interface ChatLine {
+  /** Seconds into the VOD. */
+  time: number;
+  author: string;
+  /** `#rrggbb`, if the site gives one. */
+  color: string | null;
+  parts: ChatPart[];
+}
+
 export const api = {
   setupStatus: () => invoke<SetupStatus>("setup_status"),
   runSetup: () => invoke<void>("run_setup"),
@@ -128,6 +142,9 @@ export const api = {
   search: (query: string, filter: SearchFilter) =>
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
+  chat: (vodId: number) => invoke<ChatLine[]>("chat", { vodId }),
+  /** Fetches a VOD's chat again after it failed. */
+  retryChat: (id: number) => invoke<void>("retry_chat", { id }),
   updateYtDlp: () => invoke<string>("update_yt_dlp"),
   kickStream: (url: string) => invoke<{ name: string; height: number; url: string }[]>("kick_stream", { url }),
   getSettings: () => invoke<Settings>("get_settings"),
@@ -156,6 +173,9 @@ export const events = {
   gpuDone: (cb: (error: string | null) => void) => listen<string | null>("gpu-done", (e) => cb(e.payload)),
   ytDlpProgress: (cb: (progress: DownloadProgress) => void) =>
     listen<DownloadProgress>("yt-dlp-progress", (e) => cb(e.payload)),
+  /** How far a VOD's chat fetch is, 0..1. */
+  chatProgress: (cb: (id: number, fraction: number) => void) =>
+    listen<[number, number]>("chat-progress", (e) => cb(...e.payload)),
 };
 
 export type { UnlistenFn };
@@ -177,4 +197,21 @@ export function thumbUrl(name: string): Promise<string> {
     thumbUrls.set(name, url);
   }
   return url;
+}
+
+const emoteUrls = new Map<string, Promise<string>>();
+
+/**
+ * A blob URL for a chat emote, by its URL on the emote provider's CDN. The app
+ * fetches each emote once and keeps it, so chat doesn't load images from the
+ * CDNs directly; the browser sniffs the image type.
+ */
+export function emoteUrl(url: string): Promise<string> {
+  let blob = emoteUrls.get(url);
+  if (!blob) {
+    blob = invoke<ArrayBuffer>("emote", { url }).then((bytes) => URL.createObjectURL(new Blob([bytes])));
+    blob.catch(() => emoteUrls.delete(url));
+    emoteUrls.set(url, blob);
+  }
+  return blob;
 }

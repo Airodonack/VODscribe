@@ -1,10 +1,12 @@
 //! The Tauri shell: app state and startup. The commands the UI calls live in
-//! `vods` (the library), `setup` (setup, settings, GPU pack, storage) and
-//! `thumbnails`; `worker` runs the download and transcription queue.
+//! `vods` (the library), `setup` (setup, settings, GPU pack, storage),
+//! `thumbnails` and `chats`; `worker` runs the download and transcription
+//! queue, and `chats` the chat replay one.
 
 // `tauri dev` serves the app from its dev server instead; tests still cover it.
 #[cfg(any(not(dev), test))]
 mod app_server;
+mod chats;
 mod loopback;
 mod media;
 mod setup;
@@ -29,6 +31,7 @@ struct AppState {
     /// The GPU add-on's download.
     gpu: setup::Install,
     media: media::MediaServer,
+    chat: chats::ChatQueue,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -77,9 +80,20 @@ pub fn run() {
                 let state = handle.state::<AppState>();
                 state.db.lock().unwrap().vod(id).ok().flatten().and_then(|v| v.source_path)
             })?;
-            app.manage(AppState { paths, db, worker, setup: setup::Install::new(), gpu: setup::Install::new(), media });
+            let (chat, chat_rx) = chats::ChatQueue::new();
+            app.manage(AppState {
+                paths,
+                db,
+                worker,
+                setup: setup::Install::new(),
+                gpu: setup::Install::new(),
+                media,
+                chat,
+            });
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+            let handle = app.handle().clone();
+            std::thread::spawn(move || chats::run(handle, chat_rx));
             // The window is created here rather than from the config, so release builds
             // open it only once the app server is listening (see app_server.rs).
             let window = app.config().app.windows.first().cloned().ok_or("no window configured")?;
@@ -115,6 +129,9 @@ pub fn run() {
             vods::cancel_vod,
             vods::search,
             vods::transcript,
+            chats::chat,
+            chats::retry_chat,
+            chats::emote,
             setup::update_yt_dlp,
             vods::kick_stream,
             setup::get_settings,
