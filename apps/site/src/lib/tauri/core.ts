@@ -26,7 +26,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   transcript: ({ vodId }) => backend.transcript(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
-  self_updatable: () => false,
+  self_updatable: () => true,
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {

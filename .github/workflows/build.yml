@@ -10,6 +10,8 @@ name: Build installers
 #                               an R2 API token that can write the vodscribe bucket
 #   WINGET_TOKEN                optional: a GitHub token of the Airodonack account,
 #                               to submit the new version to winget-pkgs
+# Variables:
+#   WINGET_SUBMIT               optional: false skips the winget job
 on:
   workflow_dispatch:
   push:
@@ -172,12 +174,10 @@ jobs:
             --cache-control "public, max-age=31536000, immutable"
           # latest/ keeps the stable names the website links to, but each download
           # is saved under its versioned name (the Content-Disposition).
-          for f in release/latest/*; do
-            name=$(basename "$f")
-            case "$name" in *.app.tar.gz) continue ;; esac
-            s3 cp "$f" "s3://vodscribe/releases/latest/$name" --cache-control "public, max-age=300" \
-              --content-disposition "attachment; filename=\"VODscribe-$VERSION-${name#VODscribe-}\""
-          done
+          while read -r name named; do
+            s3 cp "release/latest/$name" "s3://vodscribe/releases/latest/$name" --cache-control "public, max-age=300" \
+              --content-disposition "attachment; filename=\"$named\""
+          done < release/latest.txt
           s3 cp release/latest.json s3://vodscribe/releases/latest.json --content-type application/json \
             --cache-control "public, max-age=300"
 
@@ -191,8 +191,8 @@ jobs:
   # Airodonack account, once that account's token is set.
   winget:
     needs: publish
-    # Off while a version waits for winget's first review: a new PR would supersede
-    # it and start that review over. Set the repo variable WINGET_SUBMIT to false.
+    # Can be turned off (the WINGET_SUBMIT variable) while a version waits for
+    # winget's first review: a new PR would supersede it and start that review over.
     if: vars.WINGET_SUBMIT != 'false'
     timeout-minutes: 15
     runs-on: windows-latest

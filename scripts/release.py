@@ -6,12 +6,14 @@
 actions/download-artifact writes them). Writes into <out dir>:
 
   files/       each installer and update bundle under its versioned name
-               (VODscribe-0.1.4-windows-x64-setup.exe, ...), for releases/<version>/,
+               (VODscribe-<version>-windows-x64-setup.exe, ...), for releases/<version>/,
                where the updater and winget fetch them
-  latest/      the same files under their stable names (VODscribe-windows-x64-setup.exe),
-               for releases/latest/, which the website links to; the publish job
-               uploads each with a Content-Disposition naming the versioned file,
-               so what lands in a Downloads folder says which version it is
+  latest/      the installers under their stable names (VODscribe-windows-x64-setup.exe),
+               for releases/latest/, which the website links to; not the macOS
+               update bundles, which only the updater fetches
+  latest.txt   one line per file in latest/: its stable name and versioned name.
+               The publish job uploads each with a Content-Disposition naming the
+               versioned file, so what lands in a Downloads folder says which version it is
   latest.json  the updater's manifest (plugins.updater in tauri.conf.json):
                every platform's versioned URL and signature, and the release
                notes from CHANGELOG.md's entry for the version
@@ -40,8 +42,9 @@ WINGET_ID = "Airodonack.VODscribe"
 # also get a plain platform the updater falls back to. Linux doesn't: each package
 # finds its own format, and anything else (such as an AppImage from 0.1.0) gets no
 # update rather than a package it can't install.
+WINDOWS_SETUP = "VODscribe-windows-x64-setup.exe"
 FILES = [
-    ("x86_64-pc-windows-msvc", "_x64-setup.exe", "VODscribe-windows-x64-setup.exe", ["windows-x86_64-nsis", "windows-x86_64"]),
+    ("x86_64-pc-windows-msvc", "_x64-setup.exe", WINDOWS_SETUP, ["windows-x86_64-nsis", "windows-x86_64"]),
     ("x86_64-pc-windows-msvc", ".msi", "VODscribe-windows-x64.msi", ["windows-x86_64-msi"]),
     ("aarch64-apple-darwin", ".dmg", "VODscribe-macos-arm64.dmg", []),
     ("aarch64-apple-darwin", ".app.tar.gz", "VODscribe-macos-arm64.app.tar.gz", ["darwin-aarch64-app", "darwin-aarch64"]),
@@ -53,7 +56,7 @@ FILES = [
 
 
 def versioned(stable: str, version: str) -> str:
-    """VODscribe-windows-x64-setup.exe -> VODscribe-0.1.4-windows-x64-setup.exe."""
+    """VODscribe-windows-x64-setup.exe -> VODscribe-<version>-windows-x64-setup.exe."""
     return stable.replace("VODscribe-", f"VODscribe-{version}-", 1)
 
 
@@ -104,13 +107,16 @@ def main(artifacts: Path, version: str, out: Path) -> None:
     latest.mkdir()
     platforms: dict[str, dict[str, str]] = {}
     sha256: dict[str, str] = {}
+    served: list[str] = []
     for target, suffix, name, keys in FILES:
         src = find(artifacts, target, suffix)
         data = src.read_bytes()
         named = versioned(name, version)
         (files / named).write_bytes(data)
-        # The same bytes under the stable name, without a second copy on disk.
-        os.link(files / named, latest / name)
+        if not name.endswith(".app.tar.gz"):
+            # The same bytes under the stable name, without a second copy on disk.
+            os.link(files / named, latest / name)
+            served.append(f"{name} {named}\n")
         sha256[name] = hashlib.sha256(data).hexdigest()
         if keys:
             sig = src.with_name(src.name + ".sig")
@@ -126,8 +132,9 @@ def main(artifacts: Path, version: str, out: Path) -> None:
         "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platforms": platforms,
     }
+    (out / "latest.txt").write_text("".join(served))
     (out / "latest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    write_winget(out / "winget", version, sha256["VODscribe-windows-x64-setup.exe"])
+    write_winget(out / "winget", version, sha256[WINDOWS_SETUP])
 
 
 def write_winget(dir: Path, version: str, sha256: str) -> None:
@@ -146,7 +153,7 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
         + "InstallerType: nullsoft\nScope: user\nUpgradeBehavior: install\n"
         + f"ReleaseDate: {datetime.date.today().isoformat()}\n"
         + "Installers:\n- Architecture: x64\n"
-        + f"  InstallerUrl: {BASE}/{version}/{versioned('VODscribe-windows-x64-setup.exe', version)}\n"
+        + f"  InstallerUrl: {BASE}/{version}/{versioned(WINDOWS_SETUP, version)}\n"
         + f"  InstallerSha256: {sha256.upper()}\n"
         + "ManifestType: installer\n"
         + tail
