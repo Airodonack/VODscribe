@@ -352,23 +352,27 @@
 
 <div class="layout">
   <div class="head" bind:this={head} bind:clientHeight={headHeight}>
-    <p class="status muted">
+    <p class="status muted" title={vod.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
       <span class="eyebrow">Transcript</span>
       {#if vod.status === "transcribing"}
         <span class="sep">·</span><Spinner label="Transcribing" />
-        {Math.round(vod.progress * 100)}% done; new lines appear as they're produced
+        Transcribing {Math.round(vod.progress * 100)}%
       {:else if lines.length > 0}
         <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
       {/if}
     </p>
     {#if hasChat}
       <div class="chat-head">
-        <span class="muted chat-status">
+        <span
+          class="muted chat-status"
+          title={vod.chat === "pending"
+            ? `Fetching chat: ${chat.length.toLocaleString()} message${chat.length === 1 ? "" : "s"} so far`
+            : undefined}
+        >
           {#if vod.chat === "pending"}
+            <!-- Beside the Chat button, so the spinner and a percentage say enough. -->
             <Spinner label="Fetching chat" />
-            Fetching chat{chatProgress !== null ? ` · ${Math.round(chatProgress * 100)}%` : "…"}{chat.length
-              ? ` · ${chat.length.toLocaleString()} so far`
-              : ""}
+            {chatProgress !== null ? `${Math.round(chatProgress * 100)}%` : ""}
           {:else if vod.chat === "none"}
             No chat replay
           {:else if vod.chat === "failed"}
@@ -512,6 +516,15 @@
     border-bottom: 1px solid var(--border);
   }
 
+  /* One line each, whatever the width: cut short rather than wrapped. */
+  .status,
+  .chat-status {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .status {
     margin: 0;
     font-size: 12px;
@@ -521,7 +534,12 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
     font-size: 12px;
+  }
+
+  .chat-head :global(button) {
+    flex: none;
   }
 
   .chat-toggle {
