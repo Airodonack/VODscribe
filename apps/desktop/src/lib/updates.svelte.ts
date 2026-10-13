@@ -4,6 +4,7 @@
 
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
+import { api } from "./api";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -37,6 +38,14 @@ class Updates {
       this.error = null;
     }
     try {
+      // A copy that wasn't installed from a package has nothing to fetch: the
+      // updater would only report that no file matches it.
+      if (!(await api.selfUpdatable())) {
+        if (manual)
+          this.status =
+            "This copy wasn't installed from a package, so it can't update itself. New versions are at vodscribe.com.";
+        return;
+      }
       this.available = await check();
       if (manual && !this.available) this.status = "VODscribe is up to date.";
     } catch (e) {

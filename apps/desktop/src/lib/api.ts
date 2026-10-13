@@ -92,6 +92,8 @@ export const api = {
   runSetup: () => invoke<void>("run_setup"),
   /** Stops setup's downloads; tools and model files that finished stay. `setupDone` then fires with null. */
   cancelSetup: () => invoke<void>("cancel_setup"),
+  /** False for a copy that wasn't installed from a package, which has no update to fetch. */
+  selfUpdatable: () => invoke<boolean>("self_updatable"),
   dataDir: () => invoke<string>("data_dir"),
   openDataDir: () => invoke<void>("open_data_dir"),
   addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),

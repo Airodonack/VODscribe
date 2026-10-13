@@ -5,6 +5,7 @@ identifier = "app"
 description = "VODscribe's own commands."
 permissions = [
   "allow-setup-status",
+  "allow-self-updatable",
   "allow-data-dir",
   "allow-open-data-dir",
   "allow-run-setup",

@@ -48,6 +48,16 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
     })
 }
 
+/// Whether this copy can update itself: the bundler stamps each package
+/// (.deb, .rpm, .msi, the NSIS installer, the macOS app) with its kind, and the
+/// updater looks up that kind's file in latest.json. A binary that was never
+/// packaged (a development build, or one built from source) has no stamp, and
+/// no file to fetch.
+#[tauri::command]
+pub(crate) async fn self_updatable() -> CmdResult<bool> {
+    Ok(tauri::utils::platform::bundle_type().is_some())
+}
+
 /// Where the library and settings live, for the privacy section in Settings.
 #[tauri::command]
 pub(crate) async fn data_dir(state: State<'_, AppState>) -> CmdResult<String> {

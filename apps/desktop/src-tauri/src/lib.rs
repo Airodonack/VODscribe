@@ -93,6 +93,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             setup::setup_status,
+            setup::self_updatable,
             setup::data_dir,
             setup::open_data_dir,
             setup::run_setup,

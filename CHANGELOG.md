@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.1.4 (unreleased)
 
 - Downloaded installers carry the version in their file name, like VODscribe-0.1.4-windows-x64-setup.exe.
+- A copy that wasn't installed from a package (built from source, say) says so when asked to check for updates, instead of an error about platforms.
 
 ## 0.1.3 — 2026-10-13
 
