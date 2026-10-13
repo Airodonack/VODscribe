@@ -33,6 +33,9 @@ const commands: Record<string, (args: Args) => unknown> = {
   get_settings: () => ({ device: "cpu" }),
   self_updatable: () => true,
   chat: () => [],
+  // The demo has no chat, so no timeline layers either.
+  get_layers: () => [],
+  chat_matches: () => [],
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {

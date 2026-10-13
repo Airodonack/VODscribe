@@ -106,7 +106,21 @@ export interface Line {
 /** A run of a chat message (crates/core `ChatPart`). */
 export type ChatPart = { type: "text"; text: string } | { type: "emote"; name: string; url: string };
 
+/** A saved chat search drawn on the timeline (crates/core `layers`). */
+export interface Layer {
+  id: string;
+  name: string;
+  /** `#rrggbb`. */
+  color: string;
+  terms: { text: string; emote: string | null }[];
+  visible: boolean;
+  /** Only this channel's VODs; null for every channel. */
+  channel: { platform: string; channel: string } | null;
+}
+
 export interface ChatLine {
+  /** Unique in the library; what `chatMatches` returns. */
+  id: number;
   /** Seconds into the VOD. */
   time: number;
   author: string;
@@ -143,6 +157,10 @@ export const api = {
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
   chat: (vodId: number) => invoke<ChatLine[]>("chat", { vodId }),
+  getLayers: () => invoke<Layer[]>("get_layers"),
+  setLayers: (layers: Layer[]) => invoke<void>("set_layers", { layers }),
+  /** For each list of terms, the ids of the VOD's chat messages with any of them as a whole word or phrase. */
+  chatMatches: (vodId: number, terms: string[][]) => invoke<number[][]>("chat_matches", { vodId, terms }),
   /** Fetches a VOD's chat again after it failed. */
   retryChat: (id: number) => invoke<void>("retry_chat", { id }),
   updateYtDlp: () => invoke<string>("update_yt_dlp"),
