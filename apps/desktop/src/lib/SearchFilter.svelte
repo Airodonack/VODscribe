@@ -56,7 +56,7 @@
     title="Change what this searches"
   >
     <Icon name="filter" size={14} /> From <span class="bar"></span><span class="summary"
-      >{scope}{#if scopeAll}<span class="lock" title="Stays on All VODs when you pick a VOD"
+      >{scope}{#if scopeAll}<span class="lock" title="Stays on All VODs when you switch VODs"
           ><Icon name="lock" size={11} /></span
         >{/if}, {looking}</span
     >
@@ -79,9 +79,7 @@
           <span class="label"
             >All VODs{#if scopeAll}<span class="lock"><Icon name="lock" size={11} /></span>{/if}</span
           >
-          <span class="muted detail wrap">
-            {scopeAll ? "Locked: stays on when you pick a VOD" : "Choose it to keep it on when you pick a VOD"}
-          </span>
+          {#if scopeAll}<span class="muted detail">Stays on when you switch VODs</span>{/if}
         </button>
       </div>
       <p class="eyebrow">Look through</p>
@@ -181,10 +179,6 @@
   .lock {
     margin-left: 4px;
     color: var(--accent);
-  }
-
-  .detail.wrap {
-    white-space: normal;
   }
 
   .detail {
