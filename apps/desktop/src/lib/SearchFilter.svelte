@@ -56,9 +56,9 @@
     title="Change what this searches"
   >
     <Icon name="filter" size={14} /> From <span class="bar"></span><span class="summary"
-      >{#if scopeAll}<span class="lock" title="Stays on All VODs when you pick a VOD"
+      >{scope}{#if scopeAll}<span class="lock" title="Stays on All VODs when you pick a VOD"
           ><Icon name="lock" size={11} /></span
-        >{/if}{scope}, {looking}</span
+        >{/if}, {looking}</span
     >
   </button>
   {#if open}
@@ -179,7 +179,7 @@
   }
 
   .lock {
-    margin: 0 4px;
+    margin-left: 4px;
     color: var(--accent);
   }
 
