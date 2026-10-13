@@ -27,8 +27,9 @@ pub struct ChatMessage {
     pub parts: Vec<ChatPart>,
     #[serde(default)]
     pub kind: Kind,
-    /// For a gift, how many subs; for a tip, how many bits or KICKs. A Super
-    /// Chat's amount is in its text instead, in whatever currency it was.
+    /// For a Twitch sub, its tier (Prime counts as 1); for a gift, how many
+    /// subs; for a tip, how many bits or KICKs. A Super Chat's amount is in its
+    /// text instead, in whatever currency it was.
     #[serde(default)]
     pub amount: Option<f64>,
 }
@@ -455,8 +456,11 @@ fn twitch_event(author: &str, text: &str) -> (Kind, Option<f64>) {
     if let Some((first, rest)) = text.split_once(' ')
         && first.eq_ignore_ascii_case(author)
     {
-        if rest.starts_with("subscribed at Tier ") || rest.starts_with("subscribed with Prime") {
-            return (Kind::Sub, None);
+        if let Some(tier) = rest.strip_prefix("subscribed at Tier ") {
+            return (Kind::Sub, leading_number(tier).or(Some(1.0)));
+        }
+        if rest.starts_with("subscribed with Prime") {
+            return (Kind::Sub, Some(1.0));
         }
         if let Some(gifting) = rest.strip_prefix("is gifting ") {
             return (Kind::Gift, leading_number(gifting).or(Some(1.0)));
@@ -717,11 +721,19 @@ mod tests {
     #[test]
     fn recognizes_twitch_events() {
         let event = |t: &str| twitch_event(t.split(' ').next().unwrap(), t);
-        assert_eq!(event("mairimyarel subscribed at Tier 1. They've subscribed for 8 months!"), (Kind::Sub, None));
-        assert_eq!(event("neezydagod subscribed with Prime. They've subscribed for 44 months!"), (Kind::Sub, None));
+        assert_eq!(event("mairimyarel subscribed at Tier 1. They've subscribed for 8 months!"), (Kind::Sub, Some(1.0)));
+        assert_eq!(event("big subscribed at Tier 3."), (Kind::Sub, Some(3.0)), "the tier");
+        assert_eq!(
+            event("neezydagod subscribed with Prime. They've subscribed for 44 months!"),
+            (Kind::Sub, Some(1.0))
+        );
         assert_eq!(event("someone is gifting 50 Tier 1 Subs to KaiCenat's community!"), (Kind::Gift, Some(50.0)));
         assert_eq!(event("someone gifted a Tier 1 sub to friend!"), (Kind::Gift, Some(1.0)));
-        assert_eq!(twitch_event("Mairimyarel", "mairimyarel subscribed at Tier 1."), (Kind::Sub, None), "any case");
+        assert_eq!(
+            twitch_event("Mairimyarel", "mairimyarel subscribed at Tier 1."),
+            (Kind::Sub, Some(1.0)),
+            "any case"
+        );
         assert_eq!(
             twitch_event("viewer", "I subscribed at Tier 1 yesterday"),
             (Kind::Message, None),

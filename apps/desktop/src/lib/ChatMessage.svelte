@@ -26,7 +26,7 @@
   onclick={() => onplay(message.time)}
   title="Play from {formatTime(message.time)}"
 >
-  {#if message.kind !== "message"}<span class="badge" style:--event={eventColor(message.kind, platform)}
+  {#if message.kind !== "message"}<span class="badge" style:--event={eventColor(platform)}
       >{eventBadge(message, platform)}</span
     >{/if}
   <span class="author" style:--author={message.color}>{message.author}</span>

@@ -111,7 +111,7 @@
     <span
       class="dot"
       class:off={layers.events.length === 0}
-      style:background={layers.events.length > 0 ? eventColor("sub", vod.platform) : null}
+      style:background={layers.events.length > 0 ? eventColor(vod.platform) : null}
     ></span>
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
@@ -136,7 +136,7 @@
           <button
             class="event"
             class:on
-            style:--event={eventColor(event.kind, vod.platform)}
+            style:--event={eventColor(vod.platform)}
             onclick={() => layers.toggleEvent(event.kind)}
             aria-pressed={on}
             title={on ? "Hide from the timeline" : "Show on the timeline"}

@@ -10,6 +10,7 @@
     label,
     overlays = [],
     events = [],
+    eventColor = "#888888",
     eventStyle = "bars",
     onseek,
   }: {
@@ -22,9 +23,11 @@
     label: string;
     /** Timeline layers drawn over it, each scaled to its own peak so its spikes stand out. */
     overlays?: { color: string; times: number[] }[];
-    /** Chat events: bars stacked from the right edge, scaled together, or dots
-     *  in a lane of their own at the right edge, a column per kind. */
-    events?: { color: string; times: number[] }[];
+    /** Chat events, with about what each was worth: full-width bars across the
+     *  strip, or dots in a lane of their own at the right edge. Either way a
+     *  moment is as opaque as the money it saw, next to the VOD's biggest. */
+    events?: { time: number; value: number }[];
+    eventColor?: string;
     eventStyle?: "bars" | "dots";
     onseek: (time: number) => void;
   } = $props();
@@ -48,25 +51,21 @@
   let levels = $derived(levelsOf(times, bins));
   let layerLevels = $derived(overlays.map((o) => ({ color: o.color, levels: levelsOf(o.times, bins) })));
 
-  // Events are few: each bar is a moment's events, kind by kind, against the
-  // busiest moment's total. No smoothing, so each one stays a sharp mark.
-  let eventLevels = $derived.by(() => {
-    const counts = events.map(() => new Float64Array(bins));
-    if (duration <= 0) return [];
-    events.forEach((e, k) => {
-      for (const t of e.times) counts[k][Math.min(bins - 1, Math.max(0, Math.floor((t / duration) * bins)))]++;
-    });
-    const totals = new Float64Array(bins).map((_, i) => counts.reduce((sum, c) => sum + c[i], 0));
-    const top = Math.max(...totals, 1);
-    // A bar's length follows the total; each kind takes its share of it.
-    const scale = totals.map((total) => (total > 0 ? Math.pow(total / top, 0.6) / total : 0));
-    return events.map((e, k) => ({
-      color: e.color,
-      counts: counts[k],
-      top,
-      levels: counts[k].map((c, i) => c * scale[i]),
-    }));
+  // Each moment's events: how many, and what they were worth together. No
+  // smoothing, so each stays a sharp mark.
+  let eventMoments = $derived.by(() => {
+    const counts = new Float64Array(bins);
+    const values = new Float64Array(bins);
+    if (duration <= 0 || events.length === 0) return null;
+    for (const e of events) {
+      const i = Math.min(bins - 1, Math.max(0, Math.floor((e.time / duration) * bins)));
+      counts[i]++;
+      values[i] += e.value;
+    }
+    return { counts, values, topCount: Math.max(...counts, 1), topValue: Math.max(...values, 0.01) };
   });
+  /** How opaque a moment worth `value` is: the biggest is solid, the least still shows. */
+  const strength = (value: number, top: number) => 0.22 + 0.78 * Math.min(1, value / top);
 
   $effect(() => {
     const ctx = canvas?.getContext("2d");
@@ -76,9 +75,8 @@
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    // Dots get a lane of their own, a column per kind; the waveforms keep the rest.
-    const COLUMN = 5;
-    const lane = eventStyle === "dots" && eventLevels.length ? eventLevels.length * COLUMN + 3 : 0;
+    // Dots get a lane of their own; the waveforms keep the rest.
+    const lane = eventStyle === "dots" && eventMoments ? 9 : 0;
     const mid = (width - lane) / 2;
     const step = height / levels.length;
     const draw = (levels: Float64Array, color: string) => {
@@ -92,32 +90,23 @@
     const style = getComputedStyle(canvas);
     draw(levels, layerLevels.length ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
-    if (lane) {
-      // A dot where each kind happened, bigger the more that happened there.
-      eventLevels.forEach((event, k) => {
-        ctx.fillStyle = event.color;
-        const x = width - lane + 3 + k * COLUMN + COLUMN / 2;
-        event.counts.forEach((count, i) => {
-          if (count <= 0) return;
-          const r = 1.4 + 1.6 * Math.sqrt(count / event.top);
+    if (eventMoments) {
+      const { counts, values, topCount, topValue } = eventMoments;
+      ctx.fillStyle = eventColor;
+      counts.forEach((count, i) => {
+        if (count <= 0) return;
+        ctx.globalAlpha = strength(values[i], topValue);
+        if (lane) {
+          // A dot, bigger the more happened there.
           ctx.beginPath();
-          ctx.arc(x, (i + 0.5) * step, r, 0, Math.PI * 2);
+          ctx.arc(width - lane / 2, (i + 0.5) * step, 1.4 + 2 * Math.sqrt(count / topCount), 0, Math.PI * 2);
           ctx.fill();
-        });
+        } else {
+          // A bar across the whole strip, on top of the rest.
+          ctx.fillRect(0, i * step, width, Math.max(1.5, step - 0.5));
+        }
       });
-    } else {
-      // Events, from the right edge inward, on top of the rest.
-      const reach = width - 2;
-      const used = new Float64Array(levels.length);
-      for (const event of eventLevels) {
-        ctx.fillStyle = event.color;
-        event.levels.forEach((level, i) => {
-          if (level <= 0) return;
-          const w = Math.max(2, level * reach);
-          ctx.fillRect(width - used[i] - w, i * step, w, Math.max(1.5, step - 0.5));
-          used[i] += w;
-        });
-      }
+      ctx.globalAlpha = 1;
     }
   });
 
