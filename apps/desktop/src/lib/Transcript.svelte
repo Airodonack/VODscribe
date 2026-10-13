@@ -413,6 +413,7 @@
           label={mapLabel}
           {overlays}
           events={eventBars}
+          eventStyle={layers.eventStyle}
           onseek={seek}
         />
       </div>

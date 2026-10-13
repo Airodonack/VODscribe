@@ -10,6 +10,7 @@
     label,
     overlays = [],
     events = [],
+    eventStyle = "bars",
     onseek,
   }: {
     /** When each event happened (chat messages, or lines when there's no chat), in seconds. */
@@ -21,8 +22,10 @@
     label: string;
     /** Timeline layers drawn over it, each scaled to its own peak so its spikes stand out. */
     overlays?: { color: string; times: number[] }[];
-    /** Chat events, stacked in one bar from the right edge, scaled together. */
+    /** Chat events: bars stacked from the right edge, scaled together, or dots
+     *  in a lane of their own at the right edge, a column per kind. */
     events?: { color: string; times: number[] }[];
+    eventStyle?: "bars" | "dots";
     onseek: (time: number) => void;
   } = $props();
 
@@ -57,7 +60,12 @@
     const top = Math.max(...totals, 1);
     // A bar's length follows the total; each kind takes its share of it.
     const scale = totals.map((total) => (total > 0 ? Math.pow(total / top, 0.6) / total : 0));
-    return events.map((e, k) => ({ color: e.color, levels: counts[k].map((c, i) => c * scale[i]) }));
+    return events.map((e, k) => ({
+      color: e.color,
+      counts: counts[k],
+      top,
+      levels: counts[k].map((c, i) => c * scale[i]),
+    }));
   });
 
   $effect(() => {
@@ -68,7 +76,10 @@
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    const mid = width / 2;
+    // Dots get a lane of their own, a column per kind; the waveforms keep the rest.
+    const COLUMN = 5;
+    const lane = eventStyle === "dots" && eventLevels.length ? eventLevels.length * COLUMN + 3 : 0;
+    const mid = (width - lane) / 2;
     const step = height / levels.length;
     const draw = (levels: Float64Array, color: string) => {
       ctx.fillStyle = color;
@@ -81,17 +92,32 @@
     const style = getComputedStyle(canvas);
     draw(levels, layerLevels.length ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
-    // Events, from the right edge inward, on top of the rest.
-    const reach = width - 2;
-    const used = new Float64Array(levels.length);
-    for (const event of eventLevels) {
-      ctx.fillStyle = event.color;
-      event.levels.forEach((level, i) => {
-        if (level <= 0) return;
-        const w = Math.max(2, level * reach);
-        ctx.fillRect(width - used[i] - w, i * step, w, Math.max(1.5, step - 0.5));
-        used[i] += w;
+    if (lane) {
+      // A dot where each kind happened, bigger the more that happened there.
+      eventLevels.forEach((event, k) => {
+        ctx.fillStyle = event.color;
+        const x = width - lane + 3 + k * COLUMN + COLUMN / 2;
+        event.counts.forEach((count, i) => {
+          if (count <= 0) return;
+          const r = 1.4 + 1.6 * Math.sqrt(count / event.top);
+          ctx.beginPath();
+          ctx.arc(x, (i + 0.5) * step, r, 0, Math.PI * 2);
+          ctx.fill();
+        });
       });
+    } else {
+      // Events, from the right edge inward, on top of the rest.
+      const reach = width - 2;
+      const used = new Float64Array(levels.length);
+      for (const event of eventLevels) {
+        ctx.fillStyle = event.color;
+        event.levels.forEach((level, i) => {
+          if (level <= 0) return;
+          const w = Math.max(2, level * reach);
+          ctx.fillRect(width - used[i] - w, i * step, w, Math.max(1.5, step - 0.5));
+          used[i] += w;
+        });
+      }
     }
   });
 

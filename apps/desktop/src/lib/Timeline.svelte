@@ -107,7 +107,12 @@
     title="Layers on the timeline: chat words and emotes to look for"
   >
     <Icon name="layers" size={14} /> Timeline
-    {#if layers.events.length > 0}<span class="dot" style:background={eventColor("sub", vod.platform)}></span>{/if}
+    <!-- The events: the platform's color when any are on, gray when none are. -->
+    <span
+      class="dot"
+      class:off={layers.events.length === 0}
+      style:background={layers.events.length > 0 ? eventColor("sub", vod.platform) : null}
+    ></span>
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   {#if open}
@@ -141,6 +146,18 @@
             <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
           </button>
         {/each}
+        {#if layers.events.length > 0}
+          <div class="style" role="group" aria-label="Show events as">
+            <span class="muted">Show as</span>
+            {#each ["bars", "dots"] as const as style (style)}
+              <button
+                class:on={layers.eventStyle === style}
+                aria-pressed={layers.eventStyle === style}
+                onclick={() => layers.setEventStyle(style)}>{style === "bars" ? "Bars" : "Dots"}</button
+              >
+            {/each}
+          </div>
+        {/if}
       </section>
       {#each mine as layer (layer.id)}
         {@const isShown = shown.includes(layer)}
@@ -249,10 +266,14 @@
     border-radius: 50%;
   }
 
+  .dot.off {
+    background: color-mix(in srgb, var(--muted) 55%, transparent);
+  }
+
   .popover {
     position: fixed;
     z-index: 10;
-    width: 340px;
+    width: 352px;
     overflow-y: auto;
     padding: 12px;
     background: var(--surface);
@@ -286,23 +307,46 @@
   /* The events: one row of toggles in the platform's color, each kind at its own strength. */
   .events {
     display: flex;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 5px;
     padding: 8px 0 10px;
     border-top: 1px solid var(--border);
   }
 
   .event {
-    flex: 1;
+    /* Each as wide as its name ("Super Chats" is long); the row wraps if they don't fit. */
+    flex: 1 1 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 5px;
+    gap: 4px;
     min-width: 0;
-    padding: 4px 6px;
+    padding: 4px 5px;
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
     color: var(--muted);
+  }
+
+  .style {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    width: 100%;
+    font-size: 11px;
+  }
+
+  .style button {
+    padding: 1px 8px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .style button.on {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 
   .event.on {

@@ -11,8 +11,22 @@ export const MAX_VISIBLE = 3;
 /** Colors new layers take, in order, skipping ones in use. */
 const PALETTE = ["#f59e0b", "#ec4899", "#ef4444", "#14b8a6", "#0ea5e9", "#84cc16", "#a855f7"];
 
+const EVENT_STYLE = "vodscribe.eventStyle";
+
 class Layers {
   list = $state<Layer[]>([]);
+  /** How events are drawn (Minimap.svelte); remembered in this webview only. */
+  eventStyle = $state<"bars" | "dots">(readEventStyle());
+
+  setEventStyle(style: "bars" | "dots") {
+    this.eventStyle = style;
+    try {
+      localStorage.setItem(EVENT_STYLE, style);
+    } catch {
+      // Not remembered, which is fine.
+    }
+  }
+
   /** The chat events drawn on the timeline. */
   events = $state<EventKind[]>([]);
   #loading: Promise<void> | null = null;
@@ -88,6 +102,14 @@ class Layers {
   remove(id: string) {
     this.list = this.list.filter((l) => l.id !== id);
     this.save();
+  }
+}
+
+function readEventStyle(): "bars" | "dots" {
+  try {
+    return localStorage.getItem(EVENT_STYLE) === "dots" ? "dots" : "bars";
+  } catch {
+    return "bars";
   }
 }
 
