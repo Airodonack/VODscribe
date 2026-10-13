@@ -5,6 +5,7 @@
 #[cfg(feature = "asr")]
 pub mod asr;
 pub mod audio;
+pub mod chat;
 pub mod db;
 pub mod deps;
 pub mod fetch;

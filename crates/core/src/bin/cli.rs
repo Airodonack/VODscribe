@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use vodscribe_core::{Paths, db::Db, fetch, model, pipeline, tools};
+use vodscribe_core::{Paths, chat, db::Db, fetch, model, pipeline, tools};
 
 fn main() -> Result<()> {
     let paths = Paths::new(std::env::var("VODSCRIBE_DATA").unwrap_or_else(|_| "vodscribe-data".into()));
@@ -70,6 +70,19 @@ fn main() -> Result<()> {
             let info = info?;
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
+        ["chat", url] => {
+            let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("yt-dlp not found; run setup")?;
+            let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"))?;
+            let started = Instant::now();
+            let messages =
+                chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &cancel, |f| eprint!("\rchat {:.0}%", f * 100.0))?;
+            eprintln!();
+            let Some(messages) = messages else { bail!("no chat replay for this VOD") };
+            for m in messages.iter().take(5).chain(messages.iter().rev().take(5).rev()) {
+                println!("{:>9.1}  {}: {}", m.time, m.author, m.text());
+            }
+            println!("{} messages in {:.1?}", messages.len(), started.elapsed());
+        }
         ["list"] => {
             for v in Db::open(&paths.db())?.vods()? {
                 println!("#{} [{:?}] {} — {}", v.id, v.status, v.info.title, v.info.url);
@@ -88,7 +101,9 @@ fn main() -> Result<()> {
                 println!("{:>8.1}  {}", s.start, s.text);
             }
         }
-        _ => bail!("usage: vodscribe-cli setup | add <url> | probe <url> | list | search <phrase> | transcript <id>"),
+        _ => bail!(
+            "usage: vodscribe-cli setup | add <url> | probe <url> | chat <url> | list | search <phrase> | transcript <id>"
+        ),
     }
     Ok(())
 }

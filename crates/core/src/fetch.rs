@@ -204,7 +204,7 @@ fn parse_progress(rest: &str) -> Option<f64> {
 
 /// Turns yt-dlp's stderr into a message for people: a plain sentence for the
 /// common failures, otherwise its ERROR lines (the full log goes to stderr).
-fn clean_error(stderr: &str) -> String {
+pub(crate) fn clean_error(stderr: &str) -> String {
     eprintln!("yt-dlp: {}", tools::last_lines(stderr, 10));
     let errors: Vec<&str> = stderr.lines().filter_map(|l| l.strip_prefix("ERROR: ")).collect();
     let raw = if errors.is_empty() { tools::last_lines(stderr, 3) } else { errors.join("\n") };

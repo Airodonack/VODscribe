@@ -37,6 +37,59 @@ pub fn resolve(url: &str) -> Result<(VodInfo, String)> {
 
 /// Kick's API responses and master playlists are a few KB.
 const API_MAX_BYTES: u64 = 1 << 20;
+/// A day-long VOD's media playlist is about 1 MB.
+const PLAYLIST_MAX_BYTES: u64 = 16 << 20;
+
+/// Where a VOD's chat is in its channel's history.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChatOrigin {
+    /// The channel's id, which its chat history is under.
+    pub channel: u64,
+    /// When the VOD starts, in Unix seconds.
+    pub start: f64,
+}
+
+/// Finds VOD `id`'s channel and start time. The start is the wall-clock time
+/// the media playlist gives its first segment; failing that, the time in the
+/// VOD's id (a UUIDv7, made when the stream started), a few seconds later.
+pub fn chat_origin(id: &str) -> Result<ChatOrigin> {
+    let (status, json) = playback(id)?;
+    if status != 200 {
+        bail!("Kick isn't responding right now ({status}). Try again later.");
+    }
+    let channel = json
+        .pointer("/video_session/creator_id")
+        .and_then(|v| v.as_str().and_then(|s| s.parse().ok()).or(v.as_u64()))
+        .context("Kick didn't say which channel this VOD is from.")?;
+    let manifest = json.pointer("/playback_url/vod").and_then(Value::as_str).filter(|s| s.starts_with("https://"));
+    let start = manifest
+        .and_then(|m| playlist_start(m).inspect_err(|e| eprintln!("Kick VOD {id}'s start time: {e:#}")).ok().flatten())
+        .or_else(|| uuid_v7_time(id))
+        .context("Kick didn't say when this VOD started.")?;
+    Ok(ChatOrigin { channel, start })
+}
+
+/// The time of the first segment in the first quality's media playlist.
+fn playlist_start(master_url: &str) -> Result<Option<f64>> {
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let master = crate::net::get_bytes(master_url, API_MAX_BYTES, &never)?;
+    let Some(variant) = parse_master(&String::from_utf8_lossy(&master)).into_iter().next() else { return Ok(None) };
+    let media = crate::net::get_bytes(&variant.url, PLAYLIST_MAX_BYTES, &never)?;
+    Ok(first_program_date(&String::from_utf8_lossy(&media)))
+}
+
+fn first_program_date(playlist: &str) -> Option<f64> {
+    playlist.lines().find_map(|l| l.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:")).and_then(crate::chat::parse_time)
+}
+
+/// The Unix time in a UUIDv7's first 48 bits (milliseconds).
+fn uuid_v7_time(id: &str) -> Option<f64> {
+    let hex: String = id.chars().filter(|c| *c != '-').collect();
+    if hex.len() != 32 || hex.as_bytes()[12] != b'7' {
+        return None;
+    }
+    Some(u64::from_str_radix(&hex[..12], 16).ok()? as f64 / 1000.0)
+}
 
 /// The playback endpoint's status and JSON body.
 fn playback(id: &str) -> Result<(u16, Value)> {
@@ -147,6 +200,17 @@ mod tests {
         assert_eq!(parse_vod_url("https://kick.com/barky/videos"), None);
         assert_eq!(parse_vod_url(&format!("https://kick.com/barky/clips/{id}")), None);
         assert_eq!(parse_vod_url(&format!("https://notkick.com/barky/videos/{id}")), None);
+    }
+
+    #[test]
+    fn finds_when_a_vod_starts() {
+        // 01a0e9a8-a9e0 is 2026-09-28T20:15:40Z; the playlist's first segment is 3 s earlier.
+        assert_eq!(uuid_v7_time("01a0e9a8-a9e0-797e-9646-df39aa9989ee"), Some(1790626540.0));
+        assert_eq!(uuid_v7_time("01a0e9a8-a9e0-497e-9646-df39aa9989ee"), None, "not a UUIDv7");
+        let playlist = "#EXTM3U\n#EXT-X-TWITCH-TOTAL-SECS:40415.302\n#EXT-X-PROGRAM-DATE-TIME:2026-09-28T20:15:37.046Z\n\
+                        #EXTINF:10.000,\n0.ts\n#EXT-X-PROGRAM-DATE-TIME:2026-09-28T20:15:47.046Z\n";
+        assert_eq!(first_program_date(playlist), Some(1790626537.046));
+        assert_eq!(first_program_date("#EXTM3U\n"), None);
     }
 
     #[test]
