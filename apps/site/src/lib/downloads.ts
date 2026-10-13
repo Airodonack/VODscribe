@@ -1,7 +1,9 @@
 // The installers, on R2 under dl.vodscribe.com/releases/. Each release is
-// uploaded to releases/<version>/ and copied to releases/latest/ under these
-// names, so the buttons follow new releases without rebuilding the site (which
-// is why the site doesn't show a version number).
+// uploaded to releases/<version>/ under versioned names and to releases/latest/
+// under these stable names, so the buttons follow new releases without
+// rebuilding the site (which is why the site doesn't show a version number).
+// The latest/ copies are served with the versioned file name, so the saved
+// file says which version it is.
 
 const BASE = "https://dl.vodscribe.com/releases/latest";
 

@@ -86,7 +86,7 @@ vodscribe-cli add <url>          # for each VOD; `setup` first, or link bin/ and
 python3 apps/site/scripts/export-demo.py /tmp/demo/library.sqlite
 ```
 
-`pnpm --filter site build` prerenders every page into `apps/site/build`, with a content security policy that SvelteKit writes into each page and response headers in `static/_headers`. The download buttons link to `dl.vodscribe.com/releases/latest/` (`src/lib/downloads.ts`), so each release has to be uploaded there under those names.
+`pnpm --filter site build` prerenders every page into `apps/site/build`, with a content security policy that SvelteKit writes into each page and response headers in `static/_headers`. The download buttons link to `dl.vodscribe.com/releases/latest/` (`src/lib/downloads.ts`), so each release has to be uploaded there under those stable names; the files are served with a `Content-Disposition` that names the versioned file, so what's saved says which version it is.
 
 It deploys from this repo through Cloudflare's Git integration: build command `pnpm install --frozen-lockfile && pnpm --filter site build`, with `apps/site/build` as the output directory on Pages. On Workers, `apps/site/wrangler.jsonc` sets the same directory and serves `404.html` for missing pages.
 
@@ -104,7 +104,7 @@ VODscribe is source-available under the [Functional Source License, Version 1.1,
 2. Bump `version` in the root `Cargo.toml`, date the changelog heading, and commit.
 3. Tag it (`git tag v0.2.0`) and push the tag. The entry becomes the release notes in `latest.json`; the tag build fails if it's missing or still marked unreleased.
 
-The tag's build signs the update bundles (`TAURI_SIGNING_PRIVATE_KEY`), then `scripts/release.py` gives every file a stable name and writes `latest.json`, and the publish job uploads them to R2: `releases/<version>/` for the updater and winget, `releases/latest/` for the website's buttons, and `releases/latest.json` last. The app checks that manifest at launch and daily, and installs an update only when the user says so, and only if it's signed with the key whose public half is in `tauri.conf.json`. Keep the private key (`~/.tauri/vodscribe-updater.key`) backed up: without it, installed copies can't be updated.
+The tag's build signs the update bundles (`TAURI_SIGNING_PRIVATE_KEY`), then `scripts/release.py` names every file (`VODscribe-<version>-windows-x64-setup.exe` and so on, plus the stable names for the website) and writes `latest.json`, and the publish job uploads them to R2: `releases/<version>/` for the updater and winget, `releases/latest/` for the website's buttons, and `releases/latest.json` last. The app checks that manifest at launch and daily, and installs an update only when the user says so, and only if it's signed with the key whose public half is in `tauri.conf.json`. Keep the private key (`~/.tauri/vodscribe-updater.key`) backed up: without it, installed copies can't be updated.
 
 The winget job then submits the new version to `microsoft/winget-pkgs` as `Airodonack.VODscribe`, once `WINGET_TOKEN` (a classic token of the Airodonack GitHub account, with `public_repo`) is set. The workflow's header lists every secret.
 

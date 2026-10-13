@@ -5,9 +5,13 @@
 <artifacts dir> holds one vodscribe-<target> directory per build (as
 actions/download-artifact writes them). Writes into <out dir>:
 
-  files/       each installer and update bundle under its stable name
-               (VODscribe-windows-x64-setup.exe, ...), which the website links
-               to under releases/latest/ and the updater under releases/<version>/
+  files/       each installer and update bundle under its versioned name
+               (VODscribe-0.1.4-windows-x64-setup.exe, ...), for releases/<version>/,
+               where the updater and winget fetch them
+  latest/      the same files under their stable names (VODscribe-windows-x64-setup.exe),
+               for releases/latest/, which the website links to; the publish job
+               uploads each with a Content-Disposition naming the versioned file,
+               so what lands in a Downloads folder says which version it is
   latest.json  the updater's manifest (plugins.updater in tauri.conf.json):
                every platform's versioned URL and signature, and the release
                notes from CHANGELOG.md's entry for the version
@@ -23,6 +27,7 @@ or if CHANGELOG.md has no entry for the version, or one still marked unreleased.
 import datetime
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -30,7 +35,8 @@ from pathlib import Path
 BASE = "https://dl.vodscribe.com/releases"
 WINGET_ID = "Airodonack.VODscribe"
 
-# (artifact, file name suffix, stable name, updater platforms). Windows and macOS
+# (artifact, file name suffix, stable name, updater platforms). The versioned
+# name puts the version after "VODscribe-" (`versioned`). Windows and macOS
 # also get a plain platform the updater falls back to. Linux doesn't: each package
 # finds its own format, and anything else (such as an AppImage from 0.1.0) gets no
 # update rather than a package it can't install.
@@ -44,6 +50,11 @@ FILES = [
     ("x86_64-unknown-linux-gnu", ".deb", "VODscribe-linux-x64.deb", ["linux-x86_64-deb"]),
     ("x86_64-unknown-linux-gnu", ".rpm", "VODscribe-linux-x64.rpm", ["linux-x86_64-rpm"]),
 ]
+
+
+def versioned(stable: str, version: str) -> str:
+    """VODscribe-windows-x64-setup.exe -> VODscribe-0.1.4-windows-x64-setup.exe."""
+    return stable.replace("VODscribe-", f"VODscribe-{version}-", 1)
 
 
 def find(artifacts: Path, target: str, suffix: str) -> Path:
@@ -88,22 +99,26 @@ def cargo_version(cargo_toml: str) -> str:
 def main(artifacts: Path, version: str, out: Path) -> None:
     # Before any file is written, so a missing entry fails at once.
     release_notes = notes(CHANGELOG.read_text(), version)
-    files = out / "files"
+    files, latest = out / "files", out / "latest"
     files.mkdir(parents=True)
+    latest.mkdir()
     platforms: dict[str, dict[str, str]] = {}
     sha256: dict[str, str] = {}
     for target, suffix, name, keys in FILES:
         src = find(artifacts, target, suffix)
         data = src.read_bytes()
-        (files / name).write_bytes(data)
+        named = versioned(name, version)
+        (files / named).write_bytes(data)
+        # The same bytes under the stable name, without a second copy on disk.
+        os.link(files / named, latest / name)
         sha256[name] = hashlib.sha256(data).hexdigest()
         if keys:
             sig = src.with_name(src.name + ".sig")
             if not sig.is_file():
                 sys.exit(f"{src} has no .sig: was the build run without TAURI_SIGNING_PRIVATE_KEY?")
             for key in keys:
-                platforms[key] = {"url": f"{BASE}/{version}/{name}", "signature": sig.read_text().strip()}
-        print(f"{name:<34} {len(data):>12,}  {sha256[name]}")
+                platforms[key] = {"url": f"{BASE}/{version}/{named}", "signature": sig.read_text().strip()}
+        print(f"{named:<40} {len(data):>12,}  {sha256[name]}")
 
     manifest = {
         "version": version,
@@ -131,7 +146,7 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
         + "InstallerType: nullsoft\nScope: user\nUpgradeBehavior: install\n"
         + f"ReleaseDate: {datetime.date.today().isoformat()}\n"
         + "Installers:\n- Architecture: x64\n"
-        + f"  InstallerUrl: {BASE}/{version}/VODscribe-windows-x64-setup.exe\n"
+        + f"  InstallerUrl: {BASE}/{version}/{versioned('VODscribe-windows-x64-setup.exe', version)}\n"
         + f"  InstallerSha256: {sha256.upper()}\n"
         + "ManifestType: installer\n"
         + tail

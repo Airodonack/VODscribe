@@ -169,8 +169,14 @@ jobs:
           # Versioned files never change; latest/ and latest.json are replaced each release.
           s3 cp release/files "s3://vodscribe/releases/$VERSION/" --recursive \
             --cache-control "public, max-age=31536000, immutable"
-          s3 cp release/files s3://vodscribe/releases/latest/ --recursive --exclude "*.app.tar.gz" \
-            --cache-control "public, max-age=300"
+          # latest/ keeps the stable names the website links to, but each download
+          # is saved under its versioned name (the Content-Disposition).
+          for f in release/latest/*; do
+            name=$(basename "$f")
+            case "$name" in *.app.tar.gz) continue ;; esac
+            s3 cp "$f" "s3://vodscribe/releases/latest/$name" --cache-control "public, max-age=300" \
+              --content-disposition "attachment; filename=\"VODscribe-$VERSION-${name#VODscribe-}\""
+          done
           s3 cp release/latest.json s3://vodscribe/releases/latest.json --content-type application/json \
             --cache-control "public, max-age=300"
 

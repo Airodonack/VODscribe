@@ -57,6 +57,12 @@ class Notes(unittest.TestCase):
             release.notes("## 2.0.0 — 2026-01-01\n\n## 1.0.0 — 2025-01-01\n\nOld\n", "2.0.0")
 
 
+class Versioned(unittest.TestCase):
+    def test_puts_the_version_after_the_name(self):
+        self.assertEqual(release.versioned("VODscribe-windows-x64-setup.exe", "0.1.4"), "VODscribe-0.1.4-windows-x64-setup.exe")
+        self.assertEqual(release.versioned("VODscribe-macos-arm64.app.tar.gz", "1.0.0"), "VODscribe-1.0.0-macos-arm64.app.tar.gz")
+
+
 class CargoVersion(unittest.TestCase):
     def test_reads_the_workspace_version(self):
         toml = '[package]\nversion = "9.9.9"\n\n[workspace.package]\nrust-version = "1.99.0"\nversion = "0.1.3"\n'
