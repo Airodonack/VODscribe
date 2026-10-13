@@ -3,7 +3,7 @@
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
-  import { LICENSES, PRIVACY } from "./links";
+  import { EMAIL, ISSUES, LICENSES, PRIVACY } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
   import { formatBytes } from "./platform";
   import Tip from "./Tip.svelte";
@@ -242,6 +242,17 @@
       >
       <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
     </div>
+  </section>
+
+  <section>
+    <span class="eyebrow">Help</span>
+    <p class="muted hint">
+      Something broken, or an idea? Say so on the issue tracker, or email <code class="path">{EMAIL}</code>. Both are
+      read by the person who makes VODscribe.
+    </p>
+    <button class="link" onclick={() => openUrl(ISSUES)}
+      >Report a problem or suggest something <Icon name="external" size={12} /></button
+    >
   </section>
 
   <section>

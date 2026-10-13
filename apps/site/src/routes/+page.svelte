@@ -35,6 +35,11 @@
       q: "Why does Windows or macOS warn me before opening it?",
       a: "VODscribe isn't code-signed yet, which costs a yearly fee. On Windows, choose More info, then Run anyway. On a Mac, open it once, then go to System Settings › Privacy & Security and choose Open Anyway.",
     },
+    {
+      q: "Something's broken, or I have an idea. Where do I say so?",
+      a: "On the issue tracker, or by email to airodonack@proton.me. Both are read by the person who makes VODscribe.",
+      link: { text: "Open the issue tracker", href: "https://github.com/Airodonack/VODscribe/issues" },
+    },
   ];
 </script>
 
@@ -145,7 +150,10 @@
     {#each FAQ as item (item.q)}
       <details>
         <summary>{item.q}</summary>
-        <p class="muted">{item.a}</p>
+        <p class="muted">
+          {item.a}
+          {#if item.link}<a href={item.link.href} rel="noopener">{item.link.text}</a>{/if}
+        </p>
       </details>
     {/each}
   </section>
