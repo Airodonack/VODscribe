@@ -190,6 +190,9 @@ jobs:
   # Airodonack account, once that account's token is set.
   winget:
     needs: publish
+    # Off while a version waits for winget's first review: a new PR would supersede
+    # it and start that review over. Set the repo variable WINGET_SUBMIT to false.
+    if: vars.WINGET_SUBMIT != 'false'
     timeout-minutes: 15
     runs-on: windows-latest
     env:
