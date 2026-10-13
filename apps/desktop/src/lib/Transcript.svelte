@@ -6,6 +6,7 @@
   import Minimap from "./Minimap.svelte";
   import Timeline from "./Timeline.svelte";
   import { layers } from "./layers.svelte";
+  import { EVENTS, type EventKind } from "./events";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
 
@@ -219,10 +220,28 @@
         () => mine === matchSeq && (matches = []),
       );
   });
-  let overlays = $derived(matches.map((m) => ({ color: m.color, times: [...m.ids].map((id) => timeOf.get(id) ?? 0) })));
+  // Chat events (events.ts): known from each message's kind, no search needed.
+  let eventCounts = $derived.by(() => {
+    const out = new Map<EventKind, number>();
+    for (const m of chat) if (m.kind !== "message") out.set(m.kind, (out.get(m.kind) ?? 0) + 1);
+    return out;
+  });
+  let eventMatches = $derived(
+    hasChat && !noChat
+      ? EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
+          id: e.kind,
+          color: e.color,
+          ids: new Set(chat.filter((m) => m.kind === e.kind).map((m) => m.id)),
+        }))
+      : [],
+  );
+  let allMatches = $derived([...eventMatches, ...matches]);
+  let overlays = $derived(
+    allMatches.map((m) => ({ color: m.color, times: [...m.ids].map((id) => timeOf.get(id) ?? 0) })),
+  );
   let counts = $derived(new Map(matches.map((m) => [m.id, m.ids.size])));
-  /** The color of the first shown layer that matched message `id`, if any. */
-  const highlightOf = (id: number) => matches.find((m) => m.ids.has(id))?.color ?? null;
+  /** The color of the first shown event or layer that matched message `id`, if any. */
+  const highlightOf = (id: number) => allMatches.find((m) => m.ids.has(id))?.color ?? null;
 
   /** Where the view starts: below the header, which stays at the top. */
   const viewTop = () => head?.getBoundingClientRect().bottom ?? 0;
@@ -333,7 +352,7 @@
         >
           <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
         </button>
-        <Timeline {vod} {emotes} {counts} />
+        <Timeline {vod} {emotes} {counts} {eventCounts} />
       </div>
     {/if}
   </div>
@@ -362,7 +381,7 @@
           {#if showChat}
             <div class="chat">
               {#each expanded.has(r) ? row.chat : row.chat.slice(0, SHOWN) as message, m (m)}
-                <ChatMessage {message} highlight={highlightOf(message.id)} onplay={play} />
+                <ChatMessage {message} platform={vod.platform} highlight={highlightOf(message.id)} onplay={play} />
               {/each}
               {#if row.chat.length > SHOWN && !expanded.has(r)}
                 <button class="link more" onclick={() => expanded.add(r)}>{row.chat.length - SHOWN} more</button>
@@ -376,7 +395,7 @@
           <span></span>
           <div class="chat">
             {#each chat.slice(0, shown) as message, m (m)}
-              <ChatMessage {message} highlight={highlightOf(message.id)} onplay={play} />
+              <ChatMessage {message} platform={vod.platform} highlight={highlightOf(message.id)} onplay={play} />
             {/each}
           </div>
         </div>

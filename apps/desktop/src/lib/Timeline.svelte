@@ -2,6 +2,7 @@
   import type { Layer, Vod } from "./api";
   import Emote from "./Emote.svelte";
   import Icon from "./Icon.svelte";
+  import { EVENTS, eventName, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
 
   // The Timeline button above the minimap, and its panel for the layers drawn
@@ -10,12 +11,15 @@
     vod,
     emotes,
     counts,
+    eventCounts,
   }: {
     vod: Vod;
     /** Emote images in this VOD's chat, by lowercase name, to show terms as their emote. */
     emotes: Map<string, string>;
     /** How many of this VOD's messages each shown layer matched, by layer id. */
     counts: Map<string, number>;
+    /** How many of each event this VOD's chat has. */
+    eventCounts: Map<EventKind, number>;
   } = $props();
 
   let open = $state(false);
@@ -103,6 +107,10 @@
     title="Layers on the timeline: chat words and emotes to look for"
   >
     <Icon name="layers" size={14} /> Timeline
+    {#each EVENTS.filter((e) => layers.events.includes(e.kind)) as event (event.kind)}<span
+        class="dot"
+        style:background={event.color}
+      ></span>{/each}
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   {#if open}
@@ -116,9 +124,32 @@
       style:max-height="{place?.maxHeight ?? 0}px"
     >
       <p class="intro muted">
-        Words and emotes to look for in chat. Up to {MAX_VISIBLE} show on the timeline at once, and their messages are highlighted.
+        Events and words to look for in chat. Up to {MAX_VISIBLE} show on the timeline at once, and their messages are highlighted.
       </p>
       {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
+      <section class="events">
+        {#each EVENTS as event (event.kind)}
+          {@const on = layers.events.includes(event.kind)}
+          <div class="event" class:hidden={!on}>
+            <span class="swatch fixed" style:background={event.color}></span>
+            <span class="event-name">{eventName(event.kind, vod.platform)}</span>
+            <span class="count muted">{eventCounts.get(event.kind) ?? 0}</span>
+            <button
+              class="icon"
+              onclick={() => layers.toggleEvent(event.kind, vod)}
+              disabled={!on && !layers.canShowMore(vod)}
+              aria-pressed={on}
+              title={on
+                ? "Hide from the timeline"
+                : layers.canShowMore(vod)
+                  ? "Show on the timeline"
+                  : `${MAX_VISIBLE} show at once; hide one first`}
+            >
+              <Icon name={on ? "eye" : "eye-off"} size={15} />
+            </button>
+          </div>
+        {/each}
+      </section>
       {#each mine as layer (layer.id)}
         {@const isShown = shown.includes(layer)}
         <section class="layer" class:hidden={!isShown}>
@@ -260,6 +291,37 @@
   }
 
   /* The layer's color, opening the system color picker. */
+  .events {
+    padding: 4px 0 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .event {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  .event-name {
+    flex: 1;
+    padding: 2px 4px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .event.hidden .swatch {
+    opacity: 0.55;
+  }
+
+  .swatch.fixed {
+    cursor: default;
+  }
+
+  .swatch.fixed:hover {
+    outline: none;
+  }
+
   .swatch {
     position: relative;
     flex: none;

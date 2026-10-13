@@ -34,7 +34,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   self_updatable: () => true,
   chat: () => [],
   // The demo has no chat, so no timeline layers either.
-  get_layers: () => [],
+  get_timeline: () => ({ layers: [], events: [] }),
   chat_matches: () => [],
 };
 

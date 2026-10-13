@@ -118,6 +118,15 @@ export interface Layer {
   channel: { platform: string; channel: string } | null;
 }
 
+/** What a chat message is: someone writing, or an event the site posts in chat (crates/core `chat::Kind`). */
+export type ChatKind = "message" | "sub" | "gift" | "tip";
+
+/** The timeline's layers and the chat events drawn on it (crates/core `layers::Timeline`). */
+export interface TimelineSettings {
+  layers: Layer[];
+  events: Exclude<ChatKind, "message">[];
+}
+
 export interface ChatLine {
   /** Unique in the library; what `chatMatches` returns. */
   id: number;
@@ -127,6 +136,9 @@ export interface ChatLine {
   /** `#rrggbb`, if the site gives one. */
   color: string | null;
   parts: ChatPart[];
+  kind: ChatKind;
+  /** For a gift, how many; for a tip, how many bits or KICKs. */
+  amount: number | null;
 }
 
 export const api = {
@@ -157,8 +169,8 @@ export const api = {
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
   chat: (vodId: number) => invoke<ChatLine[]>("chat", { vodId }),
-  getLayers: () => invoke<Layer[]>("get_layers"),
-  setLayers: (layers: Layer[]) => invoke<void>("set_layers", { layers }),
+  getTimeline: () => invoke<TimelineSettings>("get_timeline"),
+  setTimeline: (timeline: TimelineSettings) => invoke<void>("set_timeline", { timeline }),
   /** For each list of terms, the ids of the VOD's chat messages with any of them as a whole word or phrase. */
   chatMatches: (vodId: number, terms: string[][]) => invoke<number[][]>("chat_matches", { vodId, terms }),
   /** Fetches a VOD's chat again after it failed. */
