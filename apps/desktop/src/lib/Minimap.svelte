@@ -9,6 +9,7 @@
     view,
     label,
     overlays = [],
+    events = [],
     onseek,
   }: {
     /** When each event happened (chat messages, or lines when there's no chat), in seconds. */
@@ -20,6 +21,8 @@
     label: string;
     /** Timeline layers drawn over it, each scaled to its own peak so its spikes stand out. */
     overlays?: { color: string; times: number[] }[];
+    /** Chat events, stacked in one bar from the right edge, scaled together. */
+    events?: { color: string; times: number[] }[];
     onseek: (time: number) => void;
   } = $props();
 
@@ -42,6 +45,21 @@
   let levels = $derived(levelsOf(times, bins));
   let layerLevels = $derived(overlays.map((o) => ({ color: o.color, levels: levelsOf(o.times, bins) })));
 
+  // Events are few: each bar is a moment's events, kind by kind, against the
+  // busiest moment's total. No smoothing, so each one stays a sharp mark.
+  let eventLevels = $derived.by(() => {
+    const counts = events.map(() => new Float64Array(bins));
+    if (duration <= 0) return [];
+    events.forEach((e, k) => {
+      for (const t of e.times) counts[k][Math.min(bins - 1, Math.max(0, Math.floor((t / duration) * bins)))]++;
+    });
+    const totals = new Float64Array(bins).map((_, i) => counts.reduce((sum, c) => sum + c[i], 0));
+    const top = Math.max(...totals, 1);
+    // A bar's length follows the total; each kind takes its share of it.
+    const scale = totals.map((total) => (total > 0 ? Math.pow(total / top, 0.6) / total : 0));
+    return events.map((e, k) => ({ color: e.color, levels: counts[k].map((c, i) => c * scale[i]) }));
+  });
+
   $effect(() => {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx || width === 0 || height === 0) return;
@@ -63,6 +81,18 @@
     const style = getComputedStyle(canvas);
     draw(levels, layerLevels.length ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
+    // Events, from the right edge inward, on top of the rest.
+    const reach = width - 2;
+    const used = new Float64Array(levels.length);
+    for (const event of eventLevels) {
+      ctx.fillStyle = event.color;
+      event.levels.forEach((level, i) => {
+        if (level <= 0) return;
+        const w = Math.max(2, level * reach);
+        ctx.fillRect(width - used[i] - w, i * step, w, Math.max(1.5, step - 0.5));
+        used[i] += w;
+      });
+    }
   });
 
   let dragging = false;

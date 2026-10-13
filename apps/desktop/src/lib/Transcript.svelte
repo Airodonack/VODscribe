@@ -6,7 +6,7 @@
   import Minimap from "./Minimap.svelte";
   import Timeline from "./Timeline.svelte";
   import { layers } from "./layers.svelte";
-  import { EVENTS, type EventKind } from "./events";
+  import { EVENTS, eventColor, type EventKind } from "./events";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
 
@@ -230,15 +230,15 @@
     hasChat && !noChat
       ? EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
           id: e.kind,
-          color: e.color,
+          color: eventColor(e.kind, vod.platform),
           ids: new Set(chat.filter((m) => m.kind === e.kind).map((m) => m.id)),
         }))
       : [],
   );
   let allMatches = $derived([...eventMatches, ...matches]);
-  let overlays = $derived(
-    allMatches.map((m) => ({ color: m.color, times: [...m.ids].map((id) => timeOf.get(id) ?? 0) })),
-  );
+  const timesOf = (ids: Set<number>) => [...ids].map((id) => timeOf.get(id) ?? 0);
+  let overlays = $derived(matches.map((m) => ({ color: m.color, times: timesOf(m.ids) })));
+  let eventBars = $derived(eventMatches.map((m) => ({ color: m.color, times: timesOf(m.ids) })));
   let counts = $derived(new Map(matches.map((m) => [m.id, m.ids.size])));
   /** The color of the first shown event or layer that matched message `id`, if any. */
   const highlightOf = (id: number) => allMatches.find((m) => m.ids.has(id))?.color ?? null;
@@ -406,7 +406,15 @@
     </div>
     {#if showMap}
       <div class="rail" style:top="{headHeight}px" style:height="{Math.max(0, railHeight - headHeight)}px">
-        <Minimap times={mapTimes} duration={mapDuration} {view} label={mapLabel} {overlays} onseek={seek} />
+        <Minimap
+          times={mapTimes}
+          duration={mapDuration}
+          {view}
+          label={mapLabel}
+          {overlays}
+          events={eventBars}
+          onseek={seek}
+        />
       </div>
     {/if}
   </div>

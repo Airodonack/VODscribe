@@ -1,15 +1,15 @@
 // Timeline layers and event toggles (crates/core `layers`): loaded once, saved
-// shortly after each change, and limited to a few drawn at once (events and
-// layers together) so the timeline stays legible.
+// shortly after each change. A few layers are drawn at once, so the timeline
+// stays legible; the events are drawn apart from them (events.ts), any of them.
 
 import { api, type Layer, type Vod } from "./api";
 import type { EventKind } from "./events";
 
-/** Layers and events drawn at once, per VOD. */
+/** Term layers drawn at once, per VOD. */
 export const MAX_VISIBLE = 3;
 
-/** Colors new layers take, in order, skipping ones in use; apart from the events' (events.ts). */
-const PALETTE = ["#f59e0b", "#ec4899", "#ef4444", "#14b8a6", "#f97316", "#a16207", "#64748b"];
+/** Colors new layers take, in order, skipping ones in use. */
+const PALETTE = ["#f59e0b", "#ec4899", "#ef4444", "#14b8a6", "#0ea5e9", "#84cc16", "#a855f7"];
 
 class Layers {
   list = $state<Layer[]>([]);
@@ -53,22 +53,20 @@ class Layers {
     return this.list.filter((l) => this.appliesTo(l, vod));
   }
 
-  /** The layers drawn for `vod`: the visible ones, in what room the events leave. */
+  /** The layers drawn for `vod`: the visible ones, at most MAX_VISIBLE. */
   shownFor(vod: Vod): Layer[] {
     return this.forVod(vod)
       .filter((l) => l.visible)
-      .slice(0, Math.max(0, MAX_VISIBLE - this.events.length));
+      .slice(0, MAX_VISIBLE);
   }
 
   canShowMore(vod: Vod): boolean {
-    return this.events.length + this.shownFor(vod).length < MAX_VISIBLE;
+    return this.shownFor(vod).length < MAX_VISIBLE;
   }
 
-  /** Shows or hides an event; showing one needs room (see `canShowMore`). */
-  toggleEvent(kind: EventKind, vod: Vod) {
+  toggleEvent(kind: EventKind) {
     if (this.events.includes(kind)) this.events = this.events.filter((k) => k !== kind);
-    else if (this.canShowMore(vod)) this.events.push(kind);
-    else return;
+    else this.events.push(kind);
     this.save();
   }
 

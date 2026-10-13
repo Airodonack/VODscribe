@@ -2,7 +2,7 @@
   import type { Layer, Vod } from "./api";
   import Emote from "./Emote.svelte";
   import Icon from "./Icon.svelte";
-  import { EVENTS, eventName, type EventKind } from "./events";
+  import { EVENTS, eventColor, eventName, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
 
   // The Timeline button above the minimap, and its panel for the layers drawn
@@ -107,10 +107,7 @@
     title="Layers on the timeline: chat words and emotes to look for"
   >
     <Icon name="layers" size={14} /> Timeline
-    {#each EVENTS.filter((e) => layers.events.includes(e.kind)) as event (event.kind)}<span
-        class="dot"
-        style:background={event.color}
-      ></span>{/each}
+    {#if layers.events.length > 0}<span class="dot" style:background={eventColor("sub", vod.platform)}></span>{/if}
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   {#if open}
@@ -124,30 +121,25 @@
       style:max-height="{place?.maxHeight ?? 0}px"
     >
       <p class="intro muted">
-        Events and words to look for in chat. Up to {MAX_VISIBLE} show on the timeline at once, and their messages are highlighted.
+        Events and words to look for in chat, drawn on the timeline with their messages highlighted. Events line the
+        right edge; up to {MAX_VISIBLE} layers show at once.
       </p>
       {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
-      <section class="events">
+      <section class="events" aria-label="Events">
         {#each EVENTS as event (event.kind)}
           {@const on = layers.events.includes(event.kind)}
-          <div class="event" class:hidden={!on}>
-            <span class="swatch fixed" style:background={event.color}></span>
-            <span class="event-name">{eventName(event.kind, vod.platform)}</span>
-            <span class="count muted">{eventCounts.get(event.kind) ?? 0}</span>
-            <button
-              class="icon"
-              onclick={() => layers.toggleEvent(event.kind, vod)}
-              disabled={!on && !layers.canShowMore(vod)}
-              aria-pressed={on}
-              title={on
-                ? "Hide from the timeline"
-                : layers.canShowMore(vod)
-                  ? "Show on the timeline"
-                  : `${MAX_VISIBLE} show at once; hide one first`}
-            >
-              <Icon name={on ? "eye" : "eye-off"} size={15} />
-            </button>
-          </div>
+          <button
+            class="event"
+            class:on
+            style:--event={eventColor(event.kind, vod.platform)}
+            onclick={() => layers.toggleEvent(event.kind)}
+            aria-pressed={on}
+            title={on ? "Hide from the timeline" : "Show on the timeline"}
+          >
+            <Icon name={event.icon} size={13} />
+            {eventName(event.kind, vod.platform)}
+            <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
+          </button>
         {/each}
       </section>
       {#each mine as layer (layer.id)}
@@ -291,35 +283,42 @@
   }
 
   /* The layer's color, opening the system color picker. */
+  /* The events: one row of toggles in the platform's color, each kind at its own strength. */
   .events {
-    padding: 4px 0 8px;
+    display: flex;
+    gap: 6px;
+    padding: 8px 0 10px;
     border-top: 1px solid var(--border);
   }
 
   .event {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 0;
-  }
-
-  .event-name {
     flex: 1;
-    padding: 2px 4px;
-    font-size: 13px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 4px 6px;
+    font-size: 12px;
     font-weight: 600;
+    white-space: nowrap;
+    color: var(--muted);
   }
 
-  .event.hidden .swatch {
-    opacity: 0.55;
+  .event.on {
+    color: var(--text);
+    border-color: var(--event);
+    background: color-mix(in srgb, var(--event) 22%, transparent);
   }
 
-  .swatch.fixed {
-    cursor: default;
+  .event :global(svg) {
+    color: var(--event);
   }
 
-  .swatch.fixed:hover {
-    outline: none;
+  .event .count {
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
   }
 
   .swatch {
