@@ -4,6 +4,7 @@
   import { api, events, type ChatLine, type Line, type Vod } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
+  import Spinner from "./Spinner.svelte";
   import Timeline from "./Timeline.svelte";
   import { layers } from "./layers.svelte";
   import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
@@ -59,29 +60,35 @@
 
   let root: HTMLDivElement;
 
-  // Showing or hiding chat changes every row's height; keep the line at the
-  // top of the view where it was, rather than jumping to another time.
-  function toggleChat() {
-    const scroller = root.closest<HTMLElement>(".body");
+  // Makes `change`, keeping the line at the top of the view where it was:
+  // showing or hiding chat changes every row's height, and chat arriving while
+  // it's fetched grows rows above the view (Kick's fills in from the end).
+  // WebKit has no scroll anchoring of its own (`overflow-anchor`).
+  function keepPlace(change: () => void) {
+    const scroller = root?.closest<HTMLElement>(".body");
     // The view starts below the header, which stays at the top.
     const top = head?.getBoundingClientRect().bottom ?? 0;
     // The first line that starts in view: one cut off at the top may shrink out of sight.
-    const anchor = [...root.querySelectorAll<HTMLElement>(".line[data-start]")].find(
-      (el) => el.getBoundingClientRect().top >= top,
-    );
+    const anchor = root
+      ? [...root.querySelectorAll<HTMLElement>(".line[data-start]")].find((el) => el.getBoundingClientRect().top >= top)
+      : undefined;
     const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
     // Read now: rows are keyed by position, so after the change this element may hold another line.
     const start = anchor?.dataset.start;
     // Applied at once, so the rows are measured as they now are.
-    flushSync(() => (chatOpen = !chatOpen));
+    flushSync(change);
+    if (!scroller || start === undefined) return;
+    const same = root.querySelector<HTMLElement>(`.line[data-start="${start}"]`);
+    if (same) scroller.scrollTop += same.getBoundingClientRect().top - top - offset;
+  }
+
+  function toggleChat() {
+    keepPlace(() => (chatOpen = !chatOpen));
     try {
       localStorage.setItem(CHAT_OPEN, String(chatOpen));
     } catch {
       // Not remembered, which is fine.
     }
-    if (!scroller || start === undefined) return;
-    const same = root.querySelector<HTMLElement>(`.line[data-start="${start}"]`);
-    if (same) scroller.scrollTop += same.getBoundingClientRect().top - top - offset;
   }
 
   // Depends only on which VOD and its chat status (both derived, so they change
@@ -98,11 +105,38 @@
       chat = [];
     }
     chatError = null;
-    if (status !== "done") return;
+    // While it's fetched, what's arrived so far (it's saved a batch at a time).
+    if (status !== "done" && status !== "pending") return;
     api.chat(id).then(
-      (c) => mine === chatSeq && (chat = c),
+      (c) => mine === chatSeq && keepPlace(() => (chat = c)),
       (e) => mine === chatSeq && (chatError = String(e)),
     );
+  });
+
+  // Each saved batch, at most this often: a busy chat saves a batch a second,
+  // and every reload lays the rows out again.
+  const RELOAD_EVERY = 1500;
+  $effect(() => {
+    const id = vodId;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = 0;
+    const reload = () => {
+      timer = undefined;
+      last = Date.now();
+      const mine = ++chatSeq;
+      api.chat(id).then(
+        (c) => mine === chatSeq && keepPlace(() => (chat = c)),
+        () => {},
+      );
+    };
+    const unlisten = events.chatSaved((vid) => {
+      if (vid !== id || timer) return;
+      timer = setTimeout(reload, Math.max(0, RELOAD_EVERY - (Date.now() - last)));
+    });
+    return () => {
+      clearTimeout(timer);
+      void unlisten.then((u) => u());
+    };
   });
 
   $effect(() => {
@@ -321,7 +355,8 @@
     <p class="status muted">
       <span class="eyebrow">Transcript</span>
       {#if vod.status === "transcribing"}
-        <span class="sep">·</span>{Math.round(vod.progress * 100)}% done; new lines appear as they're produced
+        <span class="sep">·</span><Spinner label="Transcribing" />
+        {Math.round(vod.progress * 100)}% done; new lines appear as they're produced
       {:else if lines.length > 0}
         <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
       {/if}
@@ -330,7 +365,10 @@
       <div class="chat-head">
         <span class="muted chat-status">
           {#if vod.chat === "pending"}
-            Fetching chat{chatProgress !== null ? ` · ${Math.round(chatProgress * 100)}%` : "…"}
+            <Spinner label="Fetching chat" />
+            Fetching chat{chatProgress !== null ? ` · ${Math.round(chatProgress * 100)}%` : "…"}{chat.length
+              ? ` · ${chat.length.toLocaleString()} so far`
+              : ""}
           {:else if vod.chat === "none"}
             No chat replay
           {:else if vod.chat === "failed"}

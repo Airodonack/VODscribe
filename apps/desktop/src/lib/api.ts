@@ -208,6 +208,8 @@ export const events = {
   /** How far a VOD's chat fetch is, 0..1. */
   chatProgress: (cb: (id: number, fraction: number) => void) =>
     listen<[number, number]>("chat-progress", (e) => cb(...e.payload)),
+  /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
+  chatSaved: (cb: (id: number) => void) => listen<number>("chat-saved", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

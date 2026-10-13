@@ -86,9 +86,9 @@
         if (half > 0) ctx.fillRect(mid - half, i * step, half * 2, Math.max(1, step - 0.5));
       });
     };
-    // With layers on, all of chat steps back to gray beneath them.
+    // With layers or events on, all of chat steps back to gray beneath them.
     const style = getComputedStyle(canvas);
-    draw(levels, layerLevels.length ? style.borderTopColor : style.color);
+    draw(levels, layerLevels.length || eventMoments ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
     if (eventMoments) {
       const { counts, values, topCount, topValue } = eventMoments;
