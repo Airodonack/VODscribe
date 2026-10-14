@@ -92,7 +92,9 @@
 
   // Each transcript line with the chat sent while it was being said: from its
   // start to the next line's. Chat before the first line gets a row of its own.
-  // Without a transcript yet, chat goes in rows of a minute each.
+  // Where there's no transcript (yet), chat goes in rows of a minute each: all
+  // of it before the first line arrives, and after the last line while the rest
+  // is transcribed, so the minimap can scroll to anywhere in it.
   const FAR = 1e12;
   interface Row {
     /** Unique among the rows, and kept as lines are added: a line's place in
@@ -103,20 +105,30 @@
     from: number;
     to: number;
   }
-  let rows = $derived.by((): Row[] => {
-    const out: Row[] = lines.map((line, i) => {
-      const to = lines[i + 1]?.start ?? FAR;
-      return { key: `line ${i} to ${to}`, line, from: line.start, to };
+  /** Rows of a minute each from minute `first` to the end of the VOD, the last one open-ended. */
+  function minuteRows(first: number): Row[] {
+    const minutes = Math.ceil((vod.duration ?? 0) / 60);
+    return Array.from({ length: Math.max(0, minutes - first) }, (_, k) => {
+      const m = first + k;
+      const to = m === minutes - 1 ? FAR : (m + 1) * 60;
+      return { key: `minute ${m} to ${to}`, line: null, from: m * 60, to };
     });
-    if (!showChat) return out;
-    if (lines.length === 0) {
-      const minutes = Math.ceil((vod.duration ?? 0) / 60);
-      return Array.from({ length: minutes }, (_, k) => {
-        const to = k === minutes - 1 ? FAR : (k + 1) * 60;
-        return { key: `minute ${k} to ${to}`, line: null, from: k * 60, to };
+  }
+  let rows = $derived.by((): Row[] => {
+    if (!showChat) {
+      return lines.map((line, i) => {
+        const to = lines[i + 1]?.start ?? FAR;
+        return { key: `line ${i} to ${to}`, line, from: line.start, to };
       });
     }
-    return [{ key: `before to ${lines[0].start}`, line: null, from: -FAR, to: lines[0].start }, ...out];
+    if (lines.length === 0) return minuteRows(0);
+    // The minute after the last line's starts the rows of minutes, if the VOD goes on that long.
+    const tail = minuteRows(Math.floor(lines[lines.length - 1].start / 60) + 1);
+    const out: Row[] = lines.map((line, i) => {
+      const to = lines[i + 1]?.start ?? tail[0]?.from ?? FAR;
+      return { key: `line ${i} to ${to}`, line, from: line.start, to };
+    });
+    return [{ key: `before to ${lines[0].start}`, line: null, from: -FAR, to: lines[0].start }, ...out, ...tail];
   });
   const keyOf = (row: Row) => row.key;
 
