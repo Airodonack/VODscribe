@@ -96,6 +96,7 @@
     else vods.unshift(vod);
   }
 
+  let reordering: Promise<void> = Promise.resolve();
   // VODs missing from `ids` (added since the reorder began) stay on top.
   function reorder(ids: number[]) {
     const listed = new Set(ids);
@@ -103,10 +104,14 @@
       ...vods.filter((v) => !listed.has(v.id)),
       ...ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined),
     ];
-    api.reorderVods(vods.map((v) => v.id)).catch(async (e) => {
-      console.error("reorder failed", e);
-      vods = await api.listVods();
-    });
+    // One save at a time, in order: holding Alt+↓ sends many.
+    const order = vods.map((v) => v.id);
+    reordering = reordering.then(() =>
+      api.reorderVods(order).catch(async (e) => {
+        console.error("reorder failed", e);
+        vods = await api.listVods();
+      }),
+    );
     runSearch();
   }
 

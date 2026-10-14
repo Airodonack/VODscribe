@@ -8,6 +8,10 @@ class AppSettings {
   value = $state<Settings | null>(null);
   error = $state<string | null>(null);
   #loading: Promise<void> | null = null;
+  // Saves go one after another, in the order made: each is sent on its own
+  // thread, so two quick changes could otherwise land older-last, and the
+  // next launch would miss the newer one.
+  #saving: Promise<void> = Promise.resolve();
 
   load(): Promise<void> {
     this.#loading ??= api.getSettings().then(
@@ -25,10 +29,14 @@ class AppSettings {
     await this.load();
     if (!this.value) return;
     this.value = { ...this.value, ...change };
-    await api.setSettings($state.snapshot(this.value)).then(
-      () => (this.error = null),
-      (e) => (this.error = String(e)),
+    const snapshot = $state.snapshot(this.value);
+    this.#saving = this.#saving.then(() =>
+      api.setSettings(snapshot).then(
+        () => void (this.error = null),
+        (e) => void (this.error = String(e)),
+      ),
     );
+    await this.#saving;
   }
 }
 
