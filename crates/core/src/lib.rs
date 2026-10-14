@@ -21,6 +21,7 @@ pub mod settings;
 pub mod thumbs;
 pub mod tools;
 pub mod transcript;
+pub mod twitch;
 pub mod word_emotes;
 
 use std::path::PathBuf;

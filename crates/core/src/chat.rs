@@ -145,7 +145,11 @@ pub fn fetch(
 ) -> Result<bool> {
     match info.platform.as_str() {
         "kick" => fetch_kick(info, store, cancel, &mut on_progress)?,
-        "twitch" => fetch_twitch(info, store, cancel, &mut on_progress)?,
+        "twitch" => {
+            if !fetch_twitch(info, store, cancel, &mut on_progress)? {
+                return Ok(false);
+            }
+        }
         "youtube" => {
             let yt_dlp = yt_dlp.context("The video downloader isn't installed yet.")?;
             if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store, cancel, &mut on_progress)? {
@@ -340,7 +344,7 @@ const RATE_LIMIT_WAIT: Duration = Duration::from_secs(5);
 static SLOW_DOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
 /// GETs or POSTs JSON, waiting and retrying a few times when rate limited.
-fn api(url: &str, body: Option<&Value>, headers: &[(&str, &str)], cancel: &AtomicBool) -> Result<Value> {
+pub(crate) fn api(url: &str, body: Option<&Value>, headers: &[(&str, &str)], cancel: &AtomicBool) -> Result<Value> {
     for attempt in 0.. {
         loop {
             if cancel.load(Ordering::Relaxed) {
@@ -606,21 +610,41 @@ const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { com
 /// A Twitch comments page: (id, message), and whether there are more.
 type TwitchPage = (Vec<(String, ChatMessage)>, bool);
 
+/// False when there's no chat replay: a clip whose broadcast Twitch no longer has.
 fn fetch_twitch(
     info: &VodInfo,
     store: &mut dyn ChatStore,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
-) -> Result<()> {
-    let id = info.platform_id.trim_start_matches('v');
-    let cheermotes = Cheermotes::for_video(id, cancel);
+) -> Result<bool> {
+    // A clip's chat is its broadcast's over the clip's stretch, at the clip's times.
+    let (id, span) = if crate::twitch::is_clip(&info.platform_id) {
+        let clip = crate::twitch::clip(&info.platform_id)?;
+        let Some((video, offset)) = clip.source else { return Ok(false) };
+        (video, Span { start: offset, duration: Some(clip.duration), end: Some(offset + clip.duration) })
+    } else {
+        let duration = info.duration.filter(|d| *d > 0.0);
+        (info.platform_id.trim_start_matches('v').to_string(), Span { start: 0.0, duration, end: None })
+    };
+    let cheermotes = Cheermotes::for_video(&id, cancel);
     let page = |offset: i64, stop: &AtomicBool| {
         let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
         parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)?, &cheermotes)
     };
-    let duration = info.duration.filter(|d| *d > 0.0);
-    twitch_into(store, duration, duration.map_or(1, slices_for), page, cancel, on_progress)?;
-    count_gift_bombs_once(store)
+    let slices = span.duration.map_or(1, slices_for);
+    twitch_into(store, span, slices, page, cancel, on_progress)?;
+    count_gift_bombs_once(store)?;
+    Ok(true)
+}
+
+/// The stretch of a broadcast to fetch the chat of: from `start` (seconds into
+/// it, which becomes 0 in what's saved), `duration` long if known, up to `end`
+/// (or on past the end, for a whole VOD).
+#[derive(Clone, Copy)]
+struct Span {
+    start: f64,
+    duration: Option<f64>,
+    end: Option<f64>,
 }
 
 /// Makes the lines of each saved gift bomb plain messages (see `GiftBombs`).
@@ -643,22 +667,24 @@ fn count_gift_bombs_once(store: &mut dyn ChatStore) -> Result<()> {
 /// page through their own.
 fn twitch_into(
     store: &mut dyn ChatStore,
-    duration: Option<f64>,
+    span: Span,
     slices: usize,
     page: impl Fn(i64, &AtomicBool) -> Result<TwitchPage> + Sync,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
 ) -> Result<()> {
-    // Slice i covers [from, to) in whole seconds; the last one runs on past the end.
+    // Slice i covers [from, to) in whole seconds of the broadcast; the last
+    // one runs on to the span's end, or past the VOD's.
+    let Span { start, duration, end } = span;
     let bounds = |i: usize| {
-        let at = |i: usize| duration.map_or(0.0, |d| (d * i as f64 / slices as f64).floor());
-        (at(i), if i + 1 == slices { f64::INFINITY } else { at(i + 1) })
+        let at = |i: usize| start + duration.map_or(0.0, |d| (d * i as f64 / slices as f64).floor());
+        (at(i), if i + 1 == slices { end.unwrap_or(f64::INFINITY) } else { at(i + 1) })
     };
     let positions = match store.resume()? {
         Some(p) if p.len() == slices => {
             for (i, &from) in p.iter().enumerate() {
                 if from != DONE_FORWARD {
-                    store.drop_range(from, bounds(i).1)?;
+                    store.drop_range(from - start, bounds(i).1 - start)?;
                 }
             }
             p
@@ -684,17 +710,17 @@ fn twitch_into(
             // of that second's messages; that's rare, and moving on keeps this finite.
             let next = if last > offset { last } else { offset + 1 };
             for (id, msg) in messages {
-                if msg.time < hi && seen.insert(id) {
-                    held.push(msg);
+                if msg.time >= lo && msg.time < hi && seen.insert(id) {
+                    held.push(ChatMessage { time: msg.time - start, ..msg });
                 }
             }
-            let progress = duration.map_or(0.0, |d| ((last as f64 - lo) / (hi.min(d) - lo)).clamp(0.0, 1.0));
+            let progress = duration.map_or(0.0, |d| ((last as f64 - lo) / (hi.min(start + d) - lo)).clamp(0.0, 1.0));
             if !more || next as f64 >= hi {
                 send(Fetched { slice, messages: held, position: DONE_FORWARD, progress: 1.0 });
                 return Ok(());
             }
             // Saved now only if before the next page's second, which that page brings again.
-            let (now, later) = held.into_iter().partition(|m| (m.time as i64) < next);
+            let (now, later) = held.into_iter().partition(|m| ((m.time + start) as i64) < next);
             held = later;
             send(Fetched { slice, messages: now, position: next as f64, progress });
             offset = next;
@@ -1420,17 +1446,47 @@ mod tests {
                     page(offset, stop)
                 }
             };
-            assert!(twitch_into(&mut store, Some(430.0), slices, failing, &no, &mut |_| {}).is_err());
+            assert!(
+                twitch_into(
+                    &mut store,
+                    Span { start: 0.0, duration: Some(430.0), end: None },
+                    slices,
+                    failing,
+                    &no,
+                    &mut |_| {}
+                )
+                .is_err()
+            );
             let partial = store.messages.len();
             assert!((1000..3000).contains(&partial), "{slices} slices: saved {partial} before failing");
             assert_eq!(store.positions.as_ref().map(Vec::len), Some(slices));
 
             // Carrying on ends with every message, once.
             let mut progress = Vec::new();
-            twitch_into(&mut store, Some(430.0), slices, page, &no, &mut |f| progress.push(f)).unwrap();
+            twitch_into(
+                &mut store,
+                Span { start: 0.0, duration: Some(430.0), end: None },
+                slices,
+                page,
+                &no,
+                &mut |f| progress.push(f),
+            )
+            .unwrap();
             assert_eq!(saved(&store), expected, "{slices} slices");
             assert_eq!(progress.last(), Some(&1.0));
         }
+
+        // A clip: 30 s from 100 s in, at the clip's own times.
+        let mut store = MemoryChat::default();
+        let clip = Span { start: 100.0, duration: Some(30.0), end: Some(130.0) };
+        twitch_into(&mut store, clip, 1, page, &no, &mut |_| {}).unwrap();
+        let in_clip: Vec<ChatMessage> = all
+            .iter()
+            .filter(|(_, m)| (100.0..130.0).contains(&m.time))
+            .map(|(_, m)| ChatMessage { time: m.time - 100.0, ..m.clone() })
+            .collect();
+        assert_eq!(saved(&store), saved(&MemoryChat { messages: in_clip, positions: None }));
+        assert!(store.messages.iter().all(|m| (0.0..30.0).contains(&m.time)));
     }
 
     #[test]
@@ -1691,7 +1747,15 @@ mod tests {
         if std::env::var("TWITCH_FULL").is_ok() {
             let begun = Instant::now();
             let mut store = MemoryChat::default();
-            twitch_into(&mut store, Some(29014.0), 4, page, &AtomicBool::new(false), &mut |_| {}).unwrap();
+            twitch_into(
+                &mut store,
+                Span { start: 0.0, duration: Some(29014.0), end: None },
+                4,
+                page,
+                &AtomicBool::new(false),
+                &mut |_| {},
+            )
+            .unwrap();
             count_gift_bombs_once(&mut store).unwrap();
             let gifts = store.messages.iter().filter(|m| m.kind == Kind::Gift).count();
             eprintln!(
@@ -1711,7 +1775,14 @@ mod tests {
                 })
             };
             let mut store = MemoryChat::default();
-            let _ = twitch_into(&mut store, Some(29014.0), slices, page, &cancel, &mut |_| {});
+            let _ = twitch_into(
+                &mut store,
+                Span { start: 0.0, duration: Some(29014.0), end: None },
+                slices,
+                page,
+                &cancel,
+                &mut |_| {},
+            );
             timer.join().unwrap();
             eprintln!("Twitch, {slices} slice(s): {} messages in 90 s", store.messages.len());
         }

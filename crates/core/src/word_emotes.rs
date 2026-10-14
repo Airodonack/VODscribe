@@ -216,6 +216,9 @@ fn video_key(info: &VodInfo) -> Option<String> {
 /// 7TV goes by, rather than the channel id its chat is under) from its page name.
 fn channel_of(info: &VodInfo) -> Result<Channel> {
     let id = match info.platform.as_str() {
+        "twitch" if crate::twitch::is_clip(&info.platform_id) => {
+            crate::twitch::clip(&info.platform_id)?.broadcaster.context("Twitch didn't say whose clip this is.")?
+        }
         "twitch" => {
             let video = info.platform_id.trim_start_matches('v');
             let body =

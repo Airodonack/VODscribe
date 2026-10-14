@@ -172,6 +172,7 @@ pub fn run() {
             chats::chat_matches,
             setup::update_yt_dlp,
             vods::kick_stream,
+            vods::twitch_clip_video,
             setup::get_settings,
             setup::set_settings,
             setup::gpu_status,

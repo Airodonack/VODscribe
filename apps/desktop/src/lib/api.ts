@@ -203,6 +203,8 @@ export const api = {
   search: (query: string, filter: SearchFilter) =>
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   /** The transcript's lines; with `after`, only those starting after it. */
+  /** A URL that plays Twitch clip `slug`'s video, signed for a while. */
+  twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
   transcript: (vodId: number, after?: number) => invoke<Line[]>("transcript", { vodId, after }),
   /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its
    *  events; `events: false` leaves those out (`events` is then null). */

@@ -336,6 +336,18 @@ pub(crate) async fn transcript(app: AppHandle, vod_id: i64, after: Option<f64>) 
     Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
 }
 
+/// A URL that plays Twitch clip `slug`'s video (see `vodscribe_core::twitch`).
+#[tauri::command]
+pub(crate) async fn twitch_clip_video(slug: String) -> CmdResult<String> {
+    if !vodscribe_core::twitch::is_clip(&slug) {
+        return Err("not a Twitch clip".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || vodscribe_core::twitch::clip_video(&slug))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
 /// Playable quality levels for a Kick VOD; Kick has no embeddable VOD player.
 #[tauri::command]
 pub(crate) async fn kick_stream(url: String) -> CmdResult<Vec<vodscribe_core::kick::Variant>> {

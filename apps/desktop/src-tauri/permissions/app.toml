@@ -38,6 +38,7 @@ permissions = [
   "allow-chat-matches",
   "allow-update-yt-dlp",
   "allow-kick-stream",
+  "allow-twitch-clip-video",
   "allow-get-settings",
   "allow-set-settings",
   "allow-gpu-status",

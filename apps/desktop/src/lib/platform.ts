@@ -31,6 +31,9 @@ export function twitchTime(seconds: number): string {
 /** yt-dlp prefixes Twitch VOD ids with "v"; Twitch's URLs and player don't. */
 export const twitchId = (vod: Vod) => vod.platform_id.replace(/^v/, "");
 
+/** A Twitch clip goes by its slug, where a VOD's id is a number (crates/core twitch.rs `is_clip`). */
+export const isTwitchClip = (vod: Vod) => vod.platform === "twitch" && !/^v?\d+$/.test(vod.platform_id);
+
 export const platformName: Record<string, string> = {
   youtube: "YouTube",
   twitch: "Twitch",
@@ -45,6 +48,8 @@ export function watchUrl(vod: Vod, time: number): string {
     case "youtube":
       return `https://www.youtube.com/watch?v=${encodeURIComponent(vod.platform_id)}&t=${t}s`;
     case "twitch":
+      // A clip's page has no time to start from.
+      if (isTwitchClip(vod)) return vod.url;
       return `https://www.twitch.tv/videos/${twitchId(vod)}?t=${twitchTime(t)}`;
     default: {
       const url = new URL(vod.url);

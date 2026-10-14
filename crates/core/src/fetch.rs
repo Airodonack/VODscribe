@@ -47,9 +47,13 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
     let published = s("upload_date")
         .filter(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
         .map(|d| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
+    let extractor = s("extractor_key").unwrap_or_default();
+    // A Twitch clip's "id" is a number of its own, which Twitch's VOD lookups
+    // would take for a VOD's; it goes by its slug instead (see `twitch`).
+    let id = if extractor == "TwitchClips" { s("display_id").or_else(|| s("id")) } else { s("id") };
     Ok(VodInfo {
-        platform: platform_of(&s("extractor_key").unwrap_or_default()),
-        platform_id: s("id").context("yt-dlp returned no video id")?,
+        platform: platform_of(&extractor),
+        platform_id: id.context("yt-dlp returned no video id")?,
         url: s("webpage_url").or_else(|| s("original_url")).context("yt-dlp returned no URL")?,
         title: s("title").unwrap_or_else(|| "Untitled".into()),
         channel: s("channel").or_else(|| s("uploader")),
@@ -363,6 +367,15 @@ mod tests {
         assert_eq!(info.channel.as_deref(), Some("someone"));
         assert_eq!(info.published.as_deref(), Some("2026-01-02"));
         assert!(parse_info(&serde_json::json!({"_type": "playlist"})).is_err());
+        let clip = serde_json::json!({
+            "id": "1431111279", "display_id": "CoweringRudeDiamondMikeHogu-somPr5Um-WHGc4ga",
+            "extractor_key": "TwitchClips", "webpage_url": "https://www.twitch.tv/crelly/clip/CoweringRudeDiamondMikeHogu-somPr5Um-WHGc4ga"
+        });
+        let clip = parse_info(&clip).unwrap();
+        assert_eq!(
+            (clip.platform.as_str(), clip.platform_id.as_str()),
+            ("twitch", "CoweringRudeDiamondMikeHogu-somPr5Um-WHGc4ga")
+        );
         // Eight bytes, but not eight digits: no date, and no panic.
         for date in ["202é102", "2026-1-2"] {
             let json = serde_json::json!({ "id": "abc", "webpage_url": "https://www.twitch.tv/videos/abc", "upload_date": date });

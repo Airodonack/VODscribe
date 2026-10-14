@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-twitch-clip-video"
+description = "Enables the twitch_clip_video command without any pre-configured scope."
+commands.allow = ["twitch_clip_video"]
+
+[[permission]]
+identifier = "deny-twitch-clip-video"
+description = "Denies the twitch_clip_video command without any pre-configured scope."
+commands.deny = ["twitch_clip_video"]

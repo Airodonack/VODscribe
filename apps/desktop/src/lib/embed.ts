@@ -5,7 +5,7 @@
 // seek(), so jumping between timestamps doesn't reload the player.
 
 import { api, type Vod } from "./api";
-import { twitchId, twitchTime } from "./platform";
+import { isTwitchClip, twitchId, twitchTime } from "./platform";
 
 export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
@@ -142,7 +142,14 @@ const TWITCH_PAUSE = 2;
 const TWITCH_PLAY = 3;
 const TWITCH_SEEK = 4;
 
-function twitch(el: HTMLElement, vod: Vod, time: number, play: boolean): Promise<EmbeddedPlayer> {
+function twitch(
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string | null) => void,
+): Promise<EmbeddedPlayer> {
+  if (isTwitchClip(vod)) return twitchClip(el, vod, time, play, onerror);
   const params = new URLSearchParams({
     video: twitchId(vod),
     // Twitch refuses to play unless `parent` names the embedding page's host.
@@ -255,6 +262,28 @@ async function kick(
       hls.loadSource(pick.url);
       hls.attachMedia(video);
       return () => hls.destroy();
+    },
+    onerror,
+  );
+}
+
+/** A Twitch clip: its video, in a plain <video>, which (unlike Twitch's clip
+ *  embed) can be told where to play from. */
+async function twitchClip(
+  el: HTMLElement,
+  vod: Vod,
+  time: number,
+  play: boolean,
+  onerror?: (message: string | null) => void,
+): Promise<EmbeddedPlayer> {
+  const src = await api.twitchClipVideo(vod.platform_id);
+  return videoPlayer(
+    el,
+    time,
+    play,
+    (video) => {
+      video.src = src;
+      video.currentTime = time;
     },
     onerror,
   );
