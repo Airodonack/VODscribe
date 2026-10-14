@@ -11,7 +11,6 @@
     overlays = [],
     events = [],
     eventColor = "#888888",
-    eventStyle = "bars",
     onseek,
   }: {
     /** When each event happened (chat messages, or lines when there's no chat), in seconds. */
@@ -23,12 +22,10 @@
     label: string;
     /** Timeline layers drawn over it, each scaled to its own peak so its spikes stand out. */
     overlays?: { color: string; times: number[] }[];
-    /** Chat events, with about what each was worth: full-width bars across the
-     *  strip, or dots in a lane of their own at the right edge. Either way a
-     *  moment is as opaque as the money it saw, next to the VOD's biggest. */
+    /** Chat events, with about what each was worth: bars across the whole
+     *  strip, each moment as opaque as the money it saw, next to the VOD's biggest. */
     events?: { time: number; value: number }[];
     eventColor?: string;
-    eventStyle?: "bars" | "dots";
     onseek: (time: number) => void;
   } = $props();
 
@@ -62,7 +59,7 @@
       counts[i]++;
       values[i] += e.value;
     }
-    return { counts, values, topCount: Math.max(...counts, 1), topValue: Math.max(...values, 0.01) };
+    return { counts, values, topValue: Math.max(...values, 0.01) };
   });
   /** How opaque a moment worth `value` is: the biggest is solid, the least still shows. */
   const strength = (value: number, top: number) => 0.22 + 0.78 * Math.min(1, value / top);
@@ -75,9 +72,7 @@
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    // Dots get a lane of their own; the waveforms keep the rest.
-    const lane = eventStyle === "dots" && eventMoments ? 9 : 0;
-    const mid = (width - lane) / 2;
+    const mid = width / 2;
     const step = height / levels.length;
     const draw = (levels: Float64Array, color: string) => {
       ctx.fillStyle = color;
@@ -91,20 +86,13 @@
     draw(levels, layerLevels.length || eventMoments ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
     if (eventMoments) {
-      const { counts, values, topCount, topValue } = eventMoments;
+      const { counts, values, topValue } = eventMoments;
       ctx.fillStyle = eventColor;
       counts.forEach((count, i) => {
         if (count <= 0) return;
+        // A bar across the whole strip, on top of the rest.
         ctx.globalAlpha = strength(values[i], topValue);
-        if (lane) {
-          // A dot, bigger the more happened there.
-          ctx.beginPath();
-          ctx.arc(width - lane / 2, (i + 0.5) * step, 1.4 + 2 * Math.sqrt(count / topCount), 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          // A bar across the whole strip, on top of the rest.
-          ctx.fillRect(0, i * step, width, Math.max(1.5, step - 0.5));
-        }
+        ctx.fillRect(0, i * step, width, Math.max(1.5, step - 0.5));
       });
       ctx.globalAlpha = 1;
     }

@@ -146,18 +146,6 @@
             <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
           </button>
         {/each}
-        {#if layers.events.length > 0}
-          <div class="style" role="group" aria-label="Show events as">
-            <span class="muted">Show as</span>
-            {#each ["bars", "dots"] as const as style (style)}
-              <button
-                class:on={layers.eventStyle === style}
-                aria-pressed={layers.eventStyle === style}
-                onclick={() => layers.setEventStyle(style)}>{style === "bars" ? "Bars" : "Dots"}</button
-              >
-            {/each}
-          </div>
-        {/if}
       </section>
       {#each mine as layer (layer.id)}
         {@const isShown = shown.includes(layer)}
@@ -326,27 +314,6 @@
     font-weight: 600;
     white-space: nowrap;
     color: var(--muted);
-  }
-
-  .style {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 4px;
-    width: 100%;
-    font-size: 11px;
-  }
-
-  .style button {
-    padding: 1px 8px;
-    font-size: 11px;
-    color: var(--muted);
-  }
-
-  .style button.on {
-    color: var(--text);
-    border-color: var(--accent);
-    background: var(--accent-soft);
   }
 
   .event.on {

@@ -462,7 +462,6 @@
           {overlays}
           events={eventMarks}
           eventColor={eventColor(vod.platform)}
-          eventStyle={layers.eventStyle}
           onseek={seek}
         />
       </div>
