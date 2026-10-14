@@ -162,8 +162,8 @@ pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i6
 }
 
 #[tauri::command]
-pub(crate) async fn list_vods(state: State<'_, AppState>) -> CmdResult<Vec<Vod>> {
-    state.db.lock().unwrap().vods().map_err(err)
+pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
+    crate::chats::with_reads(app, |db| db.vods()).await
 }
 
 #[tauri::command]
@@ -185,7 +185,10 @@ async fn erase_in_parts(
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
         let state = handle.state::<AppState>();
-        while part(&state.db.lock().unwrap())? > 0 {}
+        // Letting go between parts, so what's waiting gets its turn.
+        while part(&state.db.lock().unwrap())? > 0 {
+            std::thread::yield_now();
+        }
         Ok(())
     })
     .await
@@ -309,12 +312,8 @@ pub(crate) struct SearchResponse {
 }
 
 #[tauri::command]
-pub(crate) async fn search(
-    state: State<'_, AppState>,
-    query: String,
-    filter: SearchFilter,
-) -> CmdResult<SearchResponse> {
-    let r = state.db.lock().unwrap().search(&query, &filter, 500).map_err(err)?;
+pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) -> CmdResult<SearchResponse> {
+    let r = crate::chats::with_reads(app, move |db| db.search(&query, &filter, 500)).await?;
     Ok(SearchResponse { hits: r.hits, truncated: r.truncated })
 }
 
@@ -325,8 +324,8 @@ pub(crate) struct Line {
 }
 
 #[tauri::command]
-pub(crate) async fn transcript(state: State<'_, AppState>, vod_id: i64) -> CmdResult<Vec<Line>> {
-    let lines = state.db.lock().unwrap().lines(vod_id).map_err(err)?;
+pub(crate) async fn transcript(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Line>> {
+    let lines = crate::chats::with_reads(app, move |db| db.lines(vod_id)).await?;
     Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
 }
 

@@ -342,6 +342,17 @@ impl Db {
         Self::open_inner(path).with_context(|| format!("open the library at {}", path.display()))
     }
 
+    /// A second connection to the library at `path`, for reading only, opened
+    /// after `open` (which makes and upgrades it). The library is in WAL mode,
+    /// so reads here never wait for writes on the other connection (chat being
+    /// saved, a VOD being deleted), and the other way around.
+    pub fn open_reader(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open the library at {} for reading", path.display()))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { conn })
+    }
+
     fn open_inner(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -1210,6 +1221,23 @@ mod tests {
             amount: None,
             event_time: None,
         }
+    }
+
+    #[test]
+    fn reads_dont_wait_for_writes() {
+        let dir = crate::TempDir::new("reader");
+        let path = dir.join("library.sqlite");
+        let db = Db::open(&path).unwrap();
+        db.add_vod(&info("a")).unwrap();
+        let reader = Db::open_reader(&path).unwrap();
+        // A write under way on the other connection, not yet committed.
+        db.conn.execute_batch("BEGIN IMMEDIATE; DELETE FROM vods;").unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(reader.vods().unwrap().len(), 1, "what was there before the write");
+        assert!(started.elapsed() < std::time::Duration::from_millis(500), "didn't wait for the writer");
+        db.conn.execute_batch("COMMIT;").unwrap();
+        assert!(reader.vods().unwrap().is_empty(), "and the write once it's done");
+        assert!(reader.add_vod(&info("b")).is_err(), "it only reads");
     }
 
     #[test]

@@ -25,6 +25,9 @@ use worker::Worker;
 struct AppState {
     paths: Paths,
     db: Mutex<Db>,
+    /// A read-only connection for what the views ask for (search, the
+    /// transcript, chat), which never waits for the writes on `db`.
+    reads: Mutex<Db>,
     worker: Worker,
     /// First-run setup's downloads.
     setup: setup::Install,
@@ -74,6 +77,7 @@ pub fn run() {
                 model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
             }
             let db = Mutex::new(Db::open(&paths.db())?);
+            let reads = Mutex::new(Db::open_reader(&paths.db())?);
             let worker = Worker::start(app.handle().clone(), paths.clone())?;
             let handle = app.handle().clone();
             let media = media::MediaServer::start(move |id| {
@@ -84,6 +88,7 @@ pub fn run() {
             app.manage(AppState {
                 paths,
                 db,
+                reads,
                 worker,
                 setup: setup::Install::new(),
                 gpu: setup::Install::new(),
