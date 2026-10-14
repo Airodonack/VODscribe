@@ -115,16 +115,17 @@ impl ChatMessage {
 /// shown while the rest arrives, and where the fetch has got to, so one that's
 /// interrupted (quitting, a network error) carries on from there.
 pub trait ChatStore {
-    /// Where an interrupted fetch got to, if one did (a position `save` was given).
-    fn resume(&mut self) -> Result<Option<f64>>;
+    /// Where an interrupted fetch got to, if one did: each slice's position,
+    /// as `save` was last given them (see `in_slices`).
+    fn resume(&mut self) -> Result<Option<Vec<f64>>>;
     /// Forgets every saved message and position, to start over.
     fn clear(&mut self) -> Result<()>;
-    /// Forgets the saved messages from `time` (seconds into the VOD) on.
-    fn drop_from(&mut self, time: f64) -> Result<()>;
-    /// Saves `messages` and that the fetch has reached `position`, together.
-    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()>;
-    /// The saved subs, as (id, message), for `resubs_announced`.
-    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>>;
+    /// Forgets the saved messages from `from` up to `to` (seconds into the VOD).
+    fn drop_range(&mut self, from: f64, to: f64) -> Result<()>;
+    /// Saves `messages` and that the fetch's slices have reached `positions`, together.
+    fn save(&mut self, messages: &[ChatMessage], positions: &[f64]) -> Result<()>;
+    /// The saved messages of `kind`, as (id, message), in time order.
+    fn of_kind(&mut self, kind: Kind) -> Result<Vec<(i64, ChatMessage)>>;
     /// Makes these saved messages plain messages.
     fn demote(&mut self, ids: &[i64]) -> Result<()>;
 }
@@ -160,34 +161,41 @@ pub fn fetch(
 #[derive(Default, Debug)]
 pub struct MemoryChat {
     pub messages: Vec<ChatMessage>,
-    pub position: Option<f64>,
+    pub positions: Option<Vec<f64>>,
 }
 
 impl ChatStore for MemoryChat {
-    fn resume(&mut self) -> Result<Option<f64>> {
-        Ok(self.position)
+    fn resume(&mut self) -> Result<Option<Vec<f64>>> {
+        Ok(self.positions.clone())
     }
 
     fn clear(&mut self) -> Result<()> {
         self.messages.clear();
-        self.position = None;
+        self.positions = None;
         Ok(())
     }
 
-    fn drop_from(&mut self, time: f64) -> Result<()> {
-        self.messages.retain(|m| m.time < time);
+    fn drop_range(&mut self, from: f64, to: f64) -> Result<()> {
+        self.messages.retain(|m| m.time < from || m.time >= to);
         Ok(())
     }
 
-    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()> {
+    fn save(&mut self, messages: &[ChatMessage], positions: &[f64]) -> Result<()> {
         self.messages.extend_from_slice(messages);
-        self.position = Some(position);
+        self.positions = Some(positions.to_vec());
         Ok(())
     }
 
-    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>> {
-        let subs = self.messages.iter().enumerate().filter(|(_, m)| m.kind == Kind::Sub);
-        Ok(subs.map(|(i, m)| (i as i64, m.clone())).collect())
+    fn of_kind(&mut self, kind: Kind) -> Result<Vec<(i64, ChatMessage)>> {
+        let mut found: Vec<_> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.kind == kind)
+            .map(|(i, m)| (i as i64, m.clone()))
+            .collect();
+        found.sort_by(|a, b| a.1.time.total_cmp(&b.1.time));
+        Ok(found)
     }
 
     fn demote(&mut self, ids: &[i64]) -> Result<()> {
@@ -213,10 +221,10 @@ impl Batch {
     }
 
     /// Saves what's collected if there's enough or it's been a while (or `now`),
-    /// with `position`, which must be where the fetch carries on after them.
-    fn save(&mut self, store: &mut dyn ChatStore, position: f64, now: bool) -> Result<()> {
+    /// with `positions`, which must be where the fetch carries on after them.
+    fn save(&mut self, store: &mut dyn ChatStore, positions: &[f64], now: bool) -> Result<()> {
         if now || self.messages.len() >= Self::SIZE || self.since.elapsed() >= Self::EVERY {
-            store.save(&self.messages, position)?;
+            store.save(&self.messages, positions)?;
             self.messages.clear();
             self.since = std::time::Instant::now();
         }
@@ -224,16 +232,125 @@ impl Batch {
     }
 }
 
+// Kick's and Twitch's chats come a page at a time, one request after another:
+// a busy six-hour chat is thousands of pages. So a long VOD's chat is fetched
+// in slices of its time at once, each paging through its own stretch.
+
+/// At most this many slices at once, each this long at least.
+const SLICES: usize = 4;
+const MIN_SLICE: f64 = 600.0;
+
+/// How many slices a `duration`-second VOD's chat is fetched in.
+fn slices_for(duration: f64) -> usize {
+    ((duration / MIN_SLICE) as usize).clamp(1, SLICES)
+}
+
+/// A slice's position once it's done: past every other, in the direction it reads.
+const DONE_FORWARD: f64 = f64::MAX;
+const DONE_BACKWARD: f64 = f64::MIN;
+
+/// What a slice's fetch hands over: messages, and where it has got to. Every
+/// message it has fetched up to that position is in this or an earlier one.
+struct Fetched {
+    slice: usize,
+    messages: Vec<ChatMessage>,
+    position: f64,
+    /// How much of its stretch is done, 0..1.
+    progress: f64,
+}
+
+/// Runs `fetch_slice(slice, from, stop, send)` for each slice at once, each on
+/// its own thread from its position in `positions`, and saves what they send to
+/// `store` in batches with every slice's position, so a fetch interrupted
+/// anywhere carries on from where each slice got to. A slice failing (or
+/// `cancel`) stops the others; what arrived is saved either way.
+fn in_slices(
+    store: &mut dyn ChatStore,
+    mut positions: Vec<f64>,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(f64),
+    fetch_slice: impl Fn(usize, f64, &AtomicBool, &dyn Fn(Fetched)) -> Result<()> + Sync,
+) -> Result<()> {
+    let n = positions.len();
+    let stop = AtomicBool::new(false);
+    let (tx, rx) = std::sync::mpsc::channel::<Fetched>();
+    // A slice done before (a fetch carried on) sends nothing more.
+    let mut progress: Vec<f64> =
+        positions.iter().map(|&p| if p == DONE_FORWARD || p == DONE_BACKWARD { 1.0 } else { 0.0 }).collect();
+    let mut batch = Batch::new();
+    let results = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..n)
+            .map(|i| {
+                let (tx, from, stop, fetch_slice) = (tx.clone(), positions[i], &stop, &fetch_slice);
+                scope.spawn(move || {
+                    let result = fetch_slice(i, from, stop, &|f| {
+                        let _ = tx.send(f);
+                    });
+                    if result.is_err() {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                    result
+                })
+            })
+            .collect();
+        drop(tx);
+        let mut saved = Ok(());
+        loop {
+            match rx.recv_timeout(crate::tools::STOP_POLL) {
+                Ok(f) => {
+                    positions[f.slice] = f.position;
+                    progress[f.slice] = f.progress;
+                    batch.messages.extend(f.messages);
+                    on_progress(progress.iter().sum::<f64>() / n as f64);
+                    if saved.is_ok() {
+                        saved = batch.save(store, &positions, false);
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if cancel.load(Ordering::Relaxed) || saved.is_err() {
+                stop.store(true, Ordering::Relaxed);
+            }
+        }
+        let mut results: Vec<Result<()>> = threads
+            .into_iter()
+            .map(|t| t.join().unwrap_or_else(|_| Err(anyhow::anyhow!("a chat fetch crashed"))))
+            .collect();
+        results.push(saved.and_then(|()| batch.save(store, &positions, true)));
+        results
+    });
+    if cancel.load(Ordering::Relaxed) {
+        return Err(crate::Canceled.into());
+    }
+    // The slice that failed, rather than the ones it stopped.
+    let mut errors: Vec<_> = results.into_iter().filter_map(Result::err).collect();
+    match errors.iter().position(|e| !crate::is_canceled(e)) {
+        Some(i) => Err(errors.swap_remove(i)),
+        None => errors.pop().map_or(Ok(()), Err),
+    }
+}
+
 /// Kick and Twitch API pages are a few tens of KB.
 const PAGE_MAX_BYTES: u64 = 4 << 20;
 /// How long to wait before asking again after the site says to slow down.
 const RATE_LIMIT_WAIT: Duration = Duration::from_secs(5);
+/// Until when every request waits, after one was told to slow down: slices
+/// fetched at once back off together.
+static SLOW_DOWN: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
 /// GETs or POSTs JSON, waiting and retrying a few times when rate limited.
 fn api(url: &str, body: Option<&Value>, headers: &[(&str, &str)], cancel: &AtomicBool) -> Result<Value> {
     for attempt in 0.. {
-        if cancel.load(Ordering::Relaxed) {
-            return Err(crate::Canceled.into());
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(crate::Canceled.into());
+            }
+            let until = *SLOW_DOWN.lock().unwrap();
+            match until.map(|t| t.saturating_duration_since(std::time::Instant::now())) {
+                Some(wait) if !wait.is_zero() => std::thread::sleep(wait.min(crate::tools::STOP_POLL)),
+                _ => break,
+            }
         }
         let agent = crate::net::agent();
         let resp = match body {
@@ -255,7 +372,7 @@ fn api(url: &str, body: Option<&Value>, headers: &[(&str, &str)], cancel: &Atomi
         let mut resp = resp.with_context(|| format!("contact {}", host(url)))?;
         let status = resp.status().as_u16();
         if status == 429 && attempt < 5 {
-            std::thread::sleep(RATE_LIMIT_WAIT);
+            *SLOW_DOWN.lock().unwrap() = Some(std::time::Instant::now() + RATE_LIMIT_WAIT);
             continue;
         }
         if status != 200 {
@@ -275,8 +392,13 @@ fn host(url: &str) -> &str {
 // of 25. The history is the whole channel's, so the VOD's span is worked out
 // from when it started (see `kick::chat_origin`) and its length.
 
-// Saved as it goes, with the next page's cursor as the position: a page holds
-// only messages older than its cursor, so carrying on from it repeats none.
+// Each slice pages back from its end, saved as it goes with its next page's
+// cursor as its position: a page holds only messages older than its cursor, so
+// carrying on from it repeats none.
+
+/// A Kick history page: (Unix time, id, message with time 0, and for a
+/// celebration, when its sub happened), and the cursor for the page before it.
+type KickPage = (Vec<(f64, String, ChatMessage, Option<f64>)>, Option<i64>);
 
 fn fetch_kick(
     info: &VodInfo,
@@ -286,65 +408,75 @@ fn fetch_kick(
 ) -> Result<()> {
     let origin = kick::chat_origin(&info.platform_id)?;
     let duration = info.duration.filter(|d| *d > 0.0).context("Kick didn't say how long this VOD is.")?;
-    let page = |cursor: i64| {
+    let page = |cursor: i64, stop: &AtomicBool| {
         let url = format!("https://web.kick.com/api/v1/chat/{}/history?cursor={cursor}", origin.channel);
-        parse_kick_page(&api(&url, None, &[], cancel)?)
+        parse_kick_page(&api(&url, None, &[], stop)?)
     };
-    kick_into(store, origin.start, duration, page, on_progress)
+    kick_into(store, origin.start, duration, slices_for(duration), page, cancel, on_progress)?;
+    let announced = resubs_announced(&store.of_kind(Kind::Sub)?);
+    store.demote(&announced)
 }
 
-/// Pages back through Kick's history into `store` (see `fetch_kick`); `page`
-/// gets the page before a cursor. Apart, so tests can page through their own.
-#[allow(clippy::type_complexity)]
+/// Pages back through Kick's history into `store` in `slices` (see
+/// `fetch_kick`); `page` gets the page before a cursor. Apart, so tests can
+/// page through their own.
 fn kick_into(
     store: &mut dyn ChatStore,
     start: f64,
     duration: f64,
-    mut page: impl FnMut(i64) -> Result<(Vec<(f64, String, ChatMessage, Option<f64>)>, Option<i64>)>,
+    slices: usize,
+    page: impl Fn(i64, &AtomicBool) -> Result<KickPage> + Sync,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
 ) -> Result<()> {
     let end = start + duration;
-    let mut cursor = match store.resume()? {
-        Some(position) => position as i64,
-        None => {
+    // Slice i covers [from, to) in Unix time; the last one includes the end.
+    let bounds =
+        |i: usize| (start + duration * i as f64 / slices as f64, start + duration * (i + 1) as f64 / slices as f64);
+    let positions = match store.resume()? {
+        Some(p) if p.len() == slices => p,
+        _ => {
             store.clear()?;
-            (end * 1e6) as i64
+            (0..slices).map(|i| bounds(i).1 * 1e6).collect()
         }
     };
-    let mut batch = Batch::new();
-    let mut seen = HashSet::new();
-    loop {
-        let (messages, next) = page(cursor)?;
-        let mut oldest = (cursor as f64 / 1e6).min(end);
-        for (at, id, msg, subbed_at) in messages {
-            oldest = oldest.min(at);
-            if at >= start && at <= end && seen.insert(id) {
-                let event_time = subbed_at.map(|t| t - start);
-                batch.messages.push(ChatMessage { time: at - start, event_time, ..msg });
+    in_slices(store, positions, cancel, on_progress, |slice, from, stop, send| {
+        let (lo, hi) = bounds(slice);
+        let last = slice + 1 == slices;
+        let mut cursor = from as i64;
+        if from == DONE_BACKWARD {
+            return Ok(());
+        }
+        let mut seen = HashSet::new();
+        loop {
+            let (messages, next) = page(cursor, stop)?;
+            let mut oldest = (cursor as f64 / 1e6).min(hi);
+            let mut keep = Vec::new();
+            for (at, id, msg, subbed_at) in messages {
+                oldest = oldest.min(at);
+                if at >= lo && (at < hi || last && at <= end) && seen.insert(id) {
+                    let event_time = subbed_at.map(|t| t - start);
+                    keep.push(ChatMessage { time: at - start, event_time, ..msg });
+                }
+            }
+            let progress = ((hi - oldest) / (hi - lo)).clamp(0.0, 1.0);
+            // Stop at the slice's start, or when the history runs out or stops moving back.
+            match next {
+                Some(next) if next < cursor && oldest >= lo => {
+                    send(Fetched { slice, messages: keep, position: next as f64, progress });
+                    cursor = next;
+                }
+                _ => {
+                    send(Fetched { slice, messages: keep, position: DONE_BACKWARD, progress: 1.0 });
+                    return Ok(());
+                }
             }
         }
-        on_progress(((end - oldest) / duration).clamp(0.0, 1.0));
-        // Stop at the VOD's start, or when the history runs out or stops moving back.
-        match next {
-            Some(next) if next < cursor && oldest >= start => {
-                cursor = next;
-                batch.save(store, next as f64, false)?;
-            }
-            _ => {
-                batch.save(store, cursor as f64, true)?;
-                break;
-            }
-        }
-    }
-    let announced = resubs_announced(&store.subs()?);
-    store.demote(&announced)?;
-    Ok(())
+    })
 }
 
-/// A history page's messages, as (Unix time, id, message with time 0, and for
-/// a celebration, when its sub happened), and the cursor for the page before it.
-#[allow(clippy::type_complexity)]
-fn parse_kick_page(page: &Value) -> Result<(Vec<(f64, String, ChatMessage, Option<f64>)>, Option<i64>)> {
+/// A history page (see `KickPage`).
+fn parse_kick_page(page: &Value) -> Result<KickPage> {
     let data = page.get("data").context("unreadable chat from Kick")?;
     let mut out = Vec::new();
     for m in data.get("messages").and_then(Value::as_array).into_iter().flatten() {
@@ -467,8 +599,12 @@ const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { com
         message { userColor fragments { text emote { emoteID } } } } }
     pageInfo { hasNextPage } } } }";
 
-// Saved as it goes, with the next offset as the position. The next page starts
-// at that second again, so carrying on drops what was saved from it first.
+// Each slice pages forward from its start, saved as it goes with the next
+// offset as its position. The next page starts at that second again, so
+// carrying on drops what was saved from it first.
+
+/// A Twitch comments page: (id, message), and whether there are more.
+type TwitchPage = (Vec<(String, ChatMessage)>, bool);
 
 fn fetch_twitch(
     info: &VodInfo,
@@ -478,67 +614,92 @@ fn fetch_twitch(
 ) -> Result<()> {
     let id = info.platform_id.trim_start_matches('v');
     let cheermotes = Cheermotes::for_video(id, cancel);
-    let page = |offset: i64| {
+    let page = |offset: i64, stop: &AtomicBool| {
         let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
-        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?, &cheermotes)
+        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)?, &cheermotes)
     };
-    twitch_into(store, info.duration.filter(|d| *d > 0.0), page, on_progress)
+    let duration = info.duration.filter(|d| *d > 0.0);
+    twitch_into(store, duration, duration.map_or(1, slices_for), page, cancel, on_progress)?;
+    count_gift_bombs_once(store)
 }
 
-/// Pages through Twitch's comments into `store` (see `fetch_twitch`); `page`
-/// gets the page from an offset. Apart, so tests can page through their own.
-#[allow(clippy::type_complexity)]
+/// Makes the lines of each saved gift bomb plain messages (see `GiftBombs`).
+/// After the fetch, as a bomb's lines can fall in the slice after its own.
+fn count_gift_bombs_once(store: &mut dyn ChatStore) -> Result<()> {
+    let mut bombs = GiftBombs::default();
+    let lines: Vec<i64> = store
+        .of_kind(Kind::Gift)?
+        .into_iter()
+        .filter_map(|(id, mut msg)| {
+            bombs.count_once(&mut msg);
+            (msg.kind != Kind::Gift).then_some(id)
+        })
+        .collect();
+    store.demote(&lines)
+}
+
+/// Pages through Twitch's comments into `store` in `slices` (see
+/// `fetch_twitch`); `page` gets the page from an offset. Apart, so tests can
+/// page through their own.
 fn twitch_into(
     store: &mut dyn ChatStore,
     duration: Option<f64>,
-    mut page: impl FnMut(i64) -> Result<(Vec<(String, ChatMessage)>, bool)>,
+    slices: usize,
+    page: impl Fn(i64, &AtomicBool) -> Result<TwitchPage> + Sync,
+    cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
 ) -> Result<()> {
-    let mut offset = match store.resume()? {
-        Some(position) => {
-            store.drop_from(position)?;
-            position as i64
+    // Slice i covers [from, to) in whole seconds; the last one runs on past the end.
+    let bounds = |i: usize| {
+        let at = |i: usize| duration.map_or(0.0, |d| (d * i as f64 / slices as f64).floor());
+        (at(i), if i + 1 == slices { f64::INFINITY } else { at(i + 1) })
+    };
+    let positions = match store.resume()? {
+        Some(p) if p.len() == slices => {
+            for (i, &from) in p.iter().enumerate() {
+                if from != DONE_FORWARD {
+                    store.drop_range(from, bounds(i).1)?;
+                }
+            }
+            p
         }
-        None => {
+        _ => {
             store.clear()?;
-            0
+            (0..slices).map(|i| bounds(i).0).collect()
         }
     };
-    let mut batch = Batch::new();
-    let mut seen = HashSet::new();
-    let mut bombs = GiftBombs::default();
-    loop {
-        let (messages, more) = page(offset)?;
-        let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
-        // A page that ends in the second it started from may not have held all
-        // of that second's messages; that's rare, and moving on keeps this finite.
-        let next = if last > offset { last } else { offset + 1 };
-        for (id, mut msg) in messages {
-            if seen.insert(id) {
-                bombs.count_once(&mut msg);
-                // Saved now only if before the next page's second, which that page brings again.
-                batch.messages.push(msg);
+    in_slices(store, positions, cancel, on_progress, |slice, from, stop, send| {
+        if from == DONE_FORWARD {
+            return Ok(());
+        }
+        let (lo, hi) = bounds(slice);
+        let mut offset = from as i64;
+        let mut seen = HashSet::new();
+        // The newest second's messages, held until the page after brings the rest of that second.
+        let mut held: Vec<ChatMessage> = Vec::new();
+        loop {
+            let (messages, more) = page(offset, stop)?;
+            let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
+            // A page that ends in the second it started from may not have held all
+            // of that second's messages; that's rare, and moving on keeps this finite.
+            let next = if last > offset { last } else { offset + 1 };
+            for (id, msg) in messages {
+                if msg.time < hi && seen.insert(id) {
+                    held.push(msg);
+                }
             }
+            let progress = duration.map_or(0.0, |d| ((last as f64 - lo) / (hi.min(d) - lo)).clamp(0.0, 1.0));
+            if !more || next as f64 >= hi {
+                send(Fetched { slice, messages: held, position: DONE_FORWARD, progress: 1.0 });
+                return Ok(());
+            }
+            // Saved now only if before the next page's second, which that page brings again.
+            let (now, later) = held.into_iter().partition(|m| (m.time as i64) < next);
+            held = later;
+            send(Fetched { slice, messages: now, position: next as f64, progress });
+            offset = next;
         }
-        if let Some(d) = duration {
-            on_progress((last as f64 / d).clamp(0.0, 1.0));
-        }
-        if !more {
-            batch.save(store, next as f64, true)?;
-            break;
-        }
-        // Keep the next second's messages for the batch after, so a save's position
-        // is never in the middle of what it saved.
-        let carry: Vec<ChatMessage> = {
-            let (keep, carry): (Vec<_>, Vec<_>) = batch.messages.drain(..).partition(|m| (m.time as i64) < next);
-            batch.messages = keep;
-            carry
-        };
-        batch.save(store, next as f64, false)?;
-        batch.messages.splice(0..0, carry);
-        offset = next;
-    }
-    Ok(())
+    })
 }
 
 fn parse_twitch_page(page: &Value, cheermotes: &Cheermotes) -> Result<(Vec<(String, ChatMessage)>, bool)> {
@@ -792,7 +953,7 @@ fn fetch_youtube(
             if let (Some(d), Some(m)) = (duration, batch.messages.last()) {
                 on_progress((m.time / d).clamp(0.0, 0.999));
             }
-            batch.save(store, 0.0, false)
+            batch.save(store, &[0.0], false)
         })
     };
     let result = (|| -> Result<()> {
@@ -826,7 +987,7 @@ fn fetch_youtube(
     if !started {
         store.clear()?;
     }
-    batch.save(store, 0.0, true)?;
+    batch.save(store, &[0.0], true)?;
     Ok(true)
 }
 
@@ -1154,6 +1315,22 @@ mod tests {
         let gifts: Vec<_> = chat.iter().filter(|m| m.kind == Kind::Gift).map(|m| (m.time, m.amount)).collect();
         assert_eq!(gifts, [(10.0, Some(2.0)), (12.0, Some(1.0)), (13.0, Some(1.0))]);
         assert_eq!(chat.len(), 5, "the lines stay in chat");
+
+        // The same once saved, in the order slices fetched at once might save
+        // them, and counted after.
+        let mut store = MemoryChat::default();
+        let mut saved = vec![
+            msg(13.0, "other", "other gifted a Tier 1 sub to d!"),
+            msg(11.0, "big", "big gifted a Tier 1 sub to b!"),
+            msg(12.0, "big", "big gifted a Tier 1 sub to c!"),
+            msg(10.0, "big", "big is gifting 2 Tier 1 Subs to Kai's community!"),
+            msg(11.0, "big", "big gifted a Tier 1 sub to a!"),
+        ];
+        store.save(&saved, &[DONE_FORWARD]).unwrap();
+        count_gift_bombs_once(&mut store).unwrap();
+        saved = store.of_kind(Kind::Gift).unwrap().into_iter().map(|(_, m)| m).collect();
+        assert_eq!(saved.iter().map(|m| m.time).collect::<Vec<_>>(), [10.0, 12.0, 13.0]);
+        assert_eq!(store.messages.len(), 5);
     }
 
     #[test]
@@ -1224,28 +1401,36 @@ mod tests {
     fn a_twitch_fetch_carries_on_where_it_stopped() {
         // 3,000 messages, 7 a second; pages of 100 from an offset, as Twitch serves them.
         let all: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
-        let page = |offset: i64| {
+        let page = |offset: i64, _: &AtomicBool| {
             let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).cloned().collect();
             let more = from.len() > 100;
             Ok((from.into_iter().take(100).collect::<Vec<_>>(), more))
         };
-        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), position: None });
+        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
+        let no = AtomicBool::new(false);
 
-        // Fails partway (the network drops), after some batches were saved.
-        let mut store = MemoryChat::default();
-        let mut calls = 0;
-        let failing = |offset: i64| {
-            calls += 1;
-            if calls > 20 { anyhow::bail!("network down") } else { page(offset) }
-        };
-        assert!(twitch_into(&mut store, Some(430.0), failing, &mut |_| {}).is_err());
-        let partial = store.messages.len();
-        assert!((1000..3000).contains(&partial), "saved {partial} before failing");
-        assert!(store.position.is_some());
+        for slices in [1, 4] {
+            // Fails partway (the network drops), after some batches were saved.
+            let mut store = MemoryChat::default();
+            let calls = std::sync::atomic::AtomicUsize::new(0);
+            let failing = |offset: i64, stop: &AtomicBool| {
+                if calls.fetch_add(1, Ordering::Relaxed) >= 20 {
+                    anyhow::bail!("network down")
+                } else {
+                    page(offset, stop)
+                }
+            };
+            assert!(twitch_into(&mut store, Some(430.0), slices, failing, &no, &mut |_| {}).is_err());
+            let partial = store.messages.len();
+            assert!((1000..3000).contains(&partial), "{slices} slices: saved {partial} before failing");
+            assert_eq!(store.positions.as_ref().map(Vec::len), Some(slices));
 
-        // Carrying on ends with every message, once.
-        twitch_into(&mut store, Some(430.0), page, &mut |_| {}).unwrap();
-        assert_eq!(saved(&store), expected);
+            // Carrying on ends with every message, once.
+            let mut progress = Vec::new();
+            twitch_into(&mut store, Some(430.0), slices, page, &no, &mut |f| progress.push(f)).unwrap();
+            assert_eq!(saved(&store), expected, "{slices} slices");
+            assert_eq!(progress.last(), Some(&1.0));
+        }
     }
 
     #[test]
@@ -1259,7 +1444,7 @@ mod tests {
                 (id, ChatMessage { time: n as f64 / 6.0, ..m })
             })
             .collect();
-        let page = |cursor: i64| {
+        let page = |cursor: i64, _: &AtomicBool| {
             let mut older: Vec<_> =
                 all.iter().filter(|(_, m)| ((start + m.time) * 1e6) < cursor as f64).cloned().collect();
             older.sort_by(|a, b| {
@@ -1271,19 +1456,26 @@ mod tests {
                 page.into_iter().map(|(id, m)| (start + m.time, id, ChatMessage { time: 0.0, ..m }, None)).collect();
             Ok((rows, next))
         };
-        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), position: None });
+        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
+        let no = AtomicBool::new(false);
 
-        let mut store = MemoryChat::default();
-        let mut calls = 0;
-        let failing = |cursor: i64| {
-            calls += 1;
-            if calls > 60 { anyhow::bail!("network down") } else { page(cursor) }
-        };
-        assert!(kick_into(&mut store, start, 500.0, failing, &mut |_| {}).is_err());
-        assert!(store.position.is_some() && !store.messages.is_empty() && store.messages.len() < 3000);
+        for slices in [1, 4] {
+            let mut store = MemoryChat::default();
+            let calls = std::sync::atomic::AtomicUsize::new(0);
+            let failing = |cursor: i64, stop: &AtomicBool| {
+                if calls.fetch_add(1, Ordering::Relaxed) >= 60 {
+                    anyhow::bail!("network down")
+                } else {
+                    page(cursor, stop)
+                }
+            };
+            assert!(kick_into(&mut store, start, 500.0, slices, failing, &no, &mut |_| {}).is_err());
+            assert!(!store.messages.is_empty() && store.messages.len() < 3000, "{slices} slices");
+            assert_eq!(store.positions.as_ref().map(Vec::len), Some(slices));
 
-        kick_into(&mut store, start, 500.0, page, &mut |_| {}).unwrap();
-        assert_eq!(saved(&store), expected);
+            kick_into(&mut store, start, 500.0, slices, page, &no, &mut |_| {}).unwrap();
+            assert_eq!(saved(&store), expected, "{slices} slices");
+        }
     }
 
     #[test]
@@ -1482,5 +1674,68 @@ mod tests {
             progress.last()
         );
         assert!(!store.messages.is_empty());
+    }
+
+    /// How much faster slices fetch, for real: Twitch for 90 s each way, Kick in full.
+    /// `cargo test -p vodscribe-core -- --ignored chat_slices_live --nocapture`.
+    #[test]
+    #[ignore = "network"]
+    fn chat_slices_live() {
+        use std::time::{Duration, Instant};
+        let twitch = std::env::var("TWITCH_ID").unwrap_or_else(|_| "2862677806".into());
+        let cheermotes = Cheermotes::for_video(&twitch, &AtomicBool::new(false));
+        let page = |offset: i64, stop: &AtomicBool| {
+            let body = json!({ "query": TWITCH_QUERY, "variables": { "id": twitch, "offset": offset } });
+            parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)?, &cheermotes)
+        };
+        if std::env::var("TWITCH_FULL").is_ok() {
+            let begun = Instant::now();
+            let mut store = MemoryChat::default();
+            twitch_into(&mut store, Some(29014.0), 4, page, &AtomicBool::new(false), &mut |_| {}).unwrap();
+            count_gift_bombs_once(&mut store).unwrap();
+            let gifts = store.messages.iter().filter(|m| m.kind == Kind::Gift).count();
+            eprintln!(
+                "Twitch in full, 4 slices: {} messages, {gifts} gifts, in {:?}",
+                store.messages.len(),
+                begun.elapsed()
+            );
+            return;
+        }
+        for slices in [1, 4] {
+            let cancel = std::sync::Arc::new(AtomicBool::new(false));
+            let timer = {
+                let cancel = cancel.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(90));
+                    cancel.store(true, Ordering::Relaxed)
+                })
+            };
+            let mut store = MemoryChat::default();
+            let _ = twitch_into(&mut store, Some(29014.0), slices, page, &cancel, &mut |_| {});
+            timer.join().unwrap();
+            eprintln!("Twitch, {slices} slice(s): {} messages in 90 s", store.messages.len());
+        }
+        let kick = std::env::var("KICK_ID").unwrap_or_else(|_| "01a0db44-6218-70fb-977c-6bbe91a018d1".into());
+        let info = VodInfo {
+            platform: "kick".into(),
+            platform_id: kick,
+            url: String::new(),
+            title: String::new(),
+            channel: None,
+            duration: Some(14786.0),
+            thumbnail: None,
+            published: None,
+        };
+        let origin = kick::chat_origin(&info.platform_id).unwrap();
+        let page = |cursor: i64, stop: &AtomicBool| {
+            let url = format!("https://web.kick.com/api/v1/chat/{}/history?cursor={cursor}", origin.channel);
+            parse_kick_page(&api(&url, None, &[], stop)?)
+        };
+        for slices in [1, 4] {
+            let begun = Instant::now();
+            let mut store = MemoryChat::default();
+            kick_into(&mut store, origin.start, 14786.0, slices, page, &AtomicBool::new(false), &mut |_| {}).unwrap();
+            eprintln!("Kick, {slices} slice(s): {} messages in {:?}", store.messages.len(), begun.elapsed());
+        }
     }
 }

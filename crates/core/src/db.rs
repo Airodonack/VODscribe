@@ -315,6 +315,11 @@ INSERT INTO vod_ids SELECT coalesce(max(id), 0) + 1 FROM vods;
 CREATE TRIGGER vods_ids AFTER INSERT ON vods BEGIN
     UPDATE vod_ids SET next = max(next, NEW.id + 1);
 END;";
+/// v15: a chat is fetched in slices at once (`chat::in_slices`), so an
+/// unfinished fetch records where each slice got to, as a JSON array.
+/// `chat_resume` (one position) is no longer written; a fetch an older version
+/// left unfinished starts over.
+const MIGRATE_V15: &str = "ALTER TABLE vods ADD COLUMN chat_slices TEXT;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -392,6 +397,7 @@ impl Db {
             MIGRATE_V12,
             MIGRATE_V13,
             MIGRATE_V14,
+            MIGRATE_V15,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -655,34 +661,36 @@ impl Db {
     /// Replaces VOD `vod_id`'s chat with `messages` and records it as fetched.
     pub fn set_chat(&mut self, vod_id: i64, messages: &[ChatMessage]) -> Result<()> {
         self.clear_chat(vod_id)?;
-        self.add_chat(vod_id, messages, 0.0)?;
+        self.add_chat(vod_id, messages, &[])?;
         self.finish_chat(vod_id)
     }
 
-    /// Where an unfinished fetch of VOD `vod_id`'s chat got to (see `chat::ChatStore`).
-    pub fn chat_resume(&self, vod_id: i64) -> Result<Option<f64>> {
-        Ok(self
+    /// Where an unfinished fetch of VOD `vod_id`'s chat got to, slice by slice (see `chat::ChatStore`).
+    pub fn chat_resume(&self, vod_id: i64) -> Result<Option<Vec<f64>>> {
+        let json: Option<String> = self
             .conn
-            .query_row("SELECT chat_resume FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
+            .query_row("SELECT chat_slices FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
             .optional()?
-            .flatten())
+            .flatten();
+        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
     }
 
     /// Forgets VOD `vod_id`'s chat and where a fetch of it got to.
     pub fn clear_chat(&self, vod_id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM chat WHERE vod_id = ?1", [vod_id])?;
-        self.conn.execute("UPDATE vods SET chat_resume = NULL WHERE id = ?1", [vod_id])?;
+        self.conn.execute("UPDATE vods SET chat_resume = NULL, chat_slices = NULL WHERE id = ?1", [vod_id])?;
         Ok(())
     }
 
-    /// Forgets VOD `vod_id`'s chat messages from `time` on.
-    pub fn drop_chat_from(&self, vod_id: i64, time: f64) -> Result<()> {
-        self.conn.execute("DELETE FROM chat WHERE vod_id = ?1 AND time >= ?2", params![vod_id, time])?;
+    /// Forgets VOD `vod_id`'s chat messages from `from` up to `to` (seconds).
+    pub fn drop_chat_range(&self, vod_id: i64, from: f64, to: f64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3", params![vod_id, from, to])?;
         Ok(())
     }
 
-    /// Adds `messages` to VOD `vod_id`'s chat and records that its fetch reached `position`, together.
-    pub fn add_chat(&mut self, vod_id: i64, messages: &[ChatMessage], position: f64) -> Result<()> {
+    /// Adds `messages` to VOD `vod_id`'s chat and records that its fetch's slices reached `positions`, together.
+    pub fn add_chat(&mut self, vod_id: i64, messages: &[ChatMessage], positions: &[f64]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare(
@@ -705,24 +713,29 @@ impl Db {
                 ])?;
             }
         }
-        tx.execute("UPDATE vods SET chat_resume = ?2 WHERE id = ?1", params![vod_id, position])?;
+        tx.execute(
+            "UPDATE vods SET chat_slices = ?2 WHERE id = ?1",
+            params![vod_id, serde_json::to_string(positions)?],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
     /// Records VOD `vod_id`'s chat as fetched in full.
     pub fn finish_chat(&self, vod_id: i64) -> Result<()> {
-        self.conn
-            .execute("UPDATE vods SET chat = 'done', chat_error = NULL, chat_resume = NULL WHERE id = ?1", [vod_id])?;
+        self.conn.execute(
+            "UPDATE vods SET chat = 'done', chat_error = NULL, chat_resume = NULL, chat_slices = NULL WHERE id = ?1",
+            [vod_id],
+        )?;
         Ok(())
     }
 
-    /// VOD `vod_id`'s subs, as (id, message).
-    pub fn chat_subs(&self, vod_id: i64) -> Result<Vec<(i64, ChatMessage)>> {
+    /// VOD `vod_id`'s messages of `kind` (subs, gifts), as (id, message), in time order.
+    pub fn chat_of_kind(&self, vod_id: i64, kind: Kind) -> Result<Vec<(i64, ChatMessage)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, time, author, text, amount, event_time FROM chat WHERE vod_id = ?1 AND kind = 'sub' ORDER BY time",
+            "SELECT id, time, author, text, amount, event_time FROM chat WHERE vod_id = ?1 AND kind = ?2 ORDER BY time, id",
         )?;
-        let rows = stmt.query_map([vod_id], |r| {
+        let rows = stmt.query_map(params![vod_id, kind.as_str()], |r| {
             Ok((
                 r.get(0)?,
                 ChatMessage {
@@ -730,7 +743,7 @@ impl Db {
                     author: r.get(2)?,
                     color: None,
                     parts: vec![ChatPart::Text { text: r.get(3)? }],
-                    kind: Kind::Sub,
+                    kind,
                     amount: r.get(4)?,
                     event_time: r.get(5)?,
                 },
@@ -974,7 +987,7 @@ pub struct LibraryChat<'a> {
 }
 
 impl crate::chat::ChatStore for LibraryChat<'_> {
-    fn resume(&mut self) -> Result<Option<f64>> {
+    fn resume(&mut self) -> Result<Option<Vec<f64>>> {
         self.db.lock().unwrap().chat_resume(self.vod_id)
     }
 
@@ -991,18 +1004,18 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
         db.tidy_index("chat_fts")
     }
 
-    fn drop_from(&mut self, time: f64) -> Result<()> {
-        self.db.lock().unwrap().drop_chat_from(self.vod_id, time)
+    fn drop_range(&mut self, from: f64, to: f64) -> Result<()> {
+        self.db.lock().unwrap().drop_chat_range(self.vod_id, from, to)
     }
 
-    fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()> {
-        self.db.lock().unwrap().add_chat(self.vod_id, messages, position)?;
+    fn save(&mut self, messages: &[ChatMessage], positions: &[f64]) -> Result<()> {
+        self.db.lock().unwrap().add_chat(self.vod_id, messages, positions)?;
         (self.on_save)();
         Ok(())
     }
 
-    fn subs(&mut self) -> Result<Vec<(i64, ChatMessage)>> {
-        self.db.lock().unwrap().chat_subs(self.vod_id)
+    fn of_kind(&mut self, kind: Kind) -> Result<Vec<(i64, ChatMessage)>> {
+        self.db.lock().unwrap().chat_of_kind(self.vod_id, kind)
     }
 
     fn demote(&mut self, ids: &[i64]) -> Result<()> {
@@ -1226,12 +1239,12 @@ mod tests {
                 &[Segment { start: i as f64, end: 1.0, text: text.clone(), words: words(&text, 0.0) }],
             )
             .unwrap();
-            db.add_chat(id, &[message(i as f64, "v", &format!("chat{text}"))], i as f64).unwrap();
+            db.add_chat(id, &[message(i as f64, "v", &format!("chat{text}"))], &[i as f64]).unwrap();
         }
         assert_eq!(db.search(secret, &SearchFilter::default(), 10).unwrap().hits.len(), 1);
         while db.delete_some_of(vod.id, 1000).unwrap() > 0 {}
         // A batch saved after the erase, by a fetch that hadn't stopped yet.
-        db.add_chat(vod.id, &[message(9.0, "v", "late quokkazanzibar")], 9.0).unwrap();
+        db.add_chat(vod.id, &[message(9.0, "v", "late quokkazanzibar")], &[9.0]).unwrap();
         db.delete_vod(vod.id).unwrap();
         assert_eq!(db.search("words", &SearchFilter::default(), 10).unwrap().hits.len(), 4, "the other VOD's stay");
         drop(db);
@@ -1351,9 +1364,9 @@ mod tests {
         let a = db.add_vod(&info("a")).unwrap().0.id;
         let b = db.add_vod(&info("b")).unwrap().0.id;
         // Saved in turns, so b's messages sit between a's ids.
-        db.add_chat(a, &[message(1.0, "v", "an apple a day")], 1.0).unwrap();
-        db.add_chat(b, &[message(2.0, "v", "apple pie")], 2.0).unwrap();
-        db.add_chat(a, &[message(3.0, "v", "apples again")], 3.0).unwrap();
+        db.add_chat(a, &[message(1.0, "v", "an apple a day")], &[1.0]).unwrap();
+        db.add_chat(b, &[message(2.0, "v", "apple pie")], &[2.0]).unwrap();
+        db.add_chat(a, &[message(3.0, "v", "apples again")], &[3.0]).unwrap();
         let chat = |query: &str, vod_id: Option<i64>| {
             let filter = SearchFilter { vod_id, speech: false, chat: true };
             db.search(query, &filter, 10).unwrap().hits.iter().map(|h| (h.vod_id, h.time)).collect::<Vec<_>>()
@@ -1389,16 +1402,16 @@ mod tests {
         let a = db.add_vod(&info("a")).unwrap().0.id;
         let b = db.add_vod(&info("b")).unwrap().0.id;
         let many: Vec<_> = (0..2500).map(|i| message(i as f64, "v", "hi")).collect();
-        db.add_chat(a, &many, 2500.0).unwrap();
+        db.add_chat(a, &many, &[2500.0]).unwrap();
         let mut subs = message(1.0, "s", "resub");
         subs.kind = Kind::Sub;
-        db.add_chat(b, &[subs.clone(), subs.clone(), subs], 2.0).unwrap();
+        db.add_chat(b, &[subs.clone(), subs.clone(), subs], &[2.0]).unwrap();
         let lock = std::sync::Mutex::new(db);
         let mut store = LibraryChat { db: &lock, vod_id: b, on_save: Box::new(|| {}) };
-        let ids: Vec<i64> = store.subs().unwrap().into_iter().map(|(id, _)| id).collect();
+        let ids: Vec<i64> = store.of_kind(Kind::Sub).unwrap().into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids.len(), 3);
         store.demote(&ids[..2]).unwrap();
-        assert_eq!(store.subs().unwrap().len(), 1);
+        assert_eq!(store.of_kind(Kind::Sub).unwrap().len(), 1);
         let mut store = LibraryChat { db: &lock, vod_id: a, on_save: Box::new(|| {}) };
         store.clear().unwrap();
         let db = lock.lock().unwrap();
@@ -1434,7 +1447,7 @@ mod tests {
         assert_eq!(lines.iter().map(|l| l.time).collect::<Vec<_>>(), [5.0, 25.0], "oldest first");
 
         // What the transcript view asks for: rows' windows, counts per stretch, events.
-        db.add_chat(a, &[message(15.0, "late", "arrived later"), message(16.0, "later", "and again")], 0.0).unwrap();
+        db.add_chat(a, &[message(15.0, "late", "arrived later"), message(16.0, "later", "and again")], &[0.0]).unwrap();
         let windows = db.chat_windows(a, &[(-1e12, 10.0), (10.0, 20.0), (20.0, 1e12)], 1).unwrap();
         let shown: Vec<_> =
             windows.iter().map(|w| (w.messages.iter().map(|m| m.time).collect::<Vec<_>>(), w.total)).collect();
