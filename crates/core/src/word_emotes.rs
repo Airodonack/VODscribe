@@ -10,10 +10,12 @@
 //! kept for a day, and an older copy is used when a provider can't be reached.
 //! Images come from the providers' CDNs (`emotes::HOSTS`).
 
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -65,6 +67,31 @@ pub const PROVIDER_IDS: &[&str] = &["7tv", "bttv", "ffz"];
 
 /// How long a list is used before it's fetched again.
 const FRESH_SECS: u64 = 24 * 60 * 60;
+/// How long after failing a list isn't asked for again: offline, each VOD
+/// opened would otherwise wait on every provider in turn.
+const RETRY_AFTER: Duration = Duration::from_secs(5 * 60);
+/// When fetching each file's list last failed.
+static FAILED: LazyLock<Mutex<HashMap<PathBuf, Instant>>> = LazyLock::new(Default::default);
+
+/// Whether fetching for `path` failed within `RETRY_AFTER`.
+fn failed_lately(path: &Path) -> bool {
+    FAILED.lock().unwrap().get(path).is_some_and(|at| at.elapsed() < RETRY_AFTER)
+}
+
+/// Fetches for `path` with `fetch`, unless that failed lately; remembers when it fails.
+fn fetch_unless_failed<T>(path: &Path, fetch: impl FnOnce() -> Result<T>) -> Result<T> {
+    if failed_lately(path) {
+        bail!("couldn't be reached a moment ago");
+    }
+    let result = fetch();
+    let mut failed = FAILED.lock().unwrap();
+    match &result {
+        Ok(_) => failed.remove(path),
+        Err(_) => failed.insert(path.to_path_buf(), Instant::now()),
+    };
+    result
+}
+
 /// A busy channel's 7TV account, with its emote set, is a few MB.
 const MAX_BYTES: u64 = 16 << 20;
 
@@ -97,7 +124,7 @@ pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordE
     let channel = match kept.filter(|c| c.is_valid() && c.platform == info.platform) {
         Some(c) => c,
         None => {
-            let c = channel_of(info)?;
+            let c = fetch_unless_failed(&channel_path, || channel_of(info))?;
             // Not kept is only slower next time, not a reason to go without.
             if let Err(e) = serde_json::to_vec(&c).map_err(Into::into).and_then(|b| write_atomic(&channel_path, &b)) {
                 eprintln!("{}: {e:#}", channel_path.display());
@@ -105,22 +132,35 @@ pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordE
             c
         }
     };
-    let mut own = Vec::new();
-    let mut global = Vec::new();
-    for p in providers {
-        let path = dir.join(format!("{}-{}.{}.json", channel.platform, channel.id, p.id));
-        own.extend(match read_fresh(&path) {
-            Some(list) => list,
-            None => settle(&path, (p.channel)(&channel)),
-        });
-        let path = dir.join(format!("global-{}.{}.json", info.platform, p.id));
-        global.extend(match read_fresh(&path) {
-            Some(list) => list,
-            None => settle(&path, (p.global)(&info.platform)),
-        });
+    // Each provider's channel list, then each one's global list: fetched at
+    // once where they're not fresh, and kept in that order.
+    type Fetch<'a> = Box<dyn Fn() -> Result<Vec<WordEmote>> + Sync + 'a>;
+    let mut lists: Vec<(PathBuf, Fetch)> = Vec::new();
+    for p in &providers {
+        let channel = &channel;
+        lists.push((
+            dir.join(format!("{}-{}.{}.json", channel.platform, channel.id, p.id)),
+            Box::new(move || (p.channel)(channel)),
+        ));
     }
+    for p in &providers {
+        let platform = info.platform.as_str();
+        lists.push((dir.join(format!("global-{platform}.{}.json", p.id)), Box::new(move || (p.global)(platform))));
+    }
+    let lists: Vec<Vec<WordEmote>> = std::thread::scope(|scope| {
+        let threads: Vec<_> = lists
+            .iter()
+            .map(|(path, fetch)| {
+                scope.spawn(move || match read_fresh(path) {
+                    Some(list) => list,
+                    None => settle(path, fetch_unless_failed(path, fetch)),
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap_or_default()).collect()
+    });
     let mut seen = std::collections::HashSet::new();
-    Ok(own.into_iter().chain(global).filter(|e| seen.insert(e.name.clone())).collect())
+    Ok(lists.into_iter().flatten().filter(|e| seen.insert(e.name.clone())).collect())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -346,6 +386,23 @@ fn now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_fetch_waits_before_trying_again() {
+        let path = PathBuf::from("/nowhere/a-failed-fetch-test.json");
+        let tries = std::cell::Cell::new(0);
+        let fail = || -> Result<()> {
+            tries.set(tries.get() + 1);
+            bail!("offline")
+        };
+        assert!(fetch_unless_failed(&path, fail).is_err());
+        assert!(fetch_unless_failed(&path, fail).is_err());
+        assert_eq!(tries.get(), 1, "not asked again so soon");
+        // Once the wait is over it's asked again, and a success is forgotten.
+        FAILED.lock().unwrap().insert(path.clone(), Instant::now() - RETRY_AFTER);
+        assert!(fetch_unless_failed(&path, || Ok(())).is_ok());
+        assert!(!failed_lately(&path));
+    }
 
     #[test]
     fn reads_each_providers_emotes() {
