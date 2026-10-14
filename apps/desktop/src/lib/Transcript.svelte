@@ -64,26 +64,20 @@
 
   let root: HTMLDivElement;
 
-  // Makes `change`, keeping the line at the top of the view where it was:
-  // showing or hiding chat changes every row's height, and chat arriving while
-  // it's fetched grows rows above the view (Kick's fills in from the end).
-  // WebKit has no scroll anchoring of its own (`overflow-anchor`).
+  // Makes `change`, keeping the row at the top of the view where it was:
+  // showing or hiding chat changes every row's height. (Heights that change
+  // as rows are measured or their chat arrives are kept in place by `remeasure`.)
   function keepPlace(change: () => void) {
-    const scroller = root?.closest<HTMLElement>(".body");
-    // The view starts below the header, which stays at the top.
-    const top = head?.getBoundingClientRect().bottom ?? 0;
-    // The first line that starts in view: one cut off at the top may shrink out of sight.
-    const anchor = root
-      ? [...root.querySelectorAll<HTMLElement>(".line[data-start]")].find((el) => el.getBoundingClientRect().top >= top)
-      : undefined;
-    const offset = anchor ? anchor.getBoundingClientRect().top - top : 0;
-    // Read now: rows are keyed by position, so after the change this element may hold another line.
-    const start = anchor?.dataset.start;
-    // Applied at once, so the rows are measured as they now are.
+    // A pixel's leeway: scroll positions are rounded, so the row at the top
+    // can otherwise read as the one ending just above it.
+    const y = viewY();
+    const index = rowAtY(y + 1);
+    const within = y - offsets[index];
+    const key = rows[index] ? keyOf(rows[index]) : null;
     flushSync(change);
-    if (!scroller || start === undefined) return;
-    const same = root.querySelector<HTMLElement>(`.line[data-start="${start}"]`);
-    if (same) scroller.scrollTop += same.getBoundingClientRect().top - top - offset;
+    if (!scroller || key === null) return;
+    const now = rows.findIndex((r) => keyOf(r) === key);
+    if (now >= 0) scroller.scrollTop = listTop + offsets[now] + within - headHeight;
   }
 
   function toggleChat() {
@@ -119,27 +113,90 @@
   });
   const keyOf = (row: Row) => `${row.from}:${row.to}`;
 
-  // Rows are added as the end comes into view, so a long VOD opens at once
-  // rather than laying out every row first. With busy chat a row is a few
-  // hundred pixels tall, so a page is several screens.
-  const PAGE = 60;
-  let shown = $state(PAGE);
-  let sentinel = $state<HTMLElement>();
-  $effect(() => {
-    void vodId;
-    shown = PAGE;
+  // Only the rows in and near the view are laid out; empty space of the right
+  // height stands in for the rest, so a long VOD with a busy chat opens, toggles
+  // chat and jumps around at once, however far it goes. Each row's height is
+  // measured the first time it's laid out and kept for the session (per row,
+  // and per whether chat is shown, since that lays rows out differently); until
+  // then it's estimated from its text and how many messages it shows.
+  const measured = new Map<string, number>();
+  let measuredGen = $state(0);
+  const heightKey = (row: Row) => `${showChat ? "chat" : "text"}|${keyOf(row)}`;
+  let width = $state(0);
+  function estimate(row: Row): number {
+    const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
+    const text = row.line ? 10 + 22.5 * Math.max(1, Math.ceil((row.line.text.length * 7.8) / textWidth)) : 0;
+    if (!showChat) return text;
+    const win = windows.get(keyOf(row));
+    if (!row.line && !win?.total) return 0;
+    // Before its chat is fetched, a row is guessed to hold a couple of messages.
+    const messages = win ? win.messages.length : 2;
+    const chat = messages * 21 + (win && win.total > win.messages.length ? 22 : 0) + (messages ? 4 : 0);
+    return Math.max(text, chat);
+  }
+  /** Where each row starts in the list, and (last) where it ends. */
+  let offsets = $derived.by(() => {
+    void measuredGen;
+    void windows;
+    const out = new Float64Array(rows.length + 1);
+    rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(heightKey(row)) ?? estimate(row))));
+    return out;
   });
-  $effect(() => {
-    void shown;
-    if (!sentinel) return;
-    // Made again after each page, since the end may still be in view.
-    const io = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && (shown += PAGE), {
-      root: root.closest(".body"),
-      rootMargin: "0px 0px 1500px 0px",
-    });
-    io.observe(sentinel);
-    return () => io.disconnect();
+  /** The row at `y` in the list (clamped). */
+  function rowAtY(y: number): number {
+    let lo = 0;
+    let hi = rows.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (offsets[mid] <= y) lo = mid;
+      else hi = mid - 1;
+    }
+    return Math.max(0, lo);
+  }
+
+  // The scroller's position, and where the list starts in it (below the header).
+  let scrollTop = $state(0);
+  let listTop = $state(0);
+  let topPad = $state<HTMLElement>();
+  /** The top of the view, in the list: just below the header, which stays at the top. */
+  const viewY = () => (scroller?.scrollTop ?? 0) + headHeight - listTop;
+  // Laid out: what's in view and this much either side, so scrolling finds rows ready.
+  const AROUND = 1000;
+  let range = $derived.by((): [number, number] => {
+    const top = scrollTop + headHeight - listTop;
+    const from = rowAtY(top - AROUND);
+    const to = Math.min(rows.length, rowAtY(top + railHeight + AROUND) + 1);
+    return [from, Math.max(from, to)];
   });
+
+  // Measures rows as they're laid out or change size. A row above the view
+  // that turns out taller or shorter than thought moves the view by as much, so
+  // what's being read stays put (WebKit has no scroll anchoring of its own).
+  let resizes: ResizeObserver | undefined;
+  function remeasure(entries: ResizeObserverEntry[]) {
+    const y = viewY();
+    let shift = 0;
+    for (const entry of entries) {
+      const el = entry.target as HTMLElement;
+      const index = Number(el.dataset.index);
+      const row = rows[index];
+      if (!row || !el.isConnected) continue;
+      const key = heightKey(row);
+      const before = measured.get(key) ?? estimate(row);
+      const height = el.offsetHeight;
+      if (height === before) continue;
+      measured.set(key, height);
+      if (offsets[index] + before <= y) shift += height - before;
+    }
+    flushSync(() => measuredGen++);
+    if (shift && scroller) scroller.scrollTop += shift;
+  }
+  function measure(node: HTMLElement) {
+    resizes ??= new ResizeObserver(remeasure);
+    resizes.observe(node);
+    return { destroy: () => resizes?.unobserve(node) };
+  }
+  $effect(() => () => resizes?.disconnect());
 
   // A row shows this many messages at first, so a burst of chat doesn't push
   // the transcript apart; each "more" shows this many more.
@@ -180,19 +237,18 @@
     });
   });
 
-  /** Fetches the windows of the rows shown that aren't loaded (or are stale, if `visibleOnly`, in view). */
-  function loadWindows(onlyStaleInView = false) {
+  /** Fetches the windows of the rows laid out (and a few more) that aren't loaded, or are stale. */
+  function loadWindows() {
     if (!canHaveChat || !showChat) return;
     const id = vodId;
     const gen = chatGen;
-    const inView = onlyStaleInView ? visibleRows() : null;
+    // The rows laid out, and a few more either side to have ready.
+    const [from, to] = range;
     const wanted: Row[] = [];
-    rows.slice(0, shown).forEach((row, i) => {
+    rows.slice(Math.max(0, from - 10), to + 10).forEach((row) => {
       const key = keyOf(row);
       if (loading.has(key)) return;
-      const missing = !windows.has(key);
-      const refresh = stale.has(key) && (!inView || (i >= inView[0] && i <= inView[1]));
-      if (missing || refresh) wanted.push(row);
+      if (!windows.has(key) || stale.has(key)) wanted.push(row);
     });
     if (wanted.length === 0) return;
     for (const row of wanted) loading.add(keyOf(row));
@@ -209,18 +265,18 @@
     Promise.all(groups.map(([cap, batch]) => fetch(batch, cap))).then(
       (results) => {
         if (gen !== chatGen || id !== vodId) return;
-        keepPlace(() => {
-          const next = new Map(windows);
-          groups.forEach(([, batch], g) =>
-            batch.forEach((row, i) => {
-              const key = keyOf(row);
-              next.set(key, results[g][i]);
-              stale.delete(key);
-              loading.delete(key);
-            }),
-          );
-          windows = next;
-        });
+        const next = new Map(windows);
+        groups.forEach(([, batch], g) =>
+          batch.forEach((row, i) => {
+            const key = keyOf(row);
+            next.set(key, results[g][i]);
+            stale.delete(key);
+            loading.delete(key);
+          }),
+        );
+        // Rows fetched above the view grow (their estimates now count their
+        // messages), which would push the view down.
+        keepPlace(() => (windows = next));
       },
       (e) => {
         for (const row of wanted) loading.delete(keyOf(row));
@@ -231,7 +287,7 @@
   // More rows shown (scrolling, a seek), chat shown, or new lines: their windows.
   $effect(() => {
     void rows;
-    void shown;
+    void range;
     void showChat;
     untrack(() => loadWindows());
   });
@@ -271,7 +327,7 @@
       last = Date.now();
       for (const key of windows.keys()) stale.add(key);
       refreshOverview();
-      loadWindows(true);
+      loadWindows();
     };
     const unlisten = events.chatSaved((vid) => {
       if (vid !== id || timer) return;
@@ -396,65 +452,34 @@
   /** The color of the first shown event or layer that matched message `id`, if any. */
   const highlightOf = (id: number) => allMatches.find((m) => m.ids.has(id))?.color ?? null;
 
-  /** Where the view starts: below the header, which stays at the top. */
-  const viewTop = () => head?.getBoundingClientRect().bottom ?? 0;
   /** When row `i` starts; the row of chat before the first line starts at 0. */
   const rowStart = (i: number) => rows[i]?.line?.start ?? Math.max(0, rows[i]?.from ?? 0);
 
-  /** The first of `els` (in page order) for which `past` holds, or els.length. */
-  function firstWhere(els: NodeListOf<HTMLElement>, past: (el: HTMLElement) => boolean): number {
-    let lo = 0;
-    let hi = els.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (past(els[mid])) hi = mid;
-      else lo = mid + 1;
-    }
-    return lo;
-  }
-
-  /** The first and last rows (indexes) in view, give or take a few. */
-  function visibleRows(): [number, number] {
-    if (!scroller) return [0, 0];
-    const els = root.querySelectorAll<HTMLElement>(".line");
-    const top = viewTop();
-    const bottom = scroller.getBoundingClientRect().bottom;
-    const first = firstWhere(els, (el) => el.getBoundingClientRect().bottom > top);
-    const after = firstWhere(els, (el) => el.getBoundingClientRect().top >= bottom);
-    return [Math.max(0, first - 5), after + 5];
-  }
-
-  // The part of the VOD in view, kept up to date as the list scrolls or grows.
-  let view = $state<{ from: number; to: number } | null>(null);
-  function updateView() {
-    if (!scroller || !showMap) return (view = null);
-    const els = root.querySelectorAll<HTMLElement>(".line");
-    const top = viewTop();
-    const bottom = scroller.getBoundingClientRect().bottom;
-    const first = Math.min(
-      firstWhere(els, (el) => el.getBoundingClientRect().bottom > top),
-      els.length - 1,
-    );
-    const after = firstWhere(els, (el) => el.getBoundingClientRect().top >= bottom);
+  // The part of the VOD in view, for the minimap's box.
+  let view = $derived.by(() => {
+    if (!showMap || rows.length === 0) return null;
+    const top = scrollTop + headHeight - listTop;
+    const first = rowAtY(top);
+    const after = rowAtY(top + railHeight - headHeight) + 1;
     const end = after < rows.length ? rowStart(after) : mapDuration;
-    view = { from: rowStart(first) / mapDuration, to: Math.min(1, end / mapDuration) };
-  }
+    return { from: rowStart(first) / mapDuration, to: Math.min(1, end / mapDuration) };
+  });
   $effect(() => {
     const s = scroller;
-    void rows;
-    void shown;
-    void railHeight;
+    // Where the list starts moves with the header, and with a message above the rows.
+    void headHeight;
+    void lines.length;
     if (!s) return;
     let frame = 0;
+    const read = () => {
+      scrollTop = s.scrollTop;
+      if (topPad) listTop = topPad.getBoundingClientRect().top - s.getBoundingClientRect().top + s.scrollTop;
+    };
     const later = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        updateView();
-        // Rows whose chat arrived while they were out of view.
-        if (stale.size) loadWindows(true);
-      });
+      frame = requestAnimationFrame(read);
     };
-    later();
+    read();
     s.addEventListener("scroll", later, { passive: true });
     return () => {
       cancelAnimationFrame(frame);
@@ -472,9 +497,7 @@
       if (rowStart(mid) <= time) lo = mid;
       else hi = mid - 1;
     }
-    if (lo >= shown) flushSync(() => (shown = lo + PAGE));
-    const el = root.querySelectorAll<HTMLElement>(".line")[lo];
-    if (el) scroller.scrollTop += el.getBoundingClientRect().top - viewTop();
+    scroller.scrollTop = listTop + offsets[lo] - headHeight;
   }
 </script>
 
@@ -533,7 +556,7 @@
     {/if}
   </div>
   <div class="cols">
-    <div class="transcript" id="transcript" class:with-chat={showChat} bind:this={root}>
+    <div class="transcript" id="transcript" class:with-chat={showChat} bind:this={root} bind:clientWidth={width}>
       {#if error}
         <p class="error-text">{error}</p>
       {:else if lines.length === 0}
@@ -543,10 +566,11 @@
             : "The transcript appears here as it is produced."}
         </p>
       {/if}
-      {#each rows.slice(0, shown) as row, r (r)}
+      <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>
+      {#each rows.slice(range[0], range[1]) as row, k (keyOf(row))}
         {@const key = keyOf(row)}
         {@const win = windows.get(key)}
-        <div class="line" data-start={row.line?.start} class:empty={!row.line && !win?.total}>
+        <div class="line" data-index={range[0] + k} use:measure class:empty={!row.line && !win?.total}>
           {#if row.line}
             {@const line = row.line}
             <button class="row" onclick={() => play(line.start)}>
@@ -570,9 +594,7 @@
           {/if}
         </div>
       {/each}
-      {#if shown < rows.length}
-        <div class="more-rows" bind:this={sentinel}></div>
-      {/if}
+      <div style:height="{offsets[rows.length] - offsets[range[1]]}px"></div>
     </div>
     {#if showMap}
       <div class="rail" style:top="{headHeight}px" style:height="{Math.max(0, railHeight - headHeight)}px">
@@ -714,9 +736,5 @@
   /* The row for chat before the first line, when there's none. */
   .line.empty {
     display: none;
-  }
-
-  .more-rows {
-    height: 1px;
   }
 </style>
