@@ -1,5 +1,8 @@
-"""Tests for release.py's changelog and version parsing: python3 -I -m unittest scripts/test_release.py"""
+"""Tests for release.py's changelog and version parsing, and verify-release.py's
+signature checks: python3 -I -m unittest scripts/test_release.py"""
 
+import base64
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -10,6 +13,11 @@ spec = importlib.util.spec_from_file_location("release", Path(__file__).with_nam
 assert spec is not None and spec.loader is not None
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+
+spec = importlib.util.spec_from_file_location("verify", Path(__file__).with_name("verify-release.py"))
+assert spec is not None and spec.loader is not None
+verify = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(verify)
 
 CHANGELOG = """# Changelog
 
@@ -116,6 +124,51 @@ class CargoVersion(unittest.TestCase):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text())
         release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
+
+
+
+def sign(secret: bytes, message: bytes) -> tuple[bytes, bytes]:
+    """Ed25519 (RFC 8032): the public key for `secret`, and its signature of `message`."""
+    h = hashlib.sha512(secret).digest()
+    a = int.from_bytes(h[:32], "little") & ((1 << 254) - 8) | (1 << 254)
+    encode = lambda p: (  # noqa: E731
+        (p[1] * pow(p[2], verify.P - 2, verify.P) % verify.P)
+        | ((p[0] * pow(p[2], verify.P - 2, verify.P) % verify.P) & 1) << 255
+    ).to_bytes(32, "little")
+    public = encode(verify._mul(a, verify.G))
+    r = int.from_bytes(hashlib.sha512(h[32:] + message).digest(), "little") % verify.L
+    big_r = encode(verify._mul(r, verify.G))
+    k = int.from_bytes(hashlib.sha512(big_r + public + message).digest(), "little") % verify.L
+    return public, big_r + ((r + k * a) % verify.L).to_bytes(32, "little")
+
+
+class SignatureTest(unittest.TestCase):
+    def test_rfc8032_vector(self):
+        public = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+        sig = bytes.fromhex(
+            "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+        )
+        self.assertTrue(verify.ed25519_ok(public, b"", sig))
+        self.assertFalse(verify.ed25519_ok(public, b"x", sig))
+        self.assertEqual(sign(bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"), b"")[1], sig)
+
+    def test_minisign(self):
+        key_id = b"\x01" * 8
+        public, _ = sign(b"\x07" * 32, b"")
+        file_hash = hashlib.blake2b(b"installer", digest_size=64).digest()
+        sig = sign(b"\x07" * 32, file_hash)[1]
+        trusted = b"timestamp:1\tfile:installer"
+        global_sig = sign(b"\x07" * 32, sig + trusted)[1]
+        b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
+        public_file = f"untrusted comment: key\n{b64(b'Ed' + key_id + public)}\n"
+        sig_file = f"untrusted comment: sig\n{b64(b'ED' + key_id + sig)}\ntrusted comment: {trusted.decode()}\n{b64(global_sig)}\n"
+        self.assertIsNone(verify.minisign_ok(public_file, sig_file, file_hash))
+        other = hashlib.blake2b(b"installer, changed", digest_size=64).digest()
+        self.assertEqual(verify.minisign_ok(public_file, sig_file, other), "signature doesn't match the file")
+        wrong_key = public_file.replace(b64(b"Ed" + key_id + public), b64(b"Ed" + b"\x02" * 8 + public))
+        self.assertEqual(verify.minisign_ok(wrong_key, sig_file, file_hash), "signed with a different key")
+        forged = sig_file.replace("file:installer", "file:other")
+        self.assertIn("trusted comment", verify.minisign_ok(public_file, forged, file_hash) or "")
 
 
 if __name__ == "__main__":
