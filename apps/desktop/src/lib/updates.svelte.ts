@@ -5,6 +5,7 @@
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { api } from "./api";
+import { ask } from "./ask";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -61,7 +62,11 @@ class Updates {
     if (!update || this.installing) return;
     if (
       this.busy &&
-      !confirm("VODscribe restarts to update. The VOD in progress carries on from where it was after the restart.")
+      !(await ask(
+        "VODscribe restarts to update. The VOD in progress carries on from where it was after the restart.",
+        "Restart and update",
+        "Not now",
+      ))
     )
       return;
     this.installing = true;

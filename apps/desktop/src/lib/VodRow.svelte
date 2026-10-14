@@ -4,6 +4,7 @@
   // animate:flip has to sit directly inside its keyed list.
   import { api, type Vod } from "./api";
   import { demoOff } from "./demo";
+  import { ask } from "./ask";
   import Icon from "./Icon.svelte";
   import { formatTime, platformName } from "./platform";
   import Progress from "./Progress.svelte";
@@ -53,10 +54,11 @@
 
   // Transcribing again first erases the old transcript, a moment for a long one.
   let clearing = $state(false);
-  function retranscribe() {
+  async function retranscribe() {
     if (
-      confirm(
+      await ask(
         `Transcribe “${vod.title}” again? Its current transcript will be replaced, and the audio may need to download again.`,
+        "Transcribe again",
       )
     ) {
       clearing = true;
@@ -71,8 +73,14 @@
     }
   }
 
-  function cancel() {
-    if (confirm(`Cancel “${vod.title}”? What's been downloaded and transcribed so far will be thrown away.`)) {
+  async function cancel() {
+    if (
+      await ask(
+        `Cancel “${vod.title}”? What's been downloaded and transcribed so far will be thrown away.`,
+        "Stop and discard",
+        "Keep going",
+      )
+    ) {
       act(api.cancelVod(vod.id));
     }
   }
@@ -81,8 +89,14 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done.
   let removing = $state(false);
-  function remove() {
-    if (confirm(`Remove “${vod.title}”? Its transcript and any downloaded audio are erased from this computer.`)) {
+  async function remove() {
+    if (
+      await ask(
+        `Remove “${vod.title}”? Its transcript and any downloaded audio are erased from this computer.`,
+        "Remove",
+        "Keep",
+      )
+    ) {
       onremove();
       removing = true;
       onerror(null);

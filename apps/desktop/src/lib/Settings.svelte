@@ -2,6 +2,7 @@
   import EmoteProviders from "./EmoteProviders.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
   import { onDestroy, onMount } from "svelte";
+  import { ask } from "./ask";
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
@@ -38,9 +39,10 @@
 
   async function clearCache() {
     const amount = cacheBytes ? ` ${formatBytes(cacheBytes)}` : "";
-    const ok = confirm(
+    const ok = await ask(
       `Free up${amount}? This deletes the parts VODscribe downloaded to run, and any unfinished downloads. ` +
         "Anything in progress is paused. Your library and transcripts are kept, and VODscribe downloads what it needs again.",
+      "Free up space",
     );
     if (!ok) return;
     clearing = true;
@@ -117,7 +119,7 @@
   }
 
   async function remove() {
-    if (!confirm("Remove the GPU add-on? VODs will be transcribed with the processor.")) return;
+    if (!(await ask("Remove the GPU add-on? VODs will be transcribed with the processor.", "Remove", "Keep"))) return;
     if (device === "gpu") await choose("cpu");
     await api.removeGpuPack().catch((e) => (error = String(e)));
     await refresh();
