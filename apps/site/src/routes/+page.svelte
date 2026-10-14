@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import Icon from "desktop/lib/Icon.svelte";
   import Demo from "#lib/Demo.svelte";
+  import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectOs, primaryDownload, type Os } from "#lib/downloads.js";
   import { SUPPORT } from "#lib/links.js";
 
@@ -9,6 +10,8 @@
   let os = $state<Os | null>(null);
   onMount(() => (os = detectOs()));
   let primary = $derived(os ? primaryDownload(os) : undefined);
+  // Which download's heads-up is open (DownloadNote): the download itself goes ahead.
+  let note = $state<Os | null>(null);
 
   const FAQ = [
     {
@@ -37,7 +40,7 @@
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: "VODscribe isn't code-signed yet, which costs a yearly fee. On Windows, choose More info, then Run anyway. On a Mac, open it once, then go to System Settings › Privacy & Security and choose Open Anyway.",
+      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, open it once, then go to System Settings › Privacy & Security and choose Open Anyway.",
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
@@ -78,7 +81,7 @@
       straight to it.
     </p>
     <div class="ctas">
-      <a class="button primary big" href={primary?.url ?? "#download"}>
+      <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
         <Icon name="download" size={18} />
         {primary ? `Download for ${primary.label}` : "Download"}
       </a>
@@ -145,7 +148,7 @@
     <ul class="files">
       {#each DOWNLOADS as d (d.url)}
         <li class:mine={d.os === os}>
-          <a href={d.url}>
+          <a href={d.url} onclick={() => (note = d.os)}>
             <Icon name="download" size={16} />
             <span class="name">{d.label}</span>
             <span class="muted">{d.detail}</span>
@@ -172,6 +175,8 @@
     {/each}
   </section>
 </main>
+
+<DownloadNote bind:os={note} />
 
 <style>
   main {
