@@ -7,6 +7,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Settings has an Appearance section, where chat can show 7TV, BetterTTV and FrankerFaceZ emotes for Kick and Twitch VODs: the channel's own and the global ones, as most viewers of big channels see them, with "zero-width" emotes (a hat, a spin) drawn over the emote before them. Each is off until you turn it on, since it means contacting that service; drag them to choose which wins when two have an emote of the same name. Chat already in your library shows them too, and the Timeline panel's pills use their images.
 - The timeline appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.
 - Settings and the search's From filter open above everything, like the Timeline panel, so a playing video or a short window can't cover or cut them off.
+- Twitch bits cheered with newer cheermotes, such as PrideCheer, count as bits: each chat fetch asks Twitch for its current cheermotes rather than relying on a built-in list. Chats fetched before keep how they were counted.
 - A link pasted while dropped links or files are still being added waits its turn, and the errors of both show together, instead of the Add button coming back early.
 
 ## 0.2.0 — 2026-10-13

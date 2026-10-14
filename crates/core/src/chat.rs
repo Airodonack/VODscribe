@@ -477,9 +477,10 @@ fn fetch_twitch(
     on_progress: &mut dyn FnMut(f64),
 ) -> Result<()> {
     let id = info.platform_id.trim_start_matches('v');
+    let cheermotes = Cheermotes::for_video(id, cancel);
     let page = |offset: i64| {
         let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
-        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?)
+        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel)?, &cheermotes)
     };
     twitch_into(store, info.duration.filter(|d| *d > 0.0), page, on_progress)
 }
@@ -540,7 +541,7 @@ fn twitch_into(
     Ok(())
 }
 
-fn parse_twitch_page(page: &Value) -> Result<(Vec<(String, ChatMessage)>, bool)> {
+fn parse_twitch_page(page: &Value, cheermotes: &Cheermotes) -> Result<(Vec<(String, ChatMessage)>, bool)> {
     if let Some(err) = page.pointer("/errors/0/message").and_then(Value::as_str) {
         bail!("Twitch wouldn't give the chat: {err}");
     }
@@ -572,18 +573,21 @@ fn parse_twitch_page(page: &Value) -> Result<(Vec<(String, ChatMessage)>, bool)>
             amount: None,
             event_time: None,
         };
-        (msg.kind, msg.amount) = twitch_event(&msg.author, &msg.text());
+        (msg.kind, msg.amount) = twitch_event(&msg.author, &msg.text(), cheermotes);
         out.push((id.to_string(), msg));
     }
     let more = video.pointer("/comments/pageInfo/hasNextPage").and_then(Value::as_bool).unwrap_or(false);
     Ok((out, more))
 }
 
-/// Twitch's own cheermotes: a cheer is one of these and a number of bits
-/// ("Cheer100"). Many emotes also end in digits (Squid1, MercyWing1), so only
-/// these count; a channel's own cheermotes aren't recognized.
+/// Twitch's cheermotes as of October 2026, and retired ones old VODs have:
+/// a cheer is one of these and a number of bits ("Cheer100"). Many emotes
+/// also end in digits (Squid1, MercyWing1), so only these count. A fetch adds
+/// Twitch's current list (`Cheermotes::for_video`); a channel's custom
+/// cheermotes keep the "Cheer" name, with the channel's own images.
 const CHEERMOTES: &[&str] = &[
     "cheer",
+    "pridecheer",
     "doodlecheer",
     "biblethump",
     "cheerwhal",
@@ -623,7 +627,51 @@ const CHEERMOTES: &[&str] = &[
 /// What a Twitch comment by `author` is. Subs and gifts are posted in the
 /// subscriber's name and start with it ("name subscribed at Tier 1. …", "name
 /// is gifting 5 Tier 1 Subs to …"); cheers are cheermotes in the text.
-fn twitch_event(author: &str, text: &str) -> (Kind, Option<f64>) {
+/// The cheermote names (lowercase) that make a word bits.
+pub(crate) struct Cheermotes(std::collections::HashSet<String>);
+
+impl Cheermotes {
+    pub(crate) fn builtin() -> Self {
+        Cheermotes(CHEERMOTES.iter().map(|c| c.to_string()).collect())
+    }
+
+    /// The built-in names, and the ones Twitch lists now: everyone's, and
+    /// those of video `id`'s channel (a charity drive's, say). Twitch adds new
+    /// ones from time to time; without an answer, the built-in ones do.
+    fn for_video(id: &str, cancel: &AtomicBool) -> Self {
+        let mut names = Self::builtin();
+        let query = "query($id: ID!) { cheerConfig { groups { nodes { prefix } } }
+            video(id: $id) { owner { cheer { cheerGroups { nodes { prefix } } } } } }";
+        let body = json!({ "query": query, "variables": { "id": id } });
+        match api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel) {
+            Ok(json) => names.0.extend(cheer_prefixes(&json)),
+            Err(e) => eprintln!("Twitch's cheermotes: {e:#}; using the built-in list"),
+        }
+        names
+    }
+
+    fn has(&self, name: &str) -> bool {
+        self.0.contains(&name.to_lowercase())
+    }
+}
+
+/// Every cheermote prefix in a `cheerConfig`/`cheerGroups` answer, lowercase.
+fn cheer_prefixes(json: &Value) -> Vec<String> {
+    let groups = [json.pointer("/data/cheerConfig/groups"), json.pointer("/data/video/owner/cheer/cheerGroups")];
+    groups
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|g| g.get("nodes")?.as_array())
+        .flatten()
+        .filter_map(|n| n.get("prefix")?.as_str())
+        .filter(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric()))
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn twitch_event(author: &str, text: &str, cheermotes: &Cheermotes) -> (Kind, Option<f64>) {
     if let Some((first, rest)) = text.split_once(' ')
         && first.eq_ignore_ascii_case(author)
     {
@@ -645,9 +693,7 @@ fn twitch_event(author: &str, text: &str) -> (Kind, Option<f64>) {
         .filter_map(|word| {
             let split = word.find(|c: char| c.is_ascii_digit())?;
             let (name, n) = word.split_at(split);
-            (CHEERMOTES.contains(&name.to_lowercase().as_str()) && n.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| n.parse::<f64>().ok())
-                .flatten()
+            (cheermotes.has(name) && n.bytes().all(|b| b.is_ascii_digit())).then(|| n.parse::<f64>().ok()).flatten()
         })
         .sum();
     if bits > 0.0 { (Kind::Tip, Some(bits)) } else { (Kind::Message, None) }
@@ -932,7 +978,7 @@ mod tests {
                     { "text": "monkaS", "emote": { "emoteID": "emotesv2_3a2f" } },
                 ] } } }],
             "pageInfo": { "hasNextPage": true } } } } });
-        let (messages, more) = parse_twitch_page(&page).unwrap();
+        let (messages, more) = parse_twitch_page(&page, &Cheermotes::builtin()).unwrap();
         assert!(more);
         let m = &messages[0].1;
         assert_eq!((m.time, m.author.as_str()), (526.0, "swiftyspiffy"));
@@ -941,12 +987,25 @@ mod tests {
             if url == "https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_3a2f/default/dark/1.0"));
 
         let refused = json!({ "errors": [{ "message": "failed integrity check" }], "data": null });
-        assert!(parse_twitch_page(&refused).unwrap_err().to_string().contains("integrity"));
+        assert!(parse_twitch_page(&refused, &Cheermotes::builtin()).unwrap_err().to_string().contains("integrity"));
+    }
+
+    #[test]
+    fn reads_twitchs_cheermote_list() {
+        let answer = json!({ "data": {
+            "cheerConfig": { "groups": [{ "nodes": [{ "prefix": "Cheer" }, { "prefix": "NewCheer" }] }] },
+            "video": { "owner": { "cheer": { "cheerGroups": [{ "nodes": [{ "prefix": "Charity" }, { "prefix": "bad prefix" }] }] } } }
+        } });
+        assert_eq!(cheer_prefixes(&answer), ["cheer", "newcheer", "charity"]);
+        let mut names = Cheermotes::builtin();
+        names.0.extend(cheer_prefixes(&answer));
+        assert_eq!(twitch_event("v", "NewCheer50", &names), (Kind::Tip, Some(50.0)));
+        assert_eq!(twitch_event("v", "NewCheer50", &Cheermotes::builtin()), (Kind::Message, None));
     }
 
     #[test]
     fn recognizes_twitch_events() {
-        let event = |t: &str| twitch_event(t.split(' ').next().unwrap(), t);
+        let event = |t: &str| twitch_event(t.split(' ').next().unwrap(), t, &Cheermotes::builtin());
         assert_eq!(event("mairimyarel subscribed at Tier 1. They've subscribed for 8 months!"), (Kind::Sub, Some(1.0)));
         assert_eq!(event("big subscribed at Tier 3."), (Kind::Sub, Some(3.0)), "the tier");
         assert_eq!(
@@ -956,28 +1015,32 @@ mod tests {
         assert_eq!(event("someone is gifting 50 Tier 1 Subs to KaiCenat's community!"), (Kind::Gift, Some(50.0)));
         assert_eq!(event("someone gifted a Tier 1 sub to friend!"), (Kind::Gift, Some(1.0)));
         assert_eq!(
-            twitch_event("Mairimyarel", "mairimyarel subscribed at Tier 1."),
+            twitch_event("Mairimyarel", "mairimyarel subscribed at Tier 1.", &Cheermotes::builtin()),
             (Kind::Sub, Some(1.0)),
             "any case"
         );
         assert_eq!(
-            twitch_event("viewer", "I subscribed at Tier 1 yesterday"),
+            twitch_event("viewer", "I subscribed at Tier 1 yesterday", &Cheermotes::builtin()),
             (Kind::Message, None),
             "only the subscriber's own notice"
         );
-        assert_eq!(twitch_event("kai", "Cheer100 Hi, Kai! How’re you? cheer50"), (Kind::Tip, Some(150.0)));
         assert_eq!(
-            twitch_event("v", "Squid1 Squid2 Squid3 Squid4 MercyWing1"),
+            twitch_event("kai", "Cheer100 Hi, Kai! How’re you? cheer50", &Cheermotes::builtin()),
+            (Kind::Tip, Some(150.0))
+        );
+        assert_eq!(
+            twitch_event("v", "Squid1 Squid2 Squid3 Squid4 MercyWing1", &Cheermotes::builtin()),
             (Kind::Message, None),
             "emotes, not cheers"
         );
-        assert_eq!(twitch_event("v", "cheer up everyone"), (Kind::Message, None));
+        assert_eq!(twitch_event("v", "cheer up everyone", &Cheermotes::builtin()), (Kind::Message, None));
+        assert_eq!(twitch_event("v", "PrideCheer300 hi", &Cheermotes::builtin()), (Kind::Tip, Some(300.0)));
     }
 
     #[test]
     fn counts_a_twitch_gift_bomb_once() {
         let msg = |time: f64, author: &str, text: &str| {
-            let (kind, amount) = twitch_event(author, text);
+            let (kind, amount) = twitch_event(author, text, &Cheermotes::builtin());
             ChatMessage {
                 time,
                 author: author.into(),
@@ -1198,5 +1261,15 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!((messages[0].time, messages[0].author.as_str()), (12.345, "@viewer"));
         assert_eq!(messages[0].text(), "nice :yt: 😂");
+    }
+
+    /// Asks Twitch for real: `cargo test -p vodscribe-core -- --ignored cheermotes`.
+    #[test]
+    #[ignore = "network"]
+    fn fetches_twitchs_cheermotes() {
+        let names = Cheermotes::for_video("2899842479", &AtomicBool::new(false));
+        let fetched = names.0.len() - Cheermotes::builtin().0.len();
+        eprintln!("{} cheermote names, {fetched} more than built in", names.0.len());
+        assert!(names.has("PrideCheer") && names.has("Cheer") && names.has("Charity"));
     }
 }
