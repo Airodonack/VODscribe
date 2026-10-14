@@ -75,6 +75,10 @@ const MAX_BYTES: u64 = 16 << 20;
 /// copy used if there is one.
 pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordEmote>> {
     let Some(key) = cache_key(info) else { return Ok(Vec::new()) };
+    // One at a time: lookups made together (a provider toggled quickly, two
+    // views) would fetch the same lists twice and write the same files at once.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let providers: Vec<&Provider> = enabled.iter().filter_map(|id| PROVIDERS.iter().find(|p| p.id == *id)).collect();
     if providers.is_empty() {
         return Ok(Vec::new());
@@ -93,7 +97,12 @@ pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordE
                 let fetched = match &channel {
                     Some(c) => (p.channel)(c),
                     None => channel_of(info).and_then(|c| {
-                        write_atomic(&channel_path, &serde_json::to_vec(&c)?)?;
+                        // Not kept is only slower next time, not a reason to go without.
+                        if let Err(e) =
+                            serde_json::to_vec(&c).map_err(Into::into).and_then(|b| write_atomic(&channel_path, &b))
+                        {
+                            eprintln!("{}: {e:#}", channel_path.display());
+                        }
                         (p.channel)(channel.insert(c))
                     }),
                 };

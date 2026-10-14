@@ -11,7 +11,6 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, Db, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
-use vodscribe_core::settings::Settings;
 use vodscribe_core::word_emotes::{self, WordEmote};
 use vodscribe_core::{chat, emotes, tools};
 
@@ -153,20 +152,24 @@ pub(crate) async fn chat_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<(S
 }
 
 /// The emotes VOD `vod_id`'s chat writes as words (see `word_emotes`), from
-/// the providers turned on in settings, in their order; none while all are off.
+/// `providers` (ids, in priority order): the ones turned on in settings, which
+/// the view sends rather than this reading them, since a change it has just
+/// made may not be saved yet. None when that's empty.
 #[tauri::command]
-pub(crate) async fn chat_word_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<WordEmote>> {
-    let state = app.state::<AppState>();
-    let providers = Settings::load(&state.paths.settings()).emote_providers;
-    if providers.enabled().is_empty() {
+pub(crate) async fn chat_word_emotes(app: AppHandle, vod_id: i64, providers: Vec<String>) -> CmdResult<Vec<WordEmote>> {
+    if providers.is_empty() {
         return Ok(Vec::new());
     }
+    let state = app.state::<AppState>();
     let Some(vod) = state.db.lock().unwrap().vod(vod_id).map_err(err)? else { return Ok(Vec::new()) };
     let dir = state.paths.emotes().join("words");
-    tauri::async_runtime::spawn_blocking(move || word_emotes::for_vod(&vod.info, &dir, &providers.enabled()))
-        .await
-        .map_err(err)?
-        .map_err(err)
+    tauri::async_runtime::spawn_blocking(move || {
+        let ids: Vec<&str> = providers.iter().map(String::as_str).collect();
+        word_emotes::for_vod(&vod.info, &dir, &ids)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
 }
 
 /// Fetches VOD `id`'s chat again, after a failure.

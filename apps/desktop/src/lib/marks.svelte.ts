@@ -61,17 +61,28 @@ export class Marks {
     // they change. Fetched once a day per channel (the app keeps the list),
     // so this is usually quick; until it's in, those words show as words.
     void settings.load();
+    // Only the latest lookup's answer counts: toggling quickly sends several,
+    // and an older one can finish last.
+    let wordsSeq = 0;
+    let wordsOf: number | null = null;
     $effect(() => {
       const { vod, canHaveChat } = this.#of();
       const id = vod.id;
-      const providers = settings.value?.emote_providers ?? [];
-      void JSON.stringify(providers);
-      this.words = new Map();
-      if (!canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick")) return;
-      if (!providers.some((p) => p.on)) return;
-      api.chatWordEmotes(id).then(
-        (list) => this.#of().vod.id === id && (this.words = new Map(list.map((e) => [e.name, e]))),
-        (e) => console.warn("word emotes:", e),
+      // Another VOD's (another channel's) emotes go at once; the same VOD's
+      // stay until the new list is in, rather than flickering to words.
+      if (wordsOf !== id) {
+        wordsOf = id;
+        this.words = new Map();
+      }
+      const on = (settings.value?.emote_providers ?? []).filter((p) => p.on).map((p) => p.id);
+      const mine = ++wordsSeq;
+      if (!canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick") || on.length === 0) {
+        this.words = new Map();
+        return;
+      }
+      api.chatWordEmotes(id, on).then(
+        (list) => mine === wordsSeq && (this.words = new Map(list.map((e) => [e.name, e]))),
+        (e) => mine === wordsSeq && console.warn("word emotes:", e),
       );
     });
 

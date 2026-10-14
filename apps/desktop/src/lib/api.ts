@@ -208,7 +208,8 @@ export const api = {
     invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
   /** The emotes in a VOD's chat, as [name, image URL]. */
   chatEmotes: (vodId: number) => invoke<[string, string][]>("chat_emotes", { vodId }),
-  chatWordEmotes: (vodId: number) => invoke<WordEmote[]>("chat_word_emotes", { vodId }),
+  /** `providers`: the ids turned on, in priority order. */
+  chatWordEmotes: (vodId: number, providers: string[]) => invoke<WordEmote[]>("chat_word_emotes", { vodId, providers }),
   getTimeline: () => invoke<TimelineSettings>("get_timeline"),
   setTimeline: (timeline: TimelineSettings) => invoke<void>("set_timeline", { timeline }),
   /** For each list of terms, the [id, time] of the VOD's chat messages with any of them as a whole word or phrase. */
