@@ -49,6 +49,7 @@ export default defineConfig({
       "@tauri-apps/api/event": here("src/lib/tauri/event.ts"),
       "@tauri-apps/api/app": here("src/lib/tauri/app.ts"),
       "@tauri-apps/api/webview": here("src/lib/tauri/webview.ts"),
+      "@tauri-apps/api/window": here("src/lib/tauri/window.ts"),
       "@tauri-apps/plugin-opener": here("src/lib/tauri/opener.ts"),
       "@tauri-apps/plugin-clipboard-manager": here("src/lib/tauri/clipboard.ts"),
       "@tauri-apps/plugin-dialog": here("src/lib/tauri/dialog.ts"),

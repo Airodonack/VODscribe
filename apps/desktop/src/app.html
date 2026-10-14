@@ -5,6 +5,18 @@
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VODscribe</title>
+    <!-- The theme's background from the very first frame, before the styles load (app.css). -->
+    <style>
+      html {
+        color-scheme: light dark;
+        background: #f4f4f2;
+      }
+      @media (prefers-color-scheme: dark) {
+        html {
+          background: #141413;
+        }
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

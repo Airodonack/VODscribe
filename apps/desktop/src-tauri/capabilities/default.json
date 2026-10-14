@@ -6,6 +6,7 @@
   "permissions": [
     "app",
     "core:default",
+    "core:window:allow-show",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://*" }]

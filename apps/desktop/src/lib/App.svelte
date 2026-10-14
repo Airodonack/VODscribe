@@ -11,6 +11,7 @@
   import Icon from "./Icon.svelte";
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { os } from "./platform";
   import { updates } from "./updates.svelte";
@@ -121,6 +122,12 @@
       loaded ? f(...args) : early.push(() => f(...args));
 
   onMount(async () => {
+    // The window starts hidden (tauri.conf.json) and is shown now that the page
+    // is in place, its background the theme's, rather than as a blank white
+    // window. (Not after an animation frame: a hidden window may never get one.)
+    void getCurrentWindow()
+      .show()
+      .catch(() => {});
     unlisten.push(updates.start());
     unlisten.push(
       await events.vod(

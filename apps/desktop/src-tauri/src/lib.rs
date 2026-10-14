@@ -102,7 +102,22 @@ pub fn run() {
                 url: tauri::WebviewUrl::External(app_server::start(app.handle())?.parse()?),
                 ..window
             };
-            tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
+            // Hidden until the page has painted its first frame and shows it
+            // (App.svelte), so it never opens as a blank white window. If the page
+            // never gets that far, it's shown anyway, broken page and all.
+            let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
+            // Behind the page, the theme's background (--bg in app.css), not white.
+            let bg = match main.theme() {
+                Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
+                _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
+            };
+            let _ = main.set_background_color(Some(bg));
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                if !main.is_visible().unwrap_or(true) {
+                    let _ = main.show();
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
