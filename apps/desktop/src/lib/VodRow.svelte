@@ -39,8 +39,8 @@
     error: "Failed",
   };
 
-  // Canceled by the user ("Canceled" in older libraries) rather than failed.
-  const stopped = $derived(vod.status === "error" && (vod.error === "Stopped" || vod.error === "Canceled"));
+  // Stopped by the user rather than failed.
+  const stopped = $derived(vod.status === "error" && vod.error === "Stopped");
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(platformName[vod.platform] ?? vod.platform);

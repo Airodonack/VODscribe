@@ -294,6 +294,10 @@ UPDATE vods SET chat = NULL WHERE chat = 'done';";
 const MIGRATE_V11: &str = "
 ALTER TABLE vods ADD COLUMN chat_resume REAL;
 ALTER TABLE chat ADD COLUMN event_time REAL;";
+/// v12: a VOD the user stopped says "Stopped", as the app has written since
+/// 0.1.0's "Canceled" (the app shows either as stopped, not failed).
+const MIGRATE_V12: &str = "
+UPDATE vods SET error = 'Stopped' WHERE status = 'error' AND error = 'Canceled';";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -357,6 +361,7 @@ impl Db {
             MIGRATE_V9,
             MIGRATE_V10,
             MIGRATE_V11,
+            MIGRATE_V12,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -1038,6 +1043,37 @@ mod tests {
         let chat: Vec<_> = db.vods().unwrap().iter().map(|v| v.chat).collect();
         assert!(chat.contains(&ChatStatus::Pending) && chat.contains(&ChatStatus::None));
         assert_eq!(db.chat(1).unwrap()[0].kind, Kind::Message, "kept until fetched again");
+    }
+
+    #[test]
+    fn canceled_vods_say_stopped() {
+        let dir = crate::TempDir::new("migrate-v12");
+        let path = dir.join("library.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 11;", before.join("\n"))).unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (platform, platform_id, url, title, status, error, added_at) VALUES
+                     ('kick', 'a', 'u', 't', 'error', 'Canceled', 0), ('kick', 'b', 'u', 't', 'error', 'No audio', 0);",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let errors: Vec<_> = db.vods().unwrap().into_iter().map(|v| v.error).collect();
+        assert!(errors.contains(&Some("Stopped".into())) && errors.contains(&Some("No audio".into())));
     }
 
     #[test]
