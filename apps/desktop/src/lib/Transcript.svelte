@@ -371,7 +371,8 @@
   });
   let lineTimes = $derived(lines.map((l) => l.start));
   let mapLabel = $derived(chatCount > 0 ? "How busy chat was over the VOD" : "Speech over the VOD");
-  let showMap = $derived(lines.length > 0 && mapDuration > 0);
+  // Chat alone is enough to draw: it can be fetched before the transcript has a line.
+  let showMap = $derived((lines.length > 0 || chatCount > 0) && mapDuration > 0);
 
   // The header spans the transcript and the minimap, and stays at the top.
   let headHeight = $state(0);
