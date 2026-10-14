@@ -9,6 +9,7 @@
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
   import Icon from "./Icon.svelte";
+  import Popover from "./Popover.svelte";
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -61,19 +62,14 @@
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
   const searchKey = os === "mac" ? "⌘F" : "Ctrl+F";
-  // Escape, or a click outside it, closes the settings panel.
   function onWindowKey(e: KeyboardEvent) {
     if (!keysForApp()) return;
-    if (e.key === "Escape") showSettings = false;
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       searchInput?.focus();
       searchInput?.select();
     }
-  }
-  function onWindowClick(e: MouseEvent) {
-    if (showSettings && settingsEl && !settingsEl.contains(e.target as Node)) showSettings = false;
   }
   // A link dropped where nothing handles it (during setup, say) would otherwise
   // navigate the whole window to it. The library's own drop handling still runs.
@@ -259,7 +255,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onWindowKey} onclick={onWindowClick} ondragover={keepDropsInApp} ondrop={keepDropsInApp} />
+<svelte:window onkeydown={onWindowKey} ondragover={keepDropsInApp} ondrop={keepDropsInApp} />
 
 {#if setup === null}
   <!-- Loading -->
@@ -295,16 +291,14 @@
             aria-expanded={showSettings}
             title="Settings"><Icon name="settings" size={18} /></button
           >
-          {#if showSettings}
-            <div class="popover" role="dialog" aria-label="Settings">
-              <Settings
-                oncleared={() => {
-                  showSettings = false;
-                  refreshSetup();
-                }}
-              />
-            </div>
-          {/if}
+          <Popover bind:open={showSettings} anchor={settingsEl} label="Settings" width={340} padding={0}>
+            <Settings
+              oncleared={() => {
+                showSettings = false;
+                refreshSetup();
+              }}
+            />
+          </Popover>
         </div>
       </div>
 
@@ -413,20 +407,6 @@
 
   .settings-anchor {
     position: relative;
-  }
-
-  .popover {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    z-index: 10;
-    width: 340px;
-    max-height: calc(var(--app-height, 100vh) - 80px);
-    overflow-y: auto;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
   }
 
   .body {

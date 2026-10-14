@@ -4,7 +4,7 @@
   import Icon from "./Icon.svelte";
   import { EVENTS, eventColor, eventName, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
-  import { portal } from "./portal";
+  import Popover from "./Popover.svelte";
 
   // The Timeline button above the minimap, and its panel for the layers drawn
   // on it: saved chat searches, each a list of terms shown as pills.
@@ -28,39 +28,6 @@
   let mine = $derived(layers.forVod(vod));
   let elsewhere = $derived(layers.list.length - mine.length);
   let shown = $derived(layers.shownFor(vod));
-
-  // The panel is placed against the window, not inside the scrolling
-  // transcript area, which would cut it off: below the button when there's
-  // room, otherwise above it (over the player), and scrolling within that.
-  const ROOM = 280;
-  let place = $state<{ top?: number; bottom?: number; right: number; maxHeight: number } | null>(null);
-  function fit() {
-    if (!open || !anchor) return;
-    const box = anchor.getBoundingClientRect();
-    const right = window.innerWidth - box.right;
-    const below = window.innerHeight - box.bottom - 16;
-    const above = box.top - 16;
-    // Too little room either side (a short window): as tall as the window, over the button.
-    const least = 160;
-    place =
-      below >= ROOM || (below >= above && below >= least)
-        ? { top: box.bottom + 8, right, maxHeight: below - 8 }
-        : above >= least
-          ? { bottom: window.innerHeight - box.top + 8, right, maxHeight: above - 8 }
-          : { top: 8, right, maxHeight: window.innerHeight - 16 };
-  }
-  $effect(() => {
-    if (open) fit();
-  });
-
-  // By the click's path when it happened: removing a pill takes its button out
-  // of the page before this runs, and that's still a click inside.
-  // The panel lives at the end of <body> (`portal`), so a click inside it isn't inside the anchor.
-  let panel = $state<HTMLElement>();
-  function onWindowClick(e: MouseEvent) {
-    const path = e.composedPath();
-    if (open && anchor && !path.includes(anchor) && !(panel && path.includes(panel))) open = false;
-  }
 
   function addTerm(layer: Layer, input: HTMLInputElement) {
     const text = input.value.trim().replace(/,$/, "").trim();
@@ -92,13 +59,6 @@
   }
 </script>
 
-<svelte:window
-  onclick={onWindowClick}
-  onkeydown={(e) => e.key === "Escape" && (open = false)}
-  onresize={fit}
-  onscrollcapture={fit}
-/>
-
 <div class="anchor" bind:this={anchor}>
   <button
     class="timeline"
@@ -119,122 +79,110 @@
     ></span>
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
-  {#if open}
-    <div
-      use:portal
-      bind:this={panel}
-      class="popover"
-      role="dialog"
-      aria-label="Timeline layers"
-      style:top={place?.top !== undefined ? `${place.top}px` : null}
-      style:bottom={place?.bottom !== undefined ? `${place.bottom}px` : null}
-      style:right="{place?.right ?? 0}px"
-      style:max-height="{place?.maxHeight ?? 0}px"
-    >
-      <p class="intro muted">
-        Events and words to look for in chat, drawn on the timeline with their messages highlighted. Up to {MAX_VISIBLE}
-        layers show at once, besides the events.
-      </p>
-      {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
-      <section class="events" aria-label="Events">
-        {#each EVENTS as event (event.kind)}
-          {@const on = layers.events.includes(event.kind)}
-          <button
-            class="event"
-            class:on
-            style:--event={eventColor(vod.platform)}
-            onclick={() => layers.toggleEvent(event.kind)}
-            aria-pressed={on}
-            title={on ? "Hide from the timeline" : "Show on the timeline"}
-          >
-            <Icon name={event.icon} size={13} />
-            {eventName(event.kind, vod.platform)}
-            <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
-          </button>
-        {/each}
-      </section>
-      {#each mine as layer (layer.id)}
-        {@const isShown = shown.includes(layer)}
-        <section class="layer" class:hidden={!isShown}>
-          <div class="top">
-            <label class="swatch" style:background={layer.color} title="Change the color">
-              <input
-                type="color"
-                value={layer.color}
-                oninput={(e) => {
-                  layer.color = e.currentTarget.value;
-                  layers.save();
-                }}
-                aria-label="{layer.name}'s color"
-              />
-            </label>
-            <input
-              class="name"
-              bind:value={layer.name}
-              oninput={() => layers.save()}
-              aria-label="Layer name"
-              spellcheck="false"
-            />
-            {#if isShown && counts.has(layer.id)}<span class="count muted">{counts.get(layer.id)}</span>{/if}
-            <button
-              class="icon"
-              onclick={() => toggleShown(layer)}
-              disabled={!layer.visible && !layers.canShowMore(vod)}
-              aria-pressed={layer.visible}
-              title={layer.visible
-                ? "Hide from the timeline"
-                : layers.canShowMore(vod)
-                  ? "Show on the timeline"
-                  : `${MAX_VISIBLE} layers show at once; hide one first`}
-            >
-              <Icon name={layer.visible ? "eye" : "eye-off"} size={15} />
-            </button>
-            <button class="icon" onclick={() => layers.remove(layer.id)} title="Delete this layer">
-              <Icon name="trash" size={14} />
-            </button>
-          </div>
-          <div class="terms">
-            {#each layer.terms as term, i (term.text)}
-              {@const image = term.emote ?? emotes.get(term.text.toLowerCase())}
-              <span class="pill" title={term.text}>
-                {#if image}<Emote name={term.text} url={image} />{:else}{term.text}{/if}
-                <button
-                  class="remove"
-                  aria-label="Remove {term.text}"
-                  onclick={() => {
-                    layer.terms.splice(i, 1);
-                    layers.save();
-                  }}><Icon name="x" size={11} /></button
-                >
-              </span>
-            {/each}
-            <input
-              class="add-term"
-              placeholder={layer.terms.length ? "Add…" : "Add a word or emote…"}
-              onkeydown={(e) => onTermKey(e, layer)}
-              onblur={(e) => addTerm(layer, e.currentTarget)}
-              aria-label="Add a term to {layer.name}"
-              spellcheck="false"
-            />
-          </div>
-          {#if vod.channel}
-            <button class="scope" onclick={() => toggleChannel(layer)}>
-              {#if layer.channel}
-                <Icon name="lock" size={11} /> Only {layer.channel.channel}'s VODs
-              {:else}
-                All channels
-              {/if}
-              <span class="muted">· make it {layer.channel ? "every channel's" : `${vod.channel}'s only`}</span>
-            </button>
-          {/if}
-        </section>
+  <Popover bind:open {anchor} label="Timeline layers" width={352}>
+    <p class="intro muted">
+      Events and words to look for in chat, drawn on the timeline with their messages highlighted. Up to {MAX_VISIBLE}
+      layers show at once, besides the events.
+    </p>
+    {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
+    <section class="events" aria-label="Events">
+      {#each EVENTS as event (event.kind)}
+        {@const on = layers.events.includes(event.kind)}
+        <button
+          class="event"
+          class:on
+          style:--event={eventColor(vod.platform)}
+          onclick={() => layers.toggleEvent(event.kind)}
+          aria-pressed={on}
+          title={on ? "Hide from the timeline" : "Show on the timeline"}
+        >
+          <Icon name={event.icon} size={13} />
+          {eventName(event.kind, vod.platform)}
+          <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
+        </button>
       {/each}
-      <button class="add" onclick={() => layers.add(vod)}><Icon name="plus" size={13} /> Add a layer</button>
-      {#if elsewhere > 0}
-        <p class="muted elsewhere">{elsewhere} more for other channels.</p>
-      {/if}
-    </div>
-  {/if}
+    </section>
+    {#each mine as layer (layer.id)}
+      {@const isShown = shown.includes(layer)}
+      <section class="layer" class:hidden={!isShown}>
+        <div class="top">
+          <label class="swatch" style:background={layer.color} title="Change the color">
+            <input
+              type="color"
+              value={layer.color}
+              oninput={(e) => {
+                layer.color = e.currentTarget.value;
+                layers.save();
+              }}
+              aria-label="{layer.name}'s color"
+            />
+          </label>
+          <input
+            class="name"
+            bind:value={layer.name}
+            oninput={() => layers.save()}
+            aria-label="Layer name"
+            spellcheck="false"
+          />
+          {#if isShown && counts.has(layer.id)}<span class="count muted">{counts.get(layer.id)}</span>{/if}
+          <button
+            class="icon"
+            onclick={() => toggleShown(layer)}
+            disabled={!layer.visible && !layers.canShowMore(vod)}
+            aria-pressed={layer.visible}
+            title={layer.visible
+              ? "Hide from the timeline"
+              : layers.canShowMore(vod)
+                ? "Show on the timeline"
+                : `${MAX_VISIBLE} layers show at once; hide one first`}
+          >
+            <Icon name={layer.visible ? "eye" : "eye-off"} size={15} />
+          </button>
+          <button class="icon" onclick={() => layers.remove(layer.id)} title="Delete this layer">
+            <Icon name="trash" size={14} />
+          </button>
+        </div>
+        <div class="terms">
+          {#each layer.terms as term, i (term.text)}
+            {@const image = term.emote ?? emotes.get(term.text.toLowerCase())}
+            <span class="pill" title={term.text}>
+              {#if image}<Emote name={term.text} url={image} />{:else}{term.text}{/if}
+              <button
+                class="remove"
+                aria-label="Remove {term.text}"
+                onclick={() => {
+                  layer.terms.splice(i, 1);
+                  layers.save();
+                }}><Icon name="x" size={11} /></button
+              >
+            </span>
+          {/each}
+          <input
+            class="add-term"
+            placeholder={layer.terms.length ? "Add…" : "Add a word or emote…"}
+            onkeydown={(e) => onTermKey(e, layer)}
+            onblur={(e) => addTerm(layer, e.currentTarget)}
+            aria-label="Add a term to {layer.name}"
+            spellcheck="false"
+          />
+        </div>
+        {#if vod.channel}
+          <button class="scope" onclick={() => toggleChannel(layer)}>
+            {#if layer.channel}
+              <Icon name="lock" size={11} /> Only {layer.channel.channel}'s VODs
+            {:else}
+              All channels
+            {/if}
+            <span class="muted">· make it {layer.channel ? "every channel's" : `${vod.channel}'s only`}</span>
+          </button>
+        {/if}
+      </section>
+    {/each}
+    <button class="add" onclick={() => layers.add(vod)}><Icon name="plus" size={13} /> Add a layer</button>
+    {#if elsewhere > 0}
+      <p class="muted elsewhere">{elsewhere} more for other channels.</p>
+    {/if}
+  </Popover>
 </div>
 
 <style>
@@ -264,19 +212,6 @@
 
   .dot.off {
     background: color-mix(in srgb, var(--muted) 55%, transparent);
-  }
-
-  .popover {
-    position: fixed;
-    /* Above everything: it's at the end of <body> (portal.ts). */
-    z-index: 1000;
-    width: 352px;
-    overflow-y: auto;
-    padding: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
   }
 
   .intro {

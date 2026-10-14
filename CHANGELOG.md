@@ -2,6 +2,11 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.2.1 (unreleased)
+
+- The timeline appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.
+- Settings and the search's From filter open above everything, like the Timeline panel, so a playing video or a short window can't cover or cut them off.
+
 ## 0.2.0 — 2026-10-13
 
 - Chat: for Kick, Twitch and YouTube livestreams, the chat replay sits beside the transcript, each line with the messages sent while it was said, emotes and all. Hide it with the Chat button. It's fetched in the background, shows as it arrives, and carries on where it stopped if interrupted.

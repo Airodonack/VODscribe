@@ -9,6 +9,7 @@
 <script lang="ts">
   import type { Vod } from "./api";
   import Icon from "./Icon.svelte";
+  import Popover from "./Popover.svelte";
 
   // A button that sums up the search's filters, opening a panel to change them.
   // New kinds of filter get a section of the panel and a part of the summary.
@@ -39,13 +40,7 @@
     if (sources[key] && !sources[other]) sources[other] = true;
     sources[key] = !sources[key];
   }
-
-  function onWindowClick(e: MouseEvent) {
-    if (open && anchor && !anchor.contains(e.target as Node)) open = false;
-  }
 </script>
-
-<svelte:window onclick={onWindowClick} onkeydown={(e) => e.key === "Escape" && (open = false)} />
 
 <div class="anchor" bind:this={anchor}>
   <button
@@ -61,38 +56,36 @@
         >{/if}, {looking}</span
     >
   </button>
-  {#if open}
-    <div class="popover" role="dialog" aria-label="Search filter">
-      <p class="eyebrow">Search in</p>
-      <div class="choices">
-        <button
-          class:on={selected && !scopeAll}
-          aria-pressed={!!selected && !scopeAll}
-          disabled={!selected}
-          title={selected ? selected.title : "Pick a VOD in the library to search only it"}
-          onclick={() => (scopeAll = false)}
+  <Popover bind:open {anchor} label="Search filter" width={280}>
+    <p class="eyebrow">Search in</p>
+    <div class="choices">
+      <button
+        class:on={selected && !scopeAll}
+        aria-pressed={!!selected && !scopeAll}
+        disabled={!selected}
+        title={selected ? selected.title : "Pick a VOD in the library to search only it"}
+        onclick={() => (scopeAll = false)}
+      >
+        <span class="label">This VOD</span>
+        {#if selected}<span class="muted detail">{selected.title}</span>{/if}
+      </button>
+      <button class:on={!selected || scopeAll} aria-pressed={!selected || scopeAll} onclick={() => (scopeAll = true)}>
+        <span class="label"
+          >All VODs{#if scopeAll}<span class="lock"><Icon name="lock" size={11} /></span>{/if}</span
         >
-          <span class="label">This VOD</span>
-          {#if selected}<span class="muted detail">{selected.title}</span>{/if}
-        </button>
-        <button class:on={!selected || scopeAll} aria-pressed={!selected || scopeAll} onclick={() => (scopeAll = true)}>
-          <span class="label"
-            >All VODs{#if scopeAll}<span class="lock"><Icon name="lock" size={11} /></span>{/if}</span
-          >
-          {#if scopeAll}<span class="muted detail">Stays on when you switch VODs</span>{/if}
-        </button>
-      </div>
-      <p class="eyebrow">Look through</p>
-      <div class="choices">
-        <button class:on={sources.audio} aria-pressed={sources.audio} onclick={() => toggle("audio")}>
-          <span class="label">Audio</span><span class="muted detail">What was said</span>
-        </button>
-        <button class:on={sources.chat} aria-pressed={sources.chat} onclick={() => toggle("chat")}>
-          <span class="label">Chat</span><span class="muted detail">What chat wrote</span>
-        </button>
-      </div>
+        {#if scopeAll}<span class="muted detail">Stays on when you switch VODs</span>{/if}
+      </button>
     </div>
-  {/if}
+    <p class="eyebrow">Look through</p>
+    <div class="choices">
+      <button class:on={sources.audio} aria-pressed={sources.audio} onclick={() => toggle("audio")}>
+        <span class="label">Audio</span><span class="muted detail">What was said</span>
+      </button>
+      <button class:on={sources.chat} aria-pressed={sources.chat} onclick={() => toggle("chat")}>
+        <span class="label">Chat</span><span class="muted detail">What chat wrote</span>
+      </button>
+    </div>
+  </Popover>
 </div>
 
 <style>
@@ -124,19 +117,6 @@
 
   .summary {
     color: var(--muted);
-  }
-
-  .popover {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    z-index: 10;
-    width: 280px;
-    padding: 12px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
   }
 
   .eyebrow {
