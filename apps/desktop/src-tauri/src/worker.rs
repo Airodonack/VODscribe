@@ -19,8 +19,8 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// downloader pauses, so finished audio doesn't pile up on disk.
 const MAX_READY: usize = 2;
 
-/// Why a running job was stopped.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a running job was stopped, from the least to the most final.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stop {
     /// Keep the partial download and transcript; resume later.
     Pause,
@@ -148,8 +148,12 @@ impl Worker {
 }
 
 impl Job {
+    /// Stops the job for `reason`, unless it's already stopping for a more
+    /// final one: clearing the cache pauses every job, which mustn't turn a
+    /// delete or cancel on its way into a pause.
     fn stop(&self, reason: Stop) {
-        *self.reason.lock().unwrap() = Some(reason);
+        let mut current = self.reason.lock().unwrap();
+        *current = (*current).max(Some(reason));
         self.flag.store(true, Ordering::Relaxed);
     }
 }
@@ -178,6 +182,9 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
                 eprintln!("queue: {e:#}");
                 None
             })
+            // The download stage marks a VOD Ready a moment before it lets go of
+            // it; the other stage's wake follows.
+            .filter(|vod| queue.jobs.iter().all(|j| j.vod_id != vod.id))
             .map(|vod| {
                 let flag = Arc::new(AtomicBool::new(false));
                 let reason = Arc::new(Mutex::new(None));
@@ -204,7 +211,7 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
             let mut queue = ctx.queue.lock().unwrap();
             let stop = *reason.lock().unwrap();
             let finished = finish(stage, &ctx.db, &ctx.paths.work(), vod.id, result, stop, progress);
-            queue.jobs.retain(|j| j.vod_id != vod.id);
+            queue.jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
             finished
         };
         if let Err(e) = finished {
@@ -499,5 +506,18 @@ mod tests {
         db.delete_vod(id).unwrap();
         finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("gone")), None, 0.3).unwrap();
         assert!(db.vod(id).unwrap().is_none());
+    }
+
+    #[test]
+    fn stops_never_become_less_final() {
+        let job = Job { vod_id: 1, flag: Arc::new(AtomicBool::new(false)), reason: Arc::new(Mutex::new(None)) };
+        job.stop(Stop::Pause);
+        assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Pause));
+        job.stop(Stop::Delete);
+        // Clearing the cache pauses every job, after the delete.
+        job.stop(Stop::Pause);
+        job.stop(Stop::Cancel);
+        assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Delete));
+        assert!(job.flag.load(Ordering::Relaxed));
     }
 }
