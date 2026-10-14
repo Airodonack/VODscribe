@@ -292,7 +292,8 @@
 
   .frame {
     aspect-ratio: 16 / 9;
-    max-height: 44vh;
+    /* The website's demo, a window within a page, sets a smaller share of its own height. */
+    max-height: var(--player-max-height, 44vh);
     margin: 0 auto;
   }
 

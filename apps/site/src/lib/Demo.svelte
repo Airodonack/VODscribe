@@ -111,8 +111,10 @@
 
   .window {
     position: relative;
-    /* The app fills this height (App.svelte). */
-    --app-height: min(680px, 82vh);
+    /* The app fills this height (App.svelte), all of it on screen at once; the
+       player takes a third of it, leaving the transcript and chat room to read. */
+    --app-height: min(760px, 88vh);
+    --player-max-height: calc(var(--app-height) * 0.34);
     height: var(--app-height);
     border: 1px solid var(--border);
     border-radius: 12px;
