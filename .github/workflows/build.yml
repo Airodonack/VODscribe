@@ -116,6 +116,24 @@ jobs:
           fi
           pnpm --filter desktop tauri build --target ${{ matrix.target }} "${args[@]}"
 
+      # No one has a Mac to try the app on, so check what can be checked here:
+      # the bundle's signature covers everything in it, it asks for macOS 12,
+      # and both programs in it start on this chip.
+      - name: Check the macOS app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(ls -d target/${{ matrix.target }}/release/bundle/macos/*.app)
+          codesign --verify --deep --strict --verbose=2 "$app"
+          test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = 12.0
+          # Ad-hoc signed: Gatekeeper rejects it (users approve it once); shown for the log.
+          spctl --assess --verbose=4 "$app" || true
+          # Without arguments the worker exits asking for them: it loaded and ran.
+          if out=$("$app/Contents/MacOS/vodscribe-worker" 2>&1); then exit 1; fi
+          grep -q -- "--model is required" <<<"$out" || { echo "$out"; exit 1; }
+          file "$app/Contents/MacOS/"*
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vodscribe-${{ matrix.target }}
