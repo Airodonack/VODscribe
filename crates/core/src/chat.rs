@@ -148,10 +148,9 @@ pub fn fetch(
         "twitch" => fetch_twitch(info, store, cancel, &mut on_progress)?,
         "youtube" => {
             let yt_dlp = yt_dlp.context("The video downloader isn't installed yet.")?;
-            // yt-dlp hands over the whole chat at the end, so there's nothing to carry on from.
-            let Some(messages) = fetch_youtube(info, yt_dlp, work_dir, vod_id)? else { return Ok(false) };
-            store.clear()?;
-            store.save(&messages, 0.0)?;
+            if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store)? {
+                return Ok(false);
+            }
         }
         _ => return Ok(false),
     }
@@ -661,7 +660,17 @@ fn is_emote_id(id: &str) -> bool {
 // YouTube: yt-dlp saves a past livestream's chat as a "live_chat" subtitle,
 // one JSON action per line.
 
-fn fetch_youtube(info: &VodInfo, yt_dlp: &YtDlp, work_dir: &Path, vod_id: i64) -> Result<Option<Vec<ChatMessage>>> {
+/// Has yt-dlp save the chat, then reads it into `store` a line at a time,
+/// saving as it goes: a long, busy stream's is hundreds of megabytes. False
+/// when the video has no chat replay. yt-dlp hands over the whole chat at the
+/// end, so there's nothing to carry on from: a fetch starts over.
+fn fetch_youtube(
+    info: &VodInfo,
+    yt_dlp: &YtDlp,
+    work_dir: &Path,
+    vod_id: i64,
+    store: &mut dyn ChatStore,
+) -> Result<bool> {
     fs::create_dir_all(work_dir)?;
     let stem = work_dir.join(format!("{vod_id}.chat"));
     let file = work_dir.join(format!("{vod_id}.chat.live_chat.json"));
@@ -679,84 +688,97 @@ fn fetch_youtube(info: &VodInfo, yt_dlp: &YtDlp, work_dir: &Path, vod_id: i64) -
         bail!("{}", crate::fetch::clean_error(&String::from_utf8_lossy(&out.stderr)));
     }
     // No file: the video has no chat replay (it wasn't a livestream).
-    let Ok(text) = fs::read_to_string(&file) else { return Ok(None) };
+    let Ok(reader) = fs::File::open(&file).map(std::io::BufReader::new) else { return Ok(false) };
+    store.clear()?;
+    let mut batch = Batch::new();
+    for line in std::io::BufRead::lines(reader) {
+        parse_youtube_line(&line?, &mut batch.messages);
+        batch.save(store, 0.0, false)?;
+    }
+    batch.save(store, 0.0, true)?;
     let _ = fs::remove_file(&file);
-    Ok(Some(parse_youtube(&text)))
+    Ok(true)
 }
 
+#[cfg(test)]
 fn parse_youtube(text: &str) -> Vec<ChatMessage> {
     let mut out = Vec::new();
     for line in text.lines() {
-        let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        let Some(replay) = v.get("replayChatItemAction") else { continue };
-        let Some(ms) = replay["videoOffsetTimeMsec"].as_str().and_then(|s| s.parse::<f64>().ok()) else { continue };
-        for action in replay["actions"].as_array().into_iter().flatten() {
-            let item = &action["addChatItemAction"]["item"];
-            // Which kind of item, where its text is, and anything to say before that.
-            let (kind, r, runs, lead) = if let Some(r) = item.get("liveChatTextMessageRenderer") {
-                (Kind::Message, r, r.pointer("/message/runs"), None)
-            } else if let Some(r) = item.get("liveChatPaidMessageRenderer") {
-                (Kind::Tip, r, r.pointer("/message/runs"), simple_text(r, "/purchaseAmountText"))
-            } else if let Some(r) = item.get("liveChatPaidStickerRenderer") {
-                let amount = simple_text(r, "/purchaseAmountText").unwrap_or_default();
-                (Kind::Tip, r, None, Some(format!("{amount} Super Sticker").trim().to_string()))
-            } else if let Some(r) = item.get("liveChatMembershipItemRenderer") {
-                // "Welcome to …!" for a new member, "Member for 6 months" for a milestone.
-                (
-                    Kind::Sub,
-                    r,
-                    r.pointer("/message/runs"),
-                    runs_text(r, "/headerSubtext").or_else(|| runs_text(r, "/headerPrimaryText")),
-                )
-            } else if let Some(r) = item.pointer(
-                "/liveChatSponsorshipsGiftPurchaseAnnouncementRenderer/header/liveChatSponsorshipsHeaderRenderer",
-            ) {
-                (Kind::Gift, r, None, runs_text(r, "/primaryText"))
-            } else {
-                continue;
-            };
-            let mut parts = Vec::new();
-            if let Some(lead) = lead.filter(|l| !l.is_empty()) {
-                push_text(&mut parts, &lead);
-                if runs.is_some() {
-                    push_text(&mut parts, " ");
-                }
-            }
-            for run in runs.and_then(Value::as_array).into_iter().flatten() {
-                if let Some(text) = run["text"].as_str() {
-                    push_text(&mut parts, text);
-                } else if let Some(emoji) = run.get("emoji") {
-                    let name = emoji.pointer("/shortcuts/0").and_then(Value::as_str);
-                    let url = emoji.pointer("/image/thumbnails/0/url").and_then(Value::as_str);
-                    match (emoji["isCustomEmoji"].as_bool(), name, url) {
-                        (Some(true), Some(name), Some(url)) if url.starts_with("https://") => {
-                            parts.push(ChatPart::Emote { name: name.to_string(), url: url.to_string() })
-                        }
-                        // A standard emoji is its own character.
-                        _ => push_text(&mut parts, emoji["emojiId"].as_str().unwrap_or_default()),
-                    }
-                }
-            }
-            if parts.is_empty() {
-                continue;
-            }
-            let mut msg = ChatMessage {
-                time: ms / 1000.0,
-                author: simple_text(r, "/authorName").unwrap_or_else(|| "?".into()),
-                color: None,
-                parts,
-                kind,
-                amount: None,
-                event_time: None,
-            };
-            // "Sent 5 … gift memberships": how many.
-            if kind == Kind::Gift {
-                msg.amount = msg.text().split_whitespace().find_map(leading_number).or(Some(1.0));
-            }
-            out.push(msg);
-        }
+        parse_youtube_line(line, &mut out);
     }
     out
+}
+
+/// Adds the chat messages in one line of yt-dlp's `live_chat.json` to `out`.
+fn parse_youtube_line(line: &str, out: &mut Vec<ChatMessage>) {
+    let Ok(v) = serde_json::from_str::<Value>(line) else { return };
+    let Some(replay) = v.get("replayChatItemAction") else { return };
+    let Some(ms) = replay["videoOffsetTimeMsec"].as_str().and_then(|s| s.parse::<f64>().ok()) else { return };
+    for action in replay["actions"].as_array().into_iter().flatten() {
+        let item = &action["addChatItemAction"]["item"];
+        // Which kind of item, where its text is, and anything to say before that.
+        let (kind, r, runs, lead) = if let Some(r) = item.get("liveChatTextMessageRenderer") {
+            (Kind::Message, r, r.pointer("/message/runs"), None)
+        } else if let Some(r) = item.get("liveChatPaidMessageRenderer") {
+            (Kind::Tip, r, r.pointer("/message/runs"), simple_text(r, "/purchaseAmountText"))
+        } else if let Some(r) = item.get("liveChatPaidStickerRenderer") {
+            let amount = simple_text(r, "/purchaseAmountText").unwrap_or_default();
+            (Kind::Tip, r, None, Some(format!("{amount} Super Sticker").trim().to_string()))
+        } else if let Some(r) = item.get("liveChatMembershipItemRenderer") {
+            // "Welcome to …!" for a new member, "Member for 6 months" for a milestone.
+            (
+                Kind::Sub,
+                r,
+                r.pointer("/message/runs"),
+                runs_text(r, "/headerSubtext").or_else(|| runs_text(r, "/headerPrimaryText")),
+            )
+        } else if let Some(r) = item
+            .pointer("/liveChatSponsorshipsGiftPurchaseAnnouncementRenderer/header/liveChatSponsorshipsHeaderRenderer")
+        {
+            (Kind::Gift, r, None, runs_text(r, "/primaryText"))
+        } else {
+            continue;
+        };
+        let mut parts = Vec::new();
+        if let Some(lead) = lead.filter(|l| !l.is_empty()) {
+            push_text(&mut parts, &lead);
+            if runs.is_some() {
+                push_text(&mut parts, " ");
+            }
+        }
+        for run in runs.and_then(Value::as_array).into_iter().flatten() {
+            if let Some(text) = run["text"].as_str() {
+                push_text(&mut parts, text);
+            } else if let Some(emoji) = run.get("emoji") {
+                let name = emoji.pointer("/shortcuts/0").and_then(Value::as_str);
+                let url = emoji.pointer("/image/thumbnails/0/url").and_then(Value::as_str);
+                match (emoji["isCustomEmoji"].as_bool(), name, url) {
+                    (Some(true), Some(name), Some(url)) if url.starts_with("https://") => {
+                        parts.push(ChatPart::Emote { name: name.to_string(), url: url.to_string() })
+                    }
+                    // A standard emoji is its own character.
+                    _ => push_text(&mut parts, emoji["emojiId"].as_str().unwrap_or_default()),
+                }
+            }
+        }
+        if parts.is_empty() {
+            continue;
+        }
+        let mut msg = ChatMessage {
+            time: ms / 1000.0,
+            author: simple_text(r, "/authorName").unwrap_or_else(|| "?".into()),
+            color: None,
+            parts,
+            kind,
+            amount: None,
+            event_time: None,
+        };
+        // "Sent 5 … gift memberships": how many.
+        if kind == Kind::Gift {
+            msg.amount = msg.text().split_whitespace().find_map(leading_number).or(Some(1.0));
+        }
+        out.push(msg);
+    }
 }
 
 /// YouTube's `{ "simpleText": … }` at `path` in `r`.
