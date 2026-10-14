@@ -113,12 +113,31 @@
     }
   });
 
+  // Clicking or dragging centers the view on the moment under the pointer.
+  // While dragging, the box is drawn there too, like a scrollbar's thumb: the
+  // view's box can lean off the pointer where the transcript has a long
+  // stretch without speech, which is little to scroll past.
   let dragging = false;
+  /** Where a drag holds the box's middle, as a fraction of the strip. */
+  let held = $state<number | null>(null);
   function seekTo(e: PointerEvent) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const fraction = Math.min(1, Math.max(0, (e.clientY - box.top) / box.height));
+    if (dragging) held = fraction;
     onseek(fraction * duration);
   }
+  function release() {
+    dragging = false;
+    held = null;
+  }
+  /** The box: the view, or while dragging, the view's size at the pointer. */
+  let shown = $derived.by(() => {
+    if (!view) return null;
+    if (held === null) return view;
+    const size = view.to - view.from;
+    const from = Math.min(1 - size, Math.max(0, held - size / 2));
+    return { from, to: from + size };
+  });
 </script>
 
 <div
@@ -142,12 +161,16 @@
     seekTo(e);
   }}
   onpointermove={(e) => dragging && seekTo(e)}
-  onpointerup={() => (dragging = false)}
-  onpointercancel={() => (dragging = false)}
+  onpointerup={release}
+  onpointercancel={release}
 >
   <canvas bind:this={canvas}></canvas>
-  {#if view}
-    <div class="view" style:top="{view.from * 100}%" style:height="{Math.max(0.5, (view.to - view.from) * 100)}%"></div>
+  {#if shown}
+    <div
+      class="view"
+      style:top="{shown.from * 100}%"
+      style:height="{Math.max(0.5, (shown.to - shown.from) * 100)}%"
+    ></div>
   {/if}
 </div>
 

@@ -358,14 +358,45 @@
   /** When row `i` starts; the row of chat before the first line starts at 0. */
   const rowStart = (i: number) => rows[i]?.line?.start ?? Math.max(0, rows[i]?.from ?? 0);
 
+  /** When row `i` ends: when the next one starts, or (the last) when the VOD ends. */
+  const rowEnd = (i: number) => (i + 1 < rows.length ? rowStart(i + 1) : Math.max(mapDuration, rowStart(i)));
+
+  // Times and places in the list map to each other evenly within each row:
+  // a row's time is spread over its height. So the minimap's box moves as
+  // smoothly as the list scrolls, even across a long row (a stretch without
+  // speech), and seeking to a moment and reading the box back agree.
+
+  /** The moment at `y` in the list. */
+  function timeAtY(y: number): number {
+    if (rows.length === 0) return 0;
+    const i = rowAtY(y);
+    const height = offsets[i + 1] - offsets[i];
+    const f = height > 0 ? Math.min(1, Math.max(0, (y - offsets[i]) / height)) : 0;
+    return rowStart(i) + f * (rowEnd(i) - rowStart(i));
+  }
+
+  /** Where moment `time` is in the list: the inverse of `timeAtY`. */
+  function yAtTime(time: number): number {
+    if (rows.length === 0) return 0;
+    let lo = 0;
+    let hi = rows.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (rowStart(mid) <= time) lo = mid;
+      else hi = mid - 1;
+    }
+    const span = rowEnd(lo) - rowStart(lo);
+    const f = span > 0 ? Math.min(1, Math.max(0, (time - rowStart(lo)) / span)) : 0;
+    return offsets[lo] + f * (offsets[lo + 1] - offsets[lo]);
+  }
+
   // The part of the VOD in view, for the minimap's box.
   let view = $derived.by(() => {
     if (!showMap || rows.length === 0) return null;
     const top = scrollTop + headHeight - listTop;
-    const first = rowAtY(top);
-    const after = rowAtY(top + railHeight - headHeight) + 1;
-    const end = after < rows.length ? rowStart(after) : mapDuration;
-    return { from: rowStart(first) / mapDuration, to: Math.min(1, end / mapDuration) };
+    const from = timeAtY(top);
+    const to = timeAtY(top + railHeight - headHeight);
+    return { from: from / mapDuration, to: Math.min(1, to / mapDuration) };
   });
   $effect(() => {
     const s = scroller;
@@ -390,17 +421,17 @@
     };
   });
 
-  /** Scrolls the row being said at `time` to the top of the view. */
+  /** Scrolls moment `time` to the middle of the view, as the minimap's box
+   *  centers on where it's clicked or dragged. Again once the rows that came
+   *  into view are measured, since far-off rows' heights are estimates. */
+  let seekFrame = 0;
   function seek(time: number) {
-    if (!scroller) return;
-    let lo = 0;
-    let hi = rows.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (rowStart(mid) <= time) lo = mid;
-      else hi = mid - 1;
-    }
-    scroller.scrollTop = listTop + offsets[lo] - headHeight;
+    const place = () => {
+      if (scroller) scroller.scrollTop = listTop + yAtTime(time) - headHeight - (railHeight - headHeight) / 2;
+    };
+    place();
+    cancelAnimationFrame(seekFrame);
+    seekFrame = requestAnimationFrame(place);
   }
 </script>
 

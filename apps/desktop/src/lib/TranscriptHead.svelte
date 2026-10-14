@@ -44,7 +44,7 @@
   } = $props();
 </script>
 
-<div class="head" bind:clientHeight={height}>
+<div class="head" bind:offsetHeight={height}>
   <p class="status muted" title={vod.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
     <span class="eyebrow">Transcript</span>
     {#if vod.status === "transcribing"}

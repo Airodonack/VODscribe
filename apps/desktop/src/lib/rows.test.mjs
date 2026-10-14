@@ -49,3 +49,24 @@ test("keys are unique, and a line's key changes when its row's end does", () => 
   assert.notEqual(before[2].key, after[2].key);
   assert.equal(before[1].key, after[1].key);
 });
+
+test("with chat, a stretch of more than a minute without speech goes in minutes", () => {
+  assert.deepEqual(spans(buildRows([line(10), line(30), line(200)], 260, true)), [
+    ["chat", -FAR, 10],
+    ["line", 10, 30],
+    ["line", 30, 60],
+    ["chat", 60, 120],
+    ["chat", 120, 180],
+    ["chat", 180, 200],
+    ["line", 200, 240],
+    ["chat", 240, FAR],
+  ]);
+});
+
+test("a gap within one minute, however long the gap's rows would be, stays one row", () => {
+  assert.deepEqual(spans(buildRows([line(61), line(119)], 600, true)).slice(1, 2), [["line", 61, 119]]);
+});
+
+test("without chat, gaps stay one row", () => {
+  assert.equal(buildRows([line(10), line(500)], 600, false).length, 2);
+});
