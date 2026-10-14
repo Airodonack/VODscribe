@@ -47,8 +47,9 @@
   let chatError = $state<string | null>(null);
   let chatProgress = $state<number | null>(null);
   let chatOpen = $state(read(CHAT_OPEN) !== "false");
-  let hasChat = $derived(vod.platform !== "local" && vod.chat !== undefined);
-  // A video that wasn't a livestream has no chat: its toggle is grayed out and the column stays shut.
+  let hasChat = $derived(vod.platform !== "local");
+  // A VOD without a chat replay (a video that wasn't a livestream, say): its
+  // toggle is grayed out and the column stays shut.
   let chatStatus = $derived(vod.chat);
   let noChat = $derived(chatStatus === "none");
   let showChat = $derived(hasChat && chatOpen && !noChat);
@@ -94,24 +95,30 @@
   // Without a transcript yet, chat goes in rows of a minute each.
   const FAR = 1e12;
   interface Row {
+    /** Unique among the rows, and kept as lines are added: a line's place in
+     *  the transcript (lines can share a start), and where its row ends, so a
+     *  row whose next line arrives is fetched again. */
+    key: string;
     line: Line | null;
     from: number;
     to: number;
   }
   let rows = $derived.by((): Row[] => {
-    const out: Row[] = lines.map((line, i) => ({ line, from: line.start, to: lines[i + 1]?.start ?? FAR }));
+    const out: Row[] = lines.map((line, i) => {
+      const to = lines[i + 1]?.start ?? FAR;
+      return { key: `line ${i} to ${to}`, line, from: line.start, to };
+    });
     if (!showChat) return out;
     if (lines.length === 0) {
       const minutes = Math.ceil((vod.duration ?? 0) / 60);
-      return Array.from({ length: minutes }, (_, k) => ({
-        line: null,
-        from: k * 60,
-        to: k === minutes - 1 ? FAR : (k + 1) * 60,
-      }));
+      return Array.from({ length: minutes }, (_, k) => {
+        const to = k === minutes - 1 ? FAR : (k + 1) * 60;
+        return { key: `minute ${k} to ${to}`, line: null, from: k * 60, to };
+      });
     }
-    return [{ line: null, from: -FAR, to: lines[0].start }, ...out];
+    return [{ key: `before to ${lines[0].start}`, line: null, from: -FAR, to: lines[0].start }, ...out];
   });
-  const keyOf = (row: Row) => `${row.from}:${row.to}`;
+  const keyOf = (row: Row) => row.key;
 
   // Only the rows in and near the view are laid out; empty space of the right
   // height stands in for the rest, so a long VOD with a busy chat opens, toggles
@@ -224,6 +231,8 @@
       if (chatOf !== id) {
         chatOf = id;
         windows = new Map();
+        // Row keys repeat from VOD to VOD; their heights don't.
+        measured.clear();
         limits.clear();
         overview = null;
       } else {
@@ -365,7 +374,6 @@
   let showMap = $derived(lines.length > 0 && mapDuration > 0);
 
   // The header spans the transcript and the minimap, and stays at the top.
-  let head = $state<HTMLElement>();
   let headHeight = $state(0);
 
   // Timeline layers (layers.svelte.ts): saved chat searches drawn over the
@@ -502,7 +510,7 @@
 </script>
 
 <div class="layout">
-  <div class="head" bind:this={head} bind:clientHeight={headHeight}>
+  <div class="head" bind:clientHeight={headHeight}>
     <p class="status muted" title={vod.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
       <span class="eyebrow">Transcript</span>
       {#if vod.status === "transcribing"}
@@ -543,11 +551,7 @@
           onclick={toggleChat}
           disabled={noChat}
           aria-expanded={showChat}
-          title={noChat
-            ? "This video has no chat replay (it wasn't a livestream)"
-            : showChat
-              ? "Hide chat"
-              : "Show chat beside the transcript"}
+          title={noChat ? "This VOD has no chat replay" : showChat ? "Hide chat" : "Show chat beside the transcript"}
         >
           <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
         </button>

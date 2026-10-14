@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { eventUsd, superChatUsd } from "./events.ts";
 
-const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 0.01, `${actual} is not ${expected}`);
+/** @param {number | null} actual @param {number} expected */
+const near = (actual, expected) =>
+  assert.ok(actual !== null && Math.abs(actual - expected) < 0.01, `${actual} is not ${expected}`);
 
 test("reads a Super Chat's amount in its currency", () => {
   near(superChatUsd("$5.00 love it"), 5);
@@ -28,7 +30,19 @@ test("stops at the amount, whatever the message starts with", () => {
 });
 
 test("values events", () => {
-  const m = (kind, amount, text = "") => ({ kind, amount, parts: [{ type: "text", text }] });
+  /**
+   * @param {import("./api").ChatKind} kind @param {number | null} amount
+   * @returns {import("./api").ChatLine}
+   */
+  const m = (kind, amount, text = "") => ({
+    id: 1,
+    time: 0,
+    author: "a",
+    color: null,
+    parts: [{ type: "text", text }],
+    kind,
+    amount,
+  });
   assert.equal(eventUsd(m("sub", 3), "twitch"), 25, "tier 3");
   assert.equal(eventUsd(m("sub", null), "kick"), 5);
   assert.equal(eventUsd(m("gift", 50), "twitch"), 250);
