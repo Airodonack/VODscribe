@@ -61,7 +61,8 @@ jobs:
             echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
           else
             # The installer, silently, for this user (its usual mode).
-            ./build/nsis/*-setup.exe //S
+            setup=(./build/nsis/*-setup.exe)
+            "${setup[0]}" //S
             app=$(find "$LOCALAPPDATA/VODscribe" -maxdepth 1 -iname 'vodscribe.exe' | head -1)
             test -n "$app"
             echo "APP=$(cygpath -w "$app")" >> "$GITHUB_ENV"
