@@ -1,0 +1,116 @@
+name: End-to-end tests
+
+# Installs the Linux and Windows builds and drives them (tests/e2e/run.mjs).
+# build.yml calls it after each build. By hand, it tests an earlier "Build
+# installers" run's installers (the run id is in its URL), so a change to the
+# test can be tried without building again.
+on:
+  workflow_call:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: The id of a Build installers run whose installers to test
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  e2e:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            models: ~/.local/share/app.vodscribe/models
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            models: ~\AppData\Local\app.vodscribe\models
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vodscribe-${{ matrix.target }}
+          path: build
+          run-id: ${{ inputs.build_run || github.run_id }}
+          github-token: ${{ github.token }}
+
+      # The speech model (about 1 GB) between runs; on a miss, setup downloads it.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ matrix.models }}
+          key: e2e-model-${{ runner.os }}-${{ hashFiles('crates/core/src/model.rs') }}
+
+      - name: Install the app and the WebDriver tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install tauri-driver --version 2.1.0 --locked
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y webkit2gtk-driver xvfb ./build/deb/*.deb
+            echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
+          else
+            # The installer, silently, for this user (its usual mode).
+            ./build/nsis/*-setup.exe //S
+            app=$(find "$LOCALAPPDATA/VODscribe" -maxdepth 1 -iname 'vodscribe.exe' | head -1)
+            test -n "$app"
+            echo "APP=$(cygpath -w "$app")" >> "$GITHUB_ENV"
+          fi
+
+      # WebView2 is driven by the msedgedriver of its exact version.
+      - name: Get msedgedriver
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $version) {
+            $version = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
+          }
+          Write-Output "WebView2 $version"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
+          # Through a wrapper that keeps msedgedriver's log, for when a session won't start.
+          $log = "$env:GITHUB_WORKSPACE\tests\e2e\out\msedgedriver.log"
+          New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\tests\e2e\out" | Out-Null
+          "@`"$env:RUNNER_TEMP\edgedriver\msedgedriver.exe`" --verbose `"--log-path=$log`" %*" |
+            Set-Content -Encoding ascii "$env:RUNNER_TEMP\edgedriver\logged.cmd"
+          "NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\logged.cmd" >> $env:GITHUB_ENV
+
+      - name: Drive the app
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            dbus-run-session -- xvfb-run -a node tests/e2e/run.mjs "$APP"
+          else
+            node tests/e2e/run.mjs "$APP"
+          fi
+
+      # Where WebView2 wrote (or didn't) the port msedgedriver waits for.
+      - name: Look for WebView2's DevToolsActivePort
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-Process | Where-Object { $_.Name -match 'vodscribe|msedgewebview2|msedgedriver' } | Format-Table Name, Id
+          foreach ($dir in "$env:LOCALAPPDATA\app.vodscribe", $env:TEMP) {
+            Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $dir -Filter DevToolsActivePort |
+              ForEach-Object { $_.FullName }
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e-${{ matrix.target }}
+          path: tests/e2e/out
+          if-no-files-found: ignore
+          retention-days: 14
