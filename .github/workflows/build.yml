@@ -204,8 +204,22 @@ jobs:
             app=$(find "$LOCALAPPDATA/VODscribe" -maxdepth 1 -iname 'vodscribe.exe' | head -1)
             test -n "$app"
             echo "APP=$(cygpath -w "$app")" >> "$GITHUB_ENV"
-            echo "NATIVE_DRIVER=$EDGEWEBDRIVER\msedgedriver.exe" >> "$GITHUB_ENV"
           fi
+
+      # WebView2 is driven by the msedgedriver of its exact version.
+      - name: Get msedgedriver
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key -ErrorAction SilentlyContinue).pv
+          if (-not $version) {
+            $version = (Get-Item "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe").VersionInfo.ProductVersion
+          }
+          Write-Output "WebView2 $version"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
+          "NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
 
       - name: Drive the app
         shell: bash
