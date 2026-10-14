@@ -943,6 +943,29 @@ mod tests {
     use super::*;
     use crate::transcript::{Segment, Segmenter};
 
+    /// How search results mark their matches, against the cases the website's
+    /// demo is tested against too (crates/core/tests/phrase-search.json):
+    /// matched runs in [brackets].
+    #[test]
+    fn shared_highlight_cases() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            about: String,
+            words: Vec<String>,
+            ranges: Vec<(usize, usize)>,
+            marked: String,
+        }
+        let cases: Vec<Case> = serde_json::from_str(include_str!("../tests/phrase-search.json")).unwrap();
+        for c in cases {
+            let words: Vec<Word> = c.words.into_iter().map(|text| Word { text, start: 0.0, end: 0.0 }).collect();
+            let marked: String = highlight(&words, &c.ranges)
+                .into_iter()
+                .map(|p| if p.hit { format!("[{}]", p.text) } else { p.text })
+                .collect();
+            assert_eq!(marked, c.marked, "{}", c.about);
+        }
+    }
+
     fn info(id: &str) -> VodInfo {
         VodInfo {
             platform: "youtube".into(),

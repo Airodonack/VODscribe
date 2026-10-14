@@ -1,14 +1,14 @@
 [
-  { "about": "a phrase", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "clutch play", "ranges": [[3, 4]] },
-  { "about": "the last term matches as a prefix", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "a clu", "ranges": [[2, 3]] },
-  { "about": "case and punctuation don't matter", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "CLUTCH, PLAY!", "ranges": [[3, 4]] },
-  { "about": "only the last term is a prefix", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "clu play", "ranges": [] },
-  { "about": "not inside a word", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "lutch", "ranges": [] },
-  { "about": "accents are ignored", "words": ["Le", "café", "était", "fermé."], "query": "cafe etait", "ranges": [[1, 2]] },
-  { "about": "hyphens split terms", "words": ["an", "e-sports", "team"], "query": "e sports team", "ranges": [[1, 2]] },
-  { "about": "apostrophes split terms", "words": ["I", "don't", "know"], "query": "don't know", "ranges": [[1, 2]] },
-  { "about": "a term isn't joined across an apostrophe", "words": ["I", "don't", "know"], "query": "dont", "ranges": [] },
-  { "about": "numbers are terms", "words": ["launched", "in", "2026,", "finally"], "query": "in 20", "ranges": [[1, 2]] },
-  { "about": "repeats don't overlap", "words": ["go", "go", "go"], "query": "go go", "ranges": [[0, 1]] },
-  { "about": "every occurrence", "words": ["moon", "and", "the", "moon"], "query": "moon", "ranges": [[0, 0], [3, 3]] }
+  { "about": "a phrase", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "clutch play", "ranges": [[3, 4]], "marked": "That was a [clutch play,] honestly." },
+  { "about": "the last term matches as a prefix", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "a clu", "ranges": [[2, 3]], "marked": "That was [a clutch] play, honestly." },
+  { "about": "case and punctuation don't matter", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "CLUTCH, PLAY!", "ranges": [[3, 4]], "marked": "That was a [clutch play,] honestly." },
+  { "about": "only the last term is a prefix", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "clu play", "ranges": [], "marked": "That was a clutch play, honestly." },
+  { "about": "not inside a word", "words": ["That", "was", "a", "clutch", "play,", "honestly."], "query": "lutch", "ranges": [], "marked": "That was a clutch play, honestly." },
+  { "about": "accents are ignored", "words": ["Le", "café", "était", "fermé."], "query": "cafe etait", "ranges": [[1, 2]], "marked": "Le [café était] fermé." },
+  { "about": "hyphens split terms", "words": ["an", "e-sports", "team"], "query": "e sports team", "ranges": [[1, 2]], "marked": "an [e-sports team]" },
+  { "about": "apostrophes split terms", "words": ["I", "don't", "know"], "query": "don't know", "ranges": [[1, 2]], "marked": "I [don't know]" },
+  { "about": "a term isn't joined across an apostrophe", "words": ["I", "don't", "know"], "query": "dont", "ranges": [], "marked": "I don't know" },
+  { "about": "numbers are terms", "words": ["launched", "in", "2026,", "finally"], "query": "in 20", "ranges": [[1, 2]], "marked": "launched [in 2026,] finally" },
+  { "about": "repeats don't overlap", "words": ["go", "go", "go"], "query": "go go", "ranges": [[0, 1]], "marked": "[go go] go" },
+  { "about": "every occurrence", "words": ["moon", "and", "the", "moon"], "query": "moon", "ranges": [[0, 0], [3, 3]], "marked": "[moon] and the [moon]" }
 ]
