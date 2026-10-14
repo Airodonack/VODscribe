@@ -234,6 +234,8 @@
 <style>
   .anchor {
     position: relative;
+    /* Keeps its size in the header; the status beside it is what gets cut short. */
+    flex: none;
   }
 
   .timeline {

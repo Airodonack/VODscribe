@@ -575,11 +575,9 @@
     font-size: 12px;
   }
 
-  .chat-head :global(button) {
-    flex: none;
-  }
-
   .chat-toggle {
+    /* Keeps its size; the status beside it is what gets cut short. */
+    flex: none;
     display: inline-flex;
     align-items: center;
     gap: 5px;
