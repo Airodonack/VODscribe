@@ -118,11 +118,6 @@
       </p>
     </div>
     <div>
-      <Icon name="shield" size={22} />
-      <h2>Stays on your computer</h2>
-      <p class="muted">Transcribing happens on your own computer. No account, no uploads, nothing collected.</p>
-    </div>
-    <div>
       <Icon name="message" size={22} />
       <h2>Chat beside the transcript</h2>
       <p class="muted">
@@ -136,10 +131,11 @@
       <p class="muted">Paste a link or drop a video file. VODs queue up and transcribe one after another.</p>
     </div>
     <div>
-      <Icon name="zap" size={22} />
-      <h2>Faster with a GPU</h2>
+      <Icon name="shield" size={22} />
+      <h2>Runs on your computer</h2>
       <p class="muted">
-        Works on any recent computer. On Windows and Linux, an NVIDIA graphics card makes it several times faster.
+        No account, no uploads, nothing collected. Any recent computer will do; an NVIDIA graphics card makes it several
+        times faster.
       </p>
     </div>
   </section>
