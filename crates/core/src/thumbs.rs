@@ -17,6 +17,10 @@ const MAX_BYTES: u64 = 8 << 20;
 /// name. `None` when there's no usable image there (gone, or not an image); an
 /// error only for failures worth retrying (network, server errors).
 pub fn fetch(url: &str, dir: &Path, id: i64) -> Result<Option<String>> {
+    // The site said where the image is; it must be out on the internet.
+    if net::check_public_url(url).is_err() {
+        return Ok(None);
+    }
     let never = AtomicBool::new(false);
     let body = match net::get(url, &never) {
         Ok((body, _)) => body,

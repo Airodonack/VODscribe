@@ -44,6 +44,11 @@ impl YtDlp {
         // A yt-dlp.conf (user, system, or one planted in the working dir) could
         // add --exec, browser cookies or output paths outside the work dir.
         cmd.arg("--ignore-config");
+        // Nor plugins: Python code from folders on this computer, run by yt-dlp.
+        cmd.arg("--no-plugin-dirs");
+        // Only sites yt-dlp knows by name. The generic extractor reads any web
+        // page for a video in it, following whatever the page points to.
+        cmd.args(["--use-extractors", "default,-generic"]);
         // Python writes to a pipe in Windows' ANSI code page unless told otherwise,
         // which mangles paths with characters outside it (a user named Jürgen).
         cmd.env("PYTHONIOENCODING", "utf-8").env("PYTHONUTF8", "1");

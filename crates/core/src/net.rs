@@ -73,6 +73,80 @@ impl<R: Read, F: FnMut(u64)> Read for ProgressReader<'_, R, F> {
     }
 }
 
+/// Fails unless `url` is an http(s) link to a host on the public internet:
+/// not this computer, the local network, or an address that resolves to them.
+/// Links pasted in, and the image links sites give (thumbnails), are checked
+/// before they're fetched, so a link can't make VODscribe (or yt-dlp, for it)
+/// reach a router's page or the app's own media server. A redirect isn't
+/// checked again.
+pub fn check_public_url(url: &str) -> Result<()> {
+    let (scheme, rest) = url.split_once("://").context("That isn't a link.")?;
+    if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
+        bail!("VODscribe only follows web links (https://…).");
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host_port.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => host_port.split(':').next().unwrap_or_default(),
+    }
+    .trim_end_matches('.')
+    .to_ascii_lowercase();
+    let local = || anyhow::anyhow!("VODscribe doesn't follow links to this computer or the local network.");
+    if host.is_empty() {
+        bail!("That isn't a link.");
+    }
+    if host == "localhost"
+        || [".localhost", ".local", ".internal", ".lan", ".home.arpa"].iter().any(|s| host.ends_with(s))
+    {
+        return Err(local());
+    }
+    let addresses: Vec<std::net::IpAddr> = match host.parse() {
+        Ok(ip) => vec![ip],
+        // A name: where it resolves now. (It could resolve elsewhere by the
+        // time it's fetched; this keeps out the plain cases.)
+        Err(_) => match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)) {
+            Ok(found) => found.map(|a| a.ip()).collect(),
+            // Not resolving is the fetch's to report.
+            Err(_) => return Ok(()),
+        },
+    };
+    if addresses.iter().any(|ip| !is_public(*ip)) {
+        return Err(local());
+    }
+    Ok(())
+}
+
+fn is_public(ip: std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || a == 0
+                // Carrier-grade NAT, 100.64.0.0/10, and benchmarking, 198.18.0.0/15.
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19)))
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                // Unique local (fc00::/7) and link-local (fe80::/10).
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
 /// Opens a streaming GET request. Returns the body reader and its length, if
 /// known. Reads fail when `cancel` is set (within `CANCEL_POLL`) or when no
 /// data arrives for `STALL_TIMEOUT`, rather than blocking on a dead connection.
@@ -225,6 +299,32 @@ pub fn download_verified(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_public_links_are_followed() {
+        for ok in ["https://www.twitch.tv/videos/1", "http://93.184.215.14/x", "https://[2606:4700::1111]/"] {
+            assert!(check_public_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "https://localhost/x",
+            "http://127.0.0.1:1234/media/1",
+            "http://192.168.1.1/",
+            "https://10.0.0.5/",
+            "https://172.20.1.1/",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]:8080/",
+            "http://[fd00::1]/",
+            "http://[::ffff:192.168.0.1]/",
+            "https://user@printer.local/",
+            "http://100.100.1.1/",
+            "http://0.0.0.0/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "https:///nohost",
+        ] {
+            assert!(check_public_url(bad).is_err(), "{bad}");
+        }
+    }
+
     use super::*;
     use std::net::TcpListener;
     use std::sync::Arc;

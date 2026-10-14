@@ -248,8 +248,14 @@ fn friendly(msg: &str) -> Option<&'static str> {
         Some(429) => "The site is limiting downloads right now. Try again in a little while.",
         Some(403) => REFUSED,
         Some(500..=599) => "The site is having problems right now. Try again later.",
-        _ if has(&["unsupported url", "is not a valid url"]) => {
-            "VODscribe can't use that link. Paste a link to a Kick, Twitch or YouTube VOD."
+        _ if has(&["unsupported url", "is not a valid url", "no suitable extractor"]) => {
+            "VODscribe can't use that link: it isn't a site the video downloader knows. Paste a link to a video page."
+        }
+        _ if has(&["no such option"]) => "The video downloader is out of date. Update it in Settings, then try again.",
+        _ if has(&["--cookies", "logged-in", "log in to", "login required", "sign in to view"])
+            && !has(&["not a bot"]) =>
+        {
+            "That site wants you signed in to get this video, and VODscribe doesn't sign in to sites."
         }
         _ if has(&["private video", "video is private"]) => "That video is private.",
         _ if has(&[
@@ -341,6 +347,18 @@ mod tests {
                 .contains("limiting")
         );
         assert!(clean_error("ERROR: [youtube] x: HTTP Error 403: Forbidden").contains("refused"));
+        assert!(
+            clean_error("ERROR: No suitable extractor found for URL https://example.com/").contains("isn't a site")
+        );
+        assert!(
+            clean_error("ERROR: [vimeo] 76979871: The web client only works when logged-in. Use --cookies, …")
+                .contains("signed in")
+        );
+        assert!(clean_error("yt-dlp: error: no such option: --no-plugin-dirs").contains("out of date"));
+        assert!(
+            clean_error("ERROR: [youtube] x: Sign in to confirm you're not a bot. Use --cookies-from-browser")
+                .contains("not a bot")
+        );
         // Only a leading tag is stripped.
         assert_eq!(
             clean_error("ERROR: unable to open for writing: [Errno 28] No space left on device"),
