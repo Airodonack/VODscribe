@@ -1,5 +1,6 @@
 # Desktop entry for the .deb and .rpm (Tauri's default template, with the
-# display name fixed). Tauri names Linux packages after productName in
+# display name fixed, and StartupNotify, so the desktop shows a busy cursor
+# until the window appears, which is once the app has loaded). Tauri names Linux packages after productName in
 # kebab-case, which would turn "VODscribe" into "vo-dscribe", so
 # tauri.linux.conf.json keeps productName lowercase and the name users see
 # comes from here.
@@ -10,6 +11,7 @@ Comment={{comment}}
 {{/if}}
 Exec={{exec}}
 StartupWMClass={{exec}}
+StartupNotify=true
 Icon={{icon}}
 Name=VODscribe
 Terminal=false

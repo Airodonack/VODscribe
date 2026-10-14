@@ -1,15 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="starting">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VODscribe</title>
-    <!-- The theme's background from the very first frame, before the styles load (app.css). -->
+    <!-- The theme's background from the very first frame, before the styles load
+         (app.css), and a busy cursor until App.svelte has the library loaded. -->
     <style>
       html {
         color-scheme: light dark;
         background: #f4f4f2;
+      }
+      html.starting,
+      html.starting * {
+        cursor: progress !important;
       }
       @media (prefers-color-scheme: dark) {
         html {

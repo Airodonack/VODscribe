@@ -153,8 +153,13 @@
         }),
       ),
     );
-    await refreshSetup();
-    vods = await api.listVods();
+    try {
+      await refreshSetup();
+      vods = await api.listVods();
+    } finally {
+      // The busy cursor (app.css `html.starting`) goes once the library is in.
+      document.documentElement.classList.remove("starting");
+    }
     loaded = true;
     early.splice(0).forEach((apply) => apply());
   });
