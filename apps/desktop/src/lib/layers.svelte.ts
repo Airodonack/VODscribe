@@ -16,6 +16,9 @@ class Layers {
 
   /** The chat events drawn on the timeline. */
   events = $state<EventKind[]>([]);
+  /** The saved layers have arrived. Until then nothing is saved: the list is
+   *  empty, and saving it would replace every saved layer. */
+  loaded = $state(false);
   #loading: Promise<void> | null = null;
   #timer: ReturnType<typeof setTimeout> | undefined;
   error = $state<string | null>(null);
@@ -25,6 +28,8 @@ class Layers {
       (t) => {
         this.list = t.layers;
         this.events = t.events;
+        this.loaded = true;
+        this.error = null;
       },
       (e) => {
         this.#loading = null;
@@ -36,6 +41,7 @@ class Layers {
 
   /** Saves a moment after the last change, so typing doesn't write on every key. */
   save() {
+    if (!this.loaded) return;
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
       api.setTimeline({ layers: $state.snapshot(this.list), events: $state.snapshot(this.events) }).then(

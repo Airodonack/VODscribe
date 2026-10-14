@@ -85,102 +85,107 @@
       layers show at once, besides the events.
     </p>
     {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
-    <section class="events" aria-label="Events">
-      {#each EVENTS as event (event.kind)}
-        {@const on = layers.events.includes(event.kind)}
-        <button
-          class="event"
-          class:on
-          style:--event={eventColor(vod.platform)}
-          onclick={() => layers.toggleEvent(event.kind)}
-          aria-pressed={on}
-          title={on ? "Hide from the timeline" : "Show on the timeline"}
-        >
-          <Icon name={event.icon} size={13} />
-          {eventName(event.kind, vod.platform)}
-          <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
-        </button>
-      {/each}
-    </section>
-    {#each mine as layer (layer.id)}
-      {@const isShown = shown.includes(layer)}
-      <section class="layer" class:hidden={!isShown}>
-        <div class="top">
-          <label class="swatch" style:background={layer.color} title="Change the color">
-            <input
-              type="color"
-              value={layer.color}
-              oninput={(e) => {
-                layer.color = e.currentTarget.value;
-                layers.save();
-              }}
-              aria-label="{layer.name}'s color"
-            />
-          </label>
-          <input
-            class="name"
-            bind:value={layer.name}
-            oninput={() => layers.save()}
-            aria-label="Layer name"
-            spellcheck="false"
-          />
-          {#if isShown && counts.has(layer.id)}<span class="count muted">{counts.get(layer.id)}</span>{/if}
+    <!-- Editable once the saved layers are in, so an edit can't be lost to them or overwrite them. -->
+    {#if !layers.loaded}
+      {#if !layers.error}<p class="muted">Loading your layers…</p>{/if}
+    {:else}
+      <section class="events" aria-label="Events">
+        {#each EVENTS as event (event.kind)}
+          {@const on = layers.events.includes(event.kind)}
           <button
-            class="icon"
-            onclick={() => toggleShown(layer)}
-            disabled={!layer.visible && !layers.canShowMore(vod)}
-            aria-pressed={layer.visible}
-            title={layer.visible
-              ? "Hide from the timeline"
-              : layers.canShowMore(vod)
-                ? "Show on the timeline"
-                : `${MAX_VISIBLE} layers show at once; hide one first`}
+            class="event"
+            class:on
+            style:--event={eventColor(vod.platform)}
+            onclick={() => layers.toggleEvent(event.kind)}
+            aria-pressed={on}
+            title={on ? "Hide from the timeline" : "Show on the timeline"}
           >
-            <Icon name={layer.visible ? "eye" : "eye-off"} size={15} />
+            <Icon name={event.icon} size={13} />
+            {eventName(event.kind, vod.platform)}
+            <span class="count">{eventCounts.get(event.kind) ?? 0}</span>
           </button>
-          <button class="icon" onclick={() => layers.remove(layer.id)} title="Delete this layer">
-            <Icon name="trash" size={14} />
-          </button>
-        </div>
-        <div class="terms">
-          {#each layer.terms as term, i (term.text)}
-            {@const image = term.emote ?? emotes.get(term.text.toLowerCase())}
-            <span class="pill" title={term.text}>
-              {#if image}<Emote name={term.text} url={image} />{:else}{term.text}{/if}
-              <button
-                class="remove"
-                aria-label="Remove {term.text}"
-                onclick={() => {
-                  layer.terms.splice(i, 1);
-                  layers.save();
-                }}><Icon name="x" size={11} /></button
-              >
-            </span>
-          {/each}
-          <input
-            class="add-term"
-            placeholder={layer.terms.length ? "Add…" : "Add a word or emote…"}
-            onkeydown={(e) => onTermKey(e, layer)}
-            onblur={(e) => addTerm(layer, e.currentTarget)}
-            aria-label="Add a term to {layer.name}"
-            spellcheck="false"
-          />
-        </div>
-        {#if vod.channel}
-          <button class="scope" onclick={() => toggleChannel(layer)}>
-            {#if layer.channel}
-              <Icon name="lock" size={11} /> Only {layer.channel.channel}'s VODs
-            {:else}
-              All channels
-            {/if}
-            <span class="muted">· make it {layer.channel ? "every channel's" : `${vod.channel}'s only`}</span>
-          </button>
-        {/if}
+        {/each}
       </section>
-    {/each}
-    <button class="add" onclick={() => layers.add(vod)}><Icon name="plus" size={13} /> Add a layer</button>
-    {#if elsewhere > 0}
-      <p class="muted elsewhere">{elsewhere} more for other channels.</p>
+      {#each mine as layer (layer.id)}
+        {@const isShown = shown.includes(layer)}
+        <section class="layer" class:hidden={!isShown}>
+          <div class="top">
+            <label class="swatch" style:background={layer.color} title="Change the color">
+              <input
+                type="color"
+                value={layer.color}
+                oninput={(e) => {
+                  layer.color = e.currentTarget.value;
+                  layers.save();
+                }}
+                aria-label="{layer.name}'s color"
+              />
+            </label>
+            <input
+              class="name"
+              bind:value={layer.name}
+              oninput={() => layers.save()}
+              aria-label="Layer name"
+              spellcheck="false"
+            />
+            {#if isShown && counts.has(layer.id)}<span class="count muted">{counts.get(layer.id)}</span>{/if}
+            <button
+              class="icon"
+              onclick={() => toggleShown(layer)}
+              disabled={!layer.visible && !layers.canShowMore(vod)}
+              aria-pressed={layer.visible}
+              title={layer.visible
+                ? "Hide from the timeline"
+                : layers.canShowMore(vod)
+                  ? "Show on the timeline"
+                  : `${MAX_VISIBLE} layers show at once; hide one first`}
+            >
+              <Icon name={layer.visible ? "eye" : "eye-off"} size={15} />
+            </button>
+            <button class="icon" onclick={() => layers.remove(layer.id)} title="Delete this layer">
+              <Icon name="trash" size={14} />
+            </button>
+          </div>
+          <div class="terms">
+            {#each layer.terms as term, i (term.text)}
+              {@const image = term.emote ?? emotes.get(term.text.toLowerCase())}
+              <span class="pill" title={term.text}>
+                {#if image}<Emote name={term.text} url={image} />{:else}{term.text}{/if}
+                <button
+                  class="remove"
+                  aria-label="Remove {term.text}"
+                  onclick={() => {
+                    layer.terms.splice(i, 1);
+                    layers.save();
+                  }}><Icon name="x" size={11} /></button
+                >
+              </span>
+            {/each}
+            <input
+              class="add-term"
+              placeholder={layer.terms.length ? "Add…" : "Add a word or emote…"}
+              onkeydown={(e) => onTermKey(e, layer)}
+              onblur={(e) => addTerm(layer, e.currentTarget)}
+              aria-label="Add a term to {layer.name}"
+              spellcheck="false"
+            />
+          </div>
+          {#if vod.channel}
+            <button class="scope" onclick={() => toggleChannel(layer)}>
+              {#if layer.channel}
+                <Icon name="lock" size={11} /> Only {layer.channel.channel}'s VODs
+              {:else}
+                All channels
+              {/if}
+              <span class="muted">· make it {layer.channel ? "every channel's" : `${vod.channel}'s only`}</span>
+            </button>
+          {/if}
+        </section>
+      {/each}
+      <button class="add" onclick={() => layers.add(vod)}><Icon name="plus" size={13} /> Add a layer</button>
+      {#if elsewhere > 0}
+        <p class="muted elsewhere">{elsewhere} more for other channels.</p>
+      {/if}
     {/if}
   </Popover>
 </div>
