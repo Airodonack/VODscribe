@@ -305,6 +305,16 @@ UPDATE vods SET error = 'Stopped' WHERE status = 'error' AND error = 'Canceled';
 const MIGRATE_V13: &str = "
 INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 0);
 INSERT INTO chat_fts (chat_fts, rank) VALUES ('secure-delete', 0);";
+/// v14: a deleted VOD's id is never given to a new one, so work still running
+/// for the deleted VOD (its chat or thumbnail being fetched) can't land on the
+/// new one. `vod_ids` holds the next id; `add_vod` takes it, and the trigger
+/// moves it past any id inserted another way.
+const MIGRATE_V14: &str = "
+CREATE TABLE vod_ids (next INTEGER NOT NULL);
+INSERT INTO vod_ids SELECT coalesce(max(id), 0) + 1 FROM vods;
+CREATE TRIGGER vods_ids AFTER INSERT ON vods BEGIN
+    UPDATE vod_ids SET next = max(next, NEW.id + 1);
+END;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -381,6 +391,7 @@ impl Db {
             MIGRATE_V11,
             MIGRATE_V12,
             MIGRATE_V13,
+            MIGRATE_V14,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -401,8 +412,9 @@ impl Db {
         }
         // New VODs go to the top of the library.
         self.conn.execute(
-            "INSERT INTO vods (platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(position), 0) - 1 FROM vods))",
+            "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at, position)
+             VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
+                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(position), 0) - 1 FROM vods))",
             params![
                 info.platform, info.platform_id, info.url, info.title, info.channel,
                 info.duration, info.thumbnail, info.published, now()
@@ -1151,6 +1163,51 @@ mod tests {
         let db = Db::open(&path).unwrap();
         let errors: Vec<_> = db.vods().unwrap().into_iter().map(|v| v.error).collect();
         assert!(errors.contains(&Some("Stopped".into())) && errors.contains(&Some("No audio".into())));
+    }
+
+    #[test]
+    fn ids_are_never_reused() {
+        let dir = crate::TempDir::new("ids");
+        let path = dir.join("library.sqlite");
+        let before: Vec<_> = {
+            // A library from before v14, whose newest VOD was deleted.
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+                MIGRATE_V12,
+                MIGRATE_V13,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 13;", before.join("\n"))).unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES
+                     ('kick', 'a', 'u', 't', 'done', 0), ('kick', 'b', 'u', 't', 'done', 0);",
+            )
+            .unwrap();
+            conn.query_row("SELECT max(id) FROM vods", [], |r| r.get::<_, i64>(0)).into_iter().collect()
+        };
+        let mut db = Db::open(&path).unwrap();
+        let a = db.add_vod(&info("a2")).unwrap().0;
+        assert!(a.id > before[0]);
+        db.delete_vod(a.id).unwrap();
+        let b = db.add_vod(&info("b2")).unwrap().0;
+        assert!(b.id > a.id, "the deleted VOD's id isn't given out again");
+        // Even after a VOD added without taking an id (as an older version would).
+        db.conn
+            .execute("INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'c', 'u', 't', 'done', 0)", [])
+            .unwrap();
+        let older = db.conn.last_insert_rowid();
+        db.delete_vod(older).unwrap();
+        assert!(db.add_vod(&info("d2")).unwrap().0.id > older);
     }
 
     #[test]
