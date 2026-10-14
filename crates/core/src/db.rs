@@ -69,6 +69,9 @@ pub struct Vod {
     /// A video (or audio) kept to play here, from a site other than YouTube,
     /// Twitch and Kick (`Paths::media`); the app plays it like a local file.
     pub media: bool,
+    /// What plays here (a local file, or the kept video) is audio alone, by its
+    /// file type: the player needs no picture.
+    pub audio_only: bool,
     /// Has transcript segments from a model this version no longer uses (or
     /// from before models were recorded). Finished VODs can be re-transcribed;
     /// unfinished ones start over when they resume.
@@ -353,6 +356,12 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         thumb: r.get("thumb")?,
         source_path: r.get("source_path")?,
         media: r.get::<_, Option<String>>("media_path")?.is_some(),
+        audio_only: [r.get::<_, Option<String>>("source_path")?, r.get("media_path")?]
+            .into_iter()
+            .flatten()
+            .next()
+            .and_then(|p| crate::local::media_type(Path::new(&p)))
+            .is_some_and(|mime| mime.starts_with("audio/")),
         outdated: {
             let model: Option<String> = r.get("model")?;
             let has_segments: bool = r.get("has_segments")?;
@@ -1242,6 +1251,21 @@ mod tests {
         let older = db.conn.last_insert_rowid();
         db.delete_vod(older).unwrap();
         assert!(db.add_vod(&info("d2")).unwrap().0.id > older);
+    }
+
+    #[test]
+    fn audio_alone_by_file_type() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = |name: &str| db.add_vod(&info(name)).unwrap().0.id;
+        let (song, film, kept, nothing) = (vod("a"), vod("b"), vod("c"), vod("d"));
+        db.set_source_path(song, "/music/song.MP3").unwrap();
+        db.set_source_path(film, "/videos/film.mkv").unwrap();
+        db.set_media_path(kept, Some("/data/media/3.m4a")).unwrap();
+        let audio_only = |id| db.vod(id).unwrap().unwrap().audio_only;
+        assert!(audio_only(song) && audio_only(kept));
+        assert!(!audio_only(film) && !audio_only(nothing));
+        db.set_media_path(kept, Some("/data/media/3.mp4")).unwrap();
+        assert!(!audio_only(kept));
     }
 
     #[test]

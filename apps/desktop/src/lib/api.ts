@@ -18,6 +18,8 @@ export interface Vod {
   source_path: string | null;
   /** A video kept to play here, from a site without an embed (crates/core `Vod::media`). */
   media: boolean;
+  /** What plays here is audio alone (by its file type): no picture to show. */
+  audio_only: boolean;
   published: string | null;
   status: Status;
   progress: number;

@@ -43,6 +43,9 @@
   }
   const isLocal = $derived(vod.source_path !== null);
   let error = $state<string | null>(null);
+  // Audio alone (a podcast, a song): a bar with the controls, not a 16:9 frame.
+  // Known from the file type; a file whose type didn't say is found out once loaded.
+  let audioOnly = $state(untrack(() => vod.audio_only));
 
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
@@ -64,6 +67,10 @@
         if (destroyed) return p.destroy();
         player = p;
         if (pending) p.seek(pending.time, pending.play);
+        const video = host?.querySelector("video");
+        video?.addEventListener("loadedmetadata", () => {
+          if (video.videoWidth === 0) audioOnly = true;
+        });
       },
       (e) => (error = String(e)),
     );
@@ -193,9 +200,13 @@
   {/if}
   {#if canEmbed(vod)}
     <div class="stage" class:collapsed>
-      <div class="frame">
+      <div class="frame" class:audio={audioOnly}>
         {#if active}
           <div class="host" bind:this={host}></div>
+        {:else if audioOnly}
+          <button class="poster bar" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
+            <Icon name="play" size={16} /> Play from {formatTime(at.time)}
+          </button>
         {:else}
           <button class="poster" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
             {#if vod.thumb}<Thumb name={vod.thumb} />{/if}
@@ -328,6 +339,26 @@
   .host {
     width: 100%;
     height: 100%;
+  }
+
+  /* Audio alone: just the controls' height. */
+  .frame.audio {
+    aspect-ratio: auto;
+    height: 54px;
+  }
+
+  .poster.bar {
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 13px;
+  }
+
+  .poster.bar:hover {
+    background: var(--accent);
+    color: var(--accent-text);
   }
 
   .poster {
