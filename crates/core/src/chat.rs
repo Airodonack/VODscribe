@@ -506,14 +506,16 @@ fn twitch_into(
     };
     let mut batch = Batch::new();
     let mut seen = HashSet::new();
+    let mut bombs = GiftBombs::default();
     loop {
         let (messages, more) = page(offset)?;
         let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
         // A page that ends in the second it started from may not have held all
         // of that second's messages; that's rare, and moving on keeps this finite.
         let next = if last > offset { last } else { offset + 1 };
-        for (id, msg) in messages {
+        for (id, mut msg) in messages {
             if seen.insert(id) {
+                bombs.count_once(&mut msg);
                 // Saved now only if before the next page's second, which that page brings again.
                 batch.messages.push(msg);
             }
@@ -650,6 +652,37 @@ fn twitch_event(author: &str, text: &str) -> (Kind, Option<f64>) {
         })
         .sum();
     if bits > 0.0 { (Kind::Tip, Some(bits)) } else { (Kind::Message, None) }
+}
+
+/// A Twitch gift bomb ("X is gifting 5 Tier 1 Subs to …") can be followed by a
+/// line for each sub ("X gifted a Tier 1 sub to Y!"). Those are the same
+/// gift: they stay in chat as messages rather than counting again.
+#[derive(Default)]
+struct GiftBombs {
+    /// Each gifter's subs still to be announced one by one, and when they gave them.
+    left: std::collections::HashMap<String, (f64, f64)>,
+}
+
+impl GiftBombs {
+    /// How long after a bomb its lines can still arrive.
+    const WITHIN: f64 = 300.0;
+
+    fn count_once(&mut self, msg: &mut ChatMessage) {
+        if msg.kind != Kind::Gift {
+            return;
+        }
+        let who = msg.author.to_lowercase();
+        if msg.text().contains(" is gifting ") {
+            self.left.insert(who, (msg.amount.unwrap_or(1.0), msg.time));
+        } else if let Some((left, at)) = self.left.get_mut(&who)
+            && *left >= 1.0
+            && msg.time - *at <= Self::WITHIN
+        {
+            *left -= 1.0;
+            msg.kind = Kind::Message;
+            msg.amount = None;
+        }
+    }
 }
 
 /// Twitch emote ids are digits, or `emotesv2_` and hex.
@@ -940,6 +973,37 @@ mod tests {
             "emotes, not cheers"
         );
         assert_eq!(twitch_event("v", "cheer up everyone"), (Kind::Message, None));
+    }
+
+    #[test]
+    fn counts_a_twitch_gift_bomb_once() {
+        let msg = |time: f64, author: &str, text: &str| {
+            let (kind, amount) = twitch_event(author, text);
+            ChatMessage {
+                time,
+                author: author.into(),
+                color: None,
+                parts: vec![ChatPart::Text { text: text.into() }],
+                kind,
+                amount,
+                event_time: None,
+            }
+        };
+        let mut bombs = GiftBombs::default();
+        let mut chat = vec![
+            msg(10.0, "big", "big is gifting 2 Tier 1 Subs to Kai's community!"),
+            msg(11.0, "big", "big gifted a Tier 1 sub to a!"),
+            msg(11.0, "big", "big gifted a Tier 1 sub to b!"),
+            // A third: a gift of its own, not part of the bomb.
+            msg(12.0, "big", "big gifted a Tier 1 sub to c!"),
+            msg(13.0, "other", "other gifted a Tier 1 sub to d!"),
+        ];
+        for m in &mut chat {
+            bombs.count_once(m);
+        }
+        let gifts: Vec<_> = chat.iter().filter(|m| m.kind == Kind::Gift).map(|m| (m.time, m.amount)).collect();
+        assert_eq!(gifts, [(10.0, Some(2.0)), (12.0, Some(1.0)), (13.0, Some(1.0))]);
+        assert_eq!(chat.len(), 5, "the lines stay in chat");
     }
 
     #[test]

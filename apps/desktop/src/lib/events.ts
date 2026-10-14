@@ -68,9 +68,16 @@ const USD_PER: Record<string, number> = {
   PEN: 0.27,
 };
 
-/** A Super Chat's amount, from the start of its text ("$5.00 …", "¥500 …", "€10,00 …"), in US dollars. */
+/**
+ * A Super Chat's amount, from the start of its text ("$5.00 …", "¥500 …",
+ * "€10,00 …", "₩10,000 …"), in US dollars. The number stops where it ends: at
+ * the first space or separator not followed by a group of three digits, so a
+ * message starting with a number ("$5.00 100 subs!") isn't read as part of it.
+ */
 export function superChatUsd(text: string): number | null {
-  const m = /^\s*([^\d\s]*)\s?([\d.,\s\u00a0]*\d)/.exec(text);
+  const m = /^\s*([^\d\s]*)[\s\u00a0]?(\d{1,3}(?:[.,\s\u00a0]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?!\d)/.exec(
+    text,
+  );
   if (!m) return null;
   const rate = USD_PER[m[1].trim()];
   if (rate === undefined) return null;
