@@ -143,6 +143,14 @@ export interface TimelineSettings {
   events: Exclude<ChatKind, "message">[];
 }
 
+/** An emote chat writes as a word: 7TV, BTTV, FFZ (crates/core `word_emotes::WordEmote`). */
+export interface WordEmote {
+  name: string;
+  url: string;
+  /** Drawn over the emote before it, not beside it. */
+  overlay: boolean;
+}
+
 export interface ChatLine {
   /** Unique in the library; what `chatMatches` returns. */
   id: number;
@@ -192,6 +200,7 @@ export const api = {
     invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
   /** The emotes in a VOD's chat, as [name, image URL]. */
   chatEmotes: (vodId: number) => invoke<[string, string][]>("chat_emotes", { vodId }),
+  chatWordEmotes: (vodId: number) => invoke<WordEmote[]>("chat_word_emotes", { vodId }),
   getTimeline: () => invoke<TimelineSettings>("get_timeline"),
   setTimeline: (timeline: TimelineSettings) => invoke<void>("set_timeline", { timeline }),
   /** For each list of terms, the [id, time] of the VOD's chat messages with any of them as a whole word or phrase. */

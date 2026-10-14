@@ -12,9 +12,17 @@ use sha2::{Digest, Sha256};
 
 use crate::net;
 
-/// The hosts emote images come from (see `chat::ChatPart::Emote`). A new
-/// emote provider (7TV, BTTV, FFZ) adds its CDN here.
-const HOSTS: &[&str] = &["files.kick.com", "static-cdn.jtvnw.net", "yt3.ggpht.com"];
+/// The hosts emote images come from: the platforms' own (see
+/// `chat::ChatPart::Emote`) and the word emote providers' (`word_emotes`). A
+/// new provider adds its CDN here.
+const HOSTS: &[&str] = &[
+    "files.kick.com",
+    "static-cdn.jtvnw.net",
+    "yt3.ggpht.com",
+    "cdn.7tv.app",
+    "cdn.betterttv.net",
+    "cdn.frankerfacez.com",
+];
 
 /// Larger than any real emote, animated ones included.
 const MAX_BYTES: u64 = 4 << 20;
@@ -55,6 +63,9 @@ mod tests {
         assert!(allowed("https://files.kick.com/emotes/4085540/fullsize"));
         assert!(allowed("https://static-cdn.jtvnw.net/emoticons/v2/25/default/dark/1.0"));
         assert!(allowed("https://yt3.ggpht.com/abc=w24-h24-c-k-nd"));
+        assert!(allowed("https://cdn.7tv.app/emote/01G3WEGZN0000ET2J0MQP5YJ0G/1x.webp"));
+        assert!(allowed("https://cdn.betterttv.net/emote/5f1b0186cf6d2144653d2970/1x"));
+        assert!(allowed("https://cdn.frankerfacez.com/emote/9/1"));
         assert!(!allowed("http://files.kick.com/emotes/1/fullsize"), "https only");
         assert!(!allowed("https://files.kick.com.evil.example/x"));
         assert!(!allowed("https://evil.example/files.kick.com"));

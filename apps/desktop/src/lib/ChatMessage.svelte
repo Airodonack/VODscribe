@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { ChatLine } from "./api";
+  import type { ChatLine, WordEmote } from "./api";
+  import { pieces } from "./chatParts";
   import { DEMO_NAMES } from "./demo";
   import Emote from "./Emote.svelte";
   import { eventBadge, eventColor } from "./events";
@@ -9,6 +10,7 @@
     message,
     platform,
     highlight = null,
+    words = new Map(),
     onplay,
   }: {
     message: ChatLine;
@@ -16,8 +18,12 @@
     platform: string;
     /** The color of a timeline layer that matched it, if any. */
     highlight?: string | null;
+    /** The words this chat's emote providers (7TV, BTTV, FFZ) show as emotes, by exact name. */
+    words?: Map<string, WordEmote>;
     onplay: (time: number) => void;
   } = $props();
+
+  let shown = $derived(pieces(message.parts, words));
 </script>
 
 <button
@@ -31,10 +37,12 @@
       >{eventBadge(message, platform)}</span
     >{/if}
   <span class="chat-author" style:--author={message.color} title={DEMO_NAMES}>{message.author}</span>
-  {#each message.parts as part, i (i)}{#if part.type === "emote"}<Emote
-        name={part.name}
-        url={part.url}
-      />{:else}{part.text}{/if}{/each}
+  {#each shown as piece, i (i)}{#if piece.type === "text"}{piece.text}{:else if piece.overlays.length}<span
+        class="stack"
+        ><Emote name={piece.name} url={piece.url} />{#each piece.overlays as over, j (j)}<span class="over"
+            ><Emote name={over.name} url={over.url} /></span
+          >{/each}</span
+      >{:else}<Emote name={piece.name} url={piece.url} />{/if}{/each}
 </button>
 
 <style>
@@ -67,6 +75,21 @@
     line-height: 1.6;
     color: color-mix(in srgb, var(--event) 70%, var(--text));
     background: color-mix(in srgb, var(--event) 18%, transparent);
+  }
+
+  /* An emote with others drawn over it (a hat, a spin), centered on it. */
+  .stack {
+    position: relative;
+    display: inline-block;
+  }
+
+  .over {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
   }
 
   /* Matched by a timeline layer: a bar and a tint in its color. */

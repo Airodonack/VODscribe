@@ -452,6 +452,7 @@
                   {message}
                   platform={vod.platform}
                   highlight={marks.highlightOf(message.id)}
+                  words={marks.words}
                   onplay={play}
                 />
               {/each}

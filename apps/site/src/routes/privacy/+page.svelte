@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated October 13, 2026</p>
+  <p class="muted">Last updated October 14, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -41,6 +41,12 @@
       <strong>Get their chat.</strong> For Kick and Twitch VODs it reads the chat replay from those sites, as their own pages
       do (web.kick.com and gql.twitch.tv); for YouTube, through the video downloader. Emotes in chat are images from Kick,
       Twitch or YouTube (files.kick.com, static-cdn.jtvnw.net, yt3.ggpht.com), each fetched once and then kept on your computer.
+    </li>
+    <li>
+      <strong>Show the emotes chat types as words.</strong> For a Kick or Twitch VOD's chat, it asks 7TV, BetterTTV and FrankerFaceZ
+      (7tv.io, api.betterttv.net, api.frankerfacez.com) which emotes that channel has, by the channel's id (looked up from
+      Twitch, or from kick.com), at most once a day per channel. Their images come from those services (cdn.7tv.app, cdn.betterttv.net,
+      cdn.frankerfacez.com) and are kept on your computer like the others.
     </li>
     <li>
       <strong>Play them.</strong> YouTube and Twitch VODs play in those sites' own players, which load only when you play

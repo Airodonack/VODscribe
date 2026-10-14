@@ -147,6 +147,7 @@ pub fn run() {
             chats::chat_overview,
             chats::chat_windows,
             chats::chat_emotes,
+            chats::chat_word_emotes,
             chats::retry_chat,
             chats::emote,
             chats::get_timeline,

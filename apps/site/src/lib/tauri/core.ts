@@ -50,6 +50,8 @@ const commands: Record<string, (args: Args) => unknown> = {
   chat_windows: ({ vodId, ranges, cap }) =>
     backend.chatWindows(vodId as number, ranges as [number, number][], cap as number),
   chat_emotes: ({ vodId }) => backend.chatEmotes(vodId as number),
+  // 7TV, BTTV and FFZ emotes: none here, as the demo shows emotes by name.
+  chat_word_emotes: () => [],
   chat_matches: ({ vodId, terms }) => backend.chatMatches(vodId as number, terms as string[][]),
   // The layers a new library starts with (crates/core layers.rs `defaults`), changed for this visit only.
   get_timeline: () => timeline,

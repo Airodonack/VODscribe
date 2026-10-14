@@ -30,6 +30,7 @@ permissions = [
   "allow-chat-overview",
   "allow-chat-windows",
   "allow-chat-emotes",
+  "allow-chat-word-emotes",
   "allow-retry-chat",
   "allow-emote",
   "allow-get-timeline",

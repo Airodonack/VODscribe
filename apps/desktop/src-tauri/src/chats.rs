@@ -11,6 +11,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, Db, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
+use vodscribe_core::word_emotes::{self, WordEmote};
 use vodscribe_core::{chat, emotes, tools};
 
 use crate::{AppState, CmdResult, emit_vod, err};
@@ -148,6 +149,16 @@ pub(crate) async fn chat_windows(
 #[tauri::command]
 pub(crate) async fn chat_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<(String, String)>> {
     with_db(app, move |db| db.chat_emotes(vod_id)).await
+}
+
+/// The emotes VOD `vod_id`'s chat writes as words (7TV, BTTV, FFZ; see
+/// `word_emotes`): the channel's list, from the copy kept for a day.
+#[tauri::command]
+pub(crate) async fn chat_word_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<WordEmote>> {
+    let state = app.state::<AppState>();
+    let Some(vod) = state.db.lock().unwrap().vod(vod_id).map_err(err)? else { return Ok(Vec::new()) };
+    let dir = state.paths.emotes().join("words");
+    tauri::async_runtime::spawn_blocking(move || word_emotes::for_vod(&vod.info, &dir)).await.map_err(err)?.map_err(err)
 }
 
 /// Fetches VOD `id`'s chat again, after a failure.

@@ -460,8 +460,8 @@ fn push_text(parts: &mut Vec<ChatPart>, text: &str) {
 // id. Paging with the cursors it returns fails an integrity check that only a
 // browser passes, so this asks for the comments from each next second instead.
 
-const TWITCH_GQL: &str = "https://gql.twitch.tv/gql";
-const TWITCH_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+pub(crate) const TWITCH_GQL: &str = "https://gql.twitch.tv/gql";
+pub(crate) const TWITCH_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { comments(contentOffsetSeconds: $offset) {
     edges { node { id contentOffsetSeconds commenter { displayName }
         message { userColor fragments { text emote { emoteID } } } } }

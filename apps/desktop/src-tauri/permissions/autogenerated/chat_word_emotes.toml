@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-word-emotes"
+description = "Enables the chat_word_emotes command without any pre-configured scope."
+commands.allow = ["chat_word_emotes"]
+
+[[permission]]
+identifier = "deny-chat-word-emotes"
+description = "Denies the chat_word_emotes command without any pre-configured scope."
+commands.deny = ["chat_word_emotes"]

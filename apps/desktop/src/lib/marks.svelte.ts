@@ -1,9 +1,11 @@
 // What the transcript view (Transcript.svelte) marks in a VOD's chat: the
 // Timeline layers' matches (layers.svelte.ts: saved chat searches) and the
 // events turned on (events.ts), drawn on the minimap and highlighted in chat.
-// Made while the view is set up, since it runs effects.
+// Also the emotes the chat writes as words (7TV, BTTV, FFZ), shown as images
+// in chat and in the Timeline panel's pills. Made while the view is set up,
+// since it runs effects.
 
-import { api, type ChatOverview, type Vod } from "./api";
+import { api, type ChatOverview, type Vod, type WordEmote } from "./api";
 import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
 import { layers } from "./layers.svelte";
 
@@ -31,8 +33,10 @@ const MATCH_EVERY = 5000;
 export class Marks {
   #of: () => MarksOf;
 
-  /** Emote images in the VOD's chat, by lowercase name, for the Timeline panel's pills. */
-  emotes = $state(new Map<string, string>());
+  /** The platform's own emotes used in the VOD's chat, by lowercase name. */
+  #chatEmotes = $state(new Map<string, string>());
+  /** The words the chat's emote providers show as emotes, by exact name. */
+  words = $state(new Map<string, WordEmote>());
   /** Each shown layer's matches, and when they were said. */
   layerMatches = $state<(Match & { times: number[] })[]>([]);
 
@@ -43,11 +47,25 @@ export class Marks {
       const { vod, canHaveChat } = this.#of();
       const id = vod.id;
       void vod.chat;
-      this.emotes = new Map();
+      this.#chatEmotes = new Map();
       if (!canHaveChat) return;
       api.chatEmotes(id).then(
-        (list) => this.#of().vod.id === id && (this.emotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
+        (list) =>
+          this.#of().vod.id === id && (this.#chatEmotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
         () => {},
+      );
+    });
+
+    // Fetched once a day per channel (the app keeps the list), so this is
+    // usually quick; until it's in, those words show as words.
+    $effect(() => {
+      const { vod, canHaveChat } = this.#of();
+      const id = vod.id;
+      this.words = new Map();
+      if (!canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick")) return;
+      api.chatWordEmotes(id).then(
+        (list) => this.#of().vod.id === id && (this.words = new Map(list.map((e) => [e.name, e]))),
+        (e) => console.warn("word emotes:", e),
       );
     });
 
@@ -88,6 +106,15 @@ export class Marks {
       return () => clearTimeout(timer);
     });
   }
+
+  /** Emote images by lowercase name, for the Timeline panel's pills: the
+   *  platform's own as used in this chat, then the providers'. */
+  emotes = $derived.by(() => {
+    const out = new Map(this.#chatEmotes);
+    for (const e of this.words.values())
+      if (!e.overlay && !out.has(e.name.toLowerCase())) out.set(e.name.toLowerCase(), e.url);
+    return out;
+  });
 
   /** Whether the VOD has a chat to mark at all. */
   #active = $derived.by(() => {
