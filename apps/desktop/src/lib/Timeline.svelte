@@ -4,6 +4,7 @@
   import Icon from "./Icon.svelte";
   import { EVENTS, eventColor, eventName, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
+  import { portal } from "./portal";
 
   // The Timeline button above the minimap, and its panel for the layers drawn
   // on it: saved chat searches, each a list of terms shown as pills.
@@ -54,8 +55,11 @@
 
   // By the click's path when it happened: removing a pill takes its button out
   // of the page before this runs, and that's still a click inside.
+  // The panel lives at the end of <body> (`portal`), so a click inside it isn't inside the anchor.
+  let panel = $state<HTMLElement>();
   function onWindowClick(e: MouseEvent) {
-    if (open && anchor && !e.composedPath().includes(anchor)) open = false;
+    const path = e.composedPath();
+    if (open && anchor && !path.includes(anchor) && !(panel && path.includes(panel))) open = false;
   }
 
   function addTerm(layer: Layer, input: HTMLInputElement) {
@@ -117,6 +121,8 @@
   </button>
   {#if open}
     <div
+      use:portal
+      bind:this={panel}
       class="popover"
       role="dialog"
       aria-label="Timeline layers"
@@ -262,7 +268,8 @@
 
   .popover {
     position: fixed;
-    z-index: 10;
+    /* Above everything: it's at the end of <body> (portal.ts). */
+    z-index: 1000;
     width: 352px;
     overflow-y: auto;
     padding: 12px;
