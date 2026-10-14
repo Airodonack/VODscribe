@@ -92,6 +92,11 @@ impl Settings {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
+        // One at a time: two saves at once (quick toggles in Settings) would
+        // write the same temporary file, which could keep the older one or
+        // leave unreadable JSON, and the next launch would fall back to defaults.
+        static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _turn = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = path.with_extension("tmp");
         fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
         fs::rename(tmp, path)?;

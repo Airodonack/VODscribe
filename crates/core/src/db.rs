@@ -580,16 +580,23 @@ impl Db {
         Ok(())
     }
 
-    /// Removes VOD `id`, once its chat and transcript are erased (`delete_some_of`),
-    /// and the search indexes' entries for them. Quit midway, the VOD is still
-    /// there to remove again, which finishes it.
+    /// Removes VOD `id`, once its chat and transcript are erased (`delete_some_of`;
+    /// any saved since, by a fetch or a transcription finishing, go with it),
+    /// and the search indexes' entries for them, tidied after it's gone.
     pub fn delete_vod(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
         self.tidy_index("chat_fts")?;
         self.tidy_index("segments_fts")?;
-        self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
-        // Copy the change into the main file and empty the WAL, which still holds the old pages.
-        // Another connection reading at the time can keep it from finishing; that's fine.
-        let _ = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+        // Copy the change into the main file and empty the WAL, which still
+        // holds the old pages. A read on another connection at the time keeps
+        // it from finishing, so it's tried a few times.
+        for _ in 0..5 {
+            let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).unwrap_or(1);
+            if busy == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         Ok(())
     }
 
@@ -962,12 +969,16 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
     }
 
     fn clear(&mut self) -> Result<()> {
-        // A part at a time, letting go of the library between them, so a
-        // busy chat fetched again doesn't hold everything else up for seconds.
+        // A part at a time, letting go of the library between them, so a busy
+        // chat fetched again doesn't hold everything else up.
         while self.db.lock().unwrap().clear_some_chat(self.vod_id, 1000)? > 0 {
             std::thread::yield_now();
         }
-        self.db.lock().unwrap().clear_chat(self.vod_id)
+        let db = self.db.lock().unwrap();
+        db.clear_chat(self.vod_id)?;
+        // The old messages' words out of the index too (some may be gone from
+        // the platform since, removed by moderators).
+        db.tidy_index("chat_fts")
     }
 
     fn drop_from(&mut self, time: f64) -> Result<()> {
@@ -1164,6 +1175,8 @@ mod tests {
         }
         assert_eq!(db.search(secret, &SearchFilter::default(), 10).unwrap().hits.len(), 1);
         while db.delete_some_of(vod.id, 1000).unwrap() > 0 {}
+        // A batch saved after the erase, by a fetch that hadn't stopped yet.
+        db.add_chat(vod.id, &[message(9.0, "v", "late quokkazanzibar")], 9.0).unwrap();
         db.delete_vod(vod.id).unwrap();
         assert_eq!(db.search("words", &SearchFilter::default(), 10).unwrap().hits.len(), 4, "the other VOD's stay");
         drop(db);
@@ -1171,6 +1184,7 @@ mod tests {
             [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()]
                 .concat();
         assert!(!bytes.windows(8).any(|w| w == &secret.as_bytes()[6..]), "deleted text still on disk");
+        assert!(!bytes.windows(8).any(|w| w == b"zanzibar"), "a late batch's text still on disk");
     }
 
     #[test]

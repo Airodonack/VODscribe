@@ -204,7 +204,12 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     state.chat.stop(id);
     erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
     // A running stage removes the files once its process has stopped.
-    let delete_row = || state.db.lock().unwrap().delete_vod(id);
+    // With the reads held too, so none is under way when the WAL is emptied.
+    let delete_row = || {
+        let db = state.db.lock().unwrap();
+        let _reads = state.reads.lock().unwrap();
+        db.delete_vod(id)
+    };
     let running = state
         .worker
         .control(id, Stop::Delete, || {

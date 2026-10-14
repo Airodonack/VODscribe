@@ -46,6 +46,8 @@ pub struct Channel {
 struct Provider {
     /// What settings call it (`PROVIDER_IDS`).
     id: &'static str,
+    /// The platforms whose channels it has emotes for.
+    platforms: &'static [&'static str],
     /// A channel's emotes; none if it has no account there.
     channel: fn(&Channel) -> Result<Vec<WordEmote>>,
     /// The emotes everyone on `platform` has.
@@ -53,9 +55,9 @@ struct Provider {
 }
 
 const PROVIDERS: &[Provider] = &[
-    Provider { id: "7tv", channel: seven_tv_channel, global: seven_tv_global },
-    Provider { id: "bttv", channel: bttv_channel, global: bttv_global },
-    Provider { id: "ffz", channel: ffz_channel, global: ffz_global },
+    Provider { id: "7tv", platforms: &["twitch", "kick"], channel: seven_tv_channel, global: seven_tv_global },
+    Provider { id: "bttv", platforms: &["twitch"], channel: bttv_channel, global: bttv_global },
+    Provider { id: "ffz", platforms: &["twitch"], channel: ffz_channel, global: ffz_global },
 ];
 
 /// The providers settings can turn on, in their starting order.
@@ -74,40 +76,42 @@ const MAX_BYTES: u64 = 16 << 20;
 /// is enabled. A provider that can't be reached is left out, with its older
 /// copy used if there is one.
 pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordEmote>> {
-    let Some(key) = cache_key(info) else { return Ok(Vec::new()) };
+    let providers: Vec<&Provider> = enabled
+        .iter()
+        .filter_map(|id| PROVIDERS.iter().find(|p| p.id == *id))
+        .filter(|p| p.platforms.contains(&info.platform.as_str()))
+        .collect();
+    let Some(video) = video_key(info) else { return Ok(Vec::new()) };
+    if providers.is_empty() {
+        return Ok(Vec::new());
+    }
     // One at a time: lookups made together (a provider toggled quickly, two
     // views) would fetch the same lists twice and write the same files at once.
     static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _turn = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
-    let providers: Vec<&Provider> = enabled.iter().filter_map(|id| PROVIDERS.iter().find(|p| p.id == *id)).collect();
-    if providers.is_empty() {
-        return Ok(Vec::new());
-    }
     fs::create_dir_all(dir)?;
-    // Looked up once, only if a channel list needs fetching, and kept: ids don't change.
-    let channel_path = dir.join(format!("{key}.channel.json"));
-    let mut channel: Option<Channel> = fs::read(&channel_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    // Whose VOD it is, looked up once per VOD and kept (a VOD's channel never
+    // changes, where a channel's name can); the lists go by the channel's id.
+    let channel_path = dir.join(format!("{video}.channel.json"));
+    let kept = fs::read(&channel_path).ok().and_then(|b| serde_json::from_slice::<Channel>(&b).ok());
+    let channel = match kept.filter(|c| c.is_valid() && c.platform == info.platform) {
+        Some(c) => c,
+        None => {
+            let c = channel_of(info)?;
+            // Not kept is only slower next time, not a reason to go without.
+            if let Err(e) = serde_json::to_vec(&c).map_err(Into::into).and_then(|b| write_atomic(&channel_path, &b)) {
+                eprintln!("{}: {e:#}", channel_path.display());
+            }
+            c
+        }
+    };
     let mut own = Vec::new();
     let mut global = Vec::new();
     for p in providers {
-        let path = dir.join(format!("{key}.{}.json", p.id));
+        let path = dir.join(format!("{}-{}.{}.json", channel.platform, channel.id, p.id));
         own.extend(match read_fresh(&path) {
             Some(list) => list,
-            None => {
-                let fetched = match &channel {
-                    Some(c) => (p.channel)(c),
-                    None => channel_of(info).and_then(|c| {
-                        // Not kept is only slower next time, not a reason to go without.
-                        if let Err(e) =
-                            serde_json::to_vec(&c).map_err(Into::into).and_then(|b| write_atomic(&channel_path, &b))
-                        {
-                            eprintln!("{}: {e:#}", channel_path.display());
-                        }
-                        (p.channel)(channel.insert(c))
-                    }),
-                };
-                settle(&path, fetched)
-            }
+            None => settle(&path, (p.channel)(&channel)),
         });
         let path = dir.join(format!("global-{}.{}.json", info.platform, p.id));
         global.extend(match read_fresh(&path) {
@@ -160,24 +164,12 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// A file name for VOD `info`'s channel: its platform and name, which are
-/// known without asking anyone.
-fn cache_key(info: &VodInfo) -> Option<String> {
-    let name = match info.platform.as_str() {
-        "twitch" => info.channel.clone().unwrap_or_default(),
-        "kick" => kick_slug(&info.url)?.to_string(),
-        _ => return None,
-    };
-    let safe: String = name.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-    // A Twitch name with no letters to go by (in another script, say): the VOD's own.
-    let safe = match safe.is_empty() {
-        false => safe,
-        true if info.platform == "twitch" && info.platform_id.chars().all(|c| c.is_ascii_alphanumeric()) => {
-            format!("video{}", info.platform_id)
-        }
-        true => return None,
-    };
-    Some(format!("{}-{safe}", info.platform))
+/// A file name for VOD `info`: its platform and id. None for a platform the
+/// providers don't cover, or an id that isn't plain letters, digits and dashes.
+fn video_key(info: &VodInfo) -> Option<String> {
+    let id = info.platform_id.as_str();
+    let plain = !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    (matches!(info.platform.as_str(), "twitch" | "kick") && plain).then(|| format!("{}-video-{id}", info.platform))
 }
 
 /// VOD `info`'s channel id: Twitch's from the video, Kick's user id (which
@@ -188,10 +180,16 @@ fn channel_of(info: &VodInfo) -> Result<Channel> {
             let video = info.platform_id.trim_start_matches('v');
             let body =
                 json!({ "query": "query($id: ID!) { video(id: $id) { owner { id } } }", "variables": { "id": video } });
+            // A time limit on the whole request: this runs while the other
+            // lookups wait their turn, and a connection gone quiet (the
+            // computer slept, say) mustn't hold them up for long.
             let resp = net::agent()
                 .post(crate::chat::TWITCH_GQL)
                 .header("Client-ID", crate::chat::TWITCH_CLIENT_ID)
                 .header("Content-Type", "application/json")
+                .config()
+                .timeout_global(Some(std::time::Duration::from_secs(30)))
+                .build()
                 .send(body.to_string())
                 .context("contact Twitch")?;
             let json = read_json(resp)?;
@@ -208,7 +206,15 @@ fn channel_of(info: &VodInfo) -> Result<Channel> {
         }
         other => bail!("no emote providers for {other}"),
     };
-    Ok(Channel { platform: info.platform.clone(), id })
+    let channel = Channel { platform: info.platform.clone(), id };
+    channel.is_valid().then_some(channel).context("an unexpected channel id")
+}
+
+impl Channel {
+    /// Both platforms' ids are numbers; nothing else goes into a provider's URL.
+    fn is_valid(&self) -> bool {
+        !self.id.is_empty() && self.id.len() <= 20 && self.id.bytes().all(|b| b.is_ascii_digit())
+    }
 }
 
 /// The channel's page name in a Kick VOD link: kick.com/<slug>/videos/<id>.
@@ -269,19 +275,13 @@ fn seven_tv_emotes(list: Option<&Value>) -> Vec<WordEmote> {
 // as "w!", which widens the next emote) aren't emotes to show.
 
 fn bttv_channel(channel: &Channel) -> Result<Vec<WordEmote>> {
-    if channel.platform != "twitch" {
-        return Ok(Vec::new());
-    }
     let Some(j) = get_json(&format!("https://api.betterttv.net/3/cached/users/twitch/{}", channel.id))? else {
         return Ok(Vec::new());
     };
     Ok([j.get("channelEmotes"), j.get("sharedEmotes")].into_iter().flat_map(bttv_emotes).collect())
 }
 
-fn bttv_global(platform: &str) -> Result<Vec<WordEmote>> {
-    if platform != "twitch" {
-        return Ok(Vec::new());
-    }
+fn bttv_global(_platform: &str) -> Result<Vec<WordEmote>> {
     Ok(bttv_emotes(get_json("https://api.betterttv.net/3/cached/emotes/global")?.as_ref()))
 }
 
@@ -305,19 +305,13 @@ fn bttv_emotes(list: Option<&Value>) -> Vec<WordEmote> {
 // emoticons with images by scale; modifier emotes draw over the one before.
 
 fn ffz_channel(channel: &Channel) -> Result<Vec<WordEmote>> {
-    if channel.platform != "twitch" {
-        return Ok(Vec::new());
-    }
     let Some(j) = get_json(&format!("https://api.frankerfacez.com/v1/room/id/{}", channel.id))? else {
         return Ok(Vec::new());
     };
     Ok(ffz_sets(&j, None))
 }
 
-fn ffz_global(platform: &str) -> Result<Vec<WordEmote>> {
-    if platform != "twitch" {
-        return Ok(Vec::new());
-    }
+fn ffz_global(_platform: &str) -> Result<Vec<WordEmote>> {
     let Some(j) = get_json("https://api.frankerfacez.com/v1/set/global")? else { return Ok(Vec::new()) };
     // Only the default sets are everyone's; the others belong to some users.
     let defaults: Vec<String> = j
@@ -398,30 +392,40 @@ mod tests {
         assert!(ffz_sets(&ffz, None).iter().all(|e| e.url.starts_with("https://") && crate::emotes::allowed(&e.url)));
     }
 
-    #[test]
-    fn channels_are_named_for_their_cache_file() {
-        let vod = |platform: &str, url: &str, channel: Option<&str>| VodInfo {
+    fn vod(platform: &str, id: &str, url: &str, channel: &str) -> VodInfo {
+        VodInfo {
             platform: platform.into(),
-            platform_id: "1".into(),
+            platform_id: id.into(),
             url: url.into(),
             title: String::new(),
-            channel: channel.map(Into::into),
+            channel: Some(channel.into()),
             duration: None,
             thumbnail: None,
             published: None,
-        };
-        assert_eq!(
-            cache_key(&vod("twitch", "https://www.twitch.tv/videos/1", Some("GEEGA"))).as_deref(),
-            Some("twitch-geega")
-        );
-        assert_eq!(
-            cache_key(&vod("kick", "https://kick.com/barky/videos/01a0", Some("Barky's stream"))).as_deref(),
-            Some("kick-barky")
-        );
-        assert_eq!(cache_key(&vod("twitch", "u", Some("../.."))).as_deref(), Some("twitch-video1"));
-        assert_eq!(cache_key(&vod("kick", "https://kick.com/../videos/x", None)), None);
-        assert_eq!(cache_key(&vod("youtube", "https://youtu.be/x", Some("Someone"))), None);
+        }
+    }
+
+    #[test]
+    fn vods_and_channels_are_named_safely() {
+        assert_eq!(video_key(&vod("twitch", "2899842479", "u", "GEEGA")).as_deref(), Some("twitch-video-2899842479"));
+        assert_eq!(video_key(&vod("kick", "01a0b0d6-75c0", "u", "Barky")).as_deref(), Some("kick-video-01a0b0d6-75c0"));
+        assert_eq!(video_key(&vod("twitch", "../..", "u", "x")), None);
+        assert_eq!(video_key(&vod("youtube", "abc", "u", "x")), None);
         assert_eq!(kick_slug("https://kick.com/../videos/x"), None);
+        assert_eq!(kick_slug("https://kick.com/barky/videos/x"), Some("barky"));
+        let channel = |id: &str| Channel { platform: "twitch".into(), id: id.into() };
+        assert!(channel("36973271").is_valid());
+        assert!(!channel("36973271/../x").is_valid() && !channel("").is_valid());
+    }
+
+    #[test]
+    fn no_provider_for_the_platform_asks_no_one() {
+        let dir = crate::TempDir::new("word-emotes-none");
+        let kick = vod("kick", "01a0", "https://kick.com/barky/videos/01a0", "Barky");
+        // BetterTTV and FrankerFaceZ don't cover Kick: not even Kick is asked whose channel it is.
+        assert!(for_vod(&kick, &dir, &["bttv", "ffz"]).unwrap().is_empty());
+        assert!(!dir.join("kick-video-01a0.channel.json").exists());
+        assert_eq!(PROVIDER_IDS, PROVIDERS.iter().map(|p| p.id).collect::<Vec<_>>(), "settings know every provider");
     }
 
     #[test]
@@ -435,8 +439,9 @@ mod tests {
         let keep = |file: &str, emotes: Vec<WordEmote>| {
             write_atomic(&dir.join(file), &serde_json::to_vec(&Cached { fetched_at: now(), emotes }).unwrap()).unwrap()
         };
-        keep("twitch-geega.7tv.json", vec![emote("KEKW", "seven")]);
-        keep("twitch-geega.ffz.json", vec![emote("KEKW", "ffz"), emote("OMEGALUL", "ffz")]);
+        write_atomic(&dir.join("twitch-video-1.channel.json"), br#"{"platform":"twitch","id":"36973271"}"#).unwrap();
+        keep("twitch-36973271.7tv.json", vec![emote("KEKW", "seven")]);
+        keep("twitch-36973271.ffz.json", vec![emote("KEKW", "ffz"), emote("OMEGALUL", "ffz")]);
         keep("global-twitch.7tv.json", vec![emote("OMEGALUL", "global"), emote("EZ", "global")]);
         keep("global-twitch.ffz.json", vec![]);
         let info = VodInfo {
@@ -466,16 +471,6 @@ mod tests {
     #[test]
     #[ignore = "network"]
     fn fetches_real_channels() {
-        let vod = |platform: &str, id: &str, url: &str, channel: &str| VodInfo {
-            platform: platform.into(),
-            platform_id: id.into(),
-            url: url.into(),
-            title: String::new(),
-            channel: Some(channel.into()),
-            duration: None,
-            thumbnail: None,
-            published: None,
-        };
         let dir = crate::TempDir::new("word-emotes-live");
         for info in [
             vod("twitch", "2899842479", "https://www.twitch.tv/videos/2899842479", "GEEGA"),
