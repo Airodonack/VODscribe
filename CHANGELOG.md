@@ -6,6 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 - The timeline appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.
 - Settings and the search's From filter open above everything, like the Timeline panel, so a playing video or a short window can't cover or cut them off.
+- A link pasted while dropped links or files are still being added waits its turn, and the errors of both show together, instead of the Add button coming back early.
 
 ## 0.2.0 — 2026-10-13
 

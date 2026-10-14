@@ -11,6 +11,7 @@
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT } from "./links";
   import Logo from "./Logo.svelte";
+  import { Adder } from "./adder.svelte";
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
   import VodRow from "./VodRow.svelte";
@@ -28,63 +29,13 @@
   } = $props();
 
   let url = $state("");
-  let adding = $state(false);
-  // The last failed action (adding a link, or a row's button), shown under the form.
-  let error = $state<string | null>(null);
+  // Adding links and files, one after another (adder.svelte.ts). Its error is
+  // also where a row's failed action shows, under the form.
+  const adder = new Adder();
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
-    adding = true;
-    error = null;
-    try {
-      await api.addVod(url);
-      url = "";
-    } catch (e) {
-      error = String(e);
-    } finally {
-      adding = false;
-    }
-  }
-
-  /**
-   * Adds what was dropped or picked. Links go through the same check as a pasted
-   * link (yt-dlp's probe); files, only accepted from a real file drop or the file
-   * picker (`allowFiles`), are probed with ffmpeg. Adds queue up, and the errors
-   * of everything added together are shown together once the queue is done.
-   */
-  let queue: Promise<void> = Promise.resolve();
-  let queued = 0;
-  let queuedErrors: string[] = [];
-  function addItems(items: string[], allowFiles: boolean) {
-    const links: string[] = [];
-    const files: string[] = [];
-    const errors: string[] = [];
-    for (const item of items.map((i) => i.trim()).filter(Boolean)) {
-      const link = item.match(/https?:\/\/\S+/i)?.[0];
-      if (link) links.push(link);
-      else if (allowFiles) files.push(item);
-      else errors.push(`“${item.length > 80 ? item.slice(0, 80) + "…" : item}” isn't a link.`);
-    }
-    if (!links.length && !files.length && !errors.length) return;
-    if (queued++ === 0) queuedErrors = [];
-    queuedErrors.push(...errors);
-    adding = true;
-    error = null;
-    queue = queue
-      .then(async () => {
-        for (const link of links) await api.addVod(link).catch((e) => queuedErrors.push(String(e)));
-        if (files.length) {
-          await api.addFiles(files).then(
-            (r) => queuedErrors.push(...r.errors),
-            (e) => queuedErrors.push(String(e)),
-          );
-        }
-      })
-      .finally(() => {
-        if (--queued > 0) return;
-        adding = false;
-        error = queuedErrors.length ? queuedErrors.join("\n") : null;
-      });
+    if (await adder.link(url)) url = "";
   }
 
   async function pickFiles() {
@@ -95,7 +46,7 @@
       // No list (it failed to load) means no filter: an empty one would hide every file.
       filters: extensions.length ? [{ name: "Video and audio", extensions }] : [],
     }).catch(() => null);
-    if (picked) addItems(Array.isArray(picked) ? picked : [picked], true);
+    if (picked) adder.items(Array.isArray(picked) ? picked : [picked], true);
   }
 
   // Dropping onto the window. Files arrive through the webview's drop event with
@@ -127,7 +78,7 @@
     e.preventDefault();
     // uri-list lines starting with # are comments.
     // Text drops only ever add links; file paths come from real file drops.
-    addItems(
+    adder.items(
       text.split(/\r?\n/).filter((l) => !l.startsWith("#")),
       false,
     );
@@ -149,7 +100,7 @@
         } else if (payload.type === "leave") dropping = false;
         else if (payload.type === "drop") {
           dropping = false;
-          if (!draggingInside) addItems(payload.paths, true);
+          if (!draggingInside) adder.items(payload.paths, true);
         }
       })
       .then(
@@ -218,7 +169,7 @@
       type="url"
       placeholder="Paste a VOD link…"
       bind:value={url}
-      disabled={adding}
+      disabled={adder.adding}
       readonly={DEMO}
       aria-label="VOD link"
       {...demoOff(
@@ -227,24 +178,24 @@
     />
     <button
       class="primary"
-      disabled={adding || (!url.trim() && !DEMO)}
+      disabled={adder.adding || (!url.trim() && !DEMO)}
       {...demoOff(
         "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
-      )}>{adding ? "Adding…" : "Add"}</button
+      )}>{adder.adding ? "Adding…" : "Add"}</button
     >
   </form>
   <p class="more muted">
     or <button
       class="link"
       onclick={pickFiles}
-      disabled={adding}
+      disabled={adder.adding}
       {...demoOff("The web demo can't transcribe. In the app, you can add video files from your computer too.")}
       >add video files…</button
     >
     {#if !DEMO}or drop {linksDrop ? "files and links" : "video files"} anywhere{/if}
   </p>
-  {#if error}
-    <p class="error-text add-error">{error}</p>
+  {#if adder.error}
+    <p class="error-text add-error">{adder.error}</p>
   {/if}
 
   <div class="list" bind:this={reorder.list}>
@@ -269,7 +220,7 @@
           ontoggle={() => toggle(vod)}
           onkey={(e) => onRowKey(e, vod)}
           onremove={() => selectedId === vod.id && onselect(null)}
-          onerror={(e) => (error = e)}
+          onerror={(e) => (adder.error = e)}
         />
       </div>
     {:else}
