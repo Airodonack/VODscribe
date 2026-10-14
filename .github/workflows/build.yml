@@ -156,6 +156,10 @@ jobs:
   # Installs each Linux and Windows build and drives it end to end (e2e.yml).
   e2e:
     needs: build
+    # What e2e.yml asks for: it can't have more than its caller grants.
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/e2e.yml
 
   # Uploads a tagged release to dl.vodscribe.com (R2): each file under
