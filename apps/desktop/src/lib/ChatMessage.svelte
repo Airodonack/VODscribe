@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ChatLine } from "./api";
+  import { DEMO_NAMES } from "./demo";
   import Emote from "./Emote.svelte";
   import { eventBadge, eventColor } from "./events";
   import { formatTime } from "./platform";
@@ -29,7 +30,7 @@
   {#if message.kind !== "message"}<span class="badge" style:--event={eventColor(platform)}
       >{eventBadge(message, platform)}</span
     >{/if}
-  <span class="author" style:--author={message.color}>{message.author}</span>
+  <span class="author" style:--author={message.color} title={DEMO_NAMES}>{message.author}</span>
   {#each message.parts as part, i (i)}{#if part.type === "emote"}<Emote
         name={part.name}
         url={part.url}

@@ -7,6 +7,23 @@ import type { SearchFilter } from "desktop/lib/api.ts";
 
 type Args = Record<string, unknown>;
 
+const layer = (id: string, name: string, color: string, terms: string[], visible: boolean) => ({
+  id,
+  name,
+  color,
+  terms: terms.map((text) => ({ text, emote: null })),
+  visible,
+  channel: null,
+});
+let timeline = {
+  layers: [
+    layer("laughter", "Laughter", "#f59e0b", ["KEKW", "LUL", "OMEGALUL", "LMAO", "LOL", "ICANT"], true),
+    layer("hype", "Hype", "#ec4899", ["Pog", "PogChamp", "POGGERS", "PogU", "W"], false),
+    layer("clip", "Clip it", "#ef4444", ["clip", "clipped", "clip it"], false),
+  ],
+  events: [] as string[],
+};
+
 const commands: Record<string, (args: Args) => unknown> = {
   setup_status: () => ({
     yt_dlp: true,
@@ -23,21 +40,20 @@ const commands: Record<string, (args: Args) => unknown> = {
   }),
   list_vods: () => backend.listVods(),
   reorder_vods: ({ ids }) => backend.reorder(ids as number[]),
-  // The demo has no chat, so leaving out what was said leaves nothing.
-  search: ({ query, filter }) => {
-    const f = (filter ?? {}) as SearchFilter;
-    return f.speech === false ? { hits: [], truncated: false } : backend.search(query as string, f.vodId ?? null);
-  },
+  search: ({ query, filter }) => backend.search(query as string, (filter ?? {}) as SearchFilter),
   transcript: ({ vodId }) => backend.transcript(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
   self_updatable: () => true,
-  // The demo has no chat, so no timeline layers either.
-  chat_overview: () => ({ count: 0, histogram: [], events: [] }),
-  chat_windows: ({ ranges }) => (ranges as unknown[]).map(() => ({ messages: [], total: 0 })),
-  chat_emotes: () => [],
-  get_timeline: () => ({ layers: [], events: [] }),
-  chat_matches: () => [],
+  chat_overview: ({ vodId, duration, bins }) =>
+    backend.chatOverview(vodId as number, duration as number, bins as number),
+  chat_windows: ({ vodId, ranges, cap }) =>
+    backend.chatWindows(vodId as number, ranges as [number, number][], cap as number),
+  chat_emotes: ({ vodId }) => backend.chatEmotes(vodId as number),
+  chat_matches: ({ vodId, terms }) => backend.chatMatches(vodId as number, terms as string[][]),
+  // The layers a new library starts with (crates/core layers.rs `defaults`), changed for this visit only.
+  get_timeline: () => timeline,
+  set_timeline: ({ timeline: next }) => void (timeline = next as typeof timeline),
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {

@@ -16,7 +16,8 @@
     "error": null,
     "added_at": 1791812048,
     "note": null,
-    "outdated": false
+    "outdated": false,
+    "chat": "none"
   },
   {
     "id": 1,
@@ -35,6 +36,7 @@
     "error": null,
     "added_at": 1791811936,
     "note": null,
-    "outdated": false
+    "outdated": false,
+    "chat": "done"
   }
 ]

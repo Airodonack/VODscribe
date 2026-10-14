@@ -6,6 +6,9 @@ declare const __DEMO__: boolean | undefined;
 /** Whether this is the website's demo rather than the app. */
 export const DEMO = typeof __DEMO__ !== "undefined" && __DEMO__;
 
+/** On chatters' names in the demo, whose chat has them made up (scripts/export-demo-chat.py). */
+export const DEMO_NAMES = DEMO ? "Made-up name: the names of the people in this chat were replaced." : undefined;
+
 /**
  * Attributes for a control that only works in the app. The demo shows it
  * grayed out, with `message` on hover, and ignores clicks on it.

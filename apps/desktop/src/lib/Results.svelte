@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { SearchHit, Vod } from "./api";
+  import { DEMO_NAMES } from "./demo";
   import { formatTime } from "./platform";
   import Icon from "./Icon.svelte";
 
@@ -63,7 +64,7 @@
     <span class="text">
       {#if hit.source === "chat"}{#if !columns}<span class="said-in" title="Written in chat"
             ><Icon name="message" size={12} /></span
-          >{/if}<span class="author" style:--author={hit.color}>{hit.author}</span>{/if}
+          >{/if}<span class="author" style:--author={hit.color} title={DEMO_NAMES}>{hit.author}</span>{/if}
       {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
     </span>
   </button>
