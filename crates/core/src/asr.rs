@@ -1,5 +1,8 @@
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 
 use anyhow::{Result, anyhow};
 use sherpa_onnx::{OfflineRecognizer, OfflineRecognizerConfig, OfflineStream, OfflineTransducerModelConfig};
@@ -74,37 +77,75 @@ impl Transcriber {
         Ok(Self { recognizer, workers: parallelism.workers, batch: parallelism.batch.max(1) })
     }
 
-    /// How many chunks to pass to `transcribe` at once to keep every worker busy.
-    pub fn batch_size(&self) -> usize {
-        self.workers * self.batch * 3
+    /// How many decoded chunks to keep ready for `transcribe_stream`.
+    pub fn queue_size(&self) -> usize {
+        self.workers * self.batch * 2
     }
 
-    /// Transcribes chunks concurrently, returning words with absolute
-    /// timestamps in chunk order.
-    pub fn transcribe(&self, chunks: &[Chunk]) -> Vec<Word> {
-        // One worker decodes on the calling thread: decoding with CUDA from a
-        // spawned thread crashed (with ONNX Runtime 1.28 and the fp16 model).
+    /// Transcribes chunks as `chunks` brings them, handing each one's end (in
+    /// seconds) and words to `out`, in order. The audio goes on being decoded
+    /// into `chunks` meanwhile, and each worker takes the next chunk as soon as
+    /// it's free, rather than a batch at a time waiting for its slowest chunk.
+    /// Stops early if `out` fails, with its error.
+    pub fn transcribe_stream(
+        &self,
+        chunks: Receiver<Chunk>,
+        mut out: impl FnMut(f64, Vec<Word>) -> Result<()>,
+    ) -> Result<()> {
+        let end = |c: &Chunk| c.start + c.samples.len() as f64 / SAMPLE_RATE as f64;
+        // One worker decodes on the calling thread, a batch of whatever chunks
+        // are ready at a time: decoding with CUDA from a spawned thread crashed
+        // (with ONNX Runtime 1.28 and the fp16 model).
         if self.workers <= 1 {
-            return chunks.chunks(self.batch).flat_map(|batch| self.transcribe_batch(batch)).collect();
+            while let Ok(first) = chunks.recv() {
+                let mut batch = vec![first];
+                while batch.len() < self.batch {
+                    match chunks.try_recv() {
+                        Ok(c) => batch.push(c),
+                        Err(_) => break,
+                    }
+                }
+                out(end(batch.last().unwrap()), self.transcribe_batch(&batch))?;
+            }
+            return Ok(());
         }
-        let next = AtomicUsize::new(0);
-        let mut done: Vec<(usize, Vec<Word>)> = std::thread::scope(|scope| {
-            let workers: Vec<_> = (0..self.workers.min(chunks.len()))
-                .map(|_| {
-                    scope.spawn(|| {
-                        let mut out = Vec::new();
-                        loop {
-                            let i = next.fetch_add(1, Ordering::Relaxed);
-                            let Some(chunk) = chunks.get(i) else { return out };
-                            out.push((i, self.transcribe_one(chunk)));
+        // Each worker takes the next chunk, numbered, and the answers are put back in order.
+        let next = Mutex::new((0usize, chunks));
+        let failed = AtomicBool::new(false);
+        let (done_tx, done_rx) = channel::<(usize, f64, Vec<Word>)>();
+        std::thread::scope(|scope| {
+            for _ in 0..self.workers {
+                let (next, failed, done_tx) = (&next, &failed, done_tx.clone());
+                scope.spawn(move || {
+                    while !failed.load(Ordering::Relaxed) {
+                        let (i, chunk) = {
+                            let mut next = next.lock().unwrap();
+                            let Ok(chunk) = next.1.recv() else { return };
+                            next.0 += 1;
+                            (next.0 - 1, chunk)
+                        };
+                        let words = self.transcribe_one(&chunk);
+                        if done_tx.send((i, end(&chunk), words)).is_err() {
+                            return;
                         }
-                    })
-                })
-                .collect();
-            workers.into_iter().flat_map(|w| w.join().unwrap()).collect()
-        });
-        done.sort_by_key(|(i, _)| *i);
-        done.into_iter().flat_map(|(_, words)| words).collect()
+                    }
+                });
+            }
+            drop(done_tx);
+            let mut waiting = BTreeMap::new();
+            let mut due = 0;
+            for (i, end, words) in done_rx {
+                waiting.insert(i, (end, words));
+                while let Some((end, words)) = waiting.remove(&due) {
+                    if let Err(e) = out(end, words) {
+                        failed.store(true, Ordering::Relaxed);
+                        return Err(e);
+                    }
+                    due += 1;
+                }
+            }
+            Ok(())
+        })
     }
 
     fn transcribe_batch(&self, chunks: &[Chunk]) -> Vec<Word> {

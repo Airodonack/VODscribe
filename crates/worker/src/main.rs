@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 use vodscribe_core::asr::{Parallelism, Provider, Transcriber};
-use vodscribe_core::audio::{self, Chunk, Chunker, SAMPLE_RATE};
+use vodscribe_core::audio::{self, Chunk, Chunker};
 
 const CHUNK_MIN_SECS: f64 = 20.0;
 const CHUNK_MAX_SECS: f64 = 30.0;
@@ -114,25 +114,27 @@ fn run() -> Result<()> {
     let transcriber = Transcriber::load(&args.model, args.provider, parallelism)?;
     emit(json!({ "ready": true }))?;
 
-    let never = AtomicBool::new(false);
-    let mut chunker = Chunker::new(CHUNK_MIN_SECS, CHUNK_MAX_SECS, args.start);
-    let mut pending: Vec<Chunk> = Vec::new();
-    let flush = |chunks: &mut Vec<Chunk>| -> Result<()> {
-        let Some(last) = chunks.last() else { return Ok(()) };
-        let end = last.start + last.samples.len() as f64 / SAMPLE_RATE as f64;
-        let words = transcriber.transcribe(chunks);
-        chunks.clear();
-        emit(json!({ "end": end, "words": words }))
-    };
-    audio::decode(&args.ffmpeg, &args.audio, args.start, &never, |samples| {
-        pending.extend(chunker.push(samples));
-        if pending.len() >= transcriber.batch_size() {
-            flush(&mut pending)?;
+    // The audio is decoded and cut into chunks on a thread of its own, a few
+    // chunks ahead of the transcription, so neither waits for the other.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Chunk>(transcriber.queue_size());
+    let (ffmpeg, audio, start) = (args.ffmpeg.clone(), args.audio.clone(), args.start);
+    let decoder = std::thread::spawn(move || -> Result<()> {
+        let never = AtomicBool::new(false);
+        let mut chunker = Chunker::new(CHUNK_MIN_SECS, CHUNK_MAX_SECS, start);
+        // A send fails only once the transcription has stopped, which has its own error.
+        audio::decode(&ffmpeg, &audio, start, &never, |samples| {
+            for chunk in chunker.push(samples) {
+                tx.send(chunk).map_err(|_| anyhow::anyhow!("transcription stopped"))?;
+            }
+            Ok(())
+        })?;
+        if let Some(chunk) = chunker.finish() {
+            tx.send(chunk).map_err(|_| anyhow::anyhow!("transcription stopped"))?;
         }
         Ok(())
-    })?;
-    pending.extend(chunker.finish());
-    flush(&mut pending)
+    });
+    transcriber.transcribe_stream(rx, |end, words| emit(json!({ "end": end, "words": words })))?;
+    decoder.join().map_err(|_| anyhow::anyhow!("decoding the audio crashed"))?
 }
 
 fn main() {
