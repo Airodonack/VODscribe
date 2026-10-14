@@ -360,6 +360,23 @@ pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()>
     gpu::uninstall(&state.paths.gpu_model_dir()).map_err(err)
 }
 
+/// Bytes of the videos kept from sites without embeds (`Paths::media`).
+#[tauri::command]
+pub(crate) async fn media_size(state: State<'_, AppState>) -> CmdResult<u64> {
+    let paths = state.paths.clone();
+    tauri::async_runtime::spawn_blocking(move || paths.media_size()).await.map_err(err)
+}
+
+/// Saves what this computer's webview plays (playable.ts asks it at each
+/// start), for the formats of videos kept from other sites.
+#[tauri::command]
+pub(crate) async fn set_playable(
+    state: State<'_, AppState>,
+    playable: vodscribe_core::playable::Playable,
+) -> CmdResult<()> {
+    playable.save(&state.paths.playable()).map_err(err)
+}
+
 /// Bytes of downloaded files that `clear_cache` would delete.
 #[tauri::command]
 pub(crate) async fn cache_size(state: State<'_, AppState>) -> CmdResult<u64> {

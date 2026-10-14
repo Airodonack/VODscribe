@@ -6,7 +6,7 @@
   import { demoOff } from "./demo";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { formatTime, platformName } from "./platform";
+  import { formatTime, siteName } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
@@ -44,7 +44,7 @@
   const stopped = $derived(vod.status === "error" && vod.error === "Stopped");
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
-  const platform = $derived(platformName[vod.platform] ?? vod.platform);
+  const platform = $derived(siteName(vod));
 
   /** Runs an action, reporting its error if it fails. */
   function act(action: Promise<unknown>) {

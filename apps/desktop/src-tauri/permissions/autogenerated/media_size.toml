@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-media-size"
+description = "Enables the media_size command without any pre-configured scope."
+commands.allow = ["media_size"]
+
+[[permission]]
+identifier = "deny-media-size"
+description = "Denies the media_size command without any pre-configured scope."
+commands.deny = ["media_size"]

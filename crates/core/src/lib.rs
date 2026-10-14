@@ -17,6 +17,7 @@ pub mod local;
 pub mod model;
 pub mod net;
 pub mod pipeline;
+pub mod playable;
 pub mod settings;
 pub mod thumbs;
 pub mod tools;
@@ -96,6 +97,15 @@ pub struct Paths {
     pub local: PathBuf,
 }
 
+/// Bytes in `path`: a file's, or everything under a folder (not following links).
+fn size_on_disk(path: &std::path::Path) -> u64 {
+    let Ok(meta) = std::fs::symlink_metadata(path) else { return 0 };
+    if !meta.is_dir() {
+        return meta.len();
+    }
+    std::fs::read_dir(path).map_or(0, |entries| entries.flatten().map(|e| size_on_disk(&e.path())).sum())
+}
+
 impl Paths {
     /// Everything in one directory.
     pub fn new(root: impl Into<PathBuf>) -> Self {
@@ -123,6 +133,11 @@ impl Paths {
         self.root.join("settings.json")
     }
 
+    /// What this computer's webview plays (`playable::Playable`).
+    pub fn playable(&self) -> PathBuf {
+        self.root.join("playable.json")
+    }
+
     /// Timeline layers (see `layers`).
     pub fn layers(&self) -> PathBuf {
         self.root.join("layers.json")
@@ -148,6 +163,13 @@ impl Paths {
         self.local.join("work")
     }
 
+    /// The videos kept from sites other than YouTube, Twitch and Kick, to play
+    /// here (`pipeline::keeps_video`), as `<vod id>.<ext>`. Not a cache: a VOD's
+    /// stays until it's deleted, or removed from the VOD.
+    pub fn media(&self) -> PathBuf {
+        pipeline::media_dir(&self.work())
+    }
+
     pub fn model_dir(&self) -> PathBuf {
         model::model_dir(&self.models(), &model::CPU_MODEL)
     }
@@ -165,14 +187,12 @@ impl Paths {
 
     /// Bytes used by `cache_dirs`.
     pub fn cache_size(&self) -> u64 {
-        fn size(path: &std::path::Path) -> u64 {
-            let Ok(meta) = std::fs::symlink_metadata(path) else { return 0 };
-            if !meta.is_dir() {
-                return meta.len();
-            }
-            std::fs::read_dir(path).map_or(0, |entries| entries.flatten().map(|e| size(&e.path())).sum())
-        }
-        self.cache_dirs().iter().map(|d| size(d)).sum()
+        self.cache_dirs().iter().map(|d| size_on_disk(d)).sum()
+    }
+
+    /// Bytes used by the kept videos (`media`).
+    pub fn media_size(&self) -> u64 {
+        size_on_disk(&self.media())
     }
 
     /// Deletes `cache_dirs`. The ones the app always needs are recreated empty.

@@ -325,7 +325,12 @@ const players: Record<string, CreatePlayer> = {
   local,
 };
 
-/** Creates a player inside `el`, or returns null if the platform has no VOD embed. */
+/** The platform's player; for another site, its kept video, played like a local file. */
+function playerFor(vod: Vod): CreatePlayer | undefined {
+  return Object.hasOwn(players, vod.platform) ? players[vod.platform] : vod.media ? local : undefined;
+}
+
+/** Creates a player inside `el`, or returns null if there's nothing to play here. */
 export function createPlayer(
   el: HTMLElement,
   vod: Vod,
@@ -333,7 +338,7 @@ export function createPlayer(
   play: boolean,
   onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> | null {
-  return players[vod.platform]?.(el, vod, time, play, onerror) ?? null;
+  return playerFor(vod)?.(el, vod, time, play, onerror) ?? null;
 }
 
-export const canEmbed = (vod: Vod) => Object.hasOwn(players, vod.platform);
+export const canEmbed = (vod: Vod) => playerFor(vod) !== undefined;

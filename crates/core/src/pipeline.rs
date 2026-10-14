@@ -57,12 +57,20 @@ pub fn download(
     vod: &Vod,
     tools: &Tools,
     work_dir: &Path,
+    video: Option<&str>,
     cancel: &AtomicBool,
     mut report: impl FnMut(Status, f64),
 ) -> Result<PathBuf> {
     // A local file is transcribed where it is: there's nothing to download.
     if let Some(source) = &vod.source_path {
         return crate::local::source(source);
+    }
+    // A site whose video is kept: transcribed from that video, once it's here.
+    let keep = keeps_video(&vod.info.platform).then_some(video).flatten();
+    if keep.is_some()
+        && let Some(kept) = db.media_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file())
+    {
+        return Ok(kept);
     }
     fs::create_dir_all(work_dir)?;
     let info = info_path(work_dir, vod.id);
@@ -76,17 +84,46 @@ pub fn download(
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info)?;
     }
-    let out = work_dir.join(vod.id.to_string());
-    match fetch::download_audio(yt_dlp, &info, &out, cancel, |f| report(Status::Downloading, f)) {
+    let (out, wanted) = match keep {
+        Some(selector) => {
+            let dir = media_dir(work_dir);
+            fs::create_dir_all(&dir)?;
+            (dir.join(vod.id.to_string()), fetch::Wanted::Video { selector, ffmpeg: tools.ffmpeg })
+        }
+        None => (work_dir.join(vod.id.to_string()), fetch::Wanted::Audio),
+    };
+    let mut get = || fetch::download(yt_dlp, &info, &out, wanted, cancel, |f| report(Status::Downloading, f));
+    let file = match get() {
         // The probe's media URLs are tied to a session the site may have soured on
         // (YouTube answers 403 past the first kilobyte of such URLs); a new probe
         // is a new session, so try once more from one before giving up.
         Err(e) if fetch::is_refused(&e) => {
             fetch::probe(yt_dlp, &vod.info.url, &info)?;
-            fetch::download_audio(yt_dlp, &info, &out, cancel, |f| report(Status::Downloading, f))
+            get()
         }
         result => result,
+    }?;
+    if keep.is_some() {
+        db.set_media_path(vod.id, Some(&file.to_string_lossy()))?;
     }
+    Ok(file)
+}
+
+/// Whether a VOD from `platform` has its video kept to play here: any site but
+/// those with embeds of their own (and files on this computer, played in place).
+pub fn keeps_video(platform: &str) -> bool {
+    !matches!(platform, "youtube" | "twitch" | "kick" | crate::local::PLATFORM)
+}
+
+/// Where kept videos go (`Paths::media`): beside the work dir, never in it, so
+/// clearing a VOD's work files after transcribing can't take its video.
+pub fn media_dir(work_dir: &Path) -> PathBuf {
+    work_dir.with_file_name("media")
+}
+
+/// Removes VOD `vod_id`'s kept video, and any part of one, from `media_dir`.
+pub fn remove_media(work_dir: &Path, vod_id: i64) {
+    remove_work_files(&media_dir(work_dir), vod_id);
 }
 
 /// Transcribes downloaded audio, writing segments to the index as they are
@@ -267,7 +304,7 @@ mod tests {
 
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
         let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
-        let audio = download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).unwrap();
+        let audio = download(&mut db, &vod, &tools, &paths.work(), None, &AtomicBool::new(false), |_, _| {}).unwrap();
         assert_eq!(audio, source, "transcribed in place, not copied");
         db.set_audio_path(vod.id, Some(&audio.to_string_lossy())).unwrap();
 
@@ -278,7 +315,7 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"the user's video");
 
         fs::remove_file(&source).unwrap();
-        assert!(download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).is_err());
+        assert!(download(&mut db, &vod, &tools, &paths.work(), None, &AtomicBool::new(false), |_, _| {}).is_err());
     }
 
     #[test]

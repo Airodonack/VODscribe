@@ -41,6 +41,33 @@ export const platformName: Record<string, string> = {
   local: "Local file",
 };
 
+/** What to call where `vod` is from: the platform's name, or for any other
+ *  site yt-dlp knows, its web address ("soundcloud.com"). */
+export function siteName(vod: Vod): string {
+  const known = platformName[vod.platform];
+  if (known) return known;
+  try {
+    return new URL(vod.url).hostname.replace(/^www\./, "");
+  } catch {
+    return vod.platform;
+  }
+}
+
+/** Whether `vod`'s video is kept to play here: a site with no embed of its
+ *  own (crates/core pipeline.rs `keeps_video`). */
+export const keepsVideo = (vod: Vod) => !["youtube", "twitch", "kick", "local"].includes(vod.platform);
+
+/** What to try when a video won't play here, for this computer's system. */
+export function playbackHint(): string {
+  const ua = navigator.userAgent;
+  if (/Windows/i.test(ua)) return "Windows can't play this video's format.";
+  if (/Mac OS X|Macintosh/i.test(ua)) return "macOS can't play this video's format.";
+  return (
+    "This computer is missing the codecs for this video's format. On Fedora, install them from RPM Fusion " +
+    "(gstreamer1-plugin-libav); on Ubuntu and Debian, install gstreamer1.0-libav. Then restart VODscribe."
+  );
+}
+
 /** Link to the VOD on its own site, at `time`. */
 export function watchUrl(vod: Vod, time: number): string {
   const t = Math.floor(time);

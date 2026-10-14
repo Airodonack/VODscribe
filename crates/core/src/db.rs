@@ -66,6 +66,9 @@ pub struct Vod {
     pub thumb: Option<String>,
     /// For a file on this computer, its path. It's read in place, never changed.
     pub source_path: Option<String>,
+    /// A video (or audio) kept to play here, from a site other than YouTube,
+    /// Twitch and Kick (`Paths::media`); the app plays it like a local file.
+    pub media: bool,
     /// Has transcript segments from a model this version no longer uses (or
     /// from before models were recorded). Finished VODs can be re-transcribed;
     /// unfinished ones start over when they resume.
@@ -320,11 +323,14 @@ END;";
 /// `chat_resume` (one position) is no longer written; a fetch an older version
 /// left unfinished starts over.
 const MIGRATE_V15: &str = "ALTER TABLE vods ADD COLUMN chat_slices TEXT;";
+/// v16: the video kept to play here, for sites other than YouTube, Twitch and
+/// Kick (`Paths::media`).
+const MIGRATE_V16: &str = "ALTER TABLE vods ADD COLUMN media_path TEXT;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
-     note, model, thumb, source_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
+     note, model, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -346,6 +352,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         note: r.get("note")?,
         thumb: r.get("thumb")?,
         source_path: r.get("source_path")?,
+        media: r.get::<_, Option<String>>("media_path")?.is_some(),
         outdated: {
             let model: Option<String> = r.get("model")?;
             let has_segments: bool = r.get("has_segments")?;
@@ -398,6 +405,7 @@ impl Db {
             MIGRATE_V13,
             MIGRATE_V14,
             MIGRATE_V15,
+            MIGRATE_V16,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -504,6 +512,16 @@ impl Db {
             "UPDATE vods SET audio_path = NULL;
              UPDATE vods SET status = 'queued', progress = 0 WHERE status = 'ready';",
         )?;
+        Ok(())
+    }
+
+    /// VOD `id`'s kept video (see `Vod::media`).
+    pub fn media_path(&self, id: i64) -> Result<Option<String>> {
+        Ok(self.conn.query_row("SELECT media_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    pub fn set_media_path(&self, id: i64, path: Option<&str>) -> Result<()> {
+        self.conn.execute("UPDATE vods SET media_path = ?2 WHERE id = ?1", params![id, path])?;
         Ok(())
     }
 

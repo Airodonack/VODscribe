@@ -98,13 +98,23 @@ fn dump_json(yt_dlp: &YtDlp, url: &str) -> Result<(Value, Vec<u8>)> {
 const PROGRESS: &str = "[vodscribe]";
 const FILE: &str = "[vodscribe-file]";
 
-/// Downloads the smallest stream that carries audio, reporting a 0..1 fraction.
-/// Returns the path of the downloaded file. An interrupted download resumes,
-/// and a finished one is reused, when called again with the same `out_stem`.
-pub fn download_audio(
+/// What to download: the smallest stream that carries audio, to transcribe;
+/// or a video to keep and play here, chosen by a yt-dlp format selection
+/// (`playable::Playable::selector`), its streams merged with `ffmpeg`.
+#[derive(Clone, Copy)]
+pub enum Wanted<'a> {
+    Audio,
+    Video { selector: &'a str, ffmpeg: &'a Path },
+}
+
+/// Downloads what's `wanted`, reporting a 0..1 fraction. Returns the path of
+/// the downloaded file. An interrupted download resumes, and a finished one is
+/// reused, when called again with the same `out_stem`.
+pub fn download(
     yt_dlp: &YtDlp,
     info_path: &Path,
     out_stem: &Path,
+    wanted: Wanted,
     cancel: &AtomicBool,
     mut on_progress: impl FnMut(f64),
 ) -> Result<PathBuf> {
@@ -112,14 +122,19 @@ pub fn download_audio(
         "download:{PROGRESS} %(progress.downloaded_bytes)s %(progress.total_bytes)s \
          %(progress.total_bytes_estimate)s %(progress.fragment_index)s %(progress.fragment_count)s"
     );
-    let mut child = yt_dlp
-        .command()
-        .arg("--load-info-json")
-        .arg(info_path)
+    let mut cmd = yt_dlp.command();
+    cmd.arg("--load-info-json").arg(info_path);
+    match wanted {
         // Audio-only when offered (YouTube, Twitch); otherwise the lowest quality muxed stream.
-        .args(["-f", "ba/w", "-N", "8", "--no-mtime", "--newline", "--progress"])
-        // Skip remuxing HLS downloads: only the audio is used, and ffmpeg reads the raw stream.
-        .args(["--fixup", "never"])
+        // HLS downloads aren't remuxed: only the audio is used, and ffmpeg reads the raw stream.
+        Wanted::Audio => cmd.args(["-f", "ba/w", "--fixup", "never"]),
+        // Kept to play: video and audio in one MP4, which every webview reads.
+        Wanted::Video { selector, ffmpeg } => {
+            cmd.args(["-f", selector, "--merge-output-format", "mp4", "--ffmpeg-location"]).arg(ffmpeg)
+        }
+    };
+    let mut child = cmd
+        .args(["-N", "8", "--no-mtime", "--newline", "--progress"])
         .args(["--progress-template", &template])
         // A runaway download (a stream that never ends) stops instead of filling the disk.
         .args(["--max-filesize", "40G"])
@@ -398,6 +413,39 @@ mod tests {
         for date in ["202é102", "2026-1-2"] {
             let json = serde_json::json!({ "id": "abc", "webpage_url": "https://www.twitch.tv/videos/abc", "upload_date": date });
             assert_eq!(parse_info(&json).unwrap().published, None);
+        }
+    }
+
+    /// Keeps a real video in a format that plays, merged with ffmpeg:
+    /// `VODSCRIBE_BIN=<data dir>/bin cargo test -p vodscribe-core -- --ignored keeps_videos_live --nocapture`.
+    #[test]
+    #[ignore = "network"]
+    fn keeps_videos_live() {
+        let bin = std::env::var("VODSCRIBE_BIN").expect("VODSCRIBE_BIN: the folder with yt-dlp");
+        let yt_dlp = crate::tools::find_yt_dlp(Path::new(&bin)).expect("yt-dlp");
+        let ffmpeg = crate::tools::find_ffmpeg(Path::new(&bin)).expect("ffmpeg");
+        let dir = crate::TempDir::new("keep-video");
+        let selector = crate::playable::Playable::default().selector(480);
+        for (name, url) in [
+            ("dailymotion", "https://www.dailymotion.com/video/x7tgad0"),
+            ("soundcloud", "https://soundcloud.com/forss/flickermood"),
+        ] {
+            let info = dir.join(format!("{name}.info.json"));
+            probe(&yt_dlp, url, &info).unwrap();
+            let wanted = Wanted::Video { selector: &selector, ffmpeg: &ffmpeg };
+            let file = download(&yt_dlp, &info, &dir.join(name), wanted, &AtomicBool::new(false), |_| {}).unwrap();
+            let out = std::process::Command::new(&ffmpeg).arg("-hide_banner").arg("-i").arg(&file).output().unwrap();
+            let streams: Vec<String> = String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .filter(|l| l.contains("Stream #"))
+                .map(|l| l.trim().to_string())
+                .collect();
+            eprintln!(
+                "{name}: {} ({} bytes)\n  {}",
+                file.display(),
+                file.metadata().unwrap().len(),
+                streams.join("\n  ")
+            );
         }
     }
 }

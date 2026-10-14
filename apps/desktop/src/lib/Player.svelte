@@ -7,7 +7,8 @@
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
-  import { formatTime, platformName, watchUrl } from "./platform";
+  import { formatTime, keepsVideo, playbackHint, siteName, watchUrl } from "./platform";
+  import { ask } from "./ask";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
   // jump, so jumping to the same timestamp twice still seeks.
@@ -29,7 +30,17 @@
     copiedTimer = setTimeout(() => (copied = null), 1500);
   }
 
-  const site = $derived(platformName[vod.platform] ?? "site");
+  const site = $derived(siteName(vod));
+
+  // A video kept from a site without an embed can be deleted to free up space.
+  async function deleteVideo() {
+    const sure = await ask(
+      `Delete this video to free up space? The transcript stays, and the video plays on ${site} instead.`,
+      "Delete video",
+      "Keep",
+    );
+    if (sure) api.deleteVideo(vod.id).catch((e) => (error = String(e)));
+  }
   const isLocal = $derived(vod.source_path !== null);
   let error = $state<string | null>(null);
 
@@ -146,6 +157,15 @@
         Show in folder
       </button>
     {:else}
+      {#if vod.media}
+        <button
+          class="link open"
+          onclick={deleteVideo}
+          title="Free up the space this video takes; the transcript stays"
+        >
+          Delete video
+        </button>
+      {/if}
       <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
         Open on {site}
         <Icon name="external" size={12} />
@@ -191,12 +211,20 @@
           <button class="link" onclick={() => api.openFile(vod.id).catch((e) => (error = String(e)))}
             >Open it in your video player</button
           >
+        {:else if vod.media && /can't be played|couldn't be played/.test(error)}
+          {playbackHint()} Meanwhile, use “Open on {site}”.
         {/if}
       </p>
     {/if}
   {:else}
     <p class="muted note">
-      {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(at.time)}.
+      {#if keepsVideo(vod) && vod.status !== "done" && vod.status !== "error"}
+        The video plays here once it's downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(at.time)}.
+      {:else if keepsVideo(vod)}
+        This video isn't kept on this computer. Use “Open on {site}” to watch from {formatTime(at.time)}.
+      {:else}
+        {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(at.time)}.
+      {/if}
     </p>
   {/if}
 </section>

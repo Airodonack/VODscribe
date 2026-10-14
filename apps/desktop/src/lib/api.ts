@@ -16,6 +16,8 @@ export interface Vod {
   thumb: string | null;
   /** For a file on this computer, its path; such VODs have platform "local". */
   source_path: string | null;
+  /** A video kept to play here, from a site without an embed (crates/core `Vod::media`). */
+  media: boolean;
   published: string | null;
   status: Status;
   progress: number;
@@ -38,6 +40,14 @@ export interface Settings {
   theme: ThemeChoice;
   /** Where chat's word emotes come from, in priority order (crates/core `settings::EmoteProviders`). */
   emote_providers: EmoteProvider[];
+  /** The tallest video kept from sites without embeds; unset means 720. */
+  video_height: number | null;
+}
+
+/** What this computer's webview plays, best first (crates/core `playable::Playable`). */
+export interface Playable {
+  video: ["av1" | "vp9" | "hevc" | "h264", "opus" | "aac" | "mp3" | "vorbis" | "flac"][];
+  audio: ("opus" | "aac" | "mp3" | "vorbis" | "flac")[];
 }
 
 /** A word emote provider (crates/core `word_emotes`): "7tv", "bttv" or "ffz". */
@@ -233,6 +243,11 @@ export const api = {
   cancelGpuInstall: () => invoke<void>("cancel_gpu_install"),
   removeGpuPack: () => invoke<void>("remove_gpu_pack"),
   cacheSize: () => invoke<number>("cache_size"),
+  /** Bytes of the videos kept from sites without embeds. */
+  mediaSize: () => invoke<number>("media_size"),
+  setPlayable: (playable: Playable) => invoke<void>("set_playable", { playable }),
+  /** Deletes the video kept for VOD `id`, keeping its transcript. */
+  deleteVideo: (id: number) => invoke<void>("delete_video", { id }),
   clearCache: () => invoke<void>("clear_cache"),
 };
 

@@ -116,7 +116,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let media = media::MediaServer::start(move |id| {
                 let state = handle.state::<AppState>();
-                state.db.lock().unwrap().vod(id).ok().flatten().and_then(|v| v.source_path)
+                // A file on this computer, or a video kept from a site without an embed.
+                let db = state.db.lock().unwrap();
+                db.vod(id).ok().flatten().and_then(|v| v.source_path).or_else(|| db.media_path(id).ok().flatten())
             })?;
             let (chat, chat_rx) = chats::ChatQueue::new();
             app.manage(AppState {
@@ -208,6 +210,9 @@ pub fn run() {
             setup::cancel_gpu_install,
             setup::remove_gpu_pack,
             setup::cache_size,
+            setup::media_size,
+            setup::set_playable,
+            vods::delete_video,
             setup::clear_cache,
         ])
         .run(tauri::generate_context!())

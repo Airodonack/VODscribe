@@ -260,7 +260,10 @@ fn finish(
     progress: f64,
 ) -> Result<()> {
     match (result, stop) {
-        (_, Some(Stop::Delete)) => pipeline::remove_work_files(work, vod_id),
+        (_, Some(Stop::Delete)) => {
+            pipeline::remove_work_files(work, vod_id);
+            pipeline::remove_media(work, vod_id);
+        }
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
         (_, Some(Stop::Pause)) => db.set_status(vod_id, Status::Paused, progress, None)?,
@@ -283,9 +286,11 @@ pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read 
 /// Throws away a VOD's partial work, leaving it in the library as canceled.
 pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
     pipeline::remove_work_files(work_dir, vod_id);
+    pipeline::remove_media(work_dir, vod_id);
     db.atomically(|db| {
         db.clear_segments(vod_id)?;
         db.set_audio_path(vod_id, None)?;
+        db.set_media_path(vod_id, None)?;
         db.set_note(vod_id, None)?;
         db.set_status(vod_id, Status::Error, 0.0, Some(STOPPED))
     })
@@ -311,8 +316,18 @@ fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> 
     let ffmpeg = tools::find_ffmpeg(&bin).context(NO_FFMPEG)?;
     let tools = pipeline::Tools { yt_dlp: yt_dlp.as_ref(), ffmpeg: &ffmpeg };
     let app = ctx.app.clone();
-    let audio =
-        pipeline::download(&mut ctx.db, vod, &tools, &ctx.paths.work(), flag, reporter(&app, vod.id, progress))?;
+    // A kept video (sites without embeds) in a format this computer plays, as tall as the settings allow.
+    let height = Settings::load(&ctx.paths.settings()).video_height();
+    let video = vodscribe_core::playable::Playable::load(&ctx.paths.playable()).selector(height);
+    let audio = pipeline::download(
+        &mut ctx.db,
+        vod,
+        &tools,
+        &ctx.paths.work(),
+        Some(&video),
+        flag,
+        reporter(&app, vod.id, progress),
+    )?;
     ctx.db.set_audio_path(vod.id, Some(&audio.to_string_lossy()))?;
     ctx.db.set_status(vod.id, Status::Ready, 0.0, None)?;
     Ok(())

@@ -16,6 +16,7 @@
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { os } from "./platform";
   import { updates } from "./updates.svelte";
+  import { savePlayable } from "./playable";
   import { settings } from "./appSettings.svelte";
   import { theme } from "./theme.svelte";
 
@@ -141,6 +142,8 @@
       .show()
       .catch(() => {});
     unlisten.push(updates.start());
+    // What this computer plays, for videos kept from other sites; in the background.
+    void savePlayable();
     unlisten.push(
       await events.vod(
         afterLoad((vod) => {

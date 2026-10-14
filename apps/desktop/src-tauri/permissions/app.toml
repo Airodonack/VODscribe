@@ -46,5 +46,8 @@ permissions = [
   "allow-cancel-gpu-install",
   "allow-remove-gpu-pack",
   "allow-cache-size",
+  "allow-media-size",
+  "allow-set-playable",
+  "allow-delete-video",
   "allow-clear-cache",
 ]

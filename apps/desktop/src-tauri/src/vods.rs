@@ -215,6 +215,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
         .worker
         .control(id, Stop::Delete, || {
             pipeline::remove_work_files(&state.paths.work(), id);
+            pipeline::remove_media(&state.paths.work(), id);
             delete_row()
         })
         .map_err(err)?;
@@ -224,6 +225,23 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     thumbs::remove(&state.paths.thumbs(), id);
     let _ = app.emit("vod-removed", id);
     Ok(())
+}
+
+/// Deletes the video kept for VOD `id` (a site without an embed), keeping
+/// its transcript; it then plays on its site instead.
+#[tauri::command]
+pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    let vod = db.vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
+    if matches!(vod.status, Status::Downloading | Status::Transcribing | Status::Ready | Status::Queued) {
+        return Err("Its video is still in use: wait until it's transcribed.".into());
+    }
+    pipeline::remove_media(&state.paths.work(), id);
+    db.set_media_path(id, None).map_err(err)?;
+    if db.audio_path(id).map_err(err)?.is_some_and(|p| !std::path::Path::new(&p).is_file()) {
+        db.set_audio_path(id, None).map_err(err)?;
+    }
+    emit_vod(&app, &db, id)
 }
 
 /// Requeues a VOD at whichever stage it needs next.

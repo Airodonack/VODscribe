@@ -22,6 +22,10 @@
     { id: "dark", label: "Dark", icon: "moon" },
   ] as const;
   let cacheBytes = $state<number | null>(null);
+  let mediaBytes = $state<number | null>(null);
+  // How tall videos kept from sites without embeds may be.
+  const HEIGHTS = [480, 720, 1080];
+  let videoHeight = $derived(appSettings.value?.video_height ?? 720);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<DownloadProgress | null>(null);
@@ -35,6 +39,7 @@
     // bar until the next progress event (which can be a while between files).
     if (gpu.installing && !step && gpu.progress) step = gpu.progress;
     cacheBytes = await api.cacheSize();
+    mediaBytes = await api.mediaSize();
   }
 
   async function clearCache() {
@@ -291,6 +296,27 @@
     <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
       {clearing ? "Clearing…" : "Free up space…"}
     </button>
+    <p class="label">Videos from other sites</p>
+    <p class="muted hint">
+      VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
+        ? `; they use ${formatBytes(mediaBytes)}`
+        : ""}. Delete one from its player to free up space; its transcript stays.
+    </p>
+    <div class="themes" role="radiogroup" aria-label="Video quality">
+      {#each HEIGHTS as h (h)}
+        <button
+          role="radio"
+          aria-checked={videoHeight === h}
+          class:on={videoHeight === h}
+          onclick={() => appSettings.update({ video_height: h })}
+        >
+          {h}p
+        </button>
+      {/each}
+    </div>
+    <p class="muted hint">
+      Up to {videoHeight}p. An hour at 720p is about 1.5 to 2.5 GB. Applies to videos added next.
+    </p>
   </section>
 
   <section>
