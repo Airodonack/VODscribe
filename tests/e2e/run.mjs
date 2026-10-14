@@ -125,14 +125,25 @@ async function main() {
 
   // First-run setup, if the app asks for it: the tools and the speech model
   // (about 1 GB, unless it's there already). What it needs is the app's call.
+  let lastShown = "";
   const library = () => js(`return !!document.querySelector('input[placeholder="Search for a phrase…"]')`);
   const setup = () =>
     js(`return [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Download")`);
   const screen = await until(
     "setup or the library",
-    async () => ((await library()) && "library") || ((await setup()) && "setup"),
-    MINUTE,
-  );
+    async () =>
+      ((await library()) && "library") ||
+      ((await setup()) && "setup") ||
+      // If it never comes, the error says what was showing instead.
+      js(`return document.body.innerText.trim().slice(0, 200) || "(a blank page)"`).then((shown) => {
+        lastShown = shown;
+        return false;
+      }),
+    // Once in a while on CI, WebKitGTK takes over a minute to show the first screen.
+    3 * MINUTE,
+  ).catch((e) => {
+    throw new Error(`${e.message}; the page showed: ${lastShown}`);
+  });
   if (screen === "setup") {
     await clickText("Download");
     step("setup downloading");
