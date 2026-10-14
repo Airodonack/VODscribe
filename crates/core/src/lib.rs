@@ -48,6 +48,18 @@ impl<'a> Progress<'a> {
     pub fn step(step: &'a str) -> Self {
         Progress { step, done: 0, total: None, file_done: 0, file_size: None, part: 1, parts: 1 }
     }
+
+    /// A file of `size` bytes (if known) with `n` of them done, as the whole of
+    /// a single-file install. Place it in a bigger one with `within`.
+    pub fn file(step: &'a str, n: u64, size: Option<u64>) -> Self {
+        Progress { step, done: n, total: size, file_done: n, file_size: size, part: 1, parts: 1 }
+    }
+
+    /// This file as part `part` of `parts` in an install of `total` bytes,
+    /// after `before` bytes of the files ahead of it.
+    pub fn within(self, before: u64, total: Option<u64>, part: usize, parts: usize) -> Self {
+        Progress { done: before + self.file_done, total, part, parts, ..self }
+    }
 }
 
 /// The error a job ends with when it was told to stop (pause, cancel, delete).
@@ -186,13 +198,55 @@ impl Paths {
     }
 }
 
+/// A fresh folder for a test, removed when it's dropped, even when the test
+/// fails. Use it as the `Path` it derefs to.
+#[cfg(test)]
+pub(crate) struct TempDir(PathBuf);
+
+#[cfg(test)]
+impl TempDir {
+    /// `vodscribe-<name>-…` in the system's temporary folder, unique to this
+    /// process and call, so tests running at once don't share one.
+    pub(crate) fn new(name: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("vodscribe-{name}-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        TempDir(dir)
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for TempDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl AsRef<std::path::Path> for TempDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn clearing_the_cache_keeps_the_library_and_settings() {
-        let paths = Paths::new(std::env::temp_dir().join(format!("vodscribe-cache-{}", std::process::id())));
+        let dir = TempDir::new("cache");
+        let paths = Paths::new(dir.join("data"));
         paths.ensure().unwrap();
         for dir in paths.cache_dirs() {
             std::fs::create_dir_all(dir.join("nested")).unwrap();
@@ -208,6 +262,13 @@ mod tests {
         assert!(paths.cache_dirs().iter().all(empty), "cache dirs are gone or empty");
         assert_eq!(std::fs::read(paths.db()).unwrap(), b"library");
         assert_eq!(std::fs::read(paths.settings()).unwrap(), b"{}");
-        std::fs::remove_dir_all(&paths.root).unwrap();
+    }
+
+    #[test]
+    fn a_file_placed_within_an_install() {
+        let p = Progress::file("Downloading b", 30, Some(100)).within(250, Some(400), 2, 3);
+        assert_eq!((p.done, p.total, p.file_done, p.file_size, p.part, p.parts), (280, Some(400), 30, Some(100), 2, 3));
+        let alone = Progress::file("Downloading yt-dlp", 7, None);
+        assert_eq!((alone.done, alone.total, alone.part, alone.parts), (7, None, 1, 1));
     }
 }

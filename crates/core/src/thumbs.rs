@@ -103,8 +103,7 @@ mod tests {
 
     #[test]
     fn removes_only_that_vods_thumbnails() {
-        let dir = std::env::temp_dir().join(format!("vodscribe-thumbs-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("thumbs");
         for name in ["1.jpg", "1-5.webp", "12-5.webp", "1.part", "notes.txt"] {
             fs::write(dir.join(name), b"x").unwrap();
         }
@@ -113,7 +112,6 @@ mod tests {
             fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
         left.sort();
         assert_eq!(left, ["1.part", "12-5.webp", "notes.txt"]);
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

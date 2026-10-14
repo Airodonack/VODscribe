@@ -242,8 +242,7 @@ mod tests {
     /// Every path that cleans up after a VOD leaves a local file alone.
     #[test]
     fn local_files_survive_every_cleanup() {
-        let root = std::env::temp_dir().join(format!("vodscribe-local-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::TempDir::new("local");
         let paths = crate::Paths::new(root.join("data"));
         paths.ensure().unwrap();
         let mine = root.join("mine");
@@ -280,14 +279,12 @@ mod tests {
 
         fs::remove_file(&source).unwrap();
         assert!(download(&mut db, &vod, &tools, &paths.work(), &AtomicBool::new(false), |_, _| {}).is_err());
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn a_stop_kills_a_quiet_worker_promptly() {
         // A "worker" that prints nothing for 30 s.
-        let dir = std::env::temp_dir().join(format!("vodscribe-stop-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("stop");
         let program = dir.join("worker.sh");
         fs::write(&program, "#!/bin/sh\nsleep 30\n").unwrap();
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
@@ -307,7 +304,7 @@ mod tests {
         let spec = WorkerSpec {
             program,
             model_id: "m",
-            model_dir: dir.clone(),
+            model_dir: dir.to_path_buf(),
             provider: "cpu",
             batch: 1,
             lib_dirs: Vec::new(),
@@ -323,6 +320,5 @@ mod tests {
         let result = run_worker(&mut db, &vod, &spec, Path::new("ffmpeg"), Path::new("audio"), &cancel, &mut |_, _| {});
         assert!(result.is_err());
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
-        fs::remove_dir_all(&dir).unwrap();
     }
 }

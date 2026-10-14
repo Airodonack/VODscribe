@@ -965,8 +965,8 @@ mod tests {
 
     #[test]
     fn migrates_v1_databases() {
-        let path = std::env::temp_dir().join(format!("vodscribe-migrate-{}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        let dir = crate::TempDir::new("migrate");
+        let path = dir.join("library.sqlite");
         {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = 1;")).unwrap();
@@ -992,14 +992,12 @@ mod tests {
         assert!(db.vod(vod.id).unwrap().unwrap().outdated, "older model");
         db.set_note(vod.id, Some("ran on CPU")).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
-        drop(db);
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn chat_from_before_kinds_is_fetched_again() {
-        let path = std::env::temp_dir().join(format!("vodscribe-migrate-v10-{}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        let dir = crate::TempDir::new("migrate-v10");
+        let path = dir.join("library.sqlite");
         {
             let conn = Connection::open(&path).unwrap();
             let before = [
@@ -1017,14 +1015,12 @@ mod tests {
         let chat: Vec<_> = db.vods().unwrap().iter().map(|v| v.chat).collect();
         assert!(chat.contains(&ChatStatus::Pending) && chat.contains(&ChatStatus::None));
         assert_eq!(db.chat(1).unwrap()[0].kind, Kind::Message, "kept until fetched again");
-        drop(db);
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn deleted_transcripts_leave_the_file() {
-        let path = std::env::temp_dir().join(format!("vodscribe-delete-{}.sqlite", std::process::id()));
-        let _ = std::fs::remove_file(&path);
+        let dir = crate::TempDir::new("delete");
+        let path = dir.join("library.sqlite");
         let mut db = Db::open(&path).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0;
         let secret = "zanzibarquokka";
@@ -1038,7 +1034,6 @@ mod tests {
             [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()]
                 .concat();
         assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()), "deleted text still on disk");
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

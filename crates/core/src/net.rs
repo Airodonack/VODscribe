@@ -252,8 +252,7 @@ mod tests {
     #[test]
     fn verified_downloads_keep_only_matching_files() {
         let never = AtomicBool::new(false);
-        let dir = std::env::temp_dir().join(format!("vodscribe-verify-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("verify");
         let dest = dir.join("file");
         let good = hex(&Sha256::digest(b"hello world"));
         let bad = hex(&Sha256::digest(b"something else"));
@@ -262,7 +261,6 @@ mod tests {
         assert!(!dest.exists() && !dest.with_extension("part").exists(), "a mismatch leaves nothing behind");
         download_verified(&serve(b"hello world", false), &dest, Some(11), &good, &never, |_| {}).unwrap();
         assert_eq!(fs::read(&dest).unwrap(), b"hello world");
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

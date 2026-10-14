@@ -158,8 +158,7 @@ mod tests {
     #[test]
     fn probes_real_files() {
         let Ok(ffmpeg) = which::which("ffmpeg") else { return };
-        let dir = std::env::temp_dir().join(format!("vodscribe-probe-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("probe");
         let make = |name: &str, args: &[&str]| {
             let out = dir.join(name);
             let ok = std::process::Command::new(&ffmpeg)
@@ -190,7 +189,6 @@ mod tests {
         let thumbs = dir.join("thumbs");
         let name = thumbnail(&ffmpeg, &video, &thumbs, 7, info.duration).unwrap().unwrap();
         assert!(name.starts_with("7-") && crate::thumbs::mime(&name) == Some("image/jpeg"));
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

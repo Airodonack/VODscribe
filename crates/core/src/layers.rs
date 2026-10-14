@@ -97,8 +97,7 @@ mod tests {
 
     #[test]
     fn saves_and_falls_back_to_the_defaults() {
-        let dir = std::env::temp_dir().join(format!("vodscribe-layers-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("layers");
         let path = dir.join("layers.json");
         let fresh = Timeline { layers: defaults(), events: Vec::new() };
         assert_eq!(load(&path), fresh, "nothing saved yet");
@@ -116,6 +115,5 @@ mod tests {
         // Before event toggles, the file was just the layers.
         fs::write(&path, serde_json::to_string(&defaults()[..1]).unwrap()).unwrap();
         assert_eq!(load(&path), Timeline { layers: defaults()[..1].to_vec(), events: Vec::new() });
-        let _ = fs::remove_dir_all(&dir);
     }
 }

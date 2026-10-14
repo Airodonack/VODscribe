@@ -299,8 +299,7 @@ mod tests {
 
     #[test]
     fn finds_the_finished_download_without_its_printed_path() {
-        let dir = std::env::temp_dir().join(format!("vodscribe-finished-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::TempDir::new("finished");
         let stem = dir.join("12");
         for name in ["12.info.json", "12.m4a.part", "123.m4a", "12.f251.webm"] {
             std::fs::write(dir.join(name), b"x").unwrap();
@@ -310,7 +309,6 @@ mod tests {
         assert_eq!(finished_file(&stem), Some(dir.join("12.m4a")));
         std::fs::write(dir.join("12.webm"), b"x").unwrap();
         assert_eq!(finished_file(&stem), None, "two candidates: don't guess");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

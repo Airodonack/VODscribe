@@ -226,12 +226,15 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
         let mut offset = 0;
         let label = "ONNX Runtime 1.28 with CUDA (sherpa-onnx 1.13.8)";
         let downloading = format!("Downloading {label}");
-        let mut report = |step: &str, done: u64, file_done: u64, file_size: u64, part: usize| {
-            on_progress(Progress { step, done, total: Some(total), file_done, file_size: Some(file_size), part, parts })
+        // `before`: the bytes of the files ahead of this one.
+        let mut report = |step: &str, before: u64, n: u64, size: u64, part: usize| {
+            on_progress(Progress::file(step, n, Some(size)).within(before, Some(total), part, parts))
         };
-        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| report(&downloading, n, n, size, 1))?;
-        offset += size;
+        net::download_verified(url, &archive, Some(size), sha256, cancel, |n| {
+            report(&downloading, offset, n, size, 1)
+        })?;
         report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size, 1);
+        offset += size;
         extract_tar_libs(&archive, &libs, platform.lib_exts)?;
         fs::remove_file(&archive)?;
 
@@ -240,10 +243,10 @@ pub fn install(pack_dir: &Path, cancel: &AtomicBool, mut on_progress: impl FnMut
             let wheel = staging.join("wheel.whl");
             let downloading = format!("Downloading {label}");
             net::download_verified(url, &wheel, Some(size), sha256, cancel, |n| {
-                report(&downloading, offset + n, n, size, part)
+                report(&downloading, offset, n, size, part)
             })?;
-            offset += size;
             report(&format!("{label} matches its SHA‑256 · unpacking"), offset, size, size, part);
+            offset += size;
             extract_wheel_libs(&wheel, &libs, platform.lib_exts)?;
             fs::remove_file(&wheel)?;
         }

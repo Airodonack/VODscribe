@@ -147,29 +147,13 @@ pub fn install(
             let url = format!("{}/{}/{}", base.trim_end_matches('/'), spec.id, file.name);
             let step = format!("Downloading {} · {}", spec.name, file.name);
             net::download_verified(&url, &path, Some(size), file.sha256, cancel, |n| {
-                on_progress(Progress {
-                    step: &step,
-                    done: done + n,
-                    total: Some(total),
-                    file_done: n,
-                    file_size: Some(size),
-                    part,
-                    parts,
-                })
+                on_progress(Progress::file(&step, n, Some(size)).within(done, Some(total), part, parts))
             })
             .with_context(|| format!("download {}", file.name))?;
         }
-        done += size;
         let step = format!("{} matches its SHA‑256", file.name);
-        on_progress(Progress {
-            step: &step,
-            done,
-            total: Some(total),
-            file_done: size,
-            file_size: Some(size),
-            part,
-            parts,
-        });
+        on_progress(Progress::file(&step, size, Some(size)).within(done, Some(total), part, parts));
+        done += size;
     }
 
     let _ = fs::remove_dir_all(&dest);

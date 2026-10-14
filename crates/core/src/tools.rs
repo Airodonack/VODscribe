@@ -124,7 +124,7 @@ pub fn install_yt_dlp(
     }
     let new = dest.with_extension("new");
     net::download_verified(&format!("{YT_DLP_RELEASE}/{asset}"), &new, None, &sha256, cancel, |n| {
-        on_progress(Progress { done: n, file_done: n, ..Progress::step("Downloading yt-dlp") })
+        on_progress(Progress::file("Downloading yt-dlp", n, None))
     })?;
     on_progress(Progress::step("yt-dlp matches its signed SHA‑256 · installing"));
     crate::deps::install_executable(&new, &dest)?;
