@@ -224,14 +224,29 @@ pub(crate) async fn retry_vod(app: AppHandle, state: State<'_, AppState>, id: i6
 /// a better model.
 #[tauri::command]
 pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let db = state.db.lock().unwrap();
-    match db.vod(id).map_err(err)? {
-        Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
-        _ => return Err("Only finished VODs can be transcribed again.".into()),
+    {
+        let db = state.db.lock().unwrap();
+        match db.vod(id).map_err(err)? {
+            Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
+            _ => return Err("Only finished VODs can be transcribed again.".into()),
+        }
+        // First, so a quit while the old transcript is erased leaves it marked
+        // outdated, and transcribing it next clears the rest.
+        db.set_model(id, None).map_err(err)?;
     }
+    // The old transcript, a part at a time on a blocking thread: a long one
+    // takes a second or more to erase, and the app shouldn't wait on the library.
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
+        let state = handle.state::<AppState>();
+        while state.db.lock().unwrap().clear_some_segments(id, 300)? > 0 {}
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    let db = state.db.lock().unwrap();
     db.atomically(|db| {
-        db.clear_segments(id)?;
-        db.set_model(id, None)?;
         db.set_note(id, None)?;
         requeue(db, id)
     })

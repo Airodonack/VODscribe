@@ -527,9 +527,16 @@ impl Db {
             return Ok(chat);
         }
         // Segments cost more each, with their words: a third as many at a time.
+        self.clear_some_segments(vod_id, (limit / 3).max(1))
+    }
+
+    /// Deletes up to `limit` of VOD `vod_id`'s transcript segments; how many, 0
+    /// when none are left. A long transcript takes a second or more to erase,
+    /// so it goes a part at a time (see `delete_some_of`).
+    pub fn clear_some_segments(&self, vod_id: i64, limit: usize) -> Result<usize> {
         Ok(self.conn.execute(
             "DELETE FROM segments WHERE id IN (SELECT id FROM segments WHERE vod_id = ?1 LIMIT ?2)",
-            params![vod_id, (limit / 3).max(1) as i64],
+            params![vod_id, limit as i64],
         )?)
     }
 

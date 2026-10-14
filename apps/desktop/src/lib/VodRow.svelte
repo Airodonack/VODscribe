@@ -51,13 +51,24 @@
     action.catch((e) => onerror(String(e)));
   }
 
+  // Transcribing again first erases the old transcript, a moment for a long one.
+  let clearing = $state(false);
   function retranscribe() {
     if (
       confirm(
         `Transcribe “${vod.title}” again? Its current transcript will be replaced, and the audio may need to download again.`,
       )
     ) {
-      act(api.retranscribeVod(vod.id));
+      // Erasing a long transcript takes a moment; the row says so meanwhile.
+      clearing = true;
+      onerror(null);
+      api.retranscribeVod(vod.id).then(
+        () => (clearing = false),
+        (e) => {
+          clearing = false;
+          onerror(String(e));
+        },
+      );
     }
   }
 
@@ -106,9 +117,12 @@
   </span>
 </button>
 
-{#if removing}
+{#if removing || clearing}
   <div class="status-area">
-    <span class="status"><Spinner label="Removing" /> Removing…</span>
+    <span class="status">
+      <Spinner label={removing ? "Removing" : "Clearing the old transcript"} />
+      {removing ? "Removing…" : "Clearing the old transcript…"}
+    </span>
   </div>
 {:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
@@ -140,7 +154,7 @@
   </div>
 {/if}
 
-<div class="actions" class:removing inert={removing}>
+<div class="actions" class:removing inert={removing || clearing}>
   {#if vod.status === "error"}
     <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
