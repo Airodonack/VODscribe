@@ -1,7 +1,9 @@
 name: Build installers
 
-# Runs by hand or on a v* tag. Tag runs can only restore caches saved on the
-# default branch, so run it by hand on main now and then to keep the Rust cache warm.
+# Runs on every push to main that touches the app, so a commit that breaks a
+# platform's build shows up within the hour instead of at release; on a v*
+# tag; and by hand. Main's runs also keep the Rust cache warm for tag runs,
+# which can only restore caches saved on the default branch.
 #
 # A v* tag also publishes the release (the publish and winget jobs). Secrets:
 #   TAURI_SIGNING_PRIVATE_KEY   signs update bundles (~/.tauri/vodscribe-updater.key);
@@ -15,7 +17,10 @@ name: Build installers
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ["v*"]
+    # The website and notes don't change the app. (Tag pushes ignore this.)
+    paths-ignore: ["apps/site/**", "**/*.md"]
 
 permissions:
   contents: read
