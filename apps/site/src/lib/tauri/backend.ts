@@ -65,8 +65,10 @@ function segments(vodId: number): Promise<Indexed[]> {
   );
 }
 
-export async function transcript(vodId: number): Promise<Line[]> {
-  return (await segments(vodId)).map(({ start, text }) => ({ start, text }));
+export async function transcript(vodId: number, after?: number): Promise<Line[]> {
+  return (await segments(vodId))
+    .filter(({ start }) => after === undefined || start > after)
+    .map(({ start, text }) => ({ start, text }));
 }
 
 // Chat, for the demo VODs that have it (static/demo/<id>.chat.json, made by

@@ -331,8 +331,8 @@ pub(crate) struct Line {
 }
 
 #[tauri::command]
-pub(crate) async fn transcript(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Line>> {
-    let lines = crate::with_reads(app, move |db| db.lines(vod_id)).await?;
+pub(crate) async fn transcript(app: AppHandle, vod_id: i64, after: Option<f64>) -> CmdResult<Vec<Line>> {
+    let lines = crate::with_reads(app, move |db| db.lines(vod_id, after)).await?;
     Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
 }
 

@@ -638,9 +638,12 @@ impl Db {
 
     /// Each segment's start time and text, without the per-word timings that
     /// `segments` also parses. This is what the transcript view needs.
-    pub fn lines(&self, vod_id: i64) -> Result<Vec<(f64, String)>> {
-        let mut stmt = self.conn.prepare("SELECT start, text FROM segments WHERE vod_id = ?1 ORDER BY start")?;
-        let rows = stmt.query_map([vod_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    /// VOD `vod_id`'s transcript lines as (start, text), all of them or those
+    /// starting after `after` (a transcription only adds lines at the end).
+    pub fn lines(&self, vod_id: i64, after: Option<f64>) -> Result<Vec<(f64, String)>> {
+        let mut stmt =
+            self.conn.prepare("SELECT start, text FROM segments WHERE vod_id = ?1 AND start > ?2 ORDER BY start")?;
+        let rows = stmt.query_map(params![vod_id, after.unwrap_or(f64::MIN)], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -1224,6 +1227,19 @@ mod tests {
     }
 
     #[test]
+    fn lines_after_a_start() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let line = |start: f64, text: &str| Segment { start, end: start + 1.0, text: text.into(), words: Vec::new() };
+        db.insert_segments(vod, &[line(0.0, "one"), line(2.5, "two")]).unwrap();
+        db.insert_segments(vod, &[line(4.0, "three")]).unwrap();
+        let texts = |after| db.lines(vod, after).unwrap().into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+        assert_eq!(texts(None), ["one", "two", "three"]);
+        assert_eq!(texts(Some(2.5)), ["three"], "only those after the last one shown");
+        assert!(texts(Some(4.0)).is_empty());
+    }
+
+    #[test]
     fn deleted_transcripts_leave_the_file() {
         let dir = crate::TempDir::new("delete");
         let path = dir.join("library.sqlite");
@@ -1507,7 +1523,7 @@ mod tests {
         db.set_chat_status(b, ChatStatus::Failed, Some("Kick isn't responding")).unwrap();
         assert_eq!(db.chat_pending().unwrap(), [b]);
         while db.delete_some_of(a, 1).unwrap() > 0 {}
-        assert!(db.chat(a).unwrap().is_empty() && db.lines(a).unwrap().is_empty(), "deleted a part at a time");
+        assert!(db.chat(a).unwrap().is_empty() && db.lines(a, None).unwrap().is_empty(), "deleted a part at a time");
         assert!(db.vod(a).unwrap().is_some(), "the VOD itself stays until delete_vod");
         db.delete_vod(a).unwrap();
         assert!(db.search("gg", &SearchFilter::default(), 10).unwrap().hits.is_empty());

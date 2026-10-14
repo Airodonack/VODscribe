@@ -21,15 +21,18 @@
   let vodId = $derived(vod.id);
   let step = $derived(vod.status === "transcribing" ? Math.floor(vod.progress * 20) : vod.status);
   // Only the latest request's answer counts, so a slow older reload can't win.
+  // While transcribing, lines are only added at the end: just those are asked for.
   let seq = 0;
   $effect(() => {
     const id = vodId;
     void step;
     const mine = ++seq;
-    api.transcript(id).then(
+    const have = untrack(() => lines);
+    const after = vod.status === "transcribing" && have.length ? have[have.length - 1].start : undefined;
+    api.transcript(id, after).then(
       (l) => {
         if (mine !== seq) return;
-        lines = l;
+        lines = after === undefined ? l : [...have, ...l];
         error = null;
       },
       (e) => {

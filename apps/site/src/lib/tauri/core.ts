@@ -41,7 +41,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   list_vods: () => backend.listVods(),
   reorder_vods: ({ ids }) => backend.reorder(ids as number[]),
   search: ({ query, filter }) => backend.search(query as string, (filter ?? {}) as SearchFilter),
-  transcript: ({ vodId }) => backend.transcript(vodId as number),
+  transcript: ({ vodId, after }) => backend.transcript(vodId as number, after as number | undefined),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
   self_updatable: () => true,
