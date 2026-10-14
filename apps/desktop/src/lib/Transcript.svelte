@@ -4,12 +4,12 @@
   import { api, events, type ChatOverview, type ChatWindow, type Line, type Vod } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
-  import Spinner from "./Spinner.svelte";
-  import Timeline from "./Timeline.svelte";
+  import TranscriptHead from "./TranscriptHead.svelte";
   import { layers } from "./layers.svelte";
-  import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
-  import Icon from "./Icon.svelte";
+  import { eventColor } from "./events";
+  import { Marks } from "./marks.svelte";
   import { formatTime } from "./platform";
+  import { buildRows, type Row } from "./rows";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -90,46 +90,8 @@
     }
   }
 
-  // Each transcript line with the chat sent while it was being said: from its
-  // start to the next line's. Chat before the first line gets a row of its own.
-  // Where there's no transcript (yet), chat goes in rows of a minute each: all
-  // of it before the first line arrives, and after the last line while the rest
-  // is transcribed, so the minimap can scroll to anywhere in it.
-  const FAR = 1e12;
-  interface Row {
-    /** Unique among the rows, and kept as lines are added: a line's place in
-     *  the transcript (lines can share a start), and where its row ends, so a
-     *  row whose next line arrives is fetched again. */
-    key: string;
-    line: Line | null;
-    from: number;
-    to: number;
-  }
-  /** Rows of a minute each from minute `first` to the end of the VOD, the last one open-ended. */
-  function minuteRows(first: number): Row[] {
-    const minutes = Math.ceil((vod.duration ?? 0) / 60);
-    return Array.from({ length: Math.max(0, minutes - first) }, (_, k) => {
-      const m = first + k;
-      const to = m === minutes - 1 ? FAR : (m + 1) * 60;
-      return { key: `minute ${m} to ${to}`, line: null, from: m * 60, to };
-    });
-  }
-  let rows = $derived.by((): Row[] => {
-    if (!showChat) {
-      return lines.map((line, i) => {
-        const to = lines[i + 1]?.start ?? FAR;
-        return { key: `line ${i} to ${to}`, line, from: line.start, to };
-      });
-    }
-    if (lines.length === 0) return minuteRows(0);
-    // The minute after the last line's starts the rows of minutes, if the VOD goes on that long.
-    const tail = minuteRows(Math.floor(lines[lines.length - 1].start / 60) + 1);
-    const out: Row[] = lines.map((line, i) => {
-      const to = lines[i + 1]?.start ?? tail[0]?.from ?? FAR;
-      return { key: `line ${i} to ${to}`, line, from: line.start, to };
-    });
-    return [{ key: `before to ${lines[0].start}`, line: null, from: -FAR, to: lines[0].start }, ...out, ...tail];
-  });
+  // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
+  let rows = $derived(buildRows(lines, vod.duration ?? 0, showChat));
   const keyOf = (row: Row) => row.key;
 
   // Only the rows in and near the view are laid out; empty space of the right
@@ -389,89 +351,9 @@
   // The header spans the transcript and the minimap, and stays at the top.
   let headHeight = $state(0);
 
-  // Timeline layers (layers.svelte.ts): saved chat searches drawn over the
-  // minimap, their messages highlighted in chat.
+  // The Timeline layers' matches and the chat events, on the minimap and in chat (marks.svelte.ts).
   $effect(() => void layers.load());
-  let shownLayers = $derived(hasChat && !noChat ? layers.shownFor(vod) : []);
-  /** Emote images in this VOD's chat, by lowercase name, for the Timeline panel's pills. */
-  let emotes = $state(new Map<string, string>());
-  $effect(() => {
-    const id = vodId;
-    void chatStatus;
-    emotes = new Map();
-    if (!canHaveChat) return;
-    api.chatEmotes(id).then(
-      (list) => id === vodId && (emotes = new Map(list.map(([name, url]) => [name.toLowerCase(), url]))),
-      () => {},
-    );
-  });
-  let matches = $state<{ id: string; color: string; ids: Set<number>; times: number[] }[]>([]);
-  let matchSeq = 0;
-  // While chat arrives, the layers' searches run at most this often, not on every batch.
-  const MATCH_EVERY = 5000;
-  let matchedAt = 0;
-  $effect(() => {
-    const id = vodId;
-    const wanted = shownLayers.map((l) => ({ id: l.id, color: l.color, terms: l.terms.map((t) => t.text) }));
-    void chatCount;
-    const arriving = chatStatus === "pending";
-    const mine = ++matchSeq;
-    if (wanted.length === 0 || chatCount === 0) {
-      matches = [];
-      return;
-    }
-    const run = () => {
-      matchedAt = Date.now();
-      api
-        .chatMatches(
-          id,
-          wanted.map((w) => w.terms),
-        )
-        .then(
-          (found) =>
-            mine === matchSeq &&
-            (matches = wanted.map((w, i) => ({
-              id: w.id,
-              color: w.color,
-              ids: new Set(found[i].map(([id]) => id)),
-              times: found[i].map(([, time]) => time),
-            }))),
-          () => mine === matchSeq && (matches = []),
-        );
-    };
-    const wait = arriving ? Math.max(0, MATCH_EVERY - (Date.now() - matchedAt)) : 0;
-    if (wait === 0) return void run();
-    const timer = setTimeout(run, wait);
-    return () => clearTimeout(timer);
-  });
-  // Chat events (events.ts): the overview has them all, few as they are.
-  let chatEvents = $derived(overview?.events ?? []);
-  let eventCounts = $derived.by(() => {
-    const out = new Map<EventKind, number>();
-    for (const m of chatEvents) if (m.kind !== "message") out.set(m.kind, (out.get(m.kind) ?? 0) + 1);
-    return out;
-  });
-  let eventMatches = $derived(
-    hasChat && !noChat
-      ? EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
-          id: e.kind,
-          color: eventColor(vod.platform),
-          ids: new Set(chatEvents.filter((m) => m.kind === e.kind).map((m) => m.id)),
-        }))
-      : [],
-  );
-  let allMatches = $derived([...eventMatches, ...matches]);
-  let overlays = $derived(matches.map((m) => ({ color: m.color, times: m.times })));
-  let eventMarks = $derived.by(() => {
-    const on = new Set(layers.events);
-    if (eventMatches.length === 0) return [];
-    return chatEvents
-      .filter((m) => m.kind !== "message" && on.has(m.kind))
-      .map((m) => ({ time: m.time, value: eventUsd(m, vod.platform) }));
-  });
-  let counts = $derived(new Map(matches.map((m) => [m.id, m.ids.size])));
-  /** The color of the first shown event or layer that matched message `id`, if any. */
-  const highlightOf = (id: number) => allMatches.find((m) => m.ids.has(id))?.color ?? null;
+  const marks = new Marks(() => ({ vod, canHaveChat, chatCount, overview }));
 
   /** When row `i` starts; the row of chat before the first line starts at 0. */
   const rowStart = (i: number) => rows[i]?.line?.start ?? Math.max(0, rows[i]?.from ?? 0);
@@ -523,55 +405,21 @@
 </script>
 
 <div class="layout">
-  <div class="head" bind:clientHeight={headHeight}>
-    <p class="status muted" title={vod.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
-      <span class="eyebrow">Transcript</span>
-      {#if vod.status === "transcribing"}
-        <span class="sep">·</span><Spinner label="Transcribing" />
-        Transcribing {Math.round(vod.progress * 100)}%
-      {:else if lines.length > 0}
-        <span class="sep">·</span>{lines.length} line{lines.length === 1 ? "" : "s"}
-      {/if}
-    </p>
-    {#if hasChat}
-      <div class="chat-head">
-        <span
-          class="muted chat-status"
-          title={vod.chat === "pending"
-            ? `Fetching chat: ${chatCount.toLocaleString()} message${chatCount === 1 ? "" : "s"} so far`
-            : undefined}
-        >
-          {#if vod.chat === "pending"}
-            <!-- Beside the Chat button, so the spinner and a percentage say enough. -->
-            <Spinner label="Fetching chat" />
-            {chatProgress !== null ? `${Math.round(chatProgress * 100)}%` : ""}
-          {:else if vod.chat === "none"}
-            No chat replay
-          {:else if vod.chat === "failed"}
-            <span class="error-text">Couldn't fetch chat</span>
-            <button class="link" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
-              >Try again</button
-            >
-          {:else if chatError}
-            <span class="error-text">{chatError}</span>
-          {:else}
-            {chatCount.toLocaleString()} message{chatCount === 1 ? "" : "s"}
-          {/if}
-        </span>
-        <button
-          class="chat-toggle"
-          class:on={showChat}
-          onclick={toggleChat}
-          disabled={noChat}
-          aria-expanded={showChat}
-          title={noChat ? "This VOD has no chat replay" : showChat ? "Hide chat" : "Show chat beside the transcript"}
-        >
-          <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
-        </button>
-        <Timeline {vod} {emotes} {counts} {eventCounts} />
-      </div>
-    {/if}
-  </div>
+  <TranscriptHead
+    {vod}
+    lineCount={lines.length}
+    {chatCount}
+    {chatProgress}
+    bind:chatError
+    {hasChat}
+    {showChat}
+    {noChat}
+    ontoggle={toggleChat}
+    emotes={marks.emotes}
+    counts={marks.counts}
+    eventCounts={marks.eventCounts}
+    bind:height={headHeight}
+  />
   <div class="cols">
     <div class="transcript" id="transcript" class:with-chat={showChat} bind:this={root} bind:clientWidth={width}>
       {#if error}
@@ -600,7 +448,12 @@
           {#if showChat}
             <div class="chat">
               {#each win?.messages ?? [] as message (message.id)}
-                <ChatMessage {message} platform={vod.platform} highlight={highlightOf(message.id)} onplay={play} />
+                <ChatMessage
+                  {message}
+                  platform={vod.platform}
+                  highlight={marks.highlightOf(message.id)}
+                  onplay={play}
+                />
               {/each}
               {#if win && win.total > win.messages.length}
                 <button class="link more" onclick={() => expand(row)} disabled={loading.has(key)}
@@ -621,8 +474,8 @@
           duration={mapDuration}
           {view}
           label={mapLabel}
-          {overlays}
-          events={eventMarks}
+          overlays={marks.overlays}
+          events={marks.eventMarks}
           eventColor={eventColor(vod.platform)}
           onseek={seek}
         />
@@ -660,62 +513,6 @@
 
   .transcript.with-chat {
     max-width: 1320px;
-  }
-
-  /* Across the transcript and the minimap, staying at the top while scrolling,
-     so chat and the timeline can be changed from anywhere. */
-  .head {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 8px 14px 8px 20px;
-    background: var(--bg);
-    border-bottom: 1px solid var(--border);
-  }
-
-  /* One line each, whatever the width: cut short rather than wrapped. */
-  .status,
-  .chat-status {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .status {
-    margin: 0;
-    font-size: 12px;
-  }
-
-  .chat-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    font-size: 12px;
-  }
-
-  .chat-toggle {
-    /* Keeps its size; the status beside it is what gets cut short. */
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    padding: 3px 8px;
-  }
-
-  .chat-toggle:disabled {
-    opacity: 0.5;
-  }
-
-  .chat-toggle.on {
-    background: var(--accent-soft);
-    border-color: transparent;
   }
 
   .link {
