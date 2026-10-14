@@ -147,7 +147,7 @@ pub fn fetch(
         "twitch" => fetch_twitch(info, store, cancel, &mut on_progress)?,
         "youtube" => {
             let yt_dlp = yt_dlp.context("The video downloader isn't installed yet.")?;
-            if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store, cancel)? {
+            if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store, cancel, &mut on_progress)? {
                 return Ok(false);
             }
         }
@@ -738,11 +738,11 @@ fn is_emote_id(id: &str) -> bool {
 // YouTube: yt-dlp saves a past livestream's chat as a "live_chat" subtitle,
 // one JSON action per line.
 
-/// Has yt-dlp save the chat, then reads it into `store` a line at a time,
-/// saving as it goes: a long, busy stream's is hundreds of megabytes. False
-/// when the video has no chat replay. yt-dlp hands over the whole chat at the
-/// end, so there's nothing to carry on from: a fetch starts over. `cancel`
-/// stops yt-dlp (it can run for many minutes) and the reading.
+/// Has yt-dlp save the chat, reading it into `store` as yt-dlp writes it (a
+/// long, busy stream's is hundreds of megabytes, and takes many minutes), and
+/// reporting how far into the VOD it has got. False when the video has no
+/// chat replay. There's nothing to carry on from, so a fetch starts over.
+/// `cancel` stops yt-dlp and the reading.
 fn fetch_youtube(
     info: &VodInfo,
     yt_dlp: &YtDlp,
@@ -750,15 +750,17 @@ fn fetch_youtube(
     vod_id: i64,
     store: &mut dyn ChatStore,
     cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(f64),
 ) -> Result<bool> {
     fs::create_dir_all(work_dir)?;
     // Not named "{vod_id}.…": `pipeline::remove_work_files` clears those when
     // a transcription ends, which may be while this is still downloading.
     let stem = work_dir.join(format!("chat-{vod_id}"));
     let file = work_dir.join(format!("chat-{vod_id}.live_chat.json"));
+    let part = file.with_extension("json.part");
     let remove = || {
         let _ = fs::remove_file(&file);
-        let _ = fs::remove_file(file.with_extension("json.part"));
+        let _ = fs::remove_file(&part);
     };
     remove();
     let mut child = yt_dlp
@@ -773,43 +775,95 @@ fn fetch_youtube(
         .spawn()
         .context("start yt-dlp")?;
     let (tx, rx) = std::sync::mpsc::channel::<String>();
-    let reader = crate::tools::send_lines(child.stderr.take().unwrap(), tx);
+    let stderr = crate::tools::send_lines(child.stderr.take().unwrap(), tx);
     let mut log = Vec::new();
-    loop {
-        // Wake regularly so a stop takes effect even while yt-dlp is quiet.
-        match rx.recv_timeout(crate::tools::STOP_POLL) {
-            Ok(line) => log.push(line),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-        if cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            remove();
-            return Err(crate::Canceled.into());
-        }
-    }
-    let _ = reader.join();
-    if !child.wait()?.success() {
-        remove();
-        bail!("{}", crate::fetch::clean_error(&log.join("\n")));
-    }
-    // No file: the video has no chat replay (it wasn't a livestream).
-    let Ok(reader) = fs::File::open(&file).map(std::io::BufReader::new) else { return Ok(false) };
-    let saved = (|| -> Result<()> {
-        store.clear()?;
-        let mut batch = Batch::new();
-        for line in std::io::BufRead::lines(reader) {
+    let mut tail = Tail::default();
+    let mut batch = Batch::new();
+    let duration = info.duration.filter(|d| *d > 0.0);
+    // Until a line is read, the store keeps the last fetch's chat.
+    let mut started = false;
+    // Each line holds a moment's messages; the first one starts the chat afresh.
+    let mut read = |tail: &mut Tail, last: bool| -> Result<()> {
+        tail.read(&[&part, &file], last, |line| {
+            if !std::mem::replace(&mut started, true) {
+                store.clear()?;
+            }
+            parse_youtube_line(line, &mut batch.messages);
+            if let (Some(d), Some(m)) = (duration, batch.messages.last()) {
+                on_progress((m.time / d).clamp(0.0, 0.999));
+            }
+            batch.save(store, 0.0, false)
+        })
+    };
+    let result = (|| -> Result<()> {
+        loop {
+            // Wake regularly so a stop takes effect even while yt-dlp is quiet.
+            match rx.recv_timeout(crate::tools::STOP_POLL) {
+                Ok(line) => log.push(line),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
             if cancel.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
                 return Err(crate::Canceled.into());
             }
-            parse_youtube_line(&line?, &mut batch.messages);
-            batch.save(store, 0.0, false)?;
+            read(&mut tail, false)?;
         }
-        batch.save(store, 0.0, true)
+        let _ = stderr.join();
+        if !child.wait()?.success() {
+            bail!("{}", crate::fetch::clean_error(&log.join("\n")));
+        }
+        read(&mut tail, true)
     })();
     remove();
-    saved.map(|()| true)
+    result?;
+    // No file: the video has no chat replay (it wasn't a livestream).
+    if !tail.opened() {
+        return Ok(false);
+    }
+    // An empty chat replay: nothing read, but it's done.
+    if !started {
+        store.clear()?;
+    }
+    batch.save(store, 0.0, true)?;
+    Ok(true)
+}
+
+/// Reads a file another program is still writing, a whole line at a time.
+#[derive(Default)]
+struct Tail {
+    file: Option<fs::File>,
+    /// The start of a line not finished yet.
+    rest: Vec<u8>,
+}
+
+impl Tail {
+    fn opened(&self) -> bool {
+        self.file.is_some()
+    }
+
+    /// Hands each line written since the last call to `each`; with `last`, also
+    /// the final one with no newline. Opens the first of `paths` that exists,
+    /// and keeps reading that file after it's renamed (yt-dlp's `.part`).
+    fn read(&mut self, paths: &[&Path], last: bool, mut each: impl FnMut(&str) -> Result<()>) -> Result<()> {
+        use std::io::Read;
+        if self.file.is_none() {
+            self.file = paths.iter().find_map(|p| fs::File::open(p).ok());
+        }
+        let Some(file) = &mut self.file else { return Ok(()) };
+        file.read_to_end(&mut self.rest)?;
+        let mut start = 0;
+        while let Some(n) = self.rest[start..].iter().position(|&b| b == b'\n') {
+            each(&String::from_utf8_lossy(&self.rest[start..start + n]))?;
+            start += n + 1;
+        }
+        self.rest.drain(..start);
+        if last && !self.rest.is_empty() {
+            each(&String::from_utf8_lossy(&std::mem::take(&mut self.rest)))?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1307,16 +1361,46 @@ mod tests {
         assert!(names.has("PrideCheer") && names.has("Cheer") && names.has("Charity"));
     }
 
-    /// A stand-in yt-dlp that writes its chat file as yt-dlp does (a `.part`,
-    /// renamed when done) after `delay` seconds.
+    #[test]
+    fn tail_reads_whole_lines_as_they_come() {
+        let dir = crate::TempDir::new("tail");
+        let path = dir.join("growing");
+        let mut tail = Tail::default();
+        let read = |tail: &mut Tail, last: bool| {
+            let mut lines = Vec::new();
+            tail.read(&[&path], last, |l| {
+                lines.push(l.to_string());
+                Ok(())
+            })
+            .unwrap();
+            lines
+        };
+        assert!(read(&mut tail, false).is_empty());
+        assert!(!tail.opened(), "nothing to read before the file exists");
+        fs::write(&path, "a\nb").unwrap();
+        assert_eq!(read(&mut tail, false), ["a"]);
+        fs::write(&path, "a\nbc\nd").unwrap();
+        assert_eq!(read(&mut tail, false), ["bc"], "a line is handed over once it ends");
+        assert_eq!(read(&mut tail, true), ["d"], "and the last one at the end");
+    }
+
+    /// A stand-in yt-dlp that writes its chat file as yt-dlp does: to a `.part`,
+    /// a line at a time (one message at 10 s, 20 s, …), `step` seconds apart,
+    /// then renamed.
     #[cfg(unix)]
-    fn fake_yt_dlp(dir: &Path, delay: u32) -> YtDlp {
+    fn fake_yt_dlp(dir: &Path, lines: u32, step: f64) -> YtDlp {
         use std::os::unix::fs::PermissionsExt;
-        let path = dir.join("yt-dlp");
-        let line = r#"{"replayChatItemAction":{"videoOffsetTimeMsec":"1000","actions":[{"addChatItemAction":{"item":{"liveChatTextMessageRenderer":{"authorName":{"simpleText":"@a"},"message":{"runs":[{"text":"hi"}]}}}}}]}}"#;
-        let script = format!(
-            "#!/bin/sh\nwhile [ \"$1\" != -o ]; do shift; done\nf=\"$2.live_chat.json\"\necho '{line}' > \"$f.part\"\nsleep {delay}\nmv \"$f.part\" \"$f\"\n"
-        );
+        let path = dir.join(format!("yt-dlp-{lines}"));
+        let mut script =
+            "#!/bin/sh\nwhile [ \"$1\" != -o ]; do shift; done\nf=\"$2.live_chat.json\"\n: > \"$f.part\"\n".to_string();
+        for i in 1..=lines {
+            let line = format!(
+                r#"{{"replayChatItemAction":{{"videoOffsetTimeMsec":"{}","actions":[{{"addChatItemAction":{{"item":{{"liveChatTextMessageRenderer":{{"authorName":{{"simpleText":"@a"}},"message":{{"runs":[{{"text":"hi"}}]}}}}}}}}}}]}}}}"#,
+                i * 10_000
+            );
+            script += &format!("echo '{line}' >> \"$f.part\"\nsleep {step}\n");
+        }
+        script += "mv \"$f.part\" \"$f\"\n";
         fs::write(&path, script).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         YtDlp { path, js_runtime: None }
@@ -1333,7 +1417,7 @@ mod tests {
             url: "https://www.youtube.com/watch?v=x".into(),
             title: "t".into(),
             channel: None,
-            duration: None,
+            duration: Some(40.0),
             thumbnail: None,
             published: None,
         };
@@ -1347,16 +1431,56 @@ mod tests {
                 std::time::Instant::now()
             })
         };
-        let result = fetch_youtube(&info, &fake_yt_dlp(&tools, 30), &work, 7, &mut MemoryChat::default(), &cancel);
+        let yt_dlp = fake_yt_dlp(&tools, 1, 30.0);
+        let result = fetch_youtube(&info, &yt_dlp, &work, 7, &mut MemoryChat::default(), &cancel, &mut |_| {});
         let stopped = stopper.join().unwrap();
         assert!(result.is_err_and(|e| crate::is_canceled(&e)));
         assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the stop", stopped.elapsed());
         assert_eq!(fs::read_dir(&*work).unwrap().count(), 0, "no files left");
-        // Left to finish: the chat is read, and its file removed.
+        // Left to finish: the chat is read as it's written, with how far it has
+        // got (of a 40 s VOD), and its file removed.
         let mut store = MemoryChat::default();
-        let fetched = fetch_youtube(&info, &fake_yt_dlp(&tools, 0), &work, 7, &mut store, &AtomicBool::new(false));
+        let begun = std::time::Instant::now();
+        let mut progress = Vec::new();
+        let yt_dlp = fake_yt_dlp(&tools, 3, 0.4);
+        let fetched = fetch_youtube(&info, &yt_dlp, &work, 7, &mut store, &AtomicBool::new(false), &mut |f| {
+            progress.push((f, begun.elapsed()))
+        });
         assert!(fetched.unwrap());
-        assert_eq!(store.messages.len(), 1);
+        assert_eq!(store.messages.len(), 3);
+        let fractions: Vec<f64> = progress.iter().map(|p| p.0).collect();
+        assert_eq!(fractions, [0.25, 0.5, 0.75]);
+        assert!(progress[0].1 < std::time::Duration::from_millis(400), "the first line read before yt-dlp is done");
         assert_eq!(fs::read_dir(&*work).unwrap().count(), 0, "no files left");
+    }
+
+    /// Fetches a real YouTube chat with the app's yt-dlp:
+    /// `VODSCRIBE_BIN=<data dir>/bin cargo test -p vodscribe-core -- --ignored youtube_chat_live --nocapture`.
+    #[test]
+    #[ignore = "network"]
+    fn youtube_chat_live() {
+        let bin = std::env::var("VODSCRIBE_BIN").expect("VODSCRIBE_BIN: the folder with yt-dlp");
+        let yt_dlp = crate::tools::find_yt_dlp(Path::new(&bin)).expect("yt-dlp");
+        let work = crate::TempDir::new("youtube-chat-live");
+        let id = std::env::var("YOUTUBE_ID").unwrap_or_else(|_| "j5HcY5GBrTw".into());
+        let info =
+            crate::fetch::probe(&yt_dlp, &format!("https://www.youtube.com/watch?v={id}"), &work.join("info.json"))
+                .unwrap();
+        let begun = std::time::Instant::now();
+        let mut progress = Vec::new();
+        let mut store = MemoryChat::default();
+        let fetched = fetch_youtube(&info, &yt_dlp, &work, 7, &mut store, &AtomicBool::new(false), &mut |f| {
+            progress.push((f, begun.elapsed()))
+        });
+        assert!(fetched.unwrap());
+        let total = begun.elapsed();
+        let early = progress.iter().filter(|p| p.1 < total.mul_f64(0.8)).count();
+        eprintln!(
+            "{} messages in {total:?}; {} progress reports, {early} in the first 80%; last {:?}",
+            store.messages.len(),
+            progress.len(),
+            progress.last()
+        );
+        assert!(!store.messages.is_empty());
     }
 }
