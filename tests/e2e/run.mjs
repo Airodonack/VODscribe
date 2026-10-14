@@ -150,6 +150,10 @@ async function main() {
     await until("setup to finish", library, 30 * MINUTE);
   }
   step("set up");
+  // The workflow keeps test runs out of the update check-ins (latest.json).
+  if (process.env.VODSCRIBE_NO_UPDATE_CHECK && (await invoke("self_updatable")) !== false) {
+    throw new Error("VODSCRIBE_NO_UPDATE_CHECK didn't reach the app: it would check for updates");
+  }
 
   // Adding a file, through the file picker.
   await js(`window.__e2e.files = [arguments[0]]`, FIXTURE);

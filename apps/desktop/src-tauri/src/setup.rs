@@ -54,8 +54,14 @@ pub(crate) async fn setup_status(state: State<'_, AppState>) -> CmdResult<SetupS
 /// into the binary, and latest.json has no file for anything else. A binary that
 /// was never packaged (a development build, or one built from source) has no
 /// stamp, and no file to fetch. Windows and macOS have a file for any copy.
+///
+/// VODSCRIBE_NO_UPDATE_CHECK (set by the end-to-end tests) makes it false, so
+/// the app never asks for latest.json: test runs don't count as people using it.
 #[tauri::command]
 pub(crate) async fn self_updatable() -> CmdResult<bool> {
+    if std::env::var_os("VODSCRIBE_NO_UPDATE_CHECK").is_some() {
+        return Ok(false);
+    }
     Ok(cfg!(not(target_os = "linux")) || tauri::utils::platform::bundle_type().is_some())
 }
 

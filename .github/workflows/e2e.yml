@@ -90,6 +90,9 @@ jobs:
 
       - name: Drive the app
         shell: bash
+        env:
+          # No update check (latest.json): test runs aren't people using the app.
+          VODSCRIBE_NO_UPDATE_CHECK: "1"
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             dbus-run-session -- xvfb-run -a node tests/e2e/run.mjs "$APP"
