@@ -524,15 +524,22 @@ impl Db {
     /// `secure_delete`) takes seconds, so they go a part at a time, letting
     /// everything else use the library in between.
     pub fn delete_some_of(&self, vod_id: i64, limit: usize) -> Result<usize> {
-        let chat = self.conn.execute(
-            "DELETE FROM chat WHERE id IN (SELECT id FROM chat WHERE vod_id = ?1 LIMIT ?2)",
-            params![vod_id, limit as i64],
-        )?;
+        let chat = self.clear_some_chat(vod_id, limit)?;
         if chat > 0 {
             return Ok(chat);
         }
         // Segments cost more each, with their words: a third as many at a time.
         self.clear_some_segments(vod_id, (limit / 3).max(1))
+    }
+
+    /// Deletes up to `limit` of VOD `vod_id`'s chat messages; how many, 0 when
+    /// none are left. A busy chat takes seconds to delete, so it goes a part at
+    /// a time, between which others can use the library (see `LibraryChat::clear`).
+    pub fn clear_some_chat(&self, vod_id: i64, limit: usize) -> Result<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM chat WHERE id IN (SELECT id FROM chat WHERE vod_id = ?1 LIMIT ?2)",
+            params![vod_id, limit as i64],
+        )?)
     }
 
     /// Deletes up to `limit` of VOD `vod_id`'s transcript segments; how many, 0
@@ -682,9 +689,11 @@ impl Db {
 
     /// Makes these chat messages plain messages.
     pub fn demote_chat(&self, ids: &[i64]) -> Result<()> {
-        for id in ids {
-            self.conn.execute("UPDATE chat SET kind = 'message' WHERE id = ?1", [id])?;
-        }
+        // One statement, so one commit: a busy chat can have hundreds.
+        self.conn.execute(
+            "UPDATE chat SET kind = 'message' WHERE id IN (SELECT value FROM json_each(?1))",
+            [serde_json::to_string(ids)?],
+        )?;
         Ok(())
     }
 
@@ -899,6 +908,11 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
     }
 
     fn clear(&mut self) -> Result<()> {
+        // A part at a time, letting go of the library between them, so a
+        // busy chat fetched again doesn't hold everything else up for seconds.
+        while self.db.lock().unwrap().clear_some_chat(self.vod_id, 1000)? > 0 {
+            std::thread::yield_now();
+        }
         self.db.lock().unwrap().clear_chat(self.vod_id)
     }
 
@@ -1196,6 +1210,31 @@ mod tests {
             amount: None,
             event_time: None,
         }
+    }
+
+    #[test]
+    fn a_chat_fetched_again_is_cleared_in_parts_and_resubs_demoted_at_once() {
+        use crate::chat::ChatStore;
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let a = db.add_vod(&info("a")).unwrap().0.id;
+        let b = db.add_vod(&info("b")).unwrap().0.id;
+        let many: Vec<_> = (0..2500).map(|i| message(i as f64, "v", "hi")).collect();
+        db.add_chat(a, &many, 2500.0).unwrap();
+        let mut subs = message(1.0, "s", "resub");
+        subs.kind = Kind::Sub;
+        db.add_chat(b, &[subs.clone(), subs.clone(), subs], 2.0).unwrap();
+        let lock = std::sync::Mutex::new(db);
+        let mut store = LibraryChat { db: &lock, vod_id: b, on_save: Box::new(|| {}) };
+        let ids: Vec<i64> = store.subs().unwrap().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(ids.len(), 3);
+        store.demote(&ids[..2]).unwrap();
+        assert_eq!(store.subs().unwrap().len(), 1);
+        let mut store = LibraryChat { db: &lock, vod_id: a, on_save: Box::new(|| {}) };
+        store.clear().unwrap();
+        let db = lock.lock().unwrap();
+        assert_eq!(db.chat_count(a).unwrap(), 0);
+        assert_eq!(db.chat_resume(a).unwrap(), None);
+        assert_eq!(db.chat_count(b).unwrap(), 3, "another VOD's chat stays");
     }
 
     #[test]

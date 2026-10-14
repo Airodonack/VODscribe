@@ -3,6 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -126,17 +127,38 @@ pub(crate) struct Install {
 /// Sends a running install's progress events, keeping the latest, so a panel
 /// opened partway through (Settings closes and reopens) shows where it is
 /// rather than waiting for the next event, which can be a while between files.
+///
+/// Downloads report every chunk read, thousands a second on a fast link, so
+/// events go out at most every `INTERVAL`, and at once when the step changes
+/// (a new file, a check), which is when it reads differently.
 pub(crate) struct Reporter {
     app: AppHandle,
     event: &'static str,
     last: Arc<Mutex<Option<serde_json::Value>>>,
+    /// When the last event went out, and its step.
+    sent: Mutex<Option<(Instant, Option<String>)>>,
 }
 
 impl Reporter {
+    const INTERVAL: Duration = Duration::from_millis(250);
+
+    pub(crate) fn new(app: AppHandle, event: &'static str, last: Arc<Mutex<Option<serde_json::Value>>>) -> Self {
+        Reporter { app, event, last, sent: Mutex::new(None) }
+    }
+
     pub(crate) fn send(&self, payload: impl Serialize) {
         let Ok(value) = serde_json::to_value(payload) else { return };
+        let step = value.get("step").and_then(|s| s.as_str()).map(str::to_string);
         *self.last.lock().unwrap() = Some(value.clone());
-        let _ = self.app.emit(self.event, value);
+        let mut sent = self.sent.lock().unwrap();
+        let due = match &*sent {
+            Some((at, last_step)) => *last_step != step || at.elapsed() >= Self::INTERVAL,
+            None => true,
+        };
+        if due {
+            *sent = Some((Instant::now(), step));
+            let _ = self.app.emit(self.event, value);
+        }
     }
 }
 
@@ -185,7 +207,7 @@ impl Install {
         *self.last.lock().unwrap() = None;
         let (running, cancel, last) = (self.running.clone(), self.cancel.clone(), self.last.clone());
         std::thread::spawn(move || {
-            let report = Reporter { app: app.clone(), event: progress_event, last: last.clone() };
+            let report = Reporter::new(app.clone(), progress_event, last.clone());
             let result = install(&app, &cancel, &report);
             *last.lock().unwrap() = None;
             running.store(false, Ordering::Relaxed);

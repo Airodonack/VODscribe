@@ -118,17 +118,24 @@ pub(crate) struct ChatOverview {
     count: u32,
     /// Messages in each of `bins` equal stretches of `duration`.
     histogram: Vec<u32>,
-    /// The subs, gifts and tips.
-    events: Vec<ChatLine>,
+    /// The subs, gifts and tips; not while a fetch is refreshing the rest
+    /// (`events: false`), since a busy chat's are a megabyte and more.
+    events: Option<Vec<ChatLine>>,
 }
 
 #[tauri::command]
-pub(crate) async fn chat_overview(app: AppHandle, vod_id: i64, duration: f64, bins: usize) -> CmdResult<ChatOverview> {
+pub(crate) async fn chat_overview(
+    app: AppHandle,
+    vod_id: i64,
+    duration: f64,
+    bins: usize,
+    events: Option<bool>,
+) -> CmdResult<ChatOverview> {
     with_db(app, move |db| {
         Ok(ChatOverview {
             count: db.chat_count(vod_id)?,
             histogram: db.chat_histogram(vod_id, duration, bins.min(10_000))?,
-            events: db.chat_events(vod_id)?,
+            events: if events.unwrap_or(true) { Some(db.chat_events(vod_id)?) } else { None },
         })
     })
     .await

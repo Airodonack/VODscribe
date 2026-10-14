@@ -302,12 +302,19 @@
   let overview = $state.raw<ChatOverview | null>(null);
   let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0));
   let overviewSeq = 0;
-  function refreshOverview() {
+  /** The counts, and with `events` the subs, gifts and tips too, which
+   *  otherwise keep what was had: while a fetch is saving, they're a megabyte
+   *  and more for a busy chat, so they're read now and then, not each time. */
+  const EVENTS_EVERY = 15000;
+  let eventsAt = 0;
+  function refreshOverview(events = true) {
     if (!canHaveChat) return void (overview = null);
     const id = vodId;
     const mine = ++overviewSeq;
-    api.chatOverview(id, mapDuration, BINS).then(
-      (o) => mine === overviewSeq && id === vodId && (overview = o),
+    if (events) eventsAt = Date.now();
+    api.chatOverview(id, mapDuration, BINS, events).then(
+      (o) =>
+        mine === overviewSeq && id === vodId && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
       (e) => mine === overviewSeq && (chatError = String(e)),
     );
   }
@@ -324,7 +331,7 @@
       timer = undefined;
       last = Date.now();
       for (const key of windows.keys()) stale.add(key);
-      refreshOverview();
+      refreshOverview(Date.now() - eventsAt >= EVENTS_EVERY);
       loadWindows();
     };
     const unlisten = events.chatSaved((vid) => {
