@@ -256,6 +256,8 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     erase_in_parts(&app, move |db| db.clear_some_segments(id, ERASE_PART / 3)).await?;
     let db = state.db.lock().unwrap();
     db.atomically(|db| {
+        // None left to delete; tidies the search index of the old transcript's words.
+        db.clear_segments(id)?;
         db.set_note(id, None)?;
         requeue(db, id)
     })

@@ -298,6 +298,13 @@ ALTER TABLE chat ADD COLUMN event_time REAL;";
 /// 0.1.0's "Canceled" (the app shows either as stopped, not failed).
 const MIGRATE_V12: &str = "
 UPDATE vods SET error = 'Stopped' WHERE status = 'error' AND error = 'Canceled';";
+/// v13: the search indexes stop rewriting each deleted row's entries as it's
+/// deleted ("secure-delete", 25 times slower: 6.2 s for a 127k-message chat);
+/// instead, `tidy_index` rewrites an index without them once a VOD's rows are
+/// gone (0.3 s for 2.7M messages), so deleted words still don't stay in the file.
+const MIGRATE_V13: &str = "
+INSERT INTO segments_fts (segments_fts, rank) VALUES ('secure-delete', 0);
+INSERT INTO chat_fts (chat_fts, rank) VALUES ('secure-delete', 0);";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -373,6 +380,7 @@ impl Db {
             MIGRATE_V10,
             MIGRATE_V11,
             MIGRATE_V12,
+            MIGRATE_V13,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -563,7 +571,21 @@ impl Db {
         )?)
     }
 
+    /// Rewrites search index `index` ("chat_fts" or "segments_fts") without
+    /// the entries of rows deleted since, which otherwise stay in the file
+    /// (secure_delete then zeroes the pages they were on). After a VOD's rows
+    /// are deleted; a no-op when there's nothing to tidy.
+    fn tidy_index(&self, index: &str) -> Result<()> {
+        self.conn.execute(&format!("INSERT INTO {index} ({index}) VALUES ('optimize')"), [])?;
+        Ok(())
+    }
+
+    /// Removes VOD `id`, once its chat and transcript are erased (`delete_some_of`),
+    /// and the search indexes' entries for them. Quit midway, the VOD is still
+    /// there to remove again, which finishes it.
     pub fn delete_vod(&self, id: i64) -> Result<()> {
+        self.tidy_index("chat_fts")?;
+        self.tidy_index("segments_fts")?;
         self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
         // Copy the change into the main file and empty the WAL, which still holds the old pages.
         // Another connection reading at the time can keep it from finishing; that's fine.
@@ -573,6 +595,8 @@ impl Db {
 
     pub fn clear_segments(&self, vod_id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM segments WHERE vod_id = ?1", [vod_id])?;
+        // The old transcript's words, out of the index too.
+        self.tidy_index("segments_fts")?;
         Ok(())
     }
 
@@ -1125,18 +1149,28 @@ mod tests {
         let dir = crate::TempDir::new("delete");
         let path = dir.join("library.sqlite");
         let mut db = Db::open(&path).unwrap();
+        // Another VOD stays, sharing the search indexes with the one removed.
+        let kept = db.add_vod(&info("kept")).unwrap().0;
         let vod = db.add_vod(&info("x")).unwrap().0;
         let secret = "zanzibarquokka";
-        db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: secret.into(), words: words(secret, 0.0) }])
+        for (i, id) in [kept.id, vod.id, kept.id].into_iter().enumerate() {
+            let text = if id == vod.id { secret.to_string() } else { format!("plain words {i}") };
+            db.insert_segments(
+                id,
+                &[Segment { start: i as f64, end: 1.0, text: text.clone(), words: words(&text, 0.0) }],
+            )
             .unwrap();
-        db.set_chat(vod.id, &[message(0.0, "v", &format!("chat{secret}"))]).unwrap();
+            db.add_chat(id, &[message(i as f64, "v", &format!("chat{text}"))], i as f64).unwrap();
+        }
         assert_eq!(db.search(secret, &SearchFilter::default(), 10).unwrap().hits.len(), 1);
+        while db.delete_some_of(vod.id, 1000).unwrap() > 0 {}
         db.delete_vod(vod.id).unwrap();
+        assert_eq!(db.search("words", &SearchFilter::default(), 10).unwrap().hits.len(), 4, "the other VOD's stay");
         drop(db);
         let bytes =
             [std::fs::read(&path).unwrap(), std::fs::read(path.with_extension("sqlite-wal")).unwrap_or_default()]
                 .concat();
-        assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()), "deleted text still on disk");
+        assert!(!bytes.windows(8).any(|w| w == &secret.as_bytes()[6..]), "deleted text still on disk");
     }
 
     #[test]
