@@ -43,7 +43,10 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
     if json.get("is_live").and_then(Value::as_bool) == Some(true) {
         bail!("That stream is still live. Add it once the VOD is available.");
     }
-    let published = s("upload_date").filter(|d| d.len() == 8).map(|d| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
+    // Digits only: slicing at byte positions would panic inside a multi-byte character.
+    let published = s("upload_date")
+        .filter(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
+        .map(|d| format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
     Ok(VodInfo {
         platform: platform_of(&s("extractor_key").unwrap_or_default()),
         platform_id: s("id").context("yt-dlp returned no video id")?,
@@ -360,5 +363,10 @@ mod tests {
         assert_eq!(info.channel.as_deref(), Some("someone"));
         assert_eq!(info.published.as_deref(), Some("2026-01-02"));
         assert!(parse_info(&serde_json::json!({"_type": "playlist"})).is_err());
+        // Eight bytes, but not eight digits: no date, and no panic.
+        for date in ["202é102", "2026-1-2"] {
+            let json = serde_json::json!({ "id": "abc", "webpage_url": "https://www.twitch.tv/videos/abc", "upload_date": date });
+            assert_eq!(parse_info(&json).unwrap().published, None);
+        }
     }
 }
