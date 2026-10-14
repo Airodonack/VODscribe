@@ -276,6 +276,11 @@ export function thumbUrl(name: string): Promise<string> {
 }
 
 const emoteUrls = new Map<string, Promise<string>>();
+/** The blob URLs already made, for showing an emote at once. */
+const emoteUrlsReady = new Map<string, string>();
+
+/** The blob URL for emote `url` if it's been fetched before. */
+export const emoteUrlNow = (url: string): string | undefined => emoteUrlsReady.get(url);
 
 /**
  * A blob URL for a chat emote, by its URL on the emote provider's CDN. The app
@@ -285,7 +290,11 @@ const emoteUrls = new Map<string, Promise<string>>();
 export function emoteUrl(url: string): Promise<string> {
   let blob = emoteUrls.get(url);
   if (!blob) {
-    blob = invoke<ArrayBuffer>("emote", { url }).then((bytes) => URL.createObjectURL(new Blob([bytes])));
+    blob = invoke<ArrayBuffer>("emote", { url }).then((bytes) => {
+      const made = URL.createObjectURL(new Blob([bytes]));
+      emoteUrlsReady.set(url, made);
+      return made;
+    });
     blob.catch(() => emoteUrls.delete(url));
     emoteUrls.set(url, blob);
   }

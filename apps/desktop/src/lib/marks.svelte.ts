@@ -10,7 +10,9 @@ import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
 import { layers } from "./layers.svelte";
 import { settings } from "./settings.svelte";
 
-/** What the marks follow, read each time it's needed. */
+/** What the marks follow: getters, so each effect and derived tracks only
+ *  what it reads (an overview refreshed while chat downloads mustn't refetch
+ *  the emotes, or restart the layers' searches). */
 export interface MarksOf {
   vod: Vod;
   /** Whether the VOD has (or is getting) a chat to search. */
@@ -32,27 +34,27 @@ interface Match {
 const MATCH_EVERY = 5000;
 
 export class Marks {
-  #of: () => MarksOf;
+  #of: MarksOf;
 
   /** The platform's own emotes used in the VOD's chat, by lowercase name. */
   #chatEmotes = $state(new Map<string, string>());
   /** The words the chat's emote providers show as emotes, by exact name. */
   words = $state(new Map<string, WordEmote>());
   /** Each shown layer's matches, and when they were said. */
-  layerMatches = $state<(Match & { times: number[] })[]>([]);
+  layerMatches = $state.raw<(Match & { times: number[] })[]>([]);
 
-  constructor(of: () => MarksOf) {
+  constructor(of: MarksOf) {
     this.#of = of;
 
     $effect(() => {
-      const { vod, canHaveChat } = this.#of();
+      const { vod, canHaveChat } = this.#of;
       const id = vod.id;
       void vod.chat;
       this.#chatEmotes = new Map();
       if (!canHaveChat) return;
       api.chatEmotes(id).then(
         (list) =>
-          this.#of().vod.id === id && (this.#chatEmotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
+          this.#of.vod.id === id && (this.#chatEmotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
         () => {},
       );
     });
@@ -66,7 +68,7 @@ export class Marks {
     let wordsSeq = 0;
     let wordsOf: number | null = null;
     $effect(() => {
-      const { vod, canHaveChat } = this.#of();
+      const { vod, canHaveChat } = this.#of;
       const id = vod.id;
       // Another VOD's (another channel's) emotes go at once; the same VOD's
       // stay until the new list is in, rather than flickering to words.
@@ -89,7 +91,7 @@ export class Marks {
     let seq = 0;
     let matchedAt = 0;
     $effect(() => {
-      const { vod, chatCount } = this.#of();
+      const { vod, chatCount } = this.#of;
       const id = vod.id;
       const wanted = this.#shownLayers.map((l) => ({ id: l.id, color: l.color, terms: l.terms.map((t) => t.text) }));
       const arriving = vod.chat === "pending";
@@ -135,13 +137,13 @@ export class Marks {
 
   /** Whether the VOD has a chat to mark at all. */
   #active = $derived.by(() => {
-    const { vod } = this.#of();
+    const { vod } = this.#of;
     return vod.platform !== "local" && vod.chat !== "none";
   });
-  #shownLayers = $derived.by(() => (this.#active ? layers.shownFor(this.#of().vod) : []));
+  #shownLayers = $derived.by(() => (this.#active ? layers.shownFor(this.#of.vod) : []));
 
   /** The chat's events (the overview has them all, few as they are). */
-  #events = $derived.by(() => this.#of().overview?.events ?? []);
+  #events = $derived.by(() => this.#of.overview?.events ?? []);
 
   /** How many of each event the chat has. */
   eventCounts = $derived.by(() => {
@@ -152,7 +154,7 @@ export class Marks {
 
   #eventMatches = $derived.by((): Match[] => {
     if (!this.#active) return [];
-    const color = eventColor(this.#of().vod.platform);
+    const color = eventColor(this.#of.vod.platform);
     return EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
       id: e.kind,
       color,
@@ -168,7 +170,7 @@ export class Marks {
   eventMarks = $derived.by(() => {
     if (this.#eventMatches.length === 0) return [];
     const on = new Set(layers.events);
-    const platform = this.#of().vod.platform;
+    const platform = this.#of.vod.platform;
     return this.#events
       .filter((m) => m.kind !== "message" && on.has(m.kind))
       .map((m) => ({ time: m.time, value: eventUsd(m, platform) }));

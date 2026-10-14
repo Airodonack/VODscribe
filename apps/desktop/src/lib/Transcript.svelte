@@ -13,7 +13,7 @@
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
-  let lines = $state<Line[]>([]);
+  let lines = $state.raw<Line[]>([]);
   let error = $state<string | null>(null);
 
   // Reload when the VOD changes, and periodically while it is still transcribing
@@ -102,7 +102,8 @@
   // then it's estimated from its text and how many messages it shows.
   const measured = new Map<string, number>();
   let measuredGen = $state(0);
-  const heightKey = (row: Row) => `${showChat ? "chat" : "text"}|${keyOf(row)}`;
+  /** Each row's key for its measured height, made once per set of rows. */
+  let heightKeys = $derived(rows.map((row) => `${showChat ? "chat" : "text"}|${keyOf(row)}`));
   let width = $state(0);
   function estimate(row: Row): number {
     const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
@@ -120,7 +121,8 @@
     void measuredGen;
     void windows;
     const out = new Float64Array(rows.length + 1);
-    rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(heightKey(row)) ?? estimate(row))));
+    const keys = heightKeys;
+    rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(keys[i]) ?? estimate(row))));
     return out;
   });
   /** The row at `y` in the list (clamped). */
@@ -157,17 +159,25 @@
   function remeasure(entries: ResizeObserverEntry[]) {
     const y = viewY();
     let shift = 0;
+    let changed = false;
     for (const entry of entries) {
       const el = entry.target as HTMLElement;
       const index = Number(el.dataset.index);
       const row = rows[index];
       if (!row || !el.isConnected) continue;
-      const key = heightKey(row);
+      const key = heightKeys[index];
       const before = measured.get(key) ?? estimate(row);
       const height = el.offsetHeight;
       if (height === before) continue;
       measured.set(key, height);
+      changed = true;
       if (offsets[index] + before <= y) shift += height - before;
+    }
+    // Rows laid out at the height they were thought to be change nothing, but
+    // just after a seek, the one sought may be among them.
+    if (!changed) {
+      if (aimed()) place();
+      return;
     }
     flushSync(() => measuredGen++);
     // Just after a seek, the moment sought stays centered; otherwise what's read stays put.
@@ -289,7 +299,7 @@
 
   // The chat as a whole: how many messages, how busy each stretch was, and the events.
   const BINS = 1000;
-  let overview = $state<ChatOverview | null>(null);
+  let overview = $state.raw<ChatOverview | null>(null);
   let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0));
   let overviewSeq = 0;
   function refreshOverview() {
@@ -358,7 +368,20 @@
 
   // The Timeline layers' matches and the chat events, on the minimap and in chat (marks.svelte.ts).
   $effect(() => void layers.load());
-  const marks = new Marks(() => ({ vod, canHaveChat, chatCount, overview }));
+  const marks = new Marks({
+    get vod() {
+      return vod;
+    },
+    get canHaveChat() {
+      return canHaveChat;
+    },
+    get chatCount() {
+      return chatCount;
+    },
+    get overview() {
+      return overview;
+    },
+  });
 
   /** When row `i` starts; the row of chat before the first line starts at 0. */
   const rowStart = (i: number) => rows[i]?.line?.start ?? Math.max(0, rows[i]?.from ?? 0);
@@ -380,9 +403,8 @@
     return rowStart(i) + f * (rowEnd(i) - rowStart(i));
   }
 
-  /** Where moment `time` is in the list: the inverse of `timeAtY`. */
-  function yAtTime(time: number): number {
-    if (rows.length === 0) return 0;
+  /** The row moment `time` is in (clamped). */
+  function rowAtTime(time: number): number {
     let lo = 0;
     let hi = rows.length - 1;
     while (lo < hi) {
@@ -390,6 +412,13 @@
       if (rowStart(mid) <= time) lo = mid;
       else hi = mid - 1;
     }
+    return Math.max(0, lo);
+  }
+
+  /** Where moment `time` is in the list: the inverse of `timeAtY`. */
+  function yAtTime(time: number): number {
+    if (rows.length === 0) return 0;
+    const lo = rowAtTime(time);
     const span = rowEnd(lo) - rowStart(lo);
     const f = span > 0 ? Math.min(1, Math.max(0, (time - rowStart(lo)) / span)) : 0;
     return offsets[lo] + f * (offsets[lo + 1] - offsets[lo]);
@@ -442,20 +471,32 @@
   function place() {
     if (!aim || !scroller) return;
     const middle = headHeight + (railHeight - headHeight) / 2;
-    const time = aim.time;
-    let nearest: HTMLElement | null = null;
-    let gap = Infinity;
-    for (const m of root.querySelectorAll<HTMLElement>(".chat [data-time]")) {
-      const d = Math.abs(Number(m.dataset.time) - time);
-      if (d < gap) [nearest, gap] = [m, d];
-    }
-    // Only if it was said near then: further off, it's in a row's "more", or not laid out yet.
-    if (nearest && gap < 30) {
-      const top = nearest.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    const message = nearestMessage(aim.time);
+    if (message) {
+      const top = message.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       scroller.scrollTop += top - middle;
     } else {
-      scroller.scrollTop = listTop + yAtTime(time) - middle;
+      scroller.scrollTop = listTop + yAtTime(aim.time) - middle;
     }
+  }
+
+  /** The laid-out chat message nearest moment `time` (within 30 s), found in
+   *  the chat fetched for its row and the rows beside it, then on the page:
+   *  only that one element, so dragging the minimap doesn't search them all. */
+  function nearestMessage(time: number): HTMLElement | null {
+    if (!showChat || rows.length === 0) return null;
+    const at = rowAtTime(time);
+    let best: { index: number; time: number } | null = null;
+    let gap = 30;
+    for (let index = at - 1; index <= at + 1; index++) {
+      const row = rows[index];
+      for (const m of (row && windows.get(keyOf(row))?.messages) || []) {
+        const d = Math.abs(m.time - time);
+        if (d < gap) [best, gap] = [{ index, time: m.time }, d];
+      }
+    }
+    if (!best) return null;
+    return root.querySelector<HTMLElement>(`.line[data-index="${best.index}"] [data-time="${best.time}"]`);
   }
 
   function seek(time: number) {

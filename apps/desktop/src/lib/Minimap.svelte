@@ -124,12 +124,21 @@
   let dragging = false;
   /** Where a drag holds the box's middle, as a fraction of the strip. */
   let held = $state<number | null>(null);
+  // A mouse can report a thousand moves a second; the view seeks once a frame.
+  let pending: number | null = null;
+  let frame = 0;
   function seekTo(e: PointerEvent) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const fraction = Math.min(1, Math.max(0, (e.clientY - box.top) / box.height));
     if (dragging) held = fraction;
-    onseek(fraction * duration);
+    if (pending === null) frame = requestAnimationFrame(seekPending);
+    pending = fraction;
   }
+  function seekPending() {
+    if (pending !== null) onseek(pending * duration);
+    pending = null;
+  }
+  $effect(() => () => cancelAnimationFrame(frame));
   function release() {
     dragging = false;
     held = null;

@@ -1,15 +1,19 @@
 <script lang="ts">
-  import { emoteUrl } from "./api";
+  import { emoteUrl, emoteUrlNow } from "./api";
 
   let { name, url }: { name: string; url: string } = $props();
 
   // Until the image is in (or if it can't be had), the emote reads as its name.
-  let src = $state<string | null>(null);
+  // One shown before is there from the first frame, so its row is laid out
+  // once rather than twice (name, then image).
+  let fetched = $state<string | null>(null);
+  let src = $derived(emoteUrlNow(url) ?? fetched);
   $effect(() => {
     let current = true;
-    src = null;
+    fetched = null;
+    if (emoteUrlNow(url)) return;
     emoteUrl(url).then(
-      (u) => current && (src = u),
+      (u) => current && (fetched = u),
       () => {},
     );
     return () => {
