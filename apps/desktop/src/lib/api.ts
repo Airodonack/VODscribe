@@ -108,6 +108,20 @@ export interface Line {
 /** A run of a chat message (crates/core `ChatPart`). */
 export type ChatPart = { type: "text"; text: string } | { type: "emote"; name: string; url: string };
 
+/** What the transcript view needs of a VOD's chat as a whole (desktop `chats::ChatOverview`). */
+export interface ChatOverview {
+  count: number;
+  histogram: number[];
+  /** The subs, gifts and tips. */
+  events: ChatLine[];
+}
+
+/** A stretch of chat: its first messages and how many it has (crates/core `db::ChatWindow`). */
+export interface ChatWindow {
+  messages: ChatLine[];
+  total: number;
+}
+
 /** A saved chat search drawn on the timeline (crates/core `layers`). */
 export interface Layer {
   id: string;
@@ -170,12 +184,18 @@ export const api = {
   search: (query: string, filter: SearchFilter) =>
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
-  /** A VOD's chat, oldest first; with `after`, only the messages saved after that one (ids only grow). */
-  chat: (vodId: number, after?: number) => invoke<ChatLine[]>("chat", { vodId, after }),
+  /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its events. */
+  chatOverview: (vodId: number, duration: number, bins: number) =>
+    invoke<ChatOverview>("chat_overview", { vodId, duration, bins }),
+  /** For each [from, to) in seconds, its first `cap` messages and how many it has. */
+  chatWindows: (vodId: number, ranges: [number, number][], cap: number) =>
+    invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
+  /** The emotes in a VOD's chat, as [name, image URL]. */
+  chatEmotes: (vodId: number) => invoke<[string, string][]>("chat_emotes", { vodId }),
   getTimeline: () => invoke<TimelineSettings>("get_timeline"),
   setTimeline: (timeline: TimelineSettings) => invoke<void>("set_timeline", { timeline }),
-  /** For each list of terms, the ids of the VOD's chat messages with any of them as a whole word or phrase. */
-  chatMatches: (vodId: number, terms: string[][]) => invoke<number[][]>("chat_matches", { vodId, terms }),
+  /** For each list of terms, the [id, time] of the VOD's chat messages with any of them as a whole word or phrase. */
+  chatMatches: (vodId: number, terms: string[][]) => invoke<[number, number][][]>("chat_matches", { vodId, terms }),
   /** Fetches a VOD's chat again after it failed. */
   retryChat: (id: number) => invoke<void>("retry_chat", { id }),
   updateYtDlp: () => invoke<string>("update_yt_dlp"),

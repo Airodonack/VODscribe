@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-chat-overview"
+description = "Enables the chat_overview command without any pre-configured scope."
+commands.allow = ["chat_overview"]
+
+[[permission]]
+identifier = "deny-chat-overview"
+description = "Denies the chat_overview command without any pre-configured scope."
+commands.deny = ["chat_overview"]

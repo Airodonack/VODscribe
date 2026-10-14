@@ -132,6 +132,30 @@ pub enum Source {
     Chat,
 }
 
+/// A transcript row's chat: its first messages, and how many it has in all.
+#[derive(Serialize, Clone, Debug)]
+pub struct ChatWindow {
+    pub messages: Vec<ChatLine>,
+    pub total: u32,
+}
+
+/// The columns `chat_line_row` reads.
+const CHAT_LINE: &str = "id, time, author, color, parts, kind, amount";
+
+/// A row of `CHAT_LINE`, its parts still JSON.
+struct ChatLineRow(i64, f64, String, Option<String>, String, String, Option<f64>);
+
+fn chat_line_row(r: &Row) -> rusqlite::Result<ChatLineRow> {
+    Ok(ChatLineRow(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+}
+
+impl ChatLineRow {
+    fn into_line(self) -> Result<ChatLine> {
+        let ChatLineRow(id, time, author, color, parts, kind, amount) = self;
+        Ok(ChatLine { id, time, author, color, parts: serde_json::from_str(&parts)?, kind: Kind::parse(&kind), amount })
+    }
+}
+
 /// A chat message as the transcript view shows it.
 #[derive(Serialize, Clone, Debug)]
 pub struct ChatLine {
@@ -650,41 +674,95 @@ impl Db {
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// VOD `vod_id`'s chat, oldest first.
+    /// VOD `vod_id`'s chat, oldest first. All of it, which can be a lot: the
+    /// transcript view asks for what it shows instead (`chat_windows`).
     pub fn chat(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
-        self.chat_after(vod_id, 0)
+        let sql = format!("SELECT {CHAT_LINE} FROM chat WHERE vod_id = ?1 ORDER BY time, id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([vod_id], chat_line_row)?;
+        rows.map(|r| r?.into_line()).collect()
     }
 
-    /// VOD `vod_id`'s chat messages saved after message `after_id` (ids only grow
-    /// as messages are saved), oldest first: what's arrived since the view last looked.
-    pub fn chat_after(&self, vod_id: i64, after_id: i64) -> Result<Vec<ChatLine>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, time, author, color, parts, kind, amount FROM chat WHERE vod_id = ?1 AND id > ?2 ORDER BY time, id",
-        )?;
-        let rows = stmt.query_map([vod_id, after_id], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, f64>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, Option<String>>(3)?,
-                r.get::<_, String>(4)?,
-                r.get::<_, String>(5)?,
-                r.get::<_, Option<f64>>(6)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (id, time, author, color, parts, kind, amount) = row?;
-            let parts = serde_json::from_str(&parts)?;
-            out.push(ChatLine { id, time, author, color, parts, kind: Kind::parse(&kind), amount });
+    /// For each stretch of VOD `vod_id` (from, to: seconds, the end left out),
+    /// its first `cap` messages and how many it has. The transcript view's rows,
+    /// each one line and the chat while it was said.
+    pub fn chat_windows(&self, vod_id: i64, ranges: &[(f64, f64)], cap: usize) -> Result<Vec<ChatWindow>> {
+        let sql = format!(
+            "SELECT {CHAT_LINE} FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3 ORDER BY time, id LIMIT ?4"
+        );
+        let mut lines = self.conn.prepare(&sql)?;
+        let mut count =
+            self.conn.prepare("SELECT count(*) FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3")?;
+        let mut out = Vec::with_capacity(ranges.len());
+        for &(from, to) in ranges {
+            let messages = lines
+                .query_map(params![vod_id, from, to, cap as i64], chat_line_row)?
+                .map(|r| r?.into_line())
+                .collect::<Result<Vec<_>>>()?;
+            let total = if messages.len() < cap {
+                messages.len() as u32
+            } else {
+                count.query_row(params![vod_id, from, to], |r| r.get(0))?
+            };
+            out.push(ChatWindow { messages, total });
         }
         Ok(out)
     }
 
-    /// The ids of VOD `vod_id`'s chat messages that contain any of `terms`, each
+    /// How many of VOD `vod_id`'s chat messages fall in each of `bins` equal
+    /// stretches of its `duration`, for the minimap.
+    pub fn chat_histogram(&self, vod_id: i64, duration: f64, bins: usize) -> Result<Vec<u32>> {
+        let mut out = vec![0u32; bins];
+        if duration <= 0.0 || bins == 0 {
+            return Ok(out);
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT CAST(time * ?2 / ?3 AS INTEGER) AS bin, count(*) FROM chat WHERE vod_id = ?1 GROUP BY bin",
+        )?;
+        let rows =
+            stmt.query_map(params![vod_id, bins as f64, duration], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, u32>(1)?)))?;
+        for row in rows {
+            let (bin, n) = row?;
+            out[(bin.max(0) as usize).min(bins - 1)] += n;
+        }
+        Ok(out)
+    }
+
+    /// How many chat messages VOD `vod_id` has.
+    pub fn chat_count(&self, vod_id: i64) -> Result<u32> {
+        Ok(self.conn.query_row("SELECT count(*) FROM chat WHERE vod_id = ?1", [vod_id], |r| r.get(0))?)
+    }
+
+    /// VOD `vod_id`'s subs, gifts and tips, oldest first. Few, next to the rest of chat.
+    pub fn chat_events(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
+        let sql = format!("SELECT {CHAT_LINE} FROM chat WHERE vod_id = ?1 AND kind != 'message' ORDER BY time, id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map([vod_id], chat_line_row)?;
+        rows.map(|r| r?.into_line()).collect()
+    }
+
+    /// The emotes in VOD `vod_id`'s chat, as (name, image URL), each once.
+    pub fn chat_emotes(&self, vod_id: i64) -> Result<Vec<(String, String)>> {
+        // Only messages with an emote, by a cheap look at their stored parts.
+        let mut stmt = self.conn.prepare("SELECT parts FROM chat WHERE vod_id = ?1 AND parts LIKE '%\"emote\"%'")?;
+        let rows = stmt.query_map([vod_id], |r| r.get::<_, String>(0))?;
+        let mut seen = std::collections::HashMap::new();
+        for parts in rows {
+            for part in serde_json::from_str::<Vec<ChatPart>>(&parts?)? {
+                if let ChatPart::Emote { name, url } = part {
+                    seen.entry(name).or_insert(url);
+                }
+            }
+        }
+        let mut out: Vec<_> = seen.into_iter().collect();
+        out.sort();
+        Ok(out)
+    }
+
+    /// The ids and times of VOD `vod_id`'s chat messages that contain any of `terms`, each
     /// a whole word or phrase (an emote by its name), matched as search matches
     /// words: ignoring case and accents. For a timeline layer (see `layers`).
-    pub fn chat_matches(&self, vod_id: i64, terms: &[String]) -> Result<Vec<i64>> {
+    pub fn chat_matches(&self, vod_id: i64, terms: &[String]) -> Result<Vec<(i64, f64)>> {
         // Terms are alphanumeric only, so quoting them can't inject FTS syntax.
         let phrases: Vec<String> = terms
             .iter()
@@ -696,11 +774,11 @@ impl Db {
             return Ok(Vec::new());
         }
         let mut stmt = self.conn.prepare(
-            "SELECT c.id FROM chat_fts f JOIN chat c ON c.id = f.rowid
+            "SELECT c.id, c.time FROM chat_fts f JOIN chat c ON c.id = f.rowid
              WHERE chat_fts MATCH ?1 AND c.vod_id = ?2 ORDER BY c.time, c.id",
         )?;
-        let ids = stmt.query_map(params![phrases.join(" OR "), vod_id], |r| r.get(0))?;
-        Ok(ids.collect::<rusqlite::Result<_>>()?)
+        let found = stmt.query_map(params![phrases.join(" OR "), vod_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(found.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Phrase search. The last term matches as a prefix so results update while typing.
@@ -1064,10 +1142,19 @@ mod tests {
 
         let lines = db.chat(a).unwrap();
         assert_eq!(lines.iter().map(|l| l.time).collect::<Vec<_>>(), [5.0, 25.0], "oldest first");
-        let newest = lines.iter().map(|l| l.id).max().unwrap();
-        db.add_chat(a, &[message(15.0, "late", "arrived later")], 0.0).unwrap();
-        let since = db.chat_after(a, newest).unwrap();
-        assert_eq!(since.iter().map(|l| l.author.as_str()).collect::<Vec<_>>(), ["late"], "only what's new");
+
+        // What the transcript view asks for: rows' windows, counts per stretch, events.
+        db.add_chat(a, &[message(15.0, "late", "arrived later"), message(16.0, "later", "and again")], 0.0).unwrap();
+        let windows = db.chat_windows(a, &[(-1e12, 10.0), (10.0, 20.0), (20.0, 1e12)], 1).unwrap();
+        let shown: Vec<_> =
+            windows.iter().map(|w| (w.messages.iter().map(|m| m.time).collect::<Vec<_>>(), w.total)).collect();
+        assert_eq!(shown, [(vec![5.0], 1), (vec![15.0], 2), (vec![25.0], 1)], "the first of each, and how many");
+        assert_eq!(db.chat_histogram(a, 30.0, 3).unwrap(), [1, 2, 1]);
+        assert_eq!(db.chat_count(a).unwrap(), 4);
+        assert_eq!(
+            db.chat_emotes(a).unwrap(),
+            [("barkylove".to_string(), "https://files.kick.com/emotes/1/fullsize".to_string())]
+        );
         db.set_chat(a, &chat).unwrap();
         let lines = db.chat(a).unwrap();
         assert_eq!(lines[1].kind, Kind::Message);
@@ -1103,8 +1190,7 @@ mod tests {
         // Layers match whole words and phrases, in any of their terms.
         let times = |terms: &[&str]| {
             let terms: Vec<String> = terms.iter().map(|t| t.to_string()).collect();
-            let found = db.chat_matches(a, &terms).unwrap();
-            lines.iter().filter(|l| found.contains(&l.id)).map(|l| l.time).collect::<Vec<_>>()
+            db.chat_matches(a, &terms).unwrap().into_iter().map(|(_, time)| time).collect::<Vec<_>>()
         };
         assert_eq!(times(&["clutch play"]), [25.0]);
         assert_eq!(times(&["BARKYLOVE", "nothing"]), [5.0], "an emote by name, any case");

@@ -4,7 +4,8 @@
   // that's in view. Clicking or dragging on it scrolls there.
 
   let {
-    times,
+    times = [],
+    histogram,
     duration,
     view,
     label,
@@ -13,8 +14,11 @@
     eventColor = "#888888",
     onseek,
   }: {
-    /** When each event happened (chat messages, or lines when there's no chat), in seconds. */
-    times: number[];
+    /** When each event happened (lines when there's no chat), in seconds. */
+    times?: number[];
+    /** Or, instead, how many happened in each of equal stretches of `duration`
+     *  (chat, which can be far too many messages to send one by one). */
+    histogram?: number[];
     duration: number;
     /** The part of the VOD in view, as 0..1 fractions of it. */
     view: { from: number; to: number } | null;
@@ -40,12 +44,23 @@
     const counts = new Float64Array(bins);
     if (duration <= 0) return counts;
     for (const t of times) counts[Math.min(bins - 1, Math.max(0, Math.floor((t / duration) * bins)))]++;
+    return shape(counts);
+  }
+
+  /** `histogram`'s counts, gathered into `bins`. */
+  function rebin(histogram: number[], bins: number): Float64Array {
+    const counts = new Float64Array(bins);
+    histogram.forEach((n, i) => (counts[Math.min(bins - 1, Math.floor((i / histogram.length) * bins))] += n));
+    return shape(counts);
+  }
+
+  function shape(counts: Float64Array): Float64Array {
     const smooth = counts.map((c, i) => (counts[i - 1] ?? c) * 0.25 + c * 0.5 + (counts[i + 1] ?? c) * 0.25);
     const top = Math.max(...smooth, 1);
     return smooth.map((c) => Math.pow(c / top, 0.8));
   }
   let bins = $derived(Math.max(1, Math.floor(height / 2)));
-  let levels = $derived(levelsOf(times, bins));
+  let levels = $derived(histogram ? rebin(histogram, bins) : levelsOf(times, bins));
   let layerLevels = $derived(overlays.map((o) => ({ color: o.color, levels: levelsOf(o.times, bins) })));
 
   // Each moment's events: how many, and what they were worth together. No

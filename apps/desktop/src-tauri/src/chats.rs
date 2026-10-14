@@ -7,8 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{ChatLine, ChatStatus, LibraryChat};
+use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, Db, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
 use vodscribe_core::{chat, emotes, tools};
 
@@ -95,11 +96,58 @@ fn fetch(app: &AppHandle, id: i64) {
     }
 }
 
-/// VOD `vod_id`'s chat, oldest first; with `after`, only the messages saved
-/// after that one, for a view keeping up with a fetch.
+// The transcript view asks for the chat it shows, not all of it: a busy VOD's
+// is a hundred thousand messages and more. Each runs on a blocking thread and
+// holds the library's lock only for its query.
+
+/// Runs `f` with the library on a blocking thread.
+async fn with_db<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(&Db) -> anyhow::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(move || f(&app.state::<AppState>().db.lock().unwrap()))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
+/// What the minimap and header need of VOD `vod_id`'s chat.
+#[derive(Serialize)]
+pub(crate) struct ChatOverview {
+    count: u32,
+    /// Messages in each of `bins` equal stretches of `duration`.
+    histogram: Vec<u32>,
+    /// The subs, gifts and tips.
+    events: Vec<ChatLine>,
+}
+
 #[tauri::command]
-pub(crate) async fn chat(state: State<'_, AppState>, vod_id: i64, after: Option<i64>) -> CmdResult<Vec<ChatLine>> {
-    state.db.lock().unwrap().chat_after(vod_id, after.unwrap_or(0)).map_err(err)
+pub(crate) async fn chat_overview(app: AppHandle, vod_id: i64, duration: f64, bins: usize) -> CmdResult<ChatOverview> {
+    with_db(app, move |db| {
+        Ok(ChatOverview {
+            count: db.chat_count(vod_id)?,
+            histogram: db.chat_histogram(vod_id, duration, bins.min(10_000))?,
+            events: db.chat_events(vod_id)?,
+        })
+    })
+    .await
+}
+
+/// For each stretch (from, to: seconds), its first `cap` messages and how many it has.
+#[tauri::command]
+pub(crate) async fn chat_windows(
+    app: AppHandle,
+    vod_id: i64,
+    ranges: Vec<(f64, f64)>,
+    cap: usize,
+) -> CmdResult<Vec<ChatWindow>> {
+    with_db(app, move |db| db.chat_windows(vod_id, &ranges, cap)).await
+}
+
+/// The emotes in VOD `vod_id`'s chat, as (name, image URL).
+#[tauri::command]
+pub(crate) async fn chat_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<(String, String)>> {
+    with_db(app, move |db| db.chat_emotes(vod_id)).await
 }
 
 /// Fetches VOD `id`'s chat again, after a failure.
@@ -131,13 +179,12 @@ pub(crate) async fn set_timeline(state: State<'_, AppState>, timeline: Timeline)
     layers::save(&state.paths.layers(), &timeline).map_err(err)
 }
 
-/// For each list of terms, the ids of VOD `vod_id`'s chat messages that contain any of them.
+/// For each list of terms, the ids and times of VOD `vod_id`'s chat messages that contain any of them.
 #[tauri::command]
 pub(crate) async fn chat_matches(
-    state: State<'_, AppState>,
+    app: AppHandle,
     vod_id: i64,
     terms: Vec<Vec<String>>,
-) -> CmdResult<Vec<Vec<i64>>> {
-    let db = state.db.lock().unwrap();
-    terms.iter().map(|t| db.chat_matches(vod_id, t).map_err(err)).collect()
+) -> CmdResult<Vec<Vec<(i64, f64)>>> {
+    with_db(app, move |db| terms.iter().map(|t| db.chat_matches(vod_id, t)).collect()).await
 }

@@ -32,8 +32,10 @@ const commands: Record<string, (args: Args) => unknown> = {
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
   self_updatable: () => true,
-  chat: () => [],
   // The demo has no chat, so no timeline layers either.
+  chat_overview: () => ({ count: 0, histogram: [], events: [] }),
+  chat_windows: ({ ranges }) => (ranges as unknown[]).map(() => ({ messages: [], total: 0 })),
+  chat_emotes: () => [],
   get_timeline: () => ({ layers: [], events: [] }),
   chat_matches: () => [],
 };

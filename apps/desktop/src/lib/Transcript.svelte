@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { flushSync } from "svelte";
-  import { SvelteSet } from "svelte/reactivity";
-  import { api, events, type ChatLine, type Line, type Vod } from "./api";
+  import { flushSync, untrack } from "svelte";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import { api, events, type ChatOverview, type ChatWindow, type Line, type Vod } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
   import Spinner from "./Spinner.svelte";
@@ -38,10 +38,12 @@
     );
   });
 
-  // Chat: loaded once it has been fetched, beside the transcript, and
-  // collapsible (remembered across VODs and launches).
+  // Chat, beside the transcript and collapsible (remembered across VODs and
+  // launches). A busy VOD's is a hundred thousand messages and more, so the
+  // view never holds it all: it asks for the counts and events it draws on the
+  // minimap (`overview`), and for each row it shows, that row's first messages
+  // (`windows`). Both catch up as a fetch saves more.
   const CHAT_OPEN = "vodscribe.chatOpen";
-  let chat = $state<ChatLine[]>([]);
   let chatError = $state<string | null>(null);
   let chatProgress = $state<number | null>(null);
   let chatOpen = $state(read(CHAT_OPEN) !== "false");
@@ -49,6 +51,8 @@
   // A video that wasn't a livestream has no chat: its toggle is grayed out and the column stays shut.
   let chatStatus = $derived(vod.chat);
   let noChat = $derived(chatStatus === "none");
+  let showChat = $derived(hasChat && chatOpen && !noChat);
+  let canHaveChat = $derived(hasChat && (chatStatus === "done" || chatStatus === "pending"));
 
   function read(key: string): string | null {
     try {
@@ -91,122 +95,34 @@
     }
   }
 
-  // Depends only on which VOD and its chat status (both derived, so they change
-  // only when their values do): the VOD itself is replaced on every update, and
-  // reloading then would empty the column and throw the scroll position.
-  let chatSeq = 0;
-  let chatOf: number | null = null;
-  /** The newest message loaded (ids only grow as they're saved), to ask only for what's after it. */
-  let chatNewest = 0;
-  const newestOf = (lines: ChatLine[]) => lines.reduce((max, m) => Math.max(max, m.id), 0);
-
-  /** `a` and `b`, each in time order, as one list in time order. */
-  function mergeByTime(a: ChatLine[], b: ChatLine[]): ChatLine[] {
-    const out: ChatLine[] = [];
-    let i = 0;
-    let j = 0;
-    while (i < a.length || j < b.length) {
-      const takeA =
-        j >= b.length || (i < a.length && (a[i].time < b[j].time || (a[i].time === b[j].time && a[i].id < b[j].id)));
-      out.push(takeA ? a[i++] : b[j++]);
-    }
-    return out;
-  }
-  $effect(() => {
-    const id = vodId;
-    const status = chatStatus;
-    const mine = ++chatSeq;
-    if (chatOf !== id) {
-      chatOf = id;
-      chat = [];
-    }
-    chatError = null;
-    // While it's fetched, what's arrived so far (it's saved a batch at a time).
-    if (status !== "done" && status !== "pending") return;
-    api.chat(id).then(
-      (c) => {
-        if (mine !== chatSeq) return;
-        chatNewest = newestOf(c);
-        keepPlace(() => (chat = c));
-      },
-      (e) => mine === chatSeq && (chatError = String(e)),
-    );
-  });
-
-  // Each saved batch, at most this often: a busy chat saves a batch a second,
-  // and every reload lays the rows out again.
-  const RELOAD_EVERY = 1500;
-  $effect(() => {
-    const id = vodId;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let last = 0;
-    const reload = () => {
-      timer = undefined;
-      last = Date.now();
-      // Only what's arrived since: a busy chat is tens of thousands of messages,
-      // too many to send and lay out again every time a batch lands.
-      const mine = ++chatSeq;
-      api.chat(id, chatNewest).then(
-        (fresh) => {
-          if (mine !== chatSeq || fresh.length === 0) return;
-          chatNewest = Math.max(chatNewest, newestOf(fresh));
-          keepPlace(() => (chat = mergeByTime(chat, fresh)));
-        },
-        () => {},
-      );
-    };
-    const unlisten = events.chatSaved((vid) => {
-      if (vid !== id || timer) return;
-      timer = setTimeout(reload, Math.max(0, RELOAD_EVERY - (Date.now() - last)));
-    });
-    return () => {
-      clearTimeout(timer);
-      void unlisten.then((u) => u());
-    };
-  });
-
-  $effect(() => {
-    const id = vodId;
-    chatProgress = null;
-    const unlisten = events.chatProgress((vid, f) => vid === id && (chatProgress = f));
-    return () => void unlisten.then((u) => u());
-  });
-
-  // Each transcript line with the chat messages sent while it was being said:
-  // from its start to the next line's. Messages before the first line get a
-  // row of their own.
+  // Each transcript line with the chat sent while it was being said: from its
+  // start to the next line's. Chat before the first line gets a row of its own.
+  // Without a transcript yet, chat goes in rows of a minute each.
+  const FAR = 1e12;
   interface Row {
     line: Line | null;
-    chat: ChatLine[];
+    from: number;
+    to: number;
   }
   let rows = $derived.by((): Row[] => {
-    const out: Row[] = lines.map((line) => ({ line, chat: [] }));
-    if (!chatOpen || chat.length === 0) return out;
-    let lead: Row | null = null;
-    let i = 0;
-    for (const message of chat) {
-      // Both lists are in time order, so one pass places every message.
-      while (i < lines.length && lines[i].start <= message.time) i++;
-      if (i === 0) (lead ??= { line: null, chat: [] }).chat.push(message);
-      else out[i - 1].chat.push(message);
+    const out: Row[] = lines.map((line, i) => ({ line, from: line.start, to: lines[i + 1]?.start ?? FAR }));
+    if (!showChat) return out;
+    if (lines.length === 0) {
+      const minutes = Math.ceil((vod.duration ?? 0) / 60);
+      return Array.from({ length: minutes }, (_, k) => ({
+        line: null,
+        from: k * 60,
+        to: k === minutes - 1 ? FAR : (k + 1) * 60,
+      }));
     }
-    return lead ? [lead, ...out] : out;
+    return [{ line: null, from: -FAR, to: lines[0].start }, ...out];
   });
+  const keyOf = (row: Row) => `${row.from}:${row.to}`;
 
-  // A row shows this many messages until it's expanded, so a burst of chat
-  // doesn't push the transcript apart.
-  const SHOWN = 8;
-  let expanded = new SvelteSet<number>();
-  $effect(() => {
-    void vodId;
-    expanded.clear();
-  });
-
-  let showChat = $derived(hasChat && chatOpen && !noChat);
-
-  // Rows are added as the end comes into view, so a long VOD with a busy chat
-  // opens at once rather than laying out every row first.
-  const PAGE = 200;
+  // Rows are added as the end comes into view, so a long VOD opens at once
+  // rather than laying out every row first. With busy chat a row is a few
+  // hundred pixels tall, so a page is several screens.
+  const PAGE = 60;
   let shown = $state(PAGE);
   let sentinel = $state<HTMLElement>();
   $effect(() => {
@@ -224,6 +140,156 @@
     io.observe(sentinel);
     return () => io.disconnect();
   });
+
+  // A row shows this many messages at first, so a burst of chat doesn't push
+  // the transcript apart; each "more" shows this many more.
+  const SHOWN = 8;
+  const MORE = 200;
+  let windows = $state(new Map<string, ChatWindow>());
+  /** Windows to fetch again: chat arrived since (a fetch is under way). */
+  const stale = new Set<string>();
+  /** How many messages expanded rows show, by window. */
+  const limits = new SvelteMap<string, number>();
+  const limitOf = (row: Row) => limits.get(keyOf(row)) ?? SHOWN;
+  /** Windows being fetched: their "more" buttons wait. */
+  const loading = new SvelteSet<string>();
+  let chatGen = 0;
+
+  // A different VOD, or a different chat status, starts afresh.
+  let chatOf: number | null = null;
+  $effect(() => {
+    const id = vodId;
+    void chatStatus;
+    void canHaveChat;
+    // Only those: what the loads read and change mustn't start this over.
+    untrack(() => {
+      chatGen++;
+      if (chatOf !== id) {
+        chatOf = id;
+        windows = new Map();
+        limits.clear();
+        overview = null;
+      } else {
+        // Same VOD, now fetched in full (or failed): what's shown is refreshed in place.
+        for (const key of windows.keys()) stale.add(key);
+      }
+      loading.clear();
+      chatError = null;
+      refreshOverview();
+      loadWindows();
+    });
+  });
+
+  /** Fetches the windows of the rows shown that aren't loaded (or are stale, if `visibleOnly`, in view). */
+  function loadWindows(onlyStaleInView = false) {
+    if (!canHaveChat || !showChat) return;
+    const id = vodId;
+    const gen = chatGen;
+    const inView = onlyStaleInView ? visibleRows() : null;
+    const wanted: Row[] = [];
+    rows.slice(0, shown).forEach((row, i) => {
+      const key = keyOf(row);
+      if (loading.has(key)) return;
+      const missing = !windows.has(key);
+      const refresh = stale.has(key) && (!inView || (i >= inView[0] && i <= inView[1]));
+      if (missing || refresh) wanted.push(row);
+    });
+    if (wanted.length === 0) return;
+    for (const row of wanted) loading.add(keyOf(row));
+    const fetch = (batch: Row[], cap: number) =>
+      api.chatWindows(
+        id,
+        batch.map((r) => [r.from, r.to]),
+        cap,
+      );
+    // One request per limit: almost every row has the first one.
+    const byLimit = new Map<number, Row[]>();
+    for (const row of wanted) byLimit.set(limitOf(row), [...(byLimit.get(limitOf(row)) ?? []), row]);
+    const groups = [...byLimit];
+    Promise.all(groups.map(([cap, batch]) => fetch(batch, cap))).then(
+      (results) => {
+        if (gen !== chatGen || id !== vodId) return;
+        keepPlace(() => {
+          const next = new Map(windows);
+          groups.forEach(([, batch], g) =>
+            batch.forEach((row, i) => {
+              const key = keyOf(row);
+              next.set(key, results[g][i]);
+              stale.delete(key);
+              loading.delete(key);
+            }),
+          );
+          windows = next;
+        });
+      },
+      (e) => {
+        for (const row of wanted) loading.delete(keyOf(row));
+        if (gen === chatGen) chatError = String(e);
+      },
+    );
+  }
+  // More rows shown (scrolling, a seek), chat shown, or new lines: their windows.
+  $effect(() => {
+    void rows;
+    void shown;
+    void showChat;
+    untrack(() => loadWindows());
+  });
+
+  function expand(row: Row) {
+    const key = keyOf(row);
+    limits.set(key, limitOf(row) + MORE);
+    stale.add(key);
+    loadWindows();
+  }
+
+  // The chat as a whole: how many messages, how busy each stretch was, and the events.
+  const BINS = 1000;
+  let overview = $state<ChatOverview | null>(null);
+  let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0));
+  let overviewSeq = 0;
+  function refreshOverview() {
+    if (!canHaveChat) return void (overview = null);
+    const id = vodId;
+    const mine = ++overviewSeq;
+    api.chatOverview(id, mapDuration, BINS).then(
+      (o) => mine === overviewSeq && id === vodId && (overview = o),
+      (e) => mine === overviewSeq && (chatError = String(e)),
+    );
+  }
+  let chatCount = $derived(overview?.count ?? 0);
+
+  // While a fetch saves batches: at most this often, the counts and the rows in
+  // view are fetched again; other rows when they come into view.
+  const REFRESH_EVERY = 1500;
+  $effect(() => {
+    const id = vodId;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = 0;
+    const refresh = () => {
+      timer = undefined;
+      last = Date.now();
+      for (const key of windows.keys()) stale.add(key);
+      refreshOverview();
+      loadWindows(true);
+    };
+    const unlisten = events.chatSaved((vid) => {
+      if (vid !== id || timer) return;
+      timer = setTimeout(refresh, Math.max(0, REFRESH_EVERY - (Date.now() - last)));
+    });
+    return () => {
+      clearTimeout(timer);
+      void unlisten.then((u) => u());
+    };
+  });
+
+  $effect(() => {
+    const id = vodId;
+    chatProgress = null;
+    const unlisten = events.chatProgress((vid, f) => vid === id && (chatProgress = f));
+    return () => void unlisten.then((u) => u());
+  });
+
   let play = (time: number) => onplay(vod.id, time);
 
   // The minimap at the right edge (Minimap.svelte): chat activity over the
@@ -238,9 +304,8 @@
     ro.observe(s);
     return () => ro.disconnect();
   });
-  let mapTimes = $derived(chat.length > 0 ? chat.map((m) => m.time) : lines.map((l) => l.start));
-  let mapLabel = $derived(chat.length > 0 ? "How busy chat was over the VOD" : "Speech over the VOD");
-  let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0, chat.at(-1)?.time ?? 0));
+  let lineTimes = $derived(lines.map((l) => l.start));
+  let mapLabel = $derived(chatCount > 0 ? "How busy chat was over the VOD" : "Speech over the VOD");
   let showMap = $derived(lines.length > 0 && mapDuration > 0);
 
   // The header spans the transcript and the minimap, and stays at the top.
@@ -251,14 +316,19 @@
   // minimap, their messages highlighted in chat.
   $effect(() => void layers.load());
   let shownLayers = $derived(hasChat && !noChat ? layers.shownFor(vod) : []);
-  /** Emote images in this VOD's chat, by lowercase name. */
-  let emotes = $derived.by(() => {
-    const out = new Map<string, string>();
-    for (const m of chat) for (const p of m.parts) if (p.type === "emote") out.set(p.name.toLowerCase(), p.url);
-    return out;
+  /** Emote images in this VOD's chat, by lowercase name, for the Timeline panel's pills. */
+  let emotes = $state(new Map<string, string>());
+  $effect(() => {
+    const id = vodId;
+    void chatStatus;
+    emotes = new Map();
+    if (!canHaveChat) return;
+    api.chatEmotes(id).then(
+      (list) => id === vodId && (emotes = new Map(list.map(([name, url]) => [name.toLowerCase(), url]))),
+      () => {},
+    );
   });
-  let timeOf = $derived(new Map(chat.map((m) => [m.id, m.time])));
-  let matches = $state<{ id: string; color: string; ids: Set<number> }[]>([]);
+  let matches = $state<{ id: string; color: string; ids: Set<number>; times: number[] }[]>([]);
   let matchSeq = 0;
   // While chat arrives, the layers' searches run at most this often, not on every batch.
   const MATCH_EVERY = 5000;
@@ -266,10 +336,10 @@
   $effect(() => {
     const id = vodId;
     const wanted = shownLayers.map((l) => ({ id: l.id, color: l.color, terms: l.terms.map((t) => t.text) }));
-    void chat.length;
+    void chatCount;
     const arriving = chatStatus === "pending";
     const mine = ++matchSeq;
-    if (wanted.length === 0 || chat.length === 0) {
+    if (wanted.length === 0 || chatCount === 0) {
       matches = [];
       return;
     }
@@ -283,7 +353,12 @@
         .then(
           (found) =>
             mine === matchSeq &&
-            (matches = wanted.map((w, i) => ({ id: w.id, color: w.color, ids: new Set(found[i]) }))),
+            (matches = wanted.map((w, i) => ({
+              id: w.id,
+              color: w.color,
+              ids: new Set(found[i].map(([id]) => id)),
+              times: found[i].map(([, time]) => time),
+            }))),
           () => mine === matchSeq && (matches = []),
         );
     };
@@ -292,10 +367,11 @@
     const timer = setTimeout(run, wait);
     return () => clearTimeout(timer);
   });
-  // Chat events (events.ts): known from each message's kind, no search needed.
+  // Chat events (events.ts): the overview has them all, few as they are.
+  let chatEvents = $derived(overview?.events ?? []);
   let eventCounts = $derived.by(() => {
     const out = new Map<EventKind, number>();
-    for (const m of chat) if (m.kind !== "message") out.set(m.kind, (out.get(m.kind) ?? 0) + 1);
+    for (const m of chatEvents) if (m.kind !== "message") out.set(m.kind, (out.get(m.kind) ?? 0) + 1);
     return out;
   });
   let eventMatches = $derived(
@@ -303,18 +379,17 @@
       ? EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
           id: e.kind,
           color: eventColor(vod.platform),
-          ids: new Set(chat.filter((m) => m.kind === e.kind).map((m) => m.id)),
+          ids: new Set(chatEvents.filter((m) => m.kind === e.kind).map((m) => m.id)),
         }))
       : [],
   );
   let allMatches = $derived([...eventMatches, ...matches]);
-  const timesOf = (ids: Set<number>) => [...ids].map((id) => timeOf.get(id) ?? 0);
-  let overlays = $derived(matches.map((m) => ({ color: m.color, times: timesOf(m.ids) })));
+  let overlays = $derived(matches.map((m) => ({ color: m.color, times: m.times })));
   let eventMarks = $derived.by(() => {
-    const shown = new Set(layers.events);
+    const on = new Set(layers.events);
     if (eventMatches.length === 0) return [];
-    return chat
-      .filter((m) => m.kind !== "message" && shown.has(m.kind))
+    return chatEvents
+      .filter((m) => m.kind !== "message" && on.has(m.kind))
       .map((m) => ({ time: m.time, value: eventUsd(m, vod.platform) }));
   });
   let counts = $derived(new Map(matches.map((m) => [m.id, m.ids.size])));
@@ -324,7 +399,7 @@
   /** Where the view starts: below the header, which stays at the top. */
   const viewTop = () => head?.getBoundingClientRect().bottom ?? 0;
   /** When row `i` starts; the row of chat before the first line starts at 0. */
-  const rowStart = (i: number) => rows[i]?.line?.start ?? 0;
+  const rowStart = (i: number) => rows[i]?.line?.start ?? Math.max(0, rows[i]?.from ?? 0);
 
   /** The first of `els` (in page order) for which `past` holds, or els.length. */
   function firstWhere(els: NodeListOf<HTMLElement>, past: (el: HTMLElement) => boolean): number {
@@ -336,6 +411,17 @@
       else lo = mid + 1;
     }
     return lo;
+  }
+
+  /** The first and last rows (indexes) in view, give or take a few. */
+  function visibleRows(): [number, number] {
+    if (!scroller) return [0, 0];
+    const els = root.querySelectorAll<HTMLElement>(".line");
+    const top = viewTop();
+    const bottom = scroller.getBoundingClientRect().bottom;
+    const first = firstWhere(els, (el) => el.getBoundingClientRect().bottom > top);
+    const after = firstWhere(els, (el) => el.getBoundingClientRect().top >= bottom);
+    return [Math.max(0, first - 5), after + 5];
   }
 
   // The part of the VOD in view, kept up to date as the list scrolls or grows.
@@ -362,7 +448,11 @@
     let frame = 0;
     const later = () => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(updateView);
+      frame = requestAnimationFrame(() => {
+        updateView();
+        // Rows whose chat arrived while they were out of view.
+        if (stale.size) loadWindows(true);
+      });
     };
     later();
     s.addEventListener("scroll", later, { passive: true });
@@ -404,7 +494,7 @@
         <span
           class="muted chat-status"
           title={vod.chat === "pending"
-            ? `Fetching chat: ${chat.length.toLocaleString()} message${chat.length === 1 ? "" : "s"} so far`
+            ? `Fetching chat: ${chatCount.toLocaleString()} message${chatCount === 1 ? "" : "s"} so far`
             : undefined}
         >
           {#if vod.chat === "pending"}
@@ -421,7 +511,7 @@
           {:else if chatError}
             <span class="error-text">{chatError}</span>
           {:else}
-            {chat.length.toLocaleString()} message{chat.length === 1 ? "" : "s"}
+            {chatCount.toLocaleString()} message{chatCount === 1 ? "" : "s"}
           {/if}
         </span>
         <button
@@ -454,7 +544,9 @@
         </p>
       {/if}
       {#each rows.slice(0, shown) as row, r (r)}
-        <div class="line" data-start={row.line?.start}>
+        {@const key = keyOf(row)}
+        {@const win = windows.get(key)}
+        <div class="line" data-start={row.line?.start} class:empty={!row.line && !win?.total}>
           {#if row.line}
             {@const line = row.line}
             <button class="row" onclick={() => play(line.start)}>
@@ -466,34 +558,27 @@
           {/if}
           {#if showChat}
             <div class="chat">
-              {#each expanded.has(r) ? row.chat : row.chat.slice(0, SHOWN) as message, m (m)}
+              {#each win?.messages ?? [] as message (message.id)}
                 <ChatMessage {message} platform={vod.platform} highlight={highlightOf(message.id)} onplay={play} />
               {/each}
-              {#if row.chat.length > SHOWN && !expanded.has(r)}
-                <button class="link more" onclick={() => expanded.add(r)}>{row.chat.length - SHOWN} more</button>
+              {#if win && win.total > win.messages.length}
+                <button class="link more" onclick={() => expand(row)} disabled={loading.has(key)}
+                  >{(win.total - win.messages.length).toLocaleString()} more</button
+                >
               {/if}
             </div>
           {/if}
         </div>
       {/each}
-      {#if showChat && lines.length === 0 && chat.length > 0}
-        <div class="line">
-          <span></span>
-          <div class="chat">
-            {#each chat.slice(0, shown) as message, m (m)}
-              <ChatMessage {message} platform={vod.platform} highlight={highlightOf(message.id)} onplay={play} />
-            {/each}
-          </div>
-        </div>
-      {/if}
-      {#if shown < Math.max(rows.length, showChat && lines.length === 0 ? chat.length : 0)}
+      {#if shown < rows.length}
         <div class="more-rows" bind:this={sentinel}></div>
       {/if}
     </div>
     {#if showMap}
       <div class="rail" style:top="{headHeight}px" style:height="{Math.max(0, railHeight - headHeight)}px">
         <Minimap
-          times={mapTimes}
+          times={lineTimes}
+          histogram={chatCount > 0 ? overview?.histogram : undefined}
           duration={mapDuration}
           {view}
           label={mapLabel}
@@ -624,6 +709,11 @@
 
   .more {
     margin: 0 8px 4px;
+  }
+
+  /* The row for chat before the first line, when there's none. */
+  .line.empty {
+    display: none;
   }
 
   .more-rows {
