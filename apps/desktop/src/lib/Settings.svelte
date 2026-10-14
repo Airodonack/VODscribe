@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmoteProviders from "./EmoteProviders.svelte";
-  import { settings as appSettings } from "./settings.svelte";
+  import { settings as appSettings } from "./appSettings.svelte";
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";

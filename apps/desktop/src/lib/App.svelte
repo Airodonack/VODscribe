@@ -16,7 +16,7 @@
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { os } from "./platform";
   import { updates } from "./updates.svelte";
-  import { settings } from "./settings.svelte";
+  import { settings } from "./appSettings.svelte";
   import { theme } from "./theme.svelte";
 
   let setup = $state<SetupStatus | null>(null);

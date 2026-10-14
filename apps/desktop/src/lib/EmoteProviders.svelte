@@ -5,7 +5,7 @@
   import Icon from "./Icon.svelte";
   import bttvLogo from "./logos/bttv.png";
   import ffzLogo from "./logos/ffz.png";
-  import { settings } from "./settings.svelte";
+  import { settings } from "./appSettings.svelte";
 
   // The emote providers chat's word emotes come from (crates/core
   // `word_emotes`), in one row: click one to turn it on or off, drag it (or

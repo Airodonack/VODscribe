@@ -8,7 +8,7 @@
 import { api, type ChatOverview, type Vod, type WordEmote } from "./api";
 import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
 import { layers } from "./layers.svelte";
-import { settings } from "./settings.svelte";
+import { settings } from "./appSettings.svelte";
 
 /** What the marks follow: getters, so each effect and derived tracks only
  *  what it reads (an overview refreshed while chat downloads mustn't refetch
