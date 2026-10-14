@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmoteProviders from "./EmoteProviders.svelte";
+  import { settings as appSettings } from "./settings.svelte";
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -11,7 +13,7 @@
 
   let { oncleared }: { oncleared: () => void } = $props();
 
-  let device = $state<Device>("cpu");
+  let device = $derived<Device>(appSettings.value?.device ?? "cpu");
   let cacheBytes = $state<number | null>(null);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
@@ -54,7 +56,7 @@
   const keep = (u: UnlistenFn) => (destroyed ? u() : unlisten.push(u));
 
   onMount(async () => {
-    device = (await api.getSettings()).device;
+    await appSettings.load();
     keep(await events.gpuProgress((progress) => (step = progress)));
     keep(await events.ytDlpProgress((progress) => (ytDlpStep = progress)));
     keep(
@@ -81,8 +83,7 @@
   );
 
   async function choose(d: Device) {
-    device = d;
-    await api.setSettings({ device: d }).catch((e) => (error = String(e)));
+    await appSettings.update({ device: d });
   }
 
   // Platforms change often enough that an old yt-dlp stops working.
@@ -195,6 +196,12 @@
     {/if}
     {#if error}<p class="error-text hint">{error}</p>{/if}
     <p class="muted hint">Changes apply from the next VOD.</p>
+  </section>
+
+  <section>
+    <span class="eyebrow">Appearance</span>
+    <p class="label">Chat emotes</p>
+    <EmoteProviders />
   </section>
 
   <section>
@@ -365,6 +372,11 @@
   .detail {
     display: block;
     font-weight: 400;
+  }
+
+  .label {
+    margin: 0 0 6px;
+    font-size: 13px;
   }
 
   .hint {

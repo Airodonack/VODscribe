@@ -33,6 +33,14 @@ export type Device = "cpu" | "gpu";
 
 export interface Settings {
   device: Device;
+  /** Where chat's word emotes come from, in priority order (crates/core `settings::EmoteProviders`). */
+  emote_providers: EmoteProvider[];
+}
+
+/** A word emote provider (crates/core `word_emotes`): "7tv", "bttv" or "ffz". */
+export interface EmoteProvider {
+  id: string;
+  on: boolean;
 }
 
 export interface GpuStatus {

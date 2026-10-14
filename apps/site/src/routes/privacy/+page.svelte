@@ -43,10 +43,11 @@
       Twitch or YouTube (files.kick.com, static-cdn.jtvnw.net, yt3.ggpht.com), each fetched once and then kept on your computer.
     </li>
     <li>
-      <strong>Show the emotes chat types as words.</strong> For a Kick or Twitch VOD's chat, it asks 7TV, BetterTTV and FrankerFaceZ
-      (7tv.io, api.betterttv.net, api.frankerfacez.com) which emotes that channel has, by the channel's id (looked up from
-      Twitch, or from kick.com), at most once a day per channel. Their images come from those services (cdn.7tv.app, cdn.betterttv.net,
-      cdn.frankerfacez.com) and are kept on your computer like the others.
+      <strong>Show the emotes chat types as words, if you turn that on.</strong> Off until you turn on 7TV, BetterTTV or FrankerFaceZ
+      in Settings → Appearance. Then, for a Kick or Twitch VOD's chat, it asks the ones you turned on (7tv.io, api.betterttv.net,
+      api.frankerfacez.com) which emotes that channel has, by the channel's id (looked up from Twitch, or from kick.com),
+      at most once a day per channel. Their images come from those services (cdn.7tv.app, cdn.betterttv.net, cdn.frankerfacez.com)
+      and are kept on your computer like the others.
     </li>
     <li>
       <strong>Play them.</strong> YouTube and Twitch VODs play in those sites' own players, which load only when you play

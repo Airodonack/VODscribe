@@ -5,9 +5,10 @@
 //! shown, so chat fetched before a channel added an emote shows it too.
 //!
 //! Each provider is an entry in `PROVIDERS`: how it finds a channel's emotes
-//! and its global ones. A channel's list is kept for a day, and an older copy
-//! is used when the providers can't be reached. Images come from the providers'
-//! CDNs (`emotes::HOSTS`).
+//! and its global ones. None is contacted until the user turns it on in
+//! Settings (`settings::EmoteProviders`), which also orders them. Each list is
+//! kept for a day, and an older copy is used when a provider can't be reached.
+//! Images come from the providers' CDNs (`emotes::HOSTS`).
 
 use std::fs;
 use std::path::Path;
@@ -43,54 +44,70 @@ pub struct Channel {
 }
 
 struct Provider {
+    /// What settings call it (`PROVIDER_IDS`).
+    id: &'static str,
     /// A channel's emotes; none if it has no account there.
     channel: fn(&Channel) -> Result<Vec<WordEmote>>,
     /// The emotes everyone on `platform` has.
     global: fn(&str) -> Result<Vec<WordEmote>>,
 }
 
-/// In order of precedence when two have the same name: a channel's own emotes
-/// come before any global one.
 const PROVIDERS: &[Provider] = &[
-    Provider { channel: seven_tv_channel, global: seven_tv_global },
-    Provider { channel: bttv_channel, global: bttv_global },
-    Provider { channel: ffz_channel, global: ffz_global },
+    Provider { id: "7tv", channel: seven_tv_channel, global: seven_tv_global },
+    Provider { id: "bttv", channel: bttv_channel, global: bttv_global },
+    Provider { id: "ffz", channel: ffz_channel, global: ffz_global },
 ];
 
-/// How long a channel's list is used before it's fetched again.
+/// The providers settings can turn on, in their starting order.
+pub const PROVIDER_IDS: &[&str] = &["7tv", "bttv", "ffz"];
+
+/// How long a list is used before it's fetched again.
 const FRESH_SECS: u64 = 24 * 60 * 60;
 /// A busy channel's 7TV account, with its emote set, is a few MB.
 const MAX_BYTES: u64 = 16 << 20;
 
-/// The emotes VOD `info`'s chat writes as words, from the copy in `dir` while
-/// it's fresh. None for a platform the providers don't cover (YouTube, files).
-pub fn for_vod(info: &VodInfo, dir: &Path) -> Result<Vec<WordEmote>> {
+/// The emotes VOD `info`'s chat writes as words, from the providers `enabled`
+/// (ids, in priority order), using the copies in `dir` while they're fresh.
+/// The channel's own emotes come first, each provider's in that order, then
+/// the global ones; the first of each name is kept. None for a platform the
+/// providers don't cover (YouTube, files), and nothing is fetched when none
+/// is enabled. A provider that can't be reached is left out, with its older
+/// copy used if there is one.
+pub fn for_vod(info: &VodInfo, dir: &Path, enabled: &[&str]) -> Result<Vec<WordEmote>> {
     let Some(key) = cache_key(info) else { return Ok(Vec::new()) };
-    let path = dir.join(format!("{key}.json"));
-    let cached: Option<Cached> = fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok());
-    if let Some(c) = &cached
-        && now().saturating_sub(c.fetched_at) < FRESH_SECS
-    {
-        return Ok(c.emotes.clone());
+    let providers: Vec<&Provider> = enabled.iter().filter_map(|id| PROVIDERS.iter().find(|p| p.id == *id)).collect();
+    if providers.is_empty() {
+        return Ok(Vec::new());
     }
-    match fetch(info) {
-        Ok(emotes) => {
-            let fresh = Cached { fetched_at: now(), emotes };
-            fs::create_dir_all(dir)?;
-            let part = path.with_extension("part");
-            fs::write(&part, serde_json::to_vec(&fresh)?)?;
-            fs::rename(&part, &path)?;
-            Ok(fresh.emotes)
-        }
-        // Offline, or a provider is down: the last list beats none.
-        Err(e) => match cached {
-            Some(c) => {
-                eprintln!("emotes for {key}: {e:#}; using the copy from before");
-                Ok(c.emotes)
+    fs::create_dir_all(dir)?;
+    // Looked up once, only if a channel list needs fetching, and kept: ids don't change.
+    let channel_path = dir.join(format!("{key}.channel.json"));
+    let mut channel: Option<Channel> = fs::read(&channel_path).ok().and_then(|b| serde_json::from_slice(&b).ok());
+    let mut own = Vec::new();
+    let mut global = Vec::new();
+    for p in providers {
+        let path = dir.join(format!("{key}.{}.json", p.id));
+        own.extend(match read_fresh(&path) {
+            Some(list) => list,
+            None => {
+                let fetched = match &channel {
+                    Some(c) => (p.channel)(c),
+                    None => channel_of(info).and_then(|c| {
+                        write_atomic(&channel_path, &serde_json::to_vec(&c)?)?;
+                        (p.channel)(channel.insert(c))
+                    }),
+                };
+                settle(&path, fetched)
             }
-            None => Err(e),
-        },
+        });
+        let path = dir.join(format!("global-{}.{}.json", info.platform, p.id));
+        global.extend(match read_fresh(&path) {
+            Some(list) => list,
+            None => settle(&path, (p.global)(&info.platform)),
+        });
     }
+    let mut seen = std::collections::HashSet::new();
+    Ok(own.into_iter().chain(global).filter(|e| seen.insert(e.name.clone())).collect())
 }
 
 #[derive(Serialize, Deserialize)]
@@ -98,6 +115,40 @@ struct Cached {
     /// Unix seconds.
     fetched_at: u64,
     emotes: Vec<WordEmote>,
+}
+
+fn read_cached(path: &Path) -> Option<Cached> {
+    fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok())
+}
+
+/// The list at `path` if it's fresh.
+fn read_fresh(path: &Path) -> Option<Vec<WordEmote>> {
+    read_cached(path).filter(|c| now().saturating_sub(c.fetched_at) < FRESH_SECS).map(|c| c.emotes)
+}
+
+/// A list just fetched, kept at `path`; or, if fetching failed, the older
+/// copy there, or none.
+fn settle(path: &Path, fetched: Result<Vec<WordEmote>>) -> Vec<WordEmote> {
+    match fetched {
+        Ok(emotes) => {
+            let cached = Cached { fetched_at: now(), emotes };
+            if let Err(e) = serde_json::to_vec(&cached).map_err(Into::into).and_then(|b| write_atomic(path, &b)) {
+                eprintln!("{}: {e:#}", path.display());
+            }
+            cached.emotes
+        }
+        Err(e) => {
+            eprintln!("{}: {e:#}; using the copy from before, if any", path.display());
+            read_cached(path).map(|c| c.emotes).unwrap_or_default()
+        }
+    }
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let part = path.with_extension("part");
+    fs::write(&part, bytes)?;
+    fs::rename(&part, path)?;
+    Ok(())
 }
 
 /// A file name for VOD `info`'s channel: its platform and name, which are
@@ -118,23 +169,6 @@ fn cache_key(info: &VodInfo) -> Option<String> {
         true => return None,
     };
     Some(format!("{}-{safe}", info.platform))
-}
-
-/// The channel's emotes from every provider, then the global ones, the first
-/// of each name kept. A provider that fails fails the whole list, so a
-/// partial one isn't kept as if complete.
-fn fetch(info: &VodInfo) -> Result<Vec<WordEmote>> {
-    let channel = channel_of(info)?;
-    let mut all = Vec::new();
-    for p in PROVIDERS {
-        all.extend((p.channel)(&channel)?);
-    }
-    for p in PROVIDERS {
-        all.extend((p.global)(&channel.platform)?);
-    }
-    let mut seen = std::collections::HashSet::new();
-    all.retain(|e| seen.insert(e.name.clone()));
-    Ok(all)
 }
 
 /// VOD `info`'s channel id: Twitch's from the video, Kick's user id (which
@@ -382,12 +416,20 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_copy_is_used_without_asking() {
+    fn fresh_copies_are_used_in_priority_order_and_off_means_none() {
         let dir = crate::TempDir::new("word-emotes");
-        let emotes =
-            vec![WordEmote { name: "KEKW".into(), url: "https://cdn.7tv.app/emote/1/1x.webp".into(), overlay: false }];
-        let cached = Cached { fetched_at: now(), emotes: emotes.clone() };
-        fs::write(dir.join("twitch-geega.json"), serde_json::to_vec(&cached).unwrap()).unwrap();
+        let emote = |name: &str, id: &str| WordEmote {
+            name: name.into(),
+            url: format!("https://cdn.7tv.app/emote/{id}/1x.webp"),
+            overlay: false,
+        };
+        let keep = |file: &str, emotes: Vec<WordEmote>| {
+            write_atomic(&dir.join(file), &serde_json::to_vec(&Cached { fetched_at: now(), emotes }).unwrap()).unwrap()
+        };
+        keep("twitch-geega.7tv.json", vec![emote("KEKW", "seven")]);
+        keep("twitch-geega.ffz.json", vec![emote("KEKW", "ffz"), emote("OMEGALUL", "ffz")]);
+        keep("global-twitch.7tv.json", vec![emote("OMEGALUL", "global"), emote("EZ", "global")]);
+        keep("global-twitch.ffz.json", vec![]);
         let info = VodInfo {
             platform: "twitch".into(),
             platform_id: "1".into(),
@@ -398,7 +440,17 @@ mod tests {
             thumbnail: None,
             published: None,
         };
-        assert_eq!(for_vod(&info, &dir).unwrap(), emotes);
+        let shown = |enabled: &[&str]| {
+            for_vod(&info, &dir, enabled)
+                .unwrap()
+                .into_iter()
+                .map(|e| format!("{} {}", e.name, &e.url["https://cdn.7tv.app/emote/".len()..]))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(shown(&["7tv", "ffz"]), ["KEKW seven/1x.webp", "OMEGALUL ffz/1x.webp", "EZ global/1x.webp"]);
+        assert_eq!(shown(&["ffz", "7tv"]), ["KEKW ffz/1x.webp", "OMEGALUL ffz/1x.webp", "EZ global/1x.webp"]);
+        assert!(shown(&[]).is_empty());
+        assert!(shown(&["unknown"]).is_empty());
     }
 
     /// Asks the providers for real: `cargo test -p vodscribe-core -- --ignored word_emotes`.
@@ -415,11 +467,12 @@ mod tests {
             thumbnail: None,
             published: None,
         };
+        let dir = crate::TempDir::new("word-emotes-live");
         for info in [
             vod("twitch", "2899842479", "https://www.twitch.tv/videos/2899842479", "GEEGA"),
             vod("kick", "01a0b0d6-75c0-75a7-8050-a72ab4dc9e0f", "https://kick.com/barky/videos/01a0b0d6", "Barky"),
         ] {
-            let emotes = fetch(&info).unwrap();
+            let emotes = for_vod(&info, &dir, PROVIDER_IDS).unwrap();
             let overlays = emotes.iter().filter(|e| e.overlay).count();
             eprintln!("{}: {} emotes, {overlays} overlays", info.url, emotes.len());
             assert!(emotes.len() > 20, "{} has only {} emotes", info.url, emotes.len());

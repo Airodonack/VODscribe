@@ -8,6 +8,7 @@
 import { api, type ChatOverview, type Vod, type WordEmote } from "./api";
 import { EVENTS, eventColor, eventUsd, type EventKind } from "./events";
 import { layers } from "./layers.svelte";
+import { settings } from "./settings.svelte";
 
 /** What the marks follow, read each time it's needed. */
 export interface MarksOf {
@@ -56,13 +57,18 @@ export class Marks {
       );
     });
 
-    // Fetched once a day per channel (the app keeps the list), so this is
-    // usually quick; until it's in, those words show as words.
+    // From the providers turned on in Settings (none at first), again when
+    // they change. Fetched once a day per channel (the app keeps the list),
+    // so this is usually quick; until it's in, those words show as words.
+    void settings.load();
     $effect(() => {
       const { vod, canHaveChat } = this.#of();
       const id = vod.id;
+      const providers = settings.value?.emote_providers ?? [];
+      void JSON.stringify(providers);
       this.words = new Map();
       if (!canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick")) return;
+      if (!providers.some((p) => p.on)) return;
       api.chatWordEmotes(id).then(
         (list) => this.#of().vod.id === id && (this.words = new Map(list.map((e) => [e.name, e]))),
         (e) => console.warn("word emotes:", e),
