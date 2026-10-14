@@ -16,6 +16,8 @@
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { os } from "./platform";
   import { updates } from "./updates.svelte";
+  import { settings } from "./settings.svelte";
+  import { theme } from "./theme.svelte";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -117,10 +119,19 @@
     (...args: A) =>
       loaded ? f(...args) : early.push(() => f(...args));
 
+  // The theme chosen in Settings, and again whenever it changes.
+  $effect(() => {
+    const chosen = settings.value?.theme;
+    if (chosen) theme.apply(chosen);
+  });
+
   onMount(async () => {
     // The window starts hidden (tauri.conf.json) and is shown now that the page
-    // is in place, its background the theme's, rather than as a blank white
-    // window. (Not after an animation frame: a hidden window may never get one.)
+    // is in place, in the theme chosen, rather than as a blank white window or
+    // in the system's colors first. (Not after an animation frame: a hidden
+    // window may never get one.)
+    await settings.load();
+    theme.apply(settings.value?.theme ?? "system");
     void getCurrentWindow()
       .show()
       .catch(() => {});

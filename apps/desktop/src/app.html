@@ -16,8 +16,11 @@
       html.starting * {
         cursor: progress !important;
       }
+      html[data-theme="dark"] {
+        background: #141413;
+      }
       @media (prefers-color-scheme: dark) {
-        html {
+        html:not([data-theme="light"]) {
           background: #141413;
         }
       }

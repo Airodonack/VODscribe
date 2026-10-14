@@ -31,8 +31,11 @@ export interface Vod {
 
 export type Device = "cpu" | "gpu";
 
+export type ThemeChoice = "system" | "light" | "dark";
+
 export interface Settings {
   device: Device;
+  theme: ThemeChoice;
   /** Where chat's word emotes come from, in priority order (crates/core `settings::EmoteProviders`). */
   emote_providers: EmoteProvider[];
 }

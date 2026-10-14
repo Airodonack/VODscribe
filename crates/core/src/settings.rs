@@ -12,10 +12,21 @@ pub enum Device {
     Gpu,
 }
 
+/// The app's colors: the system's light or dark, or always one of them.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Theme {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Settings {
     pub device: Device,
+    pub theme: Theme,
     /// The emote providers chat's word emotes come from (`word_emotes`), in
     /// the order that wins when two have an emote of the same name. All off
     /// until the user turns them on, since each is a service contacted.

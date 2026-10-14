@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { theme } from "./theme.svelte";
   // A strip beside the transcript with the whole VOD top to bottom: how busy
   // it was at each moment, drawn as a mirrored waveform, and a box for the part
   // that's in view. Clicking or dragging on it scrolls there.
@@ -82,6 +83,8 @@
 
   $effect(() => {
     const ctx = canvas?.getContext("2d");
+    // The colors are read from the page, so a change of theme redraws.
+    void theme.dark;
     if (!canvas || !ctx || width === 0 || height === 0) return;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * dpr);

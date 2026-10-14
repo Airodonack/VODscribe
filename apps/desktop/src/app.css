@@ -27,8 +27,38 @@
   color-scheme: light dark;
 }
 
+/* Dark: when the system is (and Settings says System), or always when it
+   says Dark (theme.svelte.ts sets data-theme on <html>). The website has no
+   data-theme, so it follows the system. The two lists of dark colors are the
+   same (theme.test.mjs checks). */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141413;
+  --surface: #1c1c1b;
+  --surface-2: #262625;
+  --surface-3: #31312f;
+  --border: #2d2d2b;
+  --text: #ecece9;
+  --muted: #9b9b95;
+  --accent: #8b93ff;
+  --accent-text: #141413;
+  --accent-soft: #272a4a;
+  --mark: #7a4a0c;
+  --mark-text: #fef3c7;
+  --warn: #f5b041;
+  --danger: #f87171;
+  --danger-soft: #3f1d1d;
+  --ok: #4ade80;
+  --stage: #000000;
+  --shadow: 0 12px 32px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #141413;
     --surface: #1c1c1b;
     --surface-2: #262625;

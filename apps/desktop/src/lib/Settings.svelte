@@ -14,6 +14,12 @@
   let { oncleared }: { oncleared: () => void } = $props();
 
   let device = $derived<Device>(appSettings.value?.device ?? "cpu");
+  let themeChoice = $derived(appSettings.value?.theme ?? "system");
+  const THEMES = [
+    { id: "system", label: "System", icon: "monitor" },
+    { id: "light", label: "Light", icon: "sun" },
+    { id: "dark", label: "Dark", icon: "moon" },
+  ] as const;
   let cacheBytes = $state<number | null>(null);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
@@ -200,6 +206,20 @@
 
   <section>
     <span class="eyebrow">Appearance</span>
+    <p class="label">Theme</p>
+    <div class="themes" role="radiogroup" aria-label="Theme">
+      {#each THEMES as t (t.id)}
+        <button
+          role="radio"
+          aria-checked={themeChoice === t.id}
+          class:on={themeChoice === t.id}
+          onclick={() => appSettings.update({ theme: t.id })}
+        >
+          <Icon name={t.icon} size={14} />
+          {t.label}
+        </button>
+      {/each}
+    </div>
     <p class="label">Chat emotes</p>
     <EmoteProviders />
   </section>
@@ -377,6 +397,36 @@
   .label {
     margin: 0 0 6px;
     font-size: 13px;
+  }
+
+  /* One control, three parts: the chosen one filled. */
+  .themes {
+    display: inline-flex;
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .themes button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    font-size: 12px;
+    border: none;
+    border-radius: 0;
+    background: none;
+    color: var(--muted);
+  }
+
+  .themes button + button {
+    border-left: 1px solid var(--border);
+  }
+
+  .themes button.on {
+    color: var(--text);
+    background: var(--accent-soft);
   }
 
   .hint {
