@@ -96,6 +96,22 @@
   // reloading then would empty the column and throw the scroll position.
   let chatSeq = 0;
   let chatOf: number | null = null;
+  /** The newest message loaded (ids only grow as they're saved), to ask only for what's after it. */
+  let chatNewest = 0;
+  const newestOf = (lines: ChatLine[]) => lines.reduce((max, m) => Math.max(max, m.id), 0);
+
+  /** `a` and `b`, each in time order, as one list in time order. */
+  function mergeByTime(a: ChatLine[], b: ChatLine[]): ChatLine[] {
+    const out: ChatLine[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < a.length || j < b.length) {
+      const takeA =
+        j >= b.length || (i < a.length && (a[i].time < b[j].time || (a[i].time === b[j].time && a[i].id < b[j].id)));
+      out.push(takeA ? a[i++] : b[j++]);
+    }
+    return out;
+  }
   $effect(() => {
     const id = vodId;
     const status = chatStatus;
@@ -108,7 +124,11 @@
     // While it's fetched, what's arrived so far (it's saved a batch at a time).
     if (status !== "done" && status !== "pending") return;
     api.chat(id).then(
-      (c) => mine === chatSeq && keepPlace(() => (chat = c)),
+      (c) => {
+        if (mine !== chatSeq) return;
+        chatNewest = newestOf(c);
+        keepPlace(() => (chat = c));
+      },
       (e) => mine === chatSeq && (chatError = String(e)),
     );
   });
@@ -123,9 +143,15 @@
     const reload = () => {
       timer = undefined;
       last = Date.now();
+      // Only what's arrived since: a busy chat is tens of thousands of messages,
+      // too many to send and lay out again every time a batch lands.
       const mine = ++chatSeq;
-      api.chat(id).then(
-        (c) => mine === chatSeq && keepPlace(() => (chat = c)),
+      api.chat(id, chatNewest).then(
+        (fresh) => {
+          if (mine !== chatSeq || fresh.length === 0) return;
+          chatNewest = Math.max(chatNewest, newestOf(fresh));
+          keepPlace(() => (chat = mergeByTime(chat, fresh)));
+        },
         () => {},
       );
     };
@@ -234,25 +260,37 @@
   let timeOf = $derived(new Map(chat.map((m) => [m.id, m.time])));
   let matches = $state<{ id: string; color: string; ids: Set<number> }[]>([]);
   let matchSeq = 0;
+  // While chat arrives, the layers' searches run at most this often, not on every batch.
+  const MATCH_EVERY = 5000;
+  let matchedAt = 0;
   $effect(() => {
     const id = vodId;
     const wanted = shownLayers.map((l) => ({ id: l.id, color: l.color, terms: l.terms.map((t) => t.text) }));
     void chat.length;
+    const arriving = chatStatus === "pending";
     const mine = ++matchSeq;
     if (wanted.length === 0 || chat.length === 0) {
       matches = [];
       return;
     }
-    api
-      .chatMatches(
-        id,
-        wanted.map((w) => w.terms),
-      )
-      .then(
-        (found) =>
-          mine === matchSeq && (matches = wanted.map((w, i) => ({ id: w.id, color: w.color, ids: new Set(found[i]) }))),
-        () => mine === matchSeq && (matches = []),
-      );
+    const run = () => {
+      matchedAt = Date.now();
+      api
+        .chatMatches(
+          id,
+          wanted.map((w) => w.terms),
+        )
+        .then(
+          (found) =>
+            mine === matchSeq &&
+            (matches = wanted.map((w, i) => ({ id: w.id, color: w.color, ids: new Set(found[i]) }))),
+          () => mine === matchSeq && (matches = []),
+        );
+    };
+    const wait = arriving ? Math.max(0, MATCH_EVERY - (Date.now() - matchedAt)) : 0;
+    if (wait === 0) return void run();
+    const timer = setTimeout(run, wait);
+    return () => clearTimeout(timer);
   });
   // Chat events (events.ts): known from each message's kind, no search needed.
   let eventCounts = $derived.by(() => {

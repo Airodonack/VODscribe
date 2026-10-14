@@ -95,10 +95,11 @@ fn fetch(app: &AppHandle, id: i64) {
     }
 }
 
-/// VOD `vod_id`'s chat, oldest first.
+/// VOD `vod_id`'s chat, oldest first; with `after`, only the messages saved
+/// after that one, for a view keeping up with a fetch.
 #[tauri::command]
-pub(crate) async fn chat(state: State<'_, AppState>, vod_id: i64) -> CmdResult<Vec<ChatLine>> {
-    state.db.lock().unwrap().chat(vod_id).map_err(err)
+pub(crate) async fn chat(state: State<'_, AppState>, vod_id: i64, after: Option<i64>) -> CmdResult<Vec<ChatLine>> {
+    state.db.lock().unwrap().chat_after(vod_id, after.unwrap_or(0)).map_err(err)
 }
 
 /// Fetches VOD `id`'s chat again, after a failure.

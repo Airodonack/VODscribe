@@ -652,10 +652,16 @@ impl Db {
 
     /// VOD `vod_id`'s chat, oldest first.
     pub fn chat(&self, vod_id: i64) -> Result<Vec<ChatLine>> {
+        self.chat_after(vod_id, 0)
+    }
+
+    /// VOD `vod_id`'s chat messages saved after message `after_id` (ids only grow
+    /// as messages are saved), oldest first: what's arrived since the view last looked.
+    pub fn chat_after(&self, vod_id: i64, after_id: i64) -> Result<Vec<ChatLine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, time, author, color, parts, kind, amount FROM chat WHERE vod_id = ?1 ORDER BY time, id",
+            "SELECT id, time, author, color, parts, kind, amount FROM chat WHERE vod_id = ?1 AND id > ?2 ORDER BY time, id",
         )?;
-        let rows = stmt.query_map([vod_id], |r| {
+        let rows = stmt.query_map([vod_id, after_id], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, f64>(1)?,
@@ -1058,6 +1064,12 @@ mod tests {
 
         let lines = db.chat(a).unwrap();
         assert_eq!(lines.iter().map(|l| l.time).collect::<Vec<_>>(), [5.0, 25.0], "oldest first");
+        let newest = lines.iter().map(|l| l.id).max().unwrap();
+        db.add_chat(a, &[message(15.0, "late", "arrived later")], 0.0).unwrap();
+        let since = db.chat_after(a, newest).unwrap();
+        assert_eq!(since.iter().map(|l| l.author.as_str()).collect::<Vec<_>>(), ["late"], "only what's new");
+        db.set_chat(a, &chat).unwrap();
+        let lines = db.chat(a).unwrap();
         assert_eq!(lines[1].kind, Kind::Message);
         assert_eq!(lines[0].parts, [emote]);
 

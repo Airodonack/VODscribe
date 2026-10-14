@@ -170,7 +170,8 @@ export const api = {
   search: (query: string, filter: SearchFilter) =>
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
-  chat: (vodId: number) => invoke<ChatLine[]>("chat", { vodId }),
+  /** A VOD's chat, oldest first; with `after`, only the messages saved after that one (ids only grow). */
+  chat: (vodId: number, after?: number) => invoke<ChatLine[]>("chat", { vodId, after }),
   getTimeline: () => invoke<TimelineSettings>("get_timeline"),
   setTimeline: (timeline: TimelineSettings) => invoke<void>("set_timeline", { timeline }),
   /** For each list of terms, the ids of the VOD's chat messages with any of them as a whole word or phrase. */
