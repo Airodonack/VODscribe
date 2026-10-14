@@ -24,6 +24,10 @@
       a: "Kick, Twitch and YouTube links: past broadcasts, highlights and uploads. It also takes video and audio files from your computer.",
     },
     {
+      q: "Does it show the chat?",
+      a: "Yes, for Kick, Twitch and YouTube livestreams: the chat replay sits beside the transcript, lined up with what was being said, and search covers it too. A timeline shows how busy chat was over the whole stream, and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
+    },
+    {
       q: "Which languages does it understand?",
       a: "English and 24 other European languages, using NVIDIA's Parakeet speech model. It's very good with clear speech; names and game terms sometimes come out spelled differently.",
     },
@@ -109,13 +113,22 @@
       <Icon name="search" size={22} />
       <h2>Every word, searchable</h2>
       <p class="muted">
-        Type a phrase to see every time it was said, across all your VODs. Click one to play from there.
+        Type a phrase to see every time it was said or written in chat, across all your VODs. Click one to play from
+        there.
       </p>
     </div>
     <div>
       <Icon name="shield" size={22} />
       <h2>Stays on your computer</h2>
       <p class="muted">Transcribing happens on your own computer. No account, no uploads, nothing collected.</p>
+    </div>
+    <div>
+      <Icon name="message" size={22} />
+      <h2>Chat beside the transcript</h2>
+      <p class="muted">
+        The stream's chat, lined up with what was said, and a timeline of where it went wild: laughs, hype, subs and
+        tips.
+      </p>
     </div>
     <div>
       <Icon name="film" size={22} />

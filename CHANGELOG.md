@@ -2,6 +2,18 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.2.0 (unreleased)
+
+- Chat: for Kick, Twitch and YouTube livestreams, the chat replay sits beside the transcript, each line with the messages sent while it was said, emotes and all. Hide it with the Chat button. It's fetched in the background, shows as it arrives, and carries on where it stopped if interrupted.
+- Search covers chat too. The From button by the search box chooses audio, chat or both, and this VOD or all of them; choosing All VODs keeps it there as you switch VODs.
+- A timeline beside the transcript shows how busy chat was over the whole VOD. Click or drag on it to go there.
+- Timeline layers mark the moments you care about: laughter, hype and "clip it" to start, or any words and emotes, for every channel or one. Up to three show at once, and their messages are highlighted in chat.
+- Subs, gifts and tips (bits, KICKs, Super Chats and memberships) are marked in chat, and can be shown on the timeline, stronger where more money changed hands.
+- Long VODs with busy chats open, scroll and jump around quickly.
+- Removing or re-transcribing a VOD shows that it's under way, and the rest of the app keeps working meanwhile.
+- No white flash when the app opens.
+- Fixes: the GPU add-on's progress shows when Settings is reopened mid-download.
+
 ## 0.1.3 — 2026-10-13
 
 - Setup and the GPU add-on downloads have a Cancel button. Tools and model files that finished stay; the GPU add-on's own pack starts over.
