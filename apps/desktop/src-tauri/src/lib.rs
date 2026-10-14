@@ -55,6 +55,28 @@ fn err(e: impl Into<anyhow::Error>) -> String {
     format!("{:#}", e.into())
 }
 
+/// The arguments WebView2's browser starts with on Windows: wry's own, plus any
+/// in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. WebView2 ignores that variable
+/// once an app passes arguments itself, which wry always does, and it's how
+/// msedgedriver asks for a debugging port (the end-to-end tests, tests/e2e).
+/// The features each disables are merged: of two --disable-features, only the
+/// last would count.
+#[cfg(any(windows, test))]
+fn webview_args(extra: &str) -> String {
+    const WRY: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+    let (mut disabled, mut rest) = (Vec::new(), Vec::new());
+    for arg in WRY.split_whitespace().chain(extra.split_whitespace()) {
+        match arg.strip_prefix("--disable-features=") {
+            Some(features) => disabled.extend(features.split(',').filter(|f| !f.is_empty())),
+            None => rest.push(arg),
+        }
+    }
+    std::iter::once(format!("--disable-features={}", disabled.join(",")))
+        .chain(rest.into_iter().map(str::to_string))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     if let Some(vod) = db.vod(id).map_err(err)? {
         let _ = app.emit("vod", vod);
@@ -122,7 +144,13 @@ pub fn run() {
             // Hidden until App.svelte has mounted and shows it, so it never opens
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
-            let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?;
+            #[cfg(windows)]
+            let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+                Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
+                _ => builder,
+            };
+            let main = builder.build()?;
             // Behind the page, the theme's background (--bg in app.css), not white.
             let bg = match main.theme() {
                 Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
@@ -184,4 +212,19 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn webview_args_keep_wrys_and_add_the_drivers() {
+        assert_eq!(
+            super::webview_args(
+                "--disable-features=IgnoreDuplicateNavs,Prewarm --remote-debugging-port=0 --enable-logging"
+            ),
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,IgnoreDuplicateNavs,Prewarm \
+             --remote-debugging-port=0 --enable-logging"
+        );
+        assert_eq!(super::webview_args(""), "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    }
 }
