@@ -1195,7 +1195,7 @@ mod tests {
             .unwrap();
             conn.query_row("SELECT max(id) FROM vods", [], |r| r.get::<_, i64>(0)).into_iter().collect()
         };
-        let mut db = Db::open(&path).unwrap();
+        let db = Db::open(&path).unwrap();
         let a = db.add_vod(&info("a2")).unwrap().0;
         assert!(a.id > before[0]);
         db.delete_vod(a.id).unwrap();
