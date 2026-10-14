@@ -312,6 +312,14 @@ kbd {
   background-clip: padding-box;
 }
 
+/* A chatter's name, in chat and search results: a hint of their chat color
+   (--author), toned toward the text color so every one is readable here. */
+.chat-author {
+  font-weight: 600;
+  margin-right: 6px;
+  color: color-mix(in srgb, var(--author, var(--muted)) 65%, var(--text));
+}
+
 /* The "·" between inline details. */
 .sep {
   margin: 0 4px;

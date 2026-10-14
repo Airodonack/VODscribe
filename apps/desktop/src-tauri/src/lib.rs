@@ -102,9 +102,9 @@ pub fn run() {
                 url: tauri::WebviewUrl::External(app_server::start(app.handle())?.parse()?),
                 ..window
             };
-            // Hidden until the page has painted its first frame and shows it
-            // (App.svelte), so it never opens as a blank white window. If the page
-            // never gets that far, it's shown anyway, broken page and all.
+            // Hidden until App.svelte has mounted and shows it, so it never opens
+            // as a blank white window. If the page never gets that far, it's
+            // shown anyway, broken page and all.
             let main = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?.build()?;
             // Behind the page, the theme's background (--bg in app.css), not white.
             let bg = match main.theme() {

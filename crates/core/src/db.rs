@@ -884,8 +884,8 @@ impl Db {
 pub struct LibraryChat<'a> {
     pub db: &'a std::sync::Mutex<Db>,
     pub vod_id: i64,
-    /// Told after each batch is saved, with how many messages it had.
-    pub on_save: Box<dyn FnMut(usize) + 'a>,
+    /// Told after each batch is saved.
+    pub on_save: Box<dyn FnMut() + 'a>,
 }
 
 impl crate::chat::ChatStore for LibraryChat<'_> {
@@ -903,7 +903,7 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
 
     fn save(&mut self, messages: &[ChatMessage], position: f64) -> Result<()> {
         self.db.lock().unwrap().add_chat(self.vod_id, messages, position)?;
-        (self.on_save)(messages.len());
+        (self.on_save)();
         Ok(())
     }
 

@@ -14,7 +14,7 @@
     eventColor = "#888888",
     onseek,
   }: {
-    /** When each event happened (lines when there's no chat), in seconds. */
+    /** When each line started (with no chat to draw), in seconds. */
     times?: number[];
     /** Or, instead, how many happened in each of equal stretches of `duration`
      *  (chat, which can be far too many messages to send one by one). */

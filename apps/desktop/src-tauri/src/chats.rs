@@ -66,7 +66,7 @@ fn fetch(app: &AppHandle, id: i64) {
     let mut store = LibraryChat {
         db: &state.db,
         vod_id: id,
-        on_save: Box::new(|_| {
+        on_save: Box::new(|| {
             let _ = app.emit("chat-saved", id);
         }),
     };

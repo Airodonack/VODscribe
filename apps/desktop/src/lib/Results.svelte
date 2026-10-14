@@ -62,9 +62,9 @@
   <button class="row" class:from-chat={hit.source === "chat"} onclick={() => onplay(hit.vod_id, hit.time)}>
     <span class="time">{formatTime(hit.time)}</span>
     <span class="text">
-      {#if hit.source === "chat"}{#if !columns}<span class="said-in" title="Written in chat"
+      {#if hit.source === "chat"}{#if !columns}<span class="chat-icon" title="Written in chat"
             ><Icon name="message" size={12} /></span
-          >{/if}<span class="author" style:--author={hit.color} title={DEMO_NAMES}>{hit.author}</span>{/if}
+          >{/if}<span class="chat-author" style:--author={hit.color} title={DEMO_NAMES}>{hit.author}</span>{/if}
       {#each hit.parts as part, i (i)}{#if part.hit}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}
     </span>
   </button>
@@ -214,15 +214,8 @@
     padding-left: 17px;
   }
 
-  .said-in {
+  .chat-icon {
     color: var(--muted);
     margin-right: 6px;
-  }
-
-  /* As in chat beside the transcript (ChatMessage.svelte). */
-  .author {
-    font-weight: 600;
-    margin-right: 6px;
-    color: color-mix(in srgb, var(--author, var(--muted)) 65%, var(--text));
   }
 </style>

@@ -133,7 +133,6 @@ pub trait ChatStore {
 /// fetch got to. False when the site has no chat replay for it (a file on this
 /// computer, another site, or a YouTube video that wasn't a livestream).
 /// Reports a 0..1 fraction while it pages through.
-#[allow(clippy::too_many_arguments)]
 pub fn fetch(
     info: &VodInfo,
     yt_dlp: Option<&YtDlp>,

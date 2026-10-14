@@ -30,7 +30,7 @@
   {#if message.kind !== "message"}<span class="badge" style:--event={eventColor(platform)}
       >{eventBadge(message, platform)}</span
     >{/if}
-  <span class="author" style:--author={message.color} title={DEMO_NAMES}>{message.author}</span>
+  <span class="chat-author" style:--author={message.color} title={DEMO_NAMES}>{message.author}</span>
   {#each message.parts as part, i (i)}{#if part.type === "emote"}<Emote
         name={part.name}
         url={part.url}
@@ -73,13 +73,5 @@
   .message.highlighted {
     box-shadow: inset 2px 0 0 var(--highlight);
     background: color-mix(in srgb, var(--highlight) 12%, transparent);
-  }
-
-  .author {
-    font-weight: 600;
-    margin-right: 6px;
-    /* Names keep a hint of their chat color, toned toward the text color so
-       every one is readable on this theme's background. */
-    color: color-mix(in srgb, var(--author, var(--muted)) 65%, var(--text));
   }
 </style>

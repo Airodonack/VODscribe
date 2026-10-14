@@ -126,8 +126,8 @@
       style:max-height="{place?.maxHeight ?? 0}px"
     >
       <p class="intro muted">
-        Events and words to look for in chat, drawn on the timeline with their messages highlighted. Events line the
-        right edge; up to {MAX_VISIBLE} layers show at once.
+        Events and words to look for in chat, drawn on the timeline with their messages highlighted. Up to {MAX_VISIBLE}
+        layers show at once, besides the events.
       </p>
       {#if layers.error}<p class="error-text">{layers.error}</p>{/if}
       <section class="events" aria-label="Events">

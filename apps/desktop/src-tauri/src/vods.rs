@@ -171,21 +171,35 @@ pub(crate) async fn reorder_vods(state: State<'_, AppState>, ids: Vec<i64>) -> C
     state.db.lock().unwrap().reorder(&ids).map_err(err)
 }
 
+/// Rows erased at a time: about 50 ms each (chat; segments, a third as many),
+/// so the library is free in between for everything else.
+const ERASE_PART: usize = 1000;
+
+/// Runs `part` on a blocking thread until it erases nothing more, taking the
+/// library's lock for each part only: erasing a VOD's chat and transcript
+/// (`secure_delete`) takes seconds.
+async fn erase_in_parts(
+    app: &AppHandle,
+    part: impl Fn(&Db) -> anyhow::Result<usize> + Send + 'static,
+) -> CmdResult<()> {
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
+        let state = handle.state::<AppState>();
+        while part(&state.db.lock().unwrap())? > 0 {}
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+
 #[tauri::command]
 pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // Its chat and transcript first, a part at a time on a blocking thread, so
     // the rest of the app isn't kept waiting on the library while they're
     // erased. (No more chat is fetched for it.)
     state.chat.stop(id);
-    let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
-        let state = handle.state::<AppState>();
-        while state.db.lock().unwrap().delete_some_of(id, 1000)? > 0 {}
-        Ok(())
-    })
-    .await
-    .map_err(err)?
-    .map_err(err)?;
+    erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
     // A running stage removes the files once its process has stopped.
     let delete_row = || state.db.lock().unwrap().delete_vod(id);
     let running = state
@@ -236,15 +250,7 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     }
     // The old transcript, a part at a time on a blocking thread: a long one
     // takes a second or more to erase, and the app shouldn't wait on the library.
-    let handle = app.clone();
-    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
-        let state = handle.state::<AppState>();
-        while state.db.lock().unwrap().clear_some_segments(id, 300)? > 0 {}
-        Ok(())
-    })
-    .await
-    .map_err(err)?
-    .map_err(err)?;
+    erase_in_parts(&app, move |db| db.clear_some_segments(id, ERASE_PART / 3)).await?;
     let db = state.db.lock().unwrap();
     db.atomically(|db| {
         db.set_note(id, None)?;

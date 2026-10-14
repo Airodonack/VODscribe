@@ -59,7 +59,6 @@
         `Transcribe “${vod.title}” again? Its current transcript will be replaced, and the audio may need to download again.`,
       )
     ) {
-      // Erasing a long transcript takes a moment; the row says so meanwhile.
       clearing = true;
       onerror(null);
       api.retranscribeVod(vod.id).then(
