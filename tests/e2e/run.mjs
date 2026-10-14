@@ -26,25 +26,15 @@ if (!app) {
   console.error("usage: node tests/e2e/run.mjs <the installed app>");
   process.exit(2);
 }
-const FIXTURE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "fixtures",
-  "eagle-has-landed.mp3",
-);
+const FIXTURE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "eagle-has-landed.mp3");
 const PORT = 4444;
 const DRIVER = `http://127.0.0.1:${PORT}`;
 const MINUTE = 60_000;
 
-const driverArgs = process.env.NATIVE_DRIVER
-  ? ["--native-driver", process.env.NATIVE_DRIVER]
-  : [];
-const driver = spawn(
-  process.env.TAURI_DRIVER ?? "tauri-driver",
-  ["--port", String(PORT), ...driverArgs],
-  {
-    stdio: ["ignore", "inherit", "inherit"],
-  },
-);
+const driverArgs = process.env.NATIVE_DRIVER ? ["--native-driver", process.env.NATIVE_DRIVER] : [];
+const driver = spawn(process.env.TAURI_DRIVER ?? "tauri-driver", ["--port", String(PORT), ...driverArgs], {
+  stdio: ["ignore", "inherit", "inherit"],
+});
 
 async function wd(method, url, body) {
   const res = await fetch(DRIVER + url, {
@@ -53,15 +43,13 @@ async function wd(method, url, body) {
     body: body && JSON.stringify(body),
   });
   const json = await res.json();
-  if (!res.ok)
-    throw new Error(`${method} ${url}: ${JSON.stringify(json.value ?? json)}`);
+  if (!res.ok) throw new Error(`${method} ${url}: ${JSON.stringify(json.value ?? json)}`);
   return json.value;
 }
 
 let session;
 const started = Date.now();
-const step = (what) =>
-  console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${what}`);
+const step = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${what}`);
 
 /** Runs `body` (a function body, with `args`) in the page and returns its awaited result. */
 const js = (body, ...args) =>
@@ -72,11 +60,7 @@ const js = (body, ...args) =>
 
 /** Calls the app's command `cmd` from the page, as the interface does. */
 const invoke = (cmd, args = {}) =>
-  js(
-    `return window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1])`,
-    cmd,
-    args,
-  );
+  js(`return window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1])`, cmd, args);
 
 /** Polls `check` until it returns something truthy, or fails after `timeout` saying `what`. */
 async function until(what, check, timeout) {
@@ -91,9 +75,7 @@ async function until(what, check, timeout) {
     }
     await sleep(500);
   }
-  throw new Error(
-    `timed out waiting for ${what} (last: ${JSON.stringify(last)})`,
-  );
+  throw new Error(`timed out waiting for ${what} (last: ${JSON.stringify(last)})`);
 }
 
 const click = (selector) =>
@@ -114,11 +96,7 @@ const clickText = (text) =>
   );
 
 async function main() {
-  await until(
-    "tauri-driver",
-    () => fetch(`${DRIVER}/status`).then((r) => r.ok),
-    MINUTE,
-  );
+  await until("tauri-driver", () => fetch(`${DRIVER}/status`).then((r) => r.ok), MINUTE);
   session = (
     await wd("POST", "/session", {
       capabilities: { alwaysMatch: { "tauri:options": { application: app } } },
@@ -127,10 +105,7 @@ async function main() {
   step("app started");
   await until(
     "the page",
-    () =>
-      js(
-        `return !!window.__TAURI_INTERNALS__ && document.readyState === "complete"`,
-      ),
+    () => js(`return !!window.__TAURI_INTERNALS__ && document.readyState === "complete"`),
     MINUTE,
   );
   await js(`
@@ -148,30 +123,21 @@ async function main() {
       return real(url, init);
     };`);
 
-  // First-run setup: the tools and the speech model (about 1 GB, unless already there).
-  const ready = (s) =>
-    s.ffmpeg && s.yt_dlp && s.model && s.js_runtime && !s.running;
-  if (!ready(await invoke("setup_status"))) {
-    await until(
-      "setup's Download button",
-      () => clickText("Download").then(() => true),
-      MINUTE,
-    );
-    step("setup downloading");
-    await until(
-      "setup to finish",
-      async () => ready(await invoke("setup_status")),
-      30 * MINUTE,
-    );
-  }
-  await until(
-    "the library",
-    () =>
-      js(
-        `return !!document.querySelector('input[placeholder="Search for a phrase…"]')`,
-      ),
+  // First-run setup, if the app asks for it: the tools and the speech model
+  // (about 1 GB, unless it's there already). What it needs is the app's call.
+  const library = () => js(`return !!document.querySelector('input[placeholder="Search for a phrase…"]')`);
+  const setup = () =>
+    js(`return [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Download")`);
+  const screen = await until(
+    "setup or the library",
+    async () => ((await library()) && "library") || ((await setup()) && "setup"),
     MINUTE,
   );
+  if (screen === "setup") {
+    await clickText("Download");
+    step("setup downloading");
+    await until("setup to finish", library, 30 * MINUTE);
+  }
   step("set up");
 
   // Adding a file, through the file picker.
@@ -191,17 +157,13 @@ async function main() {
     "the transcription",
     async () => {
       const v = (await invoke("list_vods"))[0];
-      if (v.status === "error")
-        throw new Error(`transcription failed: ${v.error}`);
+      if (v.status === "error") throw new Error(`transcription failed: ${v.error}`);
       return v.status === "done" && v;
     },
     15 * MINUTE,
   );
-  const text = (await invoke("transcript", { vodId: done.id }))
-    .map((l) => l.text)
-    .join(" ");
-  if (!/landed/i.test(text))
-    throw new Error(`the transcript doesn't have "landed": ${text}`);
+  const text = (await invoke("transcript", { vodId: done.id })).map((l) => l.text).join(" ");
+  if (!/landed/i.test(text)) throw new Error(`the transcript doesn't have "landed": ${text}`);
   step(`transcribed: "${text}"`);
 
   // Searching, and playing from the result.
@@ -210,11 +172,7 @@ async function main() {
      input.value = "landed";
      input.dispatchEvent(new Event("input", { bubbles: true }));`,
   );
-  await until(
-    "a search result",
-    () => js(`return !!document.querySelector("button.row")`),
-    MINUTE,
-  );
+  await until("a search result", () => js(`return !!document.querySelector("button.row")`), MINUTE);
   await click("button.row");
   await until(
     "the player",
@@ -234,15 +192,10 @@ async function main() {
   await sleep(2000);
   const asked = await js(`return window.__e2e.asked.length`);
   if (asked !== 1) throw new Error(`Remove asked ${asked} times, not once`);
-  if ((await invoke("list_vods")).length !== 1)
-    throw new Error(`answering "Keep" removed the VOD`);
+  if ((await invoke("list_vods")).length !== 1) throw new Error(`answering "Keep" removed the VOD`);
   await js(`window.__e2e.answer = "Remove"`);
   await click('button[aria-label="Remove"]');
-  await until(
-    "the VOD to be removed",
-    async () => (await invoke("list_vods")).length === 0,
-    MINUTE,
-  );
+  await until("the VOD to be removed", async () => (await invoke("list_vods")).length === 0, MINUTE);
   step("removed, after asking");
 }
 
@@ -253,12 +206,8 @@ async function diagnose() {
     `return [...document.querySelectorAll(".error-text")].map((e) => e.textContent.trim()).filter(Boolean)`,
   ).catch((e) => [`(couldn't read the page: ${e.message})`]);
   if (errors.length) console.error(`the page shows: ${errors.join(" | ")}`);
-  const out =
-    process.env.E2E_OUT ??
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "out");
-  const png = await wd("GET", `/session/${session}/screenshot`).catch(
-    () => null,
-  );
+  const out = process.env.E2E_OUT ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "out");
+  const png = await wd("GET", `/session/${session}/screenshot`).catch(() => null);
   if (png) {
     mkdirSync(out, { recursive: true });
     writeFileSync(path.join(out, "failure.png"), Buffer.from(png, "base64"));
