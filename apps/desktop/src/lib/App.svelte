@@ -334,7 +334,11 @@
             onclearscope={() => (scopeAll = true)}
           />
         {:else if selected}
-          <Transcript vod={selected} onplay={play} />
+          <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
+               heights, a seek in progress) shows under the next while it loads. -->
+          {#key selected.id}
+            <Transcript vod={selected} onplay={play} />
+          {/key}
         {:else}
           <div class="home">
             <div class="empty">
