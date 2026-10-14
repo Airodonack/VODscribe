@@ -173,6 +173,19 @@ pub(crate) async fn reorder_vods(state: State<'_, AppState>, ids: Vec<i64>) -> C
 
 #[tauri::command]
 pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    // Its chat and transcript first, a part at a time on a blocking thread, so
+    // the rest of the app isn't kept waiting on the library while they're
+    // erased. (No more chat is fetched for it.)
+    state.chat.stop(id);
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<()> {
+        let state = handle.state::<AppState>();
+        while state.db.lock().unwrap().delete_some_of(id, 1000)? > 0 {}
+        Ok(())
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
     // A running stage removes the files once its process has stopped.
     let delete_row = || state.db.lock().unwrap().delete_vod(id);
     let running = state
@@ -185,7 +198,6 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     if running {
         delete_row().map_err(err)?;
     }
-    state.chat.stop(id);
     thumbs::remove(&state.paths.thumbs(), id);
     let _ = app.emit("vod-removed", id);
     Ok(())

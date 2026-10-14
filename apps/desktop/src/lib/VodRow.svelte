@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import { formatTime, platformName } from "./platform";
   import Progress from "./Progress.svelte";
+  import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
 
   let {
@@ -66,15 +67,30 @@
     }
   }
 
+  // Removing a VOD with a long transcript and busy chat takes a few seconds
+  // (its text is erased, not just dropped); the row says so meanwhile, and
+  // goes when it's done.
+  let removing = $state(false);
   function remove() {
     if (confirm(`Remove “${vod.title}”? Its transcript and any downloaded audio are erased from this computer.`)) {
       onremove();
-      act(api.deleteVod(vod.id));
+      removing = true;
+      onerror(null);
+      api.deleteVod(vod.id).catch((e) => {
+        removing = false;
+        onerror(String(e));
+      });
     }
   }
 </script>
 
-<button class="main" onclick={ontoggle} onkeydown={onkey} title={reorderable ? "Drag to reorder (Alt+↑/↓)" : undefined}>
+<button
+  class="main"
+  class:removing
+  onclick={ontoggle}
+  onkeydown={onkey}
+  title={reorderable ? "Drag to reorder (Alt+↑/↓)" : undefined}
+>
   <span class="thumb {vod.platform}">
     <!-- The platform tile shows until (and unless) the thumbnail covers it. -->
     <Icon name="play" size={14} />
@@ -90,7 +106,11 @@
   </span>
 </button>
 
-{#if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
+{#if removing}
+  <div class="status-area">
+    <span class="status"><Spinner label="Removing" /> Removing…</span>
+  </div>
+{:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
     {#if vod.status !== "done"}
       <span class="status" class:active class:error-text={vod.status === "error" && !stopped}>
@@ -120,7 +140,7 @@
   </div>
 {/if}
 
-<div class="actions">
+<div class="actions" class:removing inert={removing}>
   {#if vod.status === "error"}
     <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
@@ -170,6 +190,11 @@
 </div>
 
 <style>
+  /* Being removed: faded, and its actions out of reach. */
+  .removing {
+    opacity: 0.5;
+  }
+
   .main {
     display: flex;
     gap: 10px;

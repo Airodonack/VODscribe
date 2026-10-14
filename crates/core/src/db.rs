@@ -513,6 +513,26 @@ impl Db {
         Ok(())
     }
 
+    /// Deletes up to `limit` of VOD `vod_id`'s chat messages and transcript
+    /// segments; how many it deleted, 0 when there are none left. A VOD with a
+    /// busy chat has a hundred thousand rows and more, and erasing them (see
+    /// `secure_delete`) takes seconds, so they go a part at a time, letting
+    /// everything else use the library in between.
+    pub fn delete_some_of(&self, vod_id: i64, limit: usize) -> Result<usize> {
+        let chat = self.conn.execute(
+            "DELETE FROM chat WHERE id IN (SELECT id FROM chat WHERE vod_id = ?1 LIMIT ?2)",
+            params![vod_id, limit as i64],
+        )?;
+        if chat > 0 {
+            return Ok(chat);
+        }
+        // Segments cost more each, with their words: a third as many at a time.
+        Ok(self.conn.execute(
+            "DELETE FROM segments WHERE id IN (SELECT id FROM segments WHERE vod_id = ?1 LIMIT ?2)",
+            params![vod_id, (limit / 3).max(1) as i64],
+        )?)
+    }
+
     pub fn delete_vod(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
         // Copy the change into the main file and empty the WAL, which still holds the old pages.
@@ -1203,6 +1223,9 @@ mod tests {
         assert_eq!(db.chat(a).unwrap().len(), 1);
         db.set_chat_status(b, ChatStatus::Failed, Some("Kick isn't responding")).unwrap();
         assert_eq!(db.chat_pending().unwrap(), [b]);
+        while db.delete_some_of(a, 1).unwrap() > 0 {}
+        assert!(db.chat(a).unwrap().is_empty() && db.lines(a).unwrap().is_empty(), "deleted a part at a time");
+        assert!(db.vod(a).unwrap().is_some(), "the VOD itself stays until delete_vod");
         db.delete_vod(a).unwrap();
         assert!(db.search("gg", &SearchFilter::default(), 10).unwrap().hits.is_empty());
     }
