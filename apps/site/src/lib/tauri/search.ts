@@ -19,13 +19,15 @@ export function terms(text: string): string[] {
     .filter(Boolean);
 }
 
-/** Inclusive word-index ranges where `query` occurs; its last term matches as a prefix. */
-export function findPhrase(words: { terms: string[] }[], query: string[]): [number, number][] {
+/** Inclusive word-index ranges where `query` occurs; its last term matches as a prefix if `lastIsPrefix`. */
+export function findPhrase(words: { terms: string[] }[], query: string[], lastIsPrefix = true): [number, number][] {
   const flat = words.flatMap((w, i) => w.terms.map((t) => [t, i] as const));
   const hits: [number, number][] = [];
   const n = query.length;
   for (let i = 0; i + n <= flat.length;) {
-    const matched = query.every((q, j) => (j === n - 1 ? flat[i + j][0].startsWith(q) : flat[i + j][0] === q));
+    const matched = query.every((q, j) =>
+      j === n - 1 && lastIsPrefix ? flat[i + j][0].startsWith(q) : flat[i + j][0] === q,
+    );
     if (matched) {
       hits.push([flat[i][1], flat[i + n - 1][1]]);
       i += n;

@@ -11,6 +11,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The timeline centers what you click or drag to in the view, so a moment you aim at is in plain sight; before, it landed just under the header. Dragging the box moves it smoothly with the pointer, also across stretches without speech, where it used to jump and stall, and with chat shown such stretches scroll by minute.
 - Settings and the search's From filter open above everything, like the Timeline panel, so a playing video or a short window can't cover or cut them off.
 - Twitch bits cheered with newer cheermotes, such as PrideCheer, count as bits: each chat fetch asks Twitch for its current cheermotes rather than relying on a built-in list. Chats fetched before keep how they were counted.
+- Faster with big chats: searching one VOD of a large library, scrolling and dragging the timeline through busy chat, and fetching a chat again (which used to freeze the app for seconds). A one-letter search now finds that word, rather than every word starting with the letter.
 - A link pasted while dropped links or files are still being added waits its turn, and the errors of both show together, instead of the Add button coming back early.
 
 ## 0.2.0 — 2026-10-13

@@ -150,6 +150,8 @@ const LIMIT = 500;
 
 export async function search(query: string, filter: SearchFilter) {
   const q = terms(query);
+  // As in the app (db.rs `search`): one letter matches as a word, not as a prefix.
+  const prefix = (q.at(-1)?.length ?? 0) >= 2;
   const hits: SearchHit[] = [];
   if (q.length === 0) return { hits, truncated: false };
   for (const vod of await listVods()) {
@@ -157,7 +159,7 @@ export async function search(query: string, filter: SearchFilter) {
     const found: SearchHit[] = [];
     if (filter.speech !== false)
       for (const seg of await segments(vod.id)) {
-        const ranges = findPhrase(seg.words, q);
+        const ranges = findPhrase(seg.words, q, prefix);
         if (ranges.length === 0) continue;
         found.push({
           vod_id: vod.id,
@@ -171,7 +173,7 @@ export async function search(query: string, filter: SearchFilter) {
       }
     if (filter.chat !== false)
       for (const { line, words } of await chat(vod.id)) {
-        const ranges = findPhrase(words, q);
+        const ranges = findPhrase(words, q, prefix);
         if (ranges.length === 0) continue;
         found.push({
           vod_id: vod.id,
