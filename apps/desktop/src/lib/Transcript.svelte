@@ -170,7 +170,9 @@
       if (offsets[index] + before <= y) shift += height - before;
     }
     flushSync(() => measuredGen++);
-    if (shift && scroller) scroller.scrollTop += shift;
+    // Just after a seek, the moment sought stays centered; otherwise what's read stays put.
+    if (aimed()) place();
+    else if (shift && scroller) scroller.scrollTop += shift;
   }
   function measure(node: HTMLElement) {
     resizes ??= new ResizeObserver(remeasure);
@@ -259,7 +261,10 @@
         );
         // Rows fetched above the view grow (their estimates now count their
         // messages), which would push the view down.
-        keepPlace(() => (windows = next));
+        if (aimed()) {
+          flushSync(() => (windows = next));
+          place();
+        } else keepPlace(() => (windows = next));
       },
       (e) => {
         for (const row of wanted) loading.delete(keyOf(row));
@@ -421,18 +426,52 @@
     };
   });
 
-  /** Scrolls moment `time` to the middle of the view, as the minimap's box
-   *  centers on where it's clicked or dragged. Again once the rows that came
-   *  into view are measured, since far-off rows' heights are estimates. */
-  let seekFrame = 0;
-  function seek(time: number) {
-    const place = () => {
-      if (scroller) scroller.scrollTop = listTop + yAtTime(time) - headHeight - (railHeight - headHeight) / 2;
-    };
-    place();
-    cancelAnimationFrame(seekFrame);
-    seekFrame = requestAnimationFrame(place);
+  // Seeking scrolls a moment to the middle of the view, as the minimap's box
+  // centers on where it's clicked or dragged. Rows far off have estimated
+  // heights until they're laid out and measured, and grow when their chat
+  // arrives, so for a moment after a seek, each of those re-centers it
+  // (`remeasure`, `loadWindows`), until the reader scrolls by themselves.
+  const SETTLE_MS = 2000;
+  let aim: { time: number; until: number } | null = null;
+  const aimed = () => aim !== null && performance.now() < aim.until;
+
+  /** Scrolls the moment aimed at to the middle of the view: the chat message
+   *  nearest it once its row is laid out (a pixel of the minimap can be many
+   *  seconds, so a click a hair past an event still finds it), until then
+   *  where the row's time puts it. */
+  function place() {
+    if (!aim || !scroller) return;
+    const middle = headHeight + (railHeight - headHeight) / 2;
+    const time = aim.time;
+    let nearest: HTMLElement | null = null;
+    let gap = Infinity;
+    for (const m of root.querySelectorAll<HTMLElement>(".chat [data-time]")) {
+      const d = Math.abs(Number(m.dataset.time) - time);
+      if (d < gap) [nearest, gap] = [m, d];
+    }
+    // Only if it was said near then: further off, it's in a row's "more", or not laid out yet.
+    if (nearest && gap < 30) {
+      const top = nearest.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      scroller.scrollTop += top - middle;
+    } else {
+      scroller.scrollTop = listTop + yAtTime(time) - middle;
+    }
   }
+
+  function seek(time: number) {
+    aim = { time, until: performance.now() + SETTLE_MS };
+    place();
+  }
+
+  // Scrolling by wheel, touch or keys is the reader's own: no more re-centering.
+  $effect(() => {
+    const s = scroller;
+    if (!s) return;
+    const stop = () => (aim = null);
+    const kinds = ["wheel", "touchstart", "keydown"] as const;
+    for (const kind of kinds) s.addEventListener(kind, stop, { passive: true });
+    return () => kinds.forEach((kind) => s.removeEventListener(kind, stop));
+  });
 </script>
 
 <div class="layout">
@@ -524,6 +563,7 @@
 
   .rail {
     position: sticky;
+    user-select: none;
     top: 0;
     flex: none;
     width: 48px;

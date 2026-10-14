@@ -30,6 +30,7 @@
   class="message"
   class:highlighted={highlight}
   style:--highlight={highlight}
+  data-time={message.time}
   onclick={() => onplay(message.time)}
   title="Play from {formatTime(message.time)}"
 >

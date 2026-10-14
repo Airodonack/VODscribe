@@ -63,18 +63,19 @@
   let levels = $derived(histogram ? rebin(histogram, bins) : levelsOf(times, bins));
   let layerLevels = $derived(overlays.map((o) => ({ color: o.color, levels: levelsOf(o.times, bins) })));
 
-  // Each moment's events: how many, and what they were worth together. No
-  // smoothing, so each stays a sharp mark.
+  // Each moment's events: what they were worth together, by the 2 px slot
+  // they're in (for how strong a bar is), and each one's exact place, where
+  // its bar is drawn, so a bar is where the box is when its moment is in view.
   let eventMoments = $derived.by(() => {
-    const counts = new Float64Array(bins);
     const values = new Float64Array(bins);
     if (duration <= 0 || events.length === 0) return null;
-    for (const e of events) {
-      const i = Math.min(bins - 1, Math.max(0, Math.floor((e.time / duration) * bins)));
-      counts[i]++;
+    const at = events.map((e) => {
+      const f = Math.min(1, Math.max(0, e.time / duration));
+      const i = Math.min(bins - 1, Math.floor(f * bins));
       values[i] += e.value;
-    }
-    return { counts, values, topValue: Math.max(...values, 0.01) };
+      return { f, i };
+    });
+    return { at, values, topValue: Math.max(...values, 0.01) };
   });
   /** How opaque a moment worth `value` is: the biggest is solid, the least still shows. */
   const strength = (value: number, top: number) => 0.22 + 0.78 * Math.min(1, value / top);
@@ -101,14 +102,14 @@
     draw(levels, layerLevels.length || eventMoments ? style.borderTopColor : style.color);
     for (const layer of layerLevels) draw(layer.levels, layer.color);
     if (eventMoments) {
-      const { counts, values, topValue } = eventMoments;
+      const { at, values, topValue } = eventMoments;
       ctx.fillStyle = eventColor;
-      counts.forEach((count, i) => {
-        if (count <= 0) return;
-        // A bar across the whole strip, on top of the rest.
+      // A bar across the whole strip, on top of the rest, centered on its moment.
+      const thick = Math.max(1.5, step - 0.5);
+      for (const { f, i } of at) {
         ctx.globalAlpha = strength(values[i], topValue);
-        ctx.fillRect(0, i * step, width, Math.max(1.5, step - 0.5));
-      });
+        ctx.fillRect(0, f * height - thick / 2, width, thick);
+      }
       ctx.globalAlpha = 1;
     }
   });
@@ -130,12 +131,15 @@
     dragging = false;
     held = null;
   }
-  /** The box: the view, or while dragging, the view's size at the pointer. */
+  /** The box: the view, or while dragging, the view's size at the pointer.
+   *  At least a few pixels tall (a long VOD's view can be under one), grown
+   *  evenly about its middle, so its middle stays on the view's. */
+  const MIN_BOX = 6;
   let shown = $derived.by(() => {
     if (!view) return null;
-    if (held === null) return view;
-    const size = view.to - view.from;
-    const from = Math.min(1 - size, Math.max(0, held - size / 2));
+    const size = Math.min(1, Math.max(view.to - view.from, height > 0 ? MIN_BOX / height : 0));
+    const middle = held ?? (view.from + view.to) / 2;
+    const from = Math.min(1 - size, Math.max(0, middle - size / 2));
     return { from, to: from + size };
   });
 </script>
@@ -151,6 +155,8 @@
   tabindex="-1"
   title="{label}. Click or drag to go there."
   onpointerdown={(e) => {
+    // Not the start of a text selection, or of dragging a selection away.
+    e.preventDefault();
     dragging = true;
     try {
       // Keeps the drag going outside the strip.
@@ -166,22 +172,21 @@
 >
   <canvas bind:this={canvas}></canvas>
   {#if shown}
-    <div
-      class="view"
-      style:top="{shown.from * 100}%"
-      style:height="{Math.max(0.5, (shown.to - shown.from) * 100)}%"
-    ></div>
+    <div class="view" style:top="{shown.from * 100}%" style:height="{(shown.to - shown.from) * 100}%"></div>
   {/if}
 </div>
 
 <style>
   .minimap {
     position: relative;
+    /* A strip to drag on, never text to select. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
     width: 100%;
     height: 100%;
     cursor: pointer;
     touch-action: none;
-    user-select: none;
   }
 
   canvas {
@@ -199,7 +204,6 @@
     position: absolute;
     left: 0;
     right: 0;
-    min-height: 4px;
     border-radius: 3px;
     background: color-mix(in srgb, var(--text) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
