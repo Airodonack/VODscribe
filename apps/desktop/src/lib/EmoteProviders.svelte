@@ -68,6 +68,8 @@
 
   function onDown(e: PointerEvent, id: string) {
     if (e.button !== 0) return;
+    // A drag that ended without a click (let go off the button) mustn't eat this press's.
+    dragged = false;
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     drag = { id, x: e.clientX, grab: e.clientX - box.left, moved: false, dx: 0 };
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);

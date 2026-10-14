@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, Db, LibraryChat};
+use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
 use vodscribe_core::word_emotes::{self, WordEmote};
 use vodscribe_core::{chat, emotes, tools};
@@ -98,20 +98,8 @@ fn fetch(app: &AppHandle, id: i64) {
 }
 
 // The transcript view asks for the chat it shows, not all of it: a busy VOD's
-// is a hundred thousand messages and more. Each runs on a blocking thread and
-// holds the library's lock only for its query.
-
-/// Runs `f` with the library's read-only connection (`AppState::reads`) on a
-/// blocking thread, so it waits for neither the async runtime nor writes.
-pub(crate) async fn with_reads<T: Send + 'static>(
-    app: AppHandle,
-    f: impl FnOnce(&Db) -> anyhow::Result<T> + Send + 'static,
-) -> CmdResult<T> {
-    tauri::async_runtime::spawn_blocking(move || f(&app.state::<AppState>().reads.lock().unwrap()))
-        .await
-        .map_err(err)?
-        .map_err(err)
-}
+// is a hundred thousand messages and more. Each reads on the library's
+// read-only connection, on a blocking thread (`with_reads`).
 
 /// What the minimap and header need of VOD `vod_id`'s chat.
 #[derive(Serialize)]
@@ -132,7 +120,7 @@ pub(crate) async fn chat_overview(
     bins: usize,
     events: Option<bool>,
 ) -> CmdResult<ChatOverview> {
-    with_reads(app, move |db| {
+    crate::with_reads(app, move |db| {
         Ok(ChatOverview {
             count: db.chat_count(vod_id)?,
             histogram: db.chat_histogram(vod_id, duration, bins.min(10_000))?,
@@ -150,13 +138,13 @@ pub(crate) async fn chat_windows(
     ranges: Vec<(f64, f64)>,
     cap: usize,
 ) -> CmdResult<Vec<ChatWindow>> {
-    with_reads(app, move |db| db.chat_windows(vod_id, &ranges, cap)).await
+    crate::with_reads(app, move |db| db.chat_windows(vod_id, &ranges, cap)).await
 }
 
 /// The emotes in VOD `vod_id`'s chat, as (name, image URL).
 #[tauri::command]
 pub(crate) async fn chat_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<(String, String)>> {
-    with_reads(app, move |db| db.chat_emotes(vod_id)).await
+    crate::with_reads(app, move |db| db.chat_emotes(vod_id)).await
 }
 
 /// The emotes VOD `vod_id`'s chat writes as words (see `word_emotes`), from
@@ -168,7 +156,7 @@ pub(crate) async fn chat_word_emotes(app: AppHandle, vod_id: i64, providers: Vec
     if providers.is_empty() {
         return Ok(Vec::new());
     }
-    let Some(vod) = with_reads(app.clone(), move |db| db.vod(vod_id)).await? else { return Ok(Vec::new()) };
+    let Some(vod) = crate::with_reads(app.clone(), move |db| db.vod(vod_id)).await? else { return Ok(Vec::new()) };
     let dir = app.state::<AppState>().paths.emotes().join("words");
     tauri::async_runtime::spawn_blocking(move || {
         let ids: Vec<&str> = providers.iter().map(String::as_str).collect();
@@ -215,5 +203,5 @@ pub(crate) async fn chat_matches(
     vod_id: i64,
     terms: Vec<Vec<String>>,
 ) -> CmdResult<Vec<Vec<(i64, f64)>>> {
-    with_reads(app, move |db| terms.iter().map(|t| db.chat_matches(vod_id, t)).collect()).await
+    crate::with_reads(app, move |db| terms.iter().map(|t| db.chat_matches(vod_id, t)).collect()).await
 }

@@ -162,6 +162,12 @@ button.link:hover:not(:disabled) {
   text-decoration: underline;
 }
 
+/* A link that stands out as one: "Try again", "N more", "What's new". */
+button.link.accent,
+button.link.accent:hover:not(:disabled) {
+  color: var(--accent);
+}
+
 /* Square icon-only buttons. */
 button.icon {
   padding: 0;

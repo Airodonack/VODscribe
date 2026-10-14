@@ -16,7 +16,7 @@
       <span><Icon name="download" size={14} /> VODscribe {updates.available.version} is out.</span>
       <div class="actions">
         <button class="primary" onclick={() => updates.install()}>Update and restart</button>
-        <button class="link" onclick={() => openUrl(releaseNotes(updates.available!.version))}
+        <button class="link accent" onclick={() => openUrl(releaseNotes(updates.available!.version))}
           >What's new <Icon name="external" size={12} /></button
         >
       </div>
@@ -59,18 +59,12 @@
     gap: 12px;
   }
 
+  /* Beside the button: its icon in line, without the banner's button padding. */
   .banner .link {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     padding: 0;
-    border: none;
-    background: none;
-    color: var(--accent);
     font-size: 13px;
-  }
-
-  .banner .link:hover {
-    text-decoration: underline;
   }
 </style>

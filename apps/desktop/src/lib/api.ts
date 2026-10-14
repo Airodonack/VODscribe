@@ -203,8 +203,8 @@ export const api = {
   search: (query: string, filter: SearchFilter) =>
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
-  /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its events. */
-  /** `events: false` leaves out the subs, gifts and tips (`events` is then null). */
+  /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its
+   *  events; `events: false` leaves those out (`events` is then null). */
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>
     invoke<ChatOverview & { events: ChatLine[] | null }>("chat_overview", { vodId, duration, bins, events }),
   /** For each [from, to) in seconds, its first `cap` messages and how many it has. */

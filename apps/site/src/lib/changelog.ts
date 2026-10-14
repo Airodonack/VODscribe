@@ -1,8 +1,8 @@
 // The releases page (routes/releases) reads CHANGELOG.md at build time: each
 // "## <version> — <date>" heading, the "- " changes under it, and any plain
-// text before them ("First release."). A version
-// still being worked on ("## 0.3.0 (unreleased)") is left out, since the site
-// is published on every push, before the release is.
+// text before them ("First release."). A version still being worked on
+// ("## 0.3.0 (unreleased)") is left out, since the site is published on every
+// push, before the release is.
 
 export interface Release {
   version: string;

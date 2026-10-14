@@ -58,12 +58,12 @@ export class Adder {
       else errors.push(`“${item.length > 80 ? item.slice(0, 80) + "…" : item}” isn't a link.`);
     }
     if (!links.length && !files.length && !errors.length) return;
-    void this.#enqueue(async (errors) => {
-      for (const link of links) await api.addVod(link).catch((e) => errors.push(String(e)));
+    void this.#enqueue(async (failed) => {
+      for (const link of links) await api.addVod(link).catch((e) => failed.push(String(e)));
       if (files.length) {
         await api.addFiles(files).then(
-          (r) => errors.push(...r.errors),
-          (e) => errors.push(String(e)),
+          (r) => failed.push(...r.errors),
+          (e) => failed.push(String(e)),
         );
       }
     }, errors);

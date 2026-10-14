@@ -163,7 +163,7 @@ pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i6
 
 #[tauri::command]
 pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
-    crate::chats::with_reads(app, |db| db.vods()).await
+    crate::with_reads(app, |db| db.vods()).await
 }
 
 #[tauri::command]
@@ -171,13 +171,13 @@ pub(crate) async fn reorder_vods(state: State<'_, AppState>, ids: Vec<i64>) -> C
     state.db.lock().unwrap().reorder(&ids).map_err(err)
 }
 
-/// Rows erased at a time: about 50 ms each (chat; segments, a third as many),
-/// so the library is free in between for everything else.
+/// Rows erased at a time: a few ms each (chat; segments, a third as many), so
+/// the library is free in between for everything else.
 const ERASE_PART: usize = 1000;
 
 /// Runs `part` on a blocking thread until it erases nothing more, taking the
-/// library's lock for each part only: erasing a VOD's chat and transcript
-/// (`secure_delete`) takes seconds.
+/// library's lock for each part only: a VOD with a busy chat and a long
+/// transcript is a hundred thousand rows and more.
 async fn erase_in_parts(
     app: &AppHandle,
     part: impl Fn(&Db) -> anyhow::Result<usize> + Send + 'static,
@@ -257,7 +257,7 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
         db.set_model(id, None).map_err(err)?;
     }
     // The old transcript, a part at a time on a blocking thread: a long one
-    // takes a second or more to erase, and the app shouldn't wait on the library.
+    // is thousands of rows, and the app shouldn't wait on the library meanwhile.
     erase_in_parts(&app, move |db| db.clear_some_segments(id, ERASE_PART / 3)).await?;
     let db = state.db.lock().unwrap();
     db.atomically(|db| {
@@ -320,7 +320,7 @@ pub(crate) struct SearchResponse {
 
 #[tauri::command]
 pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) -> CmdResult<SearchResponse> {
-    let r = crate::chats::with_reads(app, move |db| db.search(&query, &filter, 500)).await?;
+    let r = crate::with_reads(app, move |db| db.search(&query, &filter, 500)).await?;
     Ok(SearchResponse { hits: r.hits, truncated: r.truncated })
 }
 
@@ -332,7 +332,7 @@ pub(crate) struct Line {
 
 #[tauri::command]
 pub(crate) async fn transcript(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Line>> {
-    let lines = crate::chats::with_reads(app, move |db| db.lines(vod_id)).await?;
+    let lines = crate::with_reads(app, move |db| db.lines(vod_id)).await?;
     Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
 }
 

@@ -101,6 +101,13 @@ pub fn terms(text: &str) -> Vec<String> {
     folded.split(|c: char| !c.is_alphanumeric()).filter(|t| !t.is_empty()).map(str::to_string).collect()
 }
 
+/// Whether a search's last term matches as a prefix (so results update while
+/// typing): only once it's two characters or more, since one begins too many
+/// words to look through. The website demo's search does the same (search.ts).
+pub fn last_is_prefix(terms: &[String]) -> bool {
+    terms.last().is_some_and(|t| t.chars().count() >= 2)
+}
+
 /// Finds each occurrence of `query` (a phrase whose last term may be a prefix)
 /// in `words`, returning inclusive word-index ranges.
 pub fn find_phrase(words: &[Word], query: &[String], last_is_prefix: bool) -> Vec<(usize, usize)> {
@@ -148,7 +155,8 @@ mod tests {
         let cases: Vec<Case> = serde_json::from_str(include_str!("../tests/phrase-search.json")).unwrap();
         for c in cases {
             let words: Vec<Word> = c.words.into_iter().map(|text| Word { text, start: 0.0, end: 0.0 }).collect();
-            assert_eq!(find_phrase(&words, &terms(&c.query), true), c.ranges, "{}", c.about);
+            let q = terms(&c.query);
+            assert_eq!(find_phrase(&words, &q, last_is_prefix(&q)), c.ranges, "{}", c.about);
         }
     }
 

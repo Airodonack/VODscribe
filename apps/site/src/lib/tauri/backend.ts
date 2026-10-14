@@ -3,7 +3,7 @@
 // the app (crates/core: db.rs `search`, transcript.rs `terms` and `find_phrase`).
 
 import type { ChatLine, ChatOverview, ChatWindow, Line, SearchFilter, SearchHit, Vod } from "desktop/lib/api.ts";
-import { findPhrase, highlight, terms } from "./search";
+import { findPhrase, highlight, lastIsPrefix, terms } from "./search";
 
 /** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
 type Segment = [text: string, start: number, wordStarts: number[]];
@@ -150,8 +150,7 @@ const LIMIT = 500;
 
 export async function search(query: string, filter: SearchFilter) {
   const q = terms(query);
-  // As in the app (db.rs `search`): one letter matches as a word, not as a prefix.
-  const prefix = (q.at(-1)?.length ?? 0) >= 2;
+  const prefix = lastIsPrefix(q);
   const hits: SearchHit[] = [];
   if (q.length === 0) return { hits, truncated: false };
   for (const vod of await listVods()) {

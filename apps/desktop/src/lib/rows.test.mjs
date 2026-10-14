@@ -64,9 +64,22 @@ test("with chat, a stretch of more than a minute without speech goes in minutes"
 });
 
 test("a gap within one minute, however long the gap's rows would be, stays one row", () => {
-  assert.deepEqual(spans(buildRows([line(61), line(119)], 600, true)).slice(1, 2), [["line", 61, 119]]);
+  assert.deepEqual(
+    spans(buildRows([line(61), line(119)], 600, true)).find((r) => r[0] === "line"),
+    ["line", 61, 119],
+  );
 });
 
 test("without chat, gaps stay one row", () => {
   assert.equal(buildRows([line(10), line(500)], 600, false).length, 2);
+});
+
+test("with chat, a first line more than a minute in has minutes of chat before it", () => {
+  assert.deepEqual(spans(buildRows([line(150)], 200, true)).slice(0, 3), [
+    ["chat", -FAR, 60],
+    ["chat", 60, 120],
+    ["chat", 120, 150],
+  ]);
+  const rows = buildRows([line(150)], 200, true);
+  assert.equal(new Set(rows.map((r) => r.key)).size, rows.length, "keys stay unique");
 });

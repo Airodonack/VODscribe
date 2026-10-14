@@ -5,13 +5,13 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.2.1 (unreleased)
 
 - Every version's changes are on vodscribe.com/releases. The version number in the sidebar opens this version's, and the update notice has a "What's new" link to the new one's.
-- Settings → Appearance chooses the theme: System (as before), Light or Dark. On Windows and macOS the title bar follows.
-- Settings has an Appearance section, where chat can show 7TV, BetterTTV and FrankerFaceZ emotes for Kick and Twitch VODs: the channel's own and the global ones, as most viewers of big channels see them, with "zero-width" emotes (a hat, a spin) drawn over the emote before them. Each is off until you turn it on, since it means contacting that service; drag them to choose which wins when two have an emote of the same name. Chat already in your library shows them too, and the Timeline panel's pills use their images.
-- The timeline appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.
-- The timeline centers what you click or drag to in the view, so a moment you aim at is in plain sight; before, it landed just under the header. Dragging the box moves it smoothly with the pointer, also across stretches without speech, where it used to jump and stall, and with chat shown such stretches scroll by minute.
+- Settings has a new Appearance section. Its theme chooses System (as before), Light or Dark; on Windows and macOS the title bar follows.
+- Chat can show 7TV, BetterTTV and FrankerFaceZ emotes for Kick and Twitch VODs (Settings → Appearance): the channel's own and the global ones, as most viewers of big channels see them, with "zero-width" emotes (a hat, a spin) drawn over the emote before them. Each is off until you turn it on, since it means contacting that service; drag them to choose which wins when two have an emote of the same name. Chat already in your library shows them too, and the Timeline panel's pills use their images.
+- The timeline strip beside the transcript appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.
+- Clicking or dragging on the timeline strip centers that moment in the view, so a moment you aim at is in plain sight; before, it landed just under the header, and its event marks sat slightly early. Dragging the box moves it smoothly with the pointer, also across stretches without speech, where it used to jump and stall, and with chat shown such stretches scroll by minute.
 - Settings and the search's From filter open above everything, like the Timeline panel, so a playing video or a short window can't cover or cut them off.
 - Twitch bits cheered with newer cheermotes, such as PrideCheer, count as bits: each chat fetch asks Twitch for its current cheermotes rather than relying on a built-in list. Chats fetched before keep how they were counted.
-- Faster with big chats: searching one VOD of a large library, scrolling and dragging the timeline through busy chat, fetching a chat again (which used to freeze the app for seconds), and removing a VOD. A one-letter search now finds that word, rather than every word starting with the letter.
+- Faster with big chats: searching one VOD of a large library, scrolling and dragging the timeline strip through busy chat, fetching a chat again (which used to freeze the app for seconds), and removing a VOD. A one-letter search now finds that word, rather than every word starting with the letter.
 - A link pasted while dropped links or files are still being added waits its turn, and the errors of both show together, instead of the Add button coming back early.
 
 ## 0.2.0 — 2026-10-13

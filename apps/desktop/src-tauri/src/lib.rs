@@ -39,6 +39,18 @@ struct AppState {
 
 type CmdResult<T> = Result<T, String>;
 
+/// Runs `f` with the library's read-only connection (`AppState::reads`) on a
+/// blocking thread, so it waits for neither the async runtime nor writes.
+async fn with_reads<T: Send + 'static>(
+    app: AppHandle,
+    f: impl FnOnce(&Db) -> anyhow::Result<T> + Send + 'static,
+) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(move || f(&app.state::<AppState>().reads.lock().unwrap()))
+        .await
+        .map_err(err)?
+        .map_err(err)
+}
+
 fn err(e: impl Into<anyhow::Error>) -> String {
     format!("{:#}", e.into())
 }

@@ -10,5 +10,7 @@
   { "about": "a term isn't joined across an apostrophe", "words": ["I", "don't", "know"], "query": "dont", "ranges": [], "marked": "I don't know" },
   { "about": "numbers are terms", "words": ["launched", "in", "2026,", "finally"], "query": "in 20", "ranges": [[1, 2]], "marked": "launched [in 2026,] finally" },
   { "about": "repeats don't overlap", "words": ["go", "go", "go"], "query": "go go", "ranges": [[0, 1]], "marked": "[go go] go" },
-  { "about": "every occurrence", "words": ["moon", "and", "the", "moon"], "query": "moon", "ranges": [[0, 0], [3, 3]], "marked": "[moon] and the [moon]" }
+  { "about": "every occurrence", "words": ["moon", "and", "the", "moon"], "query": "moon", "ranges": [[0, 0], [3, 3]], "marked": "[moon] and the [moon]" },
+  { "about": "one letter matches a whole word, not as a prefix", "words": ["an", "apple", "a", "day"], "query": "a", "ranges": [[2, 2]], "marked": "an apple [a] day" },
+  { "about": "a one-letter last term after others matches whole too", "words": ["was", "a", "clutch", "was", "an", "ace"], "query": "was a", "ranges": [[0, 1]], "marked": "[was a] clutch was an ace" }
 ]

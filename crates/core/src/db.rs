@@ -539,8 +539,8 @@ impl Db {
 
     /// Deletes up to `limit` of VOD `vod_id`'s chat messages and transcript
     /// segments; how many it deleted, 0 when there are none left. A VOD with a
-    /// busy chat has a hundred thousand rows and more, and erasing them (see
-    /// `secure_delete`) takes seconds, so they go a part at a time, letting
+    /// busy chat has a hundred thousand rows and more: about half a second to
+    /// erase (a few ms a thousand), so they go a part at a time, letting
     /// everything else use the library in between.
     pub fn delete_some_of(&self, vod_id: i64, limit: usize) -> Result<usize> {
         let chat = self.clear_some_chat(vod_id, limit)?;
@@ -552,23 +552,21 @@ impl Db {
     }
 
     /// Deletes up to `limit` of VOD `vod_id`'s chat messages; how many, 0 when
-    /// none are left. A busy chat takes seconds to delete, so it goes a part at
-    /// a time, between which others can use the library (see `LibraryChat::clear`).
+    /// none are left (a part at a time: see `delete_some_of`, `LibraryChat::clear`).
     pub fn clear_some_chat(&self, vod_id: i64, limit: usize) -> Result<usize> {
-        Ok(self.conn.execute(
-            "DELETE FROM chat WHERE id IN (SELECT id FROM chat WHERE vod_id = ?1 LIMIT ?2)",
-            params![vod_id, limit as i64],
-        )?)
+        self.clear_some("chat", vod_id, limit)
     }
 
     /// Deletes up to `limit` of VOD `vod_id`'s transcript segments; how many, 0
-    /// when none are left. A long transcript takes a second or more to erase,
-    /// so it goes a part at a time (see `delete_some_of`).
+    /// when none are left (a part at a time: see `delete_some_of`).
     pub fn clear_some_segments(&self, vod_id: i64, limit: usize) -> Result<usize> {
-        Ok(self.conn.execute(
-            "DELETE FROM segments WHERE id IN (SELECT id FROM segments WHERE vod_id = ?1 LIMIT ?2)",
-            params![vod_id, limit as i64],
-        )?)
+        self.clear_some("segments", vod_id, limit)
+    }
+
+    /// Deletes up to `limit` of VOD `vod_id`'s rows in `table` (one of the two above).
+    fn clear_some(&self, table: &str, vod_id: i64, limit: usize) -> Result<usize> {
+        let sql = format!("DELETE FROM {table} WHERE id IN (SELECT id FROM {table} WHERE vod_id = ?1 LIMIT ?2)");
+        Ok(self.conn.execute(&sql, params![vod_id, limit as i64])?)
     }
 
     /// Rewrites search index `index` ("chat_fts" or "segments_fts") without
@@ -888,7 +886,7 @@ impl Db {
             return Ok(SearchResults { hits: Vec::new(), truncated: false });
         }
         // Terms are alphanumeric only, so quoting them can't inject FTS syntax.
-        let prefix = q.last().is_some_and(|t| t.chars().count() >= 2);
+        let prefix = crate::transcript::last_is_prefix(&q);
         let fts = format!("\"{}\"{}", q.join(" "), if prefix { "*" } else { "" });
         // (library position, VOD id, hit), to merge the sources in order.
         let mut found: Vec<(i64, i64, SearchHit)> = Vec::new();

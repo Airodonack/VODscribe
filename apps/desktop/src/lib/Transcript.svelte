@@ -74,10 +74,10 @@
     const y = viewY();
     const index = rowAtY(y + 1);
     const within = y - offsets[index];
-    const key = rows[index] ? keyOf(rows[index]) : null;
+    const key = rows[index] ? rows[index].key : null;
     flushSync(change);
     if (!scroller || key === null) return;
-    const now = rows.findIndex((r) => keyOf(r) === key);
+    const now = rows.findIndex((r) => r.key === key);
     if (now >= 0) scroller.scrollTop = listTop + offsets[now] + within - headHeight;
   }
 
@@ -92,7 +92,6 @@
 
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
   let rows = $derived(buildRows(lines, vod.duration ?? 0, showChat));
-  const keyOf = (row: Row) => row.key;
 
   // Only the rows in and near the view are laid out; empty space of the right
   // height stands in for the rest, so a long VOD with a busy chat opens, toggles
@@ -103,13 +102,13 @@
   const measured = new Map<string, number>();
   let measuredGen = $state(0);
   /** Each row's key for its measured height, made once per set of rows. */
-  let heightKeys = $derived(rows.map((row) => `${showChat ? "chat" : "text"}|${keyOf(row)}`));
+  let heightKeys = $derived(rows.map((row) => `${showChat ? "chat" : "text"}|${row.key}`));
   let width = $state(0);
   function estimate(row: Row): number {
     const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
     const text = row.line ? 10 + 22.5 * Math.max(1, Math.ceil((row.line.text.length * 7.8) / textWidth)) : 0;
     if (!showChat) return text;
-    const win = windows.get(keyOf(row));
+    const win = windows.get(row.key);
     if (!row.line && !win?.total) return 0;
     // Before its chat is fetched, a row is guessed to hold a couple of messages.
     const messages = win ? win.messages.length : 2;
@@ -125,17 +124,19 @@
     rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(keys[i]) ?? estimate(row))));
     return out;
   });
-  /** The row at `y` in the list (clamped). */
-  function rowAtY(y: number): number {
+  /** The last row whose `at(i)` is at most `x`, or the first row (rows are in order). */
+  function lastRowAtOrBefore(at: (i: number) => number, x: number): number {
     let lo = 0;
     let hi = rows.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (offsets[mid] <= y) lo = mid;
+      if (at(mid) <= x) lo = mid;
       else hi = mid - 1;
     }
     return Math.max(0, lo);
   }
+  /** The row at `y` in the list (clamped). */
+  const rowAtY = (y: number) => lastRowAtOrBefore((i) => offsets[i], y);
 
   // The scroller's position, and where the list starts in it (below the header).
   let scrollTop = $state(0);
@@ -200,7 +201,7 @@
   const stale = new Set<string>();
   /** How many messages expanded rows show, by window. */
   const limits = new SvelteMap<string, number>();
-  const limitOf = (row: Row) => limits.get(keyOf(row)) ?? SHOWN;
+  const limitOf = (row: Row) => limits.get(row.key) ?? SHOWN;
   /** Windows being fetched: their "more" buttons wait. */
   const loading = new SvelteSet<string>();
   let chatGen = 0;
@@ -241,12 +242,12 @@
     const [from, to] = range;
     const wanted: Row[] = [];
     rows.slice(Math.max(0, from - 10), to + 10).forEach((row) => {
-      const key = keyOf(row);
+      const key = row.key;
       if (loading.has(key)) return;
       if (!windows.has(key) || stale.has(key)) wanted.push(row);
     });
     if (wanted.length === 0) return;
-    for (const row of wanted) loading.add(keyOf(row));
+    for (const row of wanted) loading.add(row.key);
     const fetch = (batch: Row[], cap: number) =>
       api.chatWindows(
         id,
@@ -263,7 +264,7 @@
         const next = new Map(windows);
         groups.forEach(([, batch], g) =>
           batch.forEach((row, i) => {
-            const key = keyOf(row);
+            const key = row.key;
             next.set(key, results[g][i]);
             stale.delete(key);
             loading.delete(key);
@@ -277,7 +278,7 @@
         } else keepPlace(() => (windows = next));
       },
       (e) => {
-        for (const row of wanted) loading.delete(keyOf(row));
+        for (const row of wanted) loading.delete(row.key);
         if (gen === chatGen) chatError = String(e);
       },
     );
@@ -291,7 +292,7 @@
   });
 
   function expand(row: Row) {
-    const key = keyOf(row);
+    const key = row.key;
     limits.set(key, limitOf(row) + MORE);
     stale.add(key);
     loadWindows();
@@ -301,21 +302,28 @@
   const BINS = 1000;
   let overview = $state.raw<ChatOverview | null>(null);
   let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0));
-  let overviewSeq = 0;
   /** The counts, and with `events` the subs, gifts and tips too, which
    *  otherwise keep what was had: while a fetch is saving, they're a megabyte
    *  and more for a busy chat, so they're read now and then, not each time. */
   const EVENTS_EVERY = 15000;
   let eventsAt = 0;
-  function refreshOverview(events = true) {
+  // Only the latest of each kind counts, so a quick refresh of the counts
+  // can't cancel a slower one that brings the events (a fetch just finished).
+  let eventsSeq = 0;
+  let countsSeq = 0;
+  function refreshOverview(withEvents = true) {
     if (!canHaveChat) return void (overview = null);
     const id = vodId;
-    const mine = ++overviewSeq;
-    if (events) eventsAt = Date.now();
-    api.chatOverview(id, mapDuration, BINS, events).then(
-      (o) =>
-        mine === overviewSeq && id === vodId && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
-      (e) => mine === overviewSeq && (chatError = String(e)),
+    // A refresh with the events has the counts too, newer than any asked for before it.
+    const mine = withEvents ? ++eventsSeq : ++countsSeq;
+    if (withEvents) {
+      countsSeq++;
+      eventsAt = Date.now();
+    }
+    const latest = () => id === vodId && mine === (withEvents ? eventsSeq : countsSeq);
+    api.chatOverview(id, mapDuration, BINS, withEvents).then(
+      (o) => latest() && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
+      (e) => latest() && (chatError = String(e)),
     );
   }
   let chatCount = $derived(overview?.count ?? 0);
@@ -325,6 +333,9 @@
   const REFRESH_EVERY = 1500;
   $effect(() => {
     const id = vodId;
+    // A change of status (the fetch done) reads everything afresh; a refresh
+    // still waiting here would only come after it.
+    void chatStatus;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let last = 0;
     const refresh = () => {
@@ -351,7 +362,7 @@
     return () => void unlisten.then((u) => u());
   });
 
-  let play = (time: number) => onplay(vod.id, time);
+  const play = (time: number) => onplay(vod.id, time);
 
   // The minimap at the right edge (Minimap.svelte): chat activity over the
   // whole VOD, or speech when there's no chat, as tall as the visible area.
@@ -411,16 +422,7 @@
   }
 
   /** The row moment `time` is in (clamped). */
-  function rowAtTime(time: number): number {
-    let lo = 0;
-    let hi = rows.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (rowStart(mid) <= time) lo = mid;
-      else hi = mid - 1;
-    }
-    return Math.max(0, lo);
-  }
+  const rowAtTime = (time: number) => lastRowAtOrBefore(rowStart, time);
 
   /** Where moment `time` is in the list: the inverse of `timeAtY`. */
   function yAtTime(time: number): number {
@@ -497,7 +499,7 @@
     let gap = 30;
     for (let index = at - 1; index <= at + 1; index++) {
       const row = rows[index];
-      for (const m of (row && windows.get(keyOf(row))?.messages) || []) {
+      for (const m of (row && windows.get(row.key)?.messages) || []) {
         const d = Math.abs(m.time - time);
         if (d < gap) [best, gap] = [{ index, time: m.time }, d];
       }
@@ -550,8 +552,8 @@
         </p>
       {/if}
       <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>
-      {#each rows.slice(range[0], range[1]) as row, k (keyOf(row))}
-        {@const key = keyOf(row)}
+      {#each rows.slice(range[0], range[1]) as row, k (row.key)}
+        {@const key = row.key}
         {@const win = windows.get(key)}
         <div class="line" data-index={range[0] + k} use:measure class:empty={!row.line && !win?.total}>
           {#if row.line}
@@ -575,7 +577,7 @@
                 />
               {/each}
               {#if win && win.total > win.messages.length}
-                <button class="link more" onclick={() => expand(row)} disabled={loading.has(key)}
+                <button class="link accent more" onclick={() => expand(row)} disabled={loading.has(key)}
                   >{(win.total - win.messages.length).toLocaleString()} more</button
                 >
               {/if}
@@ -633,18 +635,6 @@
 
   .transcript.with-chat {
     max-width: 1320px;
-  }
-
-  .link {
-    border: none;
-    background: none;
-    padding: 0;
-    color: var(--accent);
-    font-size: 12px;
-  }
-
-  .link:hover {
-    text-decoration: underline;
   }
 
   .with-chat .line {

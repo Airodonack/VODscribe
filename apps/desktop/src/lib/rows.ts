@@ -1,10 +1,10 @@
 // The transcript view's rows (Transcript.svelte): each transcript line with the
-// chat sent while it was being said, from its start to the next line's. Chat
-// before the first line gets a row of its own. Where there's no transcript
-// (yet), chat goes in rows of a minute each: all of it before the first line
-// arrives, after the last line while the rest is transcribed, and in a stretch
-// of more than a minute without speech, so the minimap can scroll through it
-// minute by minute rather than past one row of it.
+// chat sent while it was being said, from its start to the next line's. Where
+// there's no transcript (yet), chat goes in rows of a minute each: all of it
+// before the first line arrives, before a first line more than a minute in
+// (otherwise that's a row of its own), after the last line while the rest is
+// transcribed, and in a stretch of more than a minute without speech, so the
+// minimap can scroll through it minute by minute rather than past one row of it.
 
 import type { Line } from "./api";
 
@@ -43,7 +43,15 @@ export function buildRows(lines: Line[], duration: number, withChat: boolean): R
   if (lines.length === 0) return minuteRows(0, duration);
   // The minute after the last line's starts the rows of minutes, if the VOD goes on that long.
   const tail = minuteRows(Math.floor(lines[lines.length - 1].start / 60) + 1, duration);
-  const out: Row[] = [{ key: `before to ${lines[0].start}`, line: null, from: -FAR, to: lines[0].start }];
+  // Chat before the first line: one row, or rows of a minute if it starts more than a minute in.
+  const first = lines[0].start;
+  const out: Row[] = [];
+  if (first <= 60) out.push({ key: `before to ${first}`, line: null, from: -FAR, to: first });
+  else
+    for (let m = 0; m * 60 < first; m++) {
+      const to = Math.min((m + 1) * 60, first);
+      out.push({ key: `minute ${m} to ${to}`, line: null, from: m === 0 ? -FAR : m * 60, to });
+    }
   lines.forEach((line, i) => {
     const next = lines[i + 1]?.start;
     if (next === undefined) {

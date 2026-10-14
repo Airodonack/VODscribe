@@ -70,7 +70,7 @@
           No chat replay
         {:else if vod.chat === "failed"}
           <span class="error-text">Couldn't fetch chat</span>
-          <button class="link" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
+          <button class="link accent" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
             >Try again</button
           >
         {:else if chatError}
@@ -149,17 +149,5 @@
   .chat-toggle.on {
     background: var(--accent-soft);
     border-color: transparent;
-  }
-
-  .link {
-    border: none;
-    background: none;
-    padding: 0;
-    color: var(--accent);
-    font-size: 12px;
-  }
-
-  .link:hover {
-    text-decoration: underline;
   }
 </style>

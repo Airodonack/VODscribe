@@ -19,6 +19,12 @@ export function terms(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Whether a search's last term matches as a prefix: once it's two characters
+ *  or more, as in the app (crates/core transcript.rs `last_is_prefix`). */
+export function lastIsPrefix(query: string[]): boolean {
+  return [...(query.at(-1) ?? "")].length >= 2;
+}
+
 /** Inclusive word-index ranges where `query` occurs; its last term matches as a prefix if `lastIsPrefix`. */
 export function findPhrase(words: { terms: string[] }[], query: string[], lastIsPrefix = true): [number, number][] {
   const flat = words.flatMap((w, i) => w.terms.map((t) => [t, i] as const));
