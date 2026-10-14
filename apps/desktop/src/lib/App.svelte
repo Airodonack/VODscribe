@@ -354,8 +354,8 @@
               {#if vods.length === 0}
                 <h2>Your library is empty</h2>
                 <p class="muted">
-                  Paste a Kick, Twitch or YouTube link on the left, or drop a video file here. VODscribe turns what's
-                  said into text on your computer, and then you can search every word.
+                  Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file here.
+                  VODscribe turns what's said into text on your computer, and then you can search every word.
                 </p>
               {:else}
                 <h2>Search every VOD</h2>

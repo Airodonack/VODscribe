@@ -40,7 +40,7 @@
     {
       key: "yt-dlp",
       name: "Video downloader",
-      what: "gets the audio from Kick, Twitch and YouTube",
+      what: "gets VODs from Kick, Twitch, YouTube and other video sites",
       page: "https://github.com/yt-dlp/yt-dlp",
       checked: "VODscribe checked it against its makers' official signature, so it wasn't damaged or tampered with.",
       done: status.yt_dlp,
