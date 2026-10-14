@@ -45,10 +45,35 @@ export const DOWNLOADS: Download[] = [
   },
 ];
 
-/** The installer to offer first for `os`: the .rpm where the browser names an RPM distro (Fedora's and openSUSE's Firefox do), otherwise the OS's first. */
-export function primaryDownload(os: Os | null): Download | undefined {
+/**
+ * The installer to offer first for `os`: the .rpm where the browser names an
+ * RPM distro (Fedora's and openSUSE's Firefox do), otherwise the OS's first.
+ * For a Mac, only once `macChip` is known: an Apple Silicon app won't open on
+ * an Intel Mac, and the other way around it runs slowly.
+ */
+export function primaryDownload(os: Os | null, macChip: MacChip | null = null): Download | undefined {
+  if (os === "mac") return macChip ? DOWNLOADS.find((d) => d.url.includes(`macos-${macChip}`)) : undefined;
   const rpm = os === "linux" && /Fedora|SUSE|Red Hat/i.test(navigator.userAgent);
   return DOWNLOADS.find((d) => d.os === os && (!rpm || d.url.endsWith(".rpm")));
+}
+
+export type MacChip = "arm64" | "x64";
+
+/**
+ * Which chip this Mac has, where the browser says (Chrome and Edge do, when
+ * asked); null otherwise. Every Mac browser's user agent says "Intel", so
+ * that can't tell.
+ */
+export async function detectMacChip(): Promise<MacChip | null> {
+  const data = (
+    navigator as { userAgentData?: { getHighEntropyValues(h: string[]): Promise<{ architecture?: string }> } }
+  ).userAgentData;
+  try {
+    const arch = (await data?.getHighEntropyValues(["architecture"]))?.architecture;
+    return arch === "arm" ? "arm64" : arch === "x86" ? "x64" : null;
+  } catch {
+    return null;
+  }
 }
 
 /** This visitor's OS, or null for phones and anything else. */

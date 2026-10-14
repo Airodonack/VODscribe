@@ -73,9 +73,10 @@
         warning goes away.
       </p>
       <p>
-        <strong>To open it:</strong> click <strong>Done</strong>, then open
-        <strong>System Settings › Privacy & Security</strong>, scroll down, and click <strong>Open Anyway</strong>. You
-        only have to do this once.
+        <strong>To open it:</strong> open the download and drag VODscribe into <strong>Applications</strong>, then open
+        it from there, so it can update itself. When macOS refuses, click <strong>Done</strong>, then open
+        <strong>System Settings › Privacy & Security</strong>, scroll down, and click
+        <strong>Open Anyway</strong>. You only have to do this once.
       </p>
       <div class="sketches" aria-hidden="true">
         <figure>
@@ -100,6 +101,10 @@
           </div>
         </figure>
       </div>
+      <p class="muted older">
+        On macOS 14 or earlier: Control-click VODscribe in Applications, choose <strong>Open</strong>, then
+        <strong>Open</strong> again.
+      </p>
     {/if}
 
     <div class="check">
@@ -390,6 +395,11 @@
     border-radius: 5px;
     background: var(--accent);
     color: var(--accent-text);
+  }
+
+  .older {
+    margin-top: -8px;
+    font-size: 13px;
   }
 
   /* For the cautious: quieter, set apart. */

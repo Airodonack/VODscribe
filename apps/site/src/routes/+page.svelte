@@ -3,13 +3,17 @@
   import Icon from "desktop/lib/Icon.svelte";
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
-  import { DOWNLOADS, detectOs, primaryDownload, type Os } from "#lib/downloads.js";
+  import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
   import { SUPPORT } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
-  onMount(() => (os = detectOs()));
-  let primary = $derived(os ? primaryDownload(os) : undefined);
+  let macChip = $state<MacChip | null>(null);
+  onMount(() => {
+    os = detectOs();
+    if (os === "mac") detectMacChip().then((chip) => (macChip = chip));
+  });
+  let primary = $derived(os ? primaryDownload(os, macChip) : undefined);
   // Which download's heads-up is open (DownloadNote): the download itself goes ahead.
   let note = $state<Os | null>(null);
 
@@ -40,7 +44,7 @@
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, open it once, then go to System Settings › Privacy & Security and choose Open Anyway.",
+      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, then go to System Settings › Privacy & Security and choose Open Anyway (on macOS 14 or earlier, Control-click it in Applications and choose Open).",
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
@@ -83,7 +87,7 @@
     <div class="ctas">
       <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
         <Icon name="download" size={18} />
-        {primary ? `Download for ${primary.label}` : "Download"}
+        {primary ? `Download for ${primary.label}` : os === "mac" ? "Download for macOS" : "Download"}
       </a>
       <a class="button big" href={SUPPORT} target="_blank" rel="noopener">
         <span class="heart">❤︎</span> Support on Ko-fi
@@ -147,7 +151,7 @@
     <h2>Download VODscribe</h2>
     <ul class="files">
       {#each DOWNLOADS as d (d.url)}
-        <li class:mine={d.os === os}>
+        <li class:mine={d.os === os && (!macChip || d.url.includes(`macos-${macChip}`))}>
           <a href={d.url} onclick={() => (note = d.os)}>
             <Icon name="download" size={16} />
             <span class="name">{d.label}</span>
@@ -156,9 +160,15 @@
         </li>
       {/each}
     </ul>
+    {#if os === "mac" && !macChip}
+      <p class="small which">
+        Not sure which Mac you have? In the Apple menu, choose About This Mac: a “Chip” line (M1, M2 and later) means
+        Apple Silicon; a “Processor” line means Intel.
+      </p>
+    {/if}
     <p class="muted small">
-      For 64-bit Windows 10 and 11, macOS (Apple Silicon and Intel) and Linux. On first run it downloads what it needs
-      to transcribe (about 1 GB), checking each file before using it.
+      For 64-bit Windows 10 and 11, macOS 12 and later (Apple Silicon and Intel) and Linux. On first run it downloads
+      what it needs to transcribe (about 1 GB), checking each file before using it.
     </p>
   </section>
 
@@ -350,6 +360,10 @@
     margin-left: auto;
     font-size: 13px;
     text-align: right;
+  }
+
+  .which {
+    margin: 0 0 12px;
   }
 
   .files li.mine .name {
