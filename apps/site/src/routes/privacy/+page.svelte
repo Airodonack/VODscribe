@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated October 12, 2026</p>
+  <p class="muted">Last updated October 13, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -25,8 +25,9 @@
   <h2>The app</h2>
   <ul>
     <li>
-      Your library, transcripts and searches are stored only on your computer, in VODscribe's data folder (Settings
-      shows where). Video files you add from your computer are read where they are, and never copied or uploaded.
+      Your library, transcripts, chat replays, timeline layers and searches are stored only on your computer, in
+      VODscribe's data folder (Settings shows where). Video files you add from your computer are read where they are,
+      and never copied or uploaded.
     </li>
     <li>VODscribe has no analytics, telemetry or crash reporting.</li>
   </ul>
@@ -35,6 +36,11 @@
     <li>
       <strong>Get the VODs you add.</strong> It downloads their details and audio from Kick, Twitch or YouTube, the way your
       browser would.
+    </li>
+    <li>
+      <strong>Get their chat.</strong> For Kick and Twitch VODs it reads the chat replay from those sites, as their own pages
+      do (web.kick.com and gql.twitch.tv); for YouTube, through the video downloader. Emotes in chat are images from Kick,
+      Twitch or YouTube (files.kick.com, static-cdn.jtvnw.net, yt3.ggpht.com), each fetched once and then kept on your computer.
     </li>
     <li>
       <strong>Play them.</strong> YouTube and Twitch VODs play in those sites' own players, which load only when you play
@@ -61,7 +67,7 @@
   <p>
     vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
     like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
-    when you play a VOD.
+    when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one.
   </p>
 
   <h2>Donations</h2>
