@@ -4,6 +4,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.2.1 (unreleased)
 
+- Every version's changes are on vodscribe.com/releases. The version number in the sidebar opens this version's, and the update notice has a "What's new" link to the new one's.
 - Settings → Appearance chooses the theme: System (as before), Light or Dark. On Windows and macOS the title bar follows.
 - Settings has an Appearance section, where chat can show 7TV, BetterTTV and FrankerFaceZ emotes for Kick and Twitch VODs: the channel's own and the global ones, as most viewers of big channels see them, with "zero-width" emotes (a hat, a spin) drawn over the emote before them. Each is off until you turn it on, since it means contacting that service; drag them to choose which wins when two have an emote of the same name. Chat already in your library shows them too, and the Timeline panel's pills use their images.
 - The timeline appears as soon as chat is in, even before the transcript has its first line, and scrolls through the part still waiting to be transcribed.

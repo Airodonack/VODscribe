@@ -9,7 +9,7 @@
   import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
-  import { AUTHOR, SITE, SUPPORT } from "./links";
+  import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
   import { Adder } from "./adder.svelte";
   import { Reorder } from "./reorder.svelte";
@@ -148,15 +148,22 @@
 {/if}
 
 <aside>
-  <!-- Two sibling buttons, since buttons can't nest: the site link fills the
-       header and the credit sits on top of it, under the name. -->
+  <!-- Sibling buttons, since buttons can't nest: the site link fills the
+       header, the credit sits on top of it under the name, and the version
+       number at the right, linking to what's new in it. -->
   <div class="brand">
     <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
       <Logo size={28} tile />
       <span class="name">VODscribe</span>
-      {#if version}<span class="version muted">v{version}</span>{/if}
-      <Icon name="external" size={12} />
+      <span class="external"><Icon name="external" size={12} /></span>
     </button>
+    {#if version}
+      <button
+        class="version"
+        onclick={() => openUrl(releaseNotes(version!))}
+        title="What's new in {version.split(/[_+-]/)[0]}">v{version}</button
+      >
+    {/if}
     <button class="credit" onclick={() => openUrl(SUPPORT)} title="Support VODscribe on Ko-fi">
       Made by {AUTHOR}
     </button>
@@ -273,11 +280,29 @@
     letter-spacing: -0.01em;
   }
 
-  .version {
+  .external {
+    display: inline-flex;
     margin-left: auto;
+  }
+
+  /* Over the site link, left of its icon: what's new in this version. */
+  .version {
+    position: absolute;
+    right: 34px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 2px;
+    border: none;
+    background: none;
+    color: var(--muted);
     font-size: 12px;
+    font-weight: 400;
     font-variant-numeric: tabular-nums;
-    color: inherit;
+  }
+
+  .version:hover:not(:disabled) {
+    color: var(--accent);
+    text-decoration: underline;
   }
 
   .credit {

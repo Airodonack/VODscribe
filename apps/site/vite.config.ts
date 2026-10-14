@@ -59,5 +59,6 @@ export default defineConfig({
     // The app's components import Svelte from apps/desktop; there must be one copy.
     dedupe: ["svelte"],
   },
-  server: { fs: { allow: [here("../desktop")] } },
+  // The releases page reads the changelog at the repository's root.
+  server: { fs: { allow: [here("../desktop"), here("../../CHANGELOG.md")] } },
 });

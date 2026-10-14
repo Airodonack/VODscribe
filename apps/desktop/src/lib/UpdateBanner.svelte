@@ -1,6 +1,8 @@
 <script lang="ts">
   // Shown at the top of the library when a newer version is out.
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
+  import { releaseNotes } from "./links";
   import Progress from "./Progress.svelte";
   import { updates } from "./updates.svelte";
 </script>
@@ -12,7 +14,12 @@
       <Progress value={updates.progress ?? 0} indeterminate={updates.progress === null} thin />
     {:else}
       <span><Icon name="download" size={14} /> VODscribe {updates.available.version} is out.</span>
-      <button class="primary" onclick={() => updates.install()}>Update and restart</button>
+      <div class="actions">
+        <button class="primary" onclick={() => updates.install()}>Update and restart</button>
+        <button class="link" onclick={() => openUrl(releaseNotes(updates.available!.version))}
+          >What's new <Icon name="external" size={12} /></button
+        >
+      </div>
     {/if}
     {#if updates.error}<p class="error-text">{updates.error}</p>{/if}
   </div>
@@ -44,5 +51,26 @@
   .error-text {
     margin: 0;
     font-weight: 400;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .banner .link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font-size: 13px;
+  }
+
+  .banner .link:hover {
+    text-decoration: underline;
   }
 </style>
