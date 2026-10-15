@@ -5,7 +5,7 @@
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { carry } from "./dragout";
+  import { DRAG_SLOP, carry } from "./dragout";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
@@ -41,7 +41,7 @@
     press = { clip, x: e.clientX, y: e.clientY };
   }
   function onPointerMove(e: PointerEvent) {
-    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
     const { clip, x, y } = press;
     press = null;
     swallowClick = true;

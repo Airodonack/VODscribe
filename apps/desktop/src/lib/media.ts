@@ -1,5 +1,6 @@
-// The arithmetic behind the player for files played here (LocalPlayer.svelte):
-// which caption is up, the waveform's columns, and where a frame step lands.
+// The arithmetic behind the player and its timeline: which caption is up,
+// the waveform's columns, where a frame step or a cut lands, the stretches
+// cuts make, and the timeline's ticks.
 
 import type { Cue } from "./api";
 
@@ -46,6 +47,15 @@ export function columns(levels: Uint8Array, duration: number, columns: number): 
 export function stepTime(time: number, frames: number, fps: number): number {
   const frame = Math.floor(time * fps + 1e-3) + frames;
   return Math.max(0, (frame + 0.25) / fps);
+}
+
+/** The frame rate assumed until a player says (a site's player never does). */
+export const DEFAULT_FPS = 30;
+
+/** A quarter of a frame after a cut at `cut`, within 0..`duration`: where to
+ *  seek to show the frame it starts, whichever way the player rounds. */
+export function inFrame(cut: number, fps: number, duration: number): number {
+  return Math.min(duration, cut + 0.25 / fps);
 }
 
 /** Seconds between labeled ticks: the first step that leaves room for a label. */

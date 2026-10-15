@@ -9,6 +9,7 @@
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
   import Icon from "./Icon.svelte";
+  import { load, save } from "./stored";
   import Popover from "./Popover.svelte";
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -39,7 +40,7 @@
   let sources = $state<Sources>(savedSources());
   function savedSources(): Sources {
     try {
-      const saved = JSON.parse(localStorage.getItem(SOURCES) ?? "null");
+      const saved = JSON.parse(load(SOURCES) ?? "null");
       const audio = saved?.audio !== false;
       const chat = saved?.chat !== false;
       // Never neither, whatever was saved.
@@ -49,12 +50,7 @@
     }
   }
   $effect(() => {
-    const value = JSON.stringify({ audio: sources.audio, chat: sources.chat });
-    try {
-      localStorage.setItem(SOURCES, value);
-    } catch {
-      // Not remembered, which is fine.
-    }
+    save(SOURCES, JSON.stringify({ audio: sources.audio, chat: sources.chat }));
   });
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);

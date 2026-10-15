@@ -8,8 +8,9 @@
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
-  import { HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
-  import { cueAt, stepTime } from "./media";
+  import { DRAG_SLOP, HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
+  import { DEFAULT_FPS, cueAt, stepTime } from "./media";
+  import { load, save } from "./stored";
 
   let {
     vod,
@@ -31,27 +32,12 @@
   const VOLUME = "vodscribe.volume";
   const CAPTIONS = "vodscribe.captions";
 
-  function read(key: string): string | null {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
-  function write(key: string, value: string) {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      // Not remembered this time; nothing else depends on it.
-    }
-  }
-
   let video = $state<HTMLVideoElement>();
   let time = $state(0);
   // A file whose type didn't say it's sound alone finds out once loaded.
   let noPicture = $state(false);
   const pictureless = $derived(audio || noPicture);
-  let captionsOn = $state(read(CAPTIONS) !== "false");
+  let captionsOn = $state(load(CAPTIONS) !== "false");
   let cues = $state.raw<Cue[]>([]);
   // Until the file's own is known.
   let fps: number | null = null;
@@ -61,8 +47,8 @@
 
   onMount(() => {
     const v = video!;
-    const saved = Number(read(VOLUME));
-    if (read(VOLUME) !== null && saved >= 0 && saved <= 1) v.volume = saved;
+    const saved = Number(load(VOLUME));
+    if (load(VOLUME) !== null && saved >= 0 && saved <= 1) v.volume = saved;
     v.src = src;
     v.currentTime = start;
     if (autoplay) v.play().catch(() => {});
@@ -116,7 +102,7 @@
   export function step(frames: number) {
     if (!video || pictureless) return;
     video.pause();
-    seek(stepTime(video.currentTime, frames, fps ?? 30), false);
+    seek(stepTime(video.currentTime, frames, fps ?? DEFAULT_FPS), false);
   }
 
   export const sound = {
@@ -126,7 +112,7 @@
       if (!video) return;
       video.volume = volume;
       video.muted = volume === 0;
-      write(VOLUME, String(volume));
+      save(VOLUME, String(volume));
     },
     setMuted(muted: boolean) {
       if (video) video.muted = muted;
@@ -145,7 +131,7 @@
     on: () => captionsOn,
     toggle() {
       captionsOn = !captionsOn;
-      write(CAPTIONS, String(captionsOn));
+      save(CAPTIONS, String(captionsOn));
     },
   };
 
@@ -169,7 +155,7 @@
     }, HOLD_MS);
   }
   function onPictureMove(e: PointerEvent) {
-    if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= 4) clearTimeout(hold);
+    if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= DRAG_SLOP) clearTimeout(hold);
     pointer = { x: e.clientX, y: e.clientY };
   }
   function onPictureUp() {

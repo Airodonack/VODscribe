@@ -8,7 +8,8 @@
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { exportStretch, stretchAt } from "./dragout";
-  import { OWN_VODS_NOTE, PERMISSION_NOTE } from "./permission";
+  import { DEFAULT_FPS, inFrame } from "./media";
+  import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
@@ -136,7 +137,7 @@
   let captionsOn = $state(false);
   let playerDuration = $state(0);
   // Exact for the app's own player; others don't say, so marks there are as near as 30 fps gets.
-  let fps = $state(30);
+  let fps = $state(DEFAULT_FPS);
   let poll = 0;
   function read() {
     poll = requestAnimationFrame(read);
@@ -145,7 +146,7 @@
     now = p.time();
     playing = p.playing();
     playerDuration = p.duration?.() ?? 0;
-    fps = p.fps?.() ?? 30;
+    fps = p.fps?.() ?? DEFAULT_FPS;
     cuts.fps = fps;
     if (p.volume) [volume, muted] = [p.volume.get(), p.volume.muted()];
     if (p.rate) rate = p.rate.get();
@@ -175,10 +176,6 @@
   let exportHover = $state(false);
   const stretch = $derived(duration ? stretchAt(now, duration) : undefined);
   const dragKey = os === "mac" ? "Option" : os === "linux" ? "Alt (or Ctrl)" : "Alt";
-  async function exportHere() {
-    if (stretch) await exportStretch(stretch.start, stretch.end);
-  }
-  let hideNote = $state(false);
 
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
@@ -205,7 +202,7 @@
   );
 
   /** Split: cuts both ends of the selection, else cuts here (or takes away the cut here). */
-  function clip() {
+  function split() {
     if (cuts.selection) cuts.cutSelection();
     // Selected only when paused: cuts placed while watching leave the keys to the playhead.
     else cuts.toggle(now, fps, !playing);
@@ -270,7 +267,7 @@
       // Held down, it's one press.
       if (e.repeat) return e.preventDefault();
       collapsed = false;
-      if (key === "b") clip();
+      if (key === "b") split();
       else exportClip();
       e.preventDefault();
       return;
@@ -297,8 +294,7 @@
       const frames = frameKey ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1) : Math.round(step * fps);
       if (player?.playing()) player.togglePlay();
       const at = cuts.nudgeSelected(frames, fps, duration);
-      // A quarter-frame in: the frame the cut starts, whichever way the player rounds.
-      if (at !== null) seekTo(Math.min(duration, at + 0.25 / fps));
+      if (at !== null) seekTo(inFrame(at, fps, duration));
       e.preventDefault();
       return;
     }
@@ -436,15 +432,7 @@
         label="Before downloading a clip"
         width={340}
       >
-        <div class="note">
-          <p>{PERMISSION_NOTE}</p>
-          <p class="muted">{OWN_VODS_NOTE}</p>
-          <label><input type="checkbox" bind:checked={hideNote} /> Don't show this again</label>
-          <div class="buttons">
-            <button onclick={() => clips.answer(false)}>Cancel</button>
-            <button class="primary" onclick={() => clips.answer(true, hideNote)}>Download clip</button>
-          </div>
-        </div>
+        <PermissionNote action="Download clip" onanswer={(download, hide) => clips.answer(download, hide)} />
       </Popover>
       <div class="controls">
         {#if duration}
@@ -480,7 +468,7 @@
           <button
             class="action clip"
             class:picking={!!cuts.selection}
-            onclick={clip}
+            onclick={split}
             title={cuts.selection
               ? "Cut both ends of the selection (B)"
               : "Cut here, between this frame and the one before; the stretches between cuts can be exported as clips (B)"}
@@ -498,7 +486,11 @@
           >
             <Icon name="download" size={14} /> Export <kbd>E</kbd>
           </button>
-          <span class="context muted" title={context}>{context}</span>
+          {#if cuts.error}
+            <span class="context error-text" title={cuts.error}>{cuts.error}</span>
+          {:else}
+            <span class="context muted" title={context}>{context}</span>
+          {/if}
           {#if player?.volume && !player.ownControls}
             <button
               class="control"
@@ -692,29 +684,6 @@
 
   .export :global(svg) {
     color: var(--accent);
-  }
-
-  .note {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    font-size: 13px;
-  }
-
-  .note p {
-    margin: 0;
-  }
-
-  .note label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .note .buttons {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 
   .speed {

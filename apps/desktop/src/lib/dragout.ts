@@ -12,11 +12,13 @@ import { api, thumbUrl, type Clip, type Vod } from "./api";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { columns, stretches } from "./media";
+import { PEAKS_RATE, columns, stretches } from "./media";
 import { formatTime } from "./platform";
 
 /** How long a press is held before it picks the clip up. */
 export const HOLD_MS = 250;
+/** How far, in pixels, a press moves before it's a drag. */
+export const DRAG_SLOP = 4;
 const FLY_MS = 150;
 
 /** The file of the clip being dragged out, so the library doesn't add it if
@@ -30,7 +32,7 @@ export function isOutgoing(paths: string[]): boolean {
 }
 
 /** Starts the system drag of `clip`, if its file is made, showing `image` (a PNG) if given. */
-export async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
+async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   if (clip.status !== "ready" || !clip.file_path) return;
   outgoing = clip.file_path;
   clearTimeout(forget);
@@ -98,7 +100,7 @@ async function pictureOf(vod: Vod, time: number, ownPlayer: boolean): Promise<{ 
 function drawWave(canvas: HTMLCanvasElement, levels: Uint8Array, start: number, end: number) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  const shown = levels.subarray(Math.floor(start * 10), Math.ceil(end * 10) + 1);
+  const shown = levels.subarray(Math.floor(start * PEAKS_RATE), Math.ceil(end * PEAKS_RATE) + 1);
   const bars = columns(shown, end - start, Math.floor(canvas.width / 2));
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4f46e5";
   for (let i = 0; i < bars.length; i++) {

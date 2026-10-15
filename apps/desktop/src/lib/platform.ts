@@ -53,9 +53,12 @@ export function siteName(vod: Vod): string {
   }
 }
 
+/** Whether `vod` is from a site whose own player plays it here (YouTube, Twitch, Kick). */
+export const hasSitePlayer = (vod: Vod) => ["youtube", "twitch", "kick"].includes(vod.platform);
+
 /** Whether `vod`'s video is kept to play here: a site with no embed of its
  *  own (crates/core pipeline.rs `keeps_video`). */
-export const keepsVideo = (vod: Vod) => !["youtube", "twitch", "kick", "local"].includes(vod.platform);
+export const keepsVideo = (vod: Vod) => !hasSitePlayer(vod) && vod.platform !== "local";
 
 /** What to try when a video won't play here, for this computer's system. */
 export function playbackHint(): string {
@@ -88,13 +91,15 @@ export function watchUrl(vod: Vod, time: number): string {
 
 /** The video heights a download can be capped at (Settings → Storage). */
 export const HEIGHTS = [480, 720, 1080];
+/** The height downloads are capped at until another is picked (crates/core settings.rs `video_height`). */
+export const DEFAULT_HEIGHT = 1080;
 
 /** Roughly how many GB an hour of video takes at each height, as sites encode it. */
 const HOUR_GB: Record<number, [number, number]> = { 480: [0.7, 1.2], 720: [1.5, 2.5], 1080: [3, 5] };
 
 /** About how much `hours` of video at `height` takes, as "3 to 5 GB" (or MB, under a GB). */
 export function videoSize(height: number, hours = 1): string {
-  const [low, high] = (HOUR_GB[height] ?? HOUR_GB[1080]).map((gb) => gb * hours);
+  const [low, high] = (HOUR_GB[height] ?? HOUR_GB[DEFAULT_HEIGHT]).map((gb) => gb * hours);
   if (high < 1) {
     const mb = (gb: number) => Math.max(1, Math.round((gb * 1000) / 10) * 10);
     return `${mb(low)} to ${mb(high)} MB`;

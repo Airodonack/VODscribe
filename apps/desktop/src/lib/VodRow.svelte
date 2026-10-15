@@ -1,6 +1,7 @@
 <script lang="ts">
   import { settings as appSettings } from "./appSettings.svelte";
-  import { OWN_VODS_NOTE, PERMISSION_NOTE, hideNote, noteHidden } from "./permission";
+  import { hideNote, noteHidden } from "./permission";
+  import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import { videoDownloads } from "./videos.svelte";
   // The contents of one library row: thumbnail, title, status and actions. The
@@ -10,7 +11,7 @@
   import { demoOff } from "./demo";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { HEIGHTS, formatTime, siteName, videoSize } from "./platform";
+  import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
@@ -58,17 +59,16 @@
   // The whole video of a YouTube, Twitch or Kick VOD, downloaded on request to
   // play and clip here (videos.svelte.ts); other sites keep theirs anyway.
   videoDownloads.start();
-  const canKeep = $derived(["youtube", "twitch", "kick"].includes(vod.platform));
+  const canKeep = $derived(hasSitePlayer(vod));
   const keeping = $derived(videoDownloads.progress.get(vod.id));
   const keepError = $derived(videoDownloads.errors.get(vod.id));
-  const height = $derived(appSettings.value?.video_height ?? 1080);
+  const height = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   const sizeAt = (h: number) => (vod.duration ? `about ${videoSize(h, vod.duration / 3600)}` : "");
   const keepSize = $derived(sizeAt(height));
   // The quality picked in the note, for this download only.
-  let pickedHeight = $state(1080);
+  let pickedHeight = $state(DEFAULT_HEIGHT);
   let keepButton = $state<HTMLElement>();
   let asking = $state(false);
-  let hideAgain = $state(false);
   function keep() {
     if (keeping !== undefined) {
       stopKeeping();
@@ -79,11 +79,11 @@
       asking = true;
     }
   }
-  function answer(download: boolean) {
+  function answer(download: boolean, hide: boolean) {
     asking = false;
     if (!download) return;
     // Not asked again: the quality picked becomes the one downloads use.
-    if (hideAgain) {
+    if (hide) {
       hideNote();
       if (pickedHeight !== height) appSettings.update({ video_height: pickedHeight });
     }
@@ -317,9 +317,13 @@
 
 {#if canKeep}
   <Popover bind:open={asking} anchor={keepButton} label="Before downloading the video" width={340}>
-    <div class="note-popover">
-      <p>{PERMISSION_NOTE}</p>
-      <p class="muted">{OWN_VODS_NOTE}</p>
+    <PermissionNote
+      action="Download video"
+      hideLabel="Don't show this again{pickedHeight !== height
+        ? ` (and download at ${pickedHeight}p from now on)`
+        : ''}"
+      onanswer={answer}
+    >
       <div class="quality" role="radiogroup" aria-label="Video quality">
         {#each HEIGHTS as h (h)}
           <button
@@ -333,16 +337,7 @@
       <p class="muted">
         Up to {pickedHeight}p{sizeAt(pickedHeight) ? `, ${sizeAt(pickedHeight)}` : ""}. It's kept until you delete it.
       </p>
-      <label
-        ><input type="checkbox" bind:checked={hideAgain} /> Don't show this again{pickedHeight !== height
-          ? ` (and download at ${pickedHeight}p from now on)`
-          : ""}</label
-      >
-      <div class="buttons">
-        <button onclick={() => answer(false)}>Cancel</button>
-        <button class="primary" onclick={() => answer(true)}>Download video</button>
-      </div>
-    </div>
+    </PermissionNote>
   </Popover>
 {/if}
 
@@ -515,23 +510,6 @@
     transition: stroke-dasharray 0.25s linear;
   }
 
-  .note-popover {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    font-size: 13px;
-  }
-
-  .note-popover p {
-    margin: 0;
-  }
-
-  .note-popover label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
   .quality {
     display: flex;
     gap: 6px;
@@ -547,12 +525,6 @@
     border-color: var(--accent);
     background: var(--accent-soft);
     color: var(--text);
-  }
-
-  .note-popover .buttons {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 
   .act {

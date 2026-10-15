@@ -15,8 +15,8 @@
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
-  import { columns, frameStart, PEAKS_RATE, tickStep } from "./media";
-  import { carry, stretchAt } from "./dragout";
+  import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
+  import { DRAG_SLOP, carry, stretchAt } from "./dragout";
   import { formatTime, os } from "./platform";
   import { theme } from "./theme.svelte";
 
@@ -152,7 +152,6 @@
 
   // The stretch being taken out of the window, lit up while it's made.
   let taking = $state<{ start: number; end: number } | null>(null);
-  let down = false;
 
   /** The modifier that drags a stretch out: Alt (Option), or Ctrl too on Linux. */
   const dragsOut = (e: PointerEvent) => e.altKey || (os === "linux" && e.ctrlKey);
@@ -165,7 +164,6 @@
       return;
     }
     if (e.button !== 0) return;
-    down = true;
     if (dragsOut(e)) {
       // With no cuts, there's only the whole VOD: not a clip.
       const range = cuts.list.length ? stretchAt(timeAt(e.clientX), duration) : undefined;
@@ -211,7 +209,7 @@
     if (drag.kind === "view") {
       const dx = e.clientX - drag.x;
       const dy = e.clientY - drag.y;
-      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_SLOP) return;
       drag.moved = true;
       follow = false;
       // Up zooms in, down out; the time grabbed stays under the pointer as it pans.
@@ -225,7 +223,7 @@
     if (drag.kind === "scrub") {
       onseek(t);
     } else if (drag.kind === "edge") {
-      if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
       drag.moved = true;
       cuts.setEdge(drag.edge, frameStart(t, fps));
       drag.edge = cuts.selectedEdge ?? drag.edge;
@@ -238,7 +236,7 @@
         drag.moved = true;
         return;
       }
-      if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
       drag.moved = true;
       drag.at = frameStart(t, fps);
       onseek(inFrame(drag.at));
@@ -246,30 +244,28 @@
   }
 
   /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file. */
-  async function takeOut(range: { start: number; end: number }, x: number, y: number) {
+  async function takeOut(range: { start: number; end: number }, px: number, py: number) {
     taking = range;
+    const box = bar!.getBoundingClientRect();
     const from = new DOMRect(
-      bar!.getBoundingClientRect().left + Math.max(0, x0(range.start)),
-      bar!.getBoundingClientRect().top,
-      Math.max(4, Math.min(width, x0(range.end)) - Math.max(0, x0(range.start))),
+      box.left + Math.max(0, x(range.start)),
+      box.top,
+      Math.max(4, Math.min(width, x(range.end)) - Math.max(0, x(range.start))),
       HEIGHT,
     );
     try {
-      await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x, y });
+      await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
     } finally {
       taking = null;
     }
   }
-  const x0 = (t: number) => ((t - viewStart) / span) * width;
 
   /** How far off the timeline a cut is dragged to remove it. */
   const AWAY = 60;
 
-  /** A quarter of a frame after a cut: the frame it starts, whichever way the player rounds. */
-  const inFrame = (cut: number) => Math.min(duration, cut + 0.25 / fps);
+  const inFrame = (cut: number) => frameAfter(cut, fps, duration);
 
   function onUp() {
-    down = false;
     const done = drag;
     drag = null;
     if (done?.kind === "view" && !done.moved) {
@@ -316,7 +312,6 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="scrubber"
-  class:zoomed={span < duration}
   class:panning={drag?.kind === "view"}
   data-view-start={viewStart}
   data-span={span}
@@ -374,7 +369,6 @@
       <!-- A clip made: an underline along its stretch. -->
       <span
         class="made {clip.status}"
-        data-band={clip.id}
         style:left={pct(clip.start)}
         style:width={widthPct(clip.start, clip.end)}
         title="Clip: {clip.title}"

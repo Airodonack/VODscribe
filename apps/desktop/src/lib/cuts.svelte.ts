@@ -1,23 +1,24 @@
 // The open VOD's marks: cuts between frames that split it into stretches,
-// each of which can become a clip. X puts one where the playhead is (or takes
-// away the one there); a selected one moves a frame at a time with , and .
-// (Player.svelte), or by dragging its flag on the timeline (Scrubber.svelte).
+// each of which can become a clip. Split (B) puts one where the playhead is
+// (or takes away the one there); a selected one moves by frames with , and .
+// or by seconds with the arrows, J and L (Player.svelte), or by dragging it on
+// the timeline (Scrubber.svelte).
 // Saved per VOD (crates/core db.rs `marks`); changes show at once and are
 // saved after.
 
 import { api, type Mark } from "./api";
-import { frameStart, nudge } from "./media";
+import { DEFAULT_FPS, frameStart, nudge } from "./media";
 
 class Cuts {
   vodId = $state<number | null>(null);
   list = $state.raw<Mark[]>([]);
   selected = $state<number | null>(null);
-  /** A stretch picked (in the transcript) but not cut yet: Clip cuts both its ends. */
+  /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends. */
   selection = $state<{ start: number; end: number } | null>(null);
   /** The selection's edge selected, to drag or move a frame at a time. */
   selectedEdge = $state<"start" | "end" | null>(null);
   /** The open VOD's frame rate, as its player says (Player.svelte), for marks placed elsewhere. */
-  fps = 30;
+  fps = DEFAULT_FPS;
   error = $state<string | null>(null);
   #seq = 0;
 

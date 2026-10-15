@@ -1,7 +1,7 @@
-// The local player's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
+// The player's and timeline's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { columns, cueAt, frameStart, nudge, stepTime, stretches, tickStep } from "./media.ts";
+import { columns, cueAt, frameStart, inFrame, nudge, stepTime, stretches, tickStep } from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
   const cues = [
@@ -77,4 +77,10 @@ test("cuts split the video into stretches", () => {
     { start: 10, end: 40 },
     { start: 40, end: 60 },
   ]);
+});
+
+test("a seek to a cut lands a quarter of a frame into the frame it starts, short of the end", () => {
+  assert.equal(inFrame(1, 4, 10), 1.0625);
+  assert.equal(frameStart(inFrame(2 / 30, 30, 10), 30), 2 / 30);
+  assert.equal(inFrame(10, 30, 10), 10);
 });

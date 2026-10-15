@@ -8,7 +8,7 @@
   import Icon from "./Icon.svelte";
   import { ISSUES, LICENSES, PRIVACY } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
-  import { HEIGHTS, formatBytes, videoSize } from "./platform";
+  import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, videoSize } from "./platform";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
 
@@ -23,7 +23,7 @@
   ] as const;
   let cacheBytes = $state<number | null>(null);
   let mediaBytes = $state<number | null>(null);
-  let videoHeight = $derived(appSettings.value?.video_height ?? 1080);
+  let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<DownloadProgress | null>(null);

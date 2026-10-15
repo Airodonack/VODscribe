@@ -11,6 +11,7 @@
   import { formatTime } from "./platform";
   import { buildRows, linesSpan, type Row } from "./rows";
   import { cuts } from "./cuts.svelte";
+  import { load, save } from "./stored";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -50,7 +51,7 @@
   const CHAT_OPEN = "vodscribe.chatOpen";
   let chatError = $state<string | null>(null);
   let chatProgress = $state<number | null>(null);
-  let chatOpen = $state(read(CHAT_OPEN) !== "false");
+  let chatOpen = $state(load(CHAT_OPEN) !== "false");
   let hasChat = $derived(vod.platform !== "local");
   // A VOD without a chat replay (a video that wasn't a livestream, say): its
   // toggle is grayed out and the column stays shut.
@@ -58,14 +59,6 @@
   let noChat = $derived(chatStatus === "none");
   let showChat = $derived(hasChat && chatOpen && !noChat);
   let canHaveChat = $derived(hasChat && (chatStatus === "done" || chatStatus === "pending"));
-
-  function read(key: string): string | null {
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
 
   let root: HTMLDivElement;
 
@@ -87,11 +80,7 @@
 
   function toggleChat() {
     keepPlace(() => (chatOpen = !chatOpen));
-    try {
-      localStorage.setItem(CHAT_OPEN, String(chatOpen));
-    } catch {
-      // Not remembered, which is fine.
-    }
+    save(CHAT_OPEN, String(chatOpen));
   }
 
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
@@ -369,7 +358,7 @@
   const play = (time: number) => onplay(vod.id, time);
 
   // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
-  // Clip then cuts either side); a click without a drag still plays the line.
+  // Split then cuts either side); a click without a drag still plays the line.
   let drag = $state<{ from: number; to: number } | null>(null);
   let pointer = { x: 0, y: 0 };
   let moved = false;
