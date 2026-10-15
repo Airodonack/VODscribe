@@ -99,7 +99,8 @@
   {/if}
   {#if !clips.list.length && !clips.ghost}
     <span class="hint muted">
-      <Icon name="scissors" size={13} /> To clip, press <kbd>I</kbd> where it starts and <kbd>O</kbd> where it ends.
+      <Icon name="scissors" size={13} /> To clip, drag across lines of the transcript, or press <kbd>I</kbd> where it
+      starts and <kbd>O</kbd> where it ends.
     </span>
   {/if}
   {#if clips.error}

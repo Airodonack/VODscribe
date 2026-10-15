@@ -1,7 +1,7 @@
 // The transcript view's rows (rows.ts): node --test apps/desktop/src/lib/rows.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FAR, buildRows } from "./rows.ts";
+import { FAR, buildRows, linesSpan } from "./rows.ts";
 
 /** @param {number} start @returns {import("./api").Line} */
 const line = (start) => ({ start, text: "hi" });
@@ -82,4 +82,17 @@ test("with chat, a first line more than a minute in has minutes of chat before i
   ]);
   const rows = buildRows([line(150)], 200, true);
   assert.equal(new Set(rows.map((r) => r.key)).size, rows.length, "keys stay unique");
+});
+
+test("a run of lines spans from the first one's start to the last one's end", () => {
+  const lines = [
+    { start: 1, end: 2.5, text: "a" },
+    { start: 3, end: 4, text: "b" },
+    { start: 6, text: "c" },
+    { start: 9, text: "d" },
+  ];
+  assert.deepEqual(linesSpan(lines, 0, 1), { start: 1, end: 4 });
+  assert.deepEqual(linesSpan(lines, 1, 0), { start: 1, end: 4 }, "dragged upwards");
+  assert.deepEqual(linesSpan(lines, 2, 2), { start: 6, end: 9 }, "no end: to the next line");
+  assert.deepEqual(linesSpan(lines, 3, 3), { start: 9, end: 14 }, "the last, with no end");
 });

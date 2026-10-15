@@ -9,7 +9,8 @@
   import { eventColor } from "./events";
   import { Marks } from "./marks.svelte";
   import { formatTime } from "./platform";
-  import { buildRows, type Row } from "./rows";
+  import { buildRows, linesSpan, type Row } from "./rows";
+  import { clips } from "./clips.svelte";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -367,6 +368,99 @@
 
   const play = (time: number) => onplay(vod.id, time);
 
+  // Pressing on a line and dragging across others picks them as a clip
+  // (clips.svelte.ts); a click without a drag still plays the line.
+  let drag = $state<{ from: number; to: number } | null>(null);
+  let pointer = { x: 0, y: 0 };
+  let moved = false;
+  let swallowClick = false;
+  let scrolling = 0;
+
+  /** The index in `rows` of the line row under the point, if any. */
+  function lineRowAt(x: number, y: number): number | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>(".line");
+    const i = el && root.contains(el) ? Number(el.dataset.index) : NaN;
+    return Number.isInteger(i) && rows[i]?.line ? i : null;
+  }
+
+  function onRowDown(e: PointerEvent, index: number) {
+    if (e.button !== 0 || e.pointerType === "touch") return;
+    drag = { from: index, to: index };
+    moved = false;
+    pointer = { x: e.clientX, y: e.clientY };
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!drag) return;
+    pointer = { x: e.clientX, y: e.clientY };
+    follow();
+    // Near the top or bottom of the view, it scrolls on, for picks longer than a screen.
+    if (!scrolling) scrolling = requestAnimationFrame(autoScroll);
+  }
+
+  function follow() {
+    if (!drag) return;
+    const i = lineRowAt(pointer.x, pointer.y);
+    if (i !== null && i !== drag.to) {
+      drag.to = i;
+      moved = true;
+    }
+  }
+
+  function autoScroll() {
+    scrolling = 0;
+    if (!drag || !scroller) return;
+    const box = scroller.getBoundingClientRect();
+    const edge = 48;
+    const speed =
+      pointer.y < box.top + edge
+        ? -(box.top + edge - pointer.y)
+        : pointer.y > box.bottom - edge
+          ? pointer.y - (box.bottom - edge)
+          : 0;
+    if (!speed) return;
+    scroller.scrollBy(0, Math.max(-24, Math.min(24, speed / 2)));
+    follow();
+    scrolling = requestAnimationFrame(autoScroll);
+  }
+
+  function onPointerUp() {
+    if (!drag) return;
+    const { from, to } = drag;
+    drag = null;
+    cancelAnimationFrame(scrolling);
+    scrolling = 0;
+    if (!moved) return;
+    swallowClick = true;
+    const first = lines.indexOf(rows[from].line!);
+    const last = lines.indexOf(rows[to].line!);
+    if (first < 0 || last < 0) return;
+    const { start, end } = linesSpan(lines, first, last);
+    // Picked on a VOD the player isn't showing: show it there, from the pick's start.
+    if (clips.vodId !== vod.id) {
+      clips.open(vod.id);
+      clips.pick(start, end, vod.duration);
+      play(start);
+    } else {
+      clips.pick(start, end, vod.duration);
+    }
+  }
+
+  function onRowClick(time: number) {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    play(time);
+  }
+
+  /** Whether row `index` is in the lines being dragged across, or in the range picked. */
+  function picked(index: number, row: Row): boolean {
+    if (drag) return index >= Math.min(drag.from, drag.to) && index <= Math.max(drag.from, drag.to);
+    const ghost = clips.vodId === vod.id ? clips.ghost : null;
+    return !!ghost && !!row.line && row.line.start >= ghost.start - 0.01 && row.line.start < ghost.end - 0.01;
+  }
+
   // The minimap at the right edge (Minimap.svelte): chat activity over the
   // whole VOD, or speech when there's no chat, as tall as the visible area.
   let scroller = $state<HTMLElement | null>(null);
@@ -527,6 +621,8 @@
   });
 </script>
 
+<svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
+
 <div class="layout">
   <TranscriptHead
     {vod}
@@ -544,7 +640,14 @@
     bind:height={headHeight}
   />
   <div class="cols">
-    <div class="transcript" id="transcript" class:with-chat={showChat} bind:this={root} bind:clientWidth={width}>
+    <div
+      class="transcript"
+      id="transcript"
+      class:with-chat={showChat}
+      class:dragging={drag}
+      bind:this={root}
+      bind:clientWidth={width}
+    >
       {#if error}
         <p class="error-text">{error}</p>
       {:else if lines.length === 0}
@@ -558,10 +661,20 @@
       {#each rows.slice(range[0], range[1]) as row, k (row.key)}
         {@const key = row.key}
         {@const win = windows.get(key)}
-        <div class="line" data-index={range[0] + k} use:measure class:empty={!row.line && !win?.total}>
+        <div
+          class="line"
+          data-index={range[0] + k}
+          use:measure
+          class:empty={!row.line && !win?.total}
+          class:picked={row.line && picked(range[0] + k, row)}
+        >
           {#if row.line}
             {@const line = row.line}
-            <button class="row" onclick={() => play(line.start)}>
+            <button
+              class="row"
+              onpointerdown={(e) => onRowDown(e, range[0] + k)}
+              onclick={() => onRowClick(line.start)}
+            >
               <span class="time">{formatTime(line.start)}</span>
               <span>{line.text}</span>
             </button>
@@ -663,5 +776,14 @@
   /* The row for chat before the first line, when there's none. */
   .line.empty {
     display: none;
+  }
+
+  .dragging {
+    user-select: none;
+    cursor: ns-resize;
+  }
+
+  .line.picked > :global(.row) {
+    background: var(--accent-soft);
   }
 </style>
