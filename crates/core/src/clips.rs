@@ -153,14 +153,18 @@ pub fn cut(
         bail!("A clip has to end after it starts.");
     }
     let length = end - start;
+    // Cuts are at frames' times: half a millisecond early, so neither rounding
+    // nor a container's time base puts the first frame before the seek point
+    // (and drops it). That's under half a frame up to 1000 fps.
+    let seek = (start - 0.0005).max(0.0);
     let dir = out.parent().context("no folder for the clip")?;
     fs::create_dir_all(dir)?;
     let name = out.file_name().context("no file name for the clip")?.to_string_lossy();
     let part = dir.join(format!(".{name}.part"));
     let mut cmd = tools::command(ffmpeg);
-    cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{start:.3}")]);
+    cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{seek:.6}")]);
     tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE)).arg("-i").arg(source);
-    cmd.args(["-t", &format!("{length:.3}")]);
+    cmd.args(["-t", &format!("{length:.6}")]);
     if audio_only {
         cmd.args(["-map", "0:a:0", "-vn"]);
     } else {
