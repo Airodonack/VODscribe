@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import ClipBar from "./ClipBar.svelte";
   import ClipStrip from "./ClipStrip.svelte";
+  import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
@@ -48,7 +49,7 @@
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
   let active = $state(false);
   let host = $state<HTMLDivElement>();
-  let player: EmbeddedPlayer | null = null;
+  let player = $state.raw<EmbeddedPlayer | null>(null);
   // A jump requested while the player is still loading, applied once it's ready.
   let pending: { time: number; play: boolean } | null = null;
   let destroyed = false;
@@ -117,9 +118,75 @@
     activate(time, play);
   });
 
+  // What the controls show, read from the player every frame (it may be in
+  // an iframe that only reports by message, so there's nothing to bind to).
+  let now = $state(untrack(() => at.time));
+  let playing = $state(false);
+  let volume = $state(1);
+  let muted = $state(false);
+  let rate = $state(1);
+  let captionsAvailable = $state(false);
+  let captionsOn = $state(false);
+  let playerDuration = $state(0);
+  let poll = 0;
+  function read() {
+    poll = requestAnimationFrame(read);
+    const p = player;
+    if (!p) return;
+    now = p.time();
+    playing = p.playing();
+    playerDuration = p.duration?.() ?? 0;
+    if (p.volume) [volume, muted] = [p.volume.get(), p.volume.muted()];
+    if (p.rate) rate = p.rate.get();
+    captionsAvailable = p.captions?.available() ?? false;
+    captionsOn = p.captions?.on() ?? false;
+  }
+  poll = requestAnimationFrame(read);
+  // The VOD's length as the site said, or as the player found when the site didn't say.
+  const duration = $derived(vod.duration || playerDuration);
+
+  /** Moves the playhead, starting the player there (paused) if it isn't yet. */
+  function seekTo(time: number) {
+    now = time;
+    if (player) player.seek(time, false);
+    else if (active) pending = { time, play: false };
+    else activate(time, false);
+  }
+
+  function togglePlay() {
+    if (player) player.togglePlay();
+    else if (!active) activate(now);
+  }
+
+  const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
+  function nextSpeed() {
+    player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
+  }
+
+  function toggleMute() {
+    const sound = player?.volume;
+    if (!sound) return;
+    // Unmuting at no volume would stay silent: back to full.
+    if (sound.muted() && sound.get() === 0) sound.set(1);
+    else sound.setMuted(!sound.muted());
+  }
+
+  // Full screen is the window's, with the player panel laid over the page:
+  // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
+  let fullscreen = $state(false);
+  function setFullscreen(on: boolean) {
+    fullscreen = on;
+    if (on) collapsed = false;
+    getCurrentWindow()
+      .setFullscreen(on)
+      .catch((e) => console.error("full screen", e));
+  }
+
   onDestroy(() => {
     destroyed = true;
+    cancelAnimationFrame(poll);
     clearTimeout(copiedTimer);
+    if (fullscreen) setFullscreen(false);
     player?.destroy();
   });
 
@@ -131,6 +198,11 @@
     if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (key === "f" || (key === "Escape" && fullscreen)) {
+      setFullscreen(key === "f" ? !fullscreen : false);
+      e.preventDefault();
+      return;
+    }
     if (!active && (key === " " || key === "k")) {
       activate(at.time);
       e.preventDefault();
@@ -163,7 +235,7 @@
 
 <svelte:window onkeydown={onKey} />
 
-<section>
+<section class:fullscreen>
   <div class="head">
     <div class="info">
       <strong title={vod.title}>{vod.title}</strong>
@@ -226,9 +298,9 @@
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
       <kbd>I</kbd><kbd>O</kbd> clip from, to <span class="sep">·</span>
       <kbd>Enter</kbd> keep the clip
+      <span class="sep">·</span> <kbd>F</kbd> full screen
       {#if framed}
         <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
-        <span class="sep">·</span> <kbd>F</kbd> full screen
       {/if}
     </p>
   {/if}
@@ -250,14 +322,75 @@
       </div>
     </div>
     {#if !collapsed}
-      {#if active && vod.duration}
-        <ClipBar
-          {vod}
-          duration={vod.duration}
-          time={() => player?.time() ?? at.time}
-          onseek={(t) => (player ? player.seek(t, false) : (pending = { time: t, play: false }))}
-        />
-      {/if}
+      <div class="controls">
+        {#if duration}
+          <Scrubber {vod} {duration} time={now} onseek={seekTo} />
+        {/if}
+        <div class="row">
+          <button
+            class="control"
+            onclick={togglePlay}
+            aria-label={playing ? "Pause" : "Play"}
+            title={playing ? "Pause" : "Play"}
+          >
+            <Icon name={playing ? "pause" : "play"} size={16} />
+          </button>
+          <!-- The time takes the room of the longest it can be (the length, under it
+               unseen), so nothing beside it moves. -->
+          <span class="time"
+            ><span class="now"
+              ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(now)}</span></span
+            >
+            / {formatTime(duration)}</span
+          >
+          <span class="context muted"></span>
+          {#if player?.volume && !player.ownControls}
+            <button
+              class="control"
+              onclick={toggleMute}
+              aria-label={muted ? "Unmute" : "Mute"}
+              title={muted ? "Unmute" : "Mute"}
+            >
+              <Icon name={muted ? "volume-off" : "volume"} size={16} />
+            </button>
+            <input
+              class="volume"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={muted ? 0 : volume}
+              oninput={(e) => player?.volume?.set(Number(e.currentTarget.value))}
+              aria-label="Volume"
+            />
+          {/if}
+          {#if player?.rate && !player.ownControls}
+            <button class="control speed" onclick={nextSpeed} title="Playback speed">{rate}×</button>
+          {/if}
+          {#if captionsAvailable}
+            <button
+              class="control"
+              class:on={captionsOn}
+              onclick={() => player?.captions?.toggle()}
+              aria-pressed={captionsOn}
+              aria-label="Captions"
+              title={captionsOn ? "Hide captions" : "Show captions"}
+            >
+              <Icon name="captions" size={16} />
+            </button>
+          {/if}
+          {#if !audioOnly}
+            <button
+              class="control"
+              onclick={() => setFullscreen(!fullscreen)}
+              aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+              title={fullscreen ? "Exit full screen (Esc)" : "Full screen (F)"}
+            >
+              <Icon name={fullscreen ? "minimize" : "maximize"} size={16} />
+            </button>
+          {/if}
+        </div>
+      </div>
       <ClipStrip onplay={playFrom} />
     {/if}
     {#if error}
@@ -289,6 +422,120 @@
   section {
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+  }
+
+  /* Full screen: the panel over the whole window, the picture as large as fits. */
+  section.fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    border: none;
+  }
+
+  .fullscreen .head,
+  .fullscreen .legend {
+    display: none;
+  }
+
+  .fullscreen .stage {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .fullscreen .frame {
+    flex: 1;
+    width: 100%;
+    max-height: none;
+    aspect-ratio: auto;
+  }
+
+  /* The timeline over the controls: the same for every player. */
+  .controls {
+    padding: 8px 16px 2px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: var(--controls-height);
+    margin: 0 -6px;
+  }
+
+  .control {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 30px;
+    height: 30px;
+    padding: 0 6px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: inherit;
+  }
+
+  .control:hover {
+    background: var(--surface-2);
+  }
+
+  .control.on {
+    color: var(--accent);
+  }
+
+  .speed {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 42px;
+  }
+
+  .row .time {
+    flex: none;
+    padding: 0 6px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .now {
+    display: inline-grid;
+    justify-items: end;
+  }
+
+  .now > span {
+    grid-area: 1 / 1;
+  }
+
+  .widest {
+    visibility: hidden;
+  }
+
+  .context {
+    flex: 1;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .volume {
+    flex: none;
+    width: 64px;
+    accent-color: var(--accent);
+  }
+
+  @media (max-width: 560px) {
+    .volume,
+    .speed {
+      display: none;
+    }
   }
 
   .head {

@@ -1,15 +1,14 @@
 <script lang="ts">
-  // The clip bar under the player: a stretch of the VOD around where it's
-  // playing, with its waveform where there is one, its clips and the range
-  // picked. Clicking seeks; dragging picks a range (clips.svelte.ts); the edges
-  // of the range picked, and of a clip, can be dragged. The wheel zooms around
-  // the pointer and Shift+wheel (or sideways) pans; it follows the playhead
-  // until panned.
+  // The timeline under every player: the whole VOD to start, zoomable to a
+  // few seconds, with its waveform where there is one, its clips and the range
+  // picked. A left click or drag only ever moves the playhead; the edges of the
+  // range picked, and of a clip, can be dragged. The wheel zooms around the
+  // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
+  // playhead until panned.
 
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { HOLD_MS, flyAndDrag } from "./dragout";
   import { columns, PEAKS_RATE, tickStep } from "./media";
   import { formatTime } from "./platform";
   import { theme } from "./theme.svelte";
@@ -23,48 +22,48 @@
     vod: Vod;
     duration: number;
     /** Where the player is now. */
-    time: () => number;
+    time: number;
     onseek: (time: number) => void;
   } = $props();
 
   const SHORTEST = 10;
-  let span = $state(
-    Math.min(
-      120,
-      untrack(() => duration),
-    ),
-  );
+  const HEIGHT = 48;
+  // The whole VOD to start.
+  let span = $state(untrack(() => duration));
   let viewStart = $state(0);
   let follow = true;
-  let now = $state(0);
   let width = $state(0);
   let levels = $state.raw<Uint8Array>(new Uint8Array());
-  let frame = 0;
 
   onMount(() => {
     api.peaks(vod.id).then(
       (l) => (levels = l),
       (e) => console.error("waveform", e),
     );
-    const tick = () => {
-      now = time();
-      if (follow && (now < viewStart || now > viewStart + span * 0.92)) setView(now - span * 0.08);
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
   });
-  onDestroy(() => {
-    cancelAnimationFrame(frame);
-    clearTimeout(hold);
+
+  // A VOD whose length was unknown (or wrong) until the player said: keep the view inside it.
+  $effect(() => {
+    void duration;
+    untrack(() => setView(viewStart, span >= duration ? duration : span));
+  });
+
+  // Zoomed in, the view keeps the playhead in sight while it plays.
+  $effect(() => {
+    const now = time;
+    untrack(() => {
+      if (follow && span < duration && (now < viewStart || now > viewStart + span * 0.92)) setView(now - span * 0.08);
+    });
   });
 
   function setView(start: number, length = span) {
-    span = Math.min(duration, Math.max(SHORTEST, length));
+    span = Math.min(duration, Math.max(Math.min(SHORTEST, duration), length));
     viewStart = Math.min(Math.max(0, start), Math.max(0, duration - span));
   }
 
   const x = (t: number) => ((t - viewStart) / span) * width;
   const pct = (t: number) => `${((t - viewStart) / span) * 100}%`;
+  const widthPct = (a: number, b: number) => `${((x(b) - x(a)) / (width || 1)) * 100}%`;
 
   let bar = $state<HTMLDivElement>();
   function timeAt(clientX: number): number {
@@ -72,10 +71,10 @@
     return Math.min(duration, Math.max(0, viewStart + ((clientX - box.left) / box.width) * span));
   }
 
-  // The waveform of the stretch shown, and the ticks.
+  // The waveform of the stretch shown: played (left of the playhead) in the
+  // accent, the rest muted; a plain track where there's no waveform.
   let canvas = $state<HTMLCanvasElement>();
   const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
-  const HEIGHT = 44;
   $effect(() => {
     if (!canvas || !bar) return;
     const ctx = canvas.getContext("2d");
@@ -87,79 +86,74 @@
     if (canvas.height !== h) canvas.height = h;
     ctx.clearRect(0, 0, w, h);
     const style = getComputedStyle(bar);
+    const played = style.getPropertyValue("--played").trim();
+    const rest = style.getPropertyValue("--unplayed").trim();
+    const at = x(time) * ratio;
+    const mid = h / 2 + 6 * ratio;
+    if (!levels.length) {
+      ctx.fillStyle = rest;
+      ctx.fillRect(0, mid - 2 * ratio, w, 4 * ratio);
+      ctx.fillStyle = played;
+      ctx.fillRect(0, mid - 2 * ratio, Math.max(0, at), 4 * ratio);
+      return;
+    }
     // Only the stretch shown: the levels from its start, as many as it holds.
     const first = Math.floor(viewStart * PEAKS_RATE);
     const shown = levels.subarray(first, Math.ceil((viewStart + span) * PEAKS_RATE) + 1);
     const bars = columns(shown, span, Math.floor(width / 2));
-    ctx.fillStyle = style.getPropertyValue("--wave").trim();
-    const mid = h / 2 + 4 * ratio;
     for (let i = 0; i < bars.length; i++) {
-      const b = Math.max(ratio, bars[i] * (h - 14 * ratio));
-      ctx.fillRect(i * 2 * ratio, mid - b / 2, ratio, b);
+      const px = i * 2 * ratio;
+      const b = Math.max(ratio, bars[i] * (h - 16 * ratio));
+      ctx.fillStyle = px < at ? played : rest;
+      ctx.fillRect(px, mid - b / 2, ratio, b);
     }
   });
 
   const ticks = $derived.by(() => {
-    if (!width) return [];
+    if (!width || !span) return [];
     const step = tickStep(span, width);
     const out = [];
     for (let t = Math.ceil(viewStart / step) * step; t <= viewStart + span; t += step) out.push(t);
     return out;
   });
 
-  // Dragging: a new range, an edge of the range picked, or an edge of a clip.
+  // Pressing: scrubbing (the playhead follows), or an edge of the range picked
+  // or of a clip. Followed on the window: the bar's contents changing under
+  // the pointer mid-drag ended drags in WebKitGTK.
   type Drag =
-    | { kind: "new"; from: number; x: number; moved: boolean }
+    | { kind: "scrub" }
     | { kind: "ghost"; edge: "start" | "end" }
     | { kind: "clip"; id: number; edge: "start" | "end"; start: number; end: number };
   let drag = $state<Drag | null>(null);
-
-  // A press held still on a made clip picks it up, to drag out of the window.
-  let hold: ReturnType<typeof setTimeout> | undefined;
-  let down = false;
-  let pointer = { x: 0, y: 0 };
+  let hover = $state<number | null>(null);
 
   function onDown(e: PointerEvent) {
     if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    const handle = target.closest<HTMLElement>("[data-edge]");
-    down = true;
-    pointer = { x: e.clientX, y: e.clientY };
-    const band = handle ? null : target.closest<HTMLElement>("[data-band]");
-    const held = band && clips.list.find((c) => c.id === Number(band.dataset.band) && c.status === "ready");
-    if (held && band) {
-      hold = setTimeout(() => {
-        drag = null;
-        flyAndDrag(held, band.getBoundingClientRect(), pointer.x, pointer.y, () => down);
-      }, HOLD_MS);
-    }
-    if (handle?.dataset.clip) {
+    const handle = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]");
+    const edge = handle?.dataset.edge as "start" | "end" | undefined;
+    if (handle?.dataset.clip && edge) {
       const clip = clips.list.find((c) => c.id === Number(handle.dataset.clip));
-      if (clip)
-        drag = {
-          kind: "clip",
-          id: clip.id,
-          edge: handle.dataset.edge as "start" | "end",
-          start: clip.start,
-          end: clip.end,
-        };
-    } else if (handle) {
-      drag = { kind: "ghost", edge: handle.dataset.edge as "start" | "end" };
+      if (clip) drag = { kind: "clip", id: clip.id, edge, start: clip.start, end: clip.end };
+    } else if (edge) {
+      drag = { kind: "ghost", edge };
     } else {
-      drag = { kind: "new", from: timeAt(e.clientX), x: e.clientX, moved: false };
+      drag = { kind: "scrub" };
+      follow = true;
+      onseek(timeAt(e.clientX));
     }
     e.preventDefault();
   }
 
   function onMove(e: PointerEvent) {
-    if (down && Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= 4) clearTimeout(hold);
-    pointer = { x: e.clientX, y: e.clientY };
+    if (bar) {
+      const box = bar.getBoundingClientRect();
+      const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
+      hover = inside || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
+    }
     if (!drag) return;
     const t = timeAt(e.clientX);
-    if (drag.kind === "new") {
-      if (!drag.moved && Math.abs(e.clientX - drag.x) < 4) return;
-      drag.moved = true;
-      clips.pick(drag.from, t, duration);
+    if (drag.kind === "scrub") {
+      onseek(t);
     } else if (drag.kind === "ghost" && clips.ghost) {
       const { start, end } = clips.ghost;
       if (drag.edge === "start") clips.pick(t, end, duration);
@@ -173,17 +167,10 @@
     }
   }
 
-  function onUp(e: PointerEvent) {
-    down = false;
-    clearTimeout(hold);
-    if (!drag) return;
+  function onUp() {
     const done = drag;
     drag = null;
-    if (!done) return;
-    if (done.kind === "new" && !done.moved) {
-      follow = true;
-      onseek(timeAt(e.clientX));
-    } else if (done.kind === "clip") {
+    if (done?.kind === "clip") {
       const clip = clips.list.find((c) => c.id === done.id);
       if (clip && (clip.start !== done.start || clip.end !== done.end)) clips.move(done.id, done.start, done.end);
     }
@@ -191,9 +178,9 @@
 
   function onWheel(e: WheelEvent) {
     e.preventDefault();
-    follow = false;
     const sideways = e.shiftKey ? e.deltaY : e.deltaX;
     if (Math.abs(sideways) > Math.abs(e.shiftKey ? 0 : e.deltaY)) {
+      follow = false;
       setView(viewStart + (sideways / width) * span);
       return;
     }
@@ -201,6 +188,7 @@
     const at = timeAt(e.clientX);
     const share = (at - viewStart) / span;
     const length = Math.min(duration, Math.max(SHORTEST, span * Math.exp(e.deltaY / 300)));
+    follow = length < span ? follow : true;
     setView(at - share * length, length);
   }
 
@@ -208,20 +196,21 @@
   function rangeOf(id: number, start: number, end: number) {
     return drag?.kind === "clip" && drag.id === id ? { start: drag.start, end: drag.end } : { start, end };
   }
+
+  const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
 </script>
 
-<!-- Followed on the window, not the bar: the range appearing under the pointer
-     mid-drag ended the drag in WebKitGTK. -->
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => (drag = null)} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="clipbar"
+  class="scrubber"
+  class:zoomed={span < duration}
   bind:this={bar}
   bind:clientWidth={width}
   onpointerdown={onDown}
+  onpointerleave={() => !drag && (hover = null)}
   onwheel={onWheel}
-  title="Drag to pick a clip · wheel to zoom · Shift+wheel to scroll"
 >
   <canvas bind:this={canvas} style:height="{HEIGHT}px"></canvas>
   {#each ticks as t (t)}
@@ -234,7 +223,7 @@
         class="band"
         data-band={clip.id}
         style:left={pct(r.start)}
-        style:width="{((x(r.end) - x(r.start)) / (width || 1)) * 100}%"
+        style:width={widthPct(r.start, r.end)}
         title={clip.title}
       >
         <!-- Kept in view when the clip starts before the stretch shown. -->
@@ -246,26 +235,29 @@
   {/each}
   {#if clips.ghost && clips.ghost.end > viewStart && clips.ghost.start < viewStart + span}
     {@const g = clips.ghost}
-    <div class="band ghost" style:left={pct(g.start)} style:width="{((x(g.end) - x(g.start)) / (width || 1)) * 100}%">
+    <div class="band ghost" style:left={pct(g.start)} style:width={widthPct(g.start, g.end)}>
       <span class="edge start" data-edge="start"></span>
       <span class="edge end" data-edge="end"></span>
     </div>
   {/if}
-  {#if now >= viewStart && now <= viewStart + span}
-    <span class="playhead" style:left={pct(now)}></span>
+  {#if time >= viewStart && time <= viewStart + span}
+    <span class="playhead" style:left={pct(time)}></span>
+  {/if}
+  {#if hoverTime !== null && hover !== null}
+    <span class="hover" style:left="{hover}px"></span>
+    <span class="tip" style:left="{Math.min(Math.max(hover, 28), width - 28)}px">{formatTime(hoverTime)}</span>
   {/if}
 </div>
 
 <style>
-  .clipbar {
-    --wave: color-mix(in srgb, var(--muted) 55%, transparent);
+  .scrubber {
+    --played: var(--accent);
+    --unplayed: color-mix(in srgb, var(--muted) 50%, transparent);
     position: relative;
-    height: 44px;
-    margin: 6px 16px 0;
+    height: 48px;
     border-radius: var(--radius-sm);
     background: var(--surface-2);
-    overflow: hidden;
-    cursor: crosshair;
+    cursor: pointer;
     touch-action: none;
     user-select: none;
   }
@@ -274,6 +266,7 @@
     position: absolute;
     inset: 0;
     width: 100%;
+    border-radius: inherit;
   }
 
   .tick {
@@ -287,21 +280,22 @@
     color: var(--muted);
     font-variant-numeric: tabular-nums;
     pointer-events: none;
+    white-space: nowrap;
   }
 
   .band {
     position: absolute;
-    top: 12px;
+    top: 13px;
     bottom: 3px;
     min-width: 2px;
     border-radius: 3px;
-    background: color-mix(in srgb, var(--accent) 28%, transparent);
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
     border: 1px solid var(--accent);
-    cursor: pointer;
+    overflow: hidden;
   }
 
   .band.ghost {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
     border-style: dashed;
   }
 
@@ -318,18 +312,18 @@
 
   .edge {
     position: absolute;
-    top: -1px;
-    bottom: -1px;
+    top: 0;
+    bottom: 0;
     width: 8px;
     cursor: ew-resize;
   }
 
   .edge.start {
-    left: -4px;
+    left: 0;
   }
 
   .edge.end {
-    right: -4px;
+    right: 0;
   }
 
   .edge::after {
@@ -351,5 +345,29 @@
     margin-left: -1px;
     background: var(--text);
     pointer-events: none;
+  }
+
+  .hover {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: color-mix(in srgb, var(--text) 35%, transparent);
+    pointer-events: none;
+  }
+
+  .tip {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    transform: translateX(-50%);
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--text);
+    color: var(--surface);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 2;
   }
 </style>

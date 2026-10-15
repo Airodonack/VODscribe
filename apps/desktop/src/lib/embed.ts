@@ -18,6 +18,18 @@ export interface EmbeddedPlayer {
   togglePlay(): void;
   /** Steps `frames` frames on (back, if negative), paused. Only where frames can be told apart. */
   step?(frames: number): void;
+  /** How long it is, where the player knows (it can differ from what the site said). */
+  duration?(): number;
+  /** Its frame rate, where known exactly (the app's own player). */
+  fps?(): number | null;
+  /** Its sound, where the app's controls set it (0..1). */
+  volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
+  /** Its speed, where the app's controls set it. */
+  rate?: { get(): number; set(rate: number): void };
+  /** Captions from the transcript, where it shows them (the app's own player). */
+  captions?: { available(): boolean; on(): boolean; toggle(): void };
+  /** Shows controls of its own that can't be hidden (Twitch's), so the app's leave out sound and speed. */
+  ownControls?: boolean;
   destroy(): void;
 }
 
@@ -99,9 +111,14 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
     autoplay: play ? "1" : "0",
     playsinline: "1",
     rel: "0",
+    // The app's controls and timeline stand in for the player's own.
+    controls: "0",
+    disablekb: "1",
+    fs: "0",
   });
   const frame = sandboxedFrame(el, `${YOUTUBE}/embed/${encodeURIComponent(vod.platform_id)}?${params}`);
   const clock = new Clock(time, play);
+  const sound = { volume: 1, muted: false, rate: 1 };
   const post = (message: object) =>
     frame.contentWindow?.postMessage(JSON.stringify({ ...message, id: 1, channel: "widget" }), YOUTUBE);
   const command = (func: string, args: unknown[] = []) => post({ event: "command", func, args });
@@ -110,7 +127,10 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
     frame,
     YOUTUBE,
     (raw) => {
-      let data: { event?: string; info?: { currentTime?: number; playerState?: number } };
+      let data: {
+        event?: string;
+        info?: { currentTime?: number; playerState?: number; volume?: number; muted?: boolean; playbackRate?: number };
+      };
       try {
         data = typeof raw === "string" ? JSON.parse(raw) : (raw as typeof data);
       } catch {
@@ -119,6 +139,9 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       if (typeof data.info?.currentTime === "number") clock.set(data.info.currentTime);
       // State 1 is "playing", 3 is "buffering".
       if (typeof data.info?.playerState === "number") clock.playing = [1, 3].includes(data.info.playerState);
+      if (typeof data.info?.volume === "number") sound.volume = data.info.volume / 100;
+      if (typeof data.info?.muted === "boolean") sound.muted = data.info.muted;
+      if (typeof data.info?.playbackRate === "number") sound.rate = data.info.playbackRate;
       return data.event === "onReady" || data.event === "initialDelivery";
     },
     (cleanup) => ({
@@ -133,6 +156,26 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
         command(clock.playing ? "pauseVideo" : "playVideo");
         clock.set(clock.now());
         clock.playing = !clock.playing;
+      },
+      volume: {
+        get: () => sound.volume,
+        muted: () => sound.muted,
+        set(volume) {
+          sound.volume = volume;
+          command("setVolume", [Math.round(volume * 100)]);
+          if (sound.muted && volume > 0) this.setMuted(false);
+        },
+        setMuted(muted) {
+          sound.muted = muted;
+          command(muted ? "mute" : "unMute");
+        },
+      },
+      rate: {
+        get: () => sound.rate,
+        set(rate) {
+          sound.rate = rate;
+          command("setPlaybackRate", [rate]);
+        },
       },
       destroy: cleanup,
     }),
@@ -201,13 +244,14 @@ function twitch(
         clock.set(clock.now());
         clock.playing = !clock.playing;
       },
+      ownControls: true,
       destroy: cleanup,
     }),
   );
 }
 
-/** A plain <video> in `el`, with the webview's controls, for streams from a
- *  site (Kick, Twitch clips). `attach` points it at its source and returns any cleanup. */
+/** A plain <video> in `el`, under the app's controls, for streams from a site
+ *  (Kick, Twitch clips). `attach` points it at its source and returns any cleanup. */
 function videoPlayer(
   el: HTMLElement,
   time: number,
@@ -216,8 +260,9 @@ function videoPlayer(
   onerror?: (message: string | null) => void,
 ): EmbeddedPlayer {
   const video = document.createElement("video");
-  video.controls = true;
   video.playsInline = true;
+  // A click on the picture plays or pauses, as on the app's own player.
+  video.addEventListener("click", () => (video.paused ? video.play().catch(() => {}) : video.pause()));
   video.style.cssText = "display: block; width: 100%; height: 100%; background: #000";
   video.addEventListener("error", () => {
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
@@ -239,6 +284,17 @@ function videoPlayer(
       if (video.paused) video.play().catch(() => {});
       else video.pause();
     },
+    duration: () => (Number.isFinite(video.duration) ? video.duration : 0),
+    volume: {
+      get: () => video.volume,
+      muted: () => video.muted,
+      set(volume) {
+        video.volume = volume;
+        video.muted = volume === 0;
+      },
+      setMuted: (muted) => (video.muted = muted),
+    },
+    rate: { get: () => video.playbackRate, set: (rate) => (video.playbackRate = rate) },
     destroy() {
       detach?.();
       video.remove();
@@ -321,6 +377,11 @@ async function local(
     playing: player.isPlaying,
     togglePlay: player.togglePlay,
     step: player.step,
+    duration: player.mediaDuration,
+    fps: player.frameRate,
+    volume: player.sound,
+    rate: player.speed,
+    captions: player.captions,
     destroy: () => unmount(player),
   };
 }
