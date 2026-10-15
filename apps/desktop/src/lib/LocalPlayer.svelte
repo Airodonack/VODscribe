@@ -284,9 +284,13 @@
     >
       <Icon name={paused ? "play" : "pause"} size={16} />
     </button>
-    <!-- As wide as the longest time it shows, so the waveform beside it doesn't shift. -->
-    <span class="time" style:min-width="{formatTime(duration).length * 2 + 3}ch"
-      >{formatTime(time)} / {formatTime(duration)}</span
+    <!-- The time takes the room of the longest it can be (the duration, under it
+         unseen), so the waveform beside it never moves. -->
+    <span class="time"
+      ><span class="now"
+        ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(time)}</span></span
+      >
+      / {formatTime(duration)}</span
     >
     <div class="seek" bind:clientWidth={width} bind:clientHeight={height}>
       <canvas
@@ -484,6 +488,19 @@
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     min-width: 42px;
+  }
+
+  .now {
+    display: inline-grid;
+    justify-items: end;
+  }
+
+  .now > span {
+    grid-area: 1 / 1;
+  }
+
+  .widest {
+    visibility: hidden;
   }
 
   .time {
