@@ -372,3 +372,9 @@ kbd {
   background: var(--surface-2);
   margin-bottom: 14px;
 }
+
+/* While something is dragged into the window, embedded players (iframes, other
+   pages) ignore the pointer, so the drop reaches the app (Library.svelte). */
+body.dropping iframe {
+  pointer-events: none;
+}

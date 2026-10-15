@@ -54,7 +54,20 @@
   // their paths, and on Linux dropped links do too. Windows and macOS don't pass
   // link drops to the app at all, so there links have to be pasted.
   const linksDrop = os === "linux";
-  let dropping = $state(false);
+  // A link dragged over the page (DOM events) or files over the window (the
+  // webview's own events); either shows the drop overlay.
+  let linkOver = $state(false);
+  let filesOver = $state(false);
+  let dropping = $derived(linkOver || filesOver);
+  // dragover repeats every few hundred milliseconds while a drag is over the
+  // page; when it stops, the drag left or ended somewhere the page doesn't hear
+  // of (outside the window), so the overlay goes.
+  let linkGone: ReturnType<typeof setTimeout> | undefined;
+  // While anything is dragged in, embedded players (separate pages in iframes)
+  // ignore the pointer, so a drop lands here rather than navigating one of them.
+  $effect(() => {
+    document.body.classList.toggle("dropping", dropping);
+  });
   // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
   let draggingInside = false;
   function onDragOver(e: DragEvent) {
@@ -63,15 +76,18 @@
     const types = e.dataTransfer?.types ?? [];
     if (draggingInside || (!types.includes("text/uri-list") && !types.includes("text/plain"))) return;
     e.preventDefault();
-    dropping = true;
+    linkOver = true;
+    clearTimeout(linkGone);
+    linkGone = setTimeout(() => (linkOver = false), 400);
   }
   function onDragLeave(e: DragEvent) {
     // dragleave fires for every element crossed; only leaving the window counts.
-    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) dropping = false;
+    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) linkOver = false;
   }
   function onDrop(e: DragEvent) {
     if (DEMO) return;
-    dropping = false;
+    linkOver = false;
+    clearTimeout(linkGone);
     const data = e.dataTransfer;
     if (!data || draggingInside) return;
     const text = data.getData("text/uri-list") || data.getData("text/plain");
@@ -97,10 +113,10 @@
       .onDragDropEvent(({ payload }) => {
         if (payload.type === "enter") {
           // macOS reports every drag, even ones with nothing the app can use.
-          dropping = payload.paths.length > 0 && !draggingInside;
-        } else if (payload.type === "leave") dropping = false;
+          filesOver = payload.paths.length > 0 && !draggingInside;
+        } else if (payload.type === "leave") filesOver = false;
         else if (payload.type === "drop") {
-          dropping = false;
+          filesOver = false;
           if (!draggingInside) adder.items(payload.paths, true);
         }
       })
@@ -110,6 +126,8 @@
       );
     return () => {
       unmounted = true;
+      clearTimeout(linkGone);
+      document.body.classList.remove("dropping");
       stop?.();
     };
   });
