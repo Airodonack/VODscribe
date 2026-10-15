@@ -35,3 +35,7 @@ unicode-normalization = "0.1.25"
 ureq = "3.4.2"
 which = "8.0.6"
 zip = { version = "9.0.1", default-features = false, features = ["deflate"] }
+[target.'cfg(unix)'.dependencies]
+# Already in the build: stopping a tool's whole process group (tools::kill_tree).
+libc = "0.2.190"
+

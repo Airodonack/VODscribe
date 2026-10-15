@@ -64,7 +64,7 @@ pub fn decode(
     })();
 
     if result.is_err() {
-        let _ = child.kill();
+        tools::kill_tree(&mut child);
     }
     let status = child.wait()?;
     let err_text = stderr_thread.join().unwrap_or_default();

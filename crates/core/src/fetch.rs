@@ -108,8 +108,7 @@ fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> 
     // Polled, so a stop takes effect while yt-dlp is still looking.
     let status = loop {
         if cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
+            tools::kill_tree(&mut child);
             return Err(crate::Canceled.into());
         }
         if let Some(status) = child.try_wait()? {
@@ -205,8 +204,7 @@ pub fn download(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         if cancel.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
+            tools::kill_tree(&mut child);
             return Err(crate::Canceled.into());
         }
         if line.is_empty() {

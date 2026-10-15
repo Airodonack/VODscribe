@@ -234,13 +234,55 @@ pub fn ffmpeg_allow<'a>(cmd: &'a mut Command, decoders: &str) -> &'a mut Command
     cmd.args(["-format_whitelist", FFMPEG_FORMATS, "-codec_whitelist", decoders, "-protocol_whitelist", "file"])
 }
 
+/// Stops `child` and everything it started, and waits until they're gone, so
+/// nothing writes after the caller cleans up. The managed yt-dlp unpacks
+/// itself and runs as a child of a small launcher; killing only the launcher
+/// left the downloader writing fragments for a second or more.
+pub fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let group = child.id() as libc::pid_t;
+        // SAFETY: plain syscalls on the process group `command` gave the child.
+        unsafe { libc::killpg(group, libc::SIGKILL) };
+        let _ = child.wait();
+        // The group is gone once none of it is left to signal.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while unsafe { libc::killpg(group, 0) } == 0 && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    #[cfg(windows)]
+    {
+        // taskkill /T stops the process and its descendants, and returns once they're stopped.
+        let _ = command(Path::new("taskkill"))
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
 /// A `Command` that doesn't flash a console window on Windows.
 /// Runs in the program's own directory rather than wherever the app was launched
 /// from, so nothing in an untrusted working dir (configs, DLLs) gets picked up.
+/// On Unix it leads a process group of its own, so `kill_tree` stops everything
+/// it starts.
 pub fn command(program: &Path) -> Command {
     let mut cmd = Command::new(program);
     if let Some(dir) = program.parent().filter(|d| d.is_dir()) {
         cmd.current_dir(dir);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
     }
     #[cfg(windows)]
     {
@@ -254,6 +296,32 @@ pub fn command(program: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Like the managed yt-dlp: a launcher whose child does the work. Once
+    /// stopped, nothing more is written.
+    #[cfg(unix)]
+    #[test]
+    fn kill_tree_stops_the_child_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::TempDir::new("kill-tree");
+        let script = dir.join("launcher");
+        // The child writes a new file every 50 ms; the launcher waits on it.
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n(i=0; while true; do i=$((i+1)); : > \"$1/f$i\"; sleep 0.05; done) &\nwait\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let mut child = command(&script).arg(&out).spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        kill_tree(&mut child);
+        let written = std::fs::read_dir(&out).unwrap().count();
+        assert!(written > 0, "the child was writing");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(std::fs::read_dir(&out).unwrap().count(), written, "nothing written once stopped");
+    }
 
     #[test]
     fn lines_survive_bytes_that_arent_utf8() {

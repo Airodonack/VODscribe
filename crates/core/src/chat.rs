@@ -991,8 +991,7 @@ fn fetch_youtube(
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
             if cancel.load(Ordering::Relaxed) {
-                let _ = child.kill();
-                let _ = child.wait();
+                crate::tools::kill_tree(&mut child);
                 return Err(crate::Canceled.into());
             }
             read(&mut tail, false)?;

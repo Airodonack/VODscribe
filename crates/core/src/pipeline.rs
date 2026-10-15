@@ -261,8 +261,7 @@ fn run_worker(
         }
     })();
     if result.is_err() {
-        let _ = child.kill();
-        let _ = child.wait();
+        tools::kill_tree(&mut child);
         // Don't wait for the stderr reader: a process the worker started may
         // still hold the pipe open, and the error at hand is what matters.
         return result;
