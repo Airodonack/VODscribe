@@ -42,7 +42,9 @@ function sandboxedFrame(el: HTMLElement, src: string): HTMLIFrameElement {
   frame.setAttribute("allow", "autoplay; fullscreen; encrypted-media; picture-in-picture");
   frame.setAttribute("allowfullscreen", "");
   frame.referrerPolicy = "strict-origin-when-cross-origin";
-  frame.style.cssText = "width: 100%; height: 100%; border: 0";
+  // A block, not inline: an inline frame sits on a text line, whose descender
+  // space pushes it past the bottom of its box.
+  frame.style.cssText = "display: block; width: 100%; height: 100%; border: 0";
   frame.src = src;
   el.appendChild(frame);
   return frame;
@@ -212,7 +214,7 @@ function videoPlayer(
   const video = document.createElement("video");
   video.controls = true;
   video.playsInline = true;
-  video.style.cssText = "width: 100%; height: 100%; background: #000";
+  video.style.cssText = "display: block; width: 100%; height: 100%; background: #000";
   video.addEventListener("error", () => {
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
     onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");

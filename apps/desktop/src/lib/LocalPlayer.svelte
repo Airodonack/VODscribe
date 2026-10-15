@@ -284,7 +284,10 @@
     >
       <Icon name={paused ? "play" : "pause"} size={16} />
     </button>
-    <span class="time">{formatTime(time)} / {formatTime(duration)}</span>
+    <!-- As wide as the longest time it shows, so the waveform beside it doesn't shift. -->
+    <span class="time" style:min-width="{formatTime(duration).length * 2 + 3}ch"
+      >{formatTime(time)} / {formatTime(duration)}</span
+    >
     <div class="seek" bind:clientWidth={width} bind:clientHeight={height}>
       <canvas
         bind:this={canvas}
@@ -390,6 +393,7 @@
   }
 
   video {
+    display: block;
     width: 100%;
     height: 100%;
     background: #000;
