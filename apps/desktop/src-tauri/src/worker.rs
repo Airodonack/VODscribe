@@ -284,13 +284,20 @@ pub const STOPPED: &str = "Stopped";
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read audio.";
 
 /// Throws away a VOD's partial work, leaving it in the library as canceled.
+/// Its video goes too where downloading it is part of transcribing; one
+/// downloaded on request (videos.rs) stays.
 pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
+    let own_video = db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform));
     pipeline::remove_work_files(work_dir, vod_id);
-    pipeline::remove_media(work_dir, vod_id);
+    if own_video {
+        pipeline::remove_media(work_dir, vod_id);
+    }
     db.atomically(|db| {
         db.clear_segments(vod_id)?;
         db.set_audio_path(vod_id, None)?;
-        db.set_media_path(vod_id, None)?;
+        if own_video {
+            db.set_media_path(vod_id, None)?;
+        }
         db.set_note(vod_id, None)?;
         db.set_status(vod_id, Status::Error, 0.0, Some(STOPPED))
     })
@@ -500,6 +507,22 @@ mod tests {
         assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
         assert_eq!(db.audio_path(id).unwrap(), None);
         assert!(!work.join(format!("{id}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_cancel_keeps_a_video_downloaded_on_request() {
+        let (db, work, id) = setup(Status::Transcribing);
+        let media = pipeline::media_dir(&work);
+        std::fs::create_dir_all(&media).unwrap();
+        let video = pipeline::media_stem(&media, id, "t").with_extension("mp4");
+        std::fs::write(&video, b"").unwrap();
+        let video = video.to_string_lossy().into_owned();
+        db.set_media_path(id, Some(&video)).unwrap();
+        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+            .unwrap();
+        assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
+        assert!(std::path::Path::new(&video).exists());
+        assert_eq!(db.media_path(id).unwrap(), Some(video));
     }
 
     #[test]
