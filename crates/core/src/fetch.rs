@@ -65,13 +65,14 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
 
 /// Fetches metadata and saves yt-dlp's info JSON to `info_path`, so the later
 /// download reuses it instead of resolving the URL a second time.
-pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path) -> Result<VodInfo> {
-    let result = dump_json(yt_dlp.command(), url).and_then(|(json, raw)| Ok((parse_info(&json)?, raw)));
+/// `cancel` stops it (yt-dlp can take a while to look a link up).
+pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path, cancel: &AtomicBool) -> Result<VodInfo> {
+    let result = dump_json(yt_dlp.command(), url, cancel).and_then(|(json, raw)| Ok((parse_info(&json)?, raw)));
     let (info, raw) = match result {
         Ok(ok) => ok,
         // yt-dlp can't read Kick's current VOD links yet. Resolve those
         // ourselves and have yt-dlp treat the manifest as a plain HLS stream.
-        Err(e) if kick::parse_vod_url(url).is_some() => {
+        Err(e) if kick::parse_vod_url(url).is_some() && !crate::is_canceled(&e) => {
             let (info, manifest) = kick::resolve(url).map_err(|kick_err| e.context(kick_err))?;
             let host = manifest.strip_prefix("https://").and_then(|r| r.split('/').next()).unwrap_or_default();
             if host != "kick.com" && !host.ends_with(".kick.com") {
@@ -79,7 +80,7 @@ pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path) -> Result<VodInfo> {
             }
             // A plain HLS stream, which only the generic extractor reads; the
             // link is Kick's own answer, not one pasted in.
-            (info, dump_json(yt_dlp.command_any_extractor(), &manifest)?.1)
+            (info, dump_json(yt_dlp.command_any_extractor(), &manifest, cancel)?.1)
         }
         Err(e) => return Err(e),
     };
@@ -87,17 +88,41 @@ pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path) -> Result<VodInfo> {
     Ok(info)
 }
 
-fn dump_json(mut cmd: std::process::Command, url: &str) -> Result<(Value, Vec<u8>)> {
-    let out = cmd
+fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> Result<(Value, Vec<u8>)> {
+    let mut child = cmd
         .args(["-J", "--no-playlist", "--no-warnings", "--", url])
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .context("run yt-dlp")?;
-    if !out.status.success() {
-        bail!("{}", clean_error(&String::from_utf8_lossy(&out.stderr)));
+    let read = |mut pipe: Box<dyn std::io::Read + Send>| {
+        std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let _ = pipe.read_to_end(&mut out);
+            out
+        })
+    };
+    let stdout = read(Box::new(child.stdout.take().unwrap()));
+    let stderr = read(Box::new(child.stderr.take().unwrap()));
+    // Polled, so a stop takes effect while yt-dlp is still looking.
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(crate::Canceled.into());
+        }
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        std::thread::sleep(tools::STOP_POLL);
+    };
+    let (stdout, stderr) = (stdout.join().unwrap_or_default(), stderr.join().unwrap_or_default());
+    if !status.success() {
+        bail!("{}", clean_error(&String::from_utf8_lossy(&stderr)));
     }
-    let json = serde_json::from_slice(&out.stdout).context("parse yt-dlp output")?;
-    Ok((json, out.stdout))
+    let json = serde_json::from_slice(&stdout).context("parse yt-dlp output")?;
+    Ok((json, stdout))
 }
 
 const PROGRESS: &str = "[vodscribe]";
@@ -415,6 +440,31 @@ mod tests {
         assert_eq!(parse_progress(" NA NA NA NA NA"), None);
     }
 
+    /// A link's lookup stops when canceled: a stand-in yt-dlp that never answers.
+    #[cfg(unix)]
+    #[test]
+    fn a_lookup_stops_when_canceled() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::TempDir::new("probe-cancel");
+        let path = dir.join("yt-dlp");
+        fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let yt_dlp = YtDlp { path, js_runtime: None };
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let stopper = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                cancel.store(true, Ordering::Relaxed);
+                std::time::Instant::now()
+            })
+        };
+        let result = probe(&yt_dlp, "https://example.com/v/1", &dir.join("info.json"), &cancel);
+        let stopped = stopper.join().unwrap();
+        assert!(result.is_err_and(|e| crate::is_canceled(&e)));
+        assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the cancel", stopped.elapsed());
+    }
+
     #[test]
     fn info_parsing() {
         let json = serde_json::json!({
@@ -461,7 +511,7 @@ mod tests {
             ),
         ] {
             let info = dir.join(format!("{name}.info.json"));
-            probe(&yt_dlp, url, &info).unwrap();
+            probe(&yt_dlp, url, &info, &AtomicBool::new(false)).unwrap();
             let wanted = Wanted::Video { selector: &selector, ffmpeg: &ffmpeg };
             let file = download(&yt_dlp, &info, &dir.join(name), wanted, &AtomicBool::new(false), |_| {}).unwrap();
             let streams = crate::local::codecs(&ffmpeg, &file).unwrap();
@@ -491,7 +541,7 @@ mod tests {
         let dir = crate::TempDir::new("kick-live");
         let url = std::env::var("KICK_URL")
             .unwrap_or_else(|_| "https://kick.com/geega/videos/01a0db44-6218-70fb-977c-6bbe91a018d1".into());
-        let info = probe(&yt_dlp, &url, &dir.join("info.json")).unwrap();
+        let info = probe(&yt_dlp, &url, &dir.join("info.json"), &AtomicBool::new(false)).unwrap();
         eprintln!("{} · {:?} · {:?}", info.title, info.channel, info.duration);
         assert_eq!(info.platform, "kick");
     }

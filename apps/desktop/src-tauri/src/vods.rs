@@ -18,8 +18,29 @@ pub(crate) struct Added {
     created: bool,
 }
 
+/// Unregisters an add's ticket when the add ends, however it ends.
+struct Unregister<'a>(&'a AppState, Option<u64>);
+
+impl Drop for Unregister<'_> {
+    fn drop(&mut self) {
+        if let Some(ticket) = self.1 {
+            self.0.adding.lock().unwrap().remove(&ticket);
+        }
+    }
+}
+
+/// Stops looking up the link being added under `ticket` (add_vod), which then
+/// fails as canceled. Nothing happens if it's done already.
 #[tauri::command]
-pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
+pub(crate) async fn cancel_add(state: State<'_, AppState>, ticket: u64) -> CmdResult<()> {
+    if let Some(flag) = state.adding.lock().unwrap().get(&ticket) {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) -> CmdResult<Added> {
     let url = url.trim().to_string();
     if url.is_empty() {
         return Err("Paste a VOD link first.".into());
@@ -29,11 +50,23 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
         // Checked, and passed on as the name it resolves as.
         let url = vodscribe_core::net::public_url(&url)?;
         let state = task_app.state::<AppState>();
+        // Registered under the interface's ticket while it's looked up, for cancel_add.
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Some(ticket) = ticket {
+            state.adding.lock().unwrap().insert(ticket, cancel.clone());
+        }
+        let _unregister = Unregister(&state, ticket);
         let yt_dlp = tools::find_yt_dlp(&state.paths.bin())
             .ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
-        let info = fetch::probe(&yt_dlp, &url, &probe_path)?;
+        let info = fetch::probe(&yt_dlp, &url, &probe_path, &cancel);
+        // Canceled once looked up, but before it's in the library: not added either.
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&probe_path);
+            return Err(vodscribe_core::Canceled.into());
+        }
+        let info = info?;
 
         let db = state.db.lock().unwrap();
         let (mut vod, created) = db.add_vod(&info)?;

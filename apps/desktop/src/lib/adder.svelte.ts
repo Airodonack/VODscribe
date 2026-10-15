@@ -47,24 +47,51 @@ export class Adder {
     return this.#queue;
   }
 
-  /** Shows stand-ins for `items` until `done` settles. */
-  #standIns(items: string[]): () => void {
-    const added = items.map((item) => ({ key: this.#nextKey++, label: labelOf(item) }));
-    this.pending = [...added.reverse(), ...this.pending];
-    const keys = new Set(added.map((p) => p.key));
-    return () => (this.pending = this.pending.filter((p) => !keys.has(p.key)));
+  /** Keys of stand-ins canceled: skipped if not started, stopped or ignored if started. */
+  #canceled = new Set<number>();
+
+  /** A stand-in for `item`, shown until the returned function is called. */
+  #standIn(item: string): Pending {
+    const p = { key: this.#nextKey++, label: labelOf(item) };
+    this.pending = [p, ...this.pending];
+    return p;
+  }
+
+  #done(p: Pending) {
+    this.pending = this.pending.filter((q) => q.key !== p.key);
+  }
+
+  /**
+   * Cancels adding the stand-in `key`: one waiting is skipped; a link being
+   * looked up is stopped (its lookup can take a while). A file being read
+   * finishes (in a second or so) and is added.
+   */
+  cancel(key: number) {
+    this.#canceled.add(key);
+    this.pending = this.pending.filter((p) => p.key !== key);
+    void api.cancelAdd(key).catch(() => {});
+  }
+
+  /** Adds link `p.label` came from; false if it failed or was canceled. */
+  async #addLink(url: string, p: Pending, failed: string[]): Promise<boolean> {
+    if (this.#canceled.has(p.key)) return false;
+    const ok = await api.addVod(url, p.key).then(
+      () => true,
+      (e) => {
+        if (!this.#canceled.has(p.key)) failed.push(String(e));
+        return false;
+      },
+    );
+    this.#done(p);
+    return ok;
   }
 
   /** Adds a pasted link; true if it was added. */
   async link(url: string): Promise<boolean> {
     let ok = false;
-    const gone = this.#standIns([url]);
+    const p = this.#standIn(url);
     await this.#enqueue(async (errors) => {
-      await api.addVod(url).then(
-        () => (ok = true),
-        (e) => errors.push(String(e)),
-      );
-      gone();
+      ok = await this.#addLink(url, p, errors);
     });
     return ok;
   }
@@ -84,20 +111,21 @@ export class Adder {
       else errors.push(`“${item.length > 80 ? item.slice(0, 80) + "…" : item}” isn't a link.`);
     }
     if (!links.length && !files.length && !errors.length) return;
-    const linkGone = links.map((link) => this.#standIns([link]));
-    const filesGone = this.#standIns(files);
+    const linkStandIns = links.map((link) => this.#standIn(link));
+    const fileStandIns = files.map((file) => this.#standIn(file));
     void this.#enqueue(async (failed) => {
-      for (const [i, link] of links.entries()) {
-        await api.addVod(link).catch((e) => failed.push(String(e)));
-        linkGone[i]();
+      for (const [i, link] of links.entries()) await this.#addLink(link, linkStandIns[i], failed);
+      // A file at a time, so one canceled before its turn is skipped.
+      for (const [i, file] of files.entries()) {
+        const p = fileStandIns[i];
+        if (!this.#canceled.has(p.key)) {
+          await api.addFiles([file]).then(
+            (r) => failed.push(...r.errors),
+            (e) => failed.push(String(e)),
+          );
+        }
+        this.#done(p);
       }
-      if (files.length) {
-        await api.addFiles(files).then(
-          (r) => failed.push(...r.errors),
-          (e) => failed.push(String(e)),
-        );
-      }
-      filesGone();
     }, errors);
   }
 }

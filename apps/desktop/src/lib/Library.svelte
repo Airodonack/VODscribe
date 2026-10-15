@@ -233,6 +233,9 @@
           <span class="standin-title">{p.label}</span>
           <span class="muted standin-meta">Adding…</span>
         </span>
+        <button class="cancel" onclick={() => adder.cancel(p.key)} title="Cancel" aria-label="Cancel adding {p.label}">
+          <Icon name="x" size={15} />
+        </button>
       </div>
     {/each}
     {#each shown as vod (vod.id)}
@@ -457,6 +460,25 @@
 
   .standin-meta {
     font-size: 12px;
+  }
+
+  /* Like a row's own action buttons (VodRow.svelte). */
+  .vod.pending .cancel {
+    margin-left: auto;
+    align-self: center;
+    flex: none;
+    width: 26px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--muted);
+    border-radius: var(--radius-sm);
+  }
+
+  .vod.pending .cancel:hover {
+    color: var(--text);
+    background: var(--surface-2);
   }
 
   .vod.selected {

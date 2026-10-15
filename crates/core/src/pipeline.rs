@@ -82,7 +82,7 @@ pub fn download(
     report(Status::Downloading, 0.0);
     let yt_dlp = tools.yt_dlp.context("The video downloader isn't installed yet.")?;
     if !fresh {
-        fetch::probe(yt_dlp, &vod.info.url, &info)?;
+        fetch::probe(yt_dlp, &vod.info.url, &info, cancel)?;
     }
     let selector = keep.map(|(playable, height)| playable.selector(height));
     let (out, wanted) = match &selector {
@@ -99,7 +99,7 @@ pub fn download(
         // (YouTube answers 403 past the first kilobyte of such URLs); a new probe
         // is a new session, so try once more from one before giving up.
         Err(e) if fetch::is_refused(&e) => {
-            fetch::probe(yt_dlp, &vod.info.url, &info)?;
+            fetch::probe(yt_dlp, &vod.info.url, &info, cancel)?;
             get()
         }
         result => result,

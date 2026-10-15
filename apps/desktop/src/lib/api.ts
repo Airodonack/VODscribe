@@ -197,7 +197,9 @@ export const api = {
   selfUpdatable: () => invoke<boolean>("self_updatable"),
   dataDir: () => invoke<string>("data_dir"),
   openDataDir: () => invoke<void>("open_data_dir"),
-  addVod: (url: string) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url }),
+  /** Adds a link; `ticket` lets cancelAdd stop it while it's looked up. */
+  addVod: (url: string, ticket?: number) => invoke<{ vod: Vod; created: boolean }>("add_vod", { url, ticket }),
+  cancelAdd: (ticket: number) => invoke<void>("cancel_add", { ticket }),
   addFiles: (paths: string[]) => invoke<{ vods: Vod[]; errors: string[] }>("add_files", { paths }),
   /** The file extensions VODscribe accepts, for the file picker. */
   mediaExtensions: () => invoke<string[]>("media_extensions"),

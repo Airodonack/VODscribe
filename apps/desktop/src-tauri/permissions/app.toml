@@ -11,6 +11,7 @@ permissions = [
   "allow-run-setup",
   "allow-cancel-setup",
   "allow-add-vod",
+  "allow-cancel-add",
   "allow-list-vods",
   "allow-add-files",
   "allow-media-extensions",

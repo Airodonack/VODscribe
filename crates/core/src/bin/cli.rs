@@ -35,7 +35,8 @@ fn main() -> Result<()> {
                 db.vod(vod.id)?.context("just added")?
             } else {
                 let yt_dlp = yt_dlp.as_ref().context("run `setup` first")?;
-                let info = fetch::probe(yt_dlp, source, &pipeline::info_path(&paths.work(), 0))?;
+                let info =
+                    fetch::probe(yt_dlp, source, &pipeline::info_path(&paths.work(), 0), &AtomicBool::new(false))?;
                 let (vod, _) = db.add_vod(&info)?;
                 std::fs::rename(pipeline::info_path(&paths.work(), 0), pipeline::info_path(&paths.work(), vod.id))?;
                 vod
@@ -65,14 +66,14 @@ fn main() -> Result<()> {
         ["probe", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
             let probe_path = paths.work().join("probe.json");
-            let info = fetch::probe(&yt_dlp, url, &probe_path);
+            let info = fetch::probe(&yt_dlp, url, &probe_path, &AtomicBool::new(false));
             let _ = std::fs::remove_file(&probe_path);
             let info = info?;
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
         ["chat", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("yt-dlp not found; run setup")?;
-            let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"))?;
+            let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"), &AtomicBool::new(false))?;
             let started = Instant::now();
             let mut store = chat::MemoryChat::default();
             let found = chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &mut store, &cancel, |f| {

@@ -1711,9 +1711,13 @@ mod tests {
         let yt_dlp = crate::tools::find_yt_dlp(Path::new(&bin)).expect("yt-dlp");
         let work = crate::TempDir::new("youtube-chat-live");
         let id = std::env::var("YOUTUBE_ID").unwrap_or_else(|_| "j5HcY5GBrTw".into());
-        let info =
-            crate::fetch::probe(&yt_dlp, &format!("https://www.youtube.com/watch?v={id}"), &work.join("info.json"))
-                .unwrap();
+        let info = crate::fetch::probe(
+            &yt_dlp,
+            &format!("https://www.youtube.com/watch?v={id}"),
+            &work.join("info.json"),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         let begun = std::time::Instant::now();
         let mut progress = Vec::new();
         let mut store = MemoryChat::default();

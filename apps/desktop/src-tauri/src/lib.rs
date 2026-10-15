@@ -35,6 +35,8 @@ struct AppState {
     gpu: setup::Install,
     media: media::MediaServer,
     chat: chats::ChatQueue,
+    /// Links being looked up to add, by the interface's ticket, so one can be canceled.
+    adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -130,6 +132,7 @@ pub fn run() {
                 gpu: setup::Install::new(),
                 media,
                 chat,
+                adding: Mutex::default(),
             });
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
@@ -175,6 +178,7 @@ pub fn run() {
             setup::run_setup,
             setup::cancel_setup,
             vods::add_vod,
+            vods::cancel_add,
             vods::list_vods,
             vods::add_files,
             vods::media_extensions,
