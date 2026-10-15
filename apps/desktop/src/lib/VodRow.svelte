@@ -233,34 +233,6 @@
 {/if}
 
 <div class="actions" class:removing inert={removing || clearing}>
-  {#if canKeep && !vod.media}
-    <button
-      class="act keep"
-      class:failed={keepError}
-      bind:this={keepButton}
-      onclick={keep}
-      title={keeping !== undefined
-        ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
-        : keepError
-          ? `The video couldn't be downloaded: ${keepError} Click to try again.`
-          : `Download the video to play and clip it here, to the frame (up to ${height}p, ${keepSize})`}
-      aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
-      {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
-    >
-      {#if keeping !== undefined}
-        <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
-          <circle cx="10" cy="10" r="7.5" class="track" />
-          <circle cx="10" cy="10" r="7.5" class="done" style:stroke-dasharray="{keeping * 47.1} 47.1" />
-        </svg>
-      {:else}
-        <Icon name={keepError ? "warning" : "download"} size={15} />
-      {/if}
-    </button>
-  {:else if canKeep && vod.media}
-    <span class="act kept" title="The video is on this computer: it plays and clips here, to the frame">
-      <Icon name="film" size={15} />
-    </span>
-  {/if}
   {#if vod.status === "error"}
     <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
@@ -296,6 +268,30 @@
       {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD again.")}
     >
       <Icon name="redo" size={15} />
+    </button>
+  {/if}
+  {#if canKeep && !vod.media}
+    <button
+      class="act keep"
+      class:failed={keepError}
+      bind:this={keepButton}
+      onclick={keep}
+      title={keeping !== undefined
+        ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
+        : keepError
+          ? `The video couldn't be downloaded: ${keepError} Click to try again.`
+          : `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and exporting work without it.`}
+      aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
+      {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
+    >
+      {#if keeping !== undefined}
+        <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.5" class="track" />
+          <circle cx="10" cy="10" r="7.5" class="done" style:stroke-dasharray="{keeping * 47.1} 47.1" />
+        </svg>
+      {:else}
+        <Icon name={keepError ? "warning" : "download"} size={15} />
+      {/if}
     </button>
   {/if}
   {#if keptVideo}
@@ -488,18 +484,11 @@
     margin-right: -6px;
   }
 
-  /* The video's icon sits at the left, apart from the row's actions. */
-  .act.keep,
-  .act.kept {
-    margin-right: auto;
+  /* The video's download: where Delete video is once it's here. */
+  .act.keep {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .act.kept {
-    color: var(--accent);
-    opacity: 1;
   }
 
   .act.failed {

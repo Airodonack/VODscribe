@@ -300,6 +300,13 @@
     setView(at - share * length, length);
   }
 
+  // Embedded players (iframes) would take the pointer mid-drag otherwise.
+  $effect(() => {
+    if (!drag) return;
+    document.body.classList.add("timeline-drag");
+    return () => document.body.classList.remove("timeline-drag");
+  });
+
   const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
 </script>
 

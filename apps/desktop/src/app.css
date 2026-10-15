@@ -429,3 +429,9 @@ body.dropping iframe {
 .carry-ghost.making {
   border-style: dashed;
 }
+
+/* While the timeline is dragged on (scrubbing, a cut, panning, a stretch
+   carried), embedded players don't take the pointer when it passes over them. */
+body.timeline-drag iframe {
+  pointer-events: none;
+}

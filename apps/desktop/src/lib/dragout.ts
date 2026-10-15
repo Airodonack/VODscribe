@@ -190,6 +190,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
     { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
   );
   clips.carrying = { start, end };
+  document.body.classList.add("timeline-drag");
 
   return new Promise((resolve) => {
     let down = true;
@@ -201,6 +202,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       window.removeEventListener("keydown", onKey, true);
       clips.carrying = null;
       clips.overBar = false;
+      document.body.classList.remove("timeline-drag");
       ghost.remove();
       if (pictureUrl?.startsWith("blob:")) URL.revokeObjectURL(pictureUrl);
       resolve();
