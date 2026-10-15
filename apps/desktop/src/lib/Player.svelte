@@ -4,6 +4,7 @@
   import { onDestroy, tick, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
+  import ClipBar from "./ClipBar.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
@@ -229,6 +230,14 @@
       </div>
     </div>
     {#if !collapsed}
+      {#if active && vod.duration}
+        <ClipBar
+          {vod}
+          duration={vod.duration}
+          time={() => player?.time() ?? at.time}
+          onseek={(t) => (player ? player.seek(t, false) : (pending = { time: t, play: false }))}
+        />
+      {/if}
       <ClipStrip onplay={playFrom} canCut={playsHere(vod)} />
     {/if}
     {#if error}

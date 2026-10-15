@@ -47,3 +47,12 @@ export function stepTime(time: number, frames: number, fps: number): number {
   const frame = Math.floor(time * fps + 1e-3) + frames;
   return Math.max(0, (frame + 0.25) / fps);
 }
+
+/** Seconds between labeled ticks: the first step that leaves room for a label. */
+const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400];
+
+/** The tick step for `span` seconds drawn `width` pixels wide, labels at least 64 px apart. */
+export function tickStep(span: number, width: number): number {
+  const fits = (step: number) => (step / span) * width >= 64;
+  return STEPS.find(fits) ?? STEPS[STEPS.length - 1];
+}

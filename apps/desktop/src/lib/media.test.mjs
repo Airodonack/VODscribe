@@ -1,7 +1,7 @@
 // The local player's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { columns, cueAt, stepTime } from "./media.ts";
+import { columns, cueAt, stepTime, tickStep } from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
   const cues = [
@@ -41,4 +41,11 @@ test("frame steps land inside the frame and count from it", () => {
   assert.equal(stepTime(0, -1, fps), 0);
   // 29.97: a time on a frame's start counts as that frame.
   assert.equal(Math.floor(stepTime(100 / 29.97, 1, 29.97) * 29.97), 101);
+});
+
+test("ticks are spaced for their labels", () => {
+  assert.equal(tickStep(120, 800), 10, "two minutes: every 10 s");
+  assert.equal(tickStep(30, 800), 5);
+  assert.equal(tickStep(10 * 3600, 800), 3600);
+  assert.equal(tickStep(100 * 3600, 400), 14400, "the longest step at most");
 });
