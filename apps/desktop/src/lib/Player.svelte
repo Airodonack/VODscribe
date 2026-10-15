@@ -199,7 +199,7 @@
     </p>
   {/if}
   {#if canEmbed(vod)}
-    <div class="stage" class:collapsed>
+    <div class="stage" class:collapsed class:audio={audioOnly}>
       <div class="frame" class:audio={audioOnly}>
         {#if active}
           <div class="host" bind:this={host}></div>
@@ -342,12 +342,26 @@
   }
 
   /* Audio alone: just the controls' height. */
+  /* Audio alone: the controls in the panel's own colors, at their own height,
+     rather than floating on a video's black stage. */
+  .stage.audio {
+    background: var(--surface);
+    padding: 0 16px 8px;
+  }
+
   .frame.audio {
     aspect-ratio: auto;
-    height: 54px;
+    height: auto;
+    max-height: none;
+  }
+
+  .frame.audio .host {
+    height: auto;
   }
 
   .poster.bar {
+    height: 40px;
+    border-radius: var(--radius);
     align-items: center;
     justify-content: center;
     gap: 8px;

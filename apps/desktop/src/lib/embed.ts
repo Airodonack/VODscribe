@@ -212,7 +212,7 @@ function videoPlayer(
     video.playsInline = true;
     video.style.cssText = "width: 100%; height: 100%; background: #000";
   } else {
-    video.style.cssText = "display: block; width: 100%; height: 100%";
+    video.style.cssText = "display: block; width: 100%";
   }
   video.addEventListener("error", () => {
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
