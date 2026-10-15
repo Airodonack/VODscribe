@@ -45,6 +45,11 @@
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(siteName(vod));
+  // A kept video can be deleted unless it's about to be used: done, paused or
+  // failed (a failed transcription still has its download).
+  const keptVideo = $derived(
+    !!vod.media && (vod.status === "done" || vod.status === "paused" || vod.status === "error"),
+  );
 
   /** Runs an action, reporting its error if it fails. */
   function act(action: Promise<unknown>) {
@@ -214,16 +219,16 @@
     >
       <Icon name="redo" size={15} />
     </button>
-    {#if vod.media}
-      <button
-        class="act"
-        onclick={deleteVideo}
-        title="Delete the video kept on this computer (the transcript stays)"
-        aria-label="Delete video"
-      >
-        <Icon name="video-off" size={15} />
-      </button>
-    {/if}
+  {/if}
+  {#if keptVideo}
+    <button
+      class="act"
+      onclick={deleteVideo}
+      title="Delete the video kept on this computer (the transcript stays)"
+      aria-label="Delete video"
+    >
+      <Icon name="video-off" size={15} />
+    </button>
   {/if}
   <button
     class="act"
