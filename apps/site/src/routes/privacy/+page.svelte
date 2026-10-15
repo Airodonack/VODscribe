@@ -36,8 +36,8 @@
     <li>
       <strong>Get the VODs you add.</strong> It downloads their details and audio from Kick, Twitch or YouTube, or from the
       site the link is on, the way your browser would. From other sites it downloads the video too, and keeps it on your computer
-      to play there, until you delete it or the VOD. It only follows links to the internet, never to your computer or your
-      local network.
+      to play there, until you delete it or the VOD. When you ask, it downloads a VOD's video, or the part of it you make
+      a clip of, from the same place. It only takes links you add to the internet, never to your computer or your local network.
     </li>
     <li>
       <strong>Get their chat.</strong> For Kick and Twitch VODs it reads the chat replay from those sites, as their own pages
