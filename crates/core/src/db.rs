@@ -449,13 +449,16 @@ pub struct Clip {
     pub shown: bool,
 }
 
-/// A mark on a VOD's timeline (only cuts, for now).
+/// A mark on a VOD's timeline: a cut (`kind` "cut", between two frames), a
+/// chapter's start ("chapter": it runs to the next one) or a highlight
+/// ("highlight", a moment), with its title or note.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Mark {
     pub id: i64,
     pub vod_id: i64,
     pub kind: String,
     pub start: f64,
+    pub text: Option<String>,
 }
 
 const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
@@ -644,20 +647,26 @@ impl Db {
 
     /// VOD `vod_id`'s marks, in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
-        let mut stmt =
-            self.conn.prepare("SELECT id, vod_id, kind, start FROM marks WHERE vod_id = ?1 ORDER BY start, id")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, vod_id, kind, start, text FROM marks WHERE vod_id = ?1 ORDER BY start, id")?;
         let rows = stmt.query_map([vod_id], |r| {
-            Ok(Mark { id: r.get(0)?, vod_id: r.get(1)?, kind: r.get(2)?, start: r.get(3)? })
+            Ok(Mark { id: r.get(0)?, vod_id: r.get(1)?, kind: r.get(2)?, start: r.get(3)?, text: r.get(4)? })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64) -> Result<Mark> {
+    pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64, text: Option<&str>) -> Result<Mark> {
         self.conn.execute(
-            "INSERT INTO marks (vod_id, kind, start, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![vod_id, kind, start, now()],
+            "INSERT INTO marks (vod_id, kind, start, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![vod_id, kind, start, text, now()],
         )?;
-        Ok(Mark { id: self.conn.last_insert_rowid(), vod_id, kind: kind.into(), start })
+        Ok(Mark { id: self.conn.last_insert_rowid(), vod_id, kind: kind.into(), start, text: text.map(Into::into) })
+    }
+
+    /// Sets mark `id`'s title or note (none, if None); false if it's gone.
+    pub fn set_mark_text(&self, id: i64, text: Option<&str>) -> Result<bool> {
+        Ok(self.conn.execute("UPDATE marks SET text = ?2 WHERE id = ?1", params![id, text])? > 0)
     }
 
     /// Moves mark `id` to `start`; false if it's gone.
@@ -1516,8 +1525,8 @@ mod tests {
     fn marks_come_in_time_order_and_go_with_their_vod() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let b = db.add_mark(vod, "cut", 20.0).unwrap();
-        let a = db.add_mark(vod, "cut", 10.0).unwrap();
+        let b = db.add_mark(vod, "cut", 20.0, None).unwrap();
+        let a = db.add_mark(vod, "cut", 10.0, None).unwrap();
         let starts = |db: &Db| db.marks(vod).unwrap().into_iter().map(|m| m.start).collect::<Vec<_>>();
         assert_eq!(starts(&db), [10.0, 20.0]);
         assert!(db.move_mark(a.id, 30.0).unwrap());
@@ -1525,6 +1534,13 @@ mod tests {
         db.delete_mark(b.id).unwrap();
         assert_eq!(starts(&db), [30.0]);
         assert!(!db.move_mark(b.id, 1.0).unwrap(), "gone");
+        let chapter = db.add_mark(vod, "chapter", 5.0, Some("Intro")).unwrap();
+        assert!(db.set_mark_text(chapter.id, Some("Lunch")).unwrap());
+        let marks = db.marks(vod).unwrap();
+        assert_eq!((marks[0].kind.as_str(), marks[0].text.as_deref()), ("chapter", Some("Lunch")));
+        assert!(db.set_mark_text(chapter.id, None).unwrap());
+        assert_eq!(db.marks(vod).unwrap()[0].text, None);
+        assert!(!db.set_mark_text(b.id, None).unwrap(), "gone");
         db.delete_vod(vod).unwrap();
         assert!(db.marks(vod).unwrap().is_empty());
     }

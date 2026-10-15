@@ -381,15 +381,43 @@ pub(crate) async fn list_marks(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Mar
     crate::with_reads(app, move |db| db.marks(vod_id)).await
 }
 
-/// Puts a cut on VOD `vod_id`'s timeline at `time` seconds (between two frames).
+/// What a mark can be (`db::Mark`).
+const MARK_KINDS: [&str; 3] = ["cut", "chapter", "highlight"];
+
+/// A mark's title or note: trimmed, at most 200 characters; none if empty.
+fn mark_text(text: Option<String>) -> Option<String> {
+    text.map(|t| t.trim().chars().take(200).collect::<String>()).filter(|t| !t.is_empty())
+}
+
+/// Puts a mark on VOD `vod_id`'s timeline at `time` seconds: a cut (between
+/// two frames) unless `kind` says a chapter or a highlight, with its `text`.
 #[tauri::command]
-pub(crate) async fn add_mark(state: State<'_, AppState>, vod_id: i64, time: f64) -> CmdResult<Mark> {
+pub(crate) async fn add_mark(
+    state: State<'_, AppState>,
+    vod_id: i64,
+    time: f64,
+    kind: Option<String>,
+    text: Option<String>,
+) -> CmdResult<Mark> {
     if !(time.is_finite() && time >= 0.0) {
         return Err("A mark has to be within the video.".into());
     }
+    let kind = kind.unwrap_or_else(|| "cut".into());
+    if !MARK_KINDS.contains(&kind.as_str()) {
+        return Err("That isn't a kind of mark.".into());
+    }
     let db = state.db.lock().unwrap();
     db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-    db.add_mark(vod_id, "cut", time).map_err(err)
+    db.add_mark(vod_id, &kind, time, mark_text(text).as_deref()).map_err(err)
+}
+
+/// Sets mark `id`'s title (a chapter's) or note (a highlight's).
+#[tauri::command]
+pub(crate) async fn set_mark_text(state: State<'_, AppState>, id: i64, text: Option<String>) -> CmdResult<()> {
+    if !state.db.lock().unwrap().set_mark_text(id, mark_text(text).as_deref()).map_err(err)? {
+        return Err("That mark is gone.".into());
+    }
+    Ok(())
 }
 
 #[tauri::command]

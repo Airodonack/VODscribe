@@ -217,6 +217,7 @@ pub fn run() {
             clips::list_marks,
             clips::add_mark,
             clips::move_mark,
+            clips::set_mark_text,
             clips::delete_mark,
             videos::keep_video,
             videos::stop_video,

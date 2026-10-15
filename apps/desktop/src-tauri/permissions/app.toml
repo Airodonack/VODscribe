@@ -34,6 +34,7 @@ permissions = [
   "allow-list-marks",
   "allow-add-mark",
   "allow-move-mark",
+  "allow-set-mark-text",
   "allow-delete-mark",
   "allow-keep-video",
   "allow-stop-video",
