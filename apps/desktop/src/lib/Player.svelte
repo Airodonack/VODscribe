@@ -6,7 +6,7 @@
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
-  import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
+  import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import { formatTime, keepsVideo, playbackHint, siteName, watchUrl } from "./platform";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
@@ -38,6 +38,8 @@
   let detected = $state(false);
   // Follows the VOD: one opened while still downloading learns once it's done.
   let audioOnly = $derived(vod.audio_only || detected);
+  // The app's own player, for a file played here, steps a frame at a time.
+  const framed = $derived(playsHere(vod) && !audioOnly);
 
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
@@ -102,7 +104,9 @@
       return;
     }
     if (!player) return;
-    if (key in STEPS) {
+    if ((key === "," || key === ".") && player.step) {
+      player.step(key === "," ? -1 : 1);
+    } else if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
       player.seek(Math.max(0, player.time() + step), false);
     } else if (key === " " || key === "k") {
@@ -179,11 +183,15 @@
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
       <kbd>J</kbd><kbd>L</kbd> 10 s
+      {#if framed}
+        <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
+        <span class="sep">·</span> <kbd>F</kbd> full screen
+      {/if}
     </p>
   {/if}
   {#if canEmbed(vod)}
     <div class="stage" class:collapsed class:audio={audioOnly}>
-      <div class="frame" class:audio={audioOnly}>
+      <div class="frame" class:audio={audioOnly} class:own={active && playsHere(vod)}>
         {#if active}
           <div class="host" bind:this={host}></div>
         {:else if audioOnly}
@@ -317,6 +325,12 @@
     /* The website's demo, a window within a page, sets a smaller share of its own height. */
     max-height: var(--player-max-height, 44vh);
     margin: 0 auto;
+  }
+
+  /* The app's own player sizes its picture itself (LocalPlayer.svelte). */
+  .frame.own {
+    aspect-ratio: auto;
+    max-height: none;
   }
 
   .host {

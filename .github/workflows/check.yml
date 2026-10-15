@@ -56,7 +56,7 @@ jobs:
       - run: pnpm check
       # The demo's search against the cases the Rust search is tested with.
       - run: node --test apps/site/src/lib/tauri/search.test.mjs apps/site/src/lib/changelog.test.mjs
-      - run: node --test apps/desktop/src/lib/events.test.mjs apps/desktop/src/lib/rows.test.mjs apps/desktop/src/lib/chatParts.test.mjs apps/desktop/src/lib/theme.test.mjs apps/desktop/src/lib/modules.test.mjs
+      - run: node --test apps/desktop/src/lib/events.test.mjs apps/desktop/src/lib/rows.test.mjs apps/desktop/src/lib/chatParts.test.mjs apps/desktop/src/lib/theme.test.mjs apps/desktop/src/lib/modules.test.mjs apps/desktop/src/lib/media.test.mjs
       # Also catches app code the website's demo stand-ins don't provide.
       - run: pnpm --filter site build
 

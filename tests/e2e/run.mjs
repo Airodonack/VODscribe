@@ -1,7 +1,7 @@
 // End-to-end test of an installed VODscribe, driven over WebDriver through
 // tauri-driver: first-run setup, adding a file, transcribing it, the
-// transcript, searching, playing from a result, and removing it (answering
-// "Keep" first, which must keep it).
+// transcript, searching, playing from a result (with its waveform and
+// captions), and removing it (answering "Keep" first, which must keep it).
 //
 //   node tests/e2e/run.mjs <the installed app>
 //
@@ -200,6 +200,23 @@ async function main() {
     MINUTE,
   );
   step("searched and played");
+
+  // The app's own player: a waveform read from the file, and the transcript as captions.
+  const levels = await js(
+    `return window.__TAURI_INTERNALS__.invoke("peaks", { id: arguments[0] }).then((b) => new Uint8Array(b).length)`,
+    done.id,
+  );
+  if (levels < 20) throw new Error(`the waveform has ${levels} levels, for a file of ${done.duration} s`);
+  const [cue] = await invoke("captions", { vodId: done.id });
+  const middle = (cue.start + cue.end) / 2;
+  await js(`const v = document.querySelector(".player video"); v.pause(); v.currentTime = arguments[0];`, middle);
+  const caption = await until(
+    "a caption",
+    () => js(`return document.querySelector(".player .caption")?.textContent.trim()`),
+    MINUTE,
+  );
+  if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
+  step(`waveform and captions: "${caption}"`);
 
   // Removing: "Keep" keeps it, "Remove" removes it.
   await js(`window.__e2e.answer = "Keep"`);

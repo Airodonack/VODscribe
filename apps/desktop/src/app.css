@@ -19,6 +19,8 @@
   --shadow: 0 10px 30px rgb(0 0 0 / 0.14), 0 1px 3px rgb(0 0 0 / 0.08);
   --radius: 8px;
   --radius-sm: 5px;
+  /* The control bar of the app's own player (LocalPlayer.svelte). */
+  --controls-height: 40px;
   --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
   --youtube: #ff0033;

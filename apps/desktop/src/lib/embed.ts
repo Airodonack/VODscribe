@@ -4,7 +4,9 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
+import { mount, unmount } from "svelte";
 import { api, type Vod } from "./api";
+import LocalPlayer from "./LocalPlayer.svelte";
 import { isTwitchClip, twitchId, twitchTime } from "./platform";
 
 export interface EmbeddedPlayer {
@@ -12,6 +14,8 @@ export interface EmbeddedPlayer {
   /** Current position in seconds. */
   time(): number;
   togglePlay(): void;
+  /** Steps `frames` frames on (back, if negative), paused. Only where frames can be told apart. */
+  step?(frames: number): void;
   destroy(): void;
 }
 
@@ -196,24 +200,19 @@ function twitch(
   );
 }
 
-/** A plain <video> in `el` (or <audio>, for sound alone: a bar of controls with
- *  no picture, no fullscreen). `attach` points it at its source and returns any cleanup. */
+/** A plain <video> in `el`, with the webview's controls, for streams from a
+ *  site (Kick, Twitch clips). `attach` points it at its source and returns any cleanup. */
 function videoPlayer(
   el: HTMLElement,
   time: number,
   play: boolean,
   attach: (video: HTMLMediaElement) => (() => void) | void,
   onerror?: (message: string | null) => void,
-  audio = false,
 ): EmbeddedPlayer {
-  const video = document.createElement(audio ? "audio" : "video");
+  const video = document.createElement("video");
   video.controls = true;
-  if (video instanceof HTMLVideoElement) {
-    video.playsInline = true;
-    video.style.cssText = "width: 100%; height: 100%; background: #000";
-  } else {
-    video.style.cssText = "display: block; width: 100%";
-  }
+  video.playsInline = true;
+  video.style.cssText = "width: 100%; height: 100%; background: #000";
   video.addEventListener("error", () => {
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
     onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
@@ -295,7 +294,8 @@ async function twitchClip(
   );
 }
 
-/** A file on this computer, streamed by the app's local media server. */
+/** A file on this computer, streamed by the app's local media server, in a
+ *  player of the app's own (LocalPlayer.svelte). */
 async function local(
   el: HTMLElement,
   vod: Vod,
@@ -304,17 +304,17 @@ async function local(
   onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> {
   const src = await api.mediaUrl(vod.id);
-  return videoPlayer(
-    el,
-    time,
-    play,
-    (video) => {
-      video.src = src;
-      video.currentTime = time;
-    },
-    onerror,
-    vod.audio_only,
-  );
+  const player = mount(LocalPlayer, {
+    target: el,
+    props: { vodId: vod.id, src, start: time, autoplay: play, audio: vod.audio_only, onerror },
+  });
+  return {
+    seek: player.seek,
+    time: player.currentTime,
+    togglePlay: player.togglePlay,
+    step: player.step,
+    destroy: () => unmount(player),
+  };
 }
 
 type CreatePlayer = (
@@ -349,3 +349,6 @@ export function createPlayer(
 }
 
 export const canEmbed = (vod: Vod) => playerFor(vod) !== undefined;
+
+/** Whether `vod` plays from a file here, in the app's own player. */
+export const playsHere = (vod: Vod) => playerFor(vod) === local;

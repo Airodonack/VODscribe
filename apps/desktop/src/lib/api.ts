@@ -128,6 +128,13 @@ export interface Line {
   text: string;
 }
 
+/** A caption (crates/core `transcript::Cue`). */
+export interface Cue {
+  start: number;
+  end: number;
+  text: string;
+}
+
 /** A run of a chat message (crates/core `ChatPart`). */
 export type ChatPart = { type: "text"; text: string } | { type: "emote"; name: string; url: string };
 
@@ -206,6 +213,10 @@ export const api = {
   showFile: (id: number) => invoke<void>("show_file", { id }),
   openFile: (id: number) => invoke<void>("open_file", { id }),
   mediaUrl: (id: number) => invoke<string>("media_url", { id }),
+  /** Loudness, ten levels a second (crates/core `peaks`); empty if unknown. */
+  peaks: (id: number) => invoke<ArrayBuffer>("peaks", { id }).then((b) => new Uint8Array(b)),
+  frameRate: (id: number) => invoke<number | null>("frame_rate", { id }),
+  captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
