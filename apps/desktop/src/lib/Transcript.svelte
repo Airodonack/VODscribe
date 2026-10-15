@@ -431,12 +431,15 @@
     cancelAnimationFrame(scrolling);
     scrolling = 0;
     if (!moved) return;
+    // The click that ends the drag isn't one on a line. It lands on whatever
+    // holds both ends, when they're on different lines, so it may never come.
     swallowClick = true;
+    setTimeout(() => (swallowClick = false));
     const first = lines.indexOf(rows[from].line!);
     const last = lines.indexOf(rows[to].line!);
     if (first < 0 || last < 0) return;
     const { start, end } = linesSpan(lines, first, last);
-    // The lines selected (Clip then cuts either side of them), and the
+    // The lines selected (Split then cuts either side of them), and the
     // playhead to their start, showing the VOD in the player if it wasn't.
     cuts.open(vod.id);
     cuts.selection = { start, end };
