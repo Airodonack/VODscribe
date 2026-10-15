@@ -6,9 +6,9 @@
   // Timeline layers. It lives at the end of <body> (`portal`) and is placed
   // against the window, so nothing can clip it or draw over it (a scrolling
   // area, a sticky header, a playing video in WebKit). It sits below its
-  // button, right edges aligned, or above it when there's more room there, and
-  // scrolls within the space it has. A click outside it or its button, or
-  // Escape, closes it.
+  // button, right edges aligned (shifted to stay inside the window), or above
+  // it when there's more room there, and scrolls within the space it has. A
+  // click outside it or its button, or Escape, closes it.
   let {
     open = $bindable(),
     anchor,
@@ -34,7 +34,8 @@
   function fit() {
     if (!open || !anchor) return;
     const box = anchor.getBoundingClientRect();
-    const right = Math.max(8, window.innerWidth - box.right);
+    // Right edges aligned, but never past the window's left edge (a button near it).
+    const right = Math.max(8, Math.min(window.innerWidth - box.right, window.innerWidth - width - 8));
     const below = window.innerHeight - box.bottom - 16;
     const above = box.top - 16;
     place =
