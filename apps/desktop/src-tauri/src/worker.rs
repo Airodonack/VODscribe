@@ -328,6 +328,20 @@ fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> 
         flag,
         reporter(&app, vod.id, progress),
     )?;
+    // The waveform, read while the audio is here: a VOD from a site with its
+    // own player doesn't keep it once transcribed. Only a stop fails the stage.
+    let peaks = ctx.paths.peaks();
+    if !vodscribe_core::peaks::path(&peaks, vod.id).is_file() {
+        match vodscribe_core::peaks::read(&ffmpeg, &audio, flag) {
+            Ok(levels) => {
+                if let Err(e) = vodscribe_core::peaks::save(&peaks, vod.id, &levels) {
+                    eprintln!("VOD {}: save its waveform: {e:#}", vod.id);
+                }
+            }
+            Err(e) if vodscribe_core::is_canceled(&e) => return Err(e),
+            Err(e) => eprintln!("VOD {}: read its waveform: {e:#}", vod.id),
+        }
+    }
     ctx.db.set_audio_path(vod.id, Some(&audio.to_string_lossy()))?;
     ctx.db.set_status(vod.id, Status::Ready, 0.0, None)?;
     Ok(())

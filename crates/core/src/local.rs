@@ -122,6 +122,27 @@ fn parse_codecs(details: &str) -> crate::playable::Streams {
     crate::playable::Streams { video: first(": Video: "), audio: first(": Audio: ") }
 }
 
+/// The frame rate of `path`'s first video stream, as ffmpeg reads it; None
+/// for sound alone.
+pub fn frame_rate(ffmpeg: &Path, path: &Path) -> Result<Option<f64>> {
+    let mut cmd = tools::command(ffmpeg);
+    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .context("run ffmpeg")?;
+    Ok(parse_frame_rate(&String::from_utf8_lossy(&out.stderr)))
+}
+
+fn parse_frame_rate(details: &str) -> Option<f64> {
+    let line = details
+        .lines()
+        .find(|l| l.trim_start().starts_with("Stream #") && l.contains(": Video: ") && !l.contains("(attached pic)"))?;
+    // "…, 1920x1080, 6000 kb/s, 29.97 fps, 29.97 tbr, …"
+    line.split(", ").find_map(|part| part.strip_suffix(" fps")?.parse::<f64>().ok()).filter(|f| *f > 0.0)
+}
+
 /// Saves a frame from a tenth of the way in as VOD `id`'s thumbnail. `None` for
 /// audio-only files.
 pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Option<f64>) -> Result<Option<String>> {
@@ -189,11 +210,15 @@ mod tests {
 ";
         let s = parse_codecs(details);
         assert_eq!((s.video.as_deref(), s.audio.as_deref()), (Some("h264"), Some("aac")));
+        assert_eq!(parse_frame_rate(details), Some(25.0));
         let song = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 128 kb/s
   Stream #0:1: Video: mjpeg (Baseline), yuvj420p, 600x600, 90k tbr, 90k tbn (attached pic)
 ";
         let s = parse_codecs(song);
         assert_eq!((s.video, s.audio.as_deref()), (None, Some("mp3")), "cover art isn't video");
+        assert_eq!(parse_frame_rate(song), None);
+        let film = "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 29.97 fps, 29.97 tbr, 1k tbn (default)";
+        assert_eq!(parse_frame_rate(film), Some(29.97));
     }
 
     /// Probes real files made with ffmpeg; skipped where ffmpeg isn't installed.
@@ -218,6 +243,7 @@ mod tests {
             &["-f", "lavfi", "-i", "testsrc=d=2:s=160x90", "-f", "lavfi", "-i", "sine=d=2", "-shortest"],
         );
         let silent = make("silent.mp4", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90"]);
+        assert_eq!(frame_rate(&ffmpeg, &video).unwrap(), Some(25.0));
         // Real audio with a program's extension is still refused.
         let program = dir.join("clip.mp4.exe");
         fs::copy(&video, &program).unwrap();

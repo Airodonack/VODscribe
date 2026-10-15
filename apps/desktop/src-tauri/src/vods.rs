@@ -263,6 +263,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
         delete_row().map_err(err)?;
     }
     thumbs::remove(&state.paths.thumbs(), id);
+    vodscribe_core::peaks::remove(&state.paths.peaks(), id);
     let _ = app.emit("vod-removed", id);
     Ok(())
 }
@@ -393,6 +394,12 @@ pub(crate) struct Line {
 pub(crate) async fn transcript(app: AppHandle, vod_id: i64, after: Option<f64>) -> CmdResult<Vec<Line>> {
     let lines = crate::with_reads(app, move |db| db.lines(vod_id, after)).await?;
     Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
+}
+
+/// VOD `vod_id`'s captions, for the player of a file played here.
+#[tauri::command]
+pub(crate) async fn captions(app: AppHandle, vod_id: i64) -> CmdResult<Vec<vodscribe_core::transcript::Cue>> {
+    crate::with_reads(app, move |db| Ok(vodscribe_core::transcript::cues(&db.segments(vod_id)?))).await
 }
 
 /// A URL that plays Twitch clip `slug`'s video (see `vodscribe_core::twitch`).

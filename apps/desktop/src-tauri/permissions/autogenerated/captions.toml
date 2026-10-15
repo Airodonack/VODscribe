@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-captions"
+description = "Enables the captions command without any pre-configured scope."
+commands.allow = ["captions"]
+
+[[permission]]
+identifier = "deny-captions"
+description = "Denies the captions command without any pre-configured scope."
+commands.deny = ["captions"]

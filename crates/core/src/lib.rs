@@ -16,6 +16,7 @@ pub mod layers;
 pub mod local;
 pub mod model;
 pub mod net;
+pub mod peaks;
 pub mod pipeline;
 pub mod playable;
 pub mod settings;
@@ -151,6 +152,12 @@ impl Paths {
     /// with the library, so Clear downloads (`cache_dirs`) leaves them.
     pub fn thumbs(&self) -> PathBuf {
         self.local.join("thumbs")
+    }
+
+    /// Each VOD's loudness over time (`peaks`). Read from audio that may be
+    /// gone since, so not a cache.
+    pub fn peaks(&self) -> PathBuf {
+        self.local.join("peaks")
     }
 
     /// Chat emote images (see `emotes`).

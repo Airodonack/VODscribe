@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-frame-rate"
+description = "Enables the frame_rate command without any pre-configured scope."
+commands.allow = ["frame_rate"]
+
+[[permission]]
+identifier = "deny-frame-rate"
+description = "Denies the frame_rate command without any pre-configured scope."
+commands.deny = ["frame_rate"]

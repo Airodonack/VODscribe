@@ -6,6 +6,8 @@
 //! made at launch, requests must name the server's own host (so a web page
 //! can't reach it through DNS rebinding), and it serves only the files of local
 //! VODs, looked up by id. Byte ranges are supported so the player can seek.
+//!
+//! The player's waveform (`peaks`) and frame rate are asked for here too.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -17,7 +19,10 @@ use anyhow::{Context, Result};
 use tauri::State;
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
-use crate::{AppState, CmdResult, loopback};
+use vodscribe_core::db::Db;
+use vodscribe_core::{local, peaks, tools};
+
+use crate::{AppState, CmdResult, err, loopback};
 
 /// Requests served at once.
 const MAX_ACTIVE: usize = 32;
@@ -65,6 +70,53 @@ impl MediaServer {
 pub(crate) async fn media_url(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     let media = &state.media;
     Ok(format!("{}/{}/{id}", media.origin, media.token))
+}
+
+/// The file VOD `id` plays from here: a file on this computer, or a video kept
+/// from a site without an embed.
+pub(crate) fn playable_file(db: &Db, id: i64) -> Option<String> {
+    db.vod(id).ok().flatten().and_then(|v| v.source_path).or_else(|| db.media_path(id).ok().flatten())
+}
+
+/// VOD `id`'s loudness over time (`peaks`), ten levels a second; empty if it
+/// was never read. One that plays from a file here is read now if need be.
+#[tauri::command]
+pub(crate) async fn peaks(state: State<'_, AppState>, id: i64) -> CmdResult<tauri::ipc::Response> {
+    let dir = state.paths.peaks();
+    if let Some(levels) = peaks::load(&dir, id) {
+        return Ok(tauri::ipc::Response::new(levels));
+    }
+    let file = playable_file(&state.db.lock().unwrap(), id);
+    let (Some(file), Some(ffmpeg)) = (file, tools::find_ffmpeg(&state.paths.bin())) else {
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    };
+    // One at a time, so opening a VOD twice reads its file once.
+    static READING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let levels = tauri::async_runtime::spawn_blocking(move || {
+        let _one = READING.lock().unwrap();
+        if let Some(levels) = peaks::load(&dir, id) {
+            return Ok(levels);
+        }
+        let levels = peaks::read(&ffmpeg, Path::new(&file), &Default::default())?;
+        peaks::save(&dir, id, &levels)?;
+        anyhow::Ok(levels)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    Ok(tauri::ipc::Response::new(levels))
+}
+
+/// The frame rate of VOD `id`'s video, for stepping a frame at a time. None
+/// for sound alone, or when it can't be read.
+#[tauri::command]
+pub(crate) async fn frame_rate(state: State<'_, AppState>, id: i64) -> CmdResult<Option<f64>> {
+    let file = playable_file(&state.db.lock().unwrap(), id);
+    let (Some(file), Some(ffmpeg)) = (file, tools::find_ffmpeg(&state.paths.bin())) else { return Ok(None) };
+    tauri::async_runtime::spawn_blocking(move || local::frame_rate(&ffmpeg, Path::new(&file)))
+        .await
+        .map_err(err)?
+        .map_err(err)
 }
 
 type Find = dyn Fn(i64) -> Option<String> + Send + Sync;

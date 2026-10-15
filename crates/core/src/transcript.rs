@@ -137,6 +137,67 @@ pub fn find_phrase(words: &[Word], query: &[String], last_is_prefix: bool) -> Ve
     hits
 }
 
+/// A caption: words shown together over the picture, at most two short lines.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Cue {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+}
+
+/// Characters a cue holds: two lines of the usual subtitle width.
+const CUE_CHARS: usize = 84;
+/// A cue ends at a pause this long, or once it has been up this long.
+const CUE_GAP: f64 = 1.0;
+const CUE_LONGEST: f64 = 6.0;
+/// How long a cue stays up after its last word, unless the next one comes first.
+const CUE_HOLD: f64 = 0.6;
+
+/// Captions for `segments`, cut from their words: at a sentence's end, at a
+/// pause, before running past `CUE_CHARS`, or at a comma once a line is full.
+pub fn cues(segments: &[Segment]) -> Vec<Cue> {
+    let mut out: Vec<Cue> = Vec::new();
+    for segment in segments {
+        if segment.words.is_empty() {
+            out.push(Cue { start: segment.start, end: segment.end, text: segment.text.clone() });
+            continue;
+        }
+        let mut current: Vec<&Word> = Vec::new();
+        let len = |words: &[&Word]| words.iter().map(|w| w.text.chars().count() + 1).sum::<usize>();
+        for word in &segment.words {
+            if let (Some(first), Some(last)) = (current.first(), current.last()) {
+                let full = len(&current) + word.text.chars().count() > CUE_CHARS;
+                let pause = word.start - last.end > CUE_GAP;
+                let long = word.end - first.start > CUE_LONGEST;
+                let comma = last.text.ends_with([',', ';', ':']) && len(&current) > CUE_CHARS / 2;
+                if full || pause || long || comma {
+                    out.push(cue(&current));
+                    current.clear();
+                }
+            }
+            current.push(word);
+            if word.text.ends_with(['.', '?', '!', '…']) {
+                out.push(cue(&current));
+                current.clear();
+            }
+        }
+        if !current.is_empty() {
+            out.push(cue(&current));
+        }
+    }
+    // Held a moment after the last word, but never over the next cue.
+    for i in 0..out.len() {
+        let next = out.get(i + 1).map_or(f64::INFINITY, |c| c.start);
+        out[i].end = (out[i].end + CUE_HOLD).min(next).max(out[i].start);
+    }
+    out
+}
+
+fn cue(words: &[&Word]) -> Cue {
+    let text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+    Cue { start: words[0].start, end: words[words.len() - 1].end, text }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +259,32 @@ mod tests {
         assert_eq!(find_phrase(&words, &terms("don't you th"), true), [(4, 6)]);
         assert_eq!(find_phrase(&words, &terms("don't you th"), false), []);
         assert_eq!(find_phrase(&words, &terms("s a"), false), [(0, 1)]);
+    }
+    #[test]
+    fn cues_break_at_sentences_pauses_and_length() {
+        let w = |text: &str, start: f64| Word { text: text.into(), start, end: start + 0.3 };
+        let seg = |words: Vec<Word>| Segment {
+            start: words[0].start,
+            end: words.last().unwrap().end,
+            text: words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" "),
+            words,
+        };
+        let long: Vec<Word> = (0..30).map(|i| w("wordy", 20.0 + i as f64 * 0.15)).collect();
+        let segments = [
+            seg(vec![w("Hello", 0.0), w("there.", 0.4), w("How", 0.8), w("are", 1.2), w("you", 3.0)]),
+            seg(vec![w("Next", 3.5)]),
+            seg(long),
+            Segment { start: 40.0, end: 41.0, text: "no words".into(), words: Vec::new() },
+        ];
+        let cues = cues(&segments);
+        let texts: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
+        let wordy = |n: usize| vec!["wordy"; n].join(" ");
+        assert_eq!(
+            texts,
+            ["Hello there.", "How are", "you", "Next", &wordy(14), &wordy(14), "wordy wordy", "no words"]
+        );
+        assert_eq!((cues[0].start, cues[0].end), (0.0, 0.8), "held until the next cue");
+        assert!((cues[1].end - 2.1).abs() < 1e-9, "held after its last word: {}", cues[1].end);
+        assert_eq!(cues[2].end, 3.5);
     }
 }

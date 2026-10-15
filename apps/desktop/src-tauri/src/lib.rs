@@ -119,6 +119,7 @@ pub fn run() {
             if let Ok(vods) = db.vods() {
                 let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
                 vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
+                vodscribe_core::peaks::tidy(&paths.peaks(), &library);
             }
             let db = Mutex::new(db);
             let reads = Mutex::new(Db::open_reader(&paths.db())?);
@@ -126,9 +127,7 @@ pub fn run() {
             let handle = app.handle().clone();
             let media = media::MediaServer::start(move |id| {
                 let state = handle.state::<AppState>();
-                // A file on this computer, or a video kept from a site without an embed.
-                let db = state.db.lock().unwrap();
-                db.vod(id).ok().flatten().and_then(|v| v.source_path).or_else(|| db.media_path(id).ok().flatten())
+                media::playable_file(&state.db.lock().unwrap(), id)
             })?;
             let (chat, chat_rx) = chats::ChatQueue::new();
             app.manage(AppState {
@@ -193,6 +192,9 @@ pub fn run() {
             vods::show_file,
             vods::open_file,
             media::media_url,
+            media::peaks,
+            media::frame_rate,
+            vods::captions,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

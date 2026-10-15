@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-peaks"
+description = "Enables the peaks command without any pre-configured scope."
+commands.allow = ["peaks"]
+
+[[permission]]
+identifier = "deny-peaks"
+description = "Denies the peaks command without any pre-configured scope."
+commands.deny = ["peaks"]
