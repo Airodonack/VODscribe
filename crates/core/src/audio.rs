@@ -141,12 +141,17 @@ impl Chunker {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// Every kind of file the app reads decodes through ffmpeg's allowlists
     /// (`tools::ffmpeg_allow`), and a container outside them doesn't. Made with
     /// ffmpeg; skipped where ffmpeg isn't installed.
     #[test]
     fn decodes_what_the_allowlists_allow() {
-        let Ok(ffmpeg) = which::which("ffmpeg") else { return };
+        let Ok(ffmpeg) = which::which("ffmpeg") else {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        };
         let dir = crate::TempDir::new("allowlist");
         let make = |name: &str, args: &[&str]| {
             let path = dir.join(name);
@@ -194,8 +199,6 @@ mod tests {
         let nut = make("n.nut", &["-c:v", "mpeg4", "-c:a", "pcm_s16le"]).expect("ffmpeg can make NUT");
         assert!(decode(&ffmpeg, &nut, 0.0, &never, |_| Ok(())).is_err());
     }
-
-    use super::*;
 
     #[test]
     fn chunker_offsets_resumed_audio() {

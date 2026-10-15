@@ -118,28 +118,6 @@ jobs:
             node tests/e2e/run.mjs "$APP"
           fi
 
-      # Where WebView2 wrote (or didn't) the port msedgedriver waits for.
-      - name: Look for WebView2's DevToolsActivePort
-        if: failure() && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          Get-Process | Where-Object { $_.Name -match 'vodscribe|msedgewebview2|msedgedriver' } | Format-Table Name, Id
-          foreach ($dir in "$env:LOCALAPPDATA\app.vodscribe", $env:TEMP) {
-            Get-ChildItem -Recurse -Force -ErrorAction SilentlyContinue $dir -Filter DevToolsActivePort |
-              ForEach-Object { $_.FullName }
-          }
-          # The app on its own, asked for a debugging port as msedgedriver asks.
-          $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
-          $app = Start-Process $env:APP -PassThru -RedirectStandardError "$env:RUNNER_TEMP\app-err.txt"
-          Start-Sleep 20
-          Write-Output "app still running: $(-not $app.HasExited) (exit code $($app.ExitCode))"
-          Get-Process | Where-Object { $_.Name -match 'vodscribe|msedgewebview2' } | Format-Table Name, Id
-          $open = (Test-NetConnection 127.0.0.1 -Port 9222 -WarningAction SilentlyContinue).TcpTestSucceeded
-          Write-Output "port 9222 open: $open"
-          Get-ChildItem -Force -ErrorAction SilentlyContinue "$env:LOCALAPPDATA\app.vodscribe" | ForEach-Object { $_.Name }
-          Get-Content -ErrorAction SilentlyContinue "$env:RUNNER_TEMP\app-err.txt" -Tail 20
-          Stop-Process -Id $app.Id -ErrorAction SilentlyContinue
-
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

@@ -52,8 +52,8 @@ fn parse_clip(c: &Value) -> Clip {
     }
 }
 
-/// A URL that plays clip `slug`'s video (720p at most, plenty for a preview
-/// pane), signed by Twitch for a while.
+/// A URL that plays clip `slug`'s video (720p at most when offered, plenty for
+/// a preview pane), signed by Twitch for a while.
 pub fn clip_video(slug: &str) -> Result<String> {
     let c = ask(
         "query($slug: ID!) { clip(slug: $slug) {

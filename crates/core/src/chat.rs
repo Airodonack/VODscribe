@@ -445,12 +445,12 @@ fn kick_into(
         }
     };
     in_slices(store, positions, cancel, on_progress, |slice, from, stop, send| {
-        let (lo, hi) = bounds(slice);
-        let last = slice + 1 == slices;
-        let mut cursor = from as i64;
         if from == DONE_BACKWARD {
             return Ok(());
         }
+        let (lo, hi) = bounds(slice);
+        let last = slice + 1 == slices;
+        let mut cursor = from as i64;
         let mut seen = HashSet::new();
         loop {
             let (messages, next) = page(cursor, stop)?;
@@ -979,7 +979,7 @@ fn fetch_youtube(
             if let (Some(d), Some(m)) = (duration, batch.messages.last()) {
                 on_progress((m.time / d).clamp(0.0, 0.999));
             }
-            batch.save(store, &[0.0], false)
+            batch.save(store, &[], false)
         })
     };
     let result = (|| -> Result<()> {
@@ -1013,7 +1013,7 @@ fn fetch_youtube(
     if !started {
         store.clear()?;
     }
-    batch.save(store, &[0.0], true)?;
+    batch.save(store, &[], true)?;
     Ok(true)
 }
 

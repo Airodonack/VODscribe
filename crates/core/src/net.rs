@@ -362,6 +362,8 @@ pub fn download_verified(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn only_public_links_are_followed() {
         for ok in ["https://www.twitch.tv/videos/1", "http://93.184.215.14/x", "https://[2606:4700::1111]/"] {
@@ -407,7 +409,6 @@ mod tests {
         assert!(!is_not_public(&check_public_url("https://does-not-exist.invalid/").unwrap_err()), "may work later");
     }
 
-    use super::*;
     use std::net::TcpListener;
     use std::sync::Arc;
 

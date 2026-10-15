@@ -126,7 +126,6 @@ class CargoVersion(unittest.TestCase):
         release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
 
 
-
 def sign(secret: bytes, message: bytes) -> tuple[bytes, bytes]:
     """Ed25519 (RFC 8032): the public key for `secret`, and its signature of `message`."""
     h = hashlib.sha512(secret).digest()

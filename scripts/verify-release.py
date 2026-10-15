@@ -147,7 +147,7 @@ def main(version: str) -> None:
                     while chunk := r.read(1 << 20):
                         h.update(chunk)
                 checked[url] = minisign_ok(public_key, base64.b64decode(entry.get("signature", "")).decode(), h.digest())
-            except Exception as e:  # noqa: BLE001: reported, with the others
+            except Exception as e:  # noqa: BLE001 (reported, with the others)
                 checked[url] = f"couldn't download: {e}"
         if checked[url]:
             problems.append(f"{platform} ({name}): {checked[url]}")
