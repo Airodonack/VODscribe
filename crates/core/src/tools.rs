@@ -204,6 +204,28 @@ pub fn sidecar(name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+// What ffmpeg may use on a file it reads: every file is from somewhere else (a
+// site, or whatever was added from the computer), and ffmpeg's rarely used
+// demuxers and decoders are where its security bugs have been. The lists hold
+// what the app's files use (local::MEDIA_TYPES, and what sites serve); a file
+// needing anything else fails to open rather than reaching that code.
+
+/// Containers (demuxer names).
+const FFMPEG_FORMATS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,flv,mp3,aac,wav,flac,ogg";
+/// Audio decoders, for reading the sound (transcribing, and a file's details).
+pub const FFMPEG_AUDIO: &str = "aac,aac_fixed,aac_latm,mp3,mp3float,mp2,mp2float,mp1,mp1float,opus,libopus,\
+     vorbis,libvorbis,flac,alac,ac3,ac3_fixed,eac3,dca,truehd,mlp,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,\
+     pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,pcm_f64le,pcm_u8,pcm_alaw,pcm_mulaw";
+/// Picture decoders (and the JPEG encoder), for a thumbnail from a file's video.
+pub const FFMPEG_PICTURE: &str = "h264,hevc,vp8,libvpx,vp9,libvpx-vp9,av1,libdav1d,libaom-av1,mpeg4,msmpeg4v3,\
+     msmpeg4v2,mpeg2video,mpeg1video,mjpeg,png,theora,vc1,wmv3,prores";
+
+/// Limits the next input `-i` of an ffmpeg `cmd` to `FFMPEG_FORMATS`, the
+/// `decoders` given, and files.
+pub fn ffmpeg_allow<'a>(cmd: &'a mut Command, decoders: &str) -> &'a mut Command {
+    cmd.args(["-format_whitelist", FFMPEG_FORMATS, "-codec_whitelist", decoders, "-protocol_whitelist", "file"])
+}
+
 /// A `Command` that doesn't flash a console window on Windows.
 /// Runs in the program's own directory rather than wherever the app was launched
 /// from, so nothing in an untrusted working dir (configs, DLLs) gets picked up.

@@ -73,7 +73,8 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
     }
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     // With no output, ffmpeg prints the file's details to stderr and exits with an error.
-    let out = tools::command(ffmpeg)
+    let mut cmd = tools::command(ffmpeg);
+    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(&path)
         .stdin(Stdio::null())
@@ -105,7 +106,8 @@ pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Opti
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
     let name = format!("{id}-{stamp}.jpg");
     let at = duration.map_or(0.0, |d| d / 10.0);
-    let status = tools::command(ffmpeg)
+    let mut cmd = tools::command(ffmpeg);
+    let status = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_PICTURE)
         .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{at:.3}"), "-i"])
         .arg(path)
         .args(["-frames:v", "1", "-vf", "scale=480:-2", "-y"])

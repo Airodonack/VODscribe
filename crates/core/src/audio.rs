@@ -18,8 +18,15 @@ pub fn decode(
     cancel: &AtomicBool,
     mut on_samples: impl FnMut(&[f32]) -> Result<()>,
 ) -> Result<()> {
-    let mut child = tools::command(ffmpeg)
-        .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-ss", &format!("{start:.3}"), "-i"])
+    let mut cmd = tools::command(ffmpeg);
+    tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO).args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
+    // A start only when carrying on partway: "-ss 0" makes ffmpeg drop the
+    // first second or two of some files (FLV, before its first keyframe).
+    if start > 0.0 {
+        cmd.args(["-ss", &format!("{start:.3}")]);
+    }
+    let mut child = cmd
+        .arg("-i")
         .arg(input)
         .args(["-vn", "-ac", "1", "-ar", &SAMPLE_RATE.to_string(), "-f", "s16le", "pipe:1"])
         .stdin(Stdio::null())
@@ -134,6 +141,60 @@ impl Chunker {
 
 #[cfg(test)]
 mod tests {
+    /// Every kind of file the app reads decodes through ffmpeg's allowlists
+    /// (`tools::ffmpeg_allow`), and a container outside them doesn't. Made with
+    /// ffmpeg; skipped where ffmpeg isn't installed.
+    #[test]
+    fn decodes_what_the_allowlists_allow() {
+        let Ok(ffmpeg) = which::which("ffmpeg") else { return };
+        let dir = crate::TempDir::new("allowlist");
+        let make = |name: &str, args: &[&str]| {
+            let path = dir.join(name);
+            let ok = std::process::Command::new(&ffmpeg)
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=3"])
+                .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-shortest"])
+                .args(args)
+                .arg(&path)
+                .status()
+                .is_ok_and(|s| s.success());
+            ok.then_some(path)
+        };
+        let samples: &[(&str, &[&str])] = &[
+            ("a.mp4", &["-c:v", "libx264", "-c:a", "aac"]),
+            ("b.mkv", &["-c:v", "libx264", "-c:a", "libopus"]),
+            ("c.webm", &["-c:v", "libvpx-vp9", "-c:a", "libopus"]),
+            ("d.avi", &["-c:v", "mpeg4", "-c:a", "libmp3lame"]),
+            ("e.ts", &["-c:v", "libx264", "-c:a", "aac"]),
+            ("f.flv", &["-c:v", "libx264", "-c:a", "aac"]),
+            ("g.mov", &["-c:v", "libx264", "-c:a", "aac"]),
+            ("h.mp3", &["-vn"]),
+            ("i.m4a", &["-vn", "-c:a", "aac"]),
+            ("j.wav", &["-vn"]),
+            ("k.flac", &["-vn"]),
+            ("l.ogg", &["-vn", "-c:a", "libvorbis"]),
+            ("m.opus", &["-vn", "-c:a", "libopus"]),
+        ];
+        let never = AtomicBool::new(false);
+        let mut tried = 0;
+        for (name, args) in samples {
+            // An ffmpeg without that encoder can't make the sample.
+            let Some(path) = make(name, args) else { continue };
+            let mut samples = 0;
+            decode(&ffmpeg, &path, 0.0, &never, |s| {
+                samples += s.len();
+                Ok(())
+            })
+            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+            // All of it: a file that loses its start (FLV with "-ss 0") falls short.
+            assert!(samples > SAMPLE_RATE * 28 / 10, "{name}: {samples} samples of 3 s");
+            tried += 1;
+        }
+        assert!(tried >= 8, "only {tried} samples could be made");
+        // NUT, a container ffmpeg reads but VODscribe doesn't take: refused.
+        let nut = make("n.nut", &["-c:v", "mpeg4", "-c:a", "pcm_s16le"]).expect("ffmpeg can make NUT");
+        assert!(decode(&ffmpeg, &nut, 0.0, &never, |_| Ok(())).is_err());
+    }
+
     use super::*;
 
     #[test]
