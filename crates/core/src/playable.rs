@@ -201,7 +201,6 @@ mod tests {
         assert_eq!(choices[7], format!("bv*[height<=720][ext!=ogv]{skip}+ba"));
         assert_eq!(choices[8], "ba[vcodec=none][acodec~='^opus']");
         assert_eq!(&choices[9..], ["ba", "b"]);
-        println!("{}", Playable::default().selector(720));
     }
 
     #[test]

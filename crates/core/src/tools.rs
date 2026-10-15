@@ -253,8 +253,10 @@ pub fn kill_tree(child: &mut std::process::Child) {
     }
     #[cfg(windows)]
     {
-        // taskkill /T stops the process and its descendants, and returns once they're stopped.
-        let _ = command(Path::new("taskkill"))
+        // taskkill /T stops the process and its descendants, and returns once
+        // they're stopped. Windows' own, not whatever is first on the PATH.
+        let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let _ = command(&Path::new(&windows).join(r"System32\taskkill.exe"))
             .args(["/T", "/F", "/PID", &child.id().to_string()])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
