@@ -100,6 +100,23 @@
     else pending = { time, play: true };
   }
 
+  // A VOD whose video has just been downloaded switches to the app's own
+  // player, where it was and as it was (playing or not).
+  let here = untrack(() => playsHere(vod));
+  $effect(() => {
+    const now = playsHere(vod);
+    if (now === here) return;
+    here = now;
+    if (!active || !player) return;
+    const time = player.time();
+    const play = player.playing();
+    player.destroy();
+    player = null;
+    active = false;
+    error = null;
+    activate(time, play);
+  });
+
   onDestroy(() => {
     destroyed = true;
     clearTimeout(copiedTimer);

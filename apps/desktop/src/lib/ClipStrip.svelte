@@ -7,6 +7,7 @@
   import { clips } from "./clips.svelte";
   import { dragOut } from "./dragout";
   import Icon from "./Icon.svelte";
+  import { OWN_VODS_NOTE, PERMISSION_NOTE } from "./permission";
   import Popover from "./Popover.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
@@ -156,8 +157,8 @@
     width={340}
   >
     <div class="note">
-      <p>Only download clips you have permission to use, such as from your own channel or with the streamer's okay.</p>
-      <p class="muted">Streamers can also download their whole VODs from their channel's video manager.</p>
+      <p>{PERMISSION_NOTE}</p>
+      <p class="muted">{OWN_VODS_NOTE}</p>
       <label><input type="checkbox" bind:checked={hideNote} /> Don't show this again</label>
       <div class="buttons">
         <button onclick={() => clips.answer(false)}>Cancel</button>

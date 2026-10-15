@@ -119,6 +119,7 @@
   }
 
   export const currentTime = () => video?.currentTime ?? 0;
+  export const isPlaying = () => !!video && !video.paused;
 
   export function togglePlay() {
     if (!video) return;

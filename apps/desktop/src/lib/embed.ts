@@ -13,6 +13,8 @@ export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
   /** Current position in seconds. */
   time(): number;
+  /** Whether it's playing (or about to: buffering). */
+  playing(): boolean;
   togglePlay(): void;
   /** Steps `frames` frames on (back, if negative), paused. Only where frames can be told apart. */
   step?(frames: number): void;
@@ -126,6 +128,7 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
         clock.set(seconds);
       },
       time: () => clock.now(),
+      playing: () => clock.playing,
       togglePlay() {
         command(clock.playing ? "pauseVideo" : "playVideo");
         clock.set(clock.now());
@@ -192,6 +195,7 @@ function twitch(
         clock.set(seconds);
       },
       time: () => clock.now(),
+      playing: () => clock.playing,
       togglePlay() {
         command(clock.playing ? TWITCH_PAUSE : TWITCH_PLAY);
         clock.set(clock.now());
@@ -230,6 +234,7 @@ function videoPlayer(
       if (play) video.play().catch(() => {});
     },
     time: () => video.currentTime,
+    playing: () => !video.paused,
     togglePlay() {
       if (video.paused) video.play().catch(() => {});
       else video.pause();
@@ -313,6 +318,7 @@ async function local(
   return {
     seek: player.seek,
     time: player.currentTime,
+    playing: player.isPlaying,
     togglePlay: player.togglePlay,
     step: player.step,
     destroy: () => unmount(player),
@@ -334,9 +340,10 @@ const players: Record<string, CreatePlayer> = {
   local,
 };
 
-/** The platform's player; for another site, its kept video, played like a local file. */
+/** A kept video, played like a local file; else the platform's player. */
 function playerFor(vod: Vod): CreatePlayer | undefined {
-  return Object.hasOwn(players, vod.platform) ? players[vod.platform] : vod.media ? local : undefined;
+  if (vod.media) return local;
+  return Object.hasOwn(players, vod.platform) ? players[vod.platform] : undefined;
 }
 
 /** Creates a player inside `el`, or returns null if there's nothing to play here. */

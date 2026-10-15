@@ -65,13 +65,12 @@ pub fn download(
     if let Some(source) = &vod.source_path {
         return crate::local::source(source);
     }
-    // A site whose video is kept: transcribed from that video, once it's here.
-    let keep = video.filter(|_| keeps_video(&vod.info.platform));
-    if keep.is_some()
-        && let Some(kept) = db.media_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file())
-    {
+    // A VOD whose video is kept (always, for sites without their own player;
+    // on request, for the others): transcribed from that video, once it's here.
+    if let Some(kept) = db.media_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file()) {
         return Ok(kept);
     }
+    let keep = video.filter(|_| keeps_video(&vod.info.platform));
     fs::create_dir_all(work_dir)?;
     let info = info_path(work_dir, vod.id);
     let fresh = fs::metadata(&info)

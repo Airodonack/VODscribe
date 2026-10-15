@@ -85,3 +85,20 @@ export function watchUrl(vod: Vod, time: number): string {
     }
   }
 }
+
+/** The video heights a download can be capped at (Settings → Storage). */
+export const HEIGHTS = [480, 720, 1080];
+
+/** Roughly how many GB an hour of video takes at each height, as sites encode it. */
+const HOUR_GB: Record<number, [number, number]> = { 480: [0.7, 1.2], 720: [1.5, 2.5], 1080: [3, 5] };
+
+/** About how much `hours` of video at `height` takes, as "3 to 5 GB" (or MB, under a GB). */
+export function videoSize(height: number, hours = 1): string {
+  const [low, high] = (HOUR_GB[height] ?? HOUR_GB[1080]).map((gb) => gb * hours);
+  if (high < 1) {
+    const mb = (gb: number) => Math.max(1, Math.round((gb * 1000) / 10) * 10);
+    return `${mb(low)} to ${mb(high)} MB`;
+  }
+  const round = (gb: number) => String(gb < 10 ? Math.round(gb * 10) / 10 : Math.round(gb));
+  return `${round(low)} to ${round(high)} GB`;
+}

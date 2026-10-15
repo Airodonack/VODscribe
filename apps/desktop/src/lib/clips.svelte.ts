@@ -5,22 +5,12 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import { api, events, type Clip } from "./api";
+import { hideNote, noteHidden } from "./permission";
 
 /** A range picked but not kept yet. */
 export interface Range {
   start: number;
   end: number;
-}
-
-/** Remembers "Don't show this again" on the note before downloading a clip. */
-const NOTE_HIDDEN = "vodscribe.clipNoteHidden";
-
-function noteHidden(): boolean {
-  try {
-    return localStorage.getItem(NOTE_HIDDEN) === "true";
-  } catch {
-    return false;
-  }
 }
 
 /** How long a clip started (or ended) with I or O alone runs. */
@@ -128,13 +118,7 @@ class Clips {
 
   /** Answers the note before downloading; `hide` keeps it from showing again. */
   answer(download: boolean, hide = false) {
-    if (download && hide) {
-      try {
-        localStorage.setItem(NOTE_HIDDEN, "true");
-      } catch {
-        // Shown again next time.
-      }
-    }
+    if (download && hide) hideNote();
     this.asking?.(download);
   }
 

@@ -12,6 +12,7 @@ mod loopback;
 mod media;
 mod setup;
 mod thumbnails;
+mod videos;
 mod vods;
 mod worker;
 
@@ -37,6 +38,8 @@ struct AppState {
     media: media::MediaServer,
     chat: chats::ChatQueue,
     clips: clips::Cutter,
+    /// Whole videos downloaded on request (`videos`).
+    videos: videos::Videos,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -142,9 +145,11 @@ pub fn run() {
                 media,
                 chat,
                 clips: clips::Cutter::new(),
+                videos: videos::Videos::default(),
                 adding: Mutex::default(),
             });
             app.state::<AppState>().clips.run(app.handle().clone())?;
+            app.state::<AppState>().videos.run(app.handle().clone())?;
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             let handle = app.handle().clone();
@@ -207,6 +212,9 @@ pub fn run() {
             clips::show_clip,
             clips::drag_clip,
             clips::save_clip,
+            videos::keep_video,
+            videos::stop_video,
+            videos::video_downloads,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

@@ -243,6 +243,12 @@ export const api = {
   dragClip: (id: number) => invoke<void>("drag_clip", { id }),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
+  /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
+  keepVideo: (id: number) => invoke<void>("keep_video", { id }),
+  /** Stops (and discards) VOD `id`'s video download. */
+  stopVideo: (id: number) => invoke<void>("stop_video", { id }),
+  /** VODs whose video is downloading or waiting to. */
+  videoDownloads: () => invoke<number[]>("video_downloads"),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
@@ -313,6 +319,9 @@ export const events = {
   /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
   chatSaved: (cb: (id: number) => void) => listen<number>("chat-saved", (e) => cb(e.payload)),
   clip: (cb: (clip: Clip) => void) => listen<Clip>("clip", (e) => cb(e.payload)),
+  /** A VOD's video download: `progress` null when waiting or over, `error` if it failed. */
+  videoProgress: (cb: (p: { id: number; progress: number | null; error: string | null }) => void) =>
+    listen<{ id: number; progress: number | null; error: string | null }>("video-progress", (e) => cb(e.payload)),
   clipProgress: (cb: (id: number, progress: number) => void) =>
     listen<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
   clipRemoved: (cb: (id: number) => void) => listen<number>("clip-removed", (e) => cb(e.payload)),

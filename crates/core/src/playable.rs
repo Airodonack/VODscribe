@@ -132,7 +132,9 @@ impl Playable {
     /// video and audio streams (merged) or one stream with both, at most
     /// `height` tall; else the best video at most that tall whose codecs the
     /// site doesn't name (Rumble's say "unknown"; almost always H.264), MP4s
-    /// first and never Ogg; else audio alone that plays here (podcasts,
+    /// first and never Ogg; else the smallest taller pair that plays here (a
+    /// small channel's Twitch VOD has only its source, often 1080p); else
+    /// audio alone that plays here (podcasts,
     /// music); else whatever the site has, which is still transcribed even if
     /// it can't be played.
     pub fn selector(&self, height: u32) -> String {
@@ -157,6 +159,11 @@ impl Playable {
         for ext in ["[ext=mp4]", "[ext!=ogv]"] {
             choices.push(format!("b[height<={height}]{ext}{unplayable}"));
             choices.push(format!("bv*[height<={height}]{ext}{unplayable}+ba"));
+        }
+        for (v, a) in &self.video {
+            let (v, a) = (v.pattern(), a.pattern());
+            choices.push(format!("wv*[height>{height}][vcodec~='{v}']+ba[acodec~='{a}']"));
+            choices.push(format!("w[height>{height}][vcodec~='{v}'][acodec~='{a}']"));
         }
         for a in &self.audio {
             choices.push(format!("ba[vcodec=none][acodec~='{}']", a.pattern()));
@@ -199,8 +206,11 @@ mod tests {
         assert_eq!(choices[5], format!("bv*[height<=720][ext=mp4]{skip}+ba"));
         assert_eq!(choices[6], format!("b[height<=720][ext!=ogv]{skip}"));
         assert_eq!(choices[7], format!("bv*[height<=720][ext!=ogv]{skip}+ba"));
-        assert_eq!(choices[8], "ba[vcodec=none][acodec~='^opus']");
-        assert_eq!(&choices[9..], ["ba", "b"]);
+        // Taller video only when there's nothing at most that tall: the smallest.
+        assert_eq!(choices[8], "wv*[height>720][vcodec~='^(av01|av1)']+ba[acodec~='^opus']");
+        assert_eq!(choices[11], "w[height>720][vcodec~='^(avc1|avc3|h264)'][acodec~='^(mp4a|aac)']");
+        assert_eq!(choices[12], "ba[vcodec=none][acodec~='^opus']");
+        assert_eq!(&choices[13..], ["ba", "b"]);
     }
 
     #[test]

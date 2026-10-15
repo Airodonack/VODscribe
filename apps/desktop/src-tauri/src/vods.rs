@@ -243,6 +243,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     // the rest of the app isn't kept waiting on the library while they're
     // erased. (No more chat is fetched for it.)
     state.chat.stop(id);
+    let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
     erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
     // A running stage removes the files once its process has stopped.
     // With the reads held too, so none is under way when the WAL is emptied.
@@ -268,8 +269,8 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     Ok(())
 }
 
-/// Deletes the video kept for VOD `id` (a site without an embed), keeping
-/// its transcript; it then plays on its site instead.
+/// Deletes the video kept for VOD `id`, keeping its transcript; it then
+/// plays on its site instead.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();

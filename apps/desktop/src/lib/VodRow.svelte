@@ -1,4 +1,8 @@
 <script lang="ts">
+  import { settings as appSettings } from "./appSettings.svelte";
+  import { OWN_VODS_NOTE, PERMISSION_NOTE, hideNote, noteHidden } from "./permission";
+  import Popover from "./Popover.svelte";
+  import { videoDownloads } from "./videos.svelte";
   // The contents of one library row: thumbnail, title, status and actions. The
   // row element itself (selection, dragging) belongs to Library, since
   // animate:flip has to sit directly inside its keyed list.
@@ -6,7 +10,7 @@
   import { demoOff } from "./demo";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { formatTime, siteName } from "./platform";
+  import { formatTime, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
@@ -50,6 +54,44 @@
   const keptVideo = $derived(
     !!vod.media && (vod.status === "done" || vod.status === "paused" || vod.status === "error"),
   );
+
+  // The whole video of a YouTube, Twitch or Kick VOD, downloaded on request to
+  // play and clip here (videos.svelte.ts); other sites keep theirs anyway.
+  videoDownloads.start();
+  const canKeep = $derived(["youtube", "twitch", "kick"].includes(vod.platform));
+  const keeping = $derived(videoDownloads.progress.get(vod.id));
+  const keepError = $derived(videoDownloads.errors.get(vod.id));
+  const height = $derived(appSettings.value?.video_height ?? 1080);
+  const keepSize = $derived(vod.duration ? `about ${videoSize(height, vod.duration / 3600)}` : "");
+  let keepButton = $state<HTMLElement>();
+  let asking = $state(false);
+  let hideAgain = $state(false);
+  function keep() {
+    if (keeping !== undefined) {
+      stopKeeping();
+    } else if (noteHidden()) {
+      videoDownloads.keep(vod.id);
+    } else {
+      asking = true;
+    }
+  }
+  function answer(download: boolean) {
+    asking = false;
+    if (!download) return;
+    if (hideAgain) hideNote();
+    videoDownloads.keep(vod.id);
+  }
+  async function stopKeeping() {
+    if (
+      await ask(
+        `Stop downloading the video of “${vod.title}”? What's downloaded so far is deleted.`,
+        "Stop",
+        "Keep going",
+      )
+    ) {
+      videoDownloads.stop(vod.id);
+    }
+  }
 
   /** Runs an action, reporting its error if it fails. */
   function act(action: Promise<unknown>) {
@@ -183,6 +225,34 @@
 {/if}
 
 <div class="actions" class:removing inert={removing || clearing}>
+  {#if canKeep && !vod.media}
+    <button
+      class="act keep"
+      class:failed={keepError}
+      bind:this={keepButton}
+      onclick={keep}
+      title={keeping !== undefined
+        ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
+        : keepError
+          ? `The video couldn't be downloaded: ${keepError} Click to try again.`
+          : `Download the video to play and clip it here, to the frame (up to ${height}p, ${keepSize})`}
+      aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
+      {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
+    >
+      {#if keeping !== undefined}
+        <svg class="ring" viewBox="0 0 20 20" aria-hidden="true">
+          <circle cx="10" cy="10" r="7.5" class="track" />
+          <circle cx="10" cy="10" r="7.5" class="done" style:stroke-dasharray="{keeping * 47.1} 47.1" />
+        </svg>
+      {:else}
+        <Icon name={keepError ? "warning" : "download"} size={15} />
+      {/if}
+    </button>
+  {:else if canKeep && vod.media}
+    <span class="act kept" title="The video is on this computer: it plays and clips here, to the frame">
+      <Icon name="film" size={15} />
+    </span>
+  {/if}
   {#if vod.status === "error"}
     <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
@@ -240,6 +310,21 @@
     <Icon name="trash" size={15} />
   </button>
 </div>
+
+{#if canKeep}
+  <Popover bind:open={asking} anchor={keepButton} label="Before downloading the video" width={340}>
+    <div class="note-popover">
+      <p>{PERMISSION_NOTE}</p>
+      <p class="muted">{OWN_VODS_NOTE}</p>
+      <p class="muted">Up to {height}p{keepSize ? `, ${keepSize}` : ""}. It's kept until you delete it.</p>
+      <label><input type="checkbox" bind:checked={hideAgain} /> Don't show this again</label>
+      <div class="buttons">
+        <button onclick={() => answer(false)}>Cancel</button>
+        <button class="primary" onclick={() => answer(true)}>Download video</button>
+      </div>
+    </div>
+  </Popover>
+{/if}
 
 <style>
   /* Being removed: faded, and its actions out of reach. */
@@ -377,6 +462,67 @@
     justify-content: flex-end;
     margin-top: 4px;
     margin-right: -6px;
+  }
+
+  /* The video's icon sits at the left, apart from the row's actions. */
+  .act.keep,
+  .act.kept {
+    margin-right: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .act.kept {
+    color: var(--accent);
+    opacity: 1;
+  }
+
+  .act.failed {
+    color: var(--warn);
+  }
+
+  .ring {
+    width: 15px;
+    height: 15px;
+    transform: rotate(-90deg);
+  }
+
+  .ring circle {
+    fill: none;
+    stroke-width: 2.5;
+  }
+
+  .ring .track {
+    stroke: var(--surface-3);
+  }
+
+  .ring .done {
+    stroke: var(--accent);
+    transition: stroke-dasharray 0.25s linear;
+  }
+
+  .note-popover {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .note-popover p {
+    margin: 0;
+  }
+
+  .note-popover label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .note-popover .buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .act {

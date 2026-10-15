@@ -8,7 +8,7 @@
   import Icon from "./Icon.svelte";
   import { ISSUES, LICENSES, PRIVACY } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
-  import { formatBytes } from "./platform";
+  import { HEIGHTS, formatBytes, videoSize } from "./platform";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
 
@@ -23,14 +23,6 @@
   ] as const;
   let cacheBytes = $state<number | null>(null);
   let mediaBytes = $state<number | null>(null);
-  // How tall videos kept from sites without embeds may be.
-  const HEIGHTS = [480, 720, 1080];
-  // Roughly what an hour of video takes at each, as sites encode it.
-  const HOUR_SIZE: Record<number, string> = {
-    480: "0.7 to 1.2 GB",
-    720: "1.5 to 2.5 GB",
-    1080: "3 to 5 GB",
-  };
   let videoHeight = $derived(appSettings.value?.video_height ?? 1080);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
@@ -240,10 +232,11 @@
 
   <section>
     <span class="eyebrow">Storage</span>
-    <p class="label">Videos from other sites</p>
+    <p class="label">Downloaded videos</p>
     <p class="muted hint">
-      VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
-        ? `; they use ${formatBytes(mediaBytes)}`
+      Videos kept here to play and clip: those of VODs from sites other than Kick, Twitch and YouTube, and of those
+      three when downloaded with the button at the left of their row{mediaBytes
+        ? `. They use ${formatBytes(mediaBytes)}`
         : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
     </p>
     <div class="themes" role="radiogroup" aria-label="Video quality">
@@ -259,8 +252,8 @@
       {/each}
     </div>
     <p class="muted hint">
-      Up to {videoHeight}p, for kept videos and clips. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[1080]}.
-      Applies to videos downloaded from now on.
+      Up to {videoHeight}p, for kept videos and clips. An hour is about {videoSize(videoHeight)}. Applies to videos
+      downloaded from now on.
     </p>
     <p class="label">Repair VODscribe</p>
     <p class="muted hint">
