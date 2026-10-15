@@ -131,9 +131,10 @@ impl Playable {
     /// yt-dlp's format selection: the first pair that plays here, as separate
     /// video and audio streams (merged) or one stream with both, at most
     /// `height` tall; else the best video at most that tall whose codecs the
-    /// site doesn't name (Rumble's say "unknown"; almost always H.264); else
-    /// audio alone that plays here (podcasts, music); else whatever the site
-    /// has, which is still transcribed even if it can't be played.
+    /// site doesn't name (Rumble's say "unknown"; almost always H.264), MP4s
+    /// first and never Ogg; else audio alone that plays here (podcasts,
+    /// music); else whatever the site has, which is still transcribed even if
+    /// it can't be played.
     pub fn selector(&self, height: u32) -> String {
         let mut choices = Vec::new();
         for (v, a) in &self.video {
@@ -142,14 +143,21 @@ impl Playable {
             choices.push(format!("b[height<={height}][vcodec~='{v}'][acodec~='{a}']"));
         }
         // Video the site doesn't name ("!~=?" keeps a format with no codec
-        // given): not of a family known not to play here.
+        // given): not of a family known not to play here, nor older ones no
+        // webview here is asked about. Sites that name no codecs (archive.org)
+        // still give the file type: an MP4 is almost always H.264, and an Ogg
+        // video (Theora) plays in none of them.
         let unplayable: String = [Video::Av1, Video::Vp9, Video::Hevc, Video::H264]
             .into_iter()
             .filter(|v| !self.video.iter().any(|(pv, _)| pv == v))
-            .map(|v| format!("[vcodec!~=?'{}']", v.pattern()))
+            .map(Video::pattern)
+            .chain(["^(vp8|theora)"])
+            .map(|p| format!("[vcodec!~=?'{p}']"))
             .collect();
-        choices.push(format!("b[height<={height}]{unplayable}"));
-        choices.push(format!("bv*[height<={height}]{unplayable}+ba"));
+        for ext in ["[ext=mp4]", "[ext!=ogv]"] {
+            choices.push(format!("b[height<={height}]{ext}{unplayable}"));
+            choices.push(format!("bv*[height<={height}]{ext}{unplayable}+ba"));
+        }
         for a in &self.audio {
             choices.push(format!("ba[vcodec=none][acodec~='{}']", a.pattern()));
         }
@@ -186,11 +194,14 @@ mod tests {
         // Video whose codecs aren't named comes before audio alone, but not of a
         // family known not to play here. Every choice is fetched by yt-dlp
         // itself, over the web.
-        let skip = "[vcodec!~=?'^(vp09|vp9)'][vcodec!~=?'^(hvc1|hev1|hevc|h265)']";
-        assert_eq!(choices[4], format!("b[height<=720]{skip}"));
-        assert_eq!(choices[5], format!("bv*[height<=720]{skip}+ba"));
-        assert_eq!(choices[6], "ba[vcodec=none][acodec~='^opus']");
-        assert_eq!(&choices[7..], ["ba", "b"]);
+        let skip = "[vcodec!~=?'^(vp09|vp9)'][vcodec!~=?'^(hvc1|hev1|hevc|h265)'][vcodec!~=?'^(vp8|theora)']";
+        assert_eq!(choices[4], format!("b[height<=720][ext=mp4]{skip}"));
+        assert_eq!(choices[5], format!("bv*[height<=720][ext=mp4]{skip}+ba"));
+        assert_eq!(choices[6], format!("b[height<=720][ext!=ogv]{skip}"));
+        assert_eq!(choices[7], format!("bv*[height<=720][ext!=ogv]{skip}+ba"));
+        assert_eq!(choices[8], "ba[vcodec=none][acodec~='^opus']");
+        assert_eq!(&choices[9..], ["ba", "b"]);
+        println!("{}", Playable::default().selector(720));
     }
 
     #[test]
