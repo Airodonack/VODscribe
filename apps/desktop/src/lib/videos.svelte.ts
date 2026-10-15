@@ -28,11 +28,12 @@ class VideoDownloads {
     );
   }
 
-  async keep(id: number) {
+  /** Downloads VOD `id`'s video, at most `height` tall (else the Storage setting). */
+  async keep(id: number, height?: number) {
     this.errors.delete(id);
     this.progress.set(id, 0);
     try {
-      await api.keepVideo(id);
+      await api.keepVideo(id, height);
     } catch (e) {
       this.progress.delete(id);
       this.errors.set(id, String(e));

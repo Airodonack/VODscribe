@@ -32,6 +32,8 @@ permissions = [
   "allow-keep-video",
   "allow-stop-video",
   "allow-video-downloads",
+  "allow-delete-all-videos",
+  "allow-open-videos-dir",
   "allow-thumbnail",
   "allow-reorder-vods",
   "allow-delete-vod",

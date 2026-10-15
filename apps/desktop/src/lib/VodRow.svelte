@@ -10,7 +10,7 @@
   import { demoOff } from "./demo";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { formatTime, siteName, videoSize } from "./platform";
+  import { HEIGHTS, formatTime, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
@@ -62,7 +62,10 @@
   const keeping = $derived(videoDownloads.progress.get(vod.id));
   const keepError = $derived(videoDownloads.errors.get(vod.id));
   const height = $derived(appSettings.value?.video_height ?? 1080);
-  const keepSize = $derived(vod.duration ? `about ${videoSize(height, vod.duration / 3600)}` : "");
+  const sizeAt = (h: number) => (vod.duration ? `about ${videoSize(h, vod.duration / 3600)}` : "");
+  const keepSize = $derived(sizeAt(height));
+  // The quality picked in the note, for this download only.
+  let pickedHeight = $state(1080);
   let keepButton = $state<HTMLElement>();
   let asking = $state(false);
   let hideAgain = $state(false);
@@ -72,6 +75,7 @@
     } else if (noteHidden()) {
       videoDownloads.keep(vod.id);
     } else {
+      pickedHeight = height;
       asking = true;
     }
   }
@@ -79,7 +83,7 @@
     asking = false;
     if (!download) return;
     if (hideAgain) hideNote();
-    videoDownloads.keep(vod.id);
+    videoDownloads.keep(vod.id, pickedHeight);
   }
   async function stopKeeping() {
     if (
@@ -316,7 +320,19 @@
     <div class="note-popover">
       <p>{PERMISSION_NOTE}</p>
       <p class="muted">{OWN_VODS_NOTE}</p>
-      <p class="muted">Up to {height}p{keepSize ? `, ${keepSize}` : ""}. It's kept until you delete it.</p>
+      <div class="quality" role="radiogroup" aria-label="Video quality">
+        {#each HEIGHTS as h (h)}
+          <button
+            role="radio"
+            aria-checked={pickedHeight === h}
+            class:on={pickedHeight === h}
+            onclick={() => (pickedHeight = h)}>{h}p</button
+          >
+        {/each}
+      </div>
+      <p class="muted">
+        Up to {pickedHeight}p{sizeAt(pickedHeight) ? `, ${sizeAt(pickedHeight)}` : ""}. It's kept until you delete it.
+      </p>
       <label><input type="checkbox" bind:checked={hideAgain} /> Don't show this again</label>
       <div class="buttons">
         <button onclick={() => answer(false)}>Cancel</button>
@@ -517,6 +533,23 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+
+  .quality {
+    display: flex;
+    gap: 6px;
+  }
+
+  .quality button {
+    flex: 1;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .quality button.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--text);
   }
 
   .note-popover .buttons {

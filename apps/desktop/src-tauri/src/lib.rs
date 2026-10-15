@@ -215,6 +215,8 @@ pub fn run() {
             videos::keep_video,
             videos::stop_video,
             videos::video_downloads,
+            videos::delete_all_videos,
+            videos::open_videos_dir,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

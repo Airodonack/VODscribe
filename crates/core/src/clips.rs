@@ -47,8 +47,24 @@ fn stamp(seconds: f64, sep: &str) -> String {
 /// the title made safe for every system's file names (Windows' being the
 /// strictest), shortened, then where it starts.
 pub fn file_name(vod_title: &str, start: f64, audio_only: bool) -> String {
-    let safe: String =
-        vod_title.chars().map(|c| if c.is_control() || r#"<>:"/\|?*"#.contains(c) { ' ' } else { c }).collect();
+    let ext = if audio_only { "m4a" } else { "mp4" };
+    format!("{} {}.{ext}", safe_name(vod_title), stamp(start, ""))
+}
+
+/// `title` made safe for every system's file names (Windows' being the
+/// strictest) and for yt-dlp's output templates (no `%`), and shortened.
+/// Square brackets become round ones: a kept video's name ends with its
+/// VOD's id in square brackets (`pipeline::media_stem`).
+pub fn safe_name(title: &str) -> String {
+    let safe: String = title
+        .chars()
+        .map(|c| match c {
+            '[' => '(',
+            ']' => ')',
+            c if c.is_control() || r#"<>:"/\|?*%"#.contains(c) => ' ',
+            c => c,
+        })
+        .collect();
     let mut safe = safe.split_whitespace().collect::<Vec<_>>().join(" ");
     if safe.chars().count() > 80 {
         safe = safe.chars().take(80).collect::<String>().trim_end().to_string();
@@ -60,8 +76,7 @@ pub fn file_name(vod_title: &str, start: f64, audio_only: bool) -> String {
             && ["COM", "LPT"].iter().any(|p| safe.to_ascii_uppercase().starts_with(p))
             && safe.ends_with(|c: char| c.is_ascii_digit()));
     let safe = if safe.is_empty() || reserved { "Clip" } else { safe };
-    let ext = if audio_only { "m4a" } else { "mp4" };
-    format!("{safe} {}.{ext}", stamp(start, ""))
+    safe.to_string()
 }
 
 /// `name` in `dir`, or with " (2)", " (3)"… before its extension if taken.
@@ -212,6 +227,8 @@ mod tests {
         assert_eq!(file_name("con", 0.0, false), "Clip 0m00s.mp4");
         assert_eq!(file_name("COM1", 0.0, false), "Clip 0m00s.mp4");
         assert_eq!(file_name("...", 0.0, false), "Clip 0m00s.mp4");
+        assert_eq!(safe_name("100% hype"), "100 hype", "no % for yt-dlp's templates");
+        assert_eq!(safe_name("Day [3]"), "Day (3)", "square brackets are for ids");
         let long = file_name(&"x".repeat(200), 0.0, false);
         assert_eq!(long.len(), 80 + " 0m00s.mp4".len());
     }

@@ -88,7 +88,7 @@ pub fn download(
         Some(selector) => {
             let dir = media_dir(work_dir);
             fs::create_dir_all(&dir)?;
-            (dir.join(vod.id.to_string()), fetch::Wanted::Video { selector, ffmpeg: tools.ffmpeg })
+            (media_stem(&dir, vod.id, &vod.info.title), fetch::Wanted::Video { selector, ffmpeg: tools.ffmpeg })
         }
         None => (work_dir.join(vod.id.to_string()), fetch::Wanted::Audio),
     };
@@ -131,14 +131,49 @@ pub fn media_dir(work_dir: &Path) -> PathBuf {
     work_dir.with_file_name("media")
 }
 
-/// Removes files in `media_dir` (named `<vod id>.…`) of VODs not in `library`:
+/// Where VOD `vod_id`'s kept video goes in `dir`, without its extension:
+/// `<title> [<id>]`, so it can be found and copied out by hand, in order by
+/// title, then by id: padded to six digits, so [000007] comes before
+/// [000012]. The id is how the app knows whose it is (`owner`); videos kept
+/// before 0.4.0 are plain `<id>.<ext>`.
+pub fn media_stem(dir: &Path, vod_id: i64, title: &str) -> PathBuf {
+    dir.join(format!("{} [{vod_id:06}]", crate::clips::safe_name(title)))
+}
+
+/// The VOD a work or media file belongs to: `<id>.…` (the work dir, and
+/// videos kept before 0.4.0) or `<title> [<id>]` followed by its extension
+/// or a download's part suffixes (`media_stem`).
+fn owner(name: &str) -> Option<i64> {
+    let digits = |s: &str| s.parse::<i64>().ok().filter(|_| s.bytes().all(|b| b.is_ascii_digit()));
+    if let Some((id, _)) = name.split_once('.')
+        && let Some(id) = digits(id)
+    {
+        return Some(id);
+    }
+    // The last " [digits]" followed by the end or a dot (titles have no square brackets).
+    let mut found = None;
+    let mut rest = name;
+    while let Some(at) = rest.find(" [") {
+        let after = &rest[at + 2..];
+        if let Some((id, tail)) = after.split_once(']')
+            && (tail.is_empty() || tail.starts_with('.'))
+            && let Some(id) = digits(id)
+        {
+            found = Some(id);
+        }
+        rest = after;
+    }
+    found
+}
+
+/// Removes files in `media_dir` (named `<vod id>.…` or `<vod id> …`) of VODs not in `library`:
 /// left by a crash, say, mid-way through removing one. Files of VODs still
 /// there stay, as a paused download carries on from its parts.
 pub fn tidy_media(work_dir: &Path, library: &[i64]) {
     let Ok(entries) = fs::read_dir(media_dir(work_dir)) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let id = name.split('.').next().and_then(|id| id.parse::<i64>().ok());
+        let id = owner(&name);
         if id.is_some_and(|id| !library.contains(&id)) && entry.path().is_file() {
             let _ = fs::remove_file(entry.path());
         }
@@ -193,10 +228,10 @@ pub fn transcribe(
 /// Deletes everything in `work_dir` belonging to a VOD: its info JSON, the
 /// audio, and any partial download fragments.
 pub fn remove_work_files(work_dir: &Path, vod_id: i64) {
-    let prefix = format!("{vod_id}.");
     let Ok(entries) = fs::read_dir(work_dir) else { return };
     for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(&prefix) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if owner(&name) == Some(vod_id) {
             let _ = fs::remove_file(entry.path());
         }
     }
@@ -301,14 +336,39 @@ mod tests {
         let work = root.join("work");
         let media = media_dir(&work);
         fs::create_dir_all(&media).unwrap();
-        for name in ["3.mp4", "4.mp4.part-Frag7.part", "29.mp4.part-Frag65.part", "30.m4a", "notes.txt"] {
+        for name in
+            ["3.mp4", "A title [4].mp4.part-Frag7.part", "29.mp4.part-Frag65.part", "Gone [30].m4a", "notes.txt"]
+        {
             fs::write(media.join(name), b"x").unwrap();
         }
         tidy_media(&work, &[3, 4]);
         let mut left: Vec<String> =
             fs::read_dir(&media).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        assert_eq!(left, ["3.mp4", "4.mp4.part-Frag7.part", "notes.txt"]);
+        assert_eq!(left, ["3.mp4", "A title [4].mp4.part-Frag7.part", "notes.txt"]);
+        // And a VOD's own go, named either way, but not another's with its digits.
+        fs::write(media.join("Version 3.1 [3].f137.mp4"), b"x").unwrap();
+        fs::write(media.join("Other [34].mp4"), b"x").unwrap();
+        remove_media(&work, 3);
+        let mut left: Vec<String> =
+            fs::read_dir(&media).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["A title [4].mp4.part-Frag7.part", "Other [34].mp4", "notes.txt"]);
+    }
+
+    #[test]
+    fn files_say_whose_they_are() {
+        assert_eq!(owner("12.info.json"), Some(12));
+        assert_eq!(owner("12.m4a.part"), Some(12));
+        assert_eq!(owner("Version 1.2 [7].mp4"), Some(7), "not the 1 of 1.2");
+        assert_eq!(owner("Day 3 [7].f399.mp4.part"), Some(7));
+        assert_eq!(owner("Talk (3) [7]"), Some(7));
+        assert_eq!(owner("Talk [000007].mp4"), Some(7), "padded");
+        assert_eq!(media_stem(Path::new("/m"), 7, "Talk [1]"), Path::new("/m/Talk (1) [000007]"));
+        assert_eq!(owner("clip-12-1000-5000.mp4"), None);
+        assert_eq!(owner("video-12.info.json"), None);
+        assert_eq!(owner("notes.txt"), None);
+        assert_eq!(owner("A [b] [x].mp4"), None);
     }
     use crate::fetch::VodInfo;
     use std::os::unix::fs::PermissionsExt;

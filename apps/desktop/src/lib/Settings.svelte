@@ -40,6 +40,31 @@
     mediaBytes = await api.mediaSize();
   }
 
+  let deletingVideos = $state(false);
+  let videosNote = $state<string | null>(null);
+  async function deleteAllVideos() {
+    const ok = await ask(
+      `Delete all downloaded videos${mediaBytes ? ` (${formatBytes(mediaBytes)})` : ""}? Transcripts and clips stay; ` +
+        "the videos play on their sites instead. Downloads under way stop.",
+      "Delete videos",
+      "Keep",
+    );
+    if (!ok) return;
+    deletingVideos = true;
+    error = null;
+    videosNote = null;
+    try {
+      const kept = await api.deleteAllVideos();
+      if (kept)
+        videosNote = `${kept} still being transcribed from ${kept === 1 ? "its video was" : "their videos were"} kept.`;
+      mediaBytes = await api.mediaSize();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      deletingVideos = false;
+    }
+  }
+
   async function clearCache() {
     const amount = cacheBytes ? ` ${formatBytes(cacheBytes)}` : "";
     const ok = await ask(
@@ -255,6 +280,13 @@
       Up to {videoHeight}p, for kept videos and clips. An hour is about {videoSize(videoHeight)}. Applies to videos
       downloaded from now on.
     </p>
+    <div class="row-buttons">
+      <button onclick={() => api.openVideosDir().catch((e) => (error = String(e)))}>Open folder</button>
+      <button class="danger-outline" onclick={deleteAllVideos} disabled={deletingVideos || !mediaBytes}>
+        {deletingVideos ? "Deleting…" : "Delete all downloaded videos…"}
+      </button>
+    </div>
+    {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
     <p class="label">Repair VODscribe</p>
     <p class="muted hint">
       Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null

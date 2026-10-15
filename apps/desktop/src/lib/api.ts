@@ -244,11 +244,14 @@ export const api = {
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
-  keepVideo: (id: number) => invoke<void>("keep_video", { id }),
+  keepVideo: (id: number, height?: number) => invoke<void>("keep_video", { id, height }),
   /** Stops (and discards) VOD `id`'s video download. */
   stopVideo: (id: number) => invoke<void>("stop_video", { id }),
   /** VODs whose video is downloading or waiting to. */
   videoDownloads: () => invoke<number[]>("video_downloads"),
+  /** Deletes every downloaded video; returns how many were kept, still needed to transcribe. */
+  deleteAllVideos: () => invoke<number>("delete_all_videos"),
+  openVideosDir: () => invoke<void>("open_videos_dir"),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),

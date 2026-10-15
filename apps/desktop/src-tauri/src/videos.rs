@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use vodscribe_core::db::Status;
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{fetch, local, pipeline, tools};
@@ -23,9 +24,13 @@ use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
+/// The heights a download can be capped at (as Settings → Storage offers).
+pub(crate) const HEIGHTS: [u32; 3] = [480, 720, 1080];
+
 #[derive(Default)]
 struct Queue {
-    waiting: VecDeque<i64>,
+    /// VODs and the height their video is capped at.
+    waiting: VecDeque<(i64, u32)>,
     /// The VOD whose video is downloading, and its stop.
     running: Option<(i64, Arc<AtomicBool>)>,
 }
@@ -51,19 +56,19 @@ impl Videos {
         std::thread::Builder::new().name("videos".into()).spawn(move || {
             loop {
                 let state = app.state::<AppState>();
-                let (id, stop) = {
+                let (id, height, stop) = {
                     let mut queue = state.videos.queue.lock().unwrap();
-                    let id = loop {
-                        if let Some(id) = queue.waiting.pop_front() {
-                            break id;
+                    let (id, height) = loop {
+                        if let Some(next) = queue.waiting.pop_front() {
+                            break next;
                         }
                         queue = state.videos.wake.wait(queue).unwrap();
                     };
                     let stop = Arc::new(AtomicBool::new(false));
                     queue.running = Some((id, stop.clone()));
-                    (id, stop)
+                    (id, height, stop)
                 };
-                let result = download(&app, id, &stop);
+                let result = download(&app, id, height, &stop);
                 state.videos.queue.lock().unwrap().running = None;
                 let error = match result {
                     Ok(()) => None,
@@ -93,13 +98,23 @@ impl Videos {
     /// The VODs whose video is downloading or waiting to, the running one first.
     fn listed(&self) -> Vec<i64> {
         let queue = self.queue.lock().unwrap();
-        queue.running.iter().map(|(id, _)| *id).chain(queue.waiting.iter().copied()).collect()
+        queue.running.iter().map(|(id, _)| *id).chain(queue.waiting.iter().map(|(id, _)| *id)).collect()
+    }
+
+    /// Stops every download and empties the queue (deleting what each had).
+    pub(crate) fn stop_all(&self) {
+        let mut queue = self.queue.lock().unwrap();
+        queue.waiting.clear();
+        if let Some((_, stop)) = &queue.running {
+            stop.store(true, Ordering::Relaxed);
+        }
     }
 }
 
-/// Downloads VOD `id`'s whole video into `Paths::media`, resuming any part
-/// already there, and records it as the VOD's kept video.
-fn download(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
+/// Downloads VOD `id`'s whole video, at most `height` tall, into
+/// `Paths::media`, resuming any part already there, and records it as the
+/// VOD's kept video.
+fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     let paths = &state.paths;
     let Some(vod) = state.db.lock().unwrap().vod(id)? else { return Ok(()) };
@@ -112,7 +127,7 @@ fn download(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     std::fs::create_dir_all(&media)?;
     let info = work.join(format!("video-{id}.info.json"));
     let playable = Playable::load(&paths.playable());
-    let selector = playable.selector(Settings::load(&paths.settings()).video_height());
+    let selector = playable.selector(height);
     let wanted = fetch::Wanted::Video { selector: &selector, ffmpeg: &ffmpeg };
     let mut last = Instant::now();
     let mut report = |progress: f64| {
@@ -123,7 +138,7 @@ fn download(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     };
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-        let out = media.join(id.to_string());
+        let out = pipeline::media_stem(&media, id, &vod.info.title);
         let mut get = || fetch::download(&yt_dlp, &info, &out, wanted, stop, &mut report);
         match get() {
             // As for whole downloads (pipeline::download): a fresh probe is a fresh session.
@@ -153,9 +168,20 @@ fn download(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
 }
 
 /// Queues the download of VOD `id`'s whole video (YouTube, Twitch and Kick;
-/// other sites keep theirs when transcribed).
+/// other sites keep theirs when transcribed), at most `height` tall, or as
+/// Settings → Storage says.
 #[tauri::command]
-pub(crate) async fn keep_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+pub(crate) async fn keep_video(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    height: Option<u32>,
+) -> CmdResult<()> {
+    let height = match height {
+        Some(h) if HEIGHTS.contains(&h) => h,
+        Some(_) => return Err("That isn't one of the video qualities.".into()),
+        None => Settings::load(&state.paths.settings()).video_height(),
+    };
     let vod = state.db.lock().unwrap().vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
     if vod.source_path.is_some() || vod.media {
         return Ok(());
@@ -165,10 +191,10 @@ pub(crate) async fn keep_video(app: AppHandle, state: State<'_, AppState>, id: i
     }
     {
         let mut queue = state.videos.queue.lock().unwrap();
-        if queue.running.as_ref().is_some_and(|(r, _)| *r == id) || queue.waiting.contains(&id) {
+        if queue.running.as_ref().is_some_and(|(r, _)| *r == id) || queue.waiting.iter().any(|(w, _)| *w == id) {
             return Ok(());
         }
-        queue.waiting.push_back(id);
+        queue.waiting.push_back((id, height));
     }
     state.videos.wake.notify_one();
     let _ = app.emit("video-progress", VideoProgress { id, progress: Some(0.0), error: None });
@@ -180,7 +206,7 @@ pub(crate) async fn keep_video(app: AppHandle, state: State<'_, AppState>, id: i
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let mut queue = state.videos.queue.lock().unwrap();
-    queue.waiting.retain(|w| *w != id);
+    queue.waiting.retain(|(w, _)| *w != id);
     match &queue.running {
         Some((running, stop)) if *running == id => stop.store(true, Ordering::Relaxed),
         _ => {
@@ -194,4 +220,38 @@ pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i
 #[tauri::command]
 pub(crate) async fn video_downloads(state: State<'_, AppState>) -> CmdResult<Vec<i64>> {
     Ok(state.videos.listed())
+}
+
+/// Deletes every downloaded video, keeping the transcripts: they then play on
+/// their sites. Downloads under way stop. Videos still needed to transcribe
+/// their VOD (from sites without their own player) stay; returns how many.
+#[tauri::command]
+pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
+    state.videos.stop_all();
+    let work = state.paths.work();
+    let db = state.db.lock().unwrap();
+    let mut kept = 0;
+    for vod in db.vods().map_err(err)? {
+        let busy = matches!(vod.status, Status::Queued | Status::Downloading | Status::Ready | Status::Transcribing);
+        if busy && pipeline::keeps_video(&vod.info.platform) {
+            kept += vod.media as usize;
+            continue;
+        }
+        pipeline::remove_media(&work, vod.id);
+        if vod.media {
+            db.set_media_path(vod.id, None).map_err(err)?;
+            crate::emit_vod(&app, &db, vod.id)?;
+        }
+    }
+    Ok(kept)
+}
+
+/// Opens the folder of downloaded videos in the system file manager. It
+/// takes no path, so the interface can't open anything else with it.
+#[tauri::command]
+pub(crate) async fn open_videos_dir(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = state.paths.media();
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    app.opener().open_path(dir.display().to_string(), None::<String>).map_err(err)
 }
