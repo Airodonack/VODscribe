@@ -182,8 +182,15 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     Ok(())
 }
 
-/// Makes a clip of a VOD from a site: downloads its range (the bulk of the
-/// time, so most of the progress), then cuts that exactly as from a file.
+/// Seconds downloaded before a clip of a VOD from a site: the section is
+/// copied, not encoded again, so it keeps no picture until its first keyframe
+/// (a short clip could have none); this reaches back past one.
+const LEAD_IN: f64 = 10.0;
+
+/// Makes a clip of a VOD from a site: downloads its range, from a little
+/// before (`LEAD_IN`; the bulk of the time, so most of the progress), then
+/// cuts it from that exactly as from a file. A section's time 0 is where it
+/// was asked to start.
 #[allow(clippy::too_many_arguments)]
 fn download_and_cut(
     app: &AppHandle,
@@ -203,7 +210,8 @@ fn download_and_cut(
     // Named for the range, so a download for an earlier range is never taken for this one.
     let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0) as i64, (end * 1000.0) as i64));
     let selector = Playable::load(&paths.playable()).selector(Settings::load(&paths.settings()).video_height());
-    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start, end };
+    let from = (start - LEAD_IN).max(0.0);
+    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end };
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
         let mut get = || fetch::download(&yt_dlp, &info, &stem, wanted, stop, |f| report(f * 0.8));
@@ -215,7 +223,8 @@ fn download_and_cut(
             }
             result => result,
         }?;
-        clips::cut(ffmpeg, &section, out, (0.0, end - start), vod.audio_only, stop, |p| report(0.8 + p * 0.2))
+        let range = (start - from, end - from);
+        clips::cut(ffmpeg, &section, out, range, vod.audio_only, stop, |p| report(0.8 + p * 0.2))
     })();
     // Whatever was downloaded goes, done or not.
     let prefix = format!("clip-{id}");
