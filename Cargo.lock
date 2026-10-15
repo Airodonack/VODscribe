@@ -6194,6 +6194,7 @@ dependencies = [
  "anyhow",
  "bzip2 0.6.1",
  "dunce",
+ "idna",
  "lzma-rs",
  "pgp",
  "rusqlite",

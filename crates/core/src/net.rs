@@ -80,18 +80,36 @@ impl<R: Read, F: FnMut(u64)> Read for ProgressReader<'_, R, F> {
 /// reach a router's page or the app's own media server. A redirect isn't
 /// checked again.
 pub fn check_public_url(url: &str) -> Result<()> {
+    public_url(url).map(|_| ())
+}
+
+/// `url`, checked as `check_public_url` does, with its host as the plain
+/// ASCII name it resolves as: a host written with look-alike characters
+/// (`ⓛocalhost`, `127。0。0。1`) is checked, and then fetched, as what it
+/// really names, so whatever fetches it next can't read it differently.
+pub fn public_url(url: &str) -> Result<String> {
     let (scheme, rest) = url.split_once("://").context("That isn't a link.")?;
     if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
         bail!("VODscribe only follows web links (https://…).");
     }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = match host_port.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or_default(),
-        None => host_port.split(':').next().unwrap_or_default(),
-    }
-    .trim_end_matches('.')
-    .to_ascii_lowercase();
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(end);
+    let (userinfo, host_port) = match authority.rsplit_once('@') {
+        Some((user, h)) => (format!("{user}@"), h),
+        None => (String::new(), authority),
+    };
+    let (raw_host, port) = match host_port.strip_prefix('[') {
+        Some(v6) => match v6.split_once(']') {
+            Some((ip, port)) => (ip, port),
+            None => bail!("That isn't a link."),
+        },
+        None => host_port.split_at(host_port.find(':').unwrap_or(host_port.len())),
+    };
+    let ipv6 = host_port.starts_with('[');
+    // As the name resolves: Unicode folded to letters and digits (UTS #46),
+    // then punycode, lowercase, without a trailing dot.
+    let host = if ipv6 { raw_host.to_ascii_lowercase() } else { idna::domain_to_ascii(raw_host).unwrap_or_default() };
+    let host = host.trim_end_matches('.').to_string();
     let local = || anyhow::anyhow!("VODscribe doesn't follow links to this computer or the local network.");
     if host.is_empty() {
         bail!("That isn't a link.");
@@ -105,16 +123,16 @@ pub fn check_public_url(url: &str) -> Result<()> {
         Ok(ip) => vec![ip],
         // A name: where it resolves now. (It could resolve elsewhere by the
         // time it's fetched; this keeps out the plain cases.)
-        Err(_) => match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)) {
-            Ok(found) => found.map(|a| a.ip()).collect(),
-            // Not resolving is the fetch's to report.
-            Err(_) => return Ok(()),
-        },
+        Err(_) => std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443))
+            .map(|found| found.map(|a| a.ip()).collect())
+            // A name that doesn't resolve can't be checked, so it isn't followed.
+            .map_err(|_| anyhow::anyhow!("Couldn't find {host}. Check the link, and that you're online."))?,
     };
-    if addresses.iter().any(|ip| !is_public(*ip)) {
+    if addresses.is_empty() || addresses.iter().any(|ip| !is_public(*ip)) {
         return Err(local());
     }
-    Ok(())
+    let host = if ipv6 { format!("[{host}]") } else { host };
+    Ok(format!("{scheme}://{userinfo}{host}{port}{path}"))
 }
 
 fn is_public(ip: std::net::IpAddr) -> bool {
@@ -137,12 +155,23 @@ fn is_public(ip: std::net::IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_public(IpAddr::V4(v4));
             }
-            let first = v6.segments()[0];
+            let seg = v6.segments();
+            // An IPv4 address carried in IPv6: IPv4-compatible (::a.b.c.d),
+            // NAT64 (64:ff9b::/96) or 6to4 (2002:aabb:ccdd::/48).
+            let carried = |hi: u16, lo: u16| std::net::Ipv4Addr::from(((hi as u32) << 16) | lo as u32);
+            if seg[..6] == [0; 6] && !v6.is_loopback() && !v6.is_unspecified() || seg[..6] == [0x64, 0xff9b, 0, 0, 0, 0]
+            {
+                return is_public(IpAddr::V4(carried(seg[6], seg[7])));
+            }
+            if seg[0] == 0x2002 && !is_public(IpAddr::V4(carried(seg[1], seg[2]))) {
+                return false;
+            }
             !(v6.is_loopback()
                 || v6.is_unspecified()
-                // Unique local (fc00::/7) and link-local (fe80::/10).
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80)
+                // Unique local (fc00::/7), link-local (fe80::/10) and the old site-local (fec0::/10).
+                || (seg[0] & 0xfe00) == 0xfc00
+                || (seg[0] & 0xffc0) == 0xfe80
+                || (seg[0] & 0xffc0) == 0xfec0)
         }
     }
 }
@@ -320,9 +349,24 @@ mod tests {
             "file:///etc/passwd",
             "javascript:alert(1)",
             "https:///nohost",
+            // Look-alike characters, folded the way a resolver (and yt-dlp) folds them.
+            "http://ⓛocalhost/x",
+            "http://127。0。0。1/",
+            "http://１２７.0.0.1/",
+            // IPv4 carried in IPv6, and the old site-local range.
+            "http://[::127.0.0.1]/",
+            "http://[64:ff9b::c0a8:101]/",
+            "http://[2002:7f00:1::]/",
+            "http://[fec0::1]/",
+            // A name that doesn't resolve can't be checked.
+            "https://does-not-exist.invalid/",
         ] {
             assert!(check_public_url(bad).is_err(), "{bad}");
         }
+        // What's fetched is the name as it resolves.
+        assert_eq!(public_url("https://WWW.Twitch.tv./videos/1?t=1").unwrap(), "https://www.twitch.tv/videos/1?t=1");
+        assert_eq!(public_url("http://93.184.215.14:8080/x").unwrap(), "http://93.184.215.14:8080/x");
+        assert_eq!(public_url("https://bücher.de/").unwrap(), "https://xn--bcher-kva.de/", "a real name in Unicode");
     }
 
     use super::*;

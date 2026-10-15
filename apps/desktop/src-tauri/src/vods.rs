@@ -26,7 +26,8 @@ pub(crate) async fn add_vod(app: AppHandle, url: String) -> CmdResult<Added> {
     }
     let task_app = app.clone();
     let added = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Added> {
-        vodscribe_core::net::check_public_url(&url)?;
+        // Checked, and passed on as the name it resolves as.
+        let url = vodscribe_core::net::public_url(&url)?;
         let state = task_app.state::<AppState>();
         let yt_dlp = tools::find_yt_dlp(&state.paths.bin())
             .ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
