@@ -51,6 +51,19 @@ impl Cutter {
         let jobs = self.jobs.lock().unwrap().take().context("the clip queue is already running")?;
         let running = self.current.clone();
         let unfinished = app.state::<AppState>().db.lock().unwrap().unfinished_clips()?;
+        {
+            // Pictures of clips no longer there (deleted with their VOD).
+            let thumbs = thumbs_dir(&app);
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            for entry in std::fs::read_dir(&thumbs).into_iter().flatten().flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let id = name.strip_suffix(".png").and_then(|id| id.parse::<i64>().ok());
+                if id.is_none_or(|id| db.clip(id).ok().flatten().is_none()) {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
         std::thread::Builder::new().name("clips".into()).spawn(move || {
             for id in jobs {
                 let stop = Arc::new(AtomicBool::new(false));
@@ -88,6 +101,15 @@ pub(crate) fn clips_dir(app: &AppHandle) -> PathBuf {
         Ok(videos) => videos.join("VODscribe"),
         Err(_) => app.state::<AppState>().paths.local.join("clips"),
     }
+}
+
+/// Each clip's first frame, shown while it's dragged out (`<clip id>.png`).
+fn thumbs_dir(app: &AppHandle) -> PathBuf {
+    app.state::<AppState>().paths.local.join("clip-thumbs")
+}
+
+fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
+    thumbs_dir(app).join(format!("{id}.png"))
 }
 
 #[derive(Serialize, Clone)]
@@ -148,7 +170,13 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         // Deleted while it was being cut.
         let _ = std::fs::remove_file(&out);
     }
-    if recorded {
+    if recorded && result.is_ok() && !vod.audio_only {
+        drop(db);
+        if let Err(e) = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id)) {
+            eprintln!("clip {id}: its picture: {e:#}");
+        }
+        emit(app, &state.db.lock().unwrap(), id);
+    } else if recorded {
         emit(app, &db, id);
     }
     Ok(())
@@ -281,6 +309,7 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
     if let Some(path) = clip.and_then(|c| c.file_path) {
         let _ = std::fs::remove_file(path);
     }
+    let _ = std::fs::remove_file(thumb_path(&app, id));
     let _ = app.emit("clip-removed", id);
     Ok(())
 }
@@ -292,6 +321,117 @@ pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i6
     let clip = state.db.lock().unwrap().clip(id).map_err(err)?;
     let path = clip.and_then(|c| c.file_path).filter(|p| Path::new(p).is_file());
     app.opener().reveal_item_in_dir(path.ok_or("That clip's file isn't made yet.")?).map_err(err)
+}
+
+/// Clip `id`'s file, if it's made.
+fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
+    let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
+    clip.file_path
+        .filter(|_| clip.status == ClipStatus::Ready)
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())
+        .ok_or_else(|| "That clip's file isn't made yet.".into())
+}
+
+/// Shown while a clip with no picture (sound alone) is dragged.
+const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
+
+/// Starts dragging clip `id`'s file out of the window, into another app (a
+/// video editor, a file manager). Takes the clip's id, not a path, so the
+/// interface can't offer any other file. Called while the mouse button is
+/// still down; the drag then belongs to the system.
+#[tauri::command]
+pub(crate) async fn drag_clip(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
+    let path = ready_file(&app, id)?;
+    let image = std::fs::read(thumb_path(&app, id)).unwrap_or_else(|_| DRAG_ICON.to_vec());
+    let (tx, rx) = mpsc::channel();
+    let on_main = window.clone();
+    window
+        .run_on_main_thread(move || {
+            let _ = tx.send(start_drag(&on_main, &path, image).map_err(|e| format!("{e:#}")));
+        })
+        .map_err(err)?;
+    tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
+}
+
+#[cfg(target_os = "linux")]
+fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Result<()> {
+    use gtk::prelude::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let source = window.gtk_window()?;
+    // Escaped, so names with spaces and other characters arrive whole.
+    let uri = glib::filename_to_uri(path, None)?;
+    let targets = gtk::TargetList::new(&[]);
+    targets.add_uri_targets(0);
+    let handlers: Rc<RefCell<Vec<glib::SignalHandlerId>>> = Rc::default();
+    let data = source.connect_drag_data_get(move |_, _, data, _, _| {
+        data.set_uris(&[uri.as_str()]);
+    });
+    handlers.borrow_mut().push(data);
+    // Once it's over, dropped or not, the window stops answering for it.
+    let ended = handlers.clone();
+    let end = source.connect_drag_end(move |source, _| {
+        for handler in ended.borrow_mut().drain(..) {
+            source.disconnect(handler);
+        }
+    });
+    handlers.borrow_mut().push(end);
+    let Some(context) = source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1)
+    else {
+        for handler in handlers.borrow_mut().drain(..) {
+            source.disconnect(handler);
+        }
+        anyhow::bail!("The drag couldn't start.");
+    };
+    let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+    if loader.write(&image).and_then(|_| loader.close()).is_ok()
+        && let Some(picture) = loader.pixbuf()
+    {
+        context.drag_set_icon_pixbuf(&picture, 0, 0);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Result<()> {
+    drag::start_drag(
+        window,
+        drag::DragItem::Files(vec![path.to_path_buf()]),
+        drag::Image::Raw(image),
+        |_, _| {},
+        drag::Options::default(),
+    )
+    .map_err(|e| anyhow::anyhow!("The drag couldn't start: {e}"))
+}
+
+/// Saves a copy of clip `id`'s file where the person picks, in the system's
+/// save dialog (opened here, so the interface can't name a place to write).
+/// False if they canceled.
+#[tauri::command]
+pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
+    use tauri_plugin_dialog::DialogExt;
+    let from = ready_file(&app, id)?;
+    let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = from.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .set_file_name(&name)
+            .add_filter(if ext == "m4a" { "Audio" } else { "Video" }, &[ext.as_str()])
+            .blocking_save_file();
+        let Some(to) = picked else { return Ok(false) };
+        let to = to.into_path().map_err(err)?;
+        if to != from {
+            std::fs::copy(&from, &to).map_err(|e| format!("Couldn't save the clip there: {e}"))?;
+        }
+        Ok(true)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[cfg(test)]

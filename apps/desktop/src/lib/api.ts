@@ -239,6 +239,10 @@ export const api = {
   renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
+  /** Starts dragging clip `id`'s file out of the window; call while the mouse button is down. */
+  dragClip: (id: number) => invoke<void>("drag_clip", { id }),
+  /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
+  saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),

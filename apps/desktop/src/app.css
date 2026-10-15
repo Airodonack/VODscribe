@@ -380,3 +380,21 @@ kbd {
 body.dropping iframe {
   pointer-events: none;
 }
+
+/* A clip's chip flying to the pointer before it's dragged out (dragout.ts). */
+.flying-chip {
+  position: fixed;
+  z-index: 2000;
+  max-width: 260px;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}

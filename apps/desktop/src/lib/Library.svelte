@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isOutgoing } from "./dragout";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open } from "@tauri-apps/plugin-dialog";
@@ -122,11 +123,12 @@
       .onDragDropEvent(({ payload }) => {
         if (payload.type === "enter") {
           // macOS reports every drag, even ones with nothing the app can use.
-          filesOver = payload.paths.length > 0 && !draggingInside;
+          // A clip being dragged out of the app isn't one to add.
+          filesOver = payload.paths.length > 0 && !draggingInside && !isOutgoing(payload.paths);
         } else if (payload.type === "leave") filesOver = false;
         else if (payload.type === "drop") {
           filesOver = false;
-          if (!draggingInside) adder.items(payload.paths, true);
+          if (!draggingInside && !isOutgoing(payload.paths)) adder.items(payload.paths, true);
         }
       })
       .then(

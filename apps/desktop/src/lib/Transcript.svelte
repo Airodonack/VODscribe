@@ -11,6 +11,7 @@
   import { formatTime } from "./platform";
   import { buildRows, linesSpan, type Row } from "./rows";
   import { clips } from "./clips.svelte";
+  import { playsHere } from "./embed";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -438,7 +439,7 @@
     const { start, end } = linesSpan(lines, first, last);
     // Picked on a VOD the player isn't showing: show it there, from the pick's start.
     if (clips.vodId !== vod.id) {
-      clips.open(vod.id);
+      clips.open(vod.id, !playsHere(vod));
       clips.pick(start, end, vod.duration);
       play(start);
     } else {

@@ -7,6 +7,8 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue } from "./api";
+  import { clips } from "./clips.svelte";
+  import { HOLD_MS, flyAndDrag } from "./dragout";
   import Icon from "./Icon.svelte";
   import { columns, cueAt, stepTime } from "./media";
   import { formatTime } from "./platform";
@@ -103,6 +105,7 @@
     destroyed = true;
     cancelAnimationFrame(frame);
     if (fullscreen) setFullscreen(false);
+    clearTimeout(hold);
     // Stop the download too: an <video> removed while loading keeps fetching.
     video?.removeAttribute("src");
     video?.load();
@@ -128,6 +131,42 @@
     if (!video || pictureless) return;
     video.pause();
     seek(stepTime(video.currentTime, frames, fps), false);
+  }
+
+  // A press held still on the picture picks up the made clip it's in, flying
+  // its chip from the clip bar (or the strip) to the pointer, to drag it out.
+  let hold: ReturnType<typeof setTimeout> | undefined;
+  let held = false;
+  let down = false;
+  let pointer = { x: 0, y: 0 };
+  function onPictureDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const now = video?.currentTime ?? 0;
+    const clip = clips.list.find((c) => c.status === "ready" && c.start <= now && now < c.end);
+    down = true;
+    held = false;
+    pointer = { x: e.clientX, y: e.clientY };
+    if (!clip) return;
+    hold = setTimeout(() => {
+      held = true;
+      const shown = [`.clipbar [data-band="${clip.id}"]`, `.chip[data-clip="${clip.id}"]`]
+        .map((s) => document.querySelector(s)?.getBoundingClientRect())
+        .find((r) => r && r.width > 0 && r.right > 0 && r.left < innerWidth);
+      flyAndDrag(clip, shown ?? root!.getBoundingClientRect(), pointer.x, pointer.y, () => down);
+    }, HOLD_MS);
+  }
+  function onPictureMove(e: PointerEvent) {
+    if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= 4) clearTimeout(hold);
+    pointer = { x: e.clientX, y: e.clientY };
+  }
+  function onPictureUp() {
+    down = false;
+    clearTimeout(hold);
+  }
+  function onPictureClick() {
+    // A press that picked a clip up isn't a click.
+    if (held) held = false;
+    else togglePlay();
   }
 
   function onError() {
@@ -255,7 +294,15 @@
 
 <div class="player" class:pictureless class:fullscreen bind:this={root}>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="picture" onclick={togglePlay} ondblclick={toggleFullscreen}>
+  <div
+    class="picture"
+    onclick={onPictureClick}
+    ondblclick={toggleFullscreen}
+    onpointerdown={onPictureDown}
+    onpointermove={onPictureMove}
+    onpointerup={onPictureUp}
+    onpointercancel={onPictureUp}
+  >
     <video
       bind:this={video}
       playsinline

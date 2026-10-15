@@ -205,6 +205,8 @@ pub fn run() {
             clips::rename_clip,
             clips::delete_clip,
             clips::show_clip,
+            clips::drag_clip,
+            clips::save_clip,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

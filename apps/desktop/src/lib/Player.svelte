@@ -87,7 +87,10 @@
     else pending = { time, play };
   });
 
-  clips.open(untrack(() => vod.id));
+  clips.open(
+    untrack(() => vod.id),
+    untrack(() => !playsHere(vod)),
+  );
 
   /** Plays from `time`, starting the player if it isn't yet. */
   function playFrom(time: number) {

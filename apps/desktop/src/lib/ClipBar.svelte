@@ -9,6 +9,7 @@
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
+  import { HOLD_MS, flyAndDrag } from "./dragout";
   import { columns, PEAKS_RATE, tickStep } from "./media";
   import { formatTime } from "./platform";
   import { theme } from "./theme.svelte";
@@ -52,7 +53,10 @@
     };
     frame = requestAnimationFrame(tick);
   });
-  onDestroy(() => cancelAnimationFrame(frame));
+  onDestroy(() => {
+    cancelAnimationFrame(frame);
+    clearTimeout(hold);
+  });
 
   function setView(start: number, length = span) {
     span = Math.min(duration, Math.max(SHORTEST, length));
@@ -110,10 +114,25 @@
     | { kind: "clip"; id: number; edge: "start" | "end"; start: number; end: number };
   let drag = $state<Drag | null>(null);
 
+  // A press held still on a made clip picks it up, to drag out of the window.
+  let hold: ReturnType<typeof setTimeout> | undefined;
+  let down = false;
+  let pointer = { x: 0, y: 0 };
+
   function onDown(e: PointerEvent) {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     const handle = target.closest<HTMLElement>("[data-edge]");
+    down = true;
+    pointer = { x: e.clientX, y: e.clientY };
+    const band = handle ? null : target.closest<HTMLElement>("[data-band]");
+    const held = band && clips.list.find((c) => c.id === Number(band.dataset.band) && c.status === "ready");
+    if (held && band) {
+      hold = setTimeout(() => {
+        drag = null;
+        flyAndDrag(held, band.getBoundingClientRect(), pointer.x, pointer.y, () => down);
+      }, HOLD_MS);
+    }
     if (handle?.dataset.clip) {
       const clip = clips.list.find((c) => c.id === Number(handle.dataset.clip));
       if (clip)
@@ -133,6 +152,8 @@
   }
 
   function onMove(e: PointerEvent) {
+    if (down && Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= 4) clearTimeout(hold);
+    pointer = { x: e.clientX, y: e.clientY };
     if (!drag) return;
     const t = timeAt(e.clientX);
     if (drag.kind === "new") {
@@ -153,6 +174,8 @@
   }
 
   function onUp(e: PointerEvent) {
+    down = false;
+    clearTimeout(hold);
     if (!drag) return;
     const done = drag;
     drag = null;
@@ -209,6 +232,7 @@
     {#if r.end > viewStart && r.start < viewStart + span}
       <div
         class="band"
+        data-band={clip.id}
         style:left={pct(r.start)}
         style:width="{((x(r.end) - x(r.start)) / (width || 1)) * 100}%"
         title={clip.title}

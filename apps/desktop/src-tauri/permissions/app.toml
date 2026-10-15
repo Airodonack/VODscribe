@@ -27,6 +27,8 @@ permissions = [
   "allow-rename-clip",
   "allow-delete-clip",
   "allow-show-clip",
+  "allow-drag-clip",
+  "allow-save-clip",
   "allow-thumbnail",
   "allow-reorder-vods",
   "allow-delete-vod",

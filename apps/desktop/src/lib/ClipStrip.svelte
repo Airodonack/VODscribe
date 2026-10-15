@@ -3,15 +3,19 @@
   // not kept yet as a dashed one. Clicking a chip plays it; double-clicking its
   // name renames it.
 
-  import type { Clip } from "./api";
+  import { api, type Clip } from "./api";
   import { clips } from "./clips.svelte";
+  import { dragOut } from "./dragout";
   import Icon from "./Icon.svelte";
+  import Popover from "./Popover.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
 
   let { onplay }: { onplay: (time: number) => void } = $props();
 
   let renaming = $state<number | null>(null);
+  let ghostChip = $state<HTMLElement>();
+  let hideNote = $state(false);
   let draft = $state("");
 
   function startRename(clip: Clip) {
@@ -30,6 +34,36 @@
     el.select();
   }
 
+  // A made clip's chip drags out once the pointer moves with the button down;
+  // the click that may follow a drag that didn't start doesn't play it.
+  let press: { clip: Clip; x: number; y: number } | null = null;
+  let swallowClick = false;
+  function onChipDown(e: PointerEvent, clip: Clip) {
+    const target = e.target as HTMLElement;
+    if (e.button !== 0 || clip.status !== "ready" || target.closest(".act, input")) return;
+    press = { clip, x: e.clientX, y: e.clientY };
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
+    const clip = press.clip;
+    press = null;
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 500);
+    dragOut(clip);
+  }
+  function play(time: number) {
+    if (!swallowClick) onplay(time);
+    swallowClick = false;
+  }
+
+  async function save(clip: Clip) {
+    try {
+      await api.saveClip(clip.id);
+    } catch (e) {
+      clips.error = String(e);
+    }
+  }
+
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
 
   function describe(clip: Clip): string {
@@ -40,11 +74,21 @@
   }
 </script>
 
+<svelte:window onpointermove={onPointerMove} onpointerup={() => (press = null)} />
+
 <div class="strip" aria-label="Clips">
   {#each clips.list as clip (clip.id)}
     {@const progress = clips.progress.get(clip.id)}
-    <div class="chip {clip.status}" title="{span(clip.start, clip.end)} · {describe(clip)}">
-      <button class="play" onclick={() => onplay(clip.start)} aria-label="Play {clip.title}">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="chip {clip.status}"
+      data-clip={clip.id}
+      title="{span(clip.start, clip.end)} · {describe(clip)}{clip.status === 'ready'
+        ? ' · drag it into a video editor or a folder'
+        : ''}"
+      onpointerdown={(e) => onChipDown(e, clip)}
+    >
+      <button class="play" onclick={() => play(clip.start)} aria-label="Play {clip.title}">
         <span class="length">{formatTime(clip.end - clip.start)}</span>
       </button>
       {#if renaming === clip.id}
@@ -69,6 +113,9 @@
       {:else if clip.status === "error"}
         <span class="bad"><Icon name="error" size={13} /></span>
       {:else if clip.status === "ready"}
+        <button class="act" onclick={() => save(clip)} title="Save a copy…" aria-label="Save a copy">
+          <Icon name="download" size={13} />
+        </button>
         <button class="act" onclick={() => clips.show(clip.id)} title="Show in folder" aria-label="Show in folder">
           <Icon name="folder" size={13} />
         </button>
@@ -83,7 +130,7 @@
   {/each}
   {#if clips.ghost}
     {@const ghost = clips.ghost}
-    <div class="chip ghost">
+    <div class="chip ghost" bind:this={ghostChip}>
       <button class="play" onclick={() => onplay(ghost.start)} aria-label="Play the range picked">
         <span class="length">{formatTime(ghost.end - ghost.start)}</span>
       </button>
@@ -102,6 +149,22 @@
       <kbd>I</kbd> where it starts and <kbd>O</kbd> where it ends.
     </span>
   {/if}
+  <Popover
+    bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
+    anchor={ghostChip}
+    label="Before downloading a clip"
+    width={340}
+  >
+    <div class="note">
+      <p>Only download clips you have permission to use, such as from your own channel or with the streamer's okay.</p>
+      <p class="muted">Streamers can also download their whole VODs from their channel's video manager.</p>
+      <label><input type="checkbox" bind:checked={hideNote} /> Don't show this again</label>
+      <div class="buttons">
+        <button onclick={() => clips.answer(false)}>Cancel</button>
+        <button class="primary" onclick={() => clips.answer(true, hideNote)}>Download clip</button>
+      </div>
+    </div>
+  </Popover>
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
   {/if}
@@ -131,6 +194,10 @@
     border-radius: 14px;
     background: var(--surface-2);
     overflow: hidden;
+  }
+
+  .chip.ready {
+    cursor: grab;
   }
 
   .chip.ghost {
@@ -235,6 +302,29 @@
 
   .hint kbd + kbd {
     margin-left: 0;
+  }
+
+  .note {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .note p {
+    margin: 0;
+  }
+
+  .note label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .error-text {

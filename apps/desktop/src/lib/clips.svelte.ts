@@ -12,6 +12,17 @@ export interface Range {
   end: number;
 }
 
+/** Remembers "Don't show this again" on the note before downloading a clip. */
+const NOTE_HIDDEN = "vodscribe.clipNoteHidden";
+
+function noteHidden(): boolean {
+  try {
+    return localStorage.getItem(NOTE_HIDDEN) === "true";
+  } catch {
+    return false;
+  }
+}
+
 /** How long a clip started (or ended) with I or O alone runs. */
 export const DEFAULT_LENGTH = 30;
 
@@ -22,11 +33,17 @@ class Clips {
   progress = new SvelteMap<number, number>();
   ghost = $state<Range | null>(null);
   error = $state<string | null>(null);
+  /** While the note before downloading a clip is up: how it's answered. */
+  asking = $state<((download: boolean) => void) | null>(null);
+  /** Whether the VOD shown is from a site, so its clips are downloaded. */
+  #fromSite = false;
   #listening = false;
   #seq = 0;
 
-  /** Shows VOD `vodId`'s clips (dropping a range picked on another). */
-  open(vodId: number) {
+  /** Shows VOD `vodId`'s clips (dropping a range picked on another); `fromSite`
+   *  if they're downloaded from the site it's on rather than cut from a file here. */
+  open(vodId: number, fromSite: boolean) {
+    this.#fromSite = fromSite;
     if (this.vodId === vodId) return;
     this.vodId = vodId;
     this.list = [];
@@ -82,7 +99,13 @@ class Clips {
   async keep() {
     const ghost = this.ghost;
     const vodId = this.vodId;
-    if (!ghost || vodId === null) return;
+    if (!ghost || vodId === null || this.asking) return;
+    // Before the first clip downloaded from a site: a word on permission.
+    if (this.#fromSite && !noteHidden()) {
+      const download = await new Promise<boolean>((answer) => (this.asking = answer));
+      this.asking = null;
+      if (!download) return;
+    }
     this.ghost = null;
     try {
       this.#put(await api.addClip(vodId, ghost.start, ghost.end));
@@ -101,6 +124,18 @@ class Clips {
     } catch (e) {
       this.error = String(e);
     }
+  }
+
+  /** Answers the note before downloading; `hide` keeps it from showing again. */
+  answer(download: boolean, hide = false) {
+    if (download && hide) {
+      try {
+        localStorage.setItem(NOTE_HIDDEN, "true");
+      } catch {
+        // Shown again next time.
+      }
+    }
+    this.asking?.(download);
   }
 
   rename = (id: number, title: string) => this.#run(api.renameClip(id, title));

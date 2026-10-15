@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-drag-clip"
+description = "Enables the drag_clip command without any pre-configured scope."
+commands.allow = ["drag_clip"]
+
+[[permission]]
+identifier = "deny-drag-clip"
+description = "Denies the drag_clip command without any pre-configured scope."
+commands.deny = ["drag_clip"]

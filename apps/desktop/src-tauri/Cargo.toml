@@ -30,3 +30,13 @@ getrandom = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
+
+# Dragging a clip out of the window into another app (clips.rs). On Linux the
+# app starts the GTK drag itself: drag's builds an unescaped file:// URI, which
+# breaks on names with spaces.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+drag = "2.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+glib = "0.18"

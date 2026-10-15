@@ -139,6 +139,28 @@ pub fn cut(
     Ok(())
 }
 
+/// A small picture of `clip`'s first frame, as a PNG at `out`, to show
+/// while it's dragged.
+pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut cmd = tools::command(ffmpeg);
+    let status = tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE))
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-i"])
+        .arg(clip)
+        .args(["-frames:v", "1", "-vf", "scale=160:-2", "-c:v", "png", "-f", "image2", "-y"])
+        .arg(out)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .status()
+        .context("run ffmpeg")?;
+    if !status.success() {
+        bail!("ffmpeg couldn't read the clip's first frame");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,6 +243,10 @@ mod tests {
         ]);
         assert!(keyframes.lines().count() >= 3, "a keyframe a second: {keyframes}");
         assert!(!dir.join("clips").join(".clip.mp4.part").exists());
+
+        let png = dir.join("thumb.png");
+        thumbnail(&ffmpeg, &out, &png).unwrap();
+        assert!(fs::read(&png).unwrap().starts_with(b"\x89PNG"));
 
         // Sound alone, and a stop partway leaves nothing behind.
         let audio = dir.join("clips").join("clip.m4a");
