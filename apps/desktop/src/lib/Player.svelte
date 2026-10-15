@@ -8,7 +8,6 @@
   import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, type EmbeddedPlayer } from "./embed";
   import { formatTime, keepsVideo, playbackHint, siteName, watchUrl } from "./platform";
-  import { ask } from "./ask";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
   // jump, so jumping to the same timestamp twice still seeks.
@@ -32,15 +31,6 @@
 
   const site = $derived(siteName(vod));
 
-  // A video kept from a site without an embed can be deleted to free up space.
-  async function deleteVideo() {
-    const sure = await ask(
-      `Delete this video to free up space? The transcript stays, and the video plays on ${site} instead.`,
-      "Delete video",
-      "Keep",
-    );
-    if (sure) api.deleteVideo(vod.id).catch((e) => (error = String(e)));
-  }
   const isLocal = $derived(vod.source_path !== null);
   let error = $state<string | null>(null);
   // Audio alone (a podcast, a song): a bar with the controls, not a 16:9 frame.
@@ -166,15 +156,6 @@
         Show in folder
       </button>
     {:else}
-      {#if vod.media}
-        <button
-          class="link open"
-          onclick={deleteVideo}
-          title="Free up the space this video takes; the transcript stays"
-        >
-          Delete video
-        </button>
-      {/if}
       <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
         Open on {site}
         <Icon name="external" size={12} />

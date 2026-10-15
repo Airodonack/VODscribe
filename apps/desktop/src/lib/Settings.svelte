@@ -300,7 +300,7 @@
     <p class="muted hint">
       VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
         ? `; they use ${formatBytes(mediaBytes)}`
-        : ""}. Delete one from its player to free up space; its transcript stays.
+        : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
     </p>
     <div class="themes" role="radiogroup" aria-label="Video quality">
       {#each HEIGHTS as h (h)}

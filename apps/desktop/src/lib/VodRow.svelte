@@ -73,6 +73,16 @@
     }
   }
 
+  // A video kept from a site without an embed can be deleted to free up space.
+  async function deleteVideo() {
+    const sure = await ask(
+      `Delete the video of “${vod.title}” to free up space? The transcript stays, and the video plays on ${siteName(vod)} instead.`,
+      "Delete video",
+      "Keep",
+    );
+    if (sure) act(api.deleteVideo(vod.id));
+  }
+
   async function cancel() {
     if (
       await ask(
@@ -204,6 +214,16 @@
     >
       <Icon name="redo" size={15} />
     </button>
+    {#if vod.media}
+      <button
+        class="act"
+        onclick={deleteVideo}
+        title="Delete the video kept on this computer (the transcript stays)"
+        aria-label="Delete video"
+      >
+        <Icon name="video-off" size={15} />
+      </button>
+    {/if}
   {/if}
   <button
     class="act"
