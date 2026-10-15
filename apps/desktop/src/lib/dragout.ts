@@ -82,13 +82,16 @@ export function rectOf(start: number, end: number): DOMRect | null {
 const PICTURE_WIDTH = 160;
 const WAVE_HEIGHT = 28;
 
-/** A picture of the stretch: its first frame (or the VOD's thumbnail), as a URL; null if there's none. */
-async function pictureOf(vod: Vod, time: number, ownPlayer: boolean): Promise<string | null> {
+/** A picture of the stretch: its first frame (or the VOD's thumbnail), as a URL; null if there's none.
+ *  `own` if it's made here, to be revoked when done (a thumbnail's is shared, api.ts). */
+async function pictureOf(vod: Vod, time: number, ownPlayer: boolean): Promise<{ url: string; own: boolean } | null> {
   if (ownPlayer && !vod.audio_only) {
     const jpeg = await api.frame(vod.id, time).catch(() => new Uint8Array());
-    if (jpeg.length) return URL.createObjectURL(new Blob([jpeg as BlobPart], { type: "image/jpeg" }));
+    if (jpeg.length)
+      return { url: URL.createObjectURL(new Blob([jpeg as BlobPart], { type: "image/jpeg" })), own: true };
   }
-  return vod.thumb ? thumbUrl(vod.thumb).catch(() => null) : null;
+  const url = vod.thumb ? await thumbUrl(vod.thumb).catch(() => null) : null;
+  return url ? { url, own: false } : null;
 }
 
 /** The stretch's waveform, drawn on `canvas`. */
@@ -161,12 +164,12 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
   caption.textContent = label;
   ghost.append(img, wave, caption);
   document.body.appendChild(ghost);
-  let pictureUrl: string | null = null;
-  const picture = pictureOf(vod, start, ownPlayer).then((url) => {
-    pictureUrl = url;
-    if (url) img.src = url;
+  let made: string | null = null;
+  const picture = pictureOf(vod, start, ownPlayer).then((p) => {
+    if (p?.own) made = p.url;
+    if (p) img.src = p.url;
     else img.remove();
-    return url
+    return p
       ? img.decode().then(
           () => img,
           () => null,
@@ -204,7 +207,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       clips.overBar = false;
       document.body.classList.remove("timeline-drag");
       ghost.remove();
-      if (pictureUrl?.startsWith("blob:")) URL.revokeObjectURL(pictureUrl);
+      if (made) URL.revokeObjectURL(made);
       resolve();
     };
     const onMove = (e: PointerEvent) => {
