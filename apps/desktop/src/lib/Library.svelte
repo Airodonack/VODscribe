@@ -12,6 +12,7 @@
   import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
   import { Adder } from "./adder.svelte";
+  import Spinner from "./Spinner.svelte";
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
   import VodRow from "./VodRow.svelte";
@@ -206,6 +207,16 @@
   {/if}
 
   <div class="list" bind:this={reorder.list}>
+    <!-- Links and files being added: each stands in until its VOD arrives (new ones go on top). -->
+    {#each adder.pending as p (p.key)}
+      <div class="vod pending" role="status" aria-label="Adding {p.label}">
+        <span class="standin-thumb"><Spinner size={16} /></span>
+        <span class="standin-text">
+          <span class="standin-title">{p.label}</span>
+          <span class="muted standin-meta">Adding…</span>
+        </span>
+      </div>
+    {/each}
     {#each shown as vod (vod.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
       <div
@@ -231,7 +242,9 @@
         />
       </div>
     {:else}
-      <p class="muted empty">No VODs yet. Paste a link above to transcribe one.</p>
+      {#if adder.pending.length === 0}
+        <p class="muted empty">No VODs yet. Paste a link above to transcribe one.</p>
+      {/if}
     {/each}
   </div>
 </aside>
@@ -384,6 +397,48 @@
 
   .vod:hover {
     background: var(--bg);
+  }
+
+  /* A stand-in for something being added: a row's shape, a spinner for its thumbnail. */
+  .vod.pending {
+    display: flex;
+    gap: 10px;
+    cursor: default;
+  }
+
+  .vod.pending:hover {
+    background: var(--surface);
+  }
+
+  .standin-thumb {
+    flex: none;
+    width: 80px;
+    aspect-ratio: 16 / 9;
+    border-radius: var(--radius-sm);
+    background: var(--surface-3);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .standin-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .standin-title {
+    font-weight: 600;
+    font-size: 13px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .standin-meta {
+    font-size: 12px;
   }
 
   .vod.selected {
