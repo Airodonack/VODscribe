@@ -171,10 +171,10 @@ impl Playable {
 
 /// What web downloads yt-dlp makes itself: plain files, HLS and DASH.
 /// (`fetch::download` has yt-dlp fetch HLS itself, rather than through ffmpeg.)
-const WEB: &str = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']";
+pub(crate) const WEB: &str = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']";
 
 /// `choice` limited to `WEB` streams: each format in it (`a+b` merges two).
-fn with_web(choice: &str) -> String {
+pub(crate) fn with_web(choice: &str) -> String {
     choice.split('+').map(|f| format!("{f}{WEB}")).collect::<Vec<_>>().join("+")
 }
 

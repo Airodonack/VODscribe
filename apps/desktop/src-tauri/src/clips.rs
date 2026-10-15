@@ -17,7 +17,6 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
-use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, fetch, tools};
 
@@ -209,7 +208,7 @@ fn download_and_cut(
     let info = work.join(format!("clip-{id}.info.json"));
     // Named for the range, so a download for an earlier range is never taken for this one.
     let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0) as i64, (end * 1000.0) as i64));
-    let selector = Playable::load(&paths.playable()).selector(Settings::load(&paths.settings()).video_height());
+    let selector = clips::selector(Settings::load(&paths.settings()).video_height());
     let from = (start - LEAD_IN).max(0.0);
     let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end };
     let result = (|| {

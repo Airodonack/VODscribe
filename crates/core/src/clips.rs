@@ -74,6 +74,23 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
     (2..).map(|n| dir.join(format!("{stem} ({n}).{ext}"))).find(|p| !p.exists()).expect("a free name")
 }
 
+/// yt-dlp's format selection for a clip's section: video at most `height`
+/// tall, the best there is; else the smallest taller one (a small channel's
+/// Twitch VOD has only its source, often 1080p, besides audio alone); only
+/// then audio alone. Any codec will do, as clips are encoded again; only
+/// streams fetched over the web.
+pub fn selector(height: u32) -> String {
+    let choices = [
+        format!("bv*[height<={height}]+ba"),
+        format!("b[height<={height}]"),
+        format!("wv*[height>{height}]+ba"),
+        format!("w[height>{height}]"),
+        "ba".to_string(),
+        "b".to_string(),
+    ];
+    choices.iter().map(|c| crate::playable::with_web(c)).collect::<Vec<_>>().join("/")
+}
+
 /// Cuts `start`..`end` seconds of `source` into `out` (replacing it, only
 /// once the new one is whole), reporting progress from 0 to 1. Sound alone
 /// (`audio_only`, and cover art is left out) makes an M4A.
@@ -174,6 +191,18 @@ mod tests {
         assert_eq!(title(&many, 0.0), "1 2 3 4 5 6 7 8…");
         assert_eq!(title(&[], 3723.4), "Clip at 1:02:03");
         assert_eq!(title(&[], 65.0), "Clip at 1:05");
+    }
+
+    #[test]
+    fn sections_are_video_even_above_the_height_asked() {
+        let s = selector(720);
+        let choices: Vec<String> = s.split('/').map(|c| c.replace(crate::playable::WEB, "")).collect();
+        assert_eq!(
+            choices,
+            ["bv*[height<=720]+ba", "b[height<=720]", "wv*[height>720]+ba", "w[height>720]", "ba", "b"],
+            "audio alone comes last"
+        );
+        assert!(s.split('/').all(|c| c.split('+').all(|f| f.ends_with(crate::playable::WEB))));
     }
 
     #[test]
