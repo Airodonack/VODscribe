@@ -76,13 +76,15 @@ class Cuts {
     }
   }
 
-  /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it). */
-  async cutSelection() {
+  /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it);
+   *  returns that stretch, from cut to cut. */
+  async cutSelection(): Promise<{ start: number; end: number } | null> {
     const picked = this.selection;
-    if (!picked) return;
+    if (!picked) return null;
     this.clearSelection();
     await this.ensure(picked.start);
     await this.ensure(picked.end);
+    return { start: frameStart(picked.start, this.fps), end: frameStart(picked.end, this.fps) };
   }
 
   clearSelection() {

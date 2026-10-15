@@ -113,6 +113,8 @@
     const now = playsHere(vod);
     if (now === here) return;
     here = now;
+    // Its clips are cut from the file now (or downloaded again, once it's deleted).
+    clips.open(vod.id, !now);
     if (!active || !player) return;
     const time = player.time();
     const play = player.playing();
@@ -211,10 +213,8 @@
 
   /** Export: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
   async function exportClip() {
-    const range = cuts.selection ?? stretch;
-    if (!range || (!cuts.selection && !cuts.list.length)) return;
-    if (cuts.selection) await cuts.cutSelection();
-    await exportStretch(range.start, range.end);
+    const range = cuts.selection ? await cuts.cutSelection() : cuts.list.length ? stretch : null;
+    if (range) await exportStretch(range.start, range.end);
   }
   const canExport = $derived(!!cuts.selection || cuts.list.length > 0);
 
@@ -248,6 +248,13 @@
     clearTimeout(copiedTimer);
     if (fullscreen) setFullscreen(false);
     player?.destroy();
+    // The note asks about this VOD's clip.
+    clips.answer(false);
+  });
+
+  // The note is shown with the controls.
+  $effect(() => {
+    if (collapsed) untrack(() => clips.answer(false));
   });
 
   // Keyboard control for whichever player is open. Keys pressed while the
@@ -260,6 +267,9 @@
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     // B cuts and E exports, as in video editors (also with Ctrl, or ⌘ on a Mac).
     if (key === "b" || key === "e") {
+      // Held down, it's one press.
+      if (e.repeat) return e.preventDefault();
+      collapsed = false;
       if (key === "b") clip();
       else exportClip();
       e.preventDefault();

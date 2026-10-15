@@ -23,6 +23,7 @@ class Clips {
   get fromSite() {
     return this.#fromSite;
   }
+  #making = new Map<string, Promise<Clip | null>>();
   #listening = false;
   #seq = 0;
 
@@ -31,6 +32,7 @@ class Clips {
   open(vodId: number, fromSite: boolean) {
     this.#fromSite = fromSite;
     if (this.vodId === vodId) return;
+    this.answer(false);
     this.vodId = vodId;
     this.list = [];
     this.error = null;
@@ -75,9 +77,25 @@ class Clips {
    * in the clip bar if `shown`). Before the first downloaded from a site, the
    * note on permission is answered first. Null if it's declined or fails.
    */
-  async make(start: number, end: number, shown = true): Promise<Clip | null> {
+  make(start: number, end: number, shown = true): Promise<Clip | null> {
+    // Asked twice before the first is answered (E pressed twice), it's made once.
+    const key = `${this.vodId} ${start} ${end}`;
+    const making = this.#making.get(key);
+    if (making) return making;
+    const made = this.#make(start, end, shown).finally(() => this.#making.delete(key));
+    this.#making.set(key, made);
+    return made;
+  }
+
+  async #make(start: number, end: number, shown: boolean): Promise<Clip | null> {
     const vodId = this.vodId;
     const made = this.find(start, end);
+    // One that failed is tried again.
+    if (made?.status === "error") {
+      await this.#run(api.setClipRange(made.id, made.start, made.end));
+      if (shown && !made.shown) await this.#run(api.keepClip(made.id));
+      return this.list.find((c) => c.id === made.id) ?? made;
+    }
     if (made && shown && !made.shown) {
       await this.#run(api.keepClip(made.id));
       return this.list.find((c) => c.id === made.id) ?? made;
@@ -104,6 +122,7 @@ class Clips {
   async ready(id: number, still: () => boolean): Promise<Clip | null> {
     for (;;) {
       const clip = this.list.find((c) => c.id === id);
+      if (clip?.status === "error") this.error = `Couldn't make the clip: ${clip.error ?? "unknown error"}`;
       if (!clip || clip.status === "error") return null;
       if (clip.status === "ready") return clip;
       if (!still()) return null;

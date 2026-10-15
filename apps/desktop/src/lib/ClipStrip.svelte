@@ -65,7 +65,8 @@
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
 
   function describe(clip: Clip): string {
-    if (clip.status === "error") return `Couldn't make this clip: ${clip.error ?? "unknown error"}`;
+    if (clip.status === "error")
+      return `Couldn't make this clip: ${clip.error ?? "unknown error"}. Export it again to try again.`;
     if (clip.status === "cutting") return "Making the clip…";
     if (clip.status === "waiting") return "Waiting to be made";
     return clip.title;
