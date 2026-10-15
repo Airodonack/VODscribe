@@ -278,9 +278,14 @@
       return;
     }
     const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
-    if (moving && (key === "," || key === "." || key === "<" || key === ">")) {
-      // A selected mark moves a frame (ten with Shift), and the picture shows its frame.
-      const frames = (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1);
+    const frameKey = key === "," || key === "." || key === "<" || key === ">";
+    if (moving && (frameKey || key in STEPS)) {
+      // A selected cut (or edge) moves: , and . a frame (ten with Shift), the
+      // arrows, J and L as far as they'd move the playhead, in whole frames.
+      // The playback stops on its frame, which the picture then shows.
+      const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
+      const frames = frameKey ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1) : Math.round(step * fps);
+      if (player?.playing()) player.togglePlay();
       const at = cuts.nudgeSelected(frames, fps, duration);
       // A quarter-frame in: the frame the cut starts, whichever way the player rounds.
       if (at !== null) seekTo(Math.min(duration, at + 0.25 / fps));
@@ -384,7 +389,8 @@
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
-      <kbd>B</kbd> cut here (<kbd>,</kbd><kbd>.</kbd> move the selected cut, <kbd>Delete</kbd> removes it)
+      <kbd>B</kbd> cut here (<kbd>,</kbd><kbd>.</kbd>, <kbd>←</kbd><kbd>→</kbd>, <kbd>J</kbd><kbd>L</kbd> move the
+      selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
       <kbd>E</kbd> export the stretch as a clip <span class="sep">·</span>
       <kbd>M</kbd> mute <span class="sep">·</span>
