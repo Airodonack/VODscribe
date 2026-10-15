@@ -166,13 +166,16 @@ pub fn download(
         // Audio-only when offered (YouTube, Twitch); otherwise the lowest quality muxed stream.
         // HLS downloads aren't remuxed: only the audio is used, and ffmpeg reads the raw stream.
         Wanted::Audio => cmd.args(["-f", "ba/w", "--fixup", "never"]),
-        // Kept to play: video and audio in one MP4, which every webview reads.
+        // Kept to play: video and audio in one MP4, which every webview reads;
+        // a single file in a container none read (Flash video, QuickTime) is
+        // rewrapped as one.
         // yt-dlp's own ffmpeg runs (merging, fixing up HLS) read what the site
         // sent, so they get the app's lists too, with picture decoders, which
         // merging needs to read a video's format; and HLS is fetched by
         // yt-dlp itself, never by ffmpeg.
         Wanted::Video { selector, ffmpeg } => cmd
-            .args(["-f", selector, "--merge-output-format", "mp4", "--downloader", "m3u8:native"])
+            .args(["-f", selector, "--merge-output-format", "mp4", "--remux-video", "flv>mp4/mov>mp4"])
+            .args(["--downloader", "m3u8:native"])
             .arg("--postprocessor-args")
             .arg(format!(
                 "ffmpeg_i:-format_whitelist {} -codec_whitelist {},{} -protocol_whitelist file",
