@@ -1,7 +1,7 @@
 // The local player's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { columns, cueAt, stepTime, tickStep } from "./media.ts";
+import { columns, cueAt, frameStart, nudge, stepTime, stretches, tickStep } from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
   const cues = [
@@ -48,4 +48,33 @@ test("ticks are spaced for their labels", () => {
   assert.equal(tickStep(30, 800), 5);
   assert.equal(tickStep(10 * 3600, 800), 3600);
   assert.equal(tickStep(100 * 3600, 400), 14400, "the longest step at most");
+});
+
+test("a mark goes where the frame on show starts", () => {
+  assert.equal(frameStart(10.02, 30), 10);
+  assert.equal(frameStart(10.04, 30), 301 / 30);
+  assert.equal(frameStart(301 / 30, 30), 301 / 30, "a time on a frame's start is that frame");
+  assert.equal(frameStart(0.01, 60), 0);
+});
+
+test("marks move a frame at a time, within the video", () => {
+  assert.equal(nudge(10, 1, 30, 100), 301 / 30);
+  assert.equal(nudge(10, -10, 30, 100), 290 / 30);
+  assert.equal(nudge(0, -1, 30, 100), 0);
+  assert.equal(nudge(100, 5, 30, 100), 100);
+  // From a time a hair off the frame (stored as a float): still whole frames.
+  assert.equal(nudge(301 / 30 + 1e-9, 1, 30, 100), 302 / 30);
+});
+
+test("cuts split the video into stretches", () => {
+  assert.deepEqual(stretches([], 60), [{ start: 0, end: 60 }]);
+  assert.deepEqual(stretches([30], 60), [
+    { start: 0, end: 30 },
+    { start: 30, end: 60 },
+  ]);
+  assert.deepEqual(stretches([40, 10, 10, 0, 60, 70], 60), [
+    { start: 0, end: 10 },
+    { start: 10, end: 40 },
+    { start: 40, end: 60 },
+  ]);
 });

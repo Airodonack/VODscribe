@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-mark"
+description = "Enables the delete_mark command without any pre-configured scope."
+commands.allow = ["delete_mark"]
+
+[[permission]]
+identifier = "deny-delete-mark"
+description = "Denies the delete_mark command without any pre-configured scope."
+commands.deny = ["delete_mark"]

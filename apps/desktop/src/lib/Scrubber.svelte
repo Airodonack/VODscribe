@@ -1,15 +1,17 @@
 <script lang="ts">
   // The timeline under every player: the whole VOD to start, zoomable to a
-  // few seconds, with its waveform where there is one, its clips and the range
-  // picked. A left click or drag only ever moves the playhead; the edges of the
-  // range picked, and of a clip, can be dragged. The wheel zooms around the
+  // few seconds, with its waveform where there is one, its marks (cuts.svelte.ts),
+  // its clips and the range picked. A left click or drag only ever moves the
+  // playhead; a mark's flag selects it and drags it (a frame at a time); the
+  // edges of the range picked, and of a clip, can be dragged. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
   // playhead until panned.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { columns, PEAKS_RATE, tickStep } from "./media";
+  import { cuts } from "./cuts.svelte";
+  import { columns, frameStart, PEAKS_RATE, tickStep } from "./media";
   import { formatTime } from "./platform";
   import { theme } from "./theme.svelte";
 
@@ -17,12 +19,15 @@
     vod,
     duration,
     time,
+    fps,
     onseek,
   }: {
     vod: Vod;
     duration: number;
     /** Where the player is now. */
     time: number;
+    /** The video's frame rate, for marks (assumed, for players that don't say). */
+    fps: number;
     onseek: (time: number) => void;
   } = $props();
 
@@ -122,6 +127,7 @@
   // the pointer mid-drag ended drags in WebKitGTK.
   type Drag =
     | { kind: "scrub" }
+    | { kind: "mark"; id: number; at: number; x: number; moved: boolean }
     | { kind: "ghost"; edge: "start" | "end" }
     | { kind: "clip"; id: number; edge: "start" | "end"; start: number; end: number };
   let drag = $state<Drag | null>(null);
@@ -131,13 +137,19 @@
     if (e.button !== 0) return;
     const handle = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]");
     const edge = handle?.dataset.edge as "start" | "end" | undefined;
-    if (handle?.dataset.clip && edge) {
+    const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
+    const mark = flag && cuts.list.find((m) => m.id === Number(flag.dataset.mark));
+    if (mark) {
+      drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false };
+      cuts.selected = mark.id;
+    } else if (handle?.dataset.clip && edge) {
       const clip = clips.list.find((c) => c.id === Number(handle.dataset.clip));
       if (clip) drag = { kind: "clip", id: clip.id, edge, start: clip.start, end: clip.end };
     } else if (edge) {
       drag = { kind: "ghost", edge };
     } else {
       drag = { kind: "scrub" };
+      cuts.selected = null;
       follow = true;
       onseek(timeAt(e.clientX));
     }
@@ -154,6 +166,11 @@
     const t = timeAt(e.clientX);
     if (drag.kind === "scrub") {
       onseek(t);
+    } else if (drag.kind === "mark") {
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
+      drag.moved = true;
+      drag.at = frameStart(t, fps);
+      onseek(drag.at);
     } else if (drag.kind === "ghost" && clips.ghost) {
       const { start, end } = clips.ghost;
       if (drag.edge === "start") clips.pick(t, end, duration);
@@ -170,6 +187,11 @@
   function onUp() {
     const done = drag;
     drag = null;
+    if (done?.kind === "mark") {
+      // A click on a flag selects the mark and shows its frame; a drag moves it.
+      if (done.moved) cuts.move(done.id, done.at);
+      else onseek(done.at);
+    }
     if (done?.kind === "clip") {
       const clip = clips.list.find((c) => c.id === done.id);
       if (clip && (clip.start !== done.start || clip.end !== done.end)) clips.move(done.id, done.start, done.end);
@@ -243,6 +265,18 @@
   {#if time >= viewStart && time <= viewStart + span}
     <span class="playhead" style:left={pct(time)}></span>
   {/if}
+  {#each cuts.list as mark (mark.id)}
+    {@const at = drag?.kind === "mark" && drag.id === mark.id ? drag.at : mark.start}
+    {#if at >= viewStart && at <= viewStart + span}
+      <span
+        class="cut"
+        class:selected={cuts.selected === mark.id}
+        data-mark={mark.id}
+        style:left={pct(at)}
+        title="Mark at {formatTime(at)} · drag to move it"
+      ></span>
+    {/if}
+  {/each}
   {#if hoverTime !== null && hover !== null}
     <span class="hover" style:left="{hover}px"></span>
     <span class="tip" style:left="{Math.min(Math.max(hover, 28), width - 28)}px">{formatTime(hoverTime)}</span>
@@ -335,6 +369,49 @@
     width: 2px;
     border-radius: 1px;
     background: var(--accent);
+  }
+
+  /* A mark: a line between two frames, with a flag at the top to grab. */
+  .cut {
+    --cut: #f59e0b;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 11px;
+    margin-left: -5px;
+    cursor: ew-resize;
+    z-index: 1;
+  }
+
+  .cut::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 5px;
+    width: 1px;
+    background: var(--cut);
+  }
+
+  .cut::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 5px;
+    width: 7px;
+    height: 9px;
+    border-radius: 0 2px 2px 0;
+    background: var(--cut);
+  }
+
+  .cut.selected::before {
+    width: 2px;
+    left: 4.5px;
+  }
+
+  .cut.selected::after {
+    box-shadow: 0 0 0 2px var(--surface);
+    height: 11px;
   }
 
   .playhead {

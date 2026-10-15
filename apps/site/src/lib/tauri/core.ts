@@ -58,6 +58,7 @@ const commands: Record<string, (args: Args) => unknown> = {
   set_timeline: ({ timeline: next }) => void (timeline = next as typeof timeline),
   // Clips are made in the app only.
   list_clips: () => [],
+  list_marks: () => [],
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {

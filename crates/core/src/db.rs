@@ -345,6 +345,21 @@ CREATE TABLE clips (
     error TEXT
 );
 CREATE INDEX clips_by_vod ON clips (vod_id, position);";
+/// v18: marks on a VOD's timeline. A "cut" is a point between two frames,
+/// splitting the VOD into stretches that can each become a clip; `end`,
+/// `text` and `source` leave room for marks of other kinds.
+const MIGRATE_V18: &str = "
+CREATE TABLE marks (
+    id INTEGER PRIMARY KEY,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    start REAL NOT NULL,
+    end REAL,
+    text TEXT,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX marks_by_vod ON marks (vod_id, start);";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -431,6 +446,15 @@ pub struct Clip {
     pub error: Option<String>,
 }
 
+/// A mark on a VOD's timeline (only cuts, for now).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Mark {
+    pub id: i64,
+    pub vod_id: i64,
+    pub kind: String,
+    pub start: f64,
+}
+
 const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error";
 
 fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
@@ -491,6 +515,7 @@ impl Db {
             MIGRATE_V15,
             MIGRATE_V16,
             MIGRATE_V17,
+            MIGRATE_V18,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -602,6 +627,34 @@ impl Db {
 
     pub fn delete_clip(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// VOD `vod_id`'s marks, in time order.
+    pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
+        let mut stmt =
+            self.conn.prepare("SELECT id, vod_id, kind, start FROM marks WHERE vod_id = ?1 ORDER BY start, id")?;
+        let rows = stmt.query_map([vod_id], |r| {
+            Ok(Mark { id: r.get(0)?, vod_id: r.get(1)?, kind: r.get(2)?, start: r.get(3)? })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64) -> Result<Mark> {
+        self.conn.execute(
+            "INSERT INTO marks (vod_id, kind, start, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![vod_id, kind, start, now()],
+        )?;
+        Ok(Mark { id: self.conn.last_insert_rowid(), vod_id, kind: kind.into(), start })
+    }
+
+    /// Moves mark `id` to `start`; false if it's gone.
+    pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
+        Ok(self.conn.execute("UPDATE marks SET start = ?2 WHERE id = ?1", params![id, start])? > 0)
+    }
+
+    pub fn delete_mark(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM marks WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -1445,6 +1498,23 @@ mod tests {
         db.clear_chat(vod).unwrap();
         db.add_chat(vod, &[], &[3.0]).unwrap();
         assert_eq!(db.chat_slices(vod).unwrap(), Some(vec![3.0]), "and carry on after that");
+    }
+
+    #[test]
+    fn marks_come_in_time_order_and_go_with_their_vod() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let b = db.add_mark(vod, "cut", 20.0).unwrap();
+        let a = db.add_mark(vod, "cut", 10.0).unwrap();
+        let starts = |db: &Db| db.marks(vod).unwrap().into_iter().map(|m| m.start).collect::<Vec<_>>();
+        assert_eq!(starts(&db), [10.0, 20.0]);
+        assert!(db.move_mark(a.id, 30.0).unwrap());
+        assert_eq!(starts(&db), [20.0, 30.0]);
+        db.delete_mark(b.id).unwrap();
+        assert_eq!(starts(&db), [30.0]);
+        assert!(!db.move_mark(b.id, 1.0).unwrap(), "gone");
+        db.delete_vod(vod).unwrap();
+        assert!(db.marks(vod).unwrap().is_empty());
     }
 
     #[test]

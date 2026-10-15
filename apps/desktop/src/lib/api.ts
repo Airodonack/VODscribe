@@ -144,6 +144,14 @@ export interface Clip {
   error: string | null;
 }
 
+/** A mark on a VOD's timeline (crates/core `db::Mark`): a cut, between two frames. */
+export interface Mark {
+  id: number;
+  vod_id: number;
+  kind: string;
+  start: number;
+}
+
 /** A caption (crates/core `transcript::Cue`). */
 export interface Cue {
   start: number;
@@ -234,6 +242,10 @@ export const api = {
   frameRate: (id: number) => invoke<number | null>("frame_rate", { id }),
   captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
   listClips: (vodId: number) => invoke<Clip[]>("list_clips", { vodId }),
+  listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
+  addMark: (vodId: number, time: number) => invoke<Mark>("add_mark", { vodId, time }),
+  moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
+  deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
   addClip: (vodId: number, start: number, end: number) => invoke<Clip>("add_clip", { vodId, start, end }),
   setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),
   renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),

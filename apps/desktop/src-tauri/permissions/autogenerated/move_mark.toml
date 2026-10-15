@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-move-mark"
+description = "Enables the move_mark command without any pre-configured scope."
+commands.allow = ["move_mark"]
+
+[[permission]]
+identifier = "deny-move-mark"
+description = "Denies the move_mark command without any pre-configured scope."
+commands.deny = ["move_mark"]

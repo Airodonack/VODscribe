@@ -6,6 +6,8 @@
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
+  import { cuts } from "./cuts.svelte";
+  import { stretches } from "./media";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
@@ -88,6 +90,7 @@
     else pending = { time, play };
   });
 
+  cuts.open(untrack(() => vod.id));
   clips.open(
     untrack(() => vod.id),
     untrack(() => !playsHere(vod)),
@@ -128,6 +131,8 @@
   let captionsAvailable = $state(false);
   let captionsOn = $state(false);
   let playerDuration = $state(0);
+  // Exact for the app's own player; others don't say, so marks there are as near as 30 fps gets.
+  let fps = $state(30);
   let poll = 0;
   function read() {
     poll = requestAnimationFrame(read);
@@ -136,6 +141,7 @@
     now = p.time();
     playing = p.playing();
     playerDuration = p.duration?.() ?? 0;
+    fps = p.fps?.() ?? 30;
     if (p.volume) [volume, muted] = [p.volume.get(), p.volume.muted()];
     if (p.rate) rate = p.rate.get();
     captionsAvailable = p.captions?.available() ?? false;
@@ -157,6 +163,26 @@
     if (player) player.togglePlay();
     else if (!active) activate(now);
   }
+
+  /** A time to the hundredth of a second, for marks: 1:02:03.25. */
+  const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
+
+  // What the line beside the controls says: about the selected mark, or the
+  // stretch the playhead is in, or how to begin.
+  const context = $derived.by(() => {
+    const selected = cuts.list.find((m) => m.id === cuts.selected);
+    const rough = !playsHere(vod) ? " (as near as this player allows; download the video to be exact)" : "";
+    if (selected)
+      return `Mark at ${precise(selected.start)}${rough} · , and . move it a frame (Shift: ten) · Delete removes it`;
+    if (!cuts.list.length) return "Press X (or Mark) to mark a frame · the stretches between marks are clips";
+    const here = stretches(
+      cuts.list.map((m) => m.start),
+      duration,
+    ).find((s) => now >= s.start && now < s.end);
+    return here
+      ? `Stretch ${formatTime(here.start)}–${formatTime(here.end)} · ${formatTime(here.end - here.start)} long${rough}`
+      : "";
+  });
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {
@@ -198,6 +224,25 @@
     if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (key === "x") {
+      cuts.toggle(now, fps);
+      e.preventDefault();
+      return;
+    }
+    if (cuts.selected !== null && (key === "," || key === "." || key === "<" || key === ">")) {
+      // A selected mark moves a frame (ten with Shift), and the picture shows its frame.
+      const frames = (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1);
+      const at = cuts.nudgeSelected(frames, fps, duration);
+      if (at !== null) seekTo(at);
+      e.preventDefault();
+      return;
+    }
+    if (cuts.selected !== null && (key === "Delete" || key === "Backspace" || key === "Escape")) {
+      if (key === "Escape") cuts.selected = null;
+      else cuts.remove(cuts.selected);
+      e.preventDefault();
+      return;
+    }
     if (key === "f" || (key === "Escape" && fullscreen)) {
       setFullscreen(key === "f" ? !fullscreen : false);
       e.preventDefault();
@@ -296,6 +341,8 @@
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
+      <kbd>X</kbd> mark a frame (<kbd>,</kbd><kbd>.</kbd> move the selected mark, <kbd>Delete</kbd> removes it)
+      <span class="sep">·</span>
       <kbd>I</kbd><kbd>O</kbd> clip from, to <span class="sep">·</span>
       <kbd>Enter</kbd> keep the clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
@@ -324,7 +371,7 @@
     {#if !collapsed}
       <div class="controls">
         {#if duration}
-          <Scrubber {vod} {duration} time={now} onseek={seekTo} />
+          <Scrubber {vod} {duration} time={now} {fps} onseek={seekTo} />
         {/if}
         <div class="row">
           <button
@@ -343,7 +390,10 @@
             >
             / {formatTime(duration)}</span
           >
-          <span class="context muted"></span>
+          <button class="control mark" onclick={() => cuts.toggle(now, fps)} title="Mark this frame, or unmark it (X)">
+            <Icon name="flag" size={14} /> Mark
+          </button>
+          <span class="context muted" title={context}>{context}</span>
           {#if player?.volume && !player.ownControls}
             <button
               class="control"
@@ -485,6 +535,12 @@
 
   .control.on {
     color: var(--accent);
+  }
+
+  .mark {
+    gap: 5px;
+    font-size: 12px;
+    color: #d97706;
   }
 
   .speed {

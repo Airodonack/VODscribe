@@ -56,3 +56,26 @@ export function tickStep(span: number, width: number): number {
   const fits = (step: number) => (step / span) * width >= 64;
   return STEPS.find(fits) ?? STEPS[STEPS.length - 1];
 }
+
+/**
+ * Where the frame showing at `time` starts, at `fps`: a mark goes there, a cut
+ * between it and the frame before, so the stretches either side of it never
+ * share a frame.
+ */
+export function frameStart(time: number, fps: number): number {
+  return Math.max(0, Math.floor(time * fps + 1e-3) / fps);
+}
+
+/** A mark at `time` moved `frames` frames on (back, if negative), within 0..`duration`. */
+export function nudge(time: number, frames: number, fps: number, duration: number): number {
+  return Math.min(duration, Math.max(0, (Math.round(time * fps) + frames) / fps));
+}
+
+/** The stretches `cuts` (seconds, any order) split 0..`duration` into. */
+export function stretches(cuts: number[], duration: number): { start: number; end: number }[] {
+  const edges = [0, ...cuts.filter((c) => c > 0 && c < duration).sort((a, b) => a - b), duration];
+  const out = [];
+  for (let i = 0; i + 1 < edges.length; i++)
+    if (edges[i + 1] > edges[i]) out.push({ start: edges[i], end: edges[i + 1] });
+  return out;
+}

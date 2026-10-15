@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Clip, ClipStatus, Db};
+use vodscribe_core::db::{Clip, ClipStatus, Db, Mark};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, fetch, tools};
 
@@ -329,6 +329,39 @@ pub(crate) async fn show_clip(app: AppHandle, state: State<'_, AppState>, id: i6
     let clip = state.db.lock().unwrap().clip(id).map_err(err)?;
     let path = clip.and_then(|c| c.file_path).filter(|p| Path::new(p).is_file());
     app.opener().reveal_item_in_dir(path.ok_or("That clip's file isn't made yet.")?).map_err(err)
+}
+
+/// VOD `vod_id`'s marks on its timeline, in time order.
+#[tauri::command]
+pub(crate) async fn list_marks(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Mark>> {
+    crate::with_reads(app, move |db| db.marks(vod_id)).await
+}
+
+/// Puts a cut on VOD `vod_id`'s timeline at `time` seconds (between two frames).
+#[tauri::command]
+pub(crate) async fn add_mark(state: State<'_, AppState>, vod_id: i64, time: f64) -> CmdResult<Mark> {
+    if !(time.is_finite() && time >= 0.0) {
+        return Err("A mark has to be within the video.".into());
+    }
+    let db = state.db.lock().unwrap();
+    db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
+    db.add_mark(vod_id, "cut", time).map_err(err)
+}
+
+#[tauri::command]
+pub(crate) async fn move_mark(state: State<'_, AppState>, id: i64, time: f64) -> CmdResult<()> {
+    if !(time.is_finite() && time >= 0.0) {
+        return Err("A mark has to be within the video.".into());
+    }
+    if !state.db.lock().unwrap().move_mark(id, time).map_err(err)? {
+        return Err("That mark is gone.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    state.db.lock().unwrap().delete_mark(id).map_err(err)
 }
 
 /// Clip `id`'s file, if it's made.
