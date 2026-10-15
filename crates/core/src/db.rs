@@ -323,8 +323,9 @@ CREATE TRIGGER vods_ids AFTER INSERT ON vods BEGIN
 END;";
 /// v15: a chat is fetched in slices at once (`chat::in_slices`), so an
 /// unfinished fetch records where each slice got to, as a JSON array.
-/// `chat_resume` (one position) is no longer written; a fetch an older version
-/// left unfinished starts over.
+/// `chat_resume` (one position) is only cleared now: a fetch an older version
+/// left unfinished starts over, and so does one an older version touched since
+/// (`chat_slices`).
 const MIGRATE_V15: &str = "ALTER TABLE vods ADD COLUMN chat_slices TEXT;";
 /// v16: the video kept to play here, for sites other than YouTube, Twitch and
 /// Kick (`Paths::media`).
@@ -696,13 +697,19 @@ impl Db {
     }
 
     /// Where an unfinished fetch of VOD `vod_id`'s chat got to, slice by slice (see `chat::ChatStore`).
-    pub fn chat_resume(&self, vod_id: i64) -> Result<Option<Vec<f64>>> {
-        let json: Option<String> = self
+    /// None if a version before 0.3.0 has fetched since (it writes `chat_resume`, which this one
+    /// only ever clears): it cleared the chat but not the slices, which no longer describe it.
+    pub fn chat_slices(&self, vod_id: i64) -> Result<Option<Vec<f64>>> {
+        let row: Option<(Option<String>, Option<f64>)> = self
             .conn
-            .query_row("SELECT chat_slices FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
-            .optional()?
-            .flatten();
-        Ok(json.and_then(|j| serde_json::from_str(&j).ok()))
+            .query_row("SELECT chat_slices, chat_resume FROM vods WHERE id = ?1", [vod_id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .optional()?;
+        Ok(match row {
+            Some((Some(json), None)) => serde_json::from_str(&json).ok(),
+            _ => None,
+        })
     }
 
     /// Forgets VOD `vod_id`'s chat and where a fetch of it got to.
@@ -1018,7 +1025,7 @@ pub struct LibraryChat<'a> {
 
 impl crate::chat::ChatStore for LibraryChat<'_> {
     fn resume(&mut self) -> Result<Option<Vec<f64>>> {
-        self.db.lock().unwrap().chat_resume(self.vod_id)
+        self.db.lock().unwrap().chat_slices(self.vod_id)
     }
 
     fn clear(&mut self) -> Result<()> {
@@ -1269,6 +1276,20 @@ mod tests {
     }
 
     #[test]
+    fn slices_written_over_by_an_older_version_are_dropped() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        db.add_chat(vod, &[], &[10.0, f64::MAX]).unwrap();
+        assert_eq!(db.chat_slices(vod).unwrap(), Some(vec![10.0, f64::MAX]));
+        // 0.2.1 cleared the chat and fetched a little, saving its own position.
+        db.conn.execute("UPDATE vods SET chat_resume = 5.0 WHERE id = ?1", [vod]).unwrap();
+        assert_eq!(db.chat_slices(vod).unwrap(), None, "start over");
+        db.clear_chat(vod).unwrap();
+        db.add_chat(vod, &[], &[3.0]).unwrap();
+        assert_eq!(db.chat_slices(vod).unwrap(), Some(vec![3.0]), "and carry on after that");
+    }
+
+    #[test]
     fn lines_after_a_start() {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
@@ -1474,7 +1495,7 @@ mod tests {
         store.clear().unwrap();
         let db = lock.lock().unwrap();
         assert_eq!(db.chat_count(a).unwrap(), 0);
-        assert_eq!(db.chat_resume(a).unwrap(), None);
+        assert_eq!(db.chat_slices(a).unwrap(), None);
         assert_eq!(db.chat_count(b).unwrap(), 3, "another VOD's chat stays");
     }
 
