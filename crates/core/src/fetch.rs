@@ -279,11 +279,6 @@ fn friendly(msg: &str) -> Option<&'static str> {
             "VODscribe can't use that link: it isn't a site the video downloader knows. Paste a link to a video page."
         }
         _ if has(&["no such option"]) => "The video downloader is out of date. Update it in Settings, then try again.",
-        _ if has(&["--cookies", "logged-in", "log in to", "login required", "sign in to view"])
-            && !has(&["not a bot"]) =>
-        {
-            "That site wants you signed in to get this video, and VODscribe doesn't sign in to sites."
-        }
         _ if has(&["private video", "video is private"]) => "That video is private.",
         _ if has(&[
             "members-only",
@@ -299,6 +294,11 @@ fn friendly(msg: &str) -> Option<&'static str> {
             "That video is age-restricted, so VODscribe can't get it."
         }
         _ if has(&["not a bot"]) => "YouTube is asking to check that you're not a bot. Try again in a little while.",
+        // After the specific cases: yt-dlp adds its sign-in hint ("Use
+        // --cookies…") to private and age-restricted videos too.
+        _ if has(&["--cookies", "logged-in", "log in to", "login required", "sign in to view"]) => {
+            "That site wants you signed in to get this video, and VODscribe doesn't sign in to sites."
+        }
         _ if has(&["requested format is not available"]) => "That video has no audio VODscribe can download.",
         _ if has(&[
             "video unavailable",
@@ -358,6 +358,15 @@ mod tests {
             "That video isn't available. It may have been deleted or made private."
         );
         assert_eq!(clean_error("ERROR: [youtube] abc: Private video. Sign in"), "That video is private.");
+        let hint = " Use --cookies-from-browser or --cookies for the authentication.";
+        assert_eq!(
+            clean_error(&format!("ERROR: [youtube] abc: Private video. Sign in if you've been granted access.{hint}")),
+            "That video is private."
+        );
+        assert!(
+            clean_error(&format!("ERROR: [youtube] abc: Sign in to confirm your age.{hint}"))
+                .contains("age-restricted")
+        );
         assert_eq!(
             clean_error("ERROR: [twitch:vod] v12: Something odd happened"),
             "Couldn't get this video: Something odd happened"
