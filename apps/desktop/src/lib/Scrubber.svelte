@@ -29,6 +29,7 @@
     current = null,
     ownPlayer = false,
     onseek,
+    onpause,
   }: {
     vod: Vod;
     duration: number;
@@ -43,6 +44,8 @@
     /** The stretch between two cuts that the playhead is in, shaded. */
     current?: { start: number; end: number } | null;
     onseek: (time: number) => void;
+    /** Pauses the player: a cut or an edge picked up is placed with the picture still. */
+    onpause: () => void;
   } = $props();
 
   const SHORTEST = 10;
@@ -178,10 +181,12 @@
     if (edge && cuts.selection) {
       // An edge of the selection: selected, to drag or move a frame at a time.
       drag = { kind: "edge", edge, at: cuts.selection[edge], x: e.clientX, moved: false };
+      onpause();
       cuts.selectedEdge = edge;
       cuts.selected = null;
     } else if (mark) {
       drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false, away: false };
+      onpause();
       cuts.selected = mark.id;
       cuts.clearSelection();
     } else {

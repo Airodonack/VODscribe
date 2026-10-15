@@ -440,6 +440,7 @@
             highlight={exportHover && canExport ? (cuts.selection ?? stretch) : null}
             current={between ? stretch : null}
             ownPlayer={playsHere(vod)}
+            onpause={() => player?.playing() && player.togglePlay()}
             onseek={seekTo}
           />
         {/if}
