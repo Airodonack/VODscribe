@@ -90,7 +90,7 @@ pub fn check_public_url(url: &str) -> Result<()> {
 pub fn public_url(url: &str) -> Result<String> {
     let (scheme, rest) = url.split_once("://").context("That isn't a link.")?;
     if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
-        bail!("VODscribe only follows web links (https://…).");
+        return Err(NotPublic("VODscribe only follows web links (https://…).").into());
     }
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, path) = rest.split_at(end);
@@ -101,7 +101,7 @@ pub fn public_url(url: &str) -> Result<String> {
     let (raw_host, port) = match host_port.strip_prefix('[') {
         Some(v6) => match v6.split_once(']') {
             Some((ip, port)) => (ip, port),
-            None => bail!("That isn't a link."),
+            None => return Err(NotPublic("That isn't a link.").into()),
         },
         None => host_port.split_at(host_port.find(':').unwrap_or(host_port.len())),
     };
@@ -110,9 +110,10 @@ pub fn public_url(url: &str) -> Result<String> {
     // then punycode, lowercase, without a trailing dot.
     let host = if ipv6 { raw_host.to_ascii_lowercase() } else { idna::domain_to_ascii(raw_host).unwrap_or_default() };
     let host = host.trim_end_matches('.').to_string();
-    let local = || anyhow::anyhow!("VODscribe doesn't follow links to this computer or the local network.");
+    let local =
+        || anyhow::Error::new(NotPublic("VODscribe doesn't follow links to this computer or the local network."));
     if host.is_empty() {
-        bail!("That isn't a link.");
+        return Err(NotPublic("That isn't a link.").into());
     }
     if host == "localhost"
         || [".localhost", ".local", ".internal", ".lan", ".home.arpa"].iter().any(|s| host.ends_with(s))
@@ -123,16 +124,48 @@ pub fn public_url(url: &str) -> Result<String> {
         Ok(ip) => vec![ip],
         // A name: where it resolves now. (It could resolve elsewhere by the
         // time it's fetched; this keeps out the plain cases.)
-        Err(_) => std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443))
-            .map(|found| found.map(|a| a.ip()).collect())
-            // A name that doesn't resolve can't be checked, so it isn't followed.
-            .map_err(|_| anyhow::anyhow!("Couldn't find {host}. Check the link, and that you're online."))?,
+        Err(_) => match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)) {
+            Ok(found) => found.map(|a| a.ip()).collect(),
+            // Behind a proxy that resolves names itself (some workplaces),
+            // this computer can't, and the fetch goes through the proxy.
+            Err(_) if proxied() => Vec::new(),
+            // Otherwise a name that doesn't resolve can't be checked, so it
+            // isn't followed. (Not NotPublic: offline, it may resolve later.)
+            Err(_) => bail!("Couldn't find {host}. Check the link, and that you're online."),
+        },
     };
-    if addresses.is_empty() || addresses.iter().any(|ip| !is_public(*ip)) {
+    if addresses.iter().any(|ip| !is_public(*ip)) {
         return Err(local());
     }
     let host = if ipv6 { format!("[{host}]") } else { host };
     Ok(format!("{scheme}://{userinfo}{host}{port}{path}"))
+}
+
+/// A link `public_url` won't follow, whatever happens later (not a web link,
+/// or to this computer or the local network), as opposed to a lookup that
+/// may work later.
+#[derive(Debug)]
+pub struct NotPublic(&'static str);
+
+impl std::fmt::Display for NotPublic {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for NotPublic {}
+
+/// Whether `e` is a link `public_url` won't ever follow.
+pub fn is_not_public(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<NotPublic>().is_some()
+}
+
+/// Whether this app's requests go through a proxy (the usual variables, which
+/// yt-dlp and ureq read too).
+fn proxied() -> bool {
+    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty()))
 }
 
 fn is_public(ip: std::net::IpAddr) -> bool {
@@ -147,9 +180,10 @@ fn is_public(ip: std::net::IpAddr) -> bool {
                 || v4.is_broadcast()
                 || v4.is_documentation()
                 || a == 0
-                // Carrier-grade NAT, 100.64.0.0/10, and benchmarking, 198.18.0.0/15.
-                || (a == 100 && (64..128).contains(&b))
-                || (a == 198 && (b == 18 || b == 19)))
+                // Carrier-grade NAT, 100.64.0.0/10. (Not the benchmarking
+                // range, 198.18.0.0/15: proxy tools (Clash, sing-box, Surge)
+                // answer every lookup with an address in it.)
+                || (a == 100 && (64..128).contains(&b)))
         }
         IpAddr::V6(v6) => {
             if let Some(v4) = v6.to_ipv4_mapped() {
@@ -367,6 +401,10 @@ mod tests {
         assert_eq!(public_url("https://WWW.Twitch.tv./videos/1?t=1").unwrap(), "https://www.twitch.tv/videos/1?t=1");
         assert_eq!(public_url("http://93.184.215.14:8080/x").unwrap(), "http://93.184.215.14:8080/x");
         assert_eq!(public_url("https://bücher.de/").unwrap(), "https://xn--bcher-kva.de/", "a real name in Unicode");
+        // Proxy tools' fake addresses are followed: the proxy fetches the real site.
+        assert!(check_public_url("http://198.18.0.7/").is_ok());
+        assert!(is_not_public(&check_public_url("http://192.168.1.1/").unwrap_err()));
+        assert!(!is_not_public(&check_public_url("https://does-not-exist.invalid/").unwrap_err()), "may work later");
     }
 
     use super::*;
