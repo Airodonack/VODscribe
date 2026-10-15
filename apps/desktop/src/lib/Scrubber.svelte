@@ -321,7 +321,7 @@
       class="selection"
       style:left={pct(Math.max(picked.start, viewStart))}
       style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-      title="Selected: Clip cuts both ends"
+      title="Selected: Split (B) cuts both ends"
     ></div>
     {#each ["start", "end"] as const as edge (edge)}
       {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}

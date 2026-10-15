@@ -1,7 +1,7 @@
 // End-to-end test of an installed VODscribe, driven over WebDriver through
 // tauri-driver: first-run setup, adding a file, transcribing it, the
 // transcript, searching, playing from a result (with its waveform and
-// captions), cutting and saving a clip, and removing it (answering "Keep"
+// captions), cutting and exporting a clip, and removing it (answering "Keep"
 // first, which must keep it).
 //
 //   node tests/e2e/run.mjs <the installed app>
@@ -219,7 +219,7 @@ async function main() {
   if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
   step(`waveform and captions: "${caption}"`);
 
-  // A clip: cuts at 0.5 and 2.5 s (X), then Save with the playhead between them.
+  // A clip: cuts at 0.5 and 2.5 s (B), then Export with the playhead between them.
   const key = (k) =>
     js(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true }))`, k);
   const seekTo = async (t) => {
@@ -227,12 +227,12 @@ async function main() {
     await sleep(300);
   };
   await seekTo(0.5);
-  await key("x");
+  await key("b");
   await seekTo(2.5);
-  await key("x");
+  await key("b");
   await until("two marks", async () => (await invoke("list_marks", { vodId: done.id })).length === 2, 10_000);
   await seekTo(1);
-  await click("button.save");
+  await click("button.export");
   const clip = await until(
     "the clip's file",
     async () => {

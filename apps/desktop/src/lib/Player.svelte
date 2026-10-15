@@ -203,20 +203,20 @@
       cuts.list.some((m) => Math.abs(m.start - stretch.end) < 1e-6),
   );
 
-  /** Clip: cuts both ends of the selection, else cuts here (or takes away the cut here). */
+  /** Split: cuts both ends of the selection, else cuts here (or takes away the cut here). */
   function clip() {
     if (cuts.selection) cuts.cutSelection();
     else cuts.toggle(now, fps);
   }
 
-  /** Save: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
-  async function save() {
+  /** Export: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
+  async function exportClip() {
     const range = cuts.selection ?? stretch;
     if (!range || (!cuts.selection && !cuts.list.length)) return;
     if (cuts.selection) await cuts.cutSelection();
     await exportStretch(range.start, range.end);
   }
-  const canSave = $derived(!!cuts.selection || cuts.list.length > 0);
+  const canExport = $derived(!!cuts.selection || cuts.list.length > 0);
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {
@@ -255,12 +255,20 @@
   const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod) || !keysForApp()) return;
+    if (e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (key === "x" || key === "s") {
-      if (key === "x") clip();
-      else save();
+    // B cuts and E exports, as in video editors (also with Ctrl, or ⌘ on a Mac).
+    if (key === "b" || key === "e") {
+      if (key === "b") clip();
+      else exportClip();
+      e.preventDefault();
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) return;
+    if (key === "m" || key === "c") {
+      if (key === "m") toggleMute();
+      else player?.captions?.toggle();
       e.preventDefault();
       return;
     }
@@ -376,9 +384,11 @@
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
-      <kbd>X</kbd> cut here (<kbd>,</kbd><kbd>.</kbd> move the selected cut, <kbd>Delete</kbd> removes it)
+      <kbd>B</kbd> cut here (<kbd>,</kbd><kbd>.</kbd> move the selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
-      <kbd>S</kbd> save the stretch as a clip <span class="sep">·</span>
+      <kbd>E</kbd> export the stretch as a clip <span class="sep">·</span>
+      <kbd>M</kbd> mute <span class="sep">·</span>
+      <kbd>C</kbd> captions <span class="sep">·</span>
       <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
       {#if framed}
@@ -427,13 +437,13 @@
             {duration}
             time={now}
             {fps}
-            highlight={exportHover && canSave ? (cuts.selection ?? stretch) : null}
+            highlight={exportHover && canExport ? (cuts.selection ?? stretch) : null}
             current={between ? stretch : null}
             ownPlayer={playsHere(vod)}
             onseek={seekTo}
           />
         {/if}
-        <div class="row">
+        <div class="bar">
           <button
             class="control"
             onclick={togglePlay}
@@ -455,21 +465,21 @@
             class:picking={!!cuts.selection}
             onclick={clip}
             title={cuts.selection
-              ? "Cut both ends of the selection (X)"
-              : "Cut here, between this frame and the one before; the stretches between cuts can be saved as clips (X)"}
+              ? "Cut both ends of the selection (B)"
+              : "Cut here, between this frame and the one before; the stretches between cuts can be exported as clips (B)"}
           >
-            <Icon name="scissors" size={14} /> Clip <kbd>X</kbd>
+            <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
           </button>
           <button
-            class="action save"
+            class="action export"
             bind:this={exportButton}
-            onclick={save}
+            onclick={exportClip}
             onmouseenter={() => (exportHover = true)}
             onmouseleave={() => (exportHover = false)}
-            disabled={!canSave}
-            title="Save the lit-up stretch as a clip in the clip bar (S). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
+            disabled={!canExport}
+            title="Export the lit-up stretch as a clip, to the clip bar (E). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
           >
-            <Icon name="download" size={14} /> Save <kbd>S</kbd>
+            <Icon name="download" size={14} /> Export <kbd>E</kbd>
           </button>
           <span class="context muted" title={context}>{context}</span>
           {#if player?.volume && !player.ownControls}
@@ -477,7 +487,7 @@
               class="control"
               onclick={toggleMute}
               aria-label={muted ? "Unmute" : "Mute"}
-              title={muted ? "Unmute" : "Mute"}
+              title={muted ? "Unmute (M)" : "Mute (M)"}
             >
               <Icon name={muted ? "volume-off" : "volume"} size={16} />
             </button>
@@ -502,7 +512,7 @@
               onclick={() => player?.captions?.toggle()}
               aria-pressed={captionsOn}
               aria-label="Captions"
-              title={captionsOn ? "Hide captions" : "Show captions"}
+              title={captionsOn ? "Hide captions (C)" : "Show captions (C)"}
             >
               <Icon name="captions" size={16} />
             </button>
@@ -587,7 +597,8 @@
     padding: 8px 16px 2px;
   }
 
-  .row {
+  /* Not "row": that's the transcript's lines, styled app-wide. */
+  .bar {
     display: flex;
     align-items: center;
     gap: 4px;
@@ -617,28 +628,23 @@
     color: var(--accent);
   }
 
-  /* Clip and Save: labelled buttons with their keys. */
+  /* Split and Export: labelled, with their keys, but otherwise like the other controls. */
   .action {
     flex: none;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    height: 28px;
-    padding: 0 6px 0 8px;
-    border: 1px solid var(--border);
+    height: 30px;
+    padding: 0 6px;
+    border: none;
     border-radius: var(--radius-sm);
-    background: var(--surface);
-    color: var(--text);
+    background: none;
+    color: inherit;
     font-size: 12px;
   }
 
   .action:hover:not(:disabled) {
     background: var(--surface-2);
-    border-color: color-mix(in srgb, var(--text) 25%, var(--border));
-  }
-
-  .action:active:not(:disabled) {
-    background: var(--surface-3);
   }
 
   .action:disabled {
@@ -657,17 +663,17 @@
     color: var(--cut);
   }
 
-  /* A selection waits to be cut: Clip takes its color. */
+  /* A selection waits to be cut: Split takes its color. */
   .clip.picking {
-    border-color: var(--pick);
-    background: color-mix(in srgb, var(--pick) 14%, var(--surface));
+    color: var(--pick);
+    background: color-mix(in srgb, var(--pick) 14%, transparent);
   }
 
   .clip.picking :global(svg) {
     color: var(--pick);
   }
 
-  .save :global(svg) {
+  .export :global(svg) {
     color: var(--accent);
   }
 
@@ -700,7 +706,7 @@
     min-width: 42px;
   }
 
-  .row .time {
+  .bar .time {
     flex: none;
     padding: 0 6px;
     font-size: 12px;
