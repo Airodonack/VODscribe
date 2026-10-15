@@ -30,12 +30,13 @@ impl Drop for Unregister<'_> {
 }
 
 /// Stops looking up the link being added under `ticket` (add_vod), which then
-/// fails as canceled. Nothing happens if it's done already.
+/// fails as canceled. A cancel that gets here before its add has started is
+/// left for the add to find; one after the add is done leaves a flag nothing
+/// reads (tickets aren't reused).
 #[tauri::command]
 pub(crate) async fn cancel_add(state: State<'_, AppState>, ticket: u64) -> CmdResult<()> {
-    if let Some(flag) = state.adding.lock().unwrap().get(&ticket) {
-        flag.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
+    let mut adding = state.adding.lock().unwrap();
+    adding.entry(ticket).or_default().store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -47,15 +48,20 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
     }
     let task_app = app.clone();
     let added = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Added> {
-        // Checked, and passed on as the name it resolves as.
-        let url = vodscribe_core::net::public_url(&url)?;
         let state = task_app.state::<AppState>();
-        // Registered under the interface's ticket while it's looked up, for cancel_add.
-        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        if let Some(ticket) = ticket {
-            state.adding.lock().unwrap().insert(ticket, cancel.clone());
-        }
+        // Registered under the interface's ticket while it's checked and looked
+        // up, for cancel_add, which may have come first.
+        let cancel = match ticket {
+            Some(ticket) => state.adding.lock().unwrap().entry(ticket).or_default().clone(),
+            None => Default::default(),
+        };
         let _unregister = Unregister(&state, ticket);
+        // Checked, and passed on as the name it resolves as. Resolving a name
+        // can take a while, and the add may have been canceled meanwhile.
+        let url = vodscribe_core::net::public_url(&url)?;
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(vodscribe_core::Canceled.into());
+        }
         let yt_dlp = tools::find_yt_dlp(&state.paths.bin())
             .ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();

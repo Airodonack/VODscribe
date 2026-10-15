@@ -15,6 +15,7 @@ export interface Pending {
 
 /** What to call `item` (a link or a file path) on its stand-in. */
 function labelOf(item: string): string {
+  item = item.trim();
   if (/^https?:\/\//i.test(item)) return item.replace(/^https?:\/\/(www\.)?/i, "");
   return item.split(/[\\/]/).pop() || item;
 }
@@ -22,7 +23,9 @@ function labelOf(item: string): string {
 export class Adder {
   /** What's waiting to be added or being added, newest first, as the library shows VODs. */
   pending = $state<Pending[]>([]);
-  #nextKey = 0;
+  // Also the add's ticket in the app, so it starts somewhere new each launch:
+  // a reloaded window's keys don't meet tickets left from before.
+  #nextKey = Math.floor(Math.random() * 2 ** 40);
   /** Something is being added: the form waits. */
   adding = $state(false);
   /** What went wrong, one line per failure; also set by the library's other actions. */
@@ -50,7 +53,7 @@ export class Adder {
   /** Keys of stand-ins canceled: skipped if not started, stopped or ignored if started. */
   #canceled = new Set<number>();
 
-  /** A stand-in for `item`, shown until the returned function is called. */
+  /** A stand-in for `item`, shown until it's #done or canceled. */
   #standIn(item: string): Pending {
     const p = { key: this.#nextKey++, label: labelOf(item) };
     this.pending = [p, ...this.pending];
@@ -59,6 +62,7 @@ export class Adder {
 
   #done(p: Pending) {
     this.pending = this.pending.filter((q) => q.key !== p.key);
+    this.#canceled.delete(p.key);
   }
 
   /**
@@ -74,7 +78,10 @@ export class Adder {
 
   /** Adds link `p.label` came from; false if it failed or was canceled. */
   async #addLink(url: string, p: Pending, failed: string[]): Promise<boolean> {
-    if (this.#canceled.has(p.key)) return false;
+    if (this.#canceled.has(p.key)) {
+      this.#done(p);
+      return false;
+    }
     const ok = await api.addVod(url, p.key).then(
       () => true,
       (e) => {
