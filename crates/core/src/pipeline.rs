@@ -145,12 +145,8 @@ pub fn media_stem(dir: &Path, vod_id: i64, title: &str) -> PathBuf {
 /// or a download's part suffixes (`media_stem`).
 fn owner(name: &str) -> Option<i64> {
     let digits = |s: &str| s.parse::<i64>().ok().filter(|_| s.bytes().all(|b| b.is_ascii_digit()));
-    if let Some((id, _)) = name.split_once('.')
-        && let Some(id) = digits(id)
-    {
-        return Some(id);
-    }
-    // The last " [digits]" followed by the end or a dot (titles have no square brackets).
+    // The last " [digits]" followed by the end or a dot (titles have no square
+    // brackets), looked for first: a title can start with digits and a dot.
     let mut found = None;
     let mut rest = name;
     while let Some(at) = rest.find(" [") {
@@ -163,7 +159,7 @@ fn owner(name: &str) -> Option<i64> {
         }
         rest = after;
     }
-    found
+    found.or_else(|| name.split_once('.').and_then(|(id, _)| digits(id)))
 }
 
 /// Removes files in `media_dir` (named `<vod id>.…` or `<vod id> …`) of VODs not in `library`:
@@ -364,6 +360,8 @@ mod tests {
         assert_eq!(owner("Day 3 [7].f399.mp4.part"), Some(7));
         assert_eq!(owner("Talk (3) [7]"), Some(7));
         assert_eq!(owner("Talk [000007].mp4"), Some(7), "padded");
+        assert_eq!(owner("2024.10.15 Stream [000007].mp4"), Some(7), "not 2024");
+        assert_eq!(owner("12. Intro [000007].f399.mp4.part"), Some(7), "not 12");
         assert_eq!(media_stem(Path::new("/m"), 7, "Talk [1]"), Path::new("/m/Talk (1) [000007]"));
         assert_eq!(owner("clip-12-1000-5000.mp4"), None);
         assert_eq!(owner("video-12.info.json"), None);
