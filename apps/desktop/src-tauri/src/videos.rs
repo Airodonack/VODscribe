@@ -120,7 +120,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let paths = &state.paths;
     let Some(vod) = state.db.lock().unwrap().vod(id)? else { return Ok(()) };
     let bin = paths.bin();
-    let yt_dlp = tools::find_yt_dlp(&bin).context("The video downloader isn't installed yet.")?;
+    let yt_dlp = tools::find_yt_dlp(&bin).context(fetch::NO_YT_DLP)?;
     let ffmpeg = tools::find_ffmpeg(&bin).context(crate::worker::NO_FFMPEG)?;
     let work = paths.work();
     std::fs::create_dir_all(&work)?;
@@ -140,15 +140,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
         let out = pipeline::media_stem(&media, id, &vod.info.title);
-        let mut get = || fetch::download(&yt_dlp, &info, &out, wanted, stop, &mut report);
-        match get() {
-            // As for whole downloads (pipeline::download): a fresh probe is a fresh session.
-            Err(e) if fetch::is_refused(&e) => {
-                fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-                get()
-            }
-            result => result,
-        }
+        fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &out, wanted, stop, &mut report)
     })();
     let _ = std::fs::remove_file(&info);
     let file = result?;

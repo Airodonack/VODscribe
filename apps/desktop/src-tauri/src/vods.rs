@@ -62,8 +62,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(vodscribe_core::Canceled.into());
         }
-        let yt_dlp = tools::find_yt_dlp(&state.paths.bin())
-            .ok_or_else(|| anyhow::anyhow!("The video downloader isn't installed yet."))?;
+        let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(fetch::NO_YT_DLP))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
         let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
         let info = fetch::probe(&yt_dlp, &url, &probe_path, &cancel);

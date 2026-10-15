@@ -169,6 +169,31 @@ fn ffmpeg_reading_files() -> String {
     )
 }
 
+/// `download`, probing `url` again (into `info_path`) and trying once more if
+/// the site refuses: the probe's media URLs are tied to a session the site may
+/// have soured on (YouTube answers 403 past the first kilobyte of such URLs),
+/// and a new probe is a new session.
+pub fn download_or_reprobe(
+    yt_dlp: &YtDlp,
+    url: &str,
+    info_path: &Path,
+    out_stem: &Path,
+    wanted: Wanted,
+    cancel: &AtomicBool,
+    mut on_progress: impl FnMut(f64),
+) -> Result<PathBuf> {
+    match download(yt_dlp, info_path, out_stem, wanted, cancel, &mut on_progress) {
+        Err(e) if is_refused(&e) => {
+            probe(yt_dlp, url, info_path, cancel)?;
+            download(yt_dlp, info_path, out_stem, wanted, cancel, on_progress)
+        }
+        result => result,
+    }
+}
+
+/// The message when yt-dlp is needed and missing.
+pub const NO_YT_DLP: &str = "The video downloader isn't installed yet.";
+
 /// Downloads what's `wanted`, reporting a 0..1 fraction. Returns the path of
 /// the downloaded file. An interrupted download resumes, and a finished one is
 /// reused, when called again with the same `out_stem`.

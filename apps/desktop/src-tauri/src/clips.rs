@@ -236,7 +236,7 @@ fn download_and_cut(
     report: &mut impl FnMut(f64),
 ) -> Result<()> {
     let paths = &app.state::<AppState>().paths;
-    let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("The video downloader isn't installed yet.")?;
+    let yt_dlp = tools::find_yt_dlp(&paths.bin()).context(fetch::NO_YT_DLP)?;
     let work = paths.work();
     std::fs::create_dir_all(&work)?;
     let info = work.join(format!("clip-{id}.info.json"));
@@ -247,15 +247,8 @@ fn download_and_cut(
     let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end };
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-        let mut get = || fetch::download(&yt_dlp, &info, &stem, wanted, stop, |f| report(f * 0.8));
-        let section = match get() {
-            // As for whole downloads (pipeline::download): a fresh probe is a fresh session.
-            Err(e) if fetch::is_refused(&e) => {
-                fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-                get()
-            }
-            result => result,
-        }?;
+        let section =
+            fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &stem, wanted, stop, |f| report(f * 0.8))?;
         let range = (start - from, end - from);
         clips::cut(ffmpeg, &section, out, range, vod.audio_only, stop, |p| report(0.8 + p * 0.2))
     })();

@@ -281,7 +281,7 @@ fn finish(
 
 /// The error note of a VOD the user stopped; the UI shows it as "Stopped", not "Failed".
 pub const STOPPED: &str = "Stopped";
-pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read audio.";
+pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
 
 /// Throws away a VOD's partial work, leaving it in the library as canceled.
 /// Its video goes too where downloading it is part of transcribing; one

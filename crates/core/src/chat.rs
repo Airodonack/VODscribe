@@ -151,7 +151,7 @@ pub fn fetch(
             }
         }
         "youtube" => {
-            let yt_dlp = yt_dlp.context("The video downloader isn't installed yet.")?;
+            let yt_dlp = yt_dlp.context(crate::fetch::NO_YT_DLP)?;
             if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store, cancel, &mut on_progress)? {
                 return Ok(false);
             }

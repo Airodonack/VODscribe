@@ -79,7 +79,7 @@ pub fn download(
 
     db.set_status(vod.id, Status::Downloading, 0.0, None)?;
     report(Status::Downloading, 0.0);
-    let yt_dlp = tools.yt_dlp.context("The video downloader isn't installed yet.")?;
+    let yt_dlp = tools.yt_dlp.context(fetch::NO_YT_DLP)?;
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info, cancel)?;
     }
@@ -92,17 +92,9 @@ pub fn download(
         }
         None => (work_dir.join(vod.id.to_string()), fetch::Wanted::Audio),
     };
-    let mut get = || fetch::download(yt_dlp, &info, &out, wanted, cancel, |f| report(Status::Downloading, f));
-    let file = match get() {
-        // The probe's media URLs are tied to a session the site may have soured on
-        // (YouTube answers 403 past the first kilobyte of such URLs); a new probe
-        // is a new session, so try once more from one before giving up.
-        Err(e) if fetch::is_refused(&e) => {
-            fetch::probe(yt_dlp, &vod.info.url, &info, cancel)?;
-            get()
-        }
-        result => result,
-    }?;
+    let file = fetch::download_or_reprobe(yt_dlp, &vod.info.url, &info, &out, wanted, cancel, |f| {
+        report(Status::Downloading, f)
+    })?;
     let Some((playable, _)) = keep else { return Ok(file) };
     // Kept to play only if what arrived plays here: sites only claim their
     // codecs. Otherwise it's still transcribed, from the work dir, and goes
