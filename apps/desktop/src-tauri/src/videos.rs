@@ -15,7 +15,6 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::Status;
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{fetch, local, pipeline, tools};
@@ -102,9 +101,11 @@ impl Videos {
     }
 
     /// Stops every download and empties the queue (deleting what each had).
-    pub(crate) fn stop_all(&self) {
+    pub(crate) fn stop_all(&self, app: &AppHandle) {
         let mut queue = self.queue.lock().unwrap();
-        queue.waiting.clear();
+        for (id, _) in queue.waiting.drain(..) {
+            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
+        }
         if let Some((_, stop)) = &queue.running {
             stop.store(true, Ordering::Relaxed);
         }
@@ -158,6 +159,11 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
         anyhow::bail!("This video came in a format that doesn't play here ({streams:?}).");
     }
     let db = state.db.lock().unwrap();
+    if stop.load(Ordering::Relaxed) {
+        // Stopped while its format was checked (the run loop deletes it):
+        // checked under the lock, so "Delete all" never misses it.
+        return Err(vodscribe_core::Canceled.into());
+    }
     if db.vod(id)?.is_none() {
         // Removed while downloading.
         pipeline::remove_media(&work, id);
@@ -224,23 +230,23 @@ pub(crate) async fn video_downloads(state: State<'_, AppState>) -> CmdResult<Vec
 
 /// Deletes every downloaded video, keeping the transcripts: they then play on
 /// their sites. Downloads under way stop. Videos still needed to transcribe
-/// their VOD (from sites without their own player) stay; returns how many.
+/// their VOD stay; returns how many.
 #[tauri::command]
 pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
-    state.videos.stop_all();
+    state.videos.stop_all(&app);
     let work = state.paths.work();
     let db = state.db.lock().unwrap();
     let mut kept = 0;
     for vod in db.vods().map_err(err)? {
-        let busy = matches!(vod.status, Status::Queued | Status::Downloading | Status::Ready | Status::Transcribing);
-        if busy && pipeline::keeps_video(&vod.info.platform) {
+        if crate::vods::busy(vod.status) {
             kept += vod.media as usize;
             continue;
         }
-        pipeline::remove_media(&work, vod.id);
         if vod.media {
-            db.set_media_path(vod.id, None).map_err(err)?;
+            crate::vods::forget_video(&db, &work, vod.id).map_err(err)?;
             crate::emit_vod(&app, &db, vod.id)?;
+        } else {
+            pipeline::remove_media(&work, vod.id);
         }
     }
     Ok(kept)

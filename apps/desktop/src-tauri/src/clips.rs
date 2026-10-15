@@ -69,6 +69,7 @@ impl Cutter {
                 *running.lock().unwrap() = Some((id, stop.clone()));
                 if let Err(e) = cut(&app, id, &stop) {
                     eprintln!("clip {id}: {e:#}");
+                    fail(&app, id, &e);
                 }
                 *running.lock().unwrap() = None;
             }
@@ -81,6 +82,16 @@ impl Cutter {
 
     fn queue(&self, id: i64) {
         let _ = self.queue.send(id);
+    }
+
+    /// Stops the cut of a clip of VOD `vod_id`, if one's being cut (its VOD is
+    /// being deleted: a download from its site could take a while).
+    pub(crate) fn stop_vod(&self, db: &Db, vod_id: i64) {
+        if let Some((id, stop)) = &*self.current.lock().unwrap()
+            && db.clip(*id).ok().flatten().is_some_and(|c| c.vod_id == vod_id)
+        {
+            stop.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Stops clip `id`'s cut, if it's the one being cut.
@@ -120,6 +131,19 @@ struct Progress {
 fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(clip)) = db.clip(id) {
         let _ = app.emit("clip", clip);
+    }
+}
+
+/// Shows clip `id` as failed with `e`, if it failed before its file was
+/// begun (no ffmpeg, say) and so still says it's waiting.
+fn fail(app: &AppHandle, id: i64, e: &anyhow::Error) {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    if let Ok(Some(clip)) = db.clip(id)
+        && clip.status == ClipStatus::Waiting
+        && db.set_clip_file(id, clip.start, clip.end, ClipStatus::Error, None, Some(&format!("{e:#}"))).is_ok()
+    {
+        emit(app, &db, id);
     }
 }
 
