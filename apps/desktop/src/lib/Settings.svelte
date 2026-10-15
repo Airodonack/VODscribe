@@ -239,6 +239,41 @@
   </section>
 
   <section>
+    <span class="eyebrow">Storage</span>
+    <p class="label">Videos from other sites</p>
+    <p class="muted hint">
+      VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
+        ? `; they use ${formatBytes(mediaBytes)}`
+        : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
+    </p>
+    <div class="themes" role="radiogroup" aria-label="Video quality">
+      {#each HEIGHTS as h (h)}
+        <button
+          role="radio"
+          aria-checked={videoHeight === h}
+          class:on={videoHeight === h}
+          onclick={() => appSettings.update({ video_height: h })}
+        >
+          {h}p
+        </button>
+      {/each}
+    </div>
+    <p class="muted hint">
+      Up to {videoHeight}p. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[720]}. Applies to videos downloaded
+      from now on.
+    </p>
+    <p class="label">Repair VODscribe</p>
+    <p class="muted hint">
+      Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null
+        ? ` (${formatBytes(cacheBytes)} in all)`
+        : ""}, then sets VODscribe up again. Your library, transcripts, chats and kept videos stay.
+    </p>
+    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+      {clearing ? "Repairing…" : "Repair…"}
+    </button>
+  </section>
+
+  <section>
     <span class="eyebrow">Video downloader</span>
     <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
     <button onclick={updateYtDlp} disabled={updating}>{updating ? "Updating…" : "Update video downloader"}</button>
@@ -292,41 +327,6 @@
       >
       <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
     </div>
-  </section>
-
-  <section>
-    <span class="eyebrow">Storage</span>
-    <p class="label">Videos from other sites</p>
-    <p class="muted hint">
-      VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
-        ? `; they use ${formatBytes(mediaBytes)}`
-        : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
-    </p>
-    <div class="themes" role="radiogroup" aria-label="Video quality">
-      {#each HEIGHTS as h (h)}
-        <button
-          role="radio"
-          aria-checked={videoHeight === h}
-          class:on={videoHeight === h}
-          onclick={() => appSettings.update({ video_height: h })}
-        >
-          {h}p
-        </button>
-      {/each}
-    </div>
-    <p class="muted hint">
-      Up to {videoHeight}p. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[720]}. Applies to videos downloaded
-      from now on.
-    </p>
-    <p class="label">Repair VODscribe</p>
-    <p class="muted hint">
-      Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null
-        ? ` (${formatBytes(cacheBytes)} in all)`
-        : ""}, then sets VODscribe up again. Your library, transcripts, chats and kept videos stay.
-    </p>
-    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
-      {clearing ? "Repairing…" : "Repair…"}
-    </button>
   </section>
 
   <section>
