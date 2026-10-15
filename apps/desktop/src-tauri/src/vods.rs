@@ -387,13 +387,14 @@ pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) 
 #[derive(Serialize)]
 pub(crate) struct Line {
     start: f64,
+    end: f64,
     text: String,
 }
 
 #[tauri::command]
 pub(crate) async fn transcript(app: AppHandle, vod_id: i64, after: Option<f64>) -> CmdResult<Vec<Line>> {
     let lines = crate::with_reads(app, move |db| db.lines(vod_id, after)).await?;
-    Ok(lines.into_iter().map(|(start, text)| Line { start, text }).collect())
+    Ok(lines.into_iter().map(|(start, end, text)| Line { start, end, text }).collect())
 }
 
 /// VOD `vod_id`'s captions, for the player of a file played here.

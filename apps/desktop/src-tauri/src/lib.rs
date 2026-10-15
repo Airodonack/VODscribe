@@ -1,12 +1,13 @@
 //! The Tauri shell: app state and startup. The commands the UI calls live in
 //! `vods` (the library), `setup` (setup, settings, GPU pack, storage),
-//! `thumbnails` and `chats`; `worker` runs the download and transcription
+//! `thumbnails`, `chats` and `clips`; `worker` runs the download and transcription
 //! queue, and `chats` the chat replay one.
 
 // `tauri dev` serves the app from its dev server instead; tests still cover it.
 #[cfg(any(not(dev), test))]
 mod app_server;
 mod chats;
+mod clips;
 mod loopback;
 mod media;
 mod setup;
@@ -35,6 +36,7 @@ struct AppState {
     gpu: setup::Install,
     media: media::MediaServer,
     chat: chats::ChatQueue,
+    clips: clips::Cutter,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -139,8 +141,10 @@ pub fn run() {
                 gpu: setup::Install::new(),
                 media,
                 chat,
+                clips: clips::Cutter::new(),
                 adding: Mutex::default(),
             });
+            app.state::<AppState>().clips.run(app.handle().clone())?;
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             let handle = app.handle().clone();
@@ -195,6 +199,12 @@ pub fn run() {
             media::peaks,
             media::frame_rate,
             vods::captions,
+            clips::list_clips,
+            clips::add_clip,
+            clips::set_clip_range,
+            clips::rename_clip,
+            clips::delete_clip,
+            clips::show_clip,
             thumbnails::thumbnail,
             vods::reorder_vods,
             vods::delete_vod,

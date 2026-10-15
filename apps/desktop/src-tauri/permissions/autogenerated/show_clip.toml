@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-clip"
+description = "Enables the show_clip command without any pre-configured scope."
+commands.allow = ["show_clip"]
+
+[[permission]]
+identifier = "deny-show-clip"
+description = "Denies the show_clip command without any pre-configured scope."
+commands.deny = ["show_clip"]

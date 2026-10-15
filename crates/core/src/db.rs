@@ -330,6 +330,21 @@ const MIGRATE_V15: &str = "ALTER TABLE vods ADD COLUMN chat_slices TEXT;";
 /// v16: the video kept to play here, for sites other than YouTube, Twitch and
 /// Kick (`Paths::media`).
 const MIGRATE_V16: &str = "ALTER TABLE vods ADD COLUMN media_path TEXT;";
+/// v17: clips, ranges of a VOD made into video files of their own (`clips`).
+const MIGRATE_V17: &str = "
+CREATE TABLE clips (
+    id INTEGER PRIMARY KEY,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    title TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    file_path TEXT,
+    error TEXT
+);
+CREATE INDEX clips_by_vod ON clips (vod_id, position);";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -369,6 +384,65 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
         },
         chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
+    })
+}
+
+/// Where a clip's file is.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipStatus {
+    /// To be made, once the VOD's video can be reached.
+    Waiting,
+    Cutting,
+    Ready,
+    Error,
+}
+
+impl ClipStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            ClipStatus::Waiting => "waiting",
+            ClipStatus::Cutting => "cutting",
+            ClipStatus::Ready => "ready",
+            ClipStatus::Error => "error",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "waiting" => ClipStatus::Waiting,
+            "cutting" => ClipStatus::Cutting,
+            "ready" => ClipStatus::Ready,
+            _ => ClipStatus::Error,
+        }
+    }
+}
+
+/// A range of a VOD, kept as a video file of its own (`crate::clips`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Clip {
+    pub id: i64,
+    pub vod_id: i64,
+    pub start: f64,
+    pub end: f64,
+    pub title: String,
+    pub status: ClipStatus,
+    pub file_path: Option<String>,
+    pub error: Option<String>,
+}
+
+const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error";
+
+fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
+    Ok(Clip {
+        id: r.get("id")?,
+        vod_id: r.get("vod_id")?,
+        start: r.get("start")?,
+        end: r.get("end")?,
+        title: r.get("title")?,
+        status: ClipStatus::parse(&r.get::<_, String>("status")?),
+        file_path: r.get("file_path")?,
+        error: r.get("error")?,
     })
 }
 
@@ -416,6 +490,7 @@ impl Db {
             MIGRATE_V14,
             MIGRATE_V15,
             MIGRATE_V16,
+            MIGRATE_V17,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -461,6 +536,73 @@ impl Db {
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods ORDER BY position, id DESC");
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Adds a clip of VOD `vod_id` from `start` to `end`, after its others.
+    pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str) -> Result<Clip> {
+        self.conn.execute(
+            "INSERT INTO clips (vod_id, start, end, title, position, created_at)
+             VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(position), 0) + 1 FROM clips WHERE vod_id = ?1), ?5)",
+            params![vod_id, start, end, title, now()],
+        )?;
+        Ok(self.clip(self.conn.last_insert_rowid())?.expect("just inserted"))
+    }
+
+    pub fn clip(&self, id: i64) -> Result<Option<Clip>> {
+        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE id = ?1");
+        Ok(self.conn.query_row(&sql, [id], clip_from_row).optional()?)
+    }
+
+    /// VOD `vod_id`'s clips, in their order.
+    pub fn clips(&self, vod_id: i64) -> Result<Vec<Clip>> {
+        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE vod_id = ?1 ORDER BY position, id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        Ok(stmt.query_map([vod_id], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Clips whose file is still to be made (or was being made when the app stopped).
+    pub fn unfinished_clips(&self) -> Result<Vec<Clip>> {
+        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE status IN ('waiting', 'cutting') ORDER BY id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        Ok(stmt.query_map([], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Moves clip `id` to a new range; its file is to be made again.
+    pub fn set_clip_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clips SET start = ?2, end = ?3, status = 'waiting', error = NULL WHERE id = ?1",
+            params![id, start, end],
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_clip(&self, id: i64, title: &str) -> Result<()> {
+        self.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
+        Ok(())
+    }
+
+    /// Records where clip `id`'s file is, unless its range has moved since
+    /// `start`..`end` was cut (it's being made again). True if recorded.
+    pub fn set_clip_file(
+        &self,
+        id: i64,
+        start: f64,
+        end: f64,
+        status: ClipStatus,
+        file: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE clips SET status = ?4, file_path = coalesce(?5, file_path), error = ?6
+             WHERE id = ?1 AND start = ?2 AND end = ?3",
+            params![id, start, end, status.as_str(), file, error],
+        )?;
+        Ok(n > 0)
+    }
+
+    pub fn delete_clip(&self, id: i64) -> Result<()> {
+        self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
+        Ok(())
     }
 
     /// Runs `f`'s writes as one transaction: all of them happen, or none do.
@@ -668,11 +810,27 @@ impl Db {
     /// `segments` also parses. This is what the transcript view needs.
     /// VOD `vod_id`'s transcript lines as (start, text), all of them or those
     /// starting after `after` (a transcription only adds lines at the end).
-    pub fn lines(&self, vod_id: i64, after: Option<f64>) -> Result<Vec<(f64, String)>> {
-        let mut stmt =
-            self.conn.prepare("SELECT start, text FROM segments WHERE vod_id = ?1 AND start > ?2 ORDER BY start")?;
-        let rows = stmt.query_map(params![vod_id, after.unwrap_or(f64::MIN)], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    /// VOD `vod_id`'s lines as (start, end, text), those starting after `after` if given.
+    pub fn lines(&self, vod_id: i64, after: Option<f64>) -> Result<Vec<(f64, f64, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT start, end, text FROM segments WHERE vod_id = ?1 AND start > ?2 ORDER BY start")?;
+        let rows =
+            stmt.query_map(params![vod_id, after.unwrap_or(f64::MIN)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The words VOD `vod_id`'s transcript has from `start` to `end`.
+    pub fn words_between(&self, vod_id: i64, start: f64, end: f64) -> Result<Vec<Word>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT words FROM segments WHERE vod_id = ?1 AND end > ?2 AND start < ?3 ORDER BY start")?;
+        let mut out = Vec::new();
+        for words in stmt.query_map(params![vod_id, start, end], |r| r.get::<_, String>(0))? {
+            let words: Vec<Word> = serde_json::from_str(&words?)?;
+            out.extend(words.into_iter().filter(|w| w.end > start && w.start < end));
+        }
+        Ok(out)
     }
 
     pub fn segments(&self, vod_id: i64) -> Result<Vec<Segment>> {
@@ -1290,13 +1448,42 @@ mod tests {
     }
 
     #[test]
+    fn clips_keep_their_order_and_follow_their_range() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let a = db.add_clip(vod, 10.0, 20.0, "first").unwrap();
+        let b = db.add_clip(vod, 5.0, 8.0, "second").unwrap();
+        assert_eq!(a.status, ClipStatus::Waiting);
+        let titles = |db: &Db| db.clips(vod).unwrap().into_iter().map(|c| c.title).collect::<Vec<_>>();
+        assert_eq!(titles(&db), ["first", "second"], "in the order they were made");
+        assert_eq!(db.unfinished_clips().unwrap().len(), 2);
+
+        // A cut that finishes after its range moved isn't recorded.
+        db.set_clip_range(a.id, 11.0, 20.0).unwrap();
+        assert!(!db.set_clip_file(a.id, 10.0, 20.0, ClipStatus::Ready, Some("/c/a.mp4"), None).unwrap());
+        assert!(db.set_clip_file(a.id, 11.0, 20.0, ClipStatus::Ready, Some("/c/a.mp4"), None).unwrap());
+        let a = db.clip(a.id).unwrap().unwrap();
+        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Ready, Some("/c/a.mp4")));
+        // Moved again: made again, at the same file.
+        db.set_clip_range(a.id, 12.0, 20.0).unwrap();
+        let a = db.clip(a.id).unwrap().unwrap();
+        assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Waiting, Some("/c/a.mp4")));
+        db.rename_clip(b.id, "renamed").unwrap();
+        db.delete_clip(a.id).unwrap();
+        assert_eq!(titles(&db), ["renamed"]);
+        // They go with their VOD.
+        db.delete_vod(vod).unwrap();
+        assert!(db.clip(b.id).unwrap().is_none());
+    }
+
+    #[test]
     fn lines_after_a_start() {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let line = |start: f64, text: &str| Segment { start, end: start + 1.0, text: text.into(), words: Vec::new() };
         db.insert_segments(vod, &[line(0.0, "one"), line(2.5, "two")]).unwrap();
         db.insert_segments(vod, &[line(4.0, "three")]).unwrap();
-        let texts = |after| db.lines(vod, after).unwrap().into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+        let texts = |after| db.lines(vod, after).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
         assert_eq!(texts(None), ["one", "two", "three"]);
         assert_eq!(texts(Some(2.5)), ["three"], "only those after the last one shown");
         assert!(texts(Some(4.0)).is_empty());

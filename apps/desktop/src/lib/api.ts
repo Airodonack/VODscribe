@@ -125,6 +125,8 @@ export interface DownloadProgress {
 
 export interface Line {
   start: number;
+  /** Missing in the website's demo, whose lines end where the next begins. */
+  end?: number;
   text: string;
 }
 

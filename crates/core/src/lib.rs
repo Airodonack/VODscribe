@@ -6,6 +6,7 @@
 pub mod asr;
 pub mod audio;
 pub mod chat;
+pub mod clips;
 pub mod db;
 pub mod deps;
 pub mod emotes;
