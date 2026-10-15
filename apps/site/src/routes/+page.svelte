@@ -28,7 +28,7 @@
     },
     {
       q: "Which VODs can it transcribe?",
-      a: "Kick, Twitch and YouTube links: past broadcasts, highlights and uploads. It also takes video and audio files from your computer.",
+      a: "Kick, Twitch and YouTube links: past broadcasts, highlights, clips and uploads. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, and their video is kept on your computer to play. It also takes video and audio files from your computer.",
     },
     {
       q: "Does it show the chat?",
@@ -63,7 +63,7 @@
   <title>VODscribe: search everything said in your VODs</title>
   <meta
     name="description"
-    content="VODscribe transcribes Kick, Twitch and YouTube VODs on your computer, so you can find any moment by what was said. Free for Windows, macOS and Linux."
+    content="VODscribe transcribes Kick, Twitch and YouTube VODs, and videos from other sites, on your computer, so you can find any moment by what was said. Free for Windows, macOS and Linux."
   />
   <meta property="og:title" content="VODscribe: search everything said in your VODs" />
   <meta
@@ -134,7 +134,7 @@
     </div>
     <div>
       <Icon name="film" size={22} />
-      <h2>Kick, Twitch, YouTube and files</h2>
+      <h2>Kick, Twitch, YouTube and more</h2>
       <p class="muted">Paste a link or drop a video file. VODs queue up and transcribe one after another.</p>
     </div>
     <div>

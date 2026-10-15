@@ -210,14 +210,14 @@
       readonly={DEMO}
       aria-label="VOD link"
       {...demoOff(
-        "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
+        "The web demo can't transcribe. In the app, paste a Kick, Twitch, YouTube or other video link here and it's transcribed on your computer.",
       )}
     />
     <button
       class="primary"
       disabled={adder.adding || (!url.trim() && !DEMO)}
       {...demoOff(
-        "The web demo can't transcribe. In the app, paste a Kick, Twitch or YouTube link here and it's transcribed on your computer.",
+        "The web demo can't transcribe. In the app, paste a Kick, Twitch, YouTube or other video link here and it's transcribed on your computer.",
       )}>{adder.adding ? "Adding…" : "Add"}</button
     >
   </form>
