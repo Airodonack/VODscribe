@@ -16,6 +16,9 @@
   --pick: #0891b2;
   /* A cut or a selection's edge that's selected, to move or remove. */
   --picked: #b5452c;
+  /* Chapters' bands, and highlights' stars. */
+  --chapter: var(--accent);
+  --highlight: #db2777;
   --warn: #b45309;
   --danger: #c81e1e;
   --danger-soft: #fee2e2;
@@ -59,6 +62,9 @@
   --cut: #f59e0b;
   --pick: #22d3ee;
   --picked: #e0694e;
+  /* Chapters' bands, and highlights' stars. */
+  --chapter: var(--accent);
+  --highlight: #f472b6;
   --warn: #f5b041;
   --danger: #f87171;
   --danger-soft: #3f1d1d;
@@ -84,6 +90,9 @@
     --cut: #f59e0b;
     --pick: #22d3ee;
     --picked: #e0694e;
+    /* Chapters' bands, and highlights' stars. */
+    --chapter: var(--accent);
+    --highlight: #f472b6;
     --warn: #f5b041;
     --danger: #f87171;
     --danger-soft: #3f1d1d;

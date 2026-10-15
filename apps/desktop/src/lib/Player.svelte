@@ -189,8 +189,8 @@
     const picked = cuts.selection;
     if (picked && cuts.selectedEdge) return `${approx}${precise(picked[cuts.selectedEdge])}`;
     if (picked) return span(picked.start, picked.end);
-    const selected = cuts.list.find((m) => m.id === cuts.selected);
-    if (selected) return `${approx}${precise(selected.start)}`;
+    const selected = cuts.all.find((m) => m.id === cuts.selected);
+    if (selected) return `${approx}${precise(selected.start)}${selected.text ? ` · ${selected.text}` : ""}`;
     if (stretch && between) return span(stretch.start, stretch.end);
     return "";
   });
@@ -273,6 +273,13 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
+    // H marks a highlight here, N starts a chapter, each with its title to write.
+    if (key === "h" || key === "n") {
+      if (!e.repeat) cuts.add(key === "h" ? "highlight" : "chapter", now, fps);
+      collapsed = false;
+      e.preventDefault();
+      return;
+    }
     if (key === "m" || key === "c") {
       if (key === "m") toggleMute();
       else player?.captions?.toggle();
@@ -399,6 +406,8 @@
       selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
       <kbd>E</kbd> export the stretch as a clip <span class="sep">·</span>
+      <kbd>H</kbd> highlight here <span class="sep">·</span>
+      <kbd>N</kbd> new chapter here (double-click one to rename it) <span class="sep">·</span>
       <kbd>M</kbd> mute <span class="sep">·</span>
       <kbd>C</kbd> captions <span class="sep">·</span>
       <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip

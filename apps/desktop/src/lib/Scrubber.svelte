@@ -10,6 +10,11 @@
   // pressed; a middle click fits the whole VOD. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
   // playhead until panned.
+  //
+  // Chapters (cuts.svelte.ts) show in a lane above it once there are any,
+  // each from its start to the next one's; highlights are stars on its top
+  // edge. Hovering one shows its title or note, a click goes to it and selects
+  // it (to move like a cut), and a double click opens its title to write.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
@@ -18,6 +23,8 @@
   import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
   import { formatTime, os } from "./platform";
+  import Popover from "./Popover.svelte";
+  import type { Mark } from "./api";
   import { theme } from "./theme.svelte";
 
   let {
@@ -174,7 +181,9 @@
       return;
     }
     const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
-    const mark = flag && cuts.list.find((m) => m.id === Number(flag.dataset.mark));
+    const mark = flag && cuts.all.find((m) => m.id === Number(flag.dataset.mark));
+    const chapter = (e.target as HTMLElement).closest<HTMLElement>("[data-chapter]");
+    const named = chapter && cuts.all.find((m) => m.id === Number(chapter.dataset.chapter));
     const edge = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]")?.dataset.edge as
       "start" | "end" | undefined;
     if (edge && cuts.selection) {
@@ -183,6 +192,11 @@
       onpause();
       cuts.selectedEdge = edge;
       cuts.selected = null;
+    } else if (named && !mark) {
+      // A chapter's band: to its start, selected.
+      cuts.selected = named.id;
+      cuts.clearSelection();
+      onseek(inFrame(named.start));
     } else if (mark) {
       drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false, away: false };
       onpause();
@@ -200,10 +214,15 @@
   }
 
   function onMove(e: PointerEvent) {
+    const over = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-mark], [data-chapter]");
+    const id = over && root?.contains(over) ? Number(over.dataset.mark ?? over.dataset.chapter) : null;
+    hoverMark = id === null ? null : (cuts.all.find((m) => m.id === id && m.kind !== "cut") ?? null);
     if (bar) {
       const box = bar.getBoundingClientRect();
       const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
-      hover = inside || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
+      const inLane = !!lane && e.clientY >= lane.getBoundingClientRect().top && e.clientY < box.top;
+      const across = e.clientX >= box.left && e.clientX <= box.right;
+      hover = inside || (inLane && across) || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
     }
     if (!drag) return;
     if (drag.kind === "view") {
@@ -305,102 +324,327 @@
   });
 
   const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
+  let hoverMark = $state<Mark | null>(null);
+
+  /** Where mark `m` is drawn: where it's being dragged to, while it is. */
+  const placed = (m: Mark) => (drag?.kind === "mark" && drag.id === m.id ? drag.at : m.start);
+
+  // Each chapter from its start to the next one's (or the end), as drawn.
+  const chapterSpans = $derived.by(() => {
+    const starts = cuts.chapters.map((c) => ({ chapter: c, start: placed(c) })).sort((a, b) => a.start - b.start);
+    return starts.map((c, i) => ({ ...c, end: starts[i + 1]?.start ?? duration }));
+  });
+  const nowChapter = $derived(chapterSpans.findIndex((c) => time >= c.start && time < c.end));
+  const label = (m: Mark) => m.text ?? (m.kind === "chapter" ? "Untitled chapter" : "Highlight");
+
+  // The title (a chapter's) or note (a highlight's) being written: in a
+  // panel by it, saved when it closes, kept as it was on Escape.
+  let root = $state<HTMLDivElement>();
+  let lane = $state<HTMLDivElement>();
+  const editing = $derived(cuts.all.find((m) => m.id === cuts.editing) ?? null);
+  let draft = $state("");
+  let keep = true;
+  let anchor = $state<HTMLElement>();
+  $effect(() => {
+    const m = editing;
+    if (!m) return;
+    untrack(() => {
+      draft = m.text ?? "";
+      keep = true;
+    });
+    // Once it's drawn (a chapter just added makes the lane).
+    queueMicrotask(() => {
+      anchor = root?.querySelector<HTMLElement>(`[data-mark="${m.id}"]`) ?? bar;
+    });
+  });
+  function closeEditor() {
+    if (editing && keep) cuts.setText(editing.id, draft);
+    cuts.editing = null;
+  }
+  const focus = (el: HTMLInputElement) => {
+    requestAnimationFrame(() => el.focus());
+  };
 </script>
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => (drag = null)} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="scrubber"
-  class:panning={drag?.kind === "view"}
-  data-view-start={viewStart}
-  data-span={span}
-  bind:this={bar}
-  bind:clientWidth={width}
-  onpointerdown={onDown}
-  onmousedown={(e) => e.button === 1 && e.preventDefault()}
-  onauxclick={(e) => e.button === 1 && e.preventDefault()}
-  onpointerleave={() => !drag && (hover = null)}
-  onwheel={onWheel}
->
-  <canvas bind:this={canvas} style:height="{HEIGHT}px"></canvas>
-  {#each ticks as t (t)}
-    <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
-  {/each}
-  {#if current && current.end > viewStart && current.start < viewStart + span}
-    <div
-      class="between"
-      style:left={pct(Math.max(current.start, viewStart))}
-      style:width={widthPct(Math.max(current.start, viewStart), Math.min(current.end, viewStart + span))}
-    ></div>
+<div class="timeline" bind:this={root}>
+  {#if chapterSpans.length}
+    <div class="chapters" bind:this={lane} onpointerdown={onDown}>
+      {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
+        {#if end > viewStart && start < viewStart + span}
+          <div
+            class="chapter"
+            class:current={i === nowChapter}
+            class:selected={cuts.selected === chapter.id}
+            data-chapter={chapter.id}
+            style:left={pct(Math.max(start, viewStart))}
+            style:width={widthPct(Math.max(start, viewStart), Math.min(end, viewStart + span))}
+            ondblclick={() => (cuts.editing = chapter.id)}
+          >
+            <span class="label" class:untitled={!chapter.text}>{label(chapter)}</span>
+          </div>
+          {#if start >= viewStart}
+            <span
+              class="chapter-start"
+              class:selected={cuts.selected === chapter.id}
+              class:away={drag?.kind === "mark" && drag.id === chapter.id && drag.away}
+              data-mark={chapter.id}
+              style:left={pct(start)}
+            ></span>
+          {/if}
+        {/if}
+      {/each}
+    </div>
   {/if}
-  {#if cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
-    {@const picked = cuts.selection}
-    <div
-      class="selection"
-      style:left={pct(Math.max(picked.start, viewStart))}
-      style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-      title="Selected: Split (B) cuts both ends"
-    ></div>
-    {#each ["start", "end"] as const as edge (edge)}
-      {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}
-        <span
-          class="cut pick"
-          class:selected={cuts.selectedEdge === edge}
-          data-edge={edge}
-          style:left={pct(picked[edge])}
-          title="The selection's {edge} · drag to move it"
-          >{#if cuts.selectedEdge === edge}<span class="foot"></span>{/if}</span
-        >
-      {/if}
+  <div
+    class="scrubber"
+    class:panning={drag?.kind === "view"}
+    data-view-start={viewStart}
+    data-span={span}
+    bind:this={bar}
+    bind:clientWidth={width}
+    onpointerdown={onDown}
+    onmousedown={(e) => e.button === 1 && e.preventDefault()}
+    onauxclick={(e) => e.button === 1 && e.preventDefault()}
+    onpointerleave={() => !drag && (hover = null)}
+    onwheel={onWheel}
+  >
+    <canvas bind:this={canvas} style:height="{HEIGHT}px"></canvas>
+    {#each ticks as t (t)}
+      <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
     {/each}
-  {/if}
-  {#each [highlight, taking] as lit, i (i)}
-    {#if lit && lit.end > viewStart && lit.start < viewStart + span}
+    {#if current && current.end > viewStart && current.start < viewStart + span}
       <div
-        class="lit"
-        style:left={pct(Math.max(lit.start, viewStart))}
-        style:width={widthPct(Math.max(lit.start, viewStart), Math.min(lit.end, viewStart + span))}
+        class="between"
+        style:left={pct(Math.max(current.start, viewStart))}
+        style:width={widthPct(Math.max(current.start, viewStart), Math.min(current.end, viewStart + span))}
       ></div>
     {/if}
-  {/each}
-  {#each clips.list as clip (clip.id)}
-    {#if clip.end > viewStart && clip.start < viewStart + span}
-      <!-- A clip made: an underline along its stretch. -->
-      <span
-        class="made {clip.status}"
-        style:left={pct(clip.start)}
-        style:width={widthPct(clip.start, clip.end)}
-        title="Clip: {clip.title}"
-      ></span>
+    {#if cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
+      {@const picked = cuts.selection}
+      <div
+        class="selection"
+        style:left={pct(Math.max(picked.start, viewStart))}
+        style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
+        title="Selected: Split (B) cuts both ends"
+      ></div>
+      {#each ["start", "end"] as const as edge (edge)}
+        {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}
+          <span
+            class="cut pick"
+            class:selected={cuts.selectedEdge === edge}
+            data-edge={edge}
+            style:left={pct(picked[edge])}
+            title="The selection's {edge} · drag to move it"
+            >{#if cuts.selectedEdge === edge}<span class="foot"></span>{/if}</span
+          >
+        {/if}
+      {/each}
     {/if}
-  {/each}
-  {#if time >= viewStart && time <= viewStart + span}
-    <span class="playhead" style:left={pct(time)}></span>
-  {/if}
-  {#each cuts.list as mark (mark.id)}
-    {@const at = drag?.kind === "mark" && drag.id === mark.id ? drag.at : mark.start}
-    {#if at >= viewStart && at <= viewStart + span}
-      <span
-        class="cut"
-        class:selected={cuts.selected === mark.id}
-        class:plain={!!cuts.selection}
-        class:away={drag?.kind === "mark" && drag.id === mark.id && drag.away}
-        data-mark={mark.id}
-        style:left={pct(at)}
-        title="Cut at {formatTime(at)} · drag to move it, or off the timeline to remove it"
-      >
-        {#if cuts.selected === mark.id}<span class="foot"></span>{/if}
-      </span>
+    {#each [highlight, taking] as lit, i (i)}
+      {#if lit && lit.end > viewStart && lit.start < viewStart + span}
+        <div
+          class="lit"
+          style:left={pct(Math.max(lit.start, viewStart))}
+          style:width={widthPct(Math.max(lit.start, viewStart), Math.min(lit.end, viewStart + span))}
+        ></div>
+      {/if}
+    {/each}
+    {#each clips.list as clip (clip.id)}
+      {#if clip.end > viewStart && clip.start < viewStart + span}
+        <!-- A clip made: an underline along its stretch. -->
+        <span
+          class="made {clip.status}"
+          style:left={pct(clip.start)}
+          style:width={widthPct(clip.start, clip.end)}
+          title="Clip: {clip.title}"
+        ></span>
+      {/if}
+    {/each}
+    {#if time >= viewStart && time <= viewStart + span}
+      <span class="playhead" style:left={pct(time)}></span>
     {/if}
-  {/each}
+    {#each cuts.list as mark (mark.id)}
+      {@const at = drag?.kind === "mark" && drag.id === mark.id ? drag.at : mark.start}
+      {#if at >= viewStart && at <= viewStart + span}
+        <span
+          class="cut"
+          class:selected={cuts.selected === mark.id}
+          class:plain={!!cuts.selection}
+          class:away={drag?.kind === "mark" && drag.id === mark.id && drag.away}
+          data-mark={mark.id}
+          style:left={pct(at)}
+          title="Cut at {formatTime(at)} · drag to move it, or off the timeline to remove it"
+        >
+          {#if cuts.selected === mark.id}<span class="foot"></span>{/if}
+        </span>
+      {/if}
+    {/each}
+    {#each cuts.highlights as h (h.id)}
+      {@const at = placed(h)}
+      {#if at >= viewStart && at <= viewStart + span}
+        <span
+          class="star"
+          class:selected={cuts.selected === h.id}
+          class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
+          data-mark={h.id}
+          style:left={pct(at)}
+          ondblclick={() => (cuts.editing = h.id)}
+        ></span>
+      {/if}
+    {/each}
+    {#if hoverTime !== null && hover !== null}
+      <span class="hover" style:left="{hover}px"></span>
+    {/if}
+  </div>
   {#if hoverTime !== null && hover !== null}
-    <span class="hover" style:left="{hover}px"></span>
-    <span class="tip" style:left="{Math.min(Math.max(hover, 28), width - 28)}px">{formatTime(hoverTime)}</span>
+    <span class="tip" class:wide={!!hoverMark} style:left="{Math.min(Math.max(hover, 28), width - 28)}px"
+      >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
+          hoverTime,
+        )}{/if}</span
+    >
   {/if}
 </div>
 
+<Popover
+  bind:open={() => !!editing, (open) => !open && closeEditor()}
+  {anchor}
+  label={editing?.kind === "chapter" ? "Chapter title" : "Highlight note"}
+  width={280}
+  padding={10}
+>
+  {#if editing}
+    <form
+      class="mark-editor"
+      onsubmit={(e) => {
+        e.preventDefault();
+        closeEditor();
+      }}
+    >
+      <input
+        use:focus
+        bind:value={draft}
+        maxlength="200"
+        placeholder={editing.kind === "chapter" ? "Chapter title" : "What happens here (optional)"}
+        onkeydown={(e) => e.key === "Escape" && (keep = false)}
+      />
+      <p class="muted">
+        {editing.kind === "chapter" ? "Chapter" : "Highlight"} at {formatTime(editing.start)} · Enter saves
+      </p>
+    </form>
+  {/if}
+</Popover>
+
 <style>
+  .timeline {
+    position: relative;
+  }
+
+  /* Chapters: a band each, from its start to the next one's. */
+  .chapters {
+    position: relative;
+    height: 20px;
+    margin-bottom: 3px;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+  }
+
+  .chapter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    padding: 0 6px 0 8px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--surface-2);
+    box-shadow: inset 2px 0 0 var(--chapter);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .chapter.current {
+    background: color-mix(in srgb, var(--chapter) 16%, var(--surface-2));
+    color: var(--text);
+  }
+
+  .chapter.selected {
+    box-shadow:
+      inset 2px 0 0 var(--picked),
+      inset 0 0 0 1px var(--picked);
+  }
+
+  .label {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .label.untitled {
+    font-style: italic;
+  }
+
+  /* A chapter's start, to grab and move. */
+  .chapter-start {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 9px;
+    margin-left: -4px;
+    cursor: ew-resize;
+    z-index: 1;
+  }
+
+  .chapter-start.away {
+    opacity: 0.35;
+  }
+
+  /* A highlight: a star on the timeline's top edge. */
+  .star {
+    position: absolute;
+    top: -6px;
+    width: 13px;
+    height: 13px;
+    margin-left: -6.5px;
+    background: var(--highlight);
+    clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+    cursor: ew-resize;
+    z-index: 3;
+  }
+
+  .star.selected {
+    background: var(--picked);
+  }
+
+  .star.away {
+    opacity: 0.35;
+  }
+
+  .tip.wide {
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tip strong {
+    font-weight: 600;
+  }
+
+  .mark-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .mark-editor p {
+    margin: 0;
+    font-size: 12px;
+  }
+
   .scrubber.panning {
     cursor: grabbing;
   }

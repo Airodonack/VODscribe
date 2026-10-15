@@ -146,12 +146,17 @@ export interface Clip {
   shown: boolean;
 }
 
-/** A mark on a VOD's timeline (crates/core `db::Mark`): a cut, between two frames. */
+export type MarkKind = "cut" | "chapter" | "highlight";
+
+/** A mark on a VOD's timeline (crates/core `db::Mark`): a cut between two
+ *  frames, a chapter's start (it runs to the next), or a highlight. */
 export interface Mark {
   id: number;
   vod_id: number;
-  kind: string;
+  kind: MarkKind;
   start: number;
+  /** A chapter's title, or a highlight's note. */
+  text: string | null;
 }
 
 /** A caption (crates/core `transcript::Cue`). */
@@ -245,7 +250,9 @@ export const api = {
   captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
   listClips: (vodId: number) => invoke<Clip[]>("list_clips", { vodId }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
-  addMark: (vodId: number, time: number) => invoke<Mark>("add_mark", { vodId, time }),
+  addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
+    invoke<Mark>("add_mark", { vodId, time, kind, text }),
+  setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
   moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
   deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
   addClip: (vodId: number, start: number, end: number, shown = true) =>

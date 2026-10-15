@@ -1,18 +1,26 @@
-// The open VOD's marks: cuts between frames that split it into stretches,
-// each of which can become a clip. Split (B) puts one where the playhead is
-// (or takes away the one there); a selected one moves by frames with , and .
-// or by seconds with the arrows, J and L (Player.svelte), or by dragging it on
-// the timeline (Scrubber.svelte).
+// The open VOD's marks. Cuts between frames split it into stretches, each of
+// which can become a clip: Split (B) puts one where the playhead is (or takes
+// away the one there). Chapters (N) name the part of the VOD from their start
+// to the next one's, and highlights (H) note a moment. A selected mark moves
+// by frames with , and . or by seconds with the arrows, J and L
+// (Player.svelte), or by dragging it on the timeline (Scrubber.svelte).
 // Saved per VOD (crates/core db.rs `marks`); changes show at once and are
 // saved after.
 
-import { api, type Mark } from "./api";
+import { api, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, nudge } from "./media";
 
 class Cuts {
   vodId = $state<number | null>(null);
-  list = $state.raw<Mark[]>([]);
+  /** Every mark, in time order. */
+  all = $state.raw<Mark[]>([]);
+  /** The cuts. */
+  list = $derived(this.all.filter((m) => m.kind === "cut"));
+  chapters = $derived(this.all.filter((m) => m.kind === "chapter"));
+  highlights = $derived(this.all.filter((m) => m.kind === "highlight"));
   selected = $state<number | null>(null);
+  /** A chapter or highlight whose title or note is being written. */
+  editing = $state<number | null>(null);
   /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends. */
   selection = $state<{ start: number; end: number } | null>(null);
   /** The selection's edge selected, to drag or move a frame at a time. */
@@ -25,8 +33,9 @@ class Cuts {
   open(vodId: number) {
     if (this.vodId === vodId) return;
     this.vodId = vodId;
-    this.list = [];
+    this.all = [];
     this.selected = null;
+    this.editing = null;
     this.selection = null;
     this.selectedEdge = null;
     this.#reload();
@@ -37,7 +46,7 @@ class Cuts {
     if (vodId === null) return;
     const mine = ++this.#seq;
     api.listMarks(vodId).then(
-      (list) => mine === this.#seq && (this.list = list),
+      (list) => mine === this.#seq && (this.all = list),
       (e) => mine === this.#seq && (this.error = String(e)),
     );
   }
@@ -69,12 +78,48 @@ class Cuts {
     if (there) return this.remove(there.id);
     try {
       const mark = await api.addMark(vodId, frameStart(time, fps));
-      if (this.vodId === vodId) this.list = this.#sorted([...this.list, mark]);
+      if (this.vodId === vodId) this.all = this.#sorted([...this.all, mark]);
       if (select) this.selected = mark.id;
       this.error = null;
     } catch (e) {
       this.error = String(e);
     }
+  }
+
+  /** Puts a chapter or highlight on the frame showing at `time`, selected, and opens its title to write. */
+  async add(kind: Exclude<MarkKind, "cut">, time: number, fps: number) {
+    const vodId = this.vodId;
+    if (vodId === null) return;
+    const start = frameStart(time, fps);
+    // One of its kind on that frame already: that one's title instead.
+    const there = this.all.find((m) => m.kind === kind && Math.abs(m.start - start) < 0.5 / fps);
+    try {
+      const mark = there ?? (await api.addMark(vodId, start, kind));
+      if (this.vodId !== vodId) return;
+      if (!there) this.all = this.#sorted([...this.all, mark]);
+      this.clearSelection();
+      this.selected = mark.id;
+      this.editing = mark.id;
+      this.error = null;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  /** Sets mark `id`'s title or note (none, if blank). */
+  setText(id: number, text: string) {
+    const clean = text.trim() || null;
+    const mark = this.all.find((m) => m.id === id);
+    if (!mark || mark.text === clean) return;
+    this.all = this.all.map((m) => (m.id === id ? { ...m, text: clean } : m));
+    this.#save(api.setMarkText(id, clean));
+  }
+
+  /** The chapter `time` is in, if any. */
+  chapterAt(time: number): Mark | undefined {
+    let found: Mark | undefined;
+    for (const c of this.chapters) if (c.start <= time + 1e-6) found = c;
+    return found;
   }
 
   /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it);
@@ -111,7 +156,7 @@ class Cuts {
   }
 
   move(id: number, time: number) {
-    this.list = this.#sorted(this.list.map((m) => (m.id === id ? { ...m, start: time } : m)));
+    this.all = this.#sorted(this.all.map((m) => (m.id === id ? { ...m, start: time } : m)));
     this.#save(api.moveMark(id, time));
   }
 
@@ -123,7 +168,7 @@ class Cuts {
       this.setEdge(this.selectedEdge, time);
       return time;
     }
-    const mark = this.list.find((m) => m.id === this.selected);
+    const mark = this.all.find((m) => m.id === this.selected);
     if (!mark) return null;
     const time = nudge(mark.start, frames, fps, duration);
     this.move(mark.id, time);
@@ -131,8 +176,9 @@ class Cuts {
   }
 
   remove(id: number) {
-    this.list = this.list.filter((m) => m.id !== id);
+    this.all = this.all.filter((m) => m.id !== id);
     if (this.selected === id) this.selected = null;
+    if (this.editing === id) this.editing = null;
     this.#save(api.deleteMark(id));
   }
 }
