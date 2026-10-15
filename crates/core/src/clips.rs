@@ -74,6 +74,9 @@ pub fn file_path(
     (folder, name)
 }
 
+/// The longest a name made by `safe_name` is, in bytes.
+const MAX_NAME: usize = 100;
+
 /// `title` made safe for every system's file names (Windows' being the
 /// strictest) and for yt-dlp's output templates (no `%`), and shortened.
 /// Square brackets become round ones: a kept video's name ends with its
@@ -89,15 +92,20 @@ pub fn safe_name(title: &str) -> String {
         })
         .collect();
     let mut safe = safe.split_whitespace().collect::<Vec<_>>().join(" ");
-    if safe.chars().count() > 80 {
-        safe = safe.chars().take(80).collect::<String>().trim_end().to_string();
+    // File names may be 255 bytes long (a character can take four), with room
+    // left for the clip's date and range, or a download's part suffixes.
+    if safe.len() > MAX_NAME {
+        let cut = (0..=MAX_NAME).rev().find(|&i| safe.is_char_boundary(i)).unwrap_or(0);
+        safe.truncate(cut);
     }
-    // Windows refuses names ending in a dot or space, and these device names.
+    // Windows refuses names ending in a dot or space, and device names, with
+    // any extension.
     let safe = safe.trim_end_matches(['.', ' ']);
-    let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&safe.to_ascii_uppercase().as_str())
-        || (safe.len() == 4
-            && ["COM", "LPT"].iter().any(|p| safe.to_ascii_uppercase().starts_with(p))
-            && safe.ends_with(|c: char| c.is_ascii_digit()));
+    let device = safe.split('.').next().unwrap_or("").trim_end().to_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"].contains(&device.as_str())
+        || (device.chars().count() == 4
+            && (device.starts_with("COM") || device.starts_with("LPT"))
+            && device.ends_with(|c: char| c.is_ascii_digit() || "¹²³".contains(c)));
     let safe = if safe.is_empty() || reserved { "Clip" } else { safe };
     safe.to_string()
 }
@@ -256,7 +264,12 @@ mod tests {
         assert_eq!(name("...", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
         assert_eq!(safe_name("100% hype"), "100 hype", "no % for yt-dlp's templates");
         assert_eq!(safe_name("Day [3]"), "Day (3)", "square brackets are for ids");
-        assert_eq!(name(&"x".repeat(200), 0.0, 1.0).len(), 80 + " 00h00m00.000s-00h00m01.000s.mp4".len());
+        assert_eq!(name(&"x".repeat(200), 0.0, 1.0).len(), 100 + " 00h00m00.000s-00h00m01.000s.mp4".len());
+        assert_eq!(safe_name(&"配信".repeat(50)), "配信".repeat(16) + "配", "bytes, on a character's edge");
+        for device in ["CON.x", "nul.tv", "CONIN$", "Com1 .txt", "LPT¹"] {
+            assert_eq!(safe_name(device), "Clip", "{device}");
+        }
+        assert_eq!(safe_name("Console"), "Console");
         // Frames of a 480 Hz video are told apart.
         assert_ne!(name("a", 1.0 / 480.0, 1.0), name("a", 2.0 / 480.0, 1.0));
         // A channel's folder, and the stream's date when it's a date.
