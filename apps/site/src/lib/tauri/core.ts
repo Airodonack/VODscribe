@@ -24,6 +24,9 @@ let timeline = {
   events: [] as string[],
 };
 
+let marks: { id: number; vod_id: number; kind: string; start: number }[] = [];
+let lastMark = 0;
+
 const commands: Record<string, (args: Args) => unknown> = {
   setup_status: () => ({
     yt_dlp: true,
@@ -56,9 +59,21 @@ const commands: Record<string, (args: Args) => unknown> = {
   // The layers a new library starts with (crates/core layers.rs `defaults`), changed for this visit only.
   get_timeline: () => timeline,
   set_timeline: ({ timeline: next }) => void (timeline = next as typeof timeline),
-  // Clips are made in the app only.
+  // Clips are made in the app only; cuts on the timeline last this visit.
   list_clips: () => [],
-  list_marks: () => [],
+  list_marks: ({ vodId }) => marks.filter((m) => m.vod_id === vodId),
+  add_mark: ({ vodId, time }) => {
+    const mark = { id: ++lastMark, vod_id: vodId as number, kind: "cut", start: time as number };
+    marks.push(mark);
+    return mark;
+  },
+  move_mark: ({ id, time }) => {
+    const mark = marks.find((m) => m.id === id);
+    if (mark) mark.start = time as number;
+  },
+  delete_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
+  // No waveforms: their audio isn't here.
+  peaks: () => new ArrayBuffer(0),
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
