@@ -193,7 +193,7 @@ async function main() {
     "the player",
     () =>
       js(`
-        const video = document.querySelector("video");
+        const video = document.querySelector("video, audio");
         const error = [...document.querySelectorAll(".error-text")].map((e) => e.textContent).join(" ");
         if (/couldn't be played|can't be played/.test(error)) throw new Error(error);
         return !!video && video.readyState >= 1 && video.currentTime > 0;`),

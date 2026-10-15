@@ -196,18 +196,24 @@ function twitch(
   );
 }
 
-/** A plain <video> in `el`. `attach` points it at its source and returns any cleanup. */
+/** A plain <video> in `el` (or <audio>, for sound alone: a bar of controls with
+ *  no picture, no fullscreen). `attach` points it at its source and returns any cleanup. */
 function videoPlayer(
   el: HTMLElement,
   time: number,
   play: boolean,
-  attach: (video: HTMLVideoElement) => (() => void) | void,
+  attach: (video: HTMLMediaElement) => (() => void) | void,
   onerror?: (message: string | null) => void,
+  audio = false,
 ): EmbeddedPlayer {
-  const video = document.createElement("video");
+  const video = document.createElement(audio ? "audio" : "video");
   video.controls = true;
-  video.playsInline = true;
-  video.style.cssText = "width: 100%; height: 100%; background: #000";
+  if (video instanceof HTMLVideoElement) {
+    video.playsInline = true;
+    video.style.cssText = "width: 100%; height: 100%; background: #000";
+  } else {
+    video.style.cssText = "display: block; width: 100%; height: 100%";
+  }
   video.addEventListener("error", () => {
     const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
     onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
@@ -307,6 +313,7 @@ async function local(
       video.currentTime = time;
     },
     onerror,
+    vod.audio_only,
   );
 }
 
