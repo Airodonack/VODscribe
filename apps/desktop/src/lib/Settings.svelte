@@ -25,6 +25,12 @@
   let mediaBytes = $state<number | null>(null);
   // How tall videos kept from sites without embeds may be.
   const HEIGHTS = [480, 720, 1080];
+  // Roughly what an hour of video takes at each, as sites encode it.
+  const HOUR_SIZE: Record<number, string> = {
+    480: "0.7 to 1.2 GB",
+    720: "1.5 to 2.5 GB",
+    1080: "3 to 5 GB",
+  };
   let videoHeight = $derived(appSettings.value?.video_height ?? 720);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
@@ -45,9 +51,10 @@
   async function clearCache() {
     const amount = cacheBytes ? ` ${formatBytes(cacheBytes)}` : "";
     const ok = await ask(
-      `Free up${amount}? This deletes the parts VODscribe downloaded to run, and any unfinished downloads. ` +
-        "Anything in progress is paused. Your library and transcripts are kept, and VODscribe downloads what it needs again.",
-      "Free up space",
+      `Repair VODscribe? This deletes the parts it downloaded to run${amount ? ` (${amount.trim()})` : ""}, and any ` +
+        "unfinished downloads, then sets it up again. Anything in progress is paused. Your library, transcripts, " +
+        "chats and kept videos stay. The GPU add-on, if you have it, is added again here.",
+      "Repair",
     );
     if (!ok) return;
     clearing = true;
@@ -289,13 +296,6 @@
 
   <section>
     <span class="eyebrow">Storage</span>
-    <p class="muted hint">
-      Downloaded parts and unfinished downloads{cacheBytes !== null ? ` use ${formatBytes(cacheBytes)}` : ""}. Your
-      library and transcripts aren't counted.
-    </p>
-    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
-      {clearing ? "Clearing…" : "Free up space…"}
-    </button>
     <p class="label">Videos from other sites</p>
     <p class="muted hint">
       VODs from sites other than Kick, Twitch and YouTube keep their video here to play{mediaBytes
@@ -315,8 +315,18 @@
       {/each}
     </div>
     <p class="muted hint">
-      Up to {videoHeight}p. An hour at 720p is about 1.5 to 2.5 GB. Applies to videos downloaded from now on.
+      Up to {videoHeight}p. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[720]}. Applies to videos downloaded
+      from now on.
     </p>
+    <p class="label">Repair VODscribe</p>
+    <p class="muted hint">
+      Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null
+        ? ` (${formatBytes(cacheBytes)} in all)`
+        : ""}, then sets VODscribe up again. Your library, transcripts, chats and kept videos stay.
+    </p>
+    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+      {clearing ? "Repairing…" : "Repair…"}
+    </button>
   </section>
 
   <section>
