@@ -74,6 +74,8 @@
   });
   // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
   let draggingInside = false;
+  // Taken from dragenter on too: a quick drag can be dropped before any
+  // dragover, and a drop no handler has claimed opens the link in the window.
   function onDragOver(e: DragEvent) {
     // The demo's page is a website: nothing can be dropped on it.
     if (DEMO) return;
@@ -96,9 +98,10 @@
     clearTimeout(linkGone);
     const data = e.dataTransfer;
     if (!data || draggingInside) return;
+    // Whatever was dropped, the webview doesn't open it in place of the app.
+    e.preventDefault();
     const text = data.getData("text/uri-list") || data.getData("text/plain");
     if (!text) return;
-    e.preventDefault();
     // uri-list lines starting with # are comments.
     // Text drops only ever add links; file paths come from real file drops.
     adder.items(
@@ -163,6 +166,7 @@
 <svelte:window
   ondragstart={() => (draggingInside = true)}
   ondragend={() => (draggingInside = false)}
+  ondragenter={onDragOver}
   ondragover={onDragOver}
   ondrop={onDrop}
   ondragleave={onDragLeave}
