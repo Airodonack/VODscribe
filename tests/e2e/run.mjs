@@ -1,7 +1,8 @@
 // End-to-end test of an installed VODscribe, driven over WebDriver through
 // tauri-driver: first-run setup, adding a file, transcribing it, the
 // transcript, searching, playing from a result (with its waveform and
-// captions), and removing it (answering "Keep" first, which must keep it).
+// captions), making a clip, and removing it (answering "Keep" first, which
+// must keep it).
 //
 //   node tests/e2e/run.mjs <the installed app>
 //
@@ -217,6 +218,35 @@ async function main() {
   );
   if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
   step(`waveform and captions: "${caption}"`);
+
+  // A clip: I and O while watching, Enter to keep it, then its file is cut.
+  const key = (k) =>
+    js(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true }))`, k);
+  const seekTo = (t) => js(`document.querySelector(".player video").currentTime = arguments[0]`, t);
+  await seekTo(0.5);
+  await key("i");
+  await seekTo(2.5);
+  await key("o");
+  await until("the range picked", () => js(`return !!document.querySelector(".chip.ghost")`), 10_000);
+  await key("Enter");
+  const clip = await until(
+    "the clip's file",
+    async () => {
+      const [c] = await invoke("list_clips", { vodId: done.id });
+      if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
+      return c?.status === "ready" && c;
+    },
+    MINUTE,
+  );
+  if (Math.abs(clip.end - clip.start - 2) > 0.3)
+    throw new Error(`the clip runs ${clip.start} to ${clip.end}, not 0.5 to 2.5`);
+  await click('.chip.ready button[aria-label="Delete clip"]');
+  await until(
+    "the clip to be deleted",
+    async () => (await invoke("list_clips", { vodId: done.id })).length === 0,
+    MINUTE,
+  );
+  step(`clipped "${clip.title}" to ${clip.file_path}, and deleted it`);
 
   // Removing: "Keep" keeps it, "Remove" removes it.
   await js(`window.__e2e.answer = "Keep"`);

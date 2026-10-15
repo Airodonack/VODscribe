@@ -130,6 +130,20 @@ export interface Line {
   text: string;
 }
 
+export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
+
+/** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */
+export interface Clip {
+  id: number;
+  vod_id: number;
+  start: number;
+  end: number;
+  title: string;
+  status: ClipStatus;
+  file_path: string | null;
+  error: string | null;
+}
+
 /** A caption (crates/core `transcript::Cue`). */
 export interface Cue {
   start: number;
@@ -219,6 +233,12 @@ export const api = {
   peaks: (id: number) => invoke<ArrayBuffer>("peaks", { id }).then((b) => new Uint8Array(b)),
   frameRate: (id: number) => invoke<number | null>("frame_rate", { id }),
   captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
+  listClips: (vodId: number) => invoke<Clip[]>("list_clips", { vodId }),
+  addClip: (vodId: number, start: number, end: number) => invoke<Clip>("add_clip", { vodId, start, end }),
+  setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),
+  renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),
+  deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
+  showClip: (id: number) => invoke<void>("show_clip", { id }),
   listVods: () => invoke<Vod[]>("list_vods"),
   reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
@@ -288,6 +308,10 @@ export const events = {
     listen<[number, number]>("chat-progress", (e) => cb(...e.payload)),
   /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
   chatSaved: (cb: (id: number) => void) => listen<number>("chat-saved", (e) => cb(e.payload)),
+  clip: (cb: (clip: Clip) => void) => listen<Clip>("clip", (e) => cb(e.payload)),
+  clipProgress: (cb: (id: number, progress: number) => void) =>
+    listen<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
+  clipRemoved: (cb: (id: number) => void) => listen<number>("clip-removed", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

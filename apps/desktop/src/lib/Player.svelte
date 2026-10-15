@@ -3,6 +3,8 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, type Vod } from "./api";
+  import { clips } from "./clips.svelte";
+  import ClipStrip from "./ClipStrip.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
@@ -84,6 +86,16 @@
     else pending = { time, play };
   });
 
+  clips.open(untrack(() => vod.id));
+
+  /** Plays from `time`, starting the player if it isn't yet. */
+  function playFrom(time: number) {
+    collapsed = false;
+    if (!active) activate(time);
+    else if (player) player.seek(time, true);
+    else pending = { time, play: true };
+  }
+
   onDestroy(() => {
     destroyed = true;
     clearTimeout(copiedTimer);
@@ -103,8 +115,16 @@
       e.preventDefault();
       return;
     }
-    if (!player) return;
-    if ((key === "," || key === ".") && player.step) {
+    if (key === "Escape" && clips.ghost) {
+      clips.ghost = null;
+    } else if (key === "Enter" && clips.ghost && !target?.closest("button, a")) {
+      clips.keep();
+    } else if (!player) {
+      return;
+    } else if (key === "i" || key === "o") {
+      const mark = key === "i" ? clips.markIn : clips.markOut;
+      mark.call(clips, player.time(), vod.duration);
+    } else if ((key === "," || key === ".") && player.step) {
       player.step(key === "," ? -1 : 1);
     } else if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
@@ -182,7 +202,9 @@
       <kbd>Space</kbd> or <kbd>K</kbd> play/pause <span class="sep">·</span>
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
-      <kbd>J</kbd><kbd>L</kbd> 10 s
+      <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
+      <kbd>I</kbd><kbd>O</kbd> clip from, to <span class="sep">·</span>
+      <kbd>Enter</kbd> keep the clip
       {#if framed}
         <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
         <span class="sep">·</span> <kbd>F</kbd> full screen
@@ -206,6 +228,9 @@
         {/if}
       </div>
     </div>
+    {#if !collapsed}
+      <ClipStrip onplay={playFrom} canCut={playsHere(vod)} />
+    {/if}
     {#if error}
       <p class="error-text note">
         {error}

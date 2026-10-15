@@ -56,6 +56,8 @@ const commands: Record<string, (args: Args) => unknown> = {
   // The layers a new library starts with (crates/core layers.rs `defaults`), changed for this visit only.
   get_timeline: () => timeline,
   set_timeline: ({ timeline: next }) => void (timeline = next as typeof timeline),
+  // Clips are made in the app only.
+  list_clips: () => [],
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
