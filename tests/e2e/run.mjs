@@ -240,6 +240,8 @@ async function main() {
   );
   if (Math.abs(clip.end - clip.start - 2) > 0.3)
     throw new Error(`the clip runs ${clip.start} to ${clip.end}, not 0.5 to 2.5`);
+  // The chip follows a moment after the clip is recorded as made.
+  await until("the chip to show it made", () => js(`return !!document.querySelector(".chip.ready")`), 10_000);
   await click('.chip.ready button[aria-label="Delete clip"]');
   await until(
     "the clip to be deleted",

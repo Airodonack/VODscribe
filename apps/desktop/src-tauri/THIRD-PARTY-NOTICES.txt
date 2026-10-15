@@ -2851,7 +2851,7 @@ THE SOFTWARE.
 
 ------------------------------------------------------------------------------
 MIT License
-Used by: core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.2.0, core-graphics 0.25.0, string_cache 0.9.0, string_cache_codegen 0.6.1
+Used by: core-foundation-sys 0.8.7, core-foundation 0.10.1, core-foundation 0.9.4, core-graphics-types 0.2.0, core-graphics 0.24.0, core-graphics 0.25.0, string_cache 0.9.0, string_cache_codegen 0.6.1
 
 Copyright (c) 2012-2013 Mozilla Foundation
 
@@ -8421,7 +8421,7 @@ SOFTWARE.
 
 ------------------------------------------------------------------------------
 MIT License
-Used by: bitfields-impl 1.0.3, bitfields 1.0.3, block2 0.6.2, brotli-decompressor 6.0.1, cargo_toml 1.0.1, crc24 0.1.6, dispatch2 0.3.1, dlopen2 0.8.2, dlopen2_derive 0.4.3, dpi 0.1.2, libm 0.2.16, minisign-verify 0.3.0, objc2-app-kit 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, objc2 0.6.5, tauri-plugin-clipboard-manager 2.4.2, tauri-plugin-dialog 2.8.2, tauri-plugin-fs 2.7.0, tauri-plugin-opener 2.7.1, tauri-plugin-process 2.4.0, tauri-plugin-single-instance 2.5.3, tauri-plugin-updater 2.13.3, tauri-plugin 2.7.1, webview2-com-macros 0.8.1, webview2-com-sys 0.39.1, webview2-com 0.39.1, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows 0.62.2, windows_x86_64_gnu 0.53.1, windows_x86_64_msvc 0.53.1
+Used by: bitfields-impl 1.0.3, bitfields 1.0.3, block2 0.6.2, brotli-decompressor 6.0.1, cargo_toml 1.0.1, crc24 0.1.6, dispatch2 0.3.1, dlopen2 0.8.2, dlopen2_derive 0.4.3, dpi 0.1.2, drag 2.1.1, libm 0.2.16, minisign-verify 0.3.0, objc2-app-kit 0.3.2, objc2-cloud-kit 0.3.2, objc2-core-data 0.3.2, objc2-core-foundation 0.3.2, objc2-core-graphics 0.3.2, objc2-core-image 0.3.2, objc2-core-text 0.3.2, objc2-core-video 0.3.2, objc2-encode 4.1.0, objc2-exception-helper 0.1.1, objc2-foundation 0.3.2, objc2-osa-kit 0.3.2, objc2-quartz-core 0.3.2, objc2-web-kit 0.3.2, objc2 0.6.5, tauri-plugin-clipboard-manager 2.4.2, tauri-plugin-dialog 2.8.2, tauri-plugin-fs 2.7.0, tauri-plugin-opener 2.7.1, tauri-plugin-process 2.4.0, tauri-plugin-single-instance 2.5.3, tauri-plugin-updater 2.13.3, tauri-plugin 2.7.1, webview2-com-macros 0.8.1, webview2-com-sys 0.39.1, webview2-com 0.39.1, windows-collections 0.3.2, windows-core 0.52.0, windows-core 0.58.0, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.52.0, windows-implement 0.58.0, windows-implement 0.60.2, windows-interface 0.52.0, windows-interface 0.58.0, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.2.0, windows-result 0.4.1, windows-strings 0.1.0, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.52.6, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows 0.52.0, windows 0.62.2, windows_x86_64_gnu 0.52.6, windows_x86_64_gnu 0.53.1, windows_x86_64_msvc 0.52.6, windows_x86_64_msvc 0.53.1
 
 MIT License
 
