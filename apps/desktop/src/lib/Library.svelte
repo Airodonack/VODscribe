@@ -65,8 +65,12 @@
   let linkGone: ReturnType<typeof setTimeout> | undefined;
   // While anything is dragged in, embedded players (separate pages in iframes)
   // ignore the pointer, so a drop lands here rather than navigating one of them.
+  // That lasts until the link is dropped or leaves the window, not just while
+  // dragover repeats: over a player, it may not reach the page in time. The
+  // pointer moving again means the drag is over.
+  let linkDragged = $state(false);
   $effect(() => {
-    document.body.classList.toggle("dropping", dropping);
+    document.body.classList.toggle("dropping", linkDragged || filesOver);
   });
   // A drag that started inside the app (transcript text, a thumbnail) isn't a drop to add.
   let draggingInside = false;
@@ -76,17 +80,19 @@
     const types = e.dataTransfer?.types ?? [];
     if (draggingInside || (!types.includes("text/uri-list") && !types.includes("text/plain"))) return;
     e.preventDefault();
-    linkOver = true;
+    linkOver = linkDragged = true;
     clearTimeout(linkGone);
     linkGone = setTimeout(() => (linkOver = false), 400);
   }
   function onDragLeave(e: DragEvent) {
     // dragleave fires for every element crossed; only leaving the window counts.
-    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) linkOver = false;
+    if (e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth || e.clientY >= innerHeight) {
+      linkOver = linkDragged = false;
+    }
   }
   function onDrop(e: DragEvent) {
     if (DEMO) return;
-    linkOver = false;
+    linkOver = linkDragged = false;
     clearTimeout(linkGone);
     const data = e.dataTransfer;
     if (!data || draggingInside) return;
@@ -160,6 +166,7 @@
   ondragover={onDragOver}
   ondrop={onDrop}
   ondragleave={onDragLeave}
+  onpointermove={() => (linkDragged = false)}
 />
 
 {#if dropping}
