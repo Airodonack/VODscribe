@@ -440,6 +440,7 @@
     // playhead to their start, showing the VOD in the player if it wasn't.
     cuts.open(vod.id);
     cuts.selection = { start, end };
+    cuts.selected = null;
     play(start);
   }
 

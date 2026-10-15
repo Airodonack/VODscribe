@@ -142,7 +142,7 @@
   type Drag =
     | { kind: "scrub" }
     | { kind: "edge"; edge: "start" | "end"; at: number; x: number; moved: boolean }
-    | { kind: "mark"; id: number; at: number; x: number; moved: boolean }
+    | { kind: "mark"; id: number; at: number; x: number; moved: boolean; away: boolean }
     | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
   let drag = $state<Drag | null>(null);
   let hover = $state<number | null>(null);
@@ -181,7 +181,7 @@
       cuts.selectedEdge = edge;
       cuts.selected = null;
     } else if (mark) {
-      drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false };
+      drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false, away: false };
       cuts.selected = mark.id;
       cuts.clearSelection();
     } else {
@@ -225,6 +225,13 @@
       drag.edge = cuts.selectedEdge ?? drag.edge;
       onseek(inFrame(frameStart(t, fps)));
     } else if (drag.kind === "mark") {
+      // Pulled well off the timeline, up or down: let go there, it's removed.
+      const box = bar!.getBoundingClientRect();
+      drag.away = e.clientY < box.top - AWAY || e.clientY > box.bottom + AWAY;
+      if (drag.away) {
+        drag.moved = true;
+        return;
+      }
       if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
       drag.moved = true;
       drag.at = frameStart(t, fps);
@@ -249,6 +256,9 @@
   }
   const x0 = (t: number) => ((t - viewStart) / span) * width;
 
+  /** How far off the timeline a cut is dragged to remove it. */
+  const AWAY = 60;
+
   /** A quarter of a frame after a cut: the frame it starts, whichever way the player rounds. */
   const inFrame = (cut: number) => Math.min(duration, cut + 0.25 / fps);
 
@@ -263,7 +273,8 @@
     if (done?.kind === "edge" && !done.moved) onseek(inFrame(done.at));
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
-      if (done.moved) cuts.move(done.id, done.at);
+      if (done.away) cuts.remove(done.id);
+      else if (done.moved) cuts.move(done.id, done.at);
       else onseek(inFrame(done.at));
     }
   }
@@ -330,7 +341,8 @@
           class:selected={cuts.selectedEdge === edge}
           data-edge={edge}
           style:left={pct(picked[edge])}
-          title="The selection's {edge} · drag to move it"><span class="foot"></span></span
+          title="The selection's {edge} · drag to move it"
+          >{#if cuts.selectedEdge === edge}<span class="foot"></span>{/if}</span
         >
       {/if}
     {/each}
@@ -365,9 +377,11 @@
       <span
         class="cut"
         class:selected={cuts.selected === mark.id}
+        class:plain={!!cuts.selection}
+        class:away={drag?.kind === "mark" && drag.id === mark.id && drag.away}
         data-mark={mark.id}
         style:left={pct(at)}
-        title="Cut at {formatTime(at)} · drag to move it"
+        title="Cut at {formatTime(at)} · drag to move it, or off the timeline to remove it"
       >
         {#if cuts.selected === mark.id}<span class="foot"></span>{/if}
       </span>
@@ -479,7 +493,7 @@
     border-top: 8px solid var(--color);
   }
 
-  /* A selection's edges: its color, with a notch at the bottom too. */
+  /* A selection's edges: its color (a notch at the bottom too once selected). */
   .cut.pick {
     --color: var(--pick);
   }
@@ -489,6 +503,20 @@
   .cut.selected {
     --color: var(--picked);
     z-index: 2;
+  }
+
+  /* While there's a selection, cuts are plain lines: its edges are the ones with notches. */
+  .cut.plain:not(.selected)::after {
+    display: none;
+  }
+
+  /* Dragged off the timeline: removed when let go. */
+  .cut.away {
+    opacity: 0.35;
+  }
+
+  .cut.away::before {
+    background: repeating-linear-gradient(var(--color) 0 4px, transparent 4px 7px);
   }
 
   .foot {

@@ -82,7 +82,11 @@
   function answer(download: boolean) {
     asking = false;
     if (!download) return;
-    if (hideAgain) hideNote();
+    // Not asked again: the quality picked becomes the one downloads use.
+    if (hideAgain) {
+      hideNote();
+      if (pickedHeight !== height) appSettings.update({ video_height: pickedHeight });
+    }
     videoDownloads.keep(vod.id, pickedHeight);
   }
   async function stopKeeping() {
@@ -333,7 +337,11 @@
       <p class="muted">
         Up to {pickedHeight}p{sizeAt(pickedHeight) ? `, ${sizeAt(pickedHeight)}` : ""}. It's kept until you delete it.
       </p>
-      <label><input type="checkbox" bind:checked={hideAgain} /> Don't show this again</label>
+      <label
+        ><input type="checkbox" bind:checked={hideAgain} /> Don't show this again{pickedHeight !== height
+          ? ` (and download at ${pickedHeight}p from now on)`
+          : ""}</label
+      >
       <div class="buttons">
         <button onclick={() => answer(false)}>Cancel</button>
         <button class="primary" onclick={() => answer(true)}>Download video</button>
