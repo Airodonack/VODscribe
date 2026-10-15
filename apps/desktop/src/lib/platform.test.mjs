@@ -17,7 +17,8 @@ test("an unknown height is sized as the default one", () => {
 });
 
 test("sites with their own player don't keep their video; other sites do; files are files", () => {
-  const vod = (platform) => ({ platform });
+  /** @param {string} platform */
+  const vod = (platform) => /** @type {import("./api").Vod} */ (/** @type {unknown} */ ({ platform }));
   for (const p of ["youtube", "twitch", "kick"]) assert.ok(hasSitePlayer(vod(p)) && !keepsVideo(vod(p)));
   assert.ok(keepsVideo(vod("rumble")) && !hasSitePlayer(vod("rumble")));
   assert.ok(!keepsVideo(vod("local")) && !hasSitePlayer(vod("local")));
