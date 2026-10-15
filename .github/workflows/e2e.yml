@@ -37,6 +37,24 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # By hand: only a build of this repository's main or a release tag. A
+      # fork's pull request can't run build.yml, but could upload artifacts
+      # of the same names from another workflow, to be installed here.
+      - name: Check the build run
+        if: inputs.build_run != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ inputs.build_run }}
+        run: |
+          set -euo pipefail
+          read -r path repo event branch < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" \
+            --jq '[.path, .head_repository.full_name, .event, .head_branch] | @tsv')
+          echo "run $RUN: $path from $repo ($event, $branch)"
+          [[ "$path" == .github/workflows/build.yml && "$repo" == "$GITHUB_REPOSITORY" ]]
+          [[ "$event" == push || "$event" == workflow_dispatch ]]
+          [[ "$branch" == main || "$branch" == v* ]]
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vodscribe-${{ matrix.target }}
