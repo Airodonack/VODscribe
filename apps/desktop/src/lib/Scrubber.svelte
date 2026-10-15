@@ -1,9 +1,11 @@
 <script lang="ts">
   // The timeline under every player: the whole VOD to start, zoomable to a
-  // few seconds, with its waveform where there is one, its marks (cuts.svelte.ts),
-  // its clips and the range picked. A left click or drag only ever moves the
-  // playhead; a mark's flag selects it and drags it (a frame at a time); the
-  // edges of the range picked, and of a clip, can be dragged. The wheel zooms around the
+  // few seconds, with its waveform where there is one, its marks (cuts.svelte.ts)
+  // and the clips made (an underline). A left click or drag only ever moves the
+  // playhead; a mark's flag selects it and drags it (a frame at a time); an
+  // Alt-drag (Option on a Mac, also Ctrl on Linux, where desktops often take
+  // Alt-drag to move windows) makes the stretch under the pointer a clip and
+  // drags it out of the window (dragout.ts). The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
   // playhead until panned.
 
@@ -12,7 +14,8 @@
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
   import { columns, frameStart, PEAKS_RATE, tickStep } from "./media";
-  import { formatTime } from "./platform";
+  import { exportStretch, flyAndDrag, stretchAt } from "./dragout";
+  import { formatTime, os } from "./platform";
   import { theme } from "./theme.svelte";
 
   let {
@@ -20,6 +23,7 @@
     duration,
     time,
     fps,
+    highlight = null,
     onseek,
   }: {
     vod: Vod;
@@ -28,6 +32,8 @@
     time: number;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
+    /** A stretch to light up: the one the Export button would make a clip of, while it's hovered. */
+    highlight?: { start: number; end: number } | null;
     onseek: (time: number) => void;
   } = $props();
 
@@ -122,31 +128,36 @@
     return out;
   });
 
-  // Pressing: scrubbing (the playhead follows), or an edge of the range picked
-  // or of a clip. Followed on the window: the bar's contents changing under
-  // the pointer mid-drag ended drags in WebKitGTK.
-  type Drag =
-    | { kind: "scrub" }
-    | { kind: "mark"; id: number; at: number; x: number; moved: boolean }
-    | { kind: "ghost"; edge: "start" | "end" }
-    | { kind: "clip"; id: number; edge: "start" | "end"; start: number; end: number };
+  // Pressing: scrubbing (the playhead follows), a mark's flag, or an Alt-drag
+  // out. Followed on the window: the bar's contents changing under the
+  // pointer mid-drag ended drags in WebKitGTK.
+  type Drag = { kind: "scrub" } | { kind: "mark"; id: number; at: number; x: number; moved: boolean };
   let drag = $state<Drag | null>(null);
   let hover = $state<number | null>(null);
 
+  // The stretch being taken out of the window, lit up while it's made.
+  let taking = $state<{ start: number; end: number } | null>(null);
+  let down = false;
+
+  /** The modifier that drags a stretch out: Alt (Option), or Ctrl too on Linux. */
+  const dragsOut = (e: PointerEvent) => e.altKey || (os === "linux" && e.ctrlKey);
+
   function onDown(e: PointerEvent) {
     if (e.button !== 0) return;
-    const handle = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]");
-    const edge = handle?.dataset.edge as "start" | "end" | undefined;
+    down = true;
+    if (dragsOut(e)) {
+      const range = stretchAt(timeAt(e.clientX), duration);
+      if (range) {
+        e.preventDefault();
+        takeOut(range, e.clientX, e.clientY);
+      }
+      return;
+    }
     const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
     const mark = flag && cuts.list.find((m) => m.id === Number(flag.dataset.mark));
     if (mark) {
       drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false };
       cuts.selected = mark.id;
-    } else if (handle?.dataset.clip && edge) {
-      const clip = clips.list.find((c) => c.id === Number(handle.dataset.clip));
-      if (clip) drag = { kind: "clip", id: clip.id, edge, start: clip.start, end: clip.end };
-    } else if (edge) {
-      drag = { kind: "ghost", edge };
     } else {
       drag = { kind: "scrub" };
       cuts.selected = null;
@@ -171,30 +182,41 @@
       drag.moved = true;
       drag.at = frameStart(t, fps);
       onseek(drag.at);
-    } else if (drag.kind === "ghost" && clips.ghost) {
-      const { start, end } = clips.ghost;
-      if (drag.edge === "start") clips.pick(t, end, duration);
-      else clips.pick(start, t, duration);
-      // Dragged past the other edge: it's now that one.
-      if (clips.ghost && (drag.edge === "start" ? t > end : t < start))
-        drag.edge = drag.edge === "start" ? "end" : "start";
-    } else if (drag.kind === "clip") {
-      if (drag.edge === "start") drag.start = Math.min(t, drag.end - 0.1);
-      else drag.end = Math.max(t, drag.start + 0.1);
     }
   }
 
+  /** Makes `range` a clip and drags it out, flying its chip from the stretch to the pointer. */
+  async function takeOut(range: { start: number; end: number }, x: number, y: number) {
+    taking = range;
+    const from = new DOMRect(
+      bar!.getBoundingClientRect().left + Math.max(0, x0(range.start)),
+      bar!.getBoundingClientRect().top,
+      Math.max(4, Math.min(width, x0(range.end)) - Math.max(0, x0(range.start))),
+      HEIGHT,
+    );
+    try {
+      await flyAndDrag(
+        exportStretch(range.start, range.end),
+        formatTime(range.end - range.start),
+        from,
+        x,
+        y,
+        () => down,
+      );
+    } finally {
+      taking = null;
+    }
+  }
+  const x0 = (t: number) => ((t - viewStart) / span) * width;
+
   function onUp() {
+    down = false;
     const done = drag;
     drag = null;
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
       if (done.moved) cuts.move(done.id, done.at);
       else onseek(done.at);
-    }
-    if (done?.kind === "clip") {
-      const clip = clips.list.find((c) => c.id === done.id);
-      if (clip && (clip.start !== done.start || clip.end !== done.end)) clips.move(done.id, done.start, done.end);
     }
   }
 
@@ -214,11 +236,6 @@
     setView(at - share * length, length);
   }
 
-  /** A clip's range as shown: while its edge is dragged, where the drag has it. */
-  function rangeOf(id: number, start: number, end: number) {
-    return drag?.kind === "clip" && drag.id === id ? { start: drag.start, end: drag.end } : { start, end };
-  }
-
   const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
 </script>
 
@@ -228,6 +245,8 @@
 <div
   class="scrubber"
   class:zoomed={span < duration}
+  data-view-start={viewStart}
+  data-span={span}
   bind:this={bar}
   bind:clientWidth={width}
   onpointerdown={onDown}
@@ -238,30 +257,27 @@
   {#each ticks as t (t)}
     <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
   {/each}
-  {#each clips.list as clip (clip.id)}
-    {@const r = rangeOf(clip.id, clip.start, clip.end)}
-    {#if r.end > viewStart && r.start < viewStart + span}
+  {#each [highlight, taking] as lit, i (i)}
+    {#if lit && lit.end > viewStart && lit.start < viewStart + span}
       <div
-        class="band"
-        data-band={clip.id}
-        style:left={pct(r.start)}
-        style:width={widthPct(r.start, r.end)}
-        title={clip.title}
-      >
-        <!-- Kept in view when the clip starts before the stretch shown. -->
-        <span class="label" style:margin-left="{Math.max(0, -x(r.start))}px">{clip.title}</span>
-        <span class="edge start" data-edge="start" data-clip={clip.id}></span>
-        <span class="edge end" data-edge="end" data-clip={clip.id}></span>
-      </div>
+        class="lit"
+        style:left={pct(Math.max(lit.start, viewStart))}
+        style:width={widthPct(Math.max(lit.start, viewStart), Math.min(lit.end, viewStart + span))}
+      ></div>
     {/if}
   {/each}
-  {#if clips.ghost && clips.ghost.end > viewStart && clips.ghost.start < viewStart + span}
-    {@const g = clips.ghost}
-    <div class="band ghost" style:left={pct(g.start)} style:width={widthPct(g.start, g.end)}>
-      <span class="edge start" data-edge="start"></span>
-      <span class="edge end" data-edge="end"></span>
-    </div>
-  {/if}
+  {#each clips.list as clip (clip.id)}
+    {#if clip.end > viewStart && clip.start < viewStart + span}
+      <!-- A clip made: an underline along its stretch. -->
+      <span
+        class="made {clip.status}"
+        data-band={clip.id}
+        style:left={pct(clip.start)}
+        style:width={widthPct(clip.start, clip.end)}
+        title="Clip: {clip.title}"
+      ></span>
+    {/if}
+  {/each}
   {#if time >= viewStart && time <= viewStart + span}
     <span class="playhead" style:left={pct(time)}></span>
   {/if}
@@ -317,58 +333,34 @@
     white-space: nowrap;
   }
 
-  .band {
-    position: absolute;
-    top: 13px;
-    bottom: 3px;
-    min-width: 2px;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-    border: 1px solid var(--accent);
-    overflow: hidden;
-  }
-
-  .band.ghost {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    border-style: dashed;
-  }
-
-  .label {
-    display: block;
-    padding: 1px 6px;
-    font-size: 10px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    color: var(--text);
-    pointer-events: none;
-  }
-
-  .edge {
+  /* The stretch Export would take, or being taken out. */
+  .lit {
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 8px;
-    cursor: ew-resize;
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    border-radius: 3px;
+    pointer-events: none;
   }
 
-  .edge.start {
-    left: 0;
-  }
-
-  .edge.end {
-    right: 0;
-  }
-
-  .edge::after {
-    content: "";
+  .made {
     position: absolute;
-    top: 25%;
-    bottom: 25%;
-    left: 3px;
-    width: 2px;
-    border-radius: 1px;
+    bottom: 1px;
+    height: 3px;
+    min-width: 2px;
+    border-radius: 2px;
     background: var(--accent);
+    pointer-events: none;
+  }
+
+  .made.waiting,
+  .made.cutting {
+    opacity: 0.5;
+  }
+
+  .made.error {
+    background: var(--danger);
   }
 
   /* A mark: a line between two frames, with a flag at the top to grab. */

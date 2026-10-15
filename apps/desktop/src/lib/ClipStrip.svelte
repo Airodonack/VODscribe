@@ -1,22 +1,18 @@
 <script lang="ts">
-  // The open VOD's clips as chips under the player, and the range picked but
-  // not kept yet as a dashed one. Clicking a chip plays it; double-clicking its
-  // name renames it.
+  // The clip bar: the open VOD's clips as pills under the player. Clicking one
+  // plays it; double-clicking its name renames it; once its file is made, it
+  // drags out of the window (into a video editor or a folder).
 
   import { api, type Clip } from "./api";
   import { clips } from "./clips.svelte";
   import { dragOut } from "./dragout";
   import Icon from "./Icon.svelte";
-  import { OWN_VODS_NOTE, PERMISSION_NOTE } from "./permission";
-  import Popover from "./Popover.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
 
   let { onplay }: { onplay: (time: number) => void } = $props();
 
   let renaming = $state<number | null>(null);
-  let ghostChip = $state<HTMLElement>();
-  let hideNote = $state(false);
   let draft = $state("");
 
   function startRename(clip: Clip) {
@@ -129,43 +125,6 @@
       {/if}
     </div>
   {/each}
-  {#if clips.ghost}
-    {@const ghost = clips.ghost}
-    <div class="chip ghost" bind:this={ghostChip}>
-      <button class="play" onclick={() => onplay(ghost.start)} aria-label="Play the range picked">
-        <span class="length">{formatTime(ghost.end - ghost.start)}</span>
-      </button>
-      <span class="name">{span(ghost.start, ghost.end)}</span>
-      <button class="keep" onclick={() => clips.keep()} title="Keep this clip (Enter)">
-        <Icon name="scissors" size={13} /> Keep
-      </button>
-      <button class="act" onclick={() => (clips.ghost = null)} title="Drop (Esc)" aria-label="Drop the range">
-        <Icon name="x" size={13} />
-      </button>
-    </div>
-  {/if}
-  {#if !clips.list.length && !clips.ghost}
-    <span class="hint muted">
-      <Icon name="scissors" size={13} /> To clip, drag on the bar above or across lines of the transcript, or press
-      <kbd>I</kbd> where it starts and <kbd>O</kbd> where it ends.
-    </span>
-  {/if}
-  <Popover
-    bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
-    anchor={ghostChip}
-    label="Before downloading a clip"
-    width={340}
-  >
-    <div class="note">
-      <p>{PERMISSION_NOTE}</p>
-      <p class="muted">{OWN_VODS_NOTE}</p>
-      <label><input type="checkbox" bind:checked={hideNote} /> Don't show this again</label>
-      <div class="buttons">
-        <button onclick={() => clips.answer(false)}>Cancel</button>
-        <button class="primary" onclick={() => clips.answer(true, hideNote)}>Download clip</button>
-      </div>
-    </div>
-  </Popover>
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
   {/if}
@@ -199,11 +158,6 @@
 
   .chip.ready {
     cursor: grab;
-  }
-
-  .chip.ghost {
-    border: 1px dashed var(--accent);
-    background: var(--accent-soft);
   }
 
   .chip.error {
@@ -264,20 +218,6 @@
     color: var(--text);
   }
 
-  .keep {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    border: none;
-    border-radius: 11px;
-    background: var(--accent);
-    color: var(--accent-text);
-    font-size: 12px;
-  }
-
   .bad {
     display: inline-flex;
     color: var(--danger);
@@ -291,41 +231,6 @@
     height: 2px;
     background: var(--accent);
     transition: width 0.25s linear;
-  }
-
-  .hint {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .hint kbd + kbd {
-    margin-left: 0;
-  }
-
-  .note {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    font-size: 13px;
-  }
-
-  .note p {
-    margin: 0;
-  }
-
-  .note label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .buttons {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 
   .error-text {

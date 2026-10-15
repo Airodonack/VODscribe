@@ -7,9 +7,10 @@
 
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue } from "./api";
-  import { clips } from "./clips.svelte";
-  import { HOLD_MS, flyAndDrag } from "./dragout";
+  import { cuts } from "./cuts.svelte";
+  import { HOLD_MS, exportStretch, flyAndDrag, rectOf, stretchAt } from "./dragout";
   import { cueAt, stepTime } from "./media";
+  import { formatTime } from "./platform";
 
   let {
     vodId,
@@ -149,27 +150,25 @@
     },
   };
 
-  // A press held still on the picture picks up the made clip it's in, flying
-  // its chip from the timeline (or the strip) to the pointer, to drag it out.
+  // A press held still on the picture takes the stretch between marks it's in
+  // out of the window as a clip, flying its chip from the timeline to the pointer.
   let hold: ReturnType<typeof setTimeout> | undefined;
   let held = false;
   let down = false;
   let pointer = { x: 0, y: 0 };
   let picture = $state<HTMLDivElement>();
   function onPictureDown(e: PointerEvent) {
-    if (e.button !== 0) return;
-    const now = video?.currentTime ?? 0;
-    const clip = clips.list.find((c) => c.status === "ready" && c.start <= now && now < c.end);
+    if (e.button !== 0 || !video) return;
+    const range = stretchAt(video.currentTime, mediaDuration());
     down = true;
     held = false;
     pointer = { x: e.clientX, y: e.clientY };
-    if (!clip) return;
+    if (!range || !cuts.list.length) return;
     hold = setTimeout(() => {
       held = true;
-      const shown = [`.scrubber [data-band="${clip.id}"]`, `.chip[data-clip="${clip.id}"]`]
-        .map((s) => document.querySelector(s)?.getBoundingClientRect())
-        .find((r) => r && r.width > 0 && r.right > 0 && r.left < innerWidth);
-      flyAndDrag(clip, shown ?? picture!.getBoundingClientRect(), pointer.x, pointer.y, () => down);
+      const from = rectOf(range.start, range.end) ?? picture!.getBoundingClientRect();
+      const label = formatTime(range.end - range.start);
+      flyAndDrag(exportStretch(range.start, range.end), label, from, pointer.x, pointer.y, () => down);
     }, HOLD_MS);
   }
   function onPictureMove(e: PointerEvent) {

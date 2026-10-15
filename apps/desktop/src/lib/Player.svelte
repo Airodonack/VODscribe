@@ -7,13 +7,15 @@
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
-  import { stretches } from "./media";
+  import { exportStretch, stretchAt } from "./dragout";
+  import { OWN_VODS_NOTE, PERMISSION_NOTE } from "./permission";
+  import Popover from "./Popover.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
-  import { formatTime, keepsVideo, playbackHint, siteName, watchUrl } from "./platform";
+  import { formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
   // jump, so jumping to the same timestamp twice still seeks.
@@ -142,6 +144,7 @@
     playing = p.playing();
     playerDuration = p.duration?.() ?? 0;
     fps = p.fps?.() ?? 30;
+    cuts.fps = fps;
     if (p.volume) [volume, muted] = [p.volume.get(), p.volume.muted()];
     if (p.rate) rate = p.rate.get();
     captionsAvailable = p.captions?.available() ?? false;
@@ -164,6 +167,17 @@
     else if (!active) activate(now);
   }
 
+  // Export: the stretch the playhead is in becomes a clip, a pill in the clip
+  // bar. Hovering the button lights the stretch up on the timeline.
+  let exportButton = $state<HTMLElement>();
+  let exportHover = $state(false);
+  const stretch = $derived(duration ? stretchAt(now, duration) : undefined);
+  const dragKey = os === "mac" ? "Option" : os === "linux" ? "Alt (or Ctrl)" : "Alt";
+  async function exportHere() {
+    if (stretch) await exportStretch(stretch.start, stretch.end);
+  }
+  let hideNote = $state(false);
+
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
 
@@ -174,13 +188,9 @@
     const rough = !playsHere(vod) ? " (as near as this player allows; download the video to be exact)" : "";
     if (selected)
       return `Mark at ${precise(selected.start)}${rough} · , and . move it a frame (Shift: ten) · Delete removes it`;
-    if (!cuts.list.length) return "Press X (or Mark) to mark a frame · the stretches between marks are clips";
-    const here = stretches(
-      cuts.list.map((m) => m.start),
-      duration,
-    ).find((s) => now >= s.start && now < s.end);
-    return here
-      ? `Stretch ${formatTime(here.start)}–${formatTime(here.end)} · ${formatTime(here.end - here.start)} long${rough}`
+    if (!cuts.list.length) return "Press X (or Mark) to mark a frame · Export makes the stretch between marks a clip";
+    return stretch
+      ? `Stretch ${formatTime(stretch.start)}–${formatTime(stretch.end)} · ${formatTime(stretch.end - stretch.start)} long${rough} · Export it, or ${dragKey}-drag it out`
       : "";
   });
 
@@ -253,15 +263,8 @@
       e.preventDefault();
       return;
     }
-    if (key === "Escape" && clips.ghost) {
-      clips.ghost = null;
-    } else if (key === "Enter" && clips.ghost && !target?.closest("button, a")) {
-      clips.keep();
-    } else if (!player) {
+    if (!player) {
       return;
-    } else if (key === "i" || key === "o") {
-      const mark = key === "i" ? clips.markIn : clips.markOut;
-      mark.call(clips, player.time(), vod.duration);
     } else if ((key === "," || key === ".") && player.step) {
       player.step(key === "," ? -1 : 1);
     } else if (key in STEPS) {
@@ -343,8 +346,7 @@
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
       <kbd>X</kbd> mark a frame (<kbd>,</kbd><kbd>.</kbd> move the selected mark, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
-      <kbd>I</kbd><kbd>O</kbd> clip from, to <span class="sep">·</span>
-      <kbd>Enter</kbd> keep the clip
+      <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
       {#if framed}
         <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
@@ -369,9 +371,25 @@
       </div>
     </div>
     {#if !collapsed}
+      <Popover
+        bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
+        anchor={exportButton}
+        label="Before downloading a clip"
+        width={340}
+      >
+        <div class="note">
+          <p>{PERMISSION_NOTE}</p>
+          <p class="muted">{OWN_VODS_NOTE}</p>
+          <label><input type="checkbox" bind:checked={hideNote} /> Don't show this again</label>
+          <div class="buttons">
+            <button onclick={() => clips.answer(false)}>Cancel</button>
+            <button class="primary" onclick={() => clips.answer(true, hideNote)}>Download clip</button>
+          </div>
+        </div>
+      </Popover>
       <div class="controls">
         {#if duration}
-          <Scrubber {vod} {duration} time={now} {fps} onseek={seekTo} />
+          <Scrubber {vod} {duration} time={now} {fps} highlight={exportHover ? stretch : null} onseek={seekTo} />
         {/if}
         <div class="row">
           <button
@@ -392,6 +410,17 @@
           >
           <button class="control mark" onclick={() => cuts.toggle(now, fps)} title="Mark this frame, or unmark it (X)">
             <Icon name="flag" size={14} /> Mark
+          </button>
+          <button
+            class="control export"
+            bind:this={exportButton}
+            onclick={exportHere}
+            onmouseenter={() => (exportHover = true)}
+            onmouseleave={() => (exportHover = false)}
+            disabled={!stretch}
+            title="Make the lit-up stretch a clip, to drag into your video editor or save. Or {dragKey}-drag a stretch of the timeline straight out."
+          >
+            <Icon name="scissors" size={14} /> Export
           </button>
           <span class="context muted" title={context}>{context}</span>
           {#if player?.volume && !player.ownControls}
@@ -441,7 +470,9 @@
           {/if}
         </div>
       </div>
-      <ClipStrip onplay={playFrom} />
+      {#if clips.list.length || clips.error}
+        <ClipStrip onplay={playFrom} />
+      {/if}
     {/if}
     {#if error}
       <p class="error-text note">
@@ -535,6 +566,39 @@
 
   .control.on {
     color: var(--accent);
+  }
+
+  .export {
+    gap: 5px;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .export:disabled {
+    opacity: 0.5;
+  }
+
+  .note {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    font-size: 13px;
+  }
+
+  .note p {
+    margin: 0;
+  }
+
+  .note label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .note .buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   .mark {

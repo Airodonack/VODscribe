@@ -12,6 +12,8 @@ class Cuts {
   vodId = $state<number | null>(null);
   list = $state.raw<Mark[]>([]);
   selected = $state<number | null>(null);
+  /** The open VOD's frame rate, as its player says (Player.svelte), for marks placed elsewhere. */
+  fps = 30;
   error = $state<string | null>(null);
   #seq = 0;
 
@@ -52,8 +54,8 @@ class Cuts {
     return this.list.find((m) => Math.abs(m.start - start) < 0.5 / fps);
   }
 
-  /** Puts a mark on the frame showing at `time`, or takes away the one there. */
-  async toggle(time: number, fps: number) {
+  /** Puts a mark on the frame showing at `time` (selected, if `select`), or takes away the one there. */
+  async toggle(time: number, fps: number, select = true) {
     const vodId = this.vodId;
     if (vodId === null) return;
     const there = this.at(time, fps);
@@ -61,11 +63,16 @@ class Cuts {
     try {
       const mark = await api.addMark(vodId, frameStart(time, fps));
       if (this.vodId === vodId) this.list = this.#sorted([...this.list, mark]);
-      this.selected = mark.id;
+      if (select) this.selected = mark.id;
       this.error = null;
     } catch (e) {
       this.error = String(e);
     }
+  }
+
+  /** Puts a mark on the frame showing at `time`, unless there's one already. */
+  async ensure(time: number) {
+    if (!this.at(time, this.fps)) await this.toggle(time, this.fps, false);
   }
 
   move(id: number, time: number) {

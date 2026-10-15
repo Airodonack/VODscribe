@@ -1,7 +1,7 @@
 // End-to-end test of an installed VODscribe, driven over WebDriver through
 // tauri-driver: first-run setup, adding a file, transcribing it, the
 // transcript, searching, playing from a result (with its waveform and
-// captions), making a clip, and removing it (answering "Keep" first, which
+// captions), marking and exporting a clip, and removing it (answering "Keep" first, which
 // must keep it).
 //
 //   node tests/e2e/run.mjs <the installed app>
@@ -219,16 +219,20 @@ async function main() {
   if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
   step(`waveform and captions: "${caption}"`);
 
-  // A clip: I and O while watching, Enter to keep it, then its file is cut.
+  // A clip: marks at 0.5 and 2.5 s (X), then Export with the playhead between them.
   const key = (k) =>
     js(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true }))`, k);
-  const seekTo = (t) => js(`document.querySelector(".player video").currentTime = arguments[0]`, t);
+  const seekTo = async (t) => {
+    await js(`document.querySelector(".player video").currentTime = arguments[0]`, t);
+    await sleep(300);
+  };
   await seekTo(0.5);
-  await key("i");
+  await key("x");
   await seekTo(2.5);
-  await key("o");
-  await until("the range picked", () => js(`return !!document.querySelector(".chip.ghost")`), 10_000);
-  await key("Enter");
+  await key("x");
+  await until("two marks", async () => (await invoke("list_marks", { vodId: done.id })).length === 2, 10_000);
+  await seekTo(1);
+  await click("button.export");
   const clip = await until(
     "the clip's file",
     async () => {
@@ -238,7 +242,7 @@ async function main() {
     },
     MINUTE,
   );
-  if (Math.abs(clip.end - clip.start - 2) > 0.3)
+  if (Math.abs(clip.start - 0.5) > 0.05 || Math.abs(clip.end - 2.5) > 0.05)
     throw new Error(`the clip runs ${clip.start} to ${clip.end}, not 0.5 to 2.5`);
   // The chip follows a moment after the clip is recorded as made.
   await until("the chip to show it made", () => js(`return !!document.querySelector(".chip.ready")`), 10_000);

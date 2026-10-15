@@ -1,32 +1,25 @@
-// The open VOD's clips (crates/core clips.rs), shared by what makes them (the
-// player's I and O keys, the clip bar, a drag across transcript lines) and the
-// chips under the player that show them. A range picked but not yet kept is the
-// "ghost": shown as a chip of its own until it's kept (or dropped).
+// The open VOD's clips (crates/core clips.rs): stretches between marks
+// (cuts.svelte.ts) exported with the Export button, an Alt-drag on the
+// timeline or a press held on the picture, shown as pills in the clip bar
+// under the player (ClipStrip.svelte).
 
 import { SvelteMap } from "svelte/reactivity";
 import { api, events, type Clip } from "./api";
 import { hideNote, noteHidden } from "./permission";
-
-/** A range picked but not kept yet. */
-export interface Range {
-  start: number;
-  end: number;
-}
-
-/** How long a clip started (or ended) with I or O alone runs. */
-export const DEFAULT_LENGTH = 30;
 
 class Clips {
   vodId = $state<number | null>(null);
   list = $state.raw<Clip[]>([]);
   /** How far each clip being cut is, 0..1. */
   progress = new SvelteMap<number, number>();
-  ghost = $state<Range | null>(null);
   error = $state<string | null>(null);
   /** While the note before downloading a clip is up: how it's answered. */
   asking = $state<((download: boolean) => void) | null>(null);
   /** Whether the VOD shown is from a site, so its clips are downloaded. */
   #fromSite = false;
+  get fromSite() {
+    return this.#fromSite;
+  }
   #listening = false;
   #seq = 0;
 
@@ -37,7 +30,6 @@ class Clips {
     if (this.vodId === vodId) return;
     this.vodId = vodId;
     this.list = [];
-    this.ghost = null;
     this.error = null;
     this.#listen();
     const mine = ++this.#seq;
@@ -65,44 +57,45 @@ class Clips {
     this.list = at < 0 ? [...this.list, clip] : this.list.map((c, i) => (i === at ? clip : c));
   }
 
-  /** Picks `start`..`end` (either way round) as the range to keep, within `duration` if known. */
-  pick(start: number, end: number, duration?: number | null) {
-    let [a, b] = start <= end ? [start, end] : [end, start];
-    a = Math.max(0, a);
-    if (duration) b = Math.min(duration, b);
-    this.ghost = b - a >= 0.1 ? { start: a, end: b } : null;
+  /** The clip of exactly `start`..`end`, if one's been made. */
+  find(start: number, end: number): Clip | undefined {
+    return this.list.find((c) => Math.abs(c.start - start) < 0.001 && Math.abs(c.end - end) < 0.001);
   }
 
-  /** The I key: the range starts at `time`. */
-  markIn(time: number, duration?: number | null) {
-    const end = this.ghost && this.ghost.end > time ? this.ghost.end : time + DEFAULT_LENGTH;
-    this.pick(time, end, duration);
-  }
-
-  /** The O key: the range ends at `time`. */
-  markOut(time: number, duration?: number | null) {
-    const start = this.ghost && this.ghost.start < time ? this.ghost.start : time - DEFAULT_LENGTH;
-    this.pick(start, time, duration);
-  }
-
-  /** Makes the picked range a clip. */
-  async keep() {
-    const ghost = this.ghost;
+  /**
+   * Makes `start`..`end` a clip, or gives the one made already. Before the
+   * first downloaded from a site, the note on permission is answered first.
+   * Null if it's declined or fails.
+   */
+  async make(start: number, end: number): Promise<Clip | null> {
     const vodId = this.vodId;
-    if (!ghost || vodId === null || this.asking) return;
-    // Before the first clip downloaded from a site: a word on permission.
+    const made = this.find(start, end);
+    if (made) return made;
+    if (vodId === null || this.asking) return null;
     if (this.#fromSite && !noteHidden()) {
       const download = await new Promise<boolean>((answer) => (this.asking = answer));
       this.asking = null;
-      if (!download) return;
+      if (!download) return null;
     }
-    this.ghost = null;
     try {
-      this.#put(await api.addClip(vodId, ghost.start, ghost.end));
+      const clip = await api.addClip(vodId, start, end);
+      this.#put(clip);
       this.error = null;
+      return clip;
     } catch (e) {
-      this.ghost = ghost;
       this.error = String(e);
+      return null;
+    }
+  }
+
+  /** Waits, while `still()`, for clip `id`'s file: the clip once made, else null. */
+  async ready(id: number, still: () => boolean): Promise<Clip | null> {
+    for (;;) {
+      const clip = this.list.find((c) => c.id === id);
+      if (!clip || clip.status === "error") return null;
+      if (clip.status === "ready") return clip;
+      if (!still()) return null;
+      await new Promise((r) => setTimeout(r, 100));
     }
   }
 

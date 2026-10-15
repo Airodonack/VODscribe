@@ -398,3 +398,8 @@ body.dropping iframe {
   box-shadow: var(--shadow);
   pointer-events: none;
 }
+
+/* Still being made: it can be dragged once it's done. */
+.flying-chip.making {
+  border-style: dashed;
+}

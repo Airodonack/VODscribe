@@ -10,8 +10,7 @@
   import { Marks } from "./marks.svelte";
   import { formatTime } from "./platform";
   import { buildRows, linesSpan, type Row } from "./rows";
-  import { clips } from "./clips.svelte";
-  import { playsHere } from "./embed";
+  import { cuts } from "./cuts.svelte";
 
   let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
 
@@ -369,8 +368,8 @@
 
   const play = (time: number) => onplay(vod.id, time);
 
-  // Pressing on a line and dragging across others picks them as a clip
-  // (clips.svelte.ts); a click without a drag still plays the line.
+  // Pressing on a line and dragging across others puts marks either side of
+  // them (cuts.svelte.ts); a click without a drag still plays the line.
   let drag = $state<{ from: number; to: number } | null>(null);
   let pointer = { x: 0, y: 0 };
   let moved = false;
@@ -437,14 +436,12 @@
     const last = lines.indexOf(rows[to].line!);
     if (first < 0 || last < 0) return;
     const { start, end } = linesSpan(lines, first, last);
-    // Picked on a VOD the player isn't showing: show it there, from the pick's start.
-    if (clips.vodId !== vod.id) {
-      clips.open(vod.id, !playsHere(vod));
-      clips.pick(start, end, vod.duration);
-      play(start);
-    } else {
-      clips.pick(start, end, vod.duration);
-    }
+    // Marks either side of the lines, and the playhead to their start (showing
+    // the VOD in the player if it wasn't), so Export takes just them.
+    lastPick = { start, end };
+    cuts.open(vod.id);
+    cuts.ensure(start).then(() => cuts.ensure(end));
+    play(start);
   }
 
   function onRowClick(time: number) {
@@ -452,14 +449,18 @@
       swallowClick = false;
       return;
     }
+    lastPick = null;
     play(time);
   }
 
-  /** Whether row `index` is in the lines being dragged across, or in the range picked. */
+  // The lines last dragged across, marked either side, stay lit until a click.
+  let lastPick = $state<{ start: number; end: number } | null>(null);
+
+  /** Whether row `index` is in the lines being dragged across, or last dragged across. */
   function picked(index: number, row: Row): boolean {
     if (drag) return index >= Math.min(drag.from, drag.to) && index <= Math.max(drag.from, drag.to);
-    const ghost = clips.vodId === vod.id ? clips.ghost : null;
-    return !!ghost && !!row.line && row.line.start >= ghost.start - 0.01 && row.line.start < ghost.end - 0.01;
+    const pick = lastPick;
+    return !!pick && !!row.line && row.line.start >= pick.start - 0.01 && row.line.start < pick.end - 0.01;
   }
 
   // The minimap at the right edge (Minimap.svelte): chat activity over the
