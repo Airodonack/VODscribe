@@ -181,19 +181,18 @@
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
 
-  // The line beside the controls: facts only (the buttons and their tips say
-  // how). ≈ marks times a site's player can only show roughly.
+  // The line beside the controls: a fact or two (the shortcuts list says how,
+  // and the line is kept for what's to come). ≈ marks times a site's player
+  // can only show roughly.
   const context = $derived.by(() => {
     const approx = playsHere(vod) ? "" : "≈ ";
+    const span = (a: number, b: number) => `${approx}${formatTime(a)}–${formatTime(b)} (${formatTime(b - a)})`;
     const picked = cuts.selection;
-    if (picked && cuts.selectedEdge)
-      return `Selection ${cuts.selectedEdge} at ${approx}${precise(picked[cuts.selectedEdge])} · , . move it a frame`;
-    if (picked)
-      return `${approx}${formatTime(picked.start)}–${formatTime(picked.end)} selected · ${formatTime(picked.end - picked.start)}`;
+    if (picked && cuts.selectedEdge) return `${approx}${precise(picked[cuts.selectedEdge])}`;
+    if (picked) return span(picked.start, picked.end);
     const selected = cuts.list.find((m) => m.id === cuts.selected);
-    if (selected) return `Cut at ${approx}${precise(selected.start)} · , . move it a frame · Delete removes it`;
-    if (stretch && between)
-      return `${approx}${formatTime(stretch.start)}–${formatTime(stretch.end)} · ${formatTime(stretch.end - stretch.start)}`;
+    if (selected) return `${approx}${precise(selected.start)}`;
+    if (stretch && between) return span(stretch.start, stretch.end);
     return "";
   });
   // Whether the playhead's stretch lies between two cuts (not the VOD's start or end).
@@ -206,7 +205,8 @@
   /** Split: cuts both ends of the selection, else cuts here (or takes away the cut here). */
   function clip() {
     if (cuts.selection) cuts.cutSelection();
-    else cuts.toggle(now, fps);
+    // Selected only when paused: cuts placed while watching leave the keys to the playhead.
+    else cuts.toggle(now, fps, !playing);
   }
 
   /** Export: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
