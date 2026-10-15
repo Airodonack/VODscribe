@@ -141,8 +141,15 @@ impl Playable {
             choices.push(format!("bv*[height<={height}][vcodec~='{v}']+ba[acodec~='{a}']"));
             choices.push(format!("b[height<={height}][vcodec~='{v}'][acodec~='{a}']"));
         }
-        choices.push(format!("b[height<={height}]"));
-        choices.push(format!("bv*[height<={height}]+ba"));
+        // Video the site doesn't name ("!~=?" keeps a format with no codec
+        // given): not of a family known not to play here.
+        let unplayable: String = [Video::Av1, Video::Vp9, Video::Hevc, Video::H264]
+            .into_iter()
+            .filter(|v| !self.video.iter().any(|(pv, _)| pv == v))
+            .map(|v| format!("[vcodec!~=?'{}']", v.pattern()))
+            .collect();
+        choices.push(format!("b[height<={height}]{unplayable}"));
+        choices.push(format!("bv*[height<={height}]{unplayable}+ba"));
         for a in &self.audio {
             choices.push(format!("ba[vcodec=none][acodec~='{}']", a.pattern()));
         }
@@ -176,9 +183,12 @@ mod tests {
         let choices: Vec<&str> = s.split('/').collect();
         assert_eq!(choices[0], "bv*[height<=720][vcodec~='^(av01|av1)']+ba[acodec~='^opus']");
         assert_eq!(choices[2], "bv*[height<=720][vcodec~='^(avc1|avc3|h264)']+ba[acodec~='^(mp4a|aac)']");
-        // Video whose codecs aren't named comes before audio alone. Every
-        // choice is fetched by yt-dlp itself, over the web.
-        assert_eq!(&choices[4..6], ["b[height<=720]", "bv*[height<=720]+ba"]);
+        // Video whose codecs aren't named comes before audio alone, but not of a
+        // family known not to play here. Every choice is fetched by yt-dlp
+        // itself, over the web.
+        let skip = "[vcodec!~=?'^(vp09|vp9)'][vcodec!~=?'^(hvc1|hev1|hevc|h265)']";
+        assert_eq!(choices[4], format!("b[height<=720]{skip}"));
+        assert_eq!(choices[5], format!("bv*[height<=720]{skip}+ba"));
         assert_eq!(choices[6], "ba[vcodec=none][acodec~='^opus']");
         assert_eq!(&choices[7..], ["ba", "b"]);
     }
