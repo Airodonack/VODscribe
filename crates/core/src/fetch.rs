@@ -74,8 +74,9 @@ pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path, cancel: &AtomicBool) -
         // ourselves and have yt-dlp treat the manifest as a plain HLS stream.
         Err(e) if kick::parse_vod_url(url).is_some() && !crate::is_canceled(&e) => {
             let (info, manifest) = kick::resolve(url).map_err(|kick_err| e.context(kick_err))?;
-            let host = manifest.strip_prefix("https://").and_then(|r| r.split('/').next()).unwrap_or_default();
-            if host != "kick.com" && !host.ends_with(".kick.com") {
+            // Checked like any link, which leaves a plain host to compare exactly.
+            let manifest = crate::net::public_url(&manifest)?;
+            if !is_kick_host(&manifest) {
                 bail!("Kick answered with a stream somewhere other than Kick.");
             }
             // A plain HLS stream, which only the generic extractor reads; the
@@ -86,6 +87,14 @@ pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path, cancel: &AtomicBool) -
     };
     fs::write(info_path, raw)?;
     Ok(info)
+}
+
+/// Whether `url` (as `net::public_url` returns it) is https on kick.com or a subdomain.
+fn is_kick_host(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h).split(':').next().unwrap_or_default();
+    host == "kick.com" || host.ends_with(".kick.com")
 }
 
 fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> Result<(Value, Vec<u8>)> {
@@ -461,6 +470,22 @@ mod tests {
         let stopped = stopper.join().unwrap();
         assert!(result.is_err_and(|e| crate::is_canceled(&e)));
         assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the cancel", stopped.elapsed());
+    }
+
+    #[test]
+    fn kick_streams_only_from_kick() {
+        assert!(is_kick_host("https://web.kick.com/api/v1/stream/manifest.m3u8?init=x"));
+        assert!(is_kick_host("https://kick.com/x"));
+        for bad in [
+            "https://evil.com?x.kick.com/m.m3u8",
+            "https://evil.com#.kick.com/",
+            "https://evilkick.com/",
+            "http://web.kick.com/",
+            "https://kick.com@evil.com/",
+            "https://web.kick.com.evil.com/",
+        ] {
+            assert!(!is_kick_host(bad), "{bad}");
+        }
     }
 
     #[test]
