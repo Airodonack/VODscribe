@@ -32,8 +32,9 @@ pub struct Settings {
     /// until the user turns them on, since each is a service contacted.
     #[serde(deserialize_with = "providers")]
     pub emote_providers: EmoteProviders,
-    /// The tallest video kept from other sites (`pipeline::keeps_video`), in
-    /// pixels; `video_height()` gives the default when unset.
+    /// The tallest video downloaded: kept from other sites
+    /// (`pipeline::keeps_video`) and for clips (`clips::selector`), in pixels;
+    /// `video_height()` gives the default when unset.
     pub video_height: Option<u32>,
 }
 
@@ -85,9 +86,10 @@ fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D
 }
 
 impl Settings {
-    /// The tallest video to keep: 720p unless chosen otherwise.
+    /// The tallest video to download: 1080p, the most offered, unless chosen
+    /// otherwise; clips are posted at 1080p.
     pub fn video_height(&self) -> u32 {
-        self.video_height.unwrap_or(720)
+        self.video_height.unwrap_or(1080)
     }
 
     /// Missing or unreadable settings fall back to defaults.

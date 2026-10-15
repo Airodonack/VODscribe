@@ -31,7 +31,7 @@
     720: "1.5 to 2.5 GB",
     1080: "3 to 5 GB",
   };
-  let videoHeight = $derived(appSettings.value?.video_height ?? 720);
+  let videoHeight = $derived(appSettings.value?.video_height ?? 1080);
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<DownloadProgress | null>(null);
@@ -259,8 +259,8 @@
       {/each}
     </div>
     <p class="muted hint">
-      Up to {videoHeight}p. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[720]}. Applies to videos downloaded
-      from now on.
+      Up to {videoHeight}p, for kept videos and clips. An hour is about {HOUR_SIZE[videoHeight] ?? HOUR_SIZE[1080]}.
+      Applies to videos downloaded from now on.
     </p>
     <p class="label">Repair VODscribe</p>
     <p class="muted hint">
