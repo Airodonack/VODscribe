@@ -238,7 +238,7 @@
           onseek={(t) => (player ? player.seek(t, false) : (pending = { time: t, play: false }))}
         />
       {/if}
-      <ClipStrip onplay={playFrom} canCut={playsHere(vod)} />
+      <ClipStrip onplay={playFrom} />
     {/if}
     {#if error}
       <p class="error-text note">

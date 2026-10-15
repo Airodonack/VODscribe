@@ -142,7 +142,29 @@ const FILE: &str = "[vodscribe-file]";
 #[derive(Clone, Copy)]
 pub enum Wanted<'a> {
     Audio,
-    Video { selector: &'a str, ffmpeg: &'a Path },
+    Video {
+        selector: &'a str,
+        ffmpeg: &'a Path,
+    },
+    /// Only `start`..`end` seconds of a video (a clip), in an MP4.
+    Section {
+        selector: &'a str,
+        ffmpeg: &'a Path,
+        start: f64,
+        end: f64,
+    },
+}
+
+/// ffmpeg's arguments for files it reads after a download (merging, fixing
+/// up): the app's lists, with picture decoders, which merging needs to read
+/// a video's format.
+fn ffmpeg_reading_files() -> String {
+    format!(
+        "ffmpeg_i:-format_whitelist {} -codec_whitelist {},{} -protocol_whitelist file",
+        tools::FFMPEG_FORMATS,
+        tools::FFMPEG_AUDIO,
+        tools::FFMPEG_PICTURE
+    )
 }
 
 /// Downloads what's `wanted`, reporting a 0..1 fraction. Returns the path of
@@ -177,12 +199,26 @@ pub fn download(
             .args(["-f", selector, "--merge-output-format", "mp4", "--remux-video", "flv>mp4/mov>mp4"])
             .args(["--downloader", "m3u8:native"])
             .arg("--postprocessor-args")
+            .arg(ffmpeg_reading_files())
+            .arg("--ffmpeg-location")
+            .arg(ffmpeg),
+        // A section is the one download yt-dlp hands to ffmpeg, which seeks in
+        // the stream itself. It reads the stream at the URL given only: over
+        // https (no local files, nor plain http), and only the formats and
+        // codecs the app reads anyway, HLS playlists among them.
+        Wanted::Section { selector, ffmpeg, start, end } => cmd
+            .args(["-f", selector, "--merge-output-format", "mp4"])
+            .arg("--download-sections")
+            .arg(format!("*{start:.3}-{end:.3}"))
+            .arg("--downloader-args")
             .arg(format!(
-                "ffmpeg_i:-format_whitelist {} -codec_whitelist {},{} -protocol_whitelist file",
+                "ffmpeg_i:-protocol_whitelist https,tls,tcp -format_whitelist {},hls -codec_whitelist {},{}",
                 tools::FFMPEG_FORMATS,
                 tools::FFMPEG_AUDIO,
                 tools::FFMPEG_PICTURE
             ))
+            .arg("--postprocessor-args")
+            .arg(ffmpeg_reading_files())
             .arg("--ffmpeg-location")
             .arg(ffmpeg),
     };

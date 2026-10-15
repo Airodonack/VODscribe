@@ -9,7 +9,7 @@
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
 
-  let { onplay, canCut }: { onplay: (time: number) => void; canCut: boolean } = $props();
+  let { onplay }: { onplay: (time: number) => void } = $props();
 
   let renaming = $state<number | null>(null);
   let draft = $state("");
@@ -35,8 +35,7 @@
   function describe(clip: Clip): string {
     if (clip.status === "error") return `Couldn't make this clip: ${clip.error ?? "unknown error"}`;
     if (clip.status === "cutting") return "Making the clip…";
-    if (clip.status === "waiting")
-      return canCut ? "Waiting to be made" : "Clips of this VOD can't be made into files yet";
+    if (clip.status === "waiting") return "Waiting to be made";
     return clip.title;
   }
 </script>

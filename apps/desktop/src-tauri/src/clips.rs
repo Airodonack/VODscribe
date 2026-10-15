@@ -1,6 +1,7 @@
 //! Clips (`vodscribe_core::clips`): the commands the interface makes and
 //! changes them with, and the queue that cuts their files, one at a time. A
-//! clip of a VOD that plays from a file here is cut from it; any other waits.
+//! clip of a VOD that plays from a file here is cut from it; of any other, its
+//! range is downloaded (`fetch::Wanted::Section`) and cut from that.
 //!
 //! Clip files go in the computer's Videos folder, under VODscribe: they're for
 //! taking elsewhere, and video editors link to a file where it is, so a clip
@@ -16,7 +17,9 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipStatus, Db};
-use vodscribe_core::{clips, tools};
+use vodscribe_core::playable::Playable;
+use vodscribe_core::settings::Settings;
+use vodscribe_core::{clips, fetch, tools};
 
 use crate::{AppState, CmdResult, err, media};
 
@@ -106,8 +109,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         let db = state.db.lock().unwrap();
         let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready) else { return Ok(()) };
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(()) };
-        // A VOD from a site with its own player: its range is downloaded instead (to come).
-        let Some(source) = media::playable_file(&db, vod.id) else { return Ok(()) };
+        let source = media::playable_file(&db, vod.id);
         (clip, vod, source)
     };
     let range = (clip.start, clip.end);
@@ -124,12 +126,16 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         emit(app, &db, id);
     }
     let mut last = Instant::now();
-    let result = clips::cut(&ffmpeg, Path::new(&source), &out, range, vod.audio_only, stop, |progress| {
+    let mut report = |progress: f64| {
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
             let _ = app.emit("clip-progress", Progress { id, progress });
         }
-    });
+    };
+    let result = match &source {
+        Some(source) => clips::cut(&ffmpeg, Path::new(source), &out, range, vod.audio_only, stop, report),
+        None => download_and_cut(app, &vod, id, range, &ffmpeg, &out, stop, &mut report),
+    };
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     let recorded = match &result {
@@ -146,6 +152,54 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         emit(app, &db, id);
     }
     Ok(())
+}
+
+/// Makes a clip of a VOD from a site: downloads its range (the bulk of the
+/// time, so most of the progress), then cuts that exactly as from a file.
+#[allow(clippy::too_many_arguments)]
+fn download_and_cut(
+    app: &AppHandle,
+    vod: &vodscribe_core::db::Vod,
+    id: i64,
+    (start, end): (f64, f64),
+    ffmpeg: &Path,
+    out: &Path,
+    stop: &AtomicBool,
+    report: &mut impl FnMut(f64),
+) -> Result<()> {
+    let paths = &app.state::<AppState>().paths;
+    let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("The video downloader isn't installed yet.")?;
+    let work = paths.work();
+    std::fs::create_dir_all(&work)?;
+    let info = work.join(format!("clip-{id}.info.json"));
+    // Named for the range, so a download for an earlier range is never taken for this one.
+    let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0) as i64, (end * 1000.0) as i64));
+    let selector = Playable::load(&paths.playable()).selector(Settings::load(&paths.settings()).video_height());
+    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start, end };
+    let result = (|| {
+        fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
+        let mut get = || fetch::download(&yt_dlp, &info, &stem, wanted, stop, |f| report(f * 0.8));
+        let section = match get() {
+            // As for whole downloads (pipeline::download): a fresh probe is a fresh session.
+            Err(e) if fetch::is_refused(&e) => {
+                fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
+                get()
+            }
+            result => result,
+        }?;
+        clips::cut(ffmpeg, &section, out, (0.0, end - start), vod.audio_only, stop, |p| report(0.8 + p * 0.2))
+    })();
+    // Whatever was downloaded goes, done or not.
+    let prefix = format!("clip-{id}");
+    if let Ok(entries) = std::fs::read_dir(&work) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.strip_prefix(&prefix).is_some_and(|rest| rest.starts_with(['.', '-'])) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    result
 }
 
 /// A range that can be a clip of a VOD `duration` seconds long (if known).
