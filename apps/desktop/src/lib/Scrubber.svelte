@@ -5,7 +5,9 @@
   // playhead; a mark's flag selects it and drags it (a frame at a time); an
   // Alt-drag (Option on a Mac, also Ctrl on Linux, where desktops often take
   // Alt-drag to move windows) makes the stretch under the pointer a clip and
-  // drags it out of the window (dragout.ts). The wheel zooms around the
+  // drags it out of the window (dragout.ts). Holding the middle button and
+  // dragging pans (sideways) and zooms (up and down) about where it was
+  // pressed; a middle click fits the whole VOD. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
   // playhead until panned.
 
@@ -131,7 +133,10 @@
   // Pressing: scrubbing (the playhead follows), a mark's flag, or an Alt-drag
   // out. Followed on the window: the bar's contents changing under the
   // pointer mid-drag ended drags in WebKitGTK.
-  type Drag = { kind: "scrub" } | { kind: "mark"; id: number; at: number; x: number; moved: boolean };
+  type Drag =
+    | { kind: "scrub" }
+    | { kind: "mark"; id: number; at: number; x: number; moved: boolean }
+    | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
   let drag = $state<Drag | null>(null);
   let hover = $state<number | null>(null);
 
@@ -143,6 +148,12 @@
   const dragsOut = (e: PointerEvent) => e.altKey || (os === "linux" && e.ctrlKey);
 
   function onDown(e: PointerEvent) {
+    if (e.button === 1) {
+      const at = timeAt(e.clientX);
+      drag = { kind: "view", x: e.clientX, y: e.clientY, at, share: (at - viewStart) / span, span, moved: false };
+      e.preventDefault();
+      return;
+    }
     if (e.button !== 0) return;
     down = true;
     if (dragsOut(e)) {
@@ -174,6 +185,19 @@
       hover = inside || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
     }
     if (!drag) return;
+    if (drag.kind === "view") {
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+      drag.moved = true;
+      follow = false;
+      // Up zooms in, down out; the time grabbed stays under the pointer as it pans.
+      const length = Math.min(duration, Math.max(SHORTEST, drag.span * Math.exp(dy / 120)));
+      const box = bar!.getBoundingClientRect();
+      const share = (e.clientX - box.left) / box.width;
+      setView(drag.at - share * length, length);
+      return;
+    }
     const t = timeAt(e.clientX);
     if (drag.kind === "scrub") {
       onseek(t);
@@ -213,6 +237,10 @@
     down = false;
     const done = drag;
     drag = null;
+    if (done?.kind === "view" && !done.moved) {
+      follow = true;
+      setView(0, duration);
+    }
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
       if (done.moved) cuts.move(done.id, done.at);
@@ -245,11 +273,14 @@
 <div
   class="scrubber"
   class:zoomed={span < duration}
+  class:panning={drag?.kind === "view"}
   data-view-start={viewStart}
   data-span={span}
   bind:this={bar}
   bind:clientWidth={width}
   onpointerdown={onDown}
+  onmousedown={(e) => e.button === 1 && e.preventDefault()}
+  onauxclick={(e) => e.button === 1 && e.preventDefault()}
   onpointerleave={() => !drag && (hover = null)}
   onwheel={onWheel}
 >
@@ -300,6 +331,10 @@
 </div>
 
 <style>
+  .scrubber.panning {
+    cursor: grabbing;
+  }
+
   .scrubber {
     --played: var(--accent);
     --unplayed: color-mix(in srgb, var(--muted) 50%, transparent);
