@@ -141,6 +141,7 @@
   // pointer mid-drag ended drags in WebKitGTK.
   type Drag =
     | { kind: "scrub" }
+    | { kind: "edge"; edge: "start" | "end"; at: number; x: number; moved: boolean }
     | { kind: "mark"; id: number; at: number; x: number; moved: boolean }
     | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
   let drag = $state<Drag | null>(null);
@@ -172,12 +173,22 @@
     }
     const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
     const mark = flag && cuts.list.find((m) => m.id === Number(flag.dataset.mark));
-    if (mark) {
+    const edge = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]")?.dataset.edge as
+      "start" | "end" | undefined;
+    if (edge && cuts.selection) {
+      // An edge of the selection: selected, to drag or move a frame at a time.
+      drag = { kind: "edge", edge, at: cuts.selection[edge], x: e.clientX, moved: false };
+      cuts.selectedEdge = edge;
+      cuts.selected = null;
+    } else if (mark) {
       drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false };
       cuts.selected = mark.id;
+      cuts.clearSelection();
     } else {
+      // Anywhere else lets go of the cut and the selection.
       drag = { kind: "scrub" };
       cuts.selected = null;
+      cuts.clearSelection();
       follow = true;
       onseek(timeAt(e.clientX));
     }
@@ -207,6 +218,12 @@
     const t = timeAt(e.clientX);
     if (drag.kind === "scrub") {
       onseek(t);
+    } else if (drag.kind === "edge") {
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
+      drag.moved = true;
+      cuts.setEdge(drag.edge, frameStart(t, fps));
+      drag.edge = cuts.selectedEdge ?? drag.edge;
+      onseek(inFrame(frameStart(t, fps)));
     } else if (drag.kind === "mark") {
       if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
       drag.moved = true;
@@ -243,6 +260,7 @@
       follow = true;
       setView(0, duration);
     }
+    if (done?.kind === "edge" && !done.moved) onseek(inFrame(done.at));
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
       if (done.moved) cuts.move(done.id, done.at);
@@ -303,8 +321,19 @@
       class="selection"
       style:left={pct(Math.max(picked.start, viewStart))}
       style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-      title="Selected: Clip (X) cuts both ends"
+      title="Selected: Clip cuts both ends"
     ></div>
+    {#each ["start", "end"] as const as edge (edge)}
+      {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}
+        <span
+          class="cut pick"
+          class:selected={cuts.selectedEdge === edge}
+          data-edge={edge}
+          style:left={pct(picked[edge])}
+          title="The selection's {edge} · drag to move it"><span class="foot"></span></span
+        >
+      {/if}
+    {/each}
   {/if}
   {#each [highlight, taking] as lit, i (i)}
     {#if lit && lit.end > viewStart && lit.start < viewStart + span}
@@ -339,7 +368,9 @@
         data-mark={mark.id}
         style:left={pct(at)}
         title="Cut at {formatTime(at)} · drag to move it"
-      ></span>
+      >
+        {#if cuts.selected === mark.id}<span class="foot"></span>{/if}
+      </span>
     {/if}
   {/each}
   {#if hoverTime !== null && hover !== null}
@@ -448,22 +479,25 @@
     border-top: 8px solid var(--color);
   }
 
-  /* Selected: its own color, a stronger line and a larger notch. */
-  .cut.selected {
+  /* A selection's edges: its color, with a notch at the bottom too. */
+  .cut.pick {
     --color: var(--pick);
+  }
+
+  /* Selected (a cut, or a selection's edge): its own color, and a notch at
+     the bottom, so it's told apart by shape as well as color. */
+  .cut.selected {
+    --color: var(--picked);
     z-index: 2;
   }
 
-  .cut.selected::before {
-    left: 5px;
-    width: 3px;
-  }
-
-  .cut.selected::after {
-    left: -1px;
-    border-left-width: 7.5px;
-    border-right-width: 7.5px;
-    border-top-width: 11px;
+  .foot {
+    position: absolute;
+    bottom: 0;
+    left: 1px;
+    border-left: 5.5px solid transparent;
+    border-right: 5.5px solid transparent;
+    border-bottom: 8px solid var(--color);
   }
 
   /* The stretch between two cuts the playhead is in. */
@@ -481,9 +515,6 @@
     top: 0;
     bottom: 0;
     background: color-mix(in srgb, var(--pick) 20%, transparent);
-    box-shadow:
-      inset 2px 0 0 var(--pick),
-      inset -2px 0 0 var(--pick);
     pointer-events: none;
   }
 

@@ -135,9 +135,19 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
+    // Named for its range: one already made for this range is made again in
+    // place; a range moved gets a new file, and the old one stays where it is.
+    let (folder, name) = clips::file_path(
+        vod.info.channel.as_deref(),
+        vod.info.published.as_deref(),
+        &vod.info.title,
+        range,
+        vod.audio_only,
+    );
+    let dir = folder.map_or_else(|| clips_dir(app), |f| clips_dir(app).join(f));
     let out = match &clip.file_path {
-        Some(path) => PathBuf::from(path),
-        None => clips::unique_path(&clips_dir(app), &clips::file_name(&vod.info.title, clip.start, vod.audio_only)),
+        Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
+        _ => clips::unique_path(&dir, &name),
     };
     {
         let db = state.db.lock().unwrap();

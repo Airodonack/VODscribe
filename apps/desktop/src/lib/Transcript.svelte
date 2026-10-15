@@ -448,6 +448,8 @@
       swallowClick = false;
       return;
     }
+    // A click elsewhere than the selection's edges lets go of it.
+    if (cuts.vodId === vod.id) cuts.clearSelection();
     play(time);
   }
 

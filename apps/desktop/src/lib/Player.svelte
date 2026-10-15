@@ -186,6 +186,8 @@
   const context = $derived.by(() => {
     const approx = playsHere(vod) ? "" : "≈ ";
     const picked = cuts.selection;
+    if (picked && cuts.selectedEdge)
+      return `Selection ${cuts.selectedEdge} at ${approx}${precise(picked[cuts.selectedEdge])} · , . move it a frame`;
     if (picked)
       return `${approx}${formatTime(picked.start)}–${formatTime(picked.end)} selected · ${formatTime(picked.end - picked.start)}`;
     const selected = cuts.list.find((m) => m.id === cuts.selected);
@@ -263,11 +265,12 @@
       return;
     }
     if (key === "Escape" && cuts.selection) {
-      cuts.selection = null;
+      cuts.clearSelection();
       e.preventDefault();
       return;
     }
-    if (cuts.selected !== null && (key === "," || key === "." || key === "<" || key === ">")) {
+    const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
+    if (moving && (key === "," || key === "." || key === "<" || key === ">")) {
       // A selected mark moves a frame (ten with Shift), and the picture shows its frame.
       const frames = (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1);
       const at = cuts.nudgeSelected(frames, fps, duration);

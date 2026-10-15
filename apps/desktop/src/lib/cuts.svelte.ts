@@ -14,6 +14,8 @@ class Cuts {
   selected = $state<number | null>(null);
   /** A stretch picked (in the transcript) but not cut yet: Clip cuts both its ends. */
   selection = $state<{ start: number; end: number } | null>(null);
+  /** The selection's edge selected, to drag or move a frame at a time. */
+  selectedEdge = $state<"start" | "end" | null>(null);
   /** The open VOD's frame rate, as its player says (Player.svelte), for marks placed elsewhere. */
   fps = 30;
   error = $state<string | null>(null);
@@ -25,6 +27,7 @@ class Cuts {
     this.list = [];
     this.selected = null;
     this.selection = null;
+    this.selectedEdge = null;
     this.#reload();
   }
 
@@ -77,9 +80,26 @@ class Cuts {
   async cutSelection() {
     const picked = this.selection;
     if (!picked) return;
-    this.selection = null;
+    this.clearSelection();
     await this.ensure(picked.start);
     await this.ensure(picked.end);
+  }
+
+  clearSelection() {
+    this.selection = null;
+    this.selectedEdge = null;
+  }
+
+  /** Moves the selection's `edge` to `time`; dragged past the other edge, it becomes that one. */
+  setEdge(edge: "start" | "end", time: number) {
+    const s = this.selection;
+    if (!s) return;
+    const other = edge === "start" ? s.end : s.start;
+    if ((edge === "start" && time > other) || (edge === "end" && time < other)) {
+      edge = edge === "start" ? "end" : "start";
+    }
+    this.selection = edge === "start" ? { start: time, end: other } : { start: other, end: time };
+    this.selectedEdge = edge;
   }
 
   /** Puts a mark on the frame showing at `time`, unless there's one already. */
@@ -92,8 +112,14 @@ class Cuts {
     this.#save(api.moveMark(id, time));
   }
 
-  /** Moves the selected mark `frames` frames; returns where it is now. */
+  /** Moves the selected mark, or the selection's selected edge, `frames` frames; returns where it is now. */
   nudgeSelected(frames: number, fps: number, duration: number): number | null {
+    const s = this.selection;
+    if (s && this.selectedEdge) {
+      const time = nudge(s[this.selectedEdge], frames, fps, duration);
+      this.setEdge(this.selectedEdge, time);
+      return time;
+    }
     const mark = this.list.find((m) => m.id === this.selected);
     if (!mark) return null;
     const time = nudge(mark.start, frames, fps, duration);

@@ -22,7 +22,7 @@ const TITLE_WORDS: usize = 8;
 pub fn title(words: &[Word], start: f64) -> String {
     let said: Vec<&str> = words.iter().take(TITLE_WORDS).map(|w| w.text.as_str()).collect();
     if said.is_empty() {
-        return format!("Clip at {}", stamp(start, ":"));
+        return format!("Clip at {}", stamp(start));
     }
     let mut title = said.join(" ");
     if words.len() > TITLE_WORDS {
@@ -31,24 +31,47 @@ pub fn title(words: &[Word], start: f64) -> String {
     title
 }
 
-/// `seconds` as 1:02:03 (with `sep` ":") or 1h02m03s (with "").
-fn stamp(seconds: f64, sep: &str) -> String {
+/// `seconds` as 1:02:03, for a title.
+fn stamp(seconds: f64) -> String {
     let s = seconds.max(0.0).floor() as u64;
     let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
-    match (sep, h) {
-        (":", 0) => format!("{m}:{s:02}"),
-        (":", _) => format!("{h}:{m:02}:{s:02}"),
-        (_, 0) => format!("{m}m{s:02}s"),
-        _ => format!("{h}h{m:02}m{s:02}s"),
-    }
+    if h == 0 { format!("{m}:{s:02}") } else { format!("{h}:{m:02}:{s:02}") }
 }
 
-/// The file name a clip of the VOD titled `vod_title` starting at `start` gets:
-/// the title made safe for every system's file names (Windows' being the
-/// strictest), shortened, then where it starts.
-pub fn file_name(vod_title: &str, start: f64, audio_only: bool) -> String {
+/// `seconds` as 01h02m03.125s, for a file name: to the millisecond (frames
+/// apart up to 1000 fps), the hours padded so a VOD's clips sort in order.
+fn file_stamp(seconds: f64) -> String {
+    let ms = (seconds.max(0.0) * 1000.0).round() as u64;
+    let (h, m, s, ms) = (ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+    format!("{h:02}h{m:02}m{s:02}.{ms:03}s")
+}
+
+/// Where a clip's file goes in the clips folder, and its name: a folder per
+/// channel (none for files on this computer), then the stream's date (ISO
+/// 8601, when the site says), the VOD's title made safe, and the clip's start
+/// and end to the millisecond:
+/// `Channel/2026-10-15 Title 01h02m03.125s-01h02m30.500s.mp4`. A range moved
+/// later is a new file, so editors linking to the old one keep it.
+pub fn file_path(
+    channel: Option<&str>,
+    published: Option<&str>,
+    vod_title: &str,
+    (start, end): (f64, f64),
+    audio_only: bool,
+) -> (Option<String>, String) {
+    let folder = channel.map(safe_name).filter(|c| c != "Clip");
+    // Only a date as ISO 8601 has it (YYYY-MM-DD), as yt-dlp gives it.
+    let date = published.filter(|d| {
+        d.len() == 10
+            && d.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() })
+    });
     let ext = if audio_only { "m4a" } else { "mp4" };
-    format!("{} {}.{ext}", safe_name(vod_title), stamp(start, ""))
+    let range = format!("{}-{}", file_stamp(start), file_stamp(end));
+    let name = match date {
+        Some(date) => format!("{date} {} {range}.{ext}", safe_name(vod_title)),
+        None => format!("{} {range}.{ext}", safe_name(vod_title)),
+    };
+    (folder, name)
 }
 
 /// `title` made safe for every system's file names (Windows' being the
@@ -222,15 +245,26 @@ mod tests {
 
     #[test]
     fn file_names_are_safe_everywhere() {
-        assert_eq!(file_name("Day 3: the \"big\" raid?", 3723.0, false), "Day 3 the big raid 1h02m03s.mp4");
-        assert_eq!(file_name("a/b\\c\n", 65.0, true), "a b c 1m05s.m4a");
-        assert_eq!(file_name("con", 0.0, false), "Clip 0m00s.mp4");
-        assert_eq!(file_name("COM1", 0.0, false), "Clip 0m00s.mp4");
-        assert_eq!(file_name("...", 0.0, false), "Clip 0m00s.mp4");
+        let name = |title: &str, start: f64, end: f64| file_path(None, None, title, (start, end), false).1;
+        assert_eq!(
+            name("Day 3: the \"big\" raid?", 3723.0, 3725.5),
+            "Day 3 the big raid 01h02m03.000s-01h02m05.500s.mp4"
+        );
+        assert_eq!(file_path(None, None, "a/b\\c\n", (65.0, 70.0), true).1, "a b c 00h01m05.000s-00h01m10.000s.m4a");
+        assert_eq!(name("con", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
+        assert_eq!(name("COM1", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
+        assert_eq!(name("...", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
         assert_eq!(safe_name("100% hype"), "100 hype", "no % for yt-dlp's templates");
         assert_eq!(safe_name("Day [3]"), "Day (3)", "square brackets are for ids");
-        let long = file_name(&"x".repeat(200), 0.0, false);
-        assert_eq!(long.len(), 80 + " 0m00s.mp4".len());
+        assert_eq!(name(&"x".repeat(200), 0.0, 1.0).len(), 80 + " 00h00m00.000s-00h00m01.000s.mp4".len());
+        // Frames of a 480 Hz video are told apart.
+        assert_ne!(name("a", 1.0 / 480.0, 1.0), name("a", 2.0 / 480.0, 1.0));
+        // A channel's folder, and the stream's date when it's a date.
+        assert_eq!(
+            file_path(Some("Some/One"), Some("2026-10-15"), "Day 3", (61.25, 90.0), false),
+            (Some("Some One".into()), "2026-10-15 Day 3 00h01m01.250s-00h01m30.000s.mp4".into())
+        );
+        assert_eq!(file_path(None, Some("20261015"), "x", (0.0, 1.0), false).1, "x 00h00m00.000s-00h00m01.000s.mp4");
     }
 
     #[test]
