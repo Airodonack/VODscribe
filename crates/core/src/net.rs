@@ -73,18 +73,19 @@ impl<R: Read, F: FnMut(u64)> Read for ProgressReader<'_, R, F> {
     }
 }
 
-/// Fails unless `url` is an http(s) link to a host on the public internet:
-/// not this computer, the local network, or an address that resolves to them.
-/// Links pasted in, and the image links sites give (thumbnails), are checked
-/// before they're fetched, so a link can't make VODscribe (or yt-dlp, for it)
-/// reach a router's page or the app's own media server. A redirect isn't
-/// checked again.
+/// Fails unless `url` is an http(s) link to a host on the public internet
+/// (see `public_url`, which links are fetched through).
 pub fn check_public_url(url: &str) -> Result<()> {
     public_url(url).map(|_| ())
 }
 
-/// `url`, checked as `check_public_url` does, with its host as the plain
-/// ASCII name it resolves as: a host written with look-alike characters
+/// `url` if it's an http(s) link to a host on the public internet: not this
+/// computer, the local network, or an address that resolves to them. Links
+/// pasted in, and the image links sites give (thumbnails), are checked and
+/// then fetched as this returns them, so a link can't make VODscribe (or
+/// yt-dlp, for it) reach a router's page or the app's own media server. A
+/// redirect isn't checked again. The host comes back as the plain ASCII name
+/// it resolves as: a host written with look-alike characters
 /// (`ⓛocalhost`, `127。0。0。1`) is checked, and then fetched, as what it
 /// really names, so whatever fetches it next can't read it differently.
 pub fn public_url(url: &str) -> Result<String> {
@@ -94,6 +95,11 @@ pub fn public_url(url: &str) -> Result<String> {
     }
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, path) = rest.split_at(end);
+    // Characters other URL readers end the host at, or skip (Python's stops at
+    // a backslash, while the resolver here reads past it): not a plain link.
+    if authority.chars().any(|c| c == '\\' || c.is_whitespace() || c.is_control()) {
+        return Err(NotPublic("That isn't a link.").into());
+    }
     let (userinfo, host_port) = match authority.rsplit_once('@') {
         Some((user, h)) => (format!("{user}@"), h),
         None => (String::new(), authority),
@@ -110,6 +116,19 @@ pub fn public_url(url: &str) -> Result<String> {
     // then punycode, lowercase, without a trailing dot.
     let host = if ipv6 { raw_host.to_ascii_lowercase() } else { idna::domain_to_ascii(raw_host).unwrap_or_default() };
     let host = host.trim_end_matches('.').to_string();
+    // Only a plain name (letters, digits, dots, hyphens, underscores) or an
+    // IPv6 address, and a port of digits: nothing a later reader could split
+    // differently.
+    let plain = if ipv6 {
+        host.parse::<std::net::Ipv6Addr>().is_ok()
+    } else {
+        host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+    };
+    let port_ok = port.is_empty()
+        || port.strip_prefix(':').is_some_and(|p| (1..=5).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()));
+    if !plain || !port_ok {
+        return Err(NotPublic("That isn't a link.").into());
+    }
     let local =
         || anyhow::Error::new(NotPublic("VODscribe doesn't follow links to this computer or the local network."));
     if host.is_empty() {
@@ -126,12 +145,12 @@ pub fn public_url(url: &str) -> Result<String> {
         // time it's fetched; this keeps out the plain cases.)
         Err(_) => match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), 443)) {
             Ok(found) => found.map(|a| a.ip()).collect(),
-            // Behind a proxy that resolves names itself (some workplaces),
-            // this computer can't, and the fetch goes through the proxy.
-            Err(_) if proxied() => Vec::new(),
-            // Otherwise a name that doesn't resolve can't be checked, so it
-            // isn't followed. (Not NotPublic: offline, it may resolve later.)
-            Err(_) => bail!("Couldn't find {host}. Check the link, and that you're online."),
+            // A one-word name (a computer or router on the local network) isn't followed.
+            Err(_) if !host.contains('.') => return Err(local()),
+            // Otherwise it may resolve elsewhere: behind a proxy that resolves
+            // names itself (set in the environment or the system's settings),
+            // or once back online. The fetch reports it if it doesn't.
+            Err(_) => Vec::new(),
         },
     };
     if addresses.iter().any(|ip| !is_public(*ip)) {
@@ -158,14 +177,6 @@ impl std::error::Error for NotPublic {}
 /// Whether `e` is a link `public_url` won't ever follow.
 pub fn is_not_public(e: &anyhow::Error) -> bool {
     e.downcast_ref::<NotPublic>().is_some()
-}
-
-/// Whether this app's requests go through a proxy (the usual variables, which
-/// yt-dlp and ureq read too).
-fn proxied() -> bool {
-    ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]
-        .iter()
-        .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty()))
 }
 
 fn is_public(ip: std::net::IpAddr) -> bool {
@@ -394,8 +405,15 @@ mod tests {
             "http://[64:ff9b::c0a8:101]/",
             "http://[2002:7f00:1::]/",
             "http://[fec0::1]/",
-            // A name that doesn't resolve can't be checked.
-            "https://does-not-exist.invalid/",
+            // A one-word name that doesn't resolve: a local computer.
+            "http://intranet-host/",
+            // A backslash, which Python's URL reading ends the host at (the
+            // resolver here read past it to a public name).
+            "http://127.0.0.1\\x.93.184.215.14.nip.io/Mediasite/Play/0123456789abcdef0123456789abcdef",
+            "http://a b.com/",
+            "http://example.com:80x/",
+            "http://example.com:123456/",
+            "http://[not-v6]/",
         ] {
             assert!(check_public_url(bad).is_err(), "{bad}");
         }
@@ -406,7 +424,10 @@ mod tests {
         // Proxy tools' fake addresses are followed: the proxy fetches the real site.
         assert!(check_public_url("http://198.18.0.7/").is_ok());
         assert!(is_not_public(&check_public_url("http://192.168.1.1/").unwrap_err()));
-        assert!(!is_not_public(&check_public_url("https://does-not-exist.invalid/").unwrap_err()), "may work later");
+        // A dotted name that doesn't resolve here may elsewhere (a proxy, later).
+        assert!(check_public_url("https://does-not-exist.invalid/").is_ok());
+        assert_eq!(public_url("https://u@example.com:8443?a").unwrap(), "https://u@example.com:8443?a");
+        assert_eq!(public_url("http://[2606:4700::1111]:8080/x").unwrap(), "http://[2606:4700::1111]:8080/x");
     }
 
     use std::net::TcpListener;

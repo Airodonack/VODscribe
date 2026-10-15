@@ -19,11 +19,13 @@ const MAX_BYTES: u64 = 8 << 20;
 pub fn fetch(url: &str, dir: &Path, id: i64) -> Result<Option<String>> {
     // The site said where the image is; it must be out on the internet. A
     // lookup that failed (offline) is tried again later; a local one never.
-    match net::check_public_url(url) {
+    // What's fetched is the link as checked.
+    let url = match net::public_url(url) {
         Err(e) if net::is_not_public(&e) => return Ok(None),
         Err(e) => return Err(e),
-        Ok(()) => {}
-    }
+        Ok(url) => url,
+    };
+    let url = url.as_str();
     let never = AtomicBool::new(false);
     let body = match net::get(url, &never) {
         Ok((body, _)) => body,
