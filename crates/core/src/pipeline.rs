@@ -132,6 +132,20 @@ pub fn media_dir(work_dir: &Path) -> PathBuf {
     work_dir.with_file_name("media")
 }
 
+/// Removes files in `media_dir` (named `<vod id>.…`) of VODs not in `library`:
+/// left by a crash, say, mid-way through removing one. Files of VODs still
+/// there stay, as a paused download carries on from its parts.
+pub fn tidy_media(work_dir: &Path, library: &[i64]) {
+    let Ok(entries) = fs::read_dir(media_dir(work_dir)) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let id = name.split('.').next().and_then(|id| id.parse::<i64>().ok());
+        if id.is_some_and(|id| !library.contains(&id)) && entry.path().is_file() {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Removes VOD `vod_id`'s kept video, and any part of one, from `media_dir`.
 pub fn remove_media(work_dir: &Path, vod_id: i64) {
     remove_work_files(&media_dir(work_dir), vod_id);
@@ -281,6 +295,22 @@ fn run_worker(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tidies_media_of_vods_gone() {
+        let root = crate::TempDir::new("tidy-media");
+        let work = root.join("work");
+        let media = media_dir(&work);
+        fs::create_dir_all(&media).unwrap();
+        for name in ["3.mp4", "4.mp4.part-Frag7.part", "29.mp4.part-Frag65.part", "30.m4a", "notes.txt"] {
+            fs::write(media.join(name), b"x").unwrap();
+        }
+        tidy_media(&work, &[3, 4]);
+        let mut left: Vec<String> =
+            fs::read_dir(&media).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["3.mp4", "4.mp4.part-Frag7.part", "notes.txt"]);
+    }
     use crate::fetch::VodInfo;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;

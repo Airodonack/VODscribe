@@ -112,7 +112,11 @@ pub fn run() {
             if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
                 model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
             }
-            let db = Mutex::new(Db::open(&paths.db())?);
+            let db = Db::open(&paths.db())?;
+            // Kept videos' leftovers from VODs no longer in the library.
+            let library: Vec<i64> = db.vods()?.iter().map(|v| v.id).collect();
+            vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
+            let db = Mutex::new(db);
             let reads = Mutex::new(Db::open_reader(&paths.db())?);
             let worker = Worker::start(app.handle().clone(), paths.clone())?;
             let handle = app.handle().clone();
