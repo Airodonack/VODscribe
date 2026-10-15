@@ -135,6 +135,8 @@ fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> 
 
 const PROGRESS: &str = "[vodscribe]";
 const FILE: &str = "[vodscribe-file]";
+/// The bitrate (kbit/s) of what's to be downloaded, printed once it's chosen.
+const RATE: &str = "[vodscribe-rate]";
 
 /// What to download: the smallest stream that carries audio, to transcribe;
 /// or a video to keep and play here, chosen by a yt-dlp format selection
@@ -222,6 +224,17 @@ pub fn download(
             .arg("--ffmpeg-location")
             .arg(ffmpeg),
     };
+    // A section is downloaded by ffmpeg, which yt-dlp reports nothing of until
+    // it's done; its progress is gauged from the part files' growth against
+    // the size the stream's bitrate makes of its length.
+    let section = match wanted {
+        Wanted::Section { start, end, .. } => {
+            cmd.args(["--print", &format!("before_dl:{RATE}%(tbr)s")]);
+            Some(end - start)
+        }
+        _ => None,
+    };
+    let mut expected: Option<f64> = None;
     let mut child = cmd
         .args(["-N", "8", "--no-mtime", "--newline", "--progress"])
         .args(["--progress-template", &template])
@@ -255,7 +268,18 @@ pub fn download(
             tools::kill_tree(&mut child);
             return Err(crate::Canceled.into());
         }
+        if let Some(bytes) = expected {
+            let written = part_bytes(out_stem);
+            if written > 0 {
+                on_progress((written as f64 / bytes).min(0.98));
+            }
+        }
         if line.is_empty() {
+            continue;
+        }
+        if let Some(rate) = line.strip_prefix(RATE) {
+            // kbit/s for the section's seconds; a format without a bitrate stays unknown.
+            expected = rate.trim().parse::<f64>().ok().filter(|r| *r > 0.0).zip(section).map(|(r, s)| r * 125.0 * s);
             continue;
         }
         if let Some(rest) = line.strip_prefix(PROGRESS) {
@@ -281,6 +305,24 @@ pub fn download(
     // The printed path is the reliable way to find the file; if it got lost,
     // the finished download is still the one file named after `out_stem`.
     path.or_else(|| finished_file(out_stem)).context("yt-dlp finished without producing a file")
+}
+
+/// Bytes in the part files of a download to `out_stem` (`<stem>.….part`).
+fn part_bytes(out_stem: &Path) -> u64 {
+    let (Some(dir), Some(stem)) = (out_stem.parent(), out_stem.file_name().and_then(|n| n.to_str())) else {
+        return 0;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.strip_prefix(stem).is_some_and(|r| r.starts_with('.')) && name.ends_with(".part")
+        })
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
 }
 
 /// The finished download for `out_stem` (`<stem>.<ext>`), ignoring yt-dlp's

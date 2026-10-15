@@ -121,8 +121,11 @@
       <button class="act" onclick={() => clips.remove(clip.id)} title="Delete clip" aria-label="Delete clip">
         <Icon name="x" size={13} />
       </button>
-      {#if progress !== undefined}
+      {#if progress !== undefined && progress > 0}
         <span class="progress" style:width="{progress * 100}%"></span>
+      {:else if clip.status === "cutting"}
+        <!-- Under way, how far not known yet: a stripe that moves. -->
+        <span class="progress busy"></span>
       {/if}
     </div>
   {/each}
@@ -246,6 +249,20 @@
     height: 2px;
     background: var(--accent);
     transition: width 0.25s linear;
+  }
+
+  .progress.busy {
+    width: 30%;
+    animation: busy 1.2s ease-in-out infinite;
+  }
+
+  @keyframes busy {
+    from {
+      left: -30%;
+    }
+    to {
+      left: 100%;
+    }
   }
 
   .error-text {
