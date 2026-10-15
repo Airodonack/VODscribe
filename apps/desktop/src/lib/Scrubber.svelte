@@ -167,7 +167,8 @@
     if (e.button !== 0) return;
     down = true;
     if (dragsOut(e)) {
-      const range = stretchAt(timeAt(e.clientX), duration);
+      // With no cuts, there's only the whole VOD: not a clip.
+      const range = cuts.list.length ? stretchAt(timeAt(e.clientX), duration) : undefined;
       if (range) {
         e.preventDefault();
         takeOut(range, e.clientX, e.clientY);

@@ -157,7 +157,8 @@
   let picture = $state<HTMLDivElement>();
   function onPictureDown(e: PointerEvent) {
     if (e.button !== 0 || !video) return;
-    const range = stretchAt(video.currentTime, mediaDuration());
+    // The VOD's length, as the timeline's: the file's may differ by a little.
+    const range = stretchAt(video.currentTime, vod.duration || mediaDuration());
     held = false;
     pointer = { x: e.clientX, y: e.clientY };
     if (!range || !cuts.list.length) return;
