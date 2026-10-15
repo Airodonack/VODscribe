@@ -57,7 +57,7 @@ pub fn download(
     vod: &Vod,
     tools: &Tools,
     work_dir: &Path,
-    video: Option<&str>,
+    video: Option<(&crate::playable::Playable, u32)>,
     cancel: &AtomicBool,
     mut report: impl FnMut(Status, f64),
 ) -> Result<PathBuf> {
@@ -66,7 +66,7 @@ pub fn download(
         return crate::local::source(source);
     }
     // A site whose video is kept: transcribed from that video, once it's here.
-    let keep = keeps_video(&vod.info.platform).then_some(video).flatten();
+    let keep = video.filter(|_| keeps_video(&vod.info.platform));
     if keep.is_some()
         && let Some(kept) = db.media_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file())
     {
@@ -84,7 +84,8 @@ pub fn download(
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info)?;
     }
-    let (out, wanted) = match keep {
+    let selector = keep.map(|(playable, height)| playable.selector(height));
+    let (out, wanted) = match &selector {
         Some(selector) => {
             let dir = media_dir(work_dir);
             fs::create_dir_all(&dir)?;
@@ -103,10 +104,20 @@ pub fn download(
         }
         result => result,
     }?;
-    if keep.is_some() {
+    let Some((playable, _)) = keep else { return Ok(file) };
+    // Kept to play only if what arrived plays here: sites only claim their
+    // codecs. Otherwise it's still transcribed, from the work dir, and goes
+    // with the rest of the work files after.
+    let streams = crate::local::codecs(tools.ffmpeg, &file)?;
+    if playable.plays(&streams) {
         db.set_media_path(vod.id, Some(&file.to_string_lossy()))?;
+        return Ok(file);
     }
-    Ok(file)
+    eprintln!("VOD {}: {streams:?} doesn't play here, so it isn't kept", vod.id);
+    let ext = file.extension().map(|e| e.to_string_lossy().into_owned()).unwrap_or_default();
+    let moved = work_dir.join(format!("{}.{ext}", vod.id));
+    fs::rename(&file, &moved)?;
+    Ok(moved)
 }
 
 /// Whether a VOD from `platform` has its video kept to play here: any site but

@@ -318,13 +318,13 @@ fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> 
     let app = ctx.app.clone();
     // A kept video (sites without embeds) in a format this computer plays, as tall as the settings allow.
     let height = Settings::load(&ctx.paths.settings()).video_height();
-    let video = vodscribe_core::playable::Playable::load(&ctx.paths.playable()).selector(height);
+    let playable = vodscribe_core::playable::Playable::load(&ctx.paths.playable());
     let audio = pipeline::download(
         &mut ctx.db,
         vod,
         &tools,
         &ctx.paths.work(),
-        Some(&video),
+        Some((&playable, height)),
         flag,
         reporter(&app, vod.id, progress),
     )?;

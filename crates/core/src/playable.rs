@@ -71,7 +71,52 @@ impl Default for Playable {
     }
 }
 
+/// A file's video and audio codecs, by ffmpeg's names (`local::codecs`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Streams {
+    pub video: Option<String>,
+    pub audio: Option<String>,
+}
+
+impl Video {
+    /// The family of ffmpeg's codec `name`.
+    fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "av1" => Video::Av1,
+            "vp9" => Video::Vp9,
+            "hevc" => Video::Hevc,
+            "h264" => Video::H264,
+            _ => return None,
+        })
+    }
+}
+
+impl Audio {
+    fn of(name: &str) -> Option<Self> {
+        Some(match name {
+            "opus" => Audio::Opus,
+            "aac" => Audio::Aac,
+            "mp3" => Audio::Mp3,
+            "vorbis" => Audio::Vorbis,
+            "flac" => Audio::Flac,
+            _ => return None,
+        })
+    }
+}
+
 impl Playable {
+    /// Whether a file of `streams` plays here: its video and audio as a pair
+    /// that does, or, with no video, its audio alone. Sites only claim their
+    /// codecs (and some say "unknown"), so this is asked of what arrived.
+    pub fn plays(&self, streams: &Streams) -> bool {
+        let audio = streams.audio.as_deref().and_then(Audio::of);
+        match (&streams.video, audio) {
+            (Some(v), Some(a)) => Video::of(v).is_some_and(|v| self.video.contains(&(v, a))),
+            (None, Some(a)) => self.audio.contains(&a),
+            _ => false,
+        }
+    }
+
     pub fn load(path: &Path) -> Self {
         fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
@@ -103,8 +148,19 @@ impl Playable {
         }
         choices.push("ba".into());
         choices.push("b".into());
-        choices.join("/")
+        // Only streams yt-dlp downloads itself over the web (not rtsp:// or
+        // the like, which it would hand to ffmpeg).
+        choices.iter().map(|c| with_web(c)).collect::<Vec<_>>().join("/")
     }
+}
+
+/// What web downloads yt-dlp makes itself: plain files, HLS and DASH.
+/// (`fetch::download` has yt-dlp fetch HLS itself, rather than through ffmpeg.)
+const WEB: &str = "[protocol~='^(https?|m3u8(_native)?|http_dash_segments)$']";
+
+/// `choice` limited to `WEB` streams: each format in it (`a+b` merges two).
+fn with_web(choice: &str) -> String {
+    choice.split('+').map(|f| format!("{f}{WEB}")).collect::<Vec<_>>().join("+")
 }
 
 #[cfg(test)]
@@ -115,14 +171,28 @@ mod tests {
     fn picks_what_plays_first_then_falls_back() {
         let p =
             Playable { video: vec![(Video::Av1, Audio::Opus), (Video::H264, Audio::Aac)], audio: vec![Audio::Opus] };
-        let s = p.selector(720);
+        let s = p.selector(720).replace(WEB, "");
+        assert!(p.selector(720).split('/').all(|c| c.split('+').all(|f| f.ends_with(WEB))), "web streams only");
         let choices: Vec<&str> = s.split('/').collect();
         assert_eq!(choices[0], "bv*[height<=720][vcodec~='^(av01|av1)']+ba[acodec~='^opus']");
         assert_eq!(choices[2], "bv*[height<=720][vcodec~='^(avc1|avc3|h264)']+ba[acodec~='^(mp4a|aac)']");
-        // Video whose codecs aren't named comes before audio alone.
+        // Video whose codecs aren't named comes before audio alone. Every
+        // choice is fetched by yt-dlp itself, over the web.
         assert_eq!(&choices[4..6], ["b[height<=720]", "bv*[height<=720]+ba"]);
         assert_eq!(choices[6], "ba[vcodec=none][acodec~='^opus']");
         assert_eq!(&choices[7..], ["ba", "b"]);
+    }
+
+    #[test]
+    fn checks_what_arrived() {
+        let p = Playable { video: vec![(Video::H264, Audio::Aac)], audio: vec![Audio::Mp3] };
+        let streams = |v: Option<&str>, a: Option<&str>| Streams { video: v.map(Into::into), audio: a.map(Into::into) };
+        assert!(p.plays(&streams(Some("h264"), Some("aac"))));
+        assert!(!p.plays(&streams(Some("hevc"), Some("aac"))), "a site's label said otherwise");
+        assert!(!p.plays(&streams(Some("h264"), Some("opus"))));
+        assert!(p.plays(&streams(None, Some("mp3"))));
+        assert!(!p.plays(&streams(None, Some("aac"))), "AAC alone isn't in this list");
+        assert!(!p.plays(&streams(Some("h264"), None)), "no sound to transcribe or hear");
     }
 
     #[test]

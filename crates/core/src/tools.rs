@@ -211,7 +211,7 @@ pub fn sidecar(name: &str) -> Result<PathBuf> {
 // needing anything else fails to open rather than reaching that code.
 
 /// Containers (demuxer names).
-const FFMPEG_FORMATS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,flv,mp3,aac,wav,flac,ogg";
+pub const FFMPEG_FORMATS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,mpegts,flv,mp3,aac,wav,flac,ogg";
 /// Audio decoders, for reading the sound (transcribing, and a file's details).
 pub const FFMPEG_AUDIO: &str = "aac,aac_fixed,aac_latm,mp3,mp3float,mp2,mp2float,mp1,mp1float,opus,libopus,\
      vorbis,libvorbis,flac,alac,ac3,ac3_fixed,eac3,dca,truehd,mlp,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,\

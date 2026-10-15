@@ -98,6 +98,30 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
     })
 }
 
+/// The codecs of `path`'s first video and audio streams, as ffmpeg names them
+/// (cover art, an "attached pic", isn't video).
+pub fn codecs(ffmpeg: &Path, path: &Path) -> Result<crate::playable::Streams> {
+    let mut cmd = tools::command(ffmpeg);
+    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .context("run ffmpeg")?;
+    Ok(parse_codecs(&String::from_utf8_lossy(&out.stderr)))
+}
+
+fn parse_codecs(details: &str) -> crate::playable::Streams {
+    let first = |kind: &str| {
+        details
+            .lines()
+            .filter(|l| l.trim_start().starts_with("Stream #") && !l.contains("(attached pic)"))
+            .find_map(|l| l.split_once(kind)?.1.split([' ', ',', '(']).next().map(str::to_string))
+            .filter(|c| !c.is_empty())
+    };
+    crate::playable::Streams { video: first(": Video: "), audio: first(": Audio: ") }
+}
+
 /// Saves a frame from a tenth of the way in as VOD `id`'s thumbnail. `None` for
 /// audio-only files.
 pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Option<f64>) -> Result<Option<String>> {
@@ -155,6 +179,22 @@ pub fn source(path: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_codecs_from_ffmpegs_details() {
+        let details = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'x.mp4':
+  Duration: 00:00:03.00, start: 0.000000, bitrate: 100 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 320x240, 25 fps
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp
+";
+        let s = parse_codecs(details);
+        assert_eq!((s.video.as_deref(), s.audio.as_deref()), (Some("h264"), Some("aac")));
+        let song = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 128 kb/s
+  Stream #0:1: Video: mjpeg (Baseline), yuvj420p, 600x600, 90k tbr, 90k tbn (attached pic)
+";
+        let s = parse_codecs(song);
+        assert_eq!((s.video, s.audio.as_deref()), (None, Some("mp3")), "cover art isn't video");
+    }
 
     /// Probes real files made with ffmpeg; skipped where ffmpeg isn't installed.
     #[test]

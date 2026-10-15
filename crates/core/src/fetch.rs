@@ -129,9 +129,21 @@ pub fn download(
         // HLS downloads aren't remuxed: only the audio is used, and ffmpeg reads the raw stream.
         Wanted::Audio => cmd.args(["-f", "ba/w", "--fixup", "never"]),
         // Kept to play: video and audio in one MP4, which every webview reads.
-        Wanted::Video { selector, ffmpeg } => {
-            cmd.args(["-f", selector, "--merge-output-format", "mp4", "--ffmpeg-location"]).arg(ffmpeg)
-        }
+        // yt-dlp's own ffmpeg runs (merging, fixing up HLS) read what the site
+        // sent, so they get the app's lists too, with picture decoders, which
+        // merging needs to read a video's format; and HLS is fetched by
+        // yt-dlp itself, never by ffmpeg.
+        Wanted::Video { selector, ffmpeg } => cmd
+            .args(["-f", selector, "--merge-output-format", "mp4", "--downloader", "m3u8:native"])
+            .arg("--postprocessor-args")
+            .arg(format!(
+                "ffmpeg_i:-format_whitelist {} -codec_whitelist {},{} -protocol_whitelist file",
+                tools::FFMPEG_FORMATS,
+                tools::FFMPEG_AUDIO,
+                tools::FFMPEG_PICTURE
+            ))
+            .arg("--ffmpeg-location")
+            .arg(ffmpeg),
     };
     let mut child = cmd
         .args(["-N", "8", "--no-mtime", "--newline", "--progress"])
@@ -429,11 +441,17 @@ mod tests {
         for (name, url) in [
             ("dailymotion", "https://www.dailymotion.com/video/x7tgad0"),
             ("soundcloud", "https://soundcloud.com/forss/flickermood"),
+            (
+                "rumble",
+                "https://rumble.com/v76ea7s-president-trump-announces-major-combat-operations-against-iran.html",
+            ),
         ] {
             let info = dir.join(format!("{name}.info.json"));
             probe(&yt_dlp, url, &info).unwrap();
             let wanted = Wanted::Video { selector: &selector, ffmpeg: &ffmpeg };
             let file = download(&yt_dlp, &info, &dir.join(name), wanted, &AtomicBool::new(false), |_| {}).unwrap();
+            let streams = crate::local::codecs(&ffmpeg, &file).unwrap();
+            assert!(crate::playable::Playable::default().plays(&streams), "{name}: {streams:?}");
             let out = std::process::Command::new(&ffmpeg).arg("-hide_banner").arg("-i").arg(&file).output().unwrap();
             let streams: Vec<String> = String::from_utf8_lossy(&out.stderr)
                 .lines()
