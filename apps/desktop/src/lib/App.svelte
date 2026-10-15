@@ -110,7 +110,8 @@
     reordering = reordering.then(() =>
       api.reorderVods(order).catch(async (e) => {
         console.error("reorder failed", e);
-        vods = await api.listVods();
+        // If reloading fails too, the chain must still go on for the next reorder.
+        vods = await api.listVods().catch(() => vods);
       }),
     );
     runSearch();

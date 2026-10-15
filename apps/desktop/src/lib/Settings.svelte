@@ -315,7 +315,7 @@
       {/each}
     </div>
     <p class="muted hint">
-      Up to {videoHeight}p. An hour at 720p is about 1.5 to 2.5 GB. Applies to videos added next.
+      Up to {videoHeight}p. An hour at 720p is about 1.5 to 2.5 GB. Applies to videos downloaded from now on.
     </p>
   </section>
 

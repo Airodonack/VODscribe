@@ -45,7 +45,9 @@
   let error = $state<string | null>(null);
   // Audio alone (a podcast, a song): a bar with the controls, not a 16:9 frame.
   // Known from the file type; a file whose type didn't say is found out once loaded.
-  let audioOnly = $state(untrack(() => vod.audio_only));
+  let detected = $state(false);
+  // Follows the VOD: one opened while still downloading learns once it's done.
+  let audioOnly = $derived(vod.audio_only || detected);
 
   // The player loads on demand: until then the VOD's (local) thumbnail stands in,
   // so selecting a VOD contacts nobody. Clicking it, a timestamp, or play starts it.
@@ -67,9 +69,9 @@
         if (destroyed) return p.destroy();
         player = p;
         if (pending) p.seek(pending.time, pending.play);
-        const video = host?.querySelector("video");
+        const video = host?.querySelector("video, audio");
         video?.addEventListener("loadedmetadata", () => {
-          if (video.videoWidth === 0) audioOnly = true;
+          if (video instanceof HTMLVideoElement && video.videoWidth === 0) detected = true;
         });
       },
       (e) => (error = String(e)),
@@ -341,7 +343,6 @@
     height: 100%;
   }
 
-  /* Audio alone: just the controls' height. */
   /* Audio alone: the controls in the panel's own colors, at their own height,
      rather than floating on a video's black stage. */
   .stage.audio {

@@ -92,7 +92,7 @@
   async function remove() {
     if (
       await ask(
-        `Remove “${vod.title}”? Its transcript and any downloaded audio are erased from this computer.`,
+        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer.`,
         "Remove",
         "Keep",
       )
