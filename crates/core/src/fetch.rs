@@ -66,14 +66,20 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
 /// Fetches metadata and saves yt-dlp's info JSON to `info_path`, so the later
 /// download reuses it instead of resolving the URL a second time.
 pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path) -> Result<VodInfo> {
-    let result = dump_json(yt_dlp, url).and_then(|(json, raw)| Ok((parse_info(&json)?, raw)));
+    let result = dump_json(yt_dlp.command(), url).and_then(|(json, raw)| Ok((parse_info(&json)?, raw)));
     let (info, raw) = match result {
         Ok(ok) => ok,
         // yt-dlp can't read Kick's current VOD links yet. Resolve those
         // ourselves and have yt-dlp treat the manifest as a plain HLS stream.
         Err(e) if kick::parse_vod_url(url).is_some() => {
             let (info, manifest) = kick::resolve(url).map_err(|kick_err| e.context(kick_err))?;
-            (info, dump_json(yt_dlp, &manifest)?.1)
+            let host = manifest.strip_prefix("https://").and_then(|r| r.split('/').next()).unwrap_or_default();
+            if host != "kick.com" && !host.ends_with(".kick.com") {
+                bail!("Kick answered with a stream somewhere other than Kick.");
+            }
+            // A plain HLS stream, which only the generic extractor reads; the
+            // link is Kick's own answer, not one pasted in.
+            (info, dump_json(yt_dlp.command_any_extractor(), &manifest)?.1)
         }
         Err(e) => return Err(e),
     };
@@ -81,9 +87,8 @@ pub fn probe(yt_dlp: &YtDlp, url: &str, info_path: &Path) -> Result<VodInfo> {
     Ok(info)
 }
 
-fn dump_json(yt_dlp: &YtDlp, url: &str) -> Result<(Value, Vec<u8>)> {
-    let out = yt_dlp
-        .command()
+fn dump_json(mut cmd: std::process::Command, url: &str) -> Result<(Value, Vec<u8>)> {
+    let out = cmd
         .args(["-J", "--no-playlist", "--no-warnings", "--", url])
         .stdin(Stdio::null())
         .output()
@@ -474,5 +479,20 @@ mod tests {
                 streams.join("\n  ")
             );
         }
+    }
+
+    /// A Kick VOD, which yt-dlp can't read itself, through the app's own Kick
+    /// lookup: `VODSCRIBE_BIN=<data dir>/bin cargo test -p vodscribe-core -- --ignored kick_vod_live`.
+    #[test]
+    #[ignore = "network"]
+    fn kick_vod_live() {
+        let bin = std::env::var("VODSCRIBE_BIN").expect("VODSCRIBE_BIN: the folder with yt-dlp");
+        let yt_dlp = crate::tools::find_yt_dlp(Path::new(&bin)).expect("yt-dlp");
+        let dir = crate::TempDir::new("kick-live");
+        let url = std::env::var("KICK_URL")
+            .unwrap_or_else(|_| "https://kick.com/geega/videos/01a0db44-6218-70fb-977c-6bbe91a018d1".into());
+        let info = probe(&yt_dlp, &url, &dir.join("info.json")).unwrap();
+        eprintln!("{} · {:?} · {:?}", info.title, info.channel, info.duration);
+        assert_eq!(info.platform, "kick");
     }
 }
