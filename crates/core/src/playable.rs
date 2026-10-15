@@ -85,9 +85,10 @@ impl Playable {
 
     /// yt-dlp's format selection: the first pair that plays here, as separate
     /// video and audio streams (merged) or one stream with both, at most
-    /// `height` tall; else audio alone that plays here (podcasts, music);
-    /// else whatever the site has, which is still transcribed even if it
-    /// can't be played.
+    /// `height` tall; else the best video at most that tall whose codecs the
+    /// site doesn't name (Rumble's say "unknown"; almost always H.264); else
+    /// audio alone that plays here (podcasts, music); else whatever the site
+    /// has, which is still transcribed even if it can't be played.
     pub fn selector(&self, height: u32) -> String {
         let mut choices = Vec::new();
         for (v, a) in &self.video {
@@ -95,10 +96,11 @@ impl Playable {
             choices.push(format!("bv*[height<={height}][vcodec~='{v}']+ba[acodec~='{a}']"));
             choices.push(format!("b[height<={height}][vcodec~='{v}'][acodec~='{a}']"));
         }
+        choices.push(format!("b[height<={height}]"));
+        choices.push(format!("bv*[height<={height}]+ba"));
         for a in &self.audio {
             choices.push(format!("ba[vcodec=none][acodec~='{}']", a.pattern()));
         }
-        choices.push(format!("b[height<={height}]"));
         choices.push("ba".into());
         choices.push("b".into());
         choices.join("/")
@@ -117,8 +119,10 @@ mod tests {
         let choices: Vec<&str> = s.split('/').collect();
         assert_eq!(choices[0], "bv*[height<=720][vcodec~='^(av01|av1)']+ba[acodec~='^opus']");
         assert_eq!(choices[2], "bv*[height<=720][vcodec~='^(avc1|avc3|h264)']+ba[acodec~='^(mp4a|aac)']");
-        assert_eq!(choices[4], "ba[vcodec=none][acodec~='^opus']");
-        assert_eq!(&choices[5..], ["b[height<=720]", "ba", "b"]);
+        // Video whose codecs aren't named comes before audio alone.
+        assert_eq!(&choices[4..6], ["b[height<=720]", "bv*[height<=720]+ba"]);
+        assert_eq!(choices[6], "ba[vcodec=none][acodec~='^opus']");
+        assert_eq!(&choices[7..], ["ba", "b"]);
     }
 
     #[test]
