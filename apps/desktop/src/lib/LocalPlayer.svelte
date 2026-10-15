@@ -6,21 +6,20 @@
   // these functions over.
 
   import { onDestroy, onMount } from "svelte";
-  import { api, type Cue } from "./api";
+  import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
-  import { HOLD_MS, exportStretch, flyAndDrag, rectOf, stretchAt } from "./dragout";
+  import { HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
   import { cueAt, stepTime } from "./media";
-  import { formatTime } from "./platform";
 
   let {
-    vodId,
+    vod,
     src,
     start,
     autoplay,
     audio,
     onerror,
   }: {
-    vodId: number;
+    vod: Vod;
     src: string;
     start: number;
     autoplay: boolean;
@@ -67,11 +66,11 @@
     v.src = src;
     v.currentTime = start;
     if (autoplay) v.play().catch(() => {});
-    api.captions(vodId).then(
+    api.captions(vod.id).then(
       (c) => (cues = c),
       (e) => console.error("captions", e),
     );
-    api.frameRate(vodId).then(
+    api.frameRate(vod.id).then(
       (f) => (fps = f),
       (e) => console.error("frame rate", e),
     );
@@ -150,25 +149,22 @@
     },
   };
 
-  // A press held still on the picture takes the stretch between marks it's in
-  // out of the window as a clip, flying its chip from the timeline to the pointer.
+  // A press held still on the picture carries the stretch between cuts that
+  // the playhead is in (dragout.ts), flying from the timeline to the pointer.
   let hold: ReturnType<typeof setTimeout> | undefined;
   let held = false;
-  let down = false;
   let pointer = { x: 0, y: 0 };
   let picture = $state<HTMLDivElement>();
   function onPictureDown(e: PointerEvent) {
     if (e.button !== 0 || !video) return;
     const range = stretchAt(video.currentTime, mediaDuration());
-    down = true;
     held = false;
     pointer = { x: e.clientX, y: e.clientY };
     if (!range || !cuts.list.length) return;
     hold = setTimeout(() => {
       held = true;
       const from = rectOf(range.start, range.end) ?? picture!.getBoundingClientRect();
-      const label = formatTime(range.end - range.start);
-      flyAndDrag(exportStretch(range.start, range.end), label, from, pointer.x, pointer.y, () => down);
+      carry({ vod, start: range.start, end: range.end, ownPlayer: true, from, x: pointer.x, y: pointer.y });
     }, HOLD_MS);
   }
   function onPictureMove(e: PointerEvent) {
@@ -176,7 +172,6 @@
     pointer = { x: e.clientX, y: e.clientY };
   }
   function onPictureUp() {
-    down = false;
     clearTimeout(hold);
   }
   function onPictureClick() {

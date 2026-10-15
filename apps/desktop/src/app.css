@@ -11,6 +11,9 @@
   --accent-soft: #eceafc;
   --mark: #fde68a;
   --mark-text: #1b1b19;
+  /* Cuts on the timeline, and what's selected there (a cut, or a stretch picked in the transcript). */
+  --cut: #f59e0b;
+  --pick: #0891b2;
   --warn: #b45309;
   --danger: #c81e1e;
   --danger-soft: #fee2e2;
@@ -51,6 +54,8 @@
   --accent-soft: #272a4a;
   --mark: #7a4a0c;
   --mark-text: #fef3c7;
+  --cut: #f59e0b;
+  --pick: #22d3ee;
   --warn: #f5b041;
   --danger: #f87171;
   --danger-soft: #3f1d1d;
@@ -73,6 +78,8 @@
     --accent-soft: #272a4a;
     --mark: #7a4a0c;
     --mark-text: #fef3c7;
+    --cut: #f59e0b;
+    --pick: #22d3ee;
     --warn: #f5b041;
     --danger: #f87171;
     --danger-soft: #3f1d1d;
@@ -381,25 +388,40 @@ body.dropping iframe {
   pointer-events: none;
 }
 
-/* A clip's chip flying to the pointer before it's dragged out (dragout.ts). */
-.flying-chip {
+/* A stretch carried from the timeline (dragout.ts): its frame over its waveform. */
+.carry-ghost {
   position: fixed;
   z-index: 2000;
-  max-width: 260px;
-  padding: 5px 12px;
+  display: flex;
+  flex-direction: column;
+  width: 160px;
   border: 1px solid var(--accent);
-  border-radius: 14px;
-  background: var(--surface-2);
-  color: var(--text);
-  font-size: 12px;
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border-radius: 8px;
+  background: var(--surface);
   box-shadow: var(--shadow);
+  overflow: hidden;
   pointer-events: none;
 }
 
-/* Still being made: it can be dragged once it's done. */
-.flying-chip.making {
+.carry-ghost img {
+  display: block;
+  width: 160px;
+}
+
+.carry-ghost canvas {
+  display: block;
+  background: var(--surface-2);
+}
+
+.carry-ghost span {
+  padding: 2px 6px 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* Taken out of the window: its file is being made. */
+.carry-ghost.making {
   border-style: dashed;
 }

@@ -369,7 +369,7 @@ async function local(
   const src = await api.mediaUrl(vod.id);
   const player = mount(LocalPlayer, {
     target: el,
-    props: { vodId: vod.id, src, start: time, autoplay: play, audio: vod.audio_only, onerror },
+    props: { vod, src, start: time, autoplay: play, audio: vod.audio_only, onerror },
   });
   return {
     seek: player.seek,

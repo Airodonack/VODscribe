@@ -16,7 +16,7 @@
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
   import { columns, frameStart, PEAKS_RATE, tickStep } from "./media";
-  import { exportStretch, flyAndDrag, stretchAt } from "./dragout";
+  import { carry, stretchAt } from "./dragout";
   import { formatTime, os } from "./platform";
   import { theme } from "./theme.svelte";
 
@@ -26,6 +26,8 @@
     time,
     fps,
     highlight = null,
+    current = null,
+    ownPlayer = false,
     onseek,
   }: {
     vod: Vod;
@@ -36,6 +38,10 @@
     fps: number;
     /** A stretch to light up: the one the Export button would make a clip of, while it's hovered. */
     highlight?: { start: number; end: number } | null;
+    /** Whether the VOD plays in the app's own player (its frames can be read). */
+    ownPlayer?: boolean;
+    /** The stretch between two cuts that the playhead is in, shaded. */
+    current?: { start: number; end: number } | null;
     onseek: (time: number) => void;
   } = $props();
 
@@ -205,11 +211,11 @@
       if (!drag.moved && Math.abs(e.clientX - drag.x) < 3) return;
       drag.moved = true;
       drag.at = frameStart(t, fps);
-      onseek(drag.at);
+      onseek(inFrame(drag.at));
     }
   }
 
-  /** Makes `range` a clip and drags it out, flying its chip from the stretch to the pointer. */
+  /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file. */
   async function takeOut(range: { start: number; end: number }, x: number, y: number) {
     taking = range;
     const from = new DOMRect(
@@ -219,19 +225,15 @@
       HEIGHT,
     );
     try {
-      await flyAndDrag(
-        exportStretch(range.start, range.end),
-        formatTime(range.end - range.start),
-        from,
-        x,
-        y,
-        () => down,
-      );
+      await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x, y });
     } finally {
       taking = null;
     }
   }
   const x0 = (t: number) => ((t - viewStart) / span) * width;
+
+  /** A quarter of a frame after a cut: the frame it starts, whichever way the player rounds. */
+  const inFrame = (cut: number) => Math.min(duration, cut + 0.25 / fps);
 
   function onUp() {
     down = false;
@@ -244,7 +246,7 @@
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
       if (done.moved) cuts.move(done.id, done.at);
-      else onseek(done.at);
+      else onseek(inFrame(done.at));
     }
   }
 
@@ -288,6 +290,22 @@
   {#each ticks as t (t)}
     <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
   {/each}
+  {#if current && current.end > viewStart && current.start < viewStart + span}
+    <div
+      class="between"
+      style:left={pct(Math.max(current.start, viewStart))}
+      style:width={widthPct(Math.max(current.start, viewStart), Math.min(current.end, viewStart + span))}
+    ></div>
+  {/if}
+  {#if cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
+    {@const picked = cuts.selection}
+    <div
+      class="selection"
+      style:left={pct(Math.max(picked.start, viewStart))}
+      style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
+      title="Selected: Clip (X) cuts both ends"
+    ></div>
+  {/if}
   {#each [highlight, taking] as lit, i (i)}
     {#if lit && lit.end > viewStart && lit.start < viewStart + span}
       <div
@@ -320,7 +338,7 @@
         class:selected={cuts.selected === mark.id}
         data-mark={mark.id}
         style:left={pct(at)}
-        title="Mark at {formatTime(at)} · drag to move it"
+        title="Cut at {formatTime(at)} · drag to move it"
       ></span>
     {/if}
   {/each}
@@ -398,16 +416,16 @@
     background: var(--danger);
   }
 
-  /* A mark: a line between two frames, with a flag at the top to grab. */
+  /* A cut: a line between two frames, with a notch at the top to grab. */
   .cut {
-    --cut: #f59e0b;
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 11px;
-    margin-left: -5px;
+    width: 13px;
+    margin-left: -6px;
     cursor: ew-resize;
     z-index: 1;
+    --color: var(--cut);
   }
 
   .cut::before {
@@ -415,30 +433,58 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 5px;
+    left: 6px;
     width: 1px;
-    background: var(--cut);
+    background: var(--color);
   }
 
   .cut::after {
     content: "";
     position: absolute;
     top: 0;
-    left: 5px;
-    width: 7px;
-    height: 9px;
-    border-radius: 0 2px 2px 0;
-    background: var(--cut);
+    left: 1px;
+    border-left: 5.5px solid transparent;
+    border-right: 5.5px solid transparent;
+    border-top: 8px solid var(--color);
+  }
+
+  /* Selected: its own color, a stronger line and a larger notch. */
+  .cut.selected {
+    --color: var(--pick);
+    z-index: 2;
   }
 
   .cut.selected::before {
-    width: 2px;
-    left: 4.5px;
+    left: 5px;
+    width: 3px;
   }
 
   .cut.selected::after {
-    box-shadow: 0 0 0 2px var(--surface);
-    height: 11px;
+    left: -1px;
+    border-left-width: 7.5px;
+    border-right-width: 7.5px;
+    border-top-width: 11px;
+  }
+
+  /* The stretch between two cuts the playhead is in. */
+  .between {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--cut) 16%, transparent);
+    pointer-events: none;
+  }
+
+  /* A stretch selected in the transcript, waiting for Clip. */
+  .selection {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--pick) 20%, transparent);
+    box-shadow:
+      inset 2px 0 0 var(--pick),
+      inset -2px 0 0 var(--pick);
+    pointer-events: none;
   }
 
   .playhead {

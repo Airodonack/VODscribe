@@ -13,6 +13,9 @@ class Clips {
   /** How far each clip being cut is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
+  /** A stretch being carried (dragout.ts), and whether it's over the clip bar. */
+  carrying = $state<{ start: number; end: number } | null>(null);
+  overBar = $state(false);
   /** While the note before downloading a clip is up: how it's answered. */
   asking = $state<((download: boolean) => void) | null>(null);
   /** Whether the VOD shown is from a site, so its clips are downloaded. */
@@ -62,14 +65,23 @@ class Clips {
     return this.list.find((c) => Math.abs(c.start - start) < 0.001 && Math.abs(c.end - end) < 0.001);
   }
 
+  /** The clips in the clip bar: saved there, not only dragged out of the window. */
+  get shown(): Clip[] {
+    return this.list.filter((c) => c.shown);
+  }
+
   /**
-   * Makes `start`..`end` a clip, or gives the one made already. Before the
-   * first downloaded from a site, the note on permission is answered first.
-   * Null if it's declined or fails.
+   * Makes `start`..`end` a clip, or gives the one made already (putting it
+   * in the clip bar if `shown`). Before the first downloaded from a site, the
+   * note on permission is answered first. Null if it's declined or fails.
    */
-  async make(start: number, end: number): Promise<Clip | null> {
+  async make(start: number, end: number, shown = true): Promise<Clip | null> {
     const vodId = this.vodId;
     const made = this.find(start, end);
+    if (made && shown && !made.shown) {
+      await this.#run(api.keepClip(made.id));
+      return this.list.find((c) => c.id === made.id) ?? made;
+    }
     if (made) return made;
     if (vodId === null || this.asking) return null;
     if (this.#fromSite && !noteHidden()) {
@@ -78,7 +90,7 @@ class Clips {
       if (!download) return null;
     }
     try {
-      const clip = await api.addClip(vodId, start, end);
+      const clip = await api.addClip(vodId, start, end, shown);
       this.#put(clip);
       this.error = null;
       return clip;

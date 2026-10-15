@@ -143,6 +143,22 @@ fn parse_frame_rate(details: &str) -> Option<f64> {
     line.split(", ").find_map(|part| part.strip_suffix(" fps")?.parse::<f64>().ok()).filter(|f| *f > 0.0)
 }
 
+/// The frame showing at `time` seconds into `path`, as a JPEG `width` pixels wide.
+pub fn frame(ffmpeg: &Path, path: &Path, time: f64, width: u32) -> Result<Vec<u8>> {
+    let mut cmd = tools::command(ffmpeg);
+    let out = tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE))
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{:.3}", time.max(0.0)), "-i"])
+        .arg(path)
+        .args(["-frames:v", "1", "-vf", &format!("scale={width}:-2"), "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"])
+        .stdin(Stdio::null())
+        .output()
+        .context("run ffmpeg")?;
+    if !out.status.success() || out.stdout.is_empty() {
+        bail!("ffmpeg couldn't read a frame: {}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(out.stdout)
+}
+
 /// Saves a frame from a tenth of the way in as VOD `id`'s thumbnail. `None` for
 /// audio-only files.
 pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Option<f64>) -> Result<Option<String>> {
@@ -244,6 +260,8 @@ mod tests {
         );
         let silent = make("silent.mp4", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90"]);
         assert_eq!(frame_rate(&ffmpeg, &video).unwrap(), Some(25.0));
+        let jpeg = frame(&ffmpeg, &video, 1.0, 80).unwrap();
+        assert!(jpeg.starts_with(&[0xff, 0xd8]), "a JPEG");
         // Real audio with a program's extension is still refused.
         let program = dir.join("clip.mp4.exe");
         fs::copy(&video, &program).unwrap();

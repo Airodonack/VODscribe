@@ -342,7 +342,8 @@ CREATE TABLE clips (
     created_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'waiting',
     file_path TEXT,
-    error TEXT
+    error TEXT,
+    shown INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX clips_by_vod ON clips (vod_id, position);";
 /// v18: marks on a VOD's timeline. A "cut" is a point between two frames,
@@ -444,6 +445,8 @@ pub struct Clip {
     pub status: ClipStatus,
     pub file_path: Option<String>,
     pub error: Option<String>,
+    /// In the clip bar: saved there, rather than only dragged out of the window.
+    pub shown: bool,
 }
 
 /// A mark on a VOD's timeline (only cuts, for now).
@@ -455,7 +458,7 @@ pub struct Mark {
     pub start: f64,
 }
 
-const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error";
+const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
 
 fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     Ok(Clip {
@@ -467,6 +470,7 @@ fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
         status: ClipStatus::parse(&r.get::<_, String>("status")?),
         file_path: r.get("file_path")?,
         error: r.get("error")?,
+        shown: r.get("shown")?,
     })
 }
 
@@ -564,11 +568,13 @@ impl Db {
     }
 
     /// Adds a clip of VOD `vod_id` from `start` to `end`, after its others.
-    pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str) -> Result<Clip> {
+    /// Adds a clip of VOD `vod_id` from `start` to `end`, after its others;
+    /// `shown` if it goes in the clip bar.
+    pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str, shown: bool) -> Result<Clip> {
         self.conn.execute(
-            "INSERT INTO clips (vod_id, start, end, title, position, created_at)
-             VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(position), 0) + 1 FROM clips WHERE vod_id = ?1), ?5)",
-            params![vod_id, start, end, title, now()],
+            "INSERT INTO clips (vod_id, start, end, title, position, created_at, shown)
+             VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(position), 0) + 1 FROM clips WHERE vod_id = ?1), ?5, ?6)",
+            params![vod_id, start, end, title, now(), shown],
         )?;
         Ok(self.clip(self.conn.last_insert_rowid())?.expect("just inserted"))
     }
@@ -598,6 +604,12 @@ impl Db {
             "UPDATE clips SET start = ?2, end = ?3, status = 'waiting', error = NULL WHERE id = ?1",
             params![id, start, end],
         )?;
+        Ok(())
+    }
+
+    /// Puts clip `id` in the clip bar.
+    pub fn show_clip(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clips SET shown = 1 WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -1521,9 +1533,12 @@ mod tests {
     fn clips_keep_their_order_and_follow_their_range() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
-        let a = db.add_clip(vod, 10.0, 20.0, "first").unwrap();
-        let b = db.add_clip(vod, 5.0, 8.0, "second").unwrap();
+        let a = db.add_clip(vod, 10.0, 20.0, "first", true).unwrap();
+        let b = db.add_clip(vod, 5.0, 8.0, "second", false).unwrap();
         assert_eq!(a.status, ClipStatus::Waiting);
+        assert!(!b.shown, "dragged out only");
+        db.show_clip(b.id).unwrap();
+        assert!(db.clip(b.id).unwrap().unwrap().shown);
         let titles = |db: &Db| db.clips(vod).unwrap().into_iter().map(|c| c.title).collect::<Vec<_>>();
         assert_eq!(titles(&db), ["first", "second"], "in the order they were made");
         assert_eq!(db.unfinished_clips().unwrap().len(), 2);

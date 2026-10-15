@@ -142,6 +142,8 @@ export interface Clip {
   status: ClipStatus;
   file_path: string | null;
   error: string | null;
+  /** In the clip bar (saved there), not only dragged out of the window. */
+  shown: boolean;
 }
 
 /** A mark on a VOD's timeline (crates/core `db::Mark`): a cut, between two frames. */
@@ -246,13 +248,19 @@ export const api = {
   addMark: (vodId: number, time: number) => invoke<Mark>("add_mark", { vodId, time }),
   moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
   deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
-  addClip: (vodId: number, start: number, end: number) => invoke<Clip>("add_clip", { vodId, start, end }),
+  addClip: (vodId: number, start: number, end: number, shown = true) =>
+    invoke<Clip>("add_clip", { vodId, start, end, shown }),
+  /** Puts clip `id` (one only dragged out) in the clip bar. */
+  keepClip: (id: number) => invoke<Clip>("keep_clip", { id }),
   setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),
   renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging clip `id`'s file out of the window; call while the mouse button is down. */
-  dragClip: (id: number) => invoke<void>("drag_clip", { id }),
+  dragClip: (id: number, image?: Uint8Array) =>
+    invoke<void>("drag_clip", { id, image: image ? Array.from(image) : null }),
+  /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
+  frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */

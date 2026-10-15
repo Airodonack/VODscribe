@@ -107,6 +107,25 @@ pub(crate) async fn peaks(state: State<'_, AppState>, id: i64) -> CmdResult<taur
     Ok(tauri::ipc::Response::new(levels))
 }
 
+/// The frame of VOD `id`'s video at `time` seconds, as a small JPEG (for the
+/// picture shown while a stretch is dragged); empty for a VOD that doesn't
+/// play from a file here, or sound alone.
+#[tauri::command]
+pub(crate) async fn frame(state: State<'_, AppState>, id: i64, time: f64) -> CmdResult<tauri::ipc::Response> {
+    let file = playable_file(&state.db.lock().unwrap(), id);
+    let (Some(file), Some(ffmpeg)) = (file, tools::find_ffmpeg(&state.paths.bin())) else {
+        return Ok(tauri::ipc::Response::new(Vec::new()));
+    };
+    if !time.is_finite() {
+        return Err("Not a time in the video.".into());
+    }
+    let jpeg = tauri::async_runtime::spawn_blocking(move || local::frame(&ffmpeg, Path::new(&file), time, 240))
+        .await
+        .map_err(err)?
+        .unwrap_or_default();
+    Ok(tauri::ipc::Response::new(jpeg))
+}
+
 /// The frame rate of VOD `id`'s video, for stepping a frame at a time. None
 /// for sound alone, or when it can't be read.
 #[tauri::command]

@@ -3,14 +3,14 @@
   // plays it; double-clicking its name renames it; once its file is made, it
   // drags out of the window (into a video editor or a folder).
 
-  import { api, type Clip } from "./api";
+  import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { dragOut } from "./dragout";
+  import { carry } from "./dragout";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
 
-  let { onplay }: { onplay: (time: number) => void } = $props();
+  let { vod, ownPlayer, onplay }: { vod: Vod; ownPlayer: boolean; onplay: (time: number) => void } = $props();
 
   let renaming = $state<number | null>(null);
   let draft = $state("");
@@ -42,11 +42,12 @@
   }
   function onPointerMove(e: PointerEvent) {
     if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
-    const clip = press.clip;
+    const { clip, x, y } = press;
     press = null;
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 500);
-    dragOut(clip);
+    const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
+    carry({ vod, start: clip.start, end: clip.end, ownPlayer, from, x: e.clientX, y: e.clientY });
   }
   function play(time: number) {
     if (!swallowClick) onplay(time);
@@ -73,8 +74,8 @@
 
 <svelte:window onpointermove={onPointerMove} onpointerup={() => (press = null)} />
 
-<div class="strip" aria-label="Clips">
-  {#each clips.list as clip (clip.id)}
+<div class="strip clip-bar" class:over={clips.overBar} aria-label="Clips">
+  {#each clips.shown as clip (clip.id)}
     {@const progress = clips.progress.get(clip.id)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -125,12 +126,26 @@
       {/if}
     </div>
   {/each}
+  {#if clips.carrying && !clips.shown.some((c) => c.start === clips.carrying?.start && c.end === clips.carrying?.end)}
+    <span class="drop muted">Drop here to keep it as a clip</span>
+  {/if}
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
   {/if}
 </div>
 
 <style>
+  .strip.over {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .drop {
+    font-size: 12px;
+    padding: 0 6px;
+    white-space: nowrap;
+  }
+
   .strip {
     display: flex;
     align-items: center;

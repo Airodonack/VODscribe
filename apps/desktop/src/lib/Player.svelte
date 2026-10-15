@@ -181,18 +181,40 @@
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
 
-  // What the line beside the controls says: about the selected mark, or the
-  // stretch the playhead is in, or how to begin.
+  // The line beside the controls: facts only (the buttons and their tips say
+  // how). ≈ marks times a site's player can only show roughly.
   const context = $derived.by(() => {
+    const approx = playsHere(vod) ? "" : "≈ ";
+    const picked = cuts.selection;
+    if (picked)
+      return `${approx}${formatTime(picked.start)}–${formatTime(picked.end)} selected · ${formatTime(picked.end - picked.start)}`;
     const selected = cuts.list.find((m) => m.id === cuts.selected);
-    const rough = !playsHere(vod) ? " (as near as this player allows; download the video to be exact)" : "";
-    if (selected)
-      return `Mark at ${precise(selected.start)}${rough} · , and . move it a frame (Shift: ten) · Delete removes it`;
-    if (!cuts.list.length) return "Press X (or Mark) to mark a frame · Export makes the stretch between marks a clip";
-    return stretch
-      ? `Stretch ${formatTime(stretch.start)}–${formatTime(stretch.end)} · ${formatTime(stretch.end - stretch.start)} long${rough} · Export it, or ${dragKey}-drag it out`
-      : "";
+    if (selected) return `Cut at ${approx}${precise(selected.start)} · , . move it a frame · Delete removes it`;
+    if (stretch && between)
+      return `${approx}${formatTime(stretch.start)}–${formatTime(stretch.end)} · ${formatTime(stretch.end - stretch.start)}`;
+    return "";
   });
+  // Whether the playhead's stretch lies between two cuts (not the VOD's start or end).
+  const between = $derived(
+    !!stretch &&
+      cuts.list.some((m) => Math.abs(m.start - stretch.start) < 1e-6) &&
+      cuts.list.some((m) => Math.abs(m.start - stretch.end) < 1e-6),
+  );
+
+  /** Clip: cuts both ends of the selection, else cuts here (or takes away the cut here). */
+  function clip() {
+    if (cuts.selection) cuts.cutSelection();
+    else cuts.toggle(now, fps);
+  }
+
+  /** Save: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
+  async function save() {
+    const range = cuts.selection ?? stretch;
+    if (!range || (!cuts.selection && !cuts.list.length)) return;
+    if (cuts.selection) await cuts.cutSelection();
+    await exportStretch(range.start, range.end);
+  }
+  const canSave = $derived(!!cuts.selection || cuts.list.length > 0);
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {
@@ -234,8 +256,14 @@
     if (e.ctrlKey || e.metaKey || e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (key === "x") {
-      cuts.toggle(now, fps);
+    if (key === "x" || key === "s") {
+      if (key === "x") clip();
+      else save();
+      e.preventDefault();
+      return;
+    }
+    if (key === "Escape" && cuts.selection) {
+      cuts.selection = null;
       e.preventDefault();
       return;
     }
@@ -243,7 +271,8 @@
       // A selected mark moves a frame (ten with Shift), and the picture shows its frame.
       const frames = (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1);
       const at = cuts.nudgeSelected(frames, fps, duration);
-      if (at !== null) seekTo(at);
+      // A quarter-frame in: the frame the cut starts, whichever way the player rounds.
+      if (at !== null) seekTo(Math.min(duration, at + 0.25 / fps));
       e.preventDefault();
       return;
     }
@@ -344,8 +373,9 @@
       <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
       <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
       <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
-      <kbd>X</kbd> mark a frame (<kbd>,</kbd><kbd>.</kbd> move the selected mark, <kbd>Delete</kbd> removes it)
+      <kbd>X</kbd> cut here (<kbd>,</kbd><kbd>.</kbd> move the selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
+      <kbd>S</kbd> save the stretch as a clip <span class="sep">·</span>
       <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
       {#if framed}
@@ -389,7 +419,16 @@
       </Popover>
       <div class="controls">
         {#if duration}
-          <Scrubber {vod} {duration} time={now} {fps} highlight={exportHover ? stretch : null} onseek={seekTo} />
+          <Scrubber
+            {vod}
+            {duration}
+            time={now}
+            {fps}
+            highlight={exportHover && canSave ? (cuts.selection ?? stretch) : null}
+            current={between ? stretch : null}
+            ownPlayer={playsHere(vod)}
+            onseek={seekTo}
+          />
         {/if}
         <div class="row">
           <button
@@ -408,19 +447,26 @@
             >
             / {formatTime(duration)}</span
           >
-          <button class="control mark" onclick={() => cuts.toggle(now, fps)} title="Mark this frame, or unmark it (X)">
-            <Icon name="flag" size={14} /> Mark
+          <button
+            class="action clip"
+            class:picking={!!cuts.selection}
+            onclick={clip}
+            title={cuts.selection
+              ? "Cut both ends of the selection (X)"
+              : "Cut here, between this frame and the one before; the stretches between cuts can be saved as clips (X)"}
+          >
+            <Icon name="scissors" size={14} /> Clip <kbd>X</kbd>
           </button>
           <button
-            class="control export"
+            class="action save"
             bind:this={exportButton}
-            onclick={exportHere}
+            onclick={save}
             onmouseenter={() => (exportHover = true)}
             onmouseleave={() => (exportHover = false)}
-            disabled={!stretch}
-            title="Make the lit-up stretch a clip, to drag into your video editor or save. Or {dragKey}-drag a stretch of the timeline straight out."
+            disabled={!canSave}
+            title="Save the lit-up stretch as a clip in the clip bar (S). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
           >
-            <Icon name="scissors" size={14} /> Export
+            <Icon name="download" size={14} /> Save <kbd>S</kbd>
           </button>
           <span class="context muted" title={context}>{context}</span>
           {#if player?.volume && !player.ownControls}
@@ -470,8 +516,8 @@
           {/if}
         </div>
       </div>
-      {#if clips.list.length || clips.error}
-        <ClipStrip onplay={playFrom} />
+      {#if clips.shown.length || clips.carrying || clips.error}
+        <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
       {/if}
     {/if}
     {#if error}
@@ -568,14 +614,58 @@
     color: var(--accent);
   }
 
-  .export {
+  /* Clip and Save: labelled buttons with their keys. */
+  .action {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
     gap: 5px;
+    height: 28px;
+    padding: 0 6px 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
     font-size: 12px;
-    color: var(--accent);
   }
 
-  .export:disabled {
-    opacity: 0.5;
+  .action:hover:not(:disabled) {
+    background: var(--surface-2);
+    border-color: color-mix(in srgb, var(--text) 25%, var(--border));
+  }
+
+  .action:active:not(:disabled) {
+    background: var(--surface-3);
+  }
+
+  .action:disabled {
+    opacity: 0.45;
+  }
+
+  .action kbd {
+    min-width: 0;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 15px;
+    color: var(--muted);
+  }
+
+  .clip :global(svg) {
+    color: var(--cut);
+  }
+
+  /* A selection waits to be cut: Clip takes its color. */
+  .clip.picking {
+    border-color: var(--pick);
+    background: color-mix(in srgb, var(--pick) 14%, var(--surface));
+  }
+
+  .clip.picking :global(svg) {
+    color: var(--pick);
+  }
+
+  .save :global(svg) {
+    color: var(--accent);
   }
 
   .note {
@@ -599,12 +689,6 @@
     display: flex;
     justify-content: flex-end;
     gap: 8px;
-  }
-
-  .mark {
-    gap: 5px;
-    font-size: 12px;
-    color: #d97706;
   }
 
   .speed {

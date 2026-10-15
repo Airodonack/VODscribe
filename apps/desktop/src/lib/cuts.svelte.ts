@@ -12,6 +12,8 @@ class Cuts {
   vodId = $state<number | null>(null);
   list = $state.raw<Mark[]>([]);
   selected = $state<number | null>(null);
+  /** A stretch picked (in the transcript) but not cut yet: Clip cuts both its ends. */
+  selection = $state<{ start: number; end: number } | null>(null);
   /** The open VOD's frame rate, as its player says (Player.svelte), for marks placed elsewhere. */
   fps = 30;
   error = $state<string | null>(null);
@@ -22,6 +24,7 @@ class Cuts {
     this.vodId = vodId;
     this.list = [];
     this.selected = null;
+    this.selection = null;
     this.#reload();
   }
 
@@ -68,6 +71,15 @@ class Cuts {
     } catch (e) {
       this.error = String(e);
     }
+  }
+
+  /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it). */
+  async cutSelection() {
+    const picked = this.selection;
+    if (!picked) return;
+    this.selection = null;
+    await this.ensure(picked.start);
+    await this.ensure(picked.end);
   }
 
   /** Puts a mark on the frame showing at `time`, unless there's one already. */

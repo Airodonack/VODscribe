@@ -257,9 +257,17 @@ pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Cli
     crate::with_reads(app, move |db| db.clips(vod_id)).await
 }
 
-/// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled with what's said in it.
+/// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled with
+/// what's said in it; in the clip bar unless `shown` is false (one only
+/// dragged out of the window).
 #[tauri::command]
-pub(crate) async fn add_clip(app: AppHandle, vod_id: i64, start: f64, end: f64) -> CmdResult<Clip> {
+pub(crate) async fn add_clip(
+    app: AppHandle,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    shown: Option<bool>,
+) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
     let clip = {
         let db = state.db.lock().unwrap();
@@ -267,7 +275,7 @@ pub(crate) async fn add_clip(app: AppHandle, vod_id: i64, start: f64, end: f64) 
         let end = vod.info.duration.map_or(end, |d| end.min(d));
         check_range(start, end, vod.info.duration)?;
         let words = db.words_between(vod_id, start, end).map_err(err)?;
-        db.add_clip(vod_id, start, end, &clips::title(&words, start)).map_err(err)?
+        db.add_clip(vod_id, start, end, &clips::title(&words, start), shown.unwrap_or(true)).map_err(err)?
     };
     state.clips.queue(clip.id);
     Ok(clip)
@@ -289,6 +297,15 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
     state.clips.stop(id);
     state.clips.queue(id);
     Ok(clip)
+}
+
+/// Puts clip `id` (one dragged out of the window) in the clip bar.
+#[tauri::command]
+pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    db.show_clip(id).map_err(err)?;
+    db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
 #[tauri::command]
@@ -382,9 +399,17 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// interface can't offer any other file. Called while the mouse button is
 /// still down; the drag then belongs to the system.
 #[tauri::command]
-pub(crate) async fn drag_clip(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
+pub(crate) async fn drag_clip(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: i64,
+    image: Option<Vec<u8>>,
+) -> CmdResult<()> {
     let path = ready_file(&app, id)?;
-    let image = std::fs::read(thumb_path(&app, id)).unwrap_or_else(|_| DRAG_ICON.to_vec());
+    // The picture the interface drew (the frame over its waveform), if it's a
+    // PNG of reasonable size; else the clip's first frame.
+    let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
+    let image = drawn.unwrap_or_else(|| std::fs::read(thumb_path(&app, id)).unwrap_or_else(|_| DRAG_ICON.to_vec()));
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window
@@ -411,11 +436,20 @@ fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Res
         data.set_uris(&[uri.as_str()]);
     });
     handlers.borrow_mut().push(data);
+    // Dropped where nothing takes it: no animation of it flying back, which
+    // holds on to the pointer (losing the next press) until it's done.
+    let failed = source.connect_drag_failed(|_, _, _| glib::Propagation::Stop);
+    handlers.borrow_mut().push(failed);
     // Once it's over, dropped or not, the window stops answering for it.
     let ended = handlers.clone();
     let end = source.connect_drag_end(move |source, _| {
         for handler in ended.borrow_mut().drain(..) {
             source.disconnect(handler);
+        }
+        // The press that started the drag never comes back up in the page:
+        // the drag took the release. Without one, its next press is lost.
+        if let Some(page) = find_webview(source.upcast_ref()) {
+            release_button(&page);
         }
     });
     handlers.borrow_mut().push(end);
@@ -433,6 +467,46 @@ fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Res
         context.drag_set_icon_pixbuf(&picture, 0, 0);
     }
     Ok(())
+}
+
+/// The page's WebKitGTK view, inside the window.
+#[cfg(target_os = "linux")]
+fn find_webview(widget: &gtk::Widget) -> Option<gtk::Widget> {
+    use gtk::prelude::*;
+    if widget.type_().name() == "WebKitWebView" {
+        return Some(widget.clone());
+    }
+    widget.downcast_ref::<gtk::Container>()?.children().iter().find_map(find_webview)
+}
+
+/// Sends `page` the release of the first mouse button, where the pointer is.
+#[cfg(target_os = "linux")]
+fn release_button(page: &gtk::Widget) {
+    use gtk::glib::translate::{ToGlibPtr, ToGlibPtrMut};
+    use gtk::prelude::*;
+    let (Some(window), Some(device)) = (page.window(), page.display().default_seat().and_then(|s| s.pointer())) else {
+        return;
+    };
+    let (_, x, y, _) = window.device_position_double(&device);
+    let (_, root_x, root_y) = device.position_double();
+    let mut event = gtk::gdk::Event::new(gtk::gdk::EventType::ButtonRelease);
+    // SAFETY: a button event just made, of the type its fields are written as;
+    // the window is referenced for the event, which unreferences it when freed.
+    unsafe {
+        let button = ToGlibPtrMut::<*mut gtk::gdk::ffi::GdkEvent>::to_glib_none_mut(&mut event).0
+            as *mut gtk::gdk::ffi::GdkEventButton;
+        (*button).window = ToGlibPtr::<*mut gtk::gdk::ffi::GdkWindow>::to_glib_full(&window);
+        (*button).send_event = 1;
+        (*button).time = gtk::gdk::ffi::GDK_CURRENT_TIME as u32;
+        (*button).x = x;
+        (*button).y = y;
+        (*button).x_root = root_x;
+        (*button).y_root = root_y;
+        (*button).button = 1;
+        (*button).state = gtk::gdk::ffi::GDK_BUTTON1_MASK;
+    }
+    event.set_device(Some(&device));
+    gtk::main_do_event(&mut event);
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -1,14 +1,18 @@
-// Dragging a clip out of the window, into a video editor or a folder. A pill
-// in the clip bar starts the system's drag once the pointer moves; an Alt-drag
-// on a stretch of the timeline (or a press held on the picture) first flies a
-// chip from the stretch to the pointer, which shows what's being picked up
-// without a word of explanation.
+// Carrying a stretch of the timeline (or a clip's pill) somewhere: an
+// Alt-drag on the timeline (Option on a Mac, Ctrl too on Linux), a press held
+// on the picture, or a pill dragged from the clip bar. Inside the window it's
+// the app's own drag, showing the stretch's frame over its waveform, and the
+// one place it lands is the clip bar (the editor's, when there is one);
+// dropped anywhere else in the window, nothing happens. Taken past the
+// window's edge, it becomes the system's drag of the clip's file, into a
+// video editor or a folder: the file is made then (without a pill), and the
+// drag starts once it's there, if the button is still down.
 
-import { api, type Clip } from "./api";
+import { api, thumbUrl, type Clip, type Vod } from "./api";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { stretches } from "./media";
+import { columns, stretches } from "./media";
 import { formatTime } from "./platform";
 
 /** How long a press is held before it picks the clip up. */
@@ -25,56 +29,13 @@ export function isOutgoing(paths: string[]): boolean {
   return outgoing !== null && paths.length > 0 && paths.every((p) => p === outgoing);
 }
 
-/** Starts the system drag of `clip`, if its file is made. */
-export async function dragOut(clip: Clip): Promise<void> {
+/** Starts the system drag of `clip`, if its file is made, showing `image` (a PNG) if given. */
+export async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   if (clip.status !== "ready" || !clip.file_path) return;
   outgoing = clip.file_path;
   clearTimeout(forget);
   forget = setTimeout(() => (outgoing = null), 60_000);
-  await api.dragClip(clip.id).catch((e) => console.error("drag", e));
-}
-
-/**
- * Flies a chip labelled `label` from `from` (the stretch on the timeline) to
- * the pointer at (`x`, `y`), while `clip` is made (or found), then starts the
- * system drag once its file is, if the button is still down (`held`). A file
- * downloaded from a site may take longer than a press: its pill in the clip
- * bar can be dragged when it's done.
- */
-export async function flyAndDrag(
-  clip: Promise<Clip | null>,
-  label: string,
-  from: DOMRect,
-  x: number,
-  y: number,
-  held: () => boolean,
-) {
-  const chip = document.createElement("div");
-  chip.className = "flying-chip";
-  chip.textContent = label;
-  document.body.appendChild(chip);
-  const box = chip.getBoundingClientRect();
-  const dx = from.left + from.width / 2 - (x - box.width / 2);
-  const dy = from.top + from.height / 2 - (y - box.height / 2);
-  chip.style.left = `${x - box.width / 2}px`;
-  chip.style.top = `${y - box.height / 2}px`;
-  const flight = chip.animate(
-    [
-      { transform: `translate(${dx}px, ${dy}px) scale(0.9)`, opacity: 0.6 },
-      { transform: "translate(0, 0) scale(1)", opacity: 1 },
-    ],
-    { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-  );
-  try {
-    const [made] = await Promise.all([clip, flight.finished.catch(() => {})]);
-    if (!made) return;
-    chip.textContent = `${formatTime(made.end - made.start)}  ${made.title}`;
-    if (made.status !== "ready") chip.classList.add("making");
-    const ready = await clips.ready(made.id, held);
-    if (ready && held()) await dragOut(ready);
-  } finally {
-    chip.remove();
-  }
+  await api.dragClip(clip.id, image).catch((e) => console.error("drag", e));
 }
 
 /** The stretch between marks that `time` is in, of a VOD `duration` seconds long. */
@@ -88,8 +49,12 @@ export function stretchAt(time: number, duration: number): { start: number; end:
 /** A download from a site longer than this asks first. */
 const LONG = 10 * 60;
 
-/** Makes the stretch `start`..`end` a clip (or gives the one made), asking first before a long download. */
-export async function exportStretch(start: number, end: number): Promise<Clip | null> {
+/**
+ * Makes the stretch `start`..`end` a clip (or gives the one made), asking
+ * first before a long download; in the clip bar if `shown`, else only made to
+ * be dragged out.
+ */
+export async function exportStretch(start: number, end: number, shown = true): Promise<Clip | null> {
   if (!clips.find(start, end) && clips.fromSite && end - start > LONG) {
     const sure = await ask(
       `This stretch is ${formatTime(end - start)} long, and it's downloaded from the site to make the clip. Make it?`,
@@ -98,10 +63,10 @@ export async function exportStretch(start: number, end: number): Promise<Clip | 
     );
     if (!sure) return null;
   }
-  return clips.make(start, end);
+  return clips.make(start, end, shown);
 }
 
-/** Where `start`..`end` is on screen: on the timeline if it's in view, else nowhere useful (null). */
+/** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
 export function rectOf(start: number, end: number): DOMRect | null {
   const bar = document.querySelector<HTMLElement>(".scrubber");
   if (!bar) return null;
@@ -112,4 +77,172 @@ export function rectOf(start: number, end: number): DOMRect | null {
   const left = box.left + ((Math.max(start, viewStart) - viewStart) / span) * box.width;
   const right = box.left + ((Math.min(end, viewStart + span) - viewStart) / span) * box.width;
   return right > left ? new DOMRect(left, box.top, right - left, box.height) : null;
+}
+
+const PICTURE_WIDTH = 160;
+const WAVE_HEIGHT = 28;
+
+/** A picture of the stretch: its first frame (or the VOD's thumbnail), as a URL; null if there's none. */
+async function pictureOf(vod: Vod, time: number, ownPlayer: boolean): Promise<string | null> {
+  if (ownPlayer && !vod.audio_only) {
+    const jpeg = await api.frame(vod.id, time).catch(() => new Uint8Array());
+    if (jpeg.length) return URL.createObjectURL(new Blob([jpeg as BlobPart], { type: "image/jpeg" }));
+  }
+  return vod.thumb ? thumbUrl(vod.thumb).catch(() => null) : null;
+}
+
+/** The stretch's waveform, drawn on `canvas`. */
+function drawWave(canvas: HTMLCanvasElement, levels: Uint8Array, start: number, end: number) {
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const shown = levels.subarray(Math.floor(start * 10), Math.ceil(end * 10) + 1);
+  const bars = columns(shown, end - start, Math.floor(canvas.width / 2));
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#4f46e5";
+  for (let i = 0; i < bars.length; i++) {
+    const h = Math.max(1, bars[i] * canvas.height);
+    ctx.fillRect(i * 2, (canvas.height - h) / 2, 1, h);
+  }
+}
+
+/** The ghost's picture and waveform as one PNG, for the system's drag. */
+async function snapshot(
+  img: HTMLImageElement | null,
+  wave: HTMLCanvasElement,
+  label: string,
+): Promise<Uint8Array | undefined> {
+  const pictureHeight = img?.naturalWidth ? Math.round((img.naturalHeight / img.naturalWidth) * PICTURE_WIDTH) : 0;
+  const canvas = document.createElement("canvas");
+  canvas.width = PICTURE_WIDTH;
+  canvas.height = pictureHeight + WAVE_HEIGHT + 18;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return undefined;
+  ctx.fillStyle = "#1c1c1b";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (img && pictureHeight) ctx.drawImage(img, 0, 0, PICTURE_WIDTH, pictureHeight);
+  ctx.drawImage(wave, 0, pictureHeight);
+  ctx.fillStyle = "#ecece9";
+  ctx.font = "12px sans-serif";
+  ctx.fillText(label, 6, pictureHeight + WAVE_HEIGHT + 13, PICTURE_WIDTH - 12);
+  const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/png"));
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
+}
+
+export interface Carry {
+  vod: Vod;
+  start: number;
+  end: number;
+  /** Whether the VOD plays in the app's own player (its frames can be read). */
+  ownPlayer: boolean;
+  /** The VOD's waveform (`peaks`), if it has one. */
+  levels?: Uint8Array;
+  /** Where on screen the stretch (or pill) is, for the ghost to fly from. */
+  from: DOMRect;
+  x: number;
+  y: number;
+}
+
+/**
+ * Carries a stretch from (`x`, `y`) while the button is down: see the top of
+ * this file. Resolves once it's dropped, taken out of the window, or let go.
+ */
+export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry): Promise<void> {
+  const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
+  const ghost = document.createElement("div");
+  ghost.className = "carry-ghost";
+  const img = document.createElement("img");
+  img.alt = "";
+  img.width = PICTURE_WIDTH;
+  const wave = document.createElement("canvas");
+  wave.width = PICTURE_WIDTH;
+  wave.height = WAVE_HEIGHT;
+  const waveform = levels ? Promise.resolve(levels) : api.peaks(vod.id).catch(() => new Uint8Array());
+  waveform.then((l) => l.length && drawWave(wave, l, start, end));
+  const caption = document.createElement("span");
+  caption.textContent = label;
+  ghost.append(img, wave, caption);
+  document.body.appendChild(ghost);
+  let pictureUrl: string | null = null;
+  const picture = pictureOf(vod, start, ownPlayer).then((url) => {
+    pictureUrl = url;
+    if (url) img.src = url;
+    else img.remove();
+    return url
+      ? img.decode().then(
+          () => img,
+          () => null,
+        )
+      : null;
+  });
+
+  const place = (px: number, py: number) => {
+    ghost.style.left = `${px + 14}px`;
+    ghost.style.top = `${py + 14}px`;
+  };
+  place(x, y);
+  ghost.animate(
+    [
+      {
+        transform: `translate(${from.left + from.width / 2 - x - 14}px, ${from.top - y - 14}px) scale(0.6)`,
+        opacity: 0.5,
+      },
+      { transform: "translate(0, 0) scale(1)", opacity: 1 },
+    ],
+    { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+  );
+  clips.carrying = { start, end };
+
+  return new Promise((resolve) => {
+    let down = true;
+    let leaving = false;
+    const overBar = (px: number, py: number) => !!document.elementFromPoint(px, py)?.closest(".clip-bar");
+    const finish = () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("keydown", onKey, true);
+      clips.carrying = null;
+      clips.overBar = false;
+      ghost.remove();
+      if (pictureUrl?.startsWith("blob:")) URL.revokeObjectURL(pictureUrl);
+      resolve();
+    };
+    const onMove = (e: PointerEvent) => {
+      if (leaving) return;
+      place(e.clientX, e.clientY);
+      clips.overBar = overBar(e.clientX, e.clientY);
+      const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
+      if (outside) takeOut();
+    };
+    const onUp = (e: PointerEvent) => {
+      down = false;
+      if (leaving) return;
+      const keep = overBar(e.clientX, e.clientY);
+      finish();
+      if (keep) exportStretch(start, end, true);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !leaving) {
+        e.preventDefault();
+        finish();
+      }
+    };
+    // Past the window's edge: the system's drag of the clip's file, made for it.
+    const takeOut = async () => {
+      leaving = true;
+      clips.overBar = false;
+      ghost.classList.add("making");
+      try {
+        const made = await exportStretch(start, end, false);
+        const ready = made && (await clips.ready(made.id, () => down));
+        if (ready && down) {
+          const image = await snapshot(await picture, wave, label);
+          await dragOut(ready, image);
+        }
+      } finally {
+        finish();
+      }
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("keydown", onKey, true);
+  });
 }

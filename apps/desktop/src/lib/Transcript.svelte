@@ -368,8 +368,8 @@
 
   const play = (time: number) => onplay(vod.id, time);
 
-  // Pressing on a line and dragging across others puts marks either side of
-  // them (cuts.svelte.ts); a click without a drag still plays the line.
+  // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
+  // Clip then cuts either side); a click without a drag still plays the line.
   let drag = $state<{ from: number; to: number } | null>(null);
   let pointer = { x: 0, y: 0 };
   let moved = false;
@@ -436,11 +436,10 @@
     const last = lines.indexOf(rows[to].line!);
     if (first < 0 || last < 0) return;
     const { start, end } = linesSpan(lines, first, last);
-    // Marks either side of the lines, and the playhead to their start (showing
-    // the VOD in the player if it wasn't), so Export takes just them.
-    lastPick = { start, end };
+    // The lines selected (Clip then cuts either side of them), and the
+    // playhead to their start, showing the VOD in the player if it wasn't.
     cuts.open(vod.id);
-    cuts.ensure(start).then(() => cuts.ensure(end));
+    cuts.selection = { start, end };
     play(start);
   }
 
@@ -449,17 +448,13 @@
       swallowClick = false;
       return;
     }
-    lastPick = null;
     play(time);
   }
 
-  // The lines last dragged across, marked either side, stay lit until a click.
-  let lastPick = $state<{ start: number; end: number } | null>(null);
-
-  /** Whether row `index` is in the lines being dragged across, or last dragged across. */
+  /** Whether row `index` is in the lines being dragged across, or selected. */
   function picked(index: number, row: Row): boolean {
     if (drag) return index >= Math.min(drag.from, drag.to) && index <= Math.max(drag.from, drag.to);
-    const pick = lastPick;
+    const pick = cuts.vodId === vod.id ? cuts.selection : null;
     return !!pick && !!row.line && row.line.start >= pick.start - 0.01 && row.line.start < pick.end - 0.01;
   }
 
@@ -786,6 +781,6 @@
   }
 
   .line.picked > :global(.row) {
-    background: var(--accent-soft);
+    background: color-mix(in srgb, var(--pick) 16%, transparent);
   }
 </style>
