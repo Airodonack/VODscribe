@@ -1,7 +1,7 @@
 {
   "name": "vodscribe",
   "private": true,
-  "description": "Searchable transcripts for Kick, Twitch and YouTube VODs",
+  "description": "Searchable transcripts for Kick, Twitch, YouTube and other VODs",
   "type": "module",
   "packageManager": "pnpm@12.11.2",
   "scripts": {

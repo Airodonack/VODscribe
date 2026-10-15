@@ -2,6 +2,21 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.3.0 — 2026-10-15
+
+- VODs from other sites: paste a link from any site the video downloader knows (Dailymotion, SoundCloud, Bandcamp and well over a thousand more), not only Kick, Twitch and YouTube. Their video, or audio, is kept on your computer to play in VODscribe, in a format your computer plays, up to 720p. Settings → Storage chooses 480p to 1080p and shows the space they take; the crossed-out camera in its row deletes the video and keeps the transcript. Sites that need you to sign in aren't supported.
+- Twitch clips play, and show the chat from the broadcast they were cut from, while Twitch still has it.
+- Kick and Twitch chats download 3 to 5 times faster.
+- YouTube chat shows how far it has got and appears as it downloads, and removing the VOD stops it.
+- Transcripts fill in steadily while they're made, and pausing or quitting loses at most half a minute of work.
+- Remove, Cancel, Transcribe again, Free up space and Remove GPU add-on ask first again. They had stopped asking, and went ahead on the first click.
+- Audio alone (a podcast, a song, an audio file) plays in a slim bar instead of an empty video frame.
+- Links and files being added show in the library right away, with a spinner, and ✕ cancels one.
+- 7TV, BetterTTV and FrankerFaceZ emotes load faster, and a provider that can't be reached isn't waited on again for a few minutes.
+- VODscribe won't follow links to this computer or your local network.
+- Needs macOS 12 or later, as it already did in practice; older Macs are told so at install.
+- Fixes: the first second or two of FLV files was left out of the transcript. Chat or a thumbnail still arriving for a removed VOD could land on the next one added. A YouTube chat could fail when its transcription finished first. Stop, Pause and Remove could miss a VOD that had just started transcribing. Switching VODs could briefly show the previous one's transcript, with its chat timeline at the wrong scale. Two quick changes in Settings could be saved out of order. Timeline layers that failed to load could be overwritten. On Linux, a link dropped onto a player opened in the player instead of being added, and the drop overlay could stay on screen. Stopping or removing a download could leave partial files behind. A rare crash on an unusual upload date.
+
 ## 0.2.1 — 2026-10-14
 
 - Every version's changes are on vodscribe.com/releases. The version number in the sidebar opens this version's, and the update notice has a "What's new" link to the new one's.

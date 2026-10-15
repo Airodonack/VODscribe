@@ -1,6 +1,6 @@
 {
   "name": "desktop",
-  "description": "Searchable transcripts for Kick, Twitch and YouTube VODs",
+  "description": "Searchable transcripts for Kick, Twitch, YouTube and other VODs",
   "type": "module",
   "scripts": {
     "dev": "vite dev",
