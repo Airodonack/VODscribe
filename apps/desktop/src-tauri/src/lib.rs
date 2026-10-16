@@ -228,6 +228,7 @@ pub fn run() {
             clips::move_mark,
             clips::set_mark_text,
             media::clip_url,
+            clips::clip_thumb,
             edits::list_edits,
             edits::create_edit,
             edits::get_edit,

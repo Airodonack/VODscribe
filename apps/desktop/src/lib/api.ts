@@ -162,6 +162,8 @@ export interface Edit {
   /** The VODs its clips are of, and the clips. */
   vod_ids: number[];
   clip_ids: number[];
+  /** The clip its first piece is of: its first frame is the edit's picture. */
+  first_clip: number | null;
 }
 
 /** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */
@@ -291,6 +293,8 @@ export const api = {
     invoke<Mark>("add_mark", { vodId, time, kind, text }),
   setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
+  /** A clip's first frame, a PNG; empty if it has none. */
+  clipThumb: (id: number) => invoke<ArrayBuffer>("clip_thumb", { id }).then((b) => new Uint8Array(b)),
   listEdits: () => invoke<Edit[]>("list_edits"),
   createEdit: () => invoke<Edit>("create_edit"),
   getEdit: (id: number) => invoke<EditView>("get_edit", { id }),

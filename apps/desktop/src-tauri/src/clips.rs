@@ -436,6 +436,15 @@ pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResul
     state.db.lock().unwrap().delete_mark(id).map_err(err)
 }
 
+/// Clip `id`'s first frame, as a PNG; empty if it has none (yet, or sound alone).
+#[tauri::command]
+pub(crate) async fn clip_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc::Response> {
+    let path = thumb_path(&app, id);
+    let png =
+        tauri::async_runtime::spawn_blocking(move || std::fs::read(path).unwrap_or_default()).await.map_err(err)?;
+    Ok(tauri::ipc::Response::new(png))
+}
+
 /// Clip `id`'s file, if it's made.
 fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;

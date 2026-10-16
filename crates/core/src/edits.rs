@@ -32,6 +32,8 @@ pub struct Edit {
     /// The VODs its clips are of, and the clips.
     pub vod_ids: Vec<i64>,
     pub clip_ids: Vec<i64>,
+    /// The clip its first piece is of: its first frame is the edit's picture.
+    pub first_clip: Option<i64>,
 }
 
 /// A row of the library's list: VODs and edits share one order.
@@ -180,6 +182,7 @@ impl Db {
             length,
             vod_ids,
             clip_ids,
+            first_clip: pieces.first().map(|p| p.clip.id),
         }))
     }
 
@@ -400,6 +403,7 @@ mod tests {
         let titles =
             |db: &Db| db.edit_pieces(edit.id).unwrap().iter().map(|p| p.clip.title.clone()).collect::<Vec<_>>();
         assert_eq!(titles(&db), ["b", "a"]);
+        assert_eq!(db.edit(edit.id).unwrap().unwrap().first_clip, Some(b.id));
         assert_eq!(db.edit(edit.id).unwrap().unwrap().vod_ids, [vod]);
         let pieces = db.edit_pieces(edit.id).unwrap();
         db.move_piece(pieces[0].id, 1).unwrap();

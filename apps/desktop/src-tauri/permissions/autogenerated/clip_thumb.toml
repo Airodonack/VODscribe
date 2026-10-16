@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clip-thumb"
+description = "Enables the clip_thumb command without any pre-configured scope."
+commands.allow = ["clip_thumb"]
+
+[[permission]]
+identifier = "deny-clip-thumb"
+description = "Denies the clip_thumb command without any pre-configured scope."
+commands.deny = ["clip_thumb"]

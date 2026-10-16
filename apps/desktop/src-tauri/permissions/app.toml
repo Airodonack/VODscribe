@@ -36,6 +36,7 @@ permissions = [
   "allow-move-mark",
   "allow-set-mark-text",
   "allow-clip-url",
+  "allow-clip-thumb",
   "allow-list-edits",
   "allow-create-edit",
   "allow-get-edit",

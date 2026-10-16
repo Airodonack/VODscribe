@@ -12,6 +12,8 @@ class Edits {
   /** The edit open in the Edit view, and its pieces. */
   openId = $state<number | null>(null);
   pieces = $state.raw<EditPiece[]>([]);
+  /** Counts each clip's changes (its file made, say), for what shows its picture. */
+  clipChanges = new SvelteMap<number, number>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
@@ -36,6 +38,7 @@ class Edits {
     events.editRemoved((id) => this.#gone(id));
     // A clip's file made, or the clip gone: the open edit's pieces show it.
     events.clip((clip) => {
+      this.clipChanges.set(clip.id, (this.clipChanges.get(clip.id) ?? 0) + 1);
       if (this.pieces.some((p) => p.clip.id === clip.id))
         this.pieces = this.pieces.map((p) => (p.clip.id === clip.id ? { ...p, clip } : p));
     });

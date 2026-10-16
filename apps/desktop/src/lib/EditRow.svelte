@@ -4,6 +4,7 @@
   // carried (dragout.ts), it's somewhere to drop it: a + over it, lit up when
   // the clip is over it.
 
+  import { untrack } from "svelte";
   import { api, type Edit } from "./api";
   import { ask } from "./ask";
   import { clips } from "./clips.svelte";
@@ -25,6 +26,28 @@
   } = $props();
 
   const progress = $derived(edits.progress.get(edit.id));
+
+  // Its picture: the first frame of its first piece's clip, kept until the next one's in.
+  let picture = $state<string | null>(null);
+  $effect(() => {
+    const id = edit.first_clip;
+    void (id !== null && edits.clipChanges.get(id));
+    let stale = false;
+    if (id === null) {
+      untrack(() => replace(null));
+      return;
+    }
+    api.clipThumb(id).then(
+      (png) => !stale && png.length && replace(URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }))),
+      () => {},
+    );
+    return () => (stale = true);
+  });
+  function replace(url: string | null) {
+    if (picture) URL.revokeObjectURL(picture);
+    picture = url;
+  }
+  $effect(() => () => picture && URL.revokeObjectURL(picture));
   const meta = $derived.by(() => {
     if (edit.pieces === 0) return "Empty";
     const what = `${edit.pieces} piece${edit.pieces === 1 ? "" : "s"} · ${formatTime(edit.length)}`;
@@ -46,13 +69,12 @@
 
 <button
   class="main"
-  data-edit-drop={edit.id}
   onclick={onopen}
   onkeydown={onkey}
   title={clips.carrying ? `Drop to add it to “${edit.title}”` : reorderable ? "Drag to reorder (Alt+↑/↓)" : undefined}
 >
   <span class="thumb">
-    <Icon name="film" size={18} />
+    {#if picture}<img src={picture} alt="" />{:else}<Icon name="film" size={18} />{/if}
     {#if edit.length}<span class="duration">{formatTime(edit.length)}</span>{/if}
   </span>
   <span class="text">
@@ -62,9 +84,6 @@
     </span>
   </span>
   {#if edit.status === "cutting"}<Spinner size={12} />{/if}
-  {#if clips.carrying}
-    <span class="drop" class:target={edits.dropTarget === edit.id}><Icon name="plus" size={22} /></span>
-  {/if}
 </button>
 <div class="actions">
   {#if edit.status === "ready" && edit.file_path}
@@ -79,10 +98,15 @@
     <Icon name="trash" size={15} />
   </button>
 </div>
+<!-- Over the whole row, its buttons too, while a clip is carried: where it drops. -->
+{#if clips.carrying}
+  <span class="drop" class:target={edits.dropTarget === edit.id} data-edit-drop={edit.id}>
+    <Icon name="plus" size={22} />
+  </span>
+{/if}
 
 <style>
   .main {
-    position: relative;
     display: flex;
     gap: 10px;
     width: 100%;
@@ -105,6 +129,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
+  }
+
+  .thumb img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
   }
 
   .duration {
@@ -158,7 +191,8 @@
   /* While a clip is carried: a + over the row, solid when the clip is over it. */
   .drop {
     position: absolute;
-    inset: -4px;
+    inset: 3px;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;
