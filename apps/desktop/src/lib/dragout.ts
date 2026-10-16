@@ -9,7 +9,7 @@
 // video editor or a folder: the file is made then (without a pill), and the
 // drag starts once it's there, if the button is still down.
 
-import { api, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
+import { api, events, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
 import { formatHint } from "./resolveHint.svelte";
 import { ask } from "./ask";
@@ -30,6 +30,12 @@ const FLY_MS = 150;
 let outgoing: string | null = null;
 let forget: ReturnType<typeof setTimeout> | undefined;
 
+/** While a clip's file is being dragged out (until the system's drag is
+ *  over): brought back over the window, it isn't something dropped in to add. */
+let out = false;
+let drags = 0;
+export const draggingOut = () => out;
+
 /** Whether `paths` are just the clip being dragged out. */
 export function isOutgoing(paths: string[]): boolean {
   return outgoing !== null && paths.length > 0 && paths.every((p) => p === outgoing);
@@ -41,7 +47,22 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   outgoing = clip.file_path;
   clearTimeout(forget);
   forget = setTimeout(() => (outgoing = null), 60_000);
-  await api.dragClip(clip.id, image).catch((e) => console.error("drag", e));
+  out = true;
+  // Over a moment after the system says so (events about the drag can come
+  // just after), or at the latest in a minute; unless another's begun.
+  const mine = ++drags;
+  let stop: (() => void) | undefined;
+  const over = () => {
+    clearTimeout(limit);
+    stop?.();
+    setTimeout(() => mine === drags && (out = false), 1000);
+  };
+  const limit = setTimeout(over, 60_000);
+  stop = await events.dragEnded(over).catch(() => undefined);
+  await api.dragClip(clip.id, image).catch((e) => {
+    console.error("drag", e);
+    over();
+  });
   formatHint.dragged();
 }
 

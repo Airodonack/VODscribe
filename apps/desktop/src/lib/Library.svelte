@@ -11,7 +11,7 @@
 </script>
 
 <script lang="ts">
-  import { isOutgoing } from "./dragout";
+  import { draggingOut, isOutgoing } from "./dragout";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open } from "@tauri-apps/plugin-dialog";
@@ -99,6 +99,8 @@
     // The demo's page is a website: nothing can be dropped on it.
     if (DEMO) return;
     const types = e.dataTransfer?.types ?? [];
+    // A clip of ours, dragged out and back: not a link to add (but not opened in the window either).
+    if (draggingOut()) return e.preventDefault();
     if (draggingInside || (!types.includes("text/uri-list") && !types.includes("text/plain"))) return;
     e.preventDefault();
     linkOver = linkDragged = true;
@@ -116,6 +118,7 @@
     linkOver = linkDragged = false;
     clearTimeout(linkGone);
     const data = e.dataTransfer;
+    if (draggingOut()) return e.preventDefault();
     if (!data || draggingInside) return;
     // Whatever was dropped, the webview doesn't open it in place of the app.
     e.preventDefault();
@@ -142,11 +145,11 @@
         if (payload.type === "enter") {
           // macOS reports every drag, even ones with nothing the app can use.
           // A clip being dragged out of the app isn't one to add.
-          filesOver = payload.paths.length > 0 && !draggingInside && !isOutgoing(payload.paths);
+          filesOver = payload.paths.length > 0 && !draggingInside && !draggingOut() && !isOutgoing(payload.paths);
         } else if (payload.type === "leave") filesOver = false;
         else if (payload.type === "drop") {
           filesOver = false;
-          if (!draggingInside && !isOutgoing(payload.paths)) adder.items(payload.paths, true);
+          if (!draggingInside && !draggingOut() && !isOutgoing(payload.paths)) adder.items(payload.paths, true);
         }
       })
       .then(

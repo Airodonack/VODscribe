@@ -440,6 +440,8 @@ export const events = {
   editProgress: (cb: (id: number, progress: number) => void) =>
     listen<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
   editRemoved: (cb: (id: number) => void) => listen<number>("edit-removed", (e) => cb(e.payload)),
+  /** The system's drag of a clip's file (out of the window) is over, dropped or not. */
+  dragEnded: (cb: () => void) => listen("drag-ended", () => cb()),
   /** A preview segment made (or, with `error`, not). */
   previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
     listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),

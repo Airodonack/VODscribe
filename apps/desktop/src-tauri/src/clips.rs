@@ -523,10 +523,13 @@ fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Res
     handlers.borrow_mut().push(failed);
     // Once it's over, dropped or not, the window stops answering for it.
     let ended = handlers.clone();
+    let told = window.clone();
     let end = source.connect_drag_end(move |source, _| {
         for handler in ended.borrow_mut().drain(..) {
             source.disconnect(handler);
         }
+        // The page, so a drag of its own coming back in isn't taken for one to add.
+        let _ = told.emit("drag-ended", ());
         // The press that started the drag never comes back up in the page:
         // the drag took the release. Without one, its next press is lost.
         if let Some(page) = find_webview(source.upcast_ref()) {
@@ -592,11 +595,15 @@ fn release_button(page: &gtk::Widget) {
 
 #[cfg(not(target_os = "linux"))]
 fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Result<()> {
+    let told = window.clone();
     drag::start_drag(
         window,
         drag::DragItem::Files(vec![path.to_path_buf()]),
         drag::Image::Raw(image),
-        |_, _| {},
+        // The page, so a drag of its own coming back in isn't taken for one to add.
+        move |_, _| {
+            let _ = told.emit("drag-ended", ());
+        },
         drag::Options::default(),
     )
     .map_err(|e| anyhow::anyhow!("The drag couldn't start: {e}"))
