@@ -465,6 +465,7 @@
           {volume}
           {muted}
           {rate}
+          {fps}
           {captionsAvailable}
           {captionsOn}
           {fullscreen}

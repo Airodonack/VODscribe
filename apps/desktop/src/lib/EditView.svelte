@@ -468,6 +468,7 @@
         {volume}
         {muted}
         {rate}
+        {fps}
         captionsAvailable={false}
         captionsOn={false}
         {fullscreen}

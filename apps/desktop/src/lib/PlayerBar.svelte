@@ -18,6 +18,7 @@
   import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
+  import { load, save } from "./stored";
 
   let {
     player,
@@ -27,6 +28,7 @@
     volume,
     muted,
     rate,
+    fps,
     captionsAvailable,
     captionsOn,
     fullscreen,
@@ -42,6 +44,8 @@
     volume: number;
     muted: boolean;
     rate: number;
+    /** The player's frame rate, for the time by frame. */
+    fps: number;
     captionsAvailable: boolean;
     captionsOn: boolean;
     fullscreen: boolean;
@@ -51,6 +55,16 @@
     /** The panel's own buttons and line of context, after the time. */
     actions?: Snippet;
   } = $props();
+
+  // The time by frame (the clock small under it), or as a clock: clicking it
+  // switches, and the choice is kept.
+  const BY_FRAME = "vodscribe.timeByFrame";
+  let byFrame = $state(load(BY_FRAME) === "1");
+  function toggleByFrame() {
+    byFrame = !byFrame;
+    save(BY_FRAME, byFrame ? "1" : "0");
+  }
+  const frame = (seconds: number) => String(Math.floor(seconds * fps + 1e-6));
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {
@@ -70,12 +84,31 @@
   </button>
   <!-- The time takes the room of the longest it can be (the length, under it
        unseen), so nothing beside it moves. -->
-  <span class="time"
-    ><span class="now"
-      ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(now)}</span></span
-    >
-    / {formatTime(duration)}</span
-  >
+  <button class="time" onclick={toggleByFrame} title={byFrame ? "Show the time as a clock" : "Show the time by frame"}>
+    {#if byFrame}
+      <!-- Frame over clock, in columns: the times now right-aligned, the
+           slashes over each other, the lengths left-aligned. -->
+      <span class="stack">
+        <span class="now"
+          ><span class="widest" aria-hidden="true">{frame(duration)}</span><span>{frame(now)}</span></span
+        >
+        <span class="slash">/</span>
+        <span>{frame(duration)}</span>
+        <span class="now clock"
+          ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(now)}</span></span
+        >
+        <span class="slash clock">/</span>
+        <span class="clock">{formatTime(duration)}</span>
+      </span>
+    {:else}
+      <span
+        ><span class="now"
+          ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(now)}</span></span
+        >
+        / {formatTime(duration)}</span
+      >
+    {/if}
+  </button>
   {@render actions?.()}
   {#if player?.volume && !player.ownControls}
     <button
@@ -207,10 +240,39 @@
   .time {
     flex: none;
     padding: 0 6px;
+    border: none;
+    background: none;
+    font: inherit;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     color: var(--muted);
     white-space: nowrap;
+    cursor: pointer;
+    gap: 0;
+    line-height: 1.2;
+  }
+
+  .stack {
+    display: grid;
+    grid-template-columns: auto auto auto;
+    align-items: baseline;
+  }
+
+  .stack .now {
+    justify-self: end;
+  }
+
+  .slash {
+    padding: 0 0.35em;
+    text-align: center;
+  }
+
+  .time:hover {
+    color: var(--text);
+  }
+
+  .clock {
+    font-size: 9px;
   }
 
   .now {
