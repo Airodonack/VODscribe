@@ -18,6 +18,8 @@ class Edits {
   pieces = $state.raw<EditPiece[]>([]);
   /** Counts each VOD's footage downloaded for edits, for what shows it. */
   footage = new SvelteMap<number, number>();
+  /** Each VOD's section downloading for edits: `from`..`to` of it, and how far, 0..1. */
+  fetching = new SvelteMap<number, { from: number; to: number; progress: number }>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
@@ -42,7 +44,9 @@ class Edits {
     });
     events.editProgress((id, p) => this.progress.set(id, p));
     events.editRemoved((id) => this.#gone(id));
+    events.footageProgress(({ vod_id, from, to, progress }) => this.fetching.set(vod_id, { from, to, progress }));
     events.footage(({ vod_id, error }) => {
+      this.fetching.delete(vod_id);
       this.footage.set(vod_id, (this.footage.get(vod_id) ?? 0) + 1);
       if (error && this.open?.vod_ids.includes(vod_id)) this.error = `Couldn't download the footage: ${error}`;
     });

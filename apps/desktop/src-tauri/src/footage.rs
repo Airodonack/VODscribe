@@ -1,14 +1,14 @@
 //! Footage for edits (`vodscribe_core::footage`): where a stretch of a VOD
 //! plays from, and a queue that downloads, one at a time, the sections of
 //! VODs from sites that edits need (into the app's data, `footage/`), telling
-//! the page as each is in (`footage`). Sections not used for a while, or
+//! the page how far each is (`footage-progress`) and when it's in (`footage`). Sections not used for a while, or
 //! past a cap, go when the app starts.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -24,6 +24,7 @@ use crate::AppState;
 const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 3600);
 /// The most the sections may take; the oldest go past it.
 const MAX_BYTES: u64 = 10 << 30;
+const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 pub(crate) struct Footage {
@@ -32,6 +33,16 @@ pub(crate) struct Footage {
     wake: Condvar,
     /// Held while a section downloads, so the queue and a render don't fetch the same one.
     fetching: Mutex<()>,
+}
+
+/// How far a section's download is, 0..1: it comes in from its start on,
+/// so the page shows that much of it as in.
+#[derive(Serialize, Clone)]
+struct Fetching {
+    vod_id: i64,
+    from: f64,
+    to: f64,
+    progress: f64,
 }
 
 #[derive(Serialize, Clone)]
@@ -114,10 +125,21 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
     let info = work.join(format!("{prefix}.info.json"));
     let selector = clips::selector(Settings::load(&paths.settings()).video_height());
     let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg: &ffmpeg, start: from, end: to };
+    let tell = |progress: f64| {
+        let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress });
+    };
+    let mut last = Instant::now();
+    let report = |progress: f64| {
+        if last.elapsed() >= PROGRESS_EVERY {
+            last = Instant::now();
+            tell(progress);
+        }
+    };
+    tell(0.0);
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
         let file =
-            fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, |_| {})?;
+            fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
         let ext = file.extension().map_or("mp4".into(), |e| e.to_string_lossy().into_owned());
         let dir = dir(app);
         std::fs::create_dir_all(&dir)?;

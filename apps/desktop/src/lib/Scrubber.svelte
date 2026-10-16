@@ -22,7 +22,9 @@
   // click selects one and goes to it, and dragging one (or Alt-dragging, Ctrl
   // too on Linux, the waveform under it) moves it, with a marker where it
   // would go; pulled well above or below the timeline, it's carried out
-  // instead, as a stretch is carried from a VOD's.
+  // instead, as a stretch is carried from a VOD's. Footage still downloading
+  // (a VOD from a site) is darker until it's in, and its piece's band shows
+  // a spinner and how much is.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
@@ -33,6 +35,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { chaptersText, formatTime, os } from "./platform";
   import Popover from "./Popover.svelte";
+  import Spinner from "./Spinner.svelte";
   import type { Mark } from "./api";
 
   /** An edit's piece on its timeline (in the edit's time). */
@@ -41,6 +44,8 @@
     start: number;
     end: number;
     label: string;
+    /** While its footage downloads: how much is in, 0..1. */
+    loading?: number;
   }
   import { theme } from "./theme.svelte";
 
@@ -48,6 +53,7 @@
     vod,
     waveform,
     pieces,
+    pending = [],
     selectedPiece = null,
     onpiece,
     duration,
@@ -66,6 +72,8 @@
     waveform?: Uint8Array;
     /** An edit's pieces, in its time, with what their bands say. */
     pieces?: LanePiece[];
+    /** Stretches of an edit whose footage isn't downloaded yet, and how much of each (from its start) is. */
+    pending?: { start: number; end: number; done: number }[];
     selectedPiece?: number | null;
     /** What's done with an edit's pieces in the lane. */
     onpiece?: {
@@ -523,12 +531,17 @@
             style:transform={moving ? `translateX(${moving.dx}px)` : null}
             title="{piece.label} · drag to move it, {os === 'mac' ? 'Option' : 'Alt'}-drag to carry it out"
           >
+            {#if piece.loading !== undefined}
+              <span class="loading" title="Downloading its footage">
+                <Spinner size={10} />{Math.round(piece.loading * 100)}%
+              </span>
+            {/if}
             <span class="label">{piece.label}</span>
             <button
               class="remove"
               onpointerdown={(e) => e.stopPropagation()}
               onclick={() => onpiece?.remove(piece.id)}
-              title="Take it out of the edit (the clip stays)"
+              title="Take it out of the edit"
               aria-label="Take it out of the edit">×</button
             >
           </div>
@@ -612,6 +625,14 @@
         {/if}
       {/each}
     {/if}
+    {#each pending as w, i (i)}
+      {@const from = Math.max(w.start + w.done, viewStart)}
+      {@const to = Math.min(w.end, viewStart + span)}
+      {#if to > from}
+        <!-- Not downloaded yet: darker, until the download reaches it. -->
+        <div class="pending" style:left={pct(from)} style:width={widthPct(from, to)}></div>
+      {/if}
+    {/each}
     {#each ranges as r, i (i)}
       {#if r.end > viewStart && r.start < viewStart + span}
         <div
@@ -942,6 +963,26 @@
     box-shadow: inset 0 0 0 1px var(--accent);
     border-radius: 3px;
     pointer-events: none;
+  }
+
+  /* An edit's footage not downloaded yet. */
+  .pending {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, #000 38%, transparent);
+    pointer-events: none;
+  }
+
+  .piece .loading {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 3px;
+    margin-right: 4px;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
   }
 
   /* What an edit plays of the VOD, while its link is hovered. */

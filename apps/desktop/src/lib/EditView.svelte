@@ -11,7 +11,7 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount } from "svelte";
-  import { api, events, type EditPiece, type Line, type Vod } from "./api";
+  import { api, events, type EditPiece, type Line, type PreviewSegment, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
@@ -132,6 +132,7 @@
   // The preview's plan, asked for again whenever the pieces change, or
   // footage of their VODs comes in.
   let planSeq = 0;
+  let planned = $state.raw<PreviewSegment[]>([]);
   $effect(() => {
     void segments;
     for (const vodId of edit?.vod_ids ?? []) void edits.footage.get(vodId);
@@ -140,7 +141,11 @@
     if (!p || id === undefined) return;
     const mine = ++planSeq;
     api.previewPlan(id).then(
-      (plan) => mine === planSeq && p.setPlan(plan),
+      (plan) => {
+        if (mine !== planSeq) return;
+        planned = plan;
+        p.setPlan(plan);
+      },
       (e) => (edits.error = String(e)),
     );
   });
@@ -226,8 +231,31 @@
     let at = 0;
     for (const piece of pieces) {
       const length = pieceLength(piece);
-      out.push({ id: piece.id, start: at, end: at + length, label: piece.title });
+      // Still downloading: how much of what it waits for is in.
+      const waits = pending.filter((w) => w.pieceId === piece.id);
+      const wanted = waits.reduce((sum, w) => sum + w.end - w.start, 0);
+      const loading = wanted > 0 ? waits.reduce((sum, w) => sum + w.done, 0) / wanted : undefined;
+      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading });
       at += length;
+    }
+    return out;
+  });
+
+  // Where the edit waits for footage still to download (a VOD from a site):
+  // each such stretch of it, and how far into it the download has come (a
+  // section comes in from its start on).
+  const pending = $derived.by(() => {
+    const out: { start: number; end: number; done: number; pieceId: number }[] = [];
+    for (const seg of planned) {
+      if (seg.key) continue;
+      const s = segments.find((x) => Math.abs(x.at - seg.at) < 1e-6 && x.piece.id === seg.piece_id);
+      const f = s && edits.fetching.get(s.piece.vod_id);
+      let done = 0;
+      if (s && f && f.from <= s.vodFrom + 1e-3 && f.to >= s.vodFrom + s.length - 1e-3) {
+        const reached = f.from + f.progress * (f.to - f.from);
+        done = Math.max(0, Math.min(seg.length, reached - s.vodFrom));
+      }
+      out.push({ start: seg.at, end: seg.at + seg.length, done, pieceId: seg.piece_id });
     }
     return out;
   });
@@ -380,6 +408,7 @@
         <Scrubber
           {waveform}
           pieces={lane}
+          {pending}
           {selectedPiece}
           {onpiece}
           duration={total}

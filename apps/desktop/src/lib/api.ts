@@ -451,6 +451,9 @@ export const events = {
   /** A preview segment made (or, with `error`, not). */
   previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
     listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),
+  /** How far a section (`from`..`to` of VOD `vod_id`) downloading for edits is, 0..1. */
+  footageProgress: (cb: (fetching: { vod_id: number; from: number; to: number; progress: number }) => void) =>
+    listen<{ vod_id: number; from: number; to: number; progress: number }>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits (or, with `error`, not). */
   footage: (cb: (fetched: { vod_id: number; error: string | null }) => void) =>
     listen<{ vod_id: number; error: string | null }>("footage", (e) => cb(e.payload)),
