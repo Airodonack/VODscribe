@@ -294,11 +294,52 @@
     return out;
   });
 
+  // While a piece's edge is dragged: the frame it's on, over the player, and
+  // what it is. One frame is asked for at a time, the latest edge's next.
+  let edgeFrame = $state<{ url: string | null; label: string; missing?: boolean } | null>(null);
+  let edgeWanted: { vodId: number; at: number; label: string } | null = null;
+  let edgeAsking = false;
+  function showEdge(id: number, side: "start" | "end", at: number | null) {
+    const piece = pieces.find((p) => p.id === id);
+    if (at === null || !piece) {
+      edgeWanted = null;
+      if (edgeFrame?.url) URL.revokeObjectURL(edgeFrame.url);
+      edgeFrame = null;
+      return;
+    }
+    // The last frame is the one just before the end.
+    const frameAt = side === "start" ? at : Math.max(0, at - 1 / fps);
+    const label = `New ${side === "start" ? "first" : "last"} frame · ${formatTime(at)}.${Math.floor((at % 1) * 10 + 1e-6)}`;
+    edgeWanted = { vodId: piece.vod_id, at: frameAt, label };
+    if (!edgeFrame) edgeFrame = { url: null, label };
+    else edgeFrame.label = label;
+    askEdge();
+  }
+  async function askEdge() {
+    if (edgeAsking || !edgeWanted) return;
+    edgeAsking = true;
+    const want = edgeWanted;
+    try {
+      const bytes = await api.vodFrame(want.vodId, want.at, 960);
+      if (!edgeWanted || !edgeFrame) return;
+      const url = bytes.length ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: "image/jpeg" })) : null;
+      if (edgeFrame.url) URL.revokeObjectURL(edgeFrame.url);
+      edgeFrame.url = url;
+      edgeFrame.missing = !url;
+    } catch (e) {
+      console.error("edge frame", e);
+    } finally {
+      edgeAsking = false;
+      if (edgeWanted && edgeWanted !== want) askEdge();
+    }
+  }
+
   const onpiece = {
     select: (id: number) => (selectedPiece = id),
     move: (id: number, index: number) => edits.move(id, index),
     remove: (id: number) => edits.removePiece(id),
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
+    resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
       const piece = pieces.find((p) => p.id === id);
       const vod = piece && vods.get(piece.vod_id);
@@ -444,6 +485,13 @@
             ><Icon name="x" size={11} /></button
           ></span
         >
+      {/if}
+      <!-- Over the player and its notes while an edge is dragged. -->
+      {#if edgeFrame}
+        <div class="edge-frame">
+          {#if edgeFrame.url}<img src={edgeFrame.url} alt="" />{/if}
+          <span>{edgeFrame.label}{edgeFrame.missing ? " · not downloaded yet; it's fetched once you let go" : ""}</span>
+        </div>
       {/if}
     </div>
 
@@ -641,6 +689,35 @@
     aspect-ratio: 16 / 9;
     max-height: var(--player-max-height, 44vh);
     background: #000;
+  }
+
+  /* The frame a dragged edge is on, over the player. */
+  .edge-frame {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+
+  .edge-frame img {
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .edge-frame span {
+    grid-area: 1 / 1;
+    align-self: start;
+    margin-top: 12px;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    background: rgb(0 0 0 / 0.7);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
 
   .quality {

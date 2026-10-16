@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vod-frame"
+description = "Enables the vod_frame command without any pre-configured scope."
+commands.allow = ["vod_frame"]
+
+[[permission]]
+identifier = "deny-vod-frame"
+description = "Denies the vod_frame command without any pre-configured scope."
+commands.deny = ["vod_frame"]

@@ -48,6 +48,7 @@ permissions = [
   "allow-add-to-edit",
   "allow-add-range-to-edit",
   "allow-edit-thumb",
+  "allow-vod-frame",
   "allow-move-piece",
   "allow-trim-piece",
   "allow-strike-piece",

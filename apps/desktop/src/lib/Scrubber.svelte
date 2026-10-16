@@ -24,7 +24,8 @@
   // would go; pulled well above or below the timeline, it's carried out
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
   // moves that end of the piece in its VOD, a frame at a time, to make it
-  // shorter or longer (only that piece; later ones follow once it's let go). Footage still downloading
+  // shorter or longer: only that piece, the pieces past that edge moving
+  // aside as it goes, and the player shows the frame the edge is on. Footage still downloading
   // (a VOD from a site) is darker until it's in, and its piece's band shows
   // a spinner and how much is.
 
@@ -86,6 +87,8 @@
       remove: (id: number) => void;
       /** Makes it `start`..`end` of its VOD (an edge was dragged). */
       resize: (id: number, start: number, end: number) => void;
+      /** While an edge is dragged: where it is in its VOD (null once it's let go). */
+      resizing?: (id: number, side: "start" | "end", at: number | null) => void;
       /** Carries it out; `home` is the timeline, where coming back moves it again. */
       carry: (id: number, x: number, y: number, from: DOMRect, home: CarryHome) => void;
     };
@@ -348,6 +351,7 @@
       const onFrame = (t: number) => Math.round(t * fps) / fps;
       if (drag.side === "start") drag.start = Math.min(end - SHORTEST_PIECE, Math.max(0, onFrame(start + by)));
       else drag.end = Math.max(start + SHORTEST_PIECE, Math.min(max ?? Infinity, onFrame(end + by)));
+      onpiece?.resizing?.(drag.id, drag.side, drag.side === "start" ? drag.start : drag.end);
       return;
     }
     const t = timeAt(e.clientX);
@@ -435,6 +439,20 @@
   /** The shortest a piece is resized to, in seconds. */
   const SHORTEST_PIECE = 0.5;
 
+  // While an edge is dragged, the pieces past it move aside by as much as it
+  // moved (later ones for an end, earlier ones for a start), in pixels.
+  const resized = $derived(drag?.kind === "resize" && drag.moved ? drag : null);
+  function aside(id: number): number {
+    const r = resized;
+    if (!r || !pieces || !width) return 0;
+    const at = pieces.findIndex((p) => p.id === r.id);
+    const i = pieces.findIndex((p) => p.id === id);
+    const perSecond = width / span;
+    if (r.side === "end" && i > at) return (r.end - r.from.end) * perSecond;
+    if (r.side === "start" && i < at) return (r.start - r.from.start) * perSecond;
+    return 0;
+  }
+
   /** A time in a VOD to a tenth of a second: 1:02.4. */
   const tenths = (t: number) => `${formatTime(t)}.${Math.floor((t % 1) * 10 + 1e-6)}`;
 
@@ -443,8 +461,11 @@
   function onUp() {
     const done = drag;
     drag = null;
-    if (done?.kind === "resize" && done.moved && (done.start !== done.from.start || done.end !== done.from.end))
-      onpiece?.resize(done.id, done.start, done.end);
+    if (done?.kind === "resize") {
+      onpiece?.resizing?.(done.id, done.side, null);
+      if (done.moved && (done.start !== done.from.start || done.end !== done.from.end))
+        onpiece?.resize(done.id, done.start, done.end);
+    }
     if (done?.kind === "piece") {
       // A click on a band selects the piece and goes to it; a drag moves it.
       const piece = pieces?.find((p) => p.id === done.id);
@@ -560,12 +581,19 @@
   };
 </script>
 
-<svelte:window onpointermove={onMove} onpointerup={onUp} onpointercancel={() => (drag = null)} />
+<svelte:window
+  onpointermove={onMove}
+  onpointerup={onUp}
+  onpointercancel={() => {
+    if (drag?.kind === "resize") onpiece?.resizing?.(drag.id, drag.side, null);
+    drag = null;
+  }}
+/>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="timeline" bind:this={root}>
   {#if pieces?.length}
-    <div class="chapters lane" bind:this={lane} onpointerdown={onDown}>
+    <div class="chapters lane" class:resizing={!!resized} bind:this={lane} onpointerdown={onDown}>
       {#each pieces as piece (piece.id)}
         {#if piece.end > viewStart && piece.start < viewStart + span}
           {@const moving = drag?.kind === "piece" && drag.id === piece.id && drag.moved ? drag : null}
@@ -582,7 +610,11 @@
             data-piece={piece.id}
             style:left={pct(Math.max(from, viewStart))}
             style:width={widthPct(Math.max(from, viewStart), Math.min(to, viewStart + span))}
-            style:transform={moving ? `translateX(${moving.dx}px)` : null}
+            style:transform={moving
+              ? `translateX(${moving.dx}px)`
+              : aside(piece.id)
+                ? `translateX(${aside(piece.id)}px)`
+                : null}
             title="{piece.label} · drag to move it, drag an edge to resize it, {os === 'mac'
               ? 'Option'
               : 'Alt'}-drag to carry it out"
@@ -648,6 +680,7 @@
   <div
     class="scrubber"
     class:panning={drag?.kind === "view"}
+    class:resizing={!!resized}
     data-view-start={viewStart}
     data-span={span}
     bind:this={bar}
@@ -890,16 +923,25 @@
     top: 0;
     bottom: 0;
     width: 6px;
-    cursor: ew-resize;
     z-index: 1;
   }
 
+  /* One-way cursors (a bracket opening towards the piece, an arrow away),
+     drawn here because Windows shows w-resize and e-resize as two-way. */
   .grip.start {
     left: 0;
+    cursor:
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='white'%20stroke-width='4'%3E%3Cpath%20d='M17%205H13V19H17'/%3E%3Cpath%20d='M11%2012H3'/%3E%3Cpath%20d='M6%209L3%2012L6%2015'/%3E%3C/g%3E%3Cg%20stroke='black'%20stroke-width='2'%3E%3Cpath%20d='M17%205H13V19H17'/%3E%3Cpath%20d='M11%2012H3'/%3E%3Cpath%20d='M6%209L3%2012L6%2015'/%3E%3C/g%3E%3C/svg%3E")
+        13 12,
+      w-resize;
   }
 
   .grip.end {
     right: 0;
+    cursor:
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='white'%20stroke-width='4'%3E%3Cpath%20d='M7%205H11V19H7'/%3E%3Cpath%20d='M13%2012H21'/%3E%3Cpath%20d='M18%209L21%2012L18%2015'/%3E%3C/g%3E%3Cg%20stroke='black'%20stroke-width='2'%3E%3Cpath%20d='M7%205H11V19H7'/%3E%3Cpath%20d='M13%2012H21'/%3E%3Cpath%20d='M18%209L21%2012L18%2015'/%3E%3C/g%3E%3C/svg%3E")
+        11 12,
+      e-resize;
   }
 
   .piece:hover .grip,
@@ -910,6 +952,17 @@
   .piece.sizing {
     z-index: 2;
     overflow: visible;
+  }
+
+  /* While resizing, pieces moved aside stay within the timeline's sides (the
+     label above the band still shows). */
+  .lane.resizing {
+    clip-path: inset(-40px 0 0 0);
+  }
+
+  /* While resizing, the waveform is as it was until it's let go: dimmed. */
+  .scrubber.resizing canvas {
+    opacity: 0.35;
   }
 
   /* While resizing: the piece's new stretch of its VOD, above the band. */
@@ -975,7 +1028,6 @@
     bottom: 0;
     width: 9px;
     margin-left: -4px;
-    cursor: ew-resize;
     z-index: 1;
   }
 
@@ -1131,7 +1183,6 @@
     bottom: 0;
     width: 13px;
     margin-left: -6px;
-    cursor: ew-resize;
     z-index: 1;
     --color: var(--cut);
   }

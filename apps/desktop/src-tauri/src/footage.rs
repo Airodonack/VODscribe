@@ -70,6 +70,32 @@ pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) 
         .or_else(|| app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.find(vod_id, start, end))
 }
 
+/// The frame of VOD `vod_id` at `at` seconds, a JPEG `width` wide (at most
+/// 960), from its footage here; empty if there's none of that moment yet.
+#[tauri::command]
+pub(crate) async fn vod_frame(
+    app: AppHandle,
+    vod_id: i64,
+    at: f64,
+    width: u32,
+) -> crate::CmdResult<tauri::ipc::Response> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let source = {
+            let db = state.db.lock().unwrap();
+            find(&app, &db, vod_id, at, at + 0.001)
+        };
+        let ffmpeg = tools::find_ffmpeg(&state.paths.bin());
+        source
+            .zip(ffmpeg)
+            .and_then(|(s, ffmpeg)| vodscribe_core::local::frame(&ffmpeg, &s.path, at - s.offset, width.min(960)).ok())
+            .unwrap_or_default()
+    })
+    .await
+    .map_err(crate::err)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 impl Footage {
     /// Starts fetching what's asked, once the app's state is in place; first, tidies the folder.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {

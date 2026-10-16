@@ -250,6 +250,7 @@ pub fn run() {
             edits::add_to_edit,
             edits::add_range_to_edit,
             edits::edit_thumb,
+            footage::vod_frame,
             edits::move_piece,
             edits::trim_piece,
             edits::strike_piece,

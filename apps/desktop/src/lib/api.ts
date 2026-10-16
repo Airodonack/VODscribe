@@ -340,6 +340,9 @@ export const api = {
     invoke<EditView>("add_range_to_edit", { editId, vodId, start, end, title, index }),
   /** Edit `id`'s picture (its first frame, or its VOD's thumbnail); empty if none. */
   editThumb: (id: number) => invoke<ArrayBuffer>("edit_thumb", { id }).then((b) => new Uint8Array(b)),
+  /** VOD `vodId`'s frame at `at` seconds, a JPEG `width` wide, from its footage here; empty if none of that moment is. */
+  vodFrame: (vodId: number, at: number, width: number) =>
+    invoke<ArrayBuffer>("vod_frame", { vodId, at, width }).then((b) => new Uint8Array(b)),
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   strikePiece: (id: number, struck: [number, number][]) => invoke<EditView>("strike_piece", { id, struck }),
