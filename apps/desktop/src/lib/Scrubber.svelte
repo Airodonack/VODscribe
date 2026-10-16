@@ -593,7 +593,13 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="timeline" bind:this={root}>
   {#if pieces?.length}
-    <div class="chapters lane" class:resizing={!!resized} bind:this={lane} onpointerdown={onDown}>
+    <div
+      class="chapters lane"
+      class:resizing={!!resized}
+      class:windows={os === "windows"}
+      bind:this={lane}
+      onpointerdown={onDown}
+    >
       {#each pieces as piece (piece.id)}
         {#if piece.end > viewStart && piece.start < viewStart + span}
           {@const moving = drag?.kind === "piece" && drag.id === piece.id && drag.moved ? drag : null}
@@ -926,21 +932,31 @@
     z-index: 1;
   }
 
-  /* One-way cursors (a bracket opening towards the piece, an arrow away),
-     drawn here because Windows shows w-resize and e-resize as two-way. */
+  /* One-way cursors: the system's, which follow the user's cursor theme. */
   .grip.start {
     left: 0;
-    cursor:
-      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='white'%20stroke-width='4'%3E%3Cpath%20d='M17%205H13V19H17'/%3E%3Cpath%20d='M11%2012H3'/%3E%3Cpath%20d='M6%209L3%2012L6%2015'/%3E%3C/g%3E%3Cg%20stroke='black'%20stroke-width='2'%3E%3Cpath%20d='M17%205H13V19H17'/%3E%3Cpath%20d='M11%2012H3'/%3E%3Cpath%20d='M6%209L3%2012L6%2015'/%3E%3C/g%3E%3C/svg%3E")
-        13 12,
-      w-resize;
+    cursor: w-resize;
   }
 
   .grip.end {
     right: 0;
+    cursor: e-resize;
+  }
+
+  /* Windows has none (its w-resize and e-resize are two-way arrows), so
+     they're drawn: an arrow from inside the piece pointing at its edge, |<-
+     and ->|, white with a black outline like Windows' own pointer. */
+  .lane.windows .grip.start {
     cursor:
-      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='white'%20stroke-width='4'%3E%3Cpath%20d='M7%205H11V19H7'/%3E%3Cpath%20d='M13%2012H21'/%3E%3Cpath%20d='M18%209L21%2012L18%2015'/%3E%3C/g%3E%3Cg%20stroke='black'%20stroke-width='2'%3E%3Cpath%20d='M7%205H11V19H7'/%3E%3Cpath%20d='M13%2012H21'/%3E%3Cpath%20d='M18%209L21%2012L18%2015'/%3E%3C/g%3E%3C/svg%3E")
-        11 12,
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='black'%20stroke-width='4'%3E%3Cpath%20d='M4%205V19'/%3E%3Cpath%20d='M20%2012H7'/%3E%3Cpath%20d='M10%209L7%2012L10%2015'/%3E%3C/g%3E%3Cg%20stroke='white'%20stroke-width='2'%3E%3Cpath%20d='M4%205V19'/%3E%3Cpath%20d='M20%2012H7'/%3E%3Cpath%20d='M10%209L7%2012L10%2015'/%3E%3C/g%3E%3C/svg%3E")
+        4 12,
+      w-resize;
+  }
+
+  .lane.windows .grip.end {
+    cursor:
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='black'%20stroke-width='4'%3E%3Cpath%20d='M20%205V19'/%3E%3Cpath%20d='M4%2012H17'/%3E%3Cpath%20d='M14%209L17%2012L14%2015'/%3E%3C/g%3E%3Cg%20stroke='white'%20stroke-width='2'%3E%3Cpath%20d='M20%205V19'/%3E%3Cpath%20d='M4%2012H17'/%3E%3Cpath%20d='M14%209L17%2012L14%2015'/%3E%3C/g%3E%3C/svg%3E")
+        20 12,
       e-resize;
   }
 
