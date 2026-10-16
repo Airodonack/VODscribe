@@ -40,7 +40,7 @@ fn build<T: SizedSample + FromSample<f32>>(
 ) -> Option<cpal::Stream> {
     device
         .build_output_stream(
-            config.clone(),
+            *config,
             move |out: &mut [T], _| {
                 // Silence unless playing, or when the queue runs dry
                 // (decoding behind): then the time stands too.

@@ -10,11 +10,18 @@
 //! transparent over it, so it could draw over the picture; but with the area
 //! in the tree GTK 3 draws the window through GL, and the transparent view
 //! then shows nothing at all (WebKitGTK 2.54 on X11, with and without its
-//! DMA-BUF renderer). It's kept to try elsewhere. Other platforms have no
-//! surface yet.
+//! DMA-BUF renderer). It's kept to try elsewhere. On Windows it's a child
+//! window over the page's control, drawn with Direct3D (present_windows.rs).
+//! macOS has no surface yet.
 
 #[cfg(target_os = "linux")]
 pub use linux::{Canvas, Place, Screen};
+#[cfg(windows)]
+pub use windows::Screen;
+
+#[cfg(windows)]
+#[path = "present_windows.rs"]
+mod windows;
 
 #[cfg(target_os = "linux")]
 mod linux {

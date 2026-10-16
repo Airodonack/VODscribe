@@ -404,8 +404,7 @@ fn run(inner: &Inner) {
                 _ => video.from(stretch.file_time(walk.from)).ok(),
             };
             let Some(mut stream) = stream else { return };
-            loop {
-                let Some(frame) = stream.next() else { break };
+            while let Some(frame) = stream.recv() {
                 let time = stretch.time(frame.pts);
                 if time >= stretch.end() - 1e-6 {
                     break;
@@ -557,7 +556,7 @@ fn run_sound(inner: &Inner) {
                     std::thread::sleep(Duration::from_millis(10));
                     continue;
                 }
-                let chunk = match stream.as_mut().and_then(|s| s.next()) {
+                let chunk = match stream.as_mut().and_then(|s| s.recv()) {
                     Some(samples) => {
                         // Cut at the stretch's end: the rest is the next one's.
                         let time = stretch.time(samples.pts);

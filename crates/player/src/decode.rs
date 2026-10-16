@@ -68,12 +68,12 @@ pub struct Stream<T> {
 
 impl<T: Send + 'static> Stream<T> {
     /// The next frame out, or None once the file (or ffmpeg) ends.
-    pub fn next(&mut self) -> Option<T> {
+    pub fn recv(&mut self) -> Option<T> {
         self.frames.recv().ok()
     }
 
     /// The next frame if one is decoded already.
-    pub fn try_next(&mut self) -> Option<T> {
+    pub fn try_recv(&mut self) -> Option<T> {
         self.frames.try_recv().ok()
     }
 }
@@ -192,7 +192,7 @@ impl Audio {
                 if got == 0 {
                     return;
                 }
-                let pcm: Vec<i16> = bytes[..got].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+                let pcm: Vec<i16> = bytes[..got].as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b)).collect();
                 let samples = Samples { pts: from + done as f64 / rate as f64, pcm };
                 done += (got / (CHANNELS * 2)) as u64;
                 if tx.send(samples).is_err() {
