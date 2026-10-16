@@ -14,7 +14,7 @@
   import { api, events, type Clip, type EditPiece, type Line, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { DRAG_SLOP, carry } from "./dragout";
+  import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type Segment } from "./editPlayer";
   import { PreviewPlayer } from "./previewPlayer";
@@ -293,13 +293,13 @@
     select: (id: number) => (selectedPiece = id),
     move: (id: number, index: number) => edits.move(id, index),
     remove: (id: number) => edits.removePiece(id),
-    carry(id: number, x: number, y: number, from: DOMRect) {
+    carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
       const piece = pieces.find((p) => p.id === id);
       const vod = piece && vods.get(piece.clip.vod_id);
       if (!piece || !vod) return;
       const start = Math.max(piece.start, piece.clip.start);
       const end = Math.min(piece.end, piece.clip.end);
-      carry({ vod, start, end, ownPlayer: playsHere(vod), from, x, y, clip: clipOf(piece) });
+      carry({ vod, start, end, ownPlayer: playsHere(vod), from, x, y, clip: clipOf(piece), home });
     },
   };
 

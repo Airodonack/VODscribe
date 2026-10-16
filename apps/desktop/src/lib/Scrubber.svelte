@@ -29,7 +29,7 @@
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
   import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
-  import { DRAG_SLOP, carry, stretchAt } from "./dragout";
+  import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { chaptersText, formatTime, os } from "./platform";
   import Popover from "./Popover.svelte";
@@ -71,7 +71,8 @@
       select: (id: number) => void;
       move: (id: number, index: number) => void;
       remove: (id: number) => void;
-      carry: (id: number, x: number, y: number, from: DOMRect) => void;
+      /** Carries it out; `home` is the timeline, where coming back moves it again. */
+      carry: (id: number, x: number, y: number, from: DOMRect, home: CarryHome) => void;
     };
     duration: number;
     /** Where the player is now. */
@@ -301,7 +302,7 @@
       // Pulled well above or below the timeline: carried out instead.
       const box = root!.getBoundingClientRect();
       if (e.clientY < box.top - CARRY_OFF || e.clientY > box.bottom + CARRY_OFF) {
-        const id = drag.id;
+        const { id, x: pressX } = drag;
         const piece = pieces?.find((p) => p.id === id);
         drag = null;
         if (piece) {
@@ -312,18 +313,19 @@
             Math.max(4, Math.min(width, x(piece.end)) - Math.max(0, x(piece.start))),
             HEIGHT,
           );
-          onpiece?.carry(id, e.clientX, e.clientY, from);
+          // Back over the timeline, the same press moves it again.
+          const back = (cx: number) => {
+            drag = { kind: "piece", id, x: pressX, dx: cx - pressX, to: 0, moved: true };
+            drag.to = insertionAt(id, timeAt(cx));
+          };
+          onpiece?.carry(id, e.clientX, e.clientY, from, { el: root!, back });
         }
         return;
       }
       if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
       drag.moved = true;
       drag.dx = e.clientX - drag.x;
-      // Where it would go: before the first other piece whose middle is past the pointer.
-      const id = drag.id;
-      const others = (pieces ?? []).filter((p) => p.id !== id);
-      const to = others.findIndex((p) => t < (p.start + p.end) / 2);
-      drag.to = to < 0 ? others.length : to;
+      drag.to = insertionAt(drag.id, t);
       return;
     }
     if (drag.kind === "scrub") {
@@ -368,6 +370,13 @@
 
   /** How far off the timeline a cut is dragged to remove it. */
   const AWAY = 60;
+  /** Where piece `id` would go, dropped at `t`: before the first other piece whose middle is past it. */
+  function insertionAt(id: number, t: number): number {
+    const others = (pieces ?? []).filter((p) => p.id !== id);
+    const to = others.findIndex((p) => t < (p.start + p.end) / 2);
+    return to < 0 ? others.length : to;
+  }
+
   /** How far above or below an edit's timeline a piece is pulled to carry it out. */
   const CARRY_OFF = 40;
 

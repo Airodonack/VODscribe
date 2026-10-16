@@ -149,13 +149,21 @@ export interface Carry {
   /** The clip it is, made if need be (in the clip bar if `shown`): an edit's
    *  piece's own. Otherwise the stretch of the VOD shown becomes one. */
   clip?: (shown: boolean) => Promise<Clip | null>;
+  /** Where it came from, if coming back there ends the carry (an edit's timeline). */
+  home?: CarryHome;
+}
+
+/** Where a carry came from: back over `el`, it ends and `back` takes the press on, at its x. */
+export interface CarryHome {
+  el: HTMLElement;
+  back: (x: number, y: number) => void;
 }
 
 /**
  * Carries a stretch from (`x`, `y`) while the button is down: see the top of
  * this file. Resolves once it's dropped, taken out of the window, or let go.
  */
-export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip }: Carry): Promise<void> {
+export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip, home }: Carry): Promise<void> {
   const make = clip ?? ((shown: boolean) => exportStretch(start, end, shown));
   const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
   const ghost = document.createElement("div");
@@ -230,6 +238,19 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip }: 
     };
     const onMove = (e: PointerEvent) => {
       if (leaving) return;
+      const box = home?.el.getBoundingClientRect();
+      if (
+        home &&
+        box &&
+        e.clientX >= box.left &&
+        e.clientX <= box.right &&
+        e.clientY >= box.top &&
+        e.clientY <= box.bottom
+      ) {
+        finish();
+        home.back(e.clientX, e.clientY);
+        return;
+      }
       place(e.clientX, e.clientY);
       const target = targetAt(e.clientX, e.clientY);
       clips.overBar = target.bar;
