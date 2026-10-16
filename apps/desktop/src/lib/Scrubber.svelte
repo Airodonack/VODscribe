@@ -19,10 +19,10 @@
   // An edit's timeline (EditView.svelte) is the same without any of a VOD's
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
   // and the joins between them. Its pieces are bands in a lane above it: a
-  // click selects one and goes to it, dragging one moves it (the others make
-  // room where it would go), and an Alt-drag (Ctrl too on Linux) of a band, or
-  // of the waveform under it, carries the piece out, as a stretch is carried
-  // from a VOD's.
+  // click selects one and goes to it, and dragging one (or Alt-dragging, Ctrl
+  // too on Linux, the waveform under it) moves it, with a marker where it
+  // would go; pulled well above or below the timeline, it's carried out
+  // instead, as a stretch is carried from a VOD's.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
@@ -217,18 +217,9 @@
         ? pieces?.find((p) => p.id === Number(band.dataset.piece))
         : pieces?.find((p) => timeAt(e.clientX) >= p.start && timeAt(e.clientX) < p.end);
       e.preventDefault();
-      if (piece && dragsOut(e)) {
-        const box = bar!.getBoundingClientRect();
-        const from = new DOMRect(
-          box.left + Math.max(0, x(piece.start)),
-          box.top,
-          Math.max(4, Math.min(width, x(piece.end)) - Math.max(0, x(piece.start))),
-          HEIGHT,
-        );
-        onpiece?.carry(piece.id, e.clientX, e.clientY, from);
-        return;
-      }
-      if (band && piece) {
+      // A band, or the piece anywhere with Alt (Ctrl too on Linux): the same
+      // drag, which moves it in the timeline and carries it out past it.
+      if (piece && (band || dragsOut(e))) {
         const index = pieces!.indexOf(piece);
         drag = { kind: "piece", id: piece.id, x: e.clientX, dx: 0, to: index, moved: false };
         return;
@@ -307,6 +298,24 @@
     }
     const t = timeAt(e.clientX);
     if (drag.kind === "piece") {
+      // Pulled well above or below the timeline: carried out instead.
+      const box = root!.getBoundingClientRect();
+      if (e.clientY < box.top - CARRY_OFF || e.clientY > box.bottom + CARRY_OFF) {
+        const id = drag.id;
+        const piece = pieces?.find((p) => p.id === id);
+        drag = null;
+        if (piece) {
+          const bounds = bar!.getBoundingClientRect();
+          const from = new DOMRect(
+            bounds.left + Math.max(0, x(piece.start)),
+            bounds.top,
+            Math.max(4, Math.min(width, x(piece.end)) - Math.max(0, x(piece.start))),
+            HEIGHT,
+          );
+          onpiece?.carry(id, e.clientX, e.clientY, from);
+        }
+        return;
+      }
       if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
       drag.moved = true;
       drag.dx = e.clientX - drag.x;
@@ -359,6 +368,8 @@
 
   /** How far off the timeline a cut is dragged to remove it. */
   const AWAY = 60;
+  /** How far above or below an edit's timeline a piece is pulled to carry it out. */
+  const CARRY_OFF = 40;
 
   const inFrame = (cut: number) => frameAfter(cut, fps, duration);
 
