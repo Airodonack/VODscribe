@@ -472,7 +472,9 @@ mod tests {
         };
         let id = db.add_vod(&info).unwrap().0.id;
         db.set_status(id, status, 0.5, None).unwrap();
-        let work = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id()));
+        // A folder of its own, so its media folder (beside it) is its own too.
+        let work =
+            std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id())).join("work");
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
         db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
