@@ -172,6 +172,13 @@
     else if (!active) activate(now);
   }
 
+  // What the edit whose link is hovered (ClipStrip.svelte) plays of this VOD.
+  const editRanges = $derived(
+    edits.hovered === null
+      ? []
+      : (edits.list.find((e) => e.id === edits.hovered)?.ranges.filter((r) => r.vod_id === vod.id) ?? []),
+  );
+
   // Export: the stretch the playhead is in becomes a clip, a pill in the clip
   // bar. Hovering the button lights the stretch up on the timeline.
   let exportButton = $state<HTMLElement>();
@@ -440,6 +447,7 @@
             time={now}
             {fps}
             highlight={exportHover && canExport ? (cuts.selection ?? stretch) : null}
+            ranges={editRanges}
             current={between ? stretch : null}
             ownPlayer={playsHere(vod)}
             onpause={() => player?.playing() && player.togglePlay()}

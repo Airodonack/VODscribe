@@ -17,6 +17,8 @@ class Edits {
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
+  /** The edit whose link in a clip bar is hovered: what it plays of that VOD lights up. */
+  hovered = $state<number | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
   #started = false;
@@ -63,11 +65,6 @@ class Edits {
   /** The edits with clips of VOD `vodId`. */
   forVod(vodId: number): Edit[] {
     return this.list.filter((e) => e.vod_ids.includes(vodId));
-  }
-
-  /** Whether clip `clipId` is in an edit. */
-  usesClip(clipId: number): boolean {
-    return this.list.some((e) => e.clip_ids.includes(clipId));
   }
 
   /** A new edit holding clip `clipId`. */

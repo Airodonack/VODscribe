@@ -169,6 +169,8 @@ export interface Edit {
   clip_ids: number[];
   /** The clip its first piece is of: its first frame is the edit's picture. */
   first_clip: number | null;
+  /** What it plays of each VOD, in order: its pieces less what's struck. */
+  ranges: { vod_id: number; start: number; end: number }[];
 }
 
 /** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */

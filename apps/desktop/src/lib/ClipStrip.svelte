@@ -3,8 +3,8 @@
   // plays it; double-clicking its name renames it; once its file is made, it
   // drags out of the window (into a video editor or a folder), or onto an
   // edit in the library's list (or on "Make new edit" there). "Add to an edit"
-  // picks one from a list. Clips in an edit aren't pills: the edit is, a link
-  // to it, so they're changed there rather than deleted here.
+  // picks one from a list. Each edit using this VOD is a link here too;
+  // hovering one lights up on the timeline what the edit plays of the VOD.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -81,10 +81,10 @@
     setTimeout(() => (added = null), 2500);
   }
 
-  // A clip in an edit belongs to it: shown as a link to the edit (one per
-  // edit with this VOD's clips), not as a pill of its own to delete.
+  // Each edit with this VOD's clips: a link to it. The pills are the bar's
+  // own: one put in an edit stays, and deleting one an edit uses only takes
+  // it off the bar (crates/core clips' `delete_clip`).
   const linked = $derived(edits.forVod(vod.id));
-  const loose = $derived(clips.shown.filter((c) => !edits.usesClip(c.id)));
 
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
 
@@ -104,14 +104,16 @@
     <button
       class="chip edit-link"
       onclick={() => edits.openEdit(edit.id)}
-      title="This VOD's clips in “{edit.title}” are there now · open the edit"
+      onmouseenter={() => (edits.hovered = edit.id)}
+      onmouseleave={() => edits.hovered === edit.id && (edits.hovered = null)}
+      title="“{edit.title}” uses this VOD where it lights up on the timeline · open the edit"
     >
       <Icon name="film" size={13} />
       <span class="name">{edit.title}</span>
       <Icon name="external" size={11} />
     </button>
   {/each}
-  {#each loose as clip (clip.id)}
+  {#each clips.shown as clip (clip.id)}
     {@const progress = clips.progress.get(clip.id)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -173,7 +175,7 @@
       {/if}
     </div>
   {/each}
-  {#if clips.carrying && !loose.some((c) => c.start === clips.carrying?.start && c.end === clips.carrying?.end)}
+  {#if clips.carrying && !clips.shown.some((c) => c.start === clips.carrying?.start && c.end === clips.carrying?.end)}
     <span class="drop muted">Drop here to keep it as a clip</span>
   {/if}
   {#if clips.error}

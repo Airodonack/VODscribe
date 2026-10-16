@@ -54,6 +54,7 @@
     time,
     fps,
     highlight = null,
+    ranges = [],
     current = null,
     ownPlayer = false,
     onseek,
@@ -81,6 +82,8 @@
     fps: number;
     /** A stretch to light up: the one the Export button would make a clip of, while it's hovered. */
     highlight?: { start: number; end: number } | null;
+    /** Stretches lit up another way: what an edit plays of the VOD, while its link is hovered. */
+    ranges?: { start: number; end: number }[];
     /** Whether the VOD plays in the app's own player (its frames can be read). */
     ownPlayer?: boolean;
     /** The stretch between two cuts that the playhead is in, shaded. */
@@ -609,6 +612,15 @@
         {/if}
       {/each}
     {/if}
+    {#each ranges as r, i (i)}
+      {#if r.end > viewStart && r.start < viewStart + span}
+        <div
+          class="lit used"
+          style:left={pct(Math.max(r.start, viewStart))}
+          style:width={widthPct(Math.max(r.start, viewStart), Math.min(r.end, viewStart + span))}
+        ></div>
+      {/if}
+    {/each}
     {#each [highlight, taking] as lit, i (i)}
       {#if lit && lit.end > viewStart && lit.start < viewStart + span}
         <div
@@ -930,6 +942,13 @@
     box-shadow: inset 0 0 0 1px var(--accent);
     border-radius: 3px;
     pointer-events: none;
+  }
+
+  /* What an edit plays of the VOD, while its link is hovered. */
+  .lit.used {
+    background: color-mix(in srgb, var(--chapter) 22%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--chapter) 80%, transparent);
+    border-radius: 2px;
   }
 
   .made {
