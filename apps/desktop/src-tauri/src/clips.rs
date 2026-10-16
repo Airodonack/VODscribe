@@ -351,12 +351,18 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
-/// Deletes clip `id` and its file.
+/// Deletes clip `id` and its file; one in an edit is only taken out of the clip bar.
 #[tauri::command]
 pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    state.clips.stop(id);
     let clip = {
         let db = state.db.lock().unwrap();
+        // An edit's: only taken out of the clip bar, kept with its file for the edit.
+        if !db.edits_with_clip(id).map_err(err)?.is_empty() {
+            db.hide_clip(id).map_err(err)?;
+            emit(&app, &db, id);
+            return Ok(());
+        }
+        state.clips.stop(id);
         let clip = db.clip(id).map_err(err)?;
         db.delete_clip(id).map_err(err)?;
         clip

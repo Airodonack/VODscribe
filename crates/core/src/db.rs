@@ -643,6 +643,12 @@ impl Db {
         Ok(())
     }
 
+    /// Takes clip `id` out of the clip bar, keeping it (and its file) for the edits it's in.
+    pub fn hide_clip(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clips SET shown = 0 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn rename_clip(&self, id: i64, title: &str) -> Result<()> {
         self.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
         Ok(())

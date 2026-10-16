@@ -34,6 +34,16 @@ pub struct Edit {
     pub clip_ids: Vec<i64>,
     /// The clip its first piece is of: its first frame is the edit's picture.
     pub first_clip: Option<i64>,
+    /// What it plays of each VOD, in order: its pieces less what's struck.
+    pub ranges: Vec<EditRange>,
+}
+
+/// A stretch of a VOD an edit plays (`Edit::ranges`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct EditRange {
+    pub vod_id: i64,
+    pub start: f64,
+    pub end: f64,
 }
 
 /// A row of the library's list: VODs and edits share one order.
@@ -183,6 +193,10 @@ impl Db {
             vod_ids,
             clip_ids,
             first_clip: pieces.first().map(|p| p.clip.id),
+            ranges: pieces
+                .iter()
+                .flat_map(|p| p.spans().into_iter().map(|(start, end)| EditRange { vod_id: p.clip.vod_id, start, end }))
+                .collect(),
         }))
     }
 
@@ -415,6 +429,11 @@ mod tests {
         let p = &db.edit_pieces(edit.id).unwrap()[0];
         assert_eq!((p.start, p.end), (10.0, 18.0), "not before the clip");
         assert_eq!(p.spans(), [(10.0, 12.0), (14.0, 18.0)]);
+        let ranges = db.edit(edit.id).unwrap().unwrap().ranges;
+        assert_eq!(
+            ranges.iter().map(|r| (r.start, r.end)).collect::<Vec<_>>(),
+            [(10.0, 12.0), (14.0, 18.0), (30.0, 35.0)]
+        );
         assert_eq!(db.edit(edit.id).unwrap().unwrap().length, 6.0 + 5.0);
         // Split in two where it's asked, the second right after the first.
         let before = db.edit_pieces(edit.id).unwrap();
