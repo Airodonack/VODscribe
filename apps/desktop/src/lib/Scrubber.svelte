@@ -18,7 +18,11 @@
   //
   // An edit's timeline (EditView.svelte) is the same without any of a VOD's
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
-  // and the joins between pieces (`joins`) as plain lines.
+  // and the joins between them. Its pieces are bands in a lane above it: a
+  // click selects one and goes to it, dragging one moves it (the others make
+  // room where it would go), and an Alt-drag (Ctrl too on Linux) of a band, or
+  // of the waveform under it, carries the piece out, as a stretch is carried
+  // from a VOD's.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
@@ -30,12 +34,22 @@
   import { chaptersText, formatTime, os } from "./platform";
   import Popover from "./Popover.svelte";
   import type { Mark } from "./api";
+
+  /** An edit's piece on its timeline (in the edit's time). */
+  export interface LanePiece {
+    id: number;
+    start: number;
+    end: number;
+    label: string;
+  }
   import { theme } from "./theme.svelte";
 
   let {
     vod,
     waveform,
-    joins,
+    pieces,
+    selectedPiece = null,
+    onpiece,
     duration,
     time,
     fps,
@@ -49,8 +63,16 @@
     vod?: Vod;
     /** An edit's waveform, given rather than fetched. */
     waveform?: Uint8Array;
-    /** Where an edit's pieces meet. */
-    joins?: number[];
+    /** An edit's pieces, in its time, with what their bands say. */
+    pieces?: LanePiece[];
+    selectedPiece?: number | null;
+    /** What's done with an edit's pieces in the lane. */
+    onpiece?: {
+      select: (id: number) => void;
+      move: (id: number, index: number) => void;
+      remove: (id: number) => void;
+      carry: (id: number, x: number, y: number, from: DOMRect) => void;
+    };
     duration: number;
     /** Where the player is now. */
     time: number;
@@ -167,6 +189,7 @@
   // pointer mid-drag ended drags in WebKitGTK.
   type Drag =
     | { kind: "scrub" }
+    | { kind: "piece"; id: number; x: number; dx: number; to: number; moved: boolean }
     | { kind: "edge"; edge: "start" | "end"; at: number; x: number; moved: boolean }
     | { kind: "mark"; id: number; at: number; x: number; moved: boolean; away: boolean }
     | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
@@ -188,10 +211,31 @@
     }
     if (e.button !== 0) return;
     if (!marking) {
+      const band = (e.target as HTMLElement).closest<HTMLElement>("[data-piece]");
+      // The piece pressed on: its band, or where the waveform is.
+      const piece = band
+        ? pieces?.find((p) => p.id === Number(band.dataset.piece))
+        : pieces?.find((p) => timeAt(e.clientX) >= p.start && timeAt(e.clientX) < p.end);
+      e.preventDefault();
+      if (piece && dragsOut(e)) {
+        const box = bar!.getBoundingClientRect();
+        const from = new DOMRect(
+          box.left + Math.max(0, x(piece.start)),
+          box.top,
+          Math.max(4, Math.min(width, x(piece.end)) - Math.max(0, x(piece.start))),
+          HEIGHT,
+        );
+        onpiece?.carry(piece.id, e.clientX, e.clientY, from);
+        return;
+      }
+      if (band && piece) {
+        const index = pieces!.indexOf(piece);
+        drag = { kind: "piece", id: piece.id, x: e.clientX, dx: 0, to: index, moved: false };
+        return;
+      }
       drag = { kind: "scrub" };
       follow = true;
       onseek(timeAt(e.clientX));
-      e.preventDefault();
       return;
     }
     if (dragsOut(e)) {
@@ -262,6 +306,17 @@
       return;
     }
     const t = timeAt(e.clientX);
+    if (drag.kind === "piece") {
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
+      drag.moved = true;
+      drag.dx = e.clientX - drag.x;
+      // Where it would go: before the first other piece whose middle is past the pointer.
+      const id = drag.id;
+      const others = (pieces ?? []).filter((p) => p.id !== id);
+      const to = others.findIndex((p) => t < (p.start + p.end) / 2);
+      drag.to = to < 0 ? others.length : to;
+      return;
+    }
     if (drag.kind === "scrub") {
       onseek(t);
     } else if (drag.kind === "edge") {
@@ -310,6 +365,15 @@
   function onUp() {
     const done = drag;
     drag = null;
+    if (done?.kind === "piece") {
+      // A click on a band selects the piece and goes to it; a drag moves it.
+      const piece = pieces?.find((p) => p.id === done.id);
+      if (done.moved && pieces?.findIndex((p) => p.id === done.id) !== done.to) onpiece?.move(done.id, done.to);
+      else if (!done.moved && piece) {
+        onpiece?.select(done.id);
+        onseek(piece.start);
+      }
+    }
     if (done?.kind === "view" && !done.moved) {
       follow = true;
       setView(0, duration);
@@ -347,6 +411,14 @@
   });
 
   const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
+  // Where an edit's pieces meet, and where one being moved would go.
+  const joins = $derived((pieces ?? []).slice(1).map((p) => p.start));
+  const insertAt = $derived.by(() => {
+    if (drag?.kind !== "piece" || !drag.moved) return null;
+    const id = drag.id;
+    const others = (pieces ?? []).filter((p) => p.id !== id);
+    return others[drag.to]?.start ?? others.at(-1)?.end ?? 0;
+  });
   let hoverMark = $state<Mark | null>(null);
 
   /** Where mark `m` is drawn: where it's being dragged to, while it is. */
@@ -412,6 +484,38 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="timeline" bind:this={root}>
+  {#if pieces?.length}
+    <div class="chapters lane" bind:this={lane} onpointerdown={onDown}>
+      {#each pieces as piece (piece.id)}
+        {#if piece.end > viewStart && piece.start < viewStart + span}
+          {@const moving = drag?.kind === "piece" && drag.id === piece.id && drag.moved ? drag : null}
+          <div
+            class="chapter piece"
+            class:current={time >= piece.start && time < piece.end}
+            class:selected={selectedPiece === piece.id}
+            class:lifted={!!moving}
+            data-piece={piece.id}
+            style:left={pct(Math.max(piece.start, viewStart))}
+            style:width={widthPct(Math.max(piece.start, viewStart), Math.min(piece.end, viewStart + span))}
+            style:transform={moving ? `translateX(${moving.dx}px)` : null}
+            title="{piece.label} · drag to move it, {os === 'mac' ? 'Option' : 'Alt'}-drag to carry it out"
+          >
+            <span class="label">{piece.label}</span>
+            <button
+              class="remove"
+              onpointerdown={(e) => e.stopPropagation()}
+              onclick={() => onpiece?.remove(piece.id)}
+              title="Take it out of the edit (the clip stays)"
+              aria-label="Take it out of the edit">×</button
+            >
+          </div>
+        {/if}
+      {/each}
+      {#if insertAt !== null}
+        <span class="insert" style:left={pct(insertAt)}></span>
+      {/if}
+    </div>
+  {/if}
   {#if marking && chapterSpans.length}
     <div class="chapters" bind:this={lane} onpointerdown={onDown}>
       {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
@@ -639,6 +743,63 @@
 
   .label.untitled {
     font-style: italic;
+  }
+
+  /* An edit's pieces: bands to select and move. */
+  .piece {
+    cursor: grab;
+    padding-right: 2px;
+    box-shadow: inset 2px 0 0 var(--cut);
+  }
+
+  .piece.lifted {
+    z-index: 2;
+    opacity: 0.85;
+    cursor: grabbing;
+    box-shadow:
+      inset 2px 0 0 var(--cut),
+      var(--shadow);
+  }
+
+  .piece .label {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .remove {
+    display: none;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  .piece:hover .remove,
+  .piece.selected .remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .remove:hover {
+    color: var(--text);
+    background: var(--surface);
+  }
+
+  .lane .insert {
+    position: absolute;
+    top: -2px;
+    bottom: -2px;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--accent);
+    z-index: 3;
   }
 
   /* A chapter's start, to grab and move. */

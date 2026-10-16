@@ -118,10 +118,13 @@ class Clips {
     }
   }
 
-  /** Waits, while `still()`, for clip `id`'s file: the clip once made, else null. */
-  async ready(id: number, still: () => boolean): Promise<Clip | null> {
+  /** Waits, while `still()`, for clip `id`'s file: the clip once made, else null.
+   *  A clip of a VOD other than the one shown (`vodId`) is asked for. */
+  async ready(id: number, still: () => boolean, vodId?: number): Promise<Clip | null> {
     for (;;) {
-      const clip = this.list.find((c) => c.id === id);
+      let clip = this.list.find((c) => c.id === id);
+      if (!clip && vodId !== undefined && vodId !== this.vodId)
+        clip = (await api.listClips(vodId).catch(() => [])).find((c) => c.id === id);
       if (clip?.status === "error") this.error = `Couldn't make the clip: ${clip.error ?? "unknown error"}`;
       if (!clip || clip.status === "error") return null;
       if (clip.status === "ready") return clip;

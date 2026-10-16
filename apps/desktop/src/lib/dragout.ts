@@ -146,13 +146,17 @@ export interface Carry {
   from: DOMRect;
   x: number;
   y: number;
+  /** The clip it is, made if need be (in the clip bar if `shown`): an edit's
+   *  piece's own. Otherwise the stretch of the VOD shown becomes one. */
+  clip?: (shown: boolean) => Promise<Clip | null>;
 }
 
 /**
  * Carries a stretch from (`x`, `y`) while the button is down: see the top of
  * this file. Resolves once it's dropped, taken out of the window, or let go.
  */
-export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry): Promise<void> {
+export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip }: Carry): Promise<void> {
+  const make = clip ?? ((shown: boolean) => exportStretch(start, end, shown));
   const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
   const ghost = document.createElement("div");
   ghost.className = "carry-ghost";
@@ -238,9 +242,9 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       if (leaving) return;
       const { edit, bar } = targetAt(e.clientX, e.clientY);
       finish();
-      if (edit === "new") exportStretch(start, end, true).then((clip) => clip && edits.createWith(clip.id));
-      else if (edit !== null) exportStretch(start, end, true).then((clip) => clip && edits.add(edit, clip.id));
-      else if (bar) exportStretch(start, end, true);
+      if (edit === "new") make(true).then((made) => made && edits.createWith(made.id));
+      else if (edit !== null) make(true).then((made) => made && edits.add(edit, made.id));
+      else if (bar) make(true);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {
@@ -254,8 +258,8 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       clips.overBar = false;
       ghost.classList.add("making");
       try {
-        const made = await exportStretch(start, end, false);
-        const ready = made && (await clips.ready(made.id, () => down));
+        const made = await make(false);
+        const ready = made && (await clips.ready(made.id, () => down, vod.id));
         if (ready && down) {
           const image = await snapshot(await picture, wave, label);
           await dragOut(ready, image);

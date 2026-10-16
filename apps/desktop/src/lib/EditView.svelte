@@ -1,29 +1,40 @@
 <script lang="ts">
-  // An edit (edits.svelte.ts), opened from its pill in a clip bar, in the
+  // An edit (edits.svelte.ts), opened from its row in the library's list, in the
   // player's place and laid out like it: the picture (editPlayer.ts, its
   // pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
   // where Split cuts the piece at the playhead in two and Render makes the
-  // video. Under them, the pieces in order (dragged to reorder), then the
-  // edit's transcript, piece by piece: a click on a line strikes it out (the
-  // edit jumps over it) or brings it back.
+  // video. Its pieces are bands in the timeline's lane (Scrubber.svelte):
+  // dragged to move, Alt-dragged to carry out. Under it, the edit's
+  // transcript, piece by piece: a click on a line strikes it out (the edit
+  // jumps over it) or brings it back.
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, type EditPiece, type Line } from "./api";
+  import { api, type Clip, type EditPiece, type Line, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { DRAG_SLOP } from "./dragout";
+  import { DRAG_SLOP, carry } from "./dragout";
+  import { playsHere } from "./embed";
   import { EditPlayer, type Segment } from "./editPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import { formatTime } from "./platform";
-  import Scrubber from "./Scrubber.svelte";
+  import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
 
-  let { backTo, onback }: { backTo?: string; onback: () => void } = $props();
+  let {
+    backTo,
+    vods,
+    onback,
+  }: {
+    backTo?: string;
+    /** The library's VODs, for carrying a piece out (its ghost, its clip's VOD). */
+    vods: Map<number, Vod>;
+    onback: () => void;
+  } = $props();
 
   const edit = $derived(edits.open);
   const pieces = $derived(edits.pieces);
@@ -75,12 +86,6 @@
     return out;
   });
   const total = $derived(segments.reduce((sum, s) => sum + (s.to - s.from), 0));
-  // Where pieces meet, in the edit's time.
-  const joins = $derived.by(() => {
-    const out: number[] = [];
-    segments.forEach((s, i) => i > 0 && s.piece.id !== segments[i - 1].piece.id && out.push(s.at));
-    return out;
-  });
 
   // The waveform: each segment's stretch of its VOD's, end to end.
   const peaksOf = new Map<number, Promise<Uint8Array>>();
@@ -203,7 +208,11 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
-    if (key === " " || key === "k") player.togglePlay();
+    if ((key === "Delete" || key === "Backspace") && selectedPiece !== null) {
+      edits.removePiece(selectedPiece);
+      selectedPiece = null;
+    } else if (key === "Escape" && selectedPiece !== null && !fullscreen) selectedPiece = null;
+    else if (key === " " || key === "k") player.togglePlay();
     else if (key === "m") toggleMute(player);
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
     else if (key === "," || key === ".") player.step(key === "," ? -1 : 1);
@@ -214,44 +223,51 @@
     e.preventDefault();
   }
 
-  // Reordering: a piece's pill dragged along the bar goes where it's let go;
-  // a click goes to it.
-  let bar = $state<HTMLDivElement>();
-  let press: { piece: EditPiece; x: number; y: number } | null = null;
-  let dragging = $state<{ id: number; to: number; x: number } | null>(null);
-  function onPieceDown(e: PointerEvent, piece: EditPiece) {
-    if (e.button !== 0 || (e.target as HTMLElement).closest(".act")) return;
-    press = { piece, x: e.clientX, y: e.clientY };
-    e.preventDefault();
-  }
-  function onMove(e: PointerEvent) {
-    if (!press || !bar) return;
-    if (!dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
-    const others = [...bar.querySelectorAll<HTMLElement>(".piece")].filter(
-      (el) => Number(el.dataset.piece) !== press!.piece.id,
-    );
-    const to = others.findIndex((el) => {
-      const box = el.getBoundingClientRect();
-      return e.clientX < box.left + box.width / 2;
-    });
-    const at = to < 0 ? others.length : to;
-    const ref = (others[at] ?? others[others.length - 1])?.getBoundingClientRect();
-    const box = bar.getBoundingClientRect();
-    const x = ref ? (others[at] ? ref.left - 4 : ref.right + 2) - box.left + bar.scrollLeft : 0;
-    dragging = { id: press.piece.id, to: at, x };
-  }
-  function onUp() {
-    const done = dragging;
-    const pressed = press;
-    press = null;
-    dragging = null;
-    if (done) {
-      if (pieces.findIndex((p) => p.id === done.id) !== done.to) edits.move(done.id, done.to);
-    } else if (pressed) {
-      const s = segments.find((seg) => seg.piece.id === pressed.piece.id);
-      if (s) seekTo(s.at);
+  // The pieces as bands in the timeline's lane: what each says, where it is.
+  let selectedPiece = $state<number | null>(null);
+  const lane = $derived.by(() => {
+    const out: LanePiece[] = [];
+    let at = 0;
+    for (const piece of pieces) {
+      const length = pieceLength(piece);
+      out.push({ id: piece.id, start: at, end: at + length, label: piece.clip.title });
+      at += length;
     }
+    return out;
+  });
+
+  /** The clip a piece is, for carrying it out: its own, if it's all of it;
+   *  else one made of the stretch it keeps (what's struck isn't left out). */
+  function clipOf(piece: EditPiece) {
+    return async (shown: boolean): Promise<Clip | null> => {
+      const start = Math.max(piece.start, piece.clip.start);
+      const end = Math.min(piece.end, piece.clip.end);
+      try {
+        if (start <= piece.clip.start + 1e-3 && end >= piece.clip.end - 1e-3) {
+          return shown && !piece.clip.shown ? await api.keepClip(piece.clip.id) : piece.clip;
+        }
+        return await api.addClip(piece.clip.vod_id, start, end, shown);
+      } catch (e) {
+        edits.error = String(e);
+        return null;
+      }
+    };
   }
+
+  const onpiece = {
+    select: (id: number) => (selectedPiece = id),
+    move: (id: number, index: number) => edits.move(id, index),
+    remove: (id: number) => edits.removePiece(id),
+    carry(id: number, x: number, y: number, from: DOMRect) {
+      const piece = pieces.find((p) => p.id === id);
+      const vod = piece && vods.get(piece.clip.vod_id);
+      if (!piece || !vod) return;
+      const start = Math.max(piece.start, piece.clip.start);
+      const end = Math.min(piece.end, piece.clip.end);
+      carry({ vod, start, end, ownPlayer: playsHere(vod), from, x, y, clip: clipOf(piece) });
+    },
+  };
+
   const pieceLength = (p: EditPiece) =>
     playedSpans(Math.max(p.start, p.clip.start), Math.min(p.end, p.clip.end), p.struck).reduce(
       (sum, [a, b]) => sum + b - a,
@@ -336,17 +352,7 @@
   const progress = $derived(edit ? edits.progress.get(edit.id) : undefined);
 </script>
 
-<svelte:window
-  onkeydown={onKey}
-  onpointermove={(e) => {
-    onMove(e);
-    onOutMove(e);
-  }}
-  onpointerup={() => {
-    onUp();
-    outPress = null;
-  }}
-/>
+<svelte:window onkeydown={onKey} onpointermove={onOutMove} onpointerup={() => (outPress = null)} />
 
 {#if edit}
   <section class="edit-view" class:fullscreen>
@@ -389,7 +395,8 @@
       <div class="frame" bind:this={host}></div>
       {#if !segments.length}
         <p class="hint">
-          Empty for now. Drop clips on this edit's pill in a VOD's clip bar, or use a clip's “Add to an edit”.
+          Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a
+          stretch of a VOD's timeline), or use a clip's “Add to an edit”.
         </p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
@@ -398,7 +405,17 @@
 
     <div class="controls">
       {#if total}
-        <Scrubber {waveform} {joins} duration={total} time={now} {fps} onseek={seekTo} onpause={() => {}} />
+        <Scrubber
+          {waveform}
+          pieces={lane}
+          {selectedPiece}
+          {onpiece}
+          duration={total}
+          time={now}
+          {fps}
+          onseek={seekTo}
+          onpause={() => player?.playing() && player.togglePlay()}
+        />
       {/if}
       <PlayerBar
         {player}
@@ -443,35 +460,6 @@
         {/snippet}
       </PlayerBar>
     </div>
-
-    <div class="pieces" bind:this={bar} class:dragging={!!dragging} aria-label="Pieces">
-      {#each pieces as piece (piece.id)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="piece {piece.clip.status}"
-          class:current={atNow?.piece.id === piece.id}
-          class:lifted={dragging?.id === piece.id}
-          data-piece={piece.id}
-          onpointerdown={(e) => onPieceDown(e, piece)}
-          title="{piece.clip.title} · {piece.vod_title} · drag to move it"
-        >
-          <span class="length">{formatTime(pieceLength(piece))}</span>
-          <span class="name">{piece.clip.title}</span>
-          {#if piece.clip.status === "cutting" || piece.clip.status === "waiting"}
-            <Spinner size={11} />
-          {/if}
-          <button
-            class="act"
-            onclick={() => edits.removePiece(piece.id)}
-            title="Take it out of the edit (the clip stays)"
-            aria-label="Take it out of the edit"><Icon name="x" size={13} /></button
-          >
-        </div>
-      {/each}
-      {#if dragging}
-        <span class="insert" style:left="{dragging.x}px"></span>
-      {/if}
-    </div>
   </section>
 
   <div class="lines">
@@ -515,8 +503,7 @@
     border: none;
   }
 
-  .fullscreen .head,
-  .fullscreen .pieces {
+  .fullscreen .head {
     display: none;
   }
 
@@ -633,82 +620,6 @@
 
   .render :global(svg) {
     color: var(--accent);
-  }
-
-  /* The pieces, like the clip bar's pills. */
-  .pieces {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 40px;
-    padding: 6px 16px;
-    overflow-x: auto;
-    user-select: none;
-    -webkit-user-select: none;
-  }
-
-  .piece {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    max-width: 260px;
-    height: 28px;
-    padding: 0 2px 0 10px;
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: var(--surface-2);
-    cursor: grab;
-    font-size: 12px;
-  }
-
-  .piece.current {
-    border-color: var(--accent);
-  }
-
-  .piece.lifted {
-    opacity: 0.45;
-  }
-
-  .piece.error {
-    border-color: var(--danger);
-  }
-
-  .dragging .piece {
-    cursor: grabbing;
-  }
-
-  .length {
-    color: var(--accent);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .name {
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-
-  .act {
-    display: flex;
-    padding: 3px;
-    border: none;
-    border-radius: 50%;
-    background: none;
-    color: var(--muted);
-  }
-
-  .act:hover {
-    color: var(--text);
-  }
-
-  .insert {
-    position: absolute;
-    top: 6px;
-    bottom: 6px;
-    width: 2px;
-    background: var(--accent);
   }
 
   .lines {

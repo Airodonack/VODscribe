@@ -363,6 +363,7 @@
       {#if edits.openId !== null && !results && !searchError}
         <EditView
           backTo={playingVod?.title}
+          vods={vodsById}
           onback={() => {
             const back = playing?.vodId ?? null;
             edits.openEdit(null);
