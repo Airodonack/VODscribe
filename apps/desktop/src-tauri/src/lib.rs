@@ -14,6 +14,7 @@ mod history;
 mod loopback;
 mod media;
 mod previews;
+mod screen;
 mod setup;
 mod thumbnails;
 mod videos;
@@ -189,18 +190,26 @@ pub fn run() {
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
             let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?;
+            // Drawn transparent over the player's screen, where that's the
+            // placement (screen.rs), which then paints the background.
+            let builder = builder.transparent(screen::page_transparent());
             #[cfg(windows)]
             let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
                 Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
                 _ => builder,
             };
             let main = builder.build()?;
-            // Behind the page, the theme's background (--bg in app.css), not white.
-            let bg = match main.theme() {
-                Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
-                _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
-            };
-            let _ = main.set_background_color(Some(bg));
+            app.manage(screen::Screen::default());
+            screen::attach(app.handle(), &main)?;
+            // Behind the page, the theme's background (--bg in app.css), not
+            // white; unless the page is transparent and the screen paints it.
+            if !screen::page_transparent() {
+                let bg = match main.theme() {
+                    Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
+                    _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
+                };
+                let _ = main.set_background_color(Some(bg));
+            }
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 if !main.is_visible().unwrap_or(true) {
@@ -258,6 +267,7 @@ pub fn run() {
             history::set_view,
             history::undo,
             history::redo,
+            screen::set_screen,
             edits::move_piece,
             edits::trim_piece,
             edits::strike_piece,

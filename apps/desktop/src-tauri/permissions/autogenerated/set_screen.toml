@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-screen"
+description = "Enables the set_screen command without any pre-configured scope."
+commands.allow = ["set_screen"]
+
+[[permission]]
+identifier = "deny-set-screen"
+description = "Denies the set_screen command without any pre-configured scope."
+commands.deny = ["set_screen"]

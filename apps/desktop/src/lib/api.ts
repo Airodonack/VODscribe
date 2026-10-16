@@ -336,6 +336,9 @@ export const api = {
   undo: (view: Doc) => invoke<Undone | null>("undo", { view }),
   /** Redoes what was undone last in `view`'s history. */
   redo: (view: Doc) => invoke<Undone | null>("redo", { view }),
+  /** Where the page's player box is (Screen.svelte) and the page's background colour; whether the page is to be transparent. */
+  setScreen: (rect: { x: number; y: number; width: number; height: number } | null, background: string) =>
+    invoke<boolean>("set_screen", { rect, background }),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */
   previewPlan: (id: number, at: number) => invoke<PreviewSegment[]>("preview_plan", { id, at }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */

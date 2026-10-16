@@ -52,6 +52,7 @@ permissions = [
   "allow-set-view",
   "allow-undo",
   "allow-redo",
+  "allow-set-screen",
   "allow-move-piece",
   "allow-trim-piece",
   "allow-strike-piece",

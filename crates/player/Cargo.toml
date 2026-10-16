@@ -1,0 +1,17 @@
+[package]
+name = "vodscribe-player"
+description = "The app's own video player: decoding, timing and drawing done here, not by the webview"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+
+# Linux draws into a GL area in the window's GTK widget tree, under the page.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+glib = "0.18"
+gl = "0.14"
+libloading = "0.8"
