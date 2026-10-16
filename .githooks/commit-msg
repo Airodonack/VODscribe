@@ -1,7 +1,7 @@
 #!/bin/sh
-# Refuses a commit message carrying a co-author trailer or a session link.
+# Refuses a commit message that names the coding assistant or its maker, in any case.
 # Enable once per clone: git config core.hooksPath .githooks
-if grep -qiE '^(claude-session|co-authored-by):|claude\.ai/' "$1"; then
-  echo "commit-msg: take the co-author or session line out of the message." >&2
+if grep -qiE 'claude|anthropic' "$1"; then
+  echo "commit-msg: the message names the coding assistant or its maker; take that out." >&2
   exit 1
 fi
