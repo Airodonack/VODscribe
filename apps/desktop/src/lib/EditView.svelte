@@ -11,12 +11,13 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, type Clip, type EditPiece, type Line, type Vod } from "./api";
+  import { api, events, type Clip, type EditPiece, type Line, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type Segment } from "./editPlayer";
+  import { PreviewPlayer } from "./previewPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
@@ -121,7 +122,7 @@
 
   // The player, and what the controls show, read from it every frame.
   let host = $state<HTMLDivElement>();
-  let player = $state<EditPlayer | null>(null);
+  let player = $state<EditPlayer | PreviewPlayer | null>(null);
   let previewError = $state<string | null>(null);
   let now = $state(0);
   let playing = $state(false);
@@ -129,8 +130,42 @@
   let muted = $state(false);
   let rate = $state(1);
   let fps = $state(DEFAULT_FPS);
+  // The preview's segments (previewPlayer.ts), where the webview plays them;
+  // else the clips' files one after another (editPlayer.ts).
   onMount(() => {
-    player = new EditPlayer(host!, (message) => (previewError = message));
+    let gone = false;
+    let stop: (() => void) | undefined;
+    api.previewCodecs().then(
+      (codecs) => {
+        if (gone) return;
+        const show = (message: string | null) => (previewError = message);
+        if (PreviewPlayer.supported(codecs)) {
+          const p = new PreviewPlayer(host!, codecs, show);
+          player = p;
+          events
+            .previewMade(({ key, error }) => (error ? (previewError = error) : p.made(key)))
+            .then((u) => (gone ? u() : (stop = u)));
+        } else player = new EditPlayer(host!, show);
+      },
+      (e) => (edits.error = String(e)),
+    );
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  });
+  // The preview's plan, asked for again whenever the pieces change.
+  let planSeq = 0;
+  $effect(() => {
+    void segments;
+    const p = player;
+    const id = edit?.id;
+    if (!(p instanceof PreviewPlayer) || id === undefined) return;
+    const mine = ++planSeq;
+    api.previewPlan(id).then(
+      (plan) => mine === planSeq && p.setPlan(plan),
+      (e) => (edits.error = String(e)),
+    );
   });
   // The pieces' frame rate: their first VOD's, where it's known.
   let frameRate = $state<number | null>(null);
@@ -146,7 +181,7 @@
     const segs = segments;
     const f = frameRate;
     const p = player;
-    untrack(() => p?.setSegments(segs, f));
+    if (p instanceof EditPlayer) untrack(() => p.setSegments(segs, f));
   });
   let poll = requestAnimationFrame(function read() {
     poll = requestAnimationFrame(read);

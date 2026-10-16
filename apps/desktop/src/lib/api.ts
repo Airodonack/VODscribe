@@ -177,6 +177,15 @@ export interface EditPiece {
   vod_title: string;
 }
 
+/** A segment of an edit's preview: where it plays in the edit, how long, and
+ *  its key (null while its clip's file isn't made). */
+export interface PreviewSegment {
+  key: string | null;
+  at: number;
+  length: number;
+  piece_id: number;
+}
+
 export interface EditView {
   edit: Edit;
   pieces: EditPiece[];
@@ -295,6 +304,12 @@ export const api = {
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
   /** A clip's first frame, a PNG; empty if it has none. */
   clipThumb: (id: number) => invoke<ArrayBuffer>("clip_thumb", { id }).then((b) => new Uint8Array(b)),
+  /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made are made next. */
+  previewPlan: (id: number) => invoke<PreviewSegment[]>("preview_plan", { id }),
+  /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
+  previewSegment: (key: string) => invoke<ArrayBuffer>("preview_segment", { key }).then((b) => new Uint8Array(b)),
+  /** What preview segments are in, as Media Source Extensions name it. */
+  previewCodecs: () => invoke<string>("preview_codecs"),
   listEdits: () => invoke<Edit[]>("list_edits"),
   createEdit: () => invoke<Edit>("create_edit"),
   getEdit: (id: number) => invoke<EditView>("get_edit", { id }),
@@ -418,6 +433,9 @@ export const events = {
   editProgress: (cb: (id: number, progress: number) => void) =>
     listen<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
   editRemoved: (cb: (id: number) => void) => listen<number>("edit-removed", (e) => cb(e.payload)),
+  /** A preview segment made (or, with `error`, not). */
+  previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
+    listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };
