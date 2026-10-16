@@ -5,6 +5,7 @@
   import { onDestroy, tick, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
+  import { edits } from "./edits.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { exportStretch, stretchAt } from "./dragout";
@@ -547,7 +548,7 @@
           {/if}
         </div>
       </div>
-      {#if clips.shown.length || clips.carrying || clips.error}
+      {#if clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length}
         <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
       {/if}
     {/if}

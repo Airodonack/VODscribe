@@ -29,6 +29,8 @@ pub struct Edit {
     /// How many pieces it has, and how long it plays, in seconds.
     pub pieces: usize,
     pub length: f64,
+    /// The VODs its clips are of: it shows in each one's clip bar.
+    pub vod_ids: Vec<i64>,
 }
 
 /// A piece of an edit: `start`..`end` of its clip's VOD (within the clip),
@@ -125,6 +127,9 @@ impl Db {
         let Some((title, status, file_path, error, version, rendered)) = row else { return Ok(None) };
         let pieces = self.edit_pieces(id)?;
         let length = pieces.iter().flat_map(|p| p.spans()).map(|(a, b)| b - a).sum();
+        let mut vod_ids: Vec<i64> = pieces.iter().map(|p| p.clip.vod_id).collect();
+        vod_ids.sort_unstable();
+        vod_ids.dedup();
         Ok(Some(Edit {
             id,
             title,
@@ -134,6 +139,7 @@ impl Db {
             current: rendered == Some(version),
             pieces: pieces.len(),
             length,
+            vod_ids,
         }))
     }
 
@@ -326,6 +332,7 @@ mod tests {
         let titles =
             |db: &Db| db.edit_pieces(edit.id).unwrap().iter().map(|p| p.clip.title.clone()).collect::<Vec<_>>();
         assert_eq!(titles(&db), ["b", "a"]);
+        assert_eq!(db.edit(edit.id).unwrap().unwrap().vod_ids, [vod]);
         let pieces = db.edit_pieces(edit.id).unwrap();
         db.move_piece(pieces[0].id, 1).unwrap();
         assert_eq!(titles(&db), ["a", "b"]);

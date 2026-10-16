@@ -2,9 +2,9 @@
 // Alt-drag on the timeline (Option on a Mac, Ctrl too on Linux), a press held
 // on the picture, or a pill dragged from the clip bar. Inside the window it's
 // the app's own drag, showing the stretch's frame over its waveform. It lands
-// on the clip bar (kept as a clip) or on an edit in the sidebar's list (kept as
-// a clip, and put at the end of that edit); dropped anywhere else in the
-// window, nothing happens. Taken past the
+// on the clip bar (kept as a clip), on an edit's pill there (kept as a clip
+// and put at the end of that edit), or on "Make new edit" above the bar (an
+// edit made with it); dropped anywhere else in the window, nothing happens. Taken past the
 // window's edge, it becomes the system's drag of the clip's file, into a
 // video editor or a folder: the file is made then (without a pill), and the
 // drag starts once it's there, if the button is still down.
@@ -198,14 +198,19 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
   );
   clips.carrying = { start, end };
   document.body.classList.add("timeline-drag");
+  // Text the press began selecting (a pill's name) isn't carried along.
+  window.getSelection()?.removeAllRanges();
 
   return new Promise((resolve) => {
     let down = true;
     let leaving = false;
-    const overBar = (px: number, py: number) => !!document.elementFromPoint(px, py)?.closest(".clip-bar");
-    const overEdit = (px: number, py: number) => {
-      const row = document.elementFromPoint(px, py)?.closest<HTMLElement>("[data-edit-drop]");
-      return row ? Number(row.dataset.editDrop) : null;
+    // What's under the pointer to drop on: an edit, "Make new edit", or the clip bar.
+    const targetAt = (px: number, py: number): { edit: number | "new" | null; bar: boolean } => {
+      const el = document.elementFromPoint(px, py);
+      const edit = el?.closest<HTMLElement>("[data-edit-drop]");
+      if (edit) return { edit: Number(edit.dataset.editDrop), bar: false };
+      if (el?.closest("[data-new-edit]")) return { edit: "new", bar: false };
+      return { edit: null, bar: !!el?.closest(".clip-bar") };
     };
     const finish = () => {
       window.removeEventListener("pointermove", onMove, true);
@@ -222,19 +227,20 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
     const onMove = (e: PointerEvent) => {
       if (leaving) return;
       place(e.clientX, e.clientY);
-      clips.overBar = overBar(e.clientX, e.clientY);
-      edits.dropTarget = overEdit(e.clientX, e.clientY);
+      const target = targetAt(e.clientX, e.clientY);
+      clips.overBar = target.bar;
+      edits.dropTarget = target.edit;
       const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
       if (outside) takeOut();
     };
     const onUp = (e: PointerEvent) => {
       down = false;
       if (leaving) return;
-      const keep = overBar(e.clientX, e.clientY);
-      const edit = overEdit(e.clientX, e.clientY);
+      const { edit, bar } = targetAt(e.clientX, e.clientY);
       finish();
-      if (keep) exportStretch(start, end, true);
+      if (edit === "new") exportStretch(start, end, true).then((clip) => clip && edits.createWith(clip.id));
       else if (edit !== null) exportStretch(start, end, true).then((clip) => clip && edits.add(edit, clip.id));
+      else if (bar) exportStretch(start, end, true);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {

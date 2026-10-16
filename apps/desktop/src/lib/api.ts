@@ -159,6 +159,8 @@ export interface Edit {
   pieces: number;
   /** How long it plays, in seconds. */
   length: number;
+  /** The VODs its clips are of: it shows in each one's clip bar. */
+  vod_ids: number[];
 }
 
 /** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */

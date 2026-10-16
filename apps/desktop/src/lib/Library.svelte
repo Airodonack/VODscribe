@@ -9,7 +9,6 @@
   import { api, type Vod } from "./api";
   import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
-  import EditList from "./EditList.svelte";
   import Icon from "./Icon.svelte";
   import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
@@ -23,14 +22,11 @@
     vods,
     selectedId,
     onselect,
-    onopenedit,
     onreorder,
   }: {
     vods: Vod[];
     selectedId: number | null;
     onselect: (id: number | null) => void;
-    /** Opens an edit in the main area. */
-    onopenedit: (id: number) => void;
     onreorder: (ids: number[]) => void;
   } = $props();
 
@@ -285,7 +281,6 @@
       {/if}
     {/each}
   </div>
-  <EditList onopen={onopenedit} />
 </aside>
 
 <style>

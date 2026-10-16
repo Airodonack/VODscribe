@@ -1,7 +1,8 @@
-// Edits (crates/core edits.rs): videos made of pieces of clips, listed in the
-// sidebar (EditList.svelte), one open at a time in the Edit view
-// (EditView.svelte). Clips get in by being dropped on an edit in the list
-// (dragout.ts) or with a clip's "Add to edit" (ClipStrip.svelte).
+// Edits (crates/core edits.rs): videos made of pieces of clips. Each shows as a
+// pill in the clip bar (ClipStrip.svelte) of every VOD its clips are of, and
+// opens in the Edit view (EditView.svelte). Clips get in by being dropped on
+// an edit's pill or on "Make new edit" (dragout.ts), or with a clip's "Add to
+// an edit".
 
 import { SvelteMap } from "svelte/reactivity";
 import { api, events, type Edit, type EditPiece, type EditView } from "./api";
@@ -14,8 +15,8 @@ class Edits {
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
-  /** The edit a carried clip is over, in the list. */
-  dropTarget = $state<number | null>(null);
+  /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
+  dropTarget = $state<number | "new" | null>(null);
   #started = false;
   #seq = 0;
 
@@ -26,10 +27,7 @@ class Edits {
   start() {
     if (this.#started) return;
     this.#started = true;
-    api.listEdits().then(
-      (list) => (this.list = list),
-      (e) => (this.error = String(e)),
-    );
+    this.#reloadList();
     events.edit((edit) => {
       if (edit.status !== "cutting") this.progress.delete(edit.id);
       this.#put(edit);
@@ -41,9 +39,34 @@ class Edits {
       if (this.pieces.some((p) => p.clip.id === clip.id))
         this.pieces = this.pieces.map((p) => (p.clip.id === clip.id ? { ...p, clip } : p));
     });
+    // A clip deleted (or its VOD) leaves the edits it was in.
     events.clipRemoved((id) => {
       if (this.pieces.some((p) => p.clip.id === id) && this.openId !== null) this.#load(this.openId);
+      this.#reloadList();
     });
+    events.vodRemoved(() => {
+      this.#reloadList();
+      if (this.openId !== null) this.#load(this.openId);
+    });
+  }
+
+  #reloadList() {
+    api.listEdits().then(
+      (list) => (this.list = list),
+      (e) => (this.error = String(e)),
+    );
+  }
+
+  /** The edits with clips of VOD `vodId`. */
+  forVod(vodId: number): Edit[] {
+    return this.list.filter((e) => e.vod_ids.includes(vodId));
+  }
+
+  /** A new edit holding clip `clipId`. */
+  async createWith(clipId: number): Promise<Edit | null> {
+    const edit = await this.create();
+    if (edit) await this.add(edit.id, clipId);
+    return edit;
   }
 
   #put(edit: Edit) {

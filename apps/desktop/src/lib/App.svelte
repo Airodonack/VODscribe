@@ -274,11 +274,12 @@
     if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time: 0, play: false } };
   }
 
-  // An edit open takes the main area; a VOD picked (or played) takes it back.
-  function openEdit(id: number) {
-    selectedId = null;
-    edits.openEdit(id);
-  }
+  // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
+  // there takes the main area, and a VOD picked (or played) takes it back.
+  edits.start();
+  $effect(() => {
+    if (edits.openId !== null) selectedId = null;
+  });
 </script>
 
 <svelte:window onkeydown={onWindowKey} ondragover={keepDropsInApp} ondrop={keepDropsInApp} />
@@ -289,7 +290,7 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {vods} {selectedId} onselect={select} onreorder={reorder} onopenedit={openEdit} />
+    <Library {vods} {selectedId} onselect={select} onreorder={reorder} />
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">

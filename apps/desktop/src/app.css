@@ -444,3 +444,10 @@ body.dropping iframe {
 body.timeline-drag iframe {
   pointer-events: none;
 }
+
+/* Nor is text selected on the way. */
+body.timeline-drag,
+body.timeline-drag * {
+  user-select: none;
+  -webkit-user-select: none;
+}
