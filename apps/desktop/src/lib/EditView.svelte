@@ -29,14 +29,10 @@
   import { load, save } from "./stored";
 
   let {
-    backTo,
     vods,
-    onback,
   }: {
-    backTo?: string;
     /** The library's VODs, for carrying a piece out (its ghost, its VOD). */
     vods: Map<number, Vod>;
-    onback: () => void;
   } = $props();
 
   const edit = $derived(edits.open);
@@ -439,10 +435,6 @@
 {#if edit}
   <section class="edit-view" class:fullscreen>
     <div class="head">
-      <button class="back link" onclick={onback} title="Back to {backTo ?? 'the VOD'}">
-        <Icon name="chevron-down" size={14} />{backTo ?? "Back"}
-      </button>
-      <span class="sep muted">/</span>
       <span class="kind"><Icon name="film" size={14} /></span>
       <input
         class="title"
@@ -452,24 +444,6 @@
         aria-label="Edit name"
       />
       <span class="grow"></span>
-      {#if edit.status === "cutting"}
-        <span class="rendering muted">
-          <Spinner size={12} /> Rendering{progress ? ` ${Math.round(progress * 100)}%` : "…"}
-        </span>
-        <button onclick={() => edits.stop(edit.id)}>Stop</button>
-      {:else}
-        <!-- The edit's output: made here, primary while there's something new to make. -->
-        {@const fresh = edit.status === "ready" && !!edit.file_path && edit.current}
-        <button
-          class="make"
-          class:primary={!fresh}
-          onclick={() => edits.render(edit.id)}
-          disabled={!segments.length}
-          title="Render the edit into one video, in Videos/VODscribe/Edits (E)"
-        >
-          {edit.status === "ready" ? "Render again" : "Render"} <kbd>E</kbd>
-        </button>
-      {/if}
       {#if edit.status === "ready" && edit.file_path}
         <button
           class="out"
@@ -479,6 +453,24 @@
         >
           <Icon name="film" size={14} />
           {edit.current ? "Rendered" : "Rendered (changed since)"}
+        </button>
+      {/if}
+      <!-- Making the video: after the link to it, so it stays put when that appears. -->
+      {#if edit.status === "cutting"}
+        <span class="rendering muted">
+          <Spinner size={12} /> Rendering{progress ? ` ${Math.round(progress * 100)}%` : "…"}
+        </span>
+        <button onclick={() => edits.stop(edit.id)}>Stop</button>
+      {:else}
+        {@const again = edit.status === "ready"}
+        <button
+          class="make"
+          onclick={() => edits.render(edit.id)}
+          disabled={!segments.length}
+          title="{again ? 'Render the edit again' : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E)"
+        >
+          <Icon name={again ? "redo" : "clapperboard"} size={14} />
+          Render <kbd>E</kbd>
         </button>
       {/if}
       <button class="icon" onclick={remove} title="Delete edit" aria-label="Delete edit">
@@ -640,24 +632,6 @@
     min-height: 40px;
   }
 
-  .back {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    max-width: 30%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-size: 13px;
-  }
-
-  .back :global(svg) {
-    transform: rotate(90deg);
-  }
-
-  .sep {
-    font-size: 13px;
-  }
-
   .kind {
     display: flex;
     color: var(--accent);
@@ -789,6 +763,10 @@
 
   .split :global(svg) {
     color: var(--cut);
+  }
+
+  .make :global(svg) {
+    color: var(--accent);
   }
 
   .make kbd {

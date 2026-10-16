@@ -299,6 +299,13 @@
   }
 
   // Selecting a VOD opens its player paused at the start, ready to jump around.
+  /** Back out of the open edit, to the VOD that was open before it. */
+  function closeEdit() {
+    const back = playing?.vodId ?? null;
+    edits.openEdit(null);
+    if (back !== null) selectedId = back;
+  }
+
   function select(id: number | null) {
     edits.openEdit(null);
     selectedId = id;
@@ -325,6 +332,12 @@
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
+        {#if edits.openId !== null}
+          <!-- Out of the edit, to the VOD that was open: the window's way back. -->
+          <button class="icon back" onclick={closeEdit} title="Back to {playingVod?.title ?? 'the VOD'}">
+            <Icon name="arrow-left" size={18} />
+          </button>
+        {/if}
         <div class="search">
           <span class="search-icon muted"><Icon name="search" /></span>
           <input
@@ -361,15 +374,7 @@
       </div>
 
       {#if edits.openId !== null && !results && !searchError}
-        <EditView
-          backTo={playingVod?.title}
-          vods={vodsById}
-          onback={() => {
-            const back = playing?.vodId ?? null;
-            edits.openEdit(null);
-            if (back !== null) selectedId = back;
-          }}
-        />
+        <EditView vods={vodsById} />
       {:else}
         {#if playing && playingVod}
           {#key playing.vodId}
