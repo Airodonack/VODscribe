@@ -65,12 +65,9 @@ class Edits {
     return this.list.filter((e) => e.vod_ids.includes(vodId));
   }
 
-  /** Whether clip `clipId` is in an edit, and the names of those it's in. */
+  /** Whether clip `clipId` is in an edit. */
   usesClip(clipId: number): boolean {
     return this.list.some((e) => e.clip_ids.includes(clipId));
-  }
-  withClip(clipId: number): string[] {
-    return this.list.filter((e) => e.clip_ids.includes(clipId)).map((e) => `“${e.title}”`);
   }
 
   /** A new edit holding clip `clipId`. */
