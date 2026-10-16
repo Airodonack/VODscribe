@@ -21,6 +21,7 @@ pub mod net;
 pub mod peaks;
 pub mod pipeline;
 pub mod playable;
+pub mod preview;
 pub mod render;
 pub mod settings;
 pub mod thumbs;

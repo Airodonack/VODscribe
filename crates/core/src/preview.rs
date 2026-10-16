@@ -1,0 +1,176 @@
+//! Previews of edits: each stretch that plays (a piece less what's struck,
+//! `edits::EditPiece::spans`) rendered on its own as a preview segment
+//! (`render::preview`), cached by what it's made of, so a change to an edit
+//! only makes the segments it changed. The page's player feeds them, in
+//! order, to one video.
+
+use std::collections::hash_map::DefaultHasher;
+use std::fs;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use serde::Serialize;
+
+use crate::db::ClipStatus;
+use crate::edits::EditPiece;
+use crate::render::Piece;
+
+/// Changes when segments are made differently, so old ones aren't used.
+const VERSION: u32 = 1;
+
+/// A segment of an edit's preview: where it plays in the edit, for how long,
+/// and its cache key (none while its clip's file isn't made).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Planned {
+    pub key: Option<String>,
+    pub at: f64,
+    pub length: f64,
+    pub piece_id: i64,
+    /// What it's rendered from; not sent to the page.
+    #[serde(skip)]
+    pub source: Option<Piece>,
+}
+
+/// The segments `pieces` play as, in order.
+pub fn plan(pieces: &[EditPiece]) -> Vec<Planned> {
+    let mut out = Vec::new();
+    let mut at = 0.0;
+    for p in pieces {
+        let file = match (&p.clip.status, &p.clip.file_path) {
+            (ClipStatus::Ready, Some(file)) => Some(PathBuf::from(file)),
+            _ => None,
+        };
+        for (a, b) in p.spans() {
+            let source =
+                file.as_ref().map(|f| Piece { source: f.clone(), start: a - p.clip.start, end: b - p.clip.start });
+            let key = source.as_ref().and_then(key);
+            out.push(Planned { key, at, length: b - a, piece_id: p.id, source });
+            at += b - a;
+        }
+    }
+    out
+}
+
+/// A segment's cache key: its file (as it is now: its size and when it was
+/// written, so a clip made again is a new file), the stretch, and `VERSION`.
+/// None if the file isn't there.
+pub fn key(piece: &Piece) -> Option<String> {
+    let meta = fs::metadata(&piece.source).ok()?;
+    let written = meta.modified().ok()?.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_nanos();
+    let mut h = DefaultHasher::new();
+    (VERSION, piece.source.as_os_str(), meta.len(), written).hash(&mut h);
+    // To the microsecond: times as stored can differ in their last bits.
+    ((piece.start * 1e6).round() as i64, (piece.end * 1e6).round() as i64).hash(&mut h);
+    Some(format!("{:016x}", h.finish()))
+}
+
+/// Whether `key` is one `key` makes (so it names nothing but a file in the cache).
+pub fn is_key(key: &str) -> bool {
+    key.len() == 16 && key.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Where segment `key` is kept in `dir`.
+pub fn path(dir: &Path, key: &str) -> PathBuf {
+    dir.join(format!("{key}.mp4"))
+}
+
+/// Removes segments in `dir` not used for `max_age`, then the least recently
+/// used until they take at most `max_bytes`.
+pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut files: Vec<(PathBuf, SystemTime, u64)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            meta.is_file().then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+        })
+        .collect();
+    let now = SystemTime::now();
+    files.retain(|(path, used, _)| {
+        let old = now.duration_since(*used).unwrap_or_default() > max_age;
+        if old {
+            let _ = fs::remove_file(path);
+        }
+        !old
+    });
+    files.sort_by_key(|(_, used, _)| std::cmp::Reverse(*used));
+    let mut total = 0;
+    for (path, _, size) in files {
+        total += size;
+        if total > max_bytes {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Marks segment `path` used now, so `tidy` keeps it.
+pub fn touch(path: &Path) {
+    if let Ok(f) = fs::File::options().append(true).open(path) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Db;
+    use crate::fetch::VodInfo;
+
+    #[test]
+    fn an_edit_plays_as_a_segment_per_stretch() {
+        let dir = crate::TempDir::new("preview");
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "x".into(),
+            channel: None,
+            duration: Some(600.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0.id;
+        let a = db.add_clip(vod, 10.0, 20.0, "a", true).unwrap();
+        let b = db.add_clip(vod, 30.0, 34.0, "b", true).unwrap();
+        let file = dir.join("a.mp4");
+        fs::write(&file, b"made").unwrap();
+        db.set_clip_file(a.id, 10.0, 20.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, a.id, None).unwrap();
+        db.add_piece(edit, b.id, None).unwrap();
+        let first = db.edit_pieces(edit).unwrap()[0].id;
+        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+
+        let planned = plan(&db.edit_pieces(edit).unwrap());
+        let spans: Vec<(f64, f64)> = planned.iter().map(|p| (p.at, p.length)).collect();
+        assert_eq!(spans, [(0.0, 2.0), (2.0, 6.0), (8.0, 4.0)], "two stretches of a, then b");
+        assert!(planned[0].key.is_some() && planned[0].key != planned[1].key);
+        assert_eq!(planned[1].source.as_ref().map(|s| (s.start, s.end)), Some((4.0, 10.0)), "in its clip's file");
+        assert_eq!(planned[2].key, None, "b's file isn't made");
+        assert!(is_key(planned[0].key.as_deref().unwrap()));
+        assert!(!is_key("../../etc/passwd") && !is_key("0123456789abcdeg"));
+
+        // The same stretch of the same file is the same segment; the file made again isn't.
+        let again = plan(&db.edit_pieces(edit).unwrap());
+        assert_eq!(again[0].key, planned[0].key);
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(&file, b"made again").unwrap();
+        assert_ne!(plan(&db.edit_pieces(edit).unwrap())[0].key, planned[0].key);
+    }
+
+    #[test]
+    fn tidying_keeps_the_newest_within_the_cap() {
+        let dir = crate::TempDir::new("preview-tidy");
+        for (name, age) in [("old", 100), ("mid", 20), ("new", 0)] {
+            let p = dir.join(format!("{name}.mp4"));
+            fs::write(&p, [0u8; 100]).unwrap();
+            let when = SystemTime::now() - Duration::from_secs(age * 86_400);
+            fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
+        }
+        tidy(&dir, Duration::from_secs(30 * 86_400), 150);
+        let left: Vec<bool> = ["old", "mid", "new"].iter().map(|n| dir.join(format!("{n}.mp4")).exists()).collect();
+        assert_eq!(left, [false, false, true], "too old, then over the cap");
+    }
+}

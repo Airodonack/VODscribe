@@ -93,6 +93,41 @@ pub fn render(
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<()> {
+    encode_pieces(ffmpeg, pieces, Quality::Final(picture), out, cancel, progress)
+}
+
+/// The picture previews are made at, whatever the edit's: every segment the
+/// same, so one player plays them one after another (`preview`).
+pub const PREVIEW: Picture = Picture { width: 960, height: 540, fps: 30.0 };
+
+/// The codecs a preview segment is in, as Media Source Extensions name them
+/// (H.264 High at level 4.0, AAC-LC).
+pub const PREVIEW_CODECS: &str = r#"video/mp4; codecs="avc1.640028, mp4a.40.2""#;
+
+/// Renders `piece` as a preview segment into `out`: at `PREVIEW`'s size and
+/// rate, picture and sound both always there (black, or silence, where its
+/// file has none), as fragmented MP4 without B-frames, so its first frame is
+/// at 0 and segments can be fed one after another to one player.
+pub fn preview(ffmpeg: &Path, piece: &Piece, out: &Path, cancel: &AtomicBool) -> Result<()> {
+    encode_pieces(ffmpeg, std::slice::from_ref(piece), Quality::Preview, out, cancel, |_| {})
+}
+
+/// What a render is for.
+enum Quality {
+    /// The edit's video: at the picture given (or its first piece's), as good as it was.
+    Final(Option<Picture>),
+    /// A preview segment (`preview`).
+    Preview,
+}
+
+fn encode_pieces(
+    ffmpeg: &Path,
+    pieces: &[Piece],
+    quality: Quality,
+    out: &Path,
+    cancel: &AtomicBool,
+    progress: impl FnMut(f64),
+) -> Result<()> {
     if pieces.is_empty() {
         bail!("There's nothing to render.");
     }
@@ -113,7 +148,10 @@ pub fn render(
         .iter()
         .map(|s| local::media(ffmpeg, s).with_context(|| format!("read {}", s.display())))
         .collect::<Result<Vec<_>>>()?;
-    let picture = picture_of(&inputs, picture);
+    let picture = match quality {
+        Quality::Final(given) => picture_of(&inputs, given),
+        Quality::Preview => Some(PREVIEW),
+    };
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
 
     let dir = out.parent().context("no folder for the video")?;
@@ -127,10 +165,22 @@ pub fn render(
         cmd.arg("-i").arg(s);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
-    if picture.is_some() {
-        cmd.args(["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]);
+    match quality {
+        Quality::Final(_) => {
+            if picture.is_some() {
+                cmd.args([
+                    "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                ]);
+            }
+            cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
+        }
+        Quality::Preview => {
+            cmd.args(["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-bf", "0", "-g", "60"]);
+            cmd.args(["-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0"]);
+            cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]);
+            cmd.args(["-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4"]);
+        }
     }
-    cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
     cmd.args(["-progress", "pipe:1", "-y"]).arg(&part);
     tools::encode(cmd, &part, out, length, cancel, progress, "the video")
 }
@@ -207,5 +257,19 @@ mod tests {
         assert!((seconds("video") - 4.5).abs() < 0.05, "{streams}");
         assert!((seconds("audio") - 4.5).abs() < 0.06, "{streams}");
         assert!(!dir.join("out").join(".edit.mp4.part").exists());
+
+        // A preview segment of the silent file: at the preview's size, with
+        // (silent) sound, starting at 0.
+        let seg = dir.join("seg.mp4");
+        let silent = Piece { source: dir.join("b.mp4"), start: 1.0, end: 3.0 };
+        preview(&ffmpeg, &silent, &seg, &AtomicBool::new(false)).unwrap();
+        let o = std::process::Command::new(&ffprobe)
+            .args(["-v", "error", "-show_entries", "stream=codec_type,width,height,start_time", "-of", "csv=p=0"])
+            .arg(&seg)
+            .output()
+            .unwrap();
+        let streams = String::from_utf8_lossy(&o.stdout).to_string();
+        assert!(streams.contains("video,960,540,0.000000"), "{streams}");
+        assert!(streams.lines().any(|l| l.starts_with("audio") && l.ends_with("0.000000")), "{streams}");
     }
 }
