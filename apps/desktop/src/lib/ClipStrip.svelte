@@ -3,8 +3,9 @@
   // plays it; double-clicking its name renames it; once its file is made, it
   // drags out of the window (into a video editor or a folder), or onto an
   // edit in the library's list (or on "Make new edit" there). "Add to an edit"
-  // picks one from a list. Each edit using this VOD is a link here too;
-  // hovering one lights up on the timeline what the edit plays of the VOD.
+  // picks one from a list. Each edit using this VOD is a link here too.
+  // Hovering a pill lights up its stretch on the timeline, or for an edit's
+  // link, what the edit plays of the VOD.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -123,6 +124,8 @@
         ? ' · drag it into a video editor or a folder'
         : ''}"
       onpointerdown={(e) => onChipDown(e, clip)}
+      onmouseenter={() => (clips.hovered = { start: clip.start, end: clip.end })}
+      onmouseleave={() => (clips.hovered = null)}
     >
       <button class="play" onclick={() => play(clip.start)} aria-label="Play {clip.title}">
         <span class="length">{formatTime(clip.end - clip.start)}</span>

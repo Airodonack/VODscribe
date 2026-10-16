@@ -111,6 +111,7 @@ class Edits {
   }
 
   openEdit(id: number | null) {
+    this.hovered = null;
     this.openId = id;
     this.pieces = [];
     this.error = null;

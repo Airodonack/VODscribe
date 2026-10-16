@@ -172,11 +172,14 @@
     else if (!active) activate(now);
   }
 
-  // What the edit whose link is hovered (ClipStrip.svelte) plays of this VOD.
+  // What a pill hovered in the clip bar (ClipStrip.svelte) is of this VOD: a
+  // clip's stretch, or what an edit plays of it.
   const editRanges = $derived(
-    edits.hovered === null
-      ? []
-      : (edits.list.find((e) => e.id === edits.hovered)?.ranges.filter((r) => r.vod_id === vod.id) ?? []),
+    clips.hovered
+      ? [clips.hovered]
+      : edits.hovered === null
+        ? []
+        : (edits.list.find((e) => e.id === edits.hovered)?.ranges.filter((r) => r.vod_id === vod.id) ?? []),
   );
 
   // Export: the stretch the playhead is in becomes a clip, a pill in the clip

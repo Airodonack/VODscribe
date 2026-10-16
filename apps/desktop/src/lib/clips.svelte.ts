@@ -13,6 +13,8 @@ class Clips {
   /** How far each clip being cut is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
+  /** The stretch of the clip whose pill is hovered, lit up on the timeline. */
+  hovered = $state<{ start: number; end: number } | null>(null);
   /** A stretch being carried (dragout.ts), and whether it's over the clip bar. */
   carrying = $state<{ start: number; end: number } | null>(null);
   overBar = $state(false);
@@ -33,6 +35,7 @@ class Clips {
     this.#fromSite = fromSite;
     if (this.vodId === vodId) return;
     this.answer(false);
+    this.hovered = null;
     this.vodId = vodId;
     this.list = [];
     this.error = null;
@@ -151,7 +154,11 @@ class Clips {
 
   rename = (id: number, title: string) => this.#run(api.renameClip(id, title));
   move = (id: number, start: number, end: number) => this.#run(api.setClipRange(id, start, end));
-  remove = (id: number) => this.#run(api.deleteClip(id));
+  remove = (id: number) => {
+    // Its pill goes from under the pointer, which may not say it left.
+    this.hovered = null;
+    return this.#run(api.deleteClip(id));
+  };
   show = (id: number) => this.#run(api.showClip(id));
 }
 
