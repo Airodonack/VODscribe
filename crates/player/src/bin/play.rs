@@ -2,10 +2,16 @@
 //! has it (decode, clock, present), to run and look at on its own.
 //!
 //!   vodscribe-play <file> [ffmpeg]
+//!   vodscribe-play --bench <file> [ffmpeg]
 //!
 //! ffmpeg is the one on PATH unless given. Space plays and pauses, the
 //! arrows seek 5 s, J and L 10 s, comma and period step a frame, Home goes
-//! to the start, Q quits. The title shows the time and frame.
+//! to the start, Q quits. The title shows the time and frame; on quitting,
+//! how long paints took is printed.
+//!
+//! `--bench` measures without a window: how fast the file decodes (frames
+//! and megabytes a second, against its rate), how long seeks take to show
+//! their frame, and how many frames are dropped over ten seconds of play.
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -16,9 +22,14 @@ fn main() -> anyhow::Result<()> {
     use vodscribe_player::clock::Player;
     use vodscribe_player::present::{Canvas, Place};
 
-    let mut args = std::env::args_os().skip(1);
-    let file = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!("usage: vodscribe-play <file> [ffmpeg]"))?);
+    let mut args = std::env::args_os().skip(1).peekable();
+    let bench = args.next_if(|a| a == "--bench").is_some();
+    let usage = || anyhow::anyhow!("usage: vodscribe-play [--bench] <file> [ffmpeg]");
+    let file = PathBuf::from(args.next().ok_or_else(usage)?);
     let ffmpeg = args.next().map(PathBuf::from).unwrap_or_else(|| "ffmpeg".into());
+    if bench {
+        return measure(&ffmpeg, &file);
+    }
 
     gtk::init()?;
     let player = Arc::new(Player::open(&ffmpeg, &file)?);
@@ -71,6 +82,85 @@ fn main() -> anyhow::Result<()> {
     window.connect_destroy(|_| gtk::main_quit());
     window.show_all();
     gtk::main();
+    let (paints, took) = canvas.painted();
+    let (shown, dropped) = player.counts();
+    if paints > 0 {
+        println!(
+            "paints {paints}, {:.2} ms each; frames shown {shown}, dropped {dropped}",
+            took.as_secs_f64() * 1e3 / paints as f64
+        );
+    }
+    Ok(())
+}
+
+/// Measures the player on `file`, printing what it finds.
+#[cfg(target_os = "linux")]
+fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<()> {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use vodscribe_player::clock::{Event, Player};
+    use vodscribe_player::decode::{self, Video};
+
+    let info = decode::probe(ffmpeg, file)?;
+    let picture = info.picture.ok_or_else(|| anyhow::anyhow!("no picture in the file"))?;
+    let duration = info.duration.unwrap_or(0.0);
+    println!("{}x{} at {} fps, {duration:.1} s", picture.width, picture.height, picture.fps);
+
+    // Decoding alone, as fast as frames can be taken.
+    let video = Video::new(ffmpeg, file, picture);
+    let mut stream = video.from(0.0)?;
+    let began = Instant::now();
+    let (mut frames, mut bytes) = (0u64, 0u64);
+    while began.elapsed() < Duration::from_secs(5) {
+        let Some(frame) = stream.next() else { break };
+        frames += 1;
+        bytes += frame.rgb.len() as u64;
+    }
+    let secs = began.elapsed().as_secs_f64();
+    println!(
+        "decode: {:.0} frames/s ({:.1}x the rate), {:.0} MB/s over the pipe",
+        frames as f64 / secs,
+        frames as f64 / secs / picture.fps,
+        bytes as f64 / secs / 1e6
+    );
+    drop(stream);
+
+    // Seeks, paused: from asking to the frame there showing.
+    let player = Player::open(ffmpeg, file)?;
+    let (tx, rx) = mpsc::channel();
+    player.on_frame(Box::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    while rx.recv_timeout(Duration::from_secs(5)).is_ok_and(|e| e != Event::Frame) {}
+    let mut times = Vec::new();
+    for i in 0..10 {
+        let at = duration * (i as f64 + 0.5) / 10.0;
+        while rx.try_recv().is_ok() {}
+        let began = Instant::now();
+        player.seek(at);
+        while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
+        times.push(began.elapsed().as_secs_f64() * 1e3);
+    }
+    times.sort_by(|a, b| a.total_cmp(b));
+    println!("seek to frame: {:.0} ms least, {:.0} ms median, {:.0} ms most", times[0], times[5], times[9]);
+
+    // Ten seconds of play from the start.
+    player.seek(0.0);
+    while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
+    let before = player.counts();
+    player.play();
+    std::thread::sleep(Duration::from_secs(10));
+    player.pause();
+    let after = player.counts();
+    println!(
+        "play 10 s: {} frames shown, {} dropped (expected about {:.0}), time {:.2} s, sound {}",
+        after.0 - before.0,
+        after.1 - before.1,
+        10.0 * picture.fps,
+        player.time(),
+        if player.has_sound() { "through an output" } else { "none" }
+    );
     Ok(())
 }
 

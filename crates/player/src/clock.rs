@@ -87,6 +87,9 @@ struct Inner {
     frame: Mutex<Option<Arc<Frame>>>,
     on_frame: Mutex<Option<OnFrame>>,
     quit: AtomicBool,
+    /// Frames shown, and dropped for being late (for measuring).
+    shown: AtomicU64,
+    dropped: AtomicU64,
 }
 
 /// A file, playing or paused at a time.
@@ -115,6 +118,8 @@ impl Player {
             frame: Mutex::new(None),
             on_frame: Mutex::new(None),
             quit: AtomicBool::new(false),
+            shown: AtomicU64::new(0),
+            dropped: AtomicU64::new(0),
             volume: Mutex::new(Arc::new(AtomicU32::new(1f32.to_bits()))),
             info,
         });
@@ -139,6 +144,16 @@ impl Player {
 
     pub fn duration(&self) -> Option<f64> {
         self.inner.info.duration
+    }
+
+    /// Whether there's a sound output (so the time follows the sound).
+    pub fn has_sound(&self) -> bool {
+        self.inner.state.lock().unwrap().output
+    }
+
+    /// Frames shown, and dropped for being late, since the file was opened.
+    pub fn counts(&self) -> (u64, u64) {
+        (self.inner.shown.load(Ordering::Relaxed), self.inner.dropped.load(Ordering::Relaxed))
     }
 
     /// The loudness, 0 to 1.
@@ -285,8 +300,10 @@ fn run(inner: &Inner, video: &Video) {
             drop(s);
             first = false;
             if late {
+                inner.dropped.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
+            inner.shown.fetch_add(1, Ordering::Relaxed);
             *inner.frame.lock().unwrap() = Some(frame);
             if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
                 f(Event::Frame);

@@ -45,6 +45,8 @@ mod linux {
         layout: Arc<Mutex<Layout>>,
         frame: Arc<Mutex<Option<Arc<Frame>>>>,
         area: glib::SendWeakRef<gtk::GLArea>,
+        /// Paints done, and the time they took in all (for measuring).
+        painted: Arc<Mutex<(u64, std::time::Duration)>>,
     }
 
     impl Canvas {
@@ -55,16 +57,26 @@ mod linux {
             let layout = Arc::new(Mutex::new(Layout::default()));
             let frame = Arc::new(Mutex::new(None));
             let painter: Rc<RefCell<Option<Painter>>> = Rc::default();
-            let (shown, picture, drawn) = (layout.clone(), frame.clone(), painter.clone());
+            let painted: Arc<Mutex<(u64, std::time::Duration)>> = Arc::default();
+            let (shown, picture, drawn, timed) = (layout.clone(), frame.clone(), painter.clone(), painted.clone());
             area.connect_render(move |area, _| {
+                let began = std::time::Instant::now();
                 let mut painter = drawn.borrow_mut();
                 let painter = painter.get_or_insert_with(Painter::new);
                 painter.paint(area, *shown.lock().unwrap(), picture.lock().unwrap().as_deref(), place);
+                let mut timed = timed.lock().unwrap();
+                timed.0 += 1;
+                timed.1 += began.elapsed();
                 glib::Propagation::Stop
             });
             // Its GL objects die with the context.
             area.connect_unrealize(move |_| *painter.borrow_mut() = None);
-            Canvas { place, layout, frame, area: glib::SendWeakRef::from(area.downgrade()) }
+            Canvas { place, layout, frame, area: glib::SendWeakRef::from(area.downgrade()), painted }
+        }
+
+        /// Paints done, and the time they took in all.
+        pub fn painted(&self) -> (u64, std::time::Duration) {
+            *self.painted.lock().unwrap()
         }
 
         pub fn layout(&self) -> Layout {
