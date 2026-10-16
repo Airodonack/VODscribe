@@ -8,6 +8,7 @@
 mod app_server;
 mod chats;
 mod clips;
+mod edits;
 mod loopback;
 mod media;
 mod setup;
@@ -38,6 +39,8 @@ struct AppState {
     media: media::MediaServer,
     chat: chats::ChatQueue,
     clips: clips::Cutter,
+    /// Edits being rendered (`edits`).
+    renders: edits::Renderer,
     /// Whole videos downloaded on request (`videos`).
     videos: videos::Videos,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
@@ -130,9 +133,13 @@ pub fn run() {
             let reads = Mutex::new(Db::open_reader(&paths.db())?);
             let worker = Worker::start(app.handle().clone(), paths.clone())?;
             let handle = app.handle().clone();
-            let media = media::MediaServer::start(move |id| {
+            let media = media::MediaServer::start(move |asked| {
                 let state = handle.state::<AppState>();
-                media::playable_file(&state.db.lock().unwrap(), id)
+                let db = state.db.lock().unwrap();
+                match asked {
+                    media::Served::Vod(id) => media::playable_file(&db, id),
+                    media::Served::Clip(id) => db.clip(id).ok().flatten().and_then(|c| c.file_path),
+                }
             })?;
             let (chat, chat_rx) = chats::ChatQueue::new();
             app.manage(AppState {
@@ -145,11 +152,13 @@ pub fn run() {
                 media,
                 chat,
                 clips: clips::Cutter::new(),
+                renders: edits::Renderer::new(),
                 videos: videos::Videos::default(),
                 adding: Mutex::default(),
             });
             app.state::<AppState>().clips.run(app.handle().clone())?;
             app.state::<AppState>().videos.run(app.handle().clone())?;
+            app.state::<AppState>().renders.run(app.handle().clone())?;
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             let handle = app.handle().clone();
@@ -218,6 +227,21 @@ pub fn run() {
             clips::add_mark,
             clips::move_mark,
             clips::set_mark_text,
+            media::clip_url,
+            edits::list_edits,
+            edits::create_edit,
+            edits::get_edit,
+            edits::rename_edit,
+            edits::delete_edit,
+            edits::add_to_edit,
+            edits::move_piece,
+            edits::trim_piece,
+            edits::strike_piece,
+            edits::remove_piece,
+            edits::render_edit_now,
+            edits::stop_render,
+            edits::show_edit,
+            edits::drag_edit,
             clips::delete_mark,
             videos::keep_video,
             videos::stop_video,

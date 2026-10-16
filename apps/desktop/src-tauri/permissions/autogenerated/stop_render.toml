@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-render"
+description = "Enables the stop_render command without any pre-configured scope."
+commands.allow = ["stop_render"]
+
+[[permission]]
+identifier = "deny-stop-render"
+description = "Denies the stop_render command without any pre-configured scope."
+commands.deny = ["stop_render"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-drag-edit"
+description = "Enables the drag_edit command without any pre-configured scope."
+commands.allow = ["drag_edit"]
+
+[[permission]]
+identifier = "deny-drag-edit"
+description = "Denies the drag_edit command without any pre-configured scope."
+commands.deny = ["drag_edit"]

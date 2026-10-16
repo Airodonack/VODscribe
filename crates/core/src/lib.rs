@@ -9,6 +9,7 @@ pub mod chat;
 pub mod clips;
 pub mod db;
 pub mod deps;
+pub mod edits;
 pub mod emotes;
 pub mod fetch;
 pub mod gpu;

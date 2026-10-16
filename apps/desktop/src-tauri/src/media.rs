@@ -5,7 +5,8 @@
 //! It only listens on the loopback interface, every URL carries a random token
 //! made at launch, requests must name the server's own host (so a web page
 //! can't reach it through DNS rebinding), and it serves only the files of local
-//! VODs, looked up by id. Byte ranges are supported so the player can seek.
+//! VODs and of clips made (for an edit's preview), looked up by id. Byte
+//! ranges are supported so the player can seek.
 //!
 //! The player's waveform (`peaks`) and frame rate are asked for here too.
 
@@ -27,6 +28,13 @@ use crate::{AppState, CmdResult, err, loopback};
 /// Requests served at once.
 const MAX_ACTIVE: usize = 32;
 
+/// What a URL asks for: a VOD's file (`/<token>/<id>`) or a clip's (`/<token>/clip/<id>`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Served {
+    Vod(i64),
+    Clip(i64),
+}
+
 pub(crate) struct MediaServer {
     /// `http://127.0.0.1:<port>`
     origin: String,
@@ -34,8 +42,8 @@ pub(crate) struct MediaServer {
 }
 
 impl MediaServer {
-    /// `find` gives the file of local VOD `id`, if it is one.
-    pub(crate) fn start(find: impl Fn(i64) -> Option<String> + Send + Sync + 'static) -> Result<Self> {
+    /// `find` gives the file asked for, if there is one.
+    pub(crate) fn start(find: impl Fn(Served) -> Option<String> + Send + Sync + 'static) -> Result<Self> {
         let find = Arc::new(find);
         let server = Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!("start the media server: {e}"))?;
         let port = server.server_addr().to_ip().context("media server address")?.port();
@@ -70,6 +78,13 @@ impl MediaServer {
 pub(crate) async fn media_url(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     let media = &state.media;
     Ok(format!("{}/{}/{id}", media.origin, media.token))
+}
+
+/// The URL a clip's file is played from (an edit's preview).
+#[tauri::command]
+pub(crate) async fn clip_url(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
+    let media = &state.media;
+    Ok(format!("{}/{}/clip/{id}", media.origin, media.token))
 }
 
 /// The file VOD `id` plays from here: a file on this computer, or a video kept
@@ -138,7 +153,7 @@ pub(crate) async fn frame_rate(state: State<'_, AppState>, id: i64) -> CmdResult
         .map_err(err)
 }
 
-type Find = dyn Fn(i64) -> Option<String> + Send + Sync;
+type Find = dyn Fn(Served) -> Option<String> + Send + Sync;
 
 fn serve(find: &Find, request: Request, host: &str, prefix: &str) {
     let response = match respond(find, &request, host, prefix) {
@@ -159,8 +174,12 @@ fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<R
         request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
     };
     loopback::check(request, host)?;
-    let id: i64 = request.url().strip_prefix(prefix).and_then(|id| id.parse().ok()).ok_or(404u16)?;
-    let source = find(id).ok_or(404u16)?;
+    let rest = request.url().strip_prefix(prefix).ok_or(404u16)?;
+    let asked = match rest.strip_prefix("clip/") {
+        Some(id) => Served::Clip(id.parse().map_err(|_| 404u16)?),
+        None => Served::Vod(rest.parse().map_err(|_| 404u16)?),
+    };
+    let source = find(asked).ok_or(404u16)?;
     let mut file = open_regular(Path::new(&source)).ok_or(404u16)?;
     let size = file.metadata().map_err(|_| 500u16)?.len();
 
@@ -283,7 +302,7 @@ mod tests {
         let data: Vec<u8> = (0..100_000u32).map(|i| (i % 10) as u8 + b'0').collect();
         std::fs::write(&path, &data).unwrap();
         let file = path.to_string_lossy().into_owned();
-        let media = MediaServer::start(move |id| (id == 7).then(|| file.clone())).unwrap();
+        let media = MediaServer::start(move |asked| (asked == Served::Vod(7)).then(|| file.clone())).unwrap();
         let ok = format!("/{}/7", media.token);
 
         let (status, body) = get(&media.origin, &ok, None, None);
@@ -295,6 +314,7 @@ mod tests {
         assert_eq!(body, b"234");
 
         assert!(get(&media.origin, &format!("/{}/8", media.token), None, None).0.contains("404"), "not a local VOD");
+        assert!(get(&media.origin, &format!("/{}/clip/7", media.token), None, None).0.contains("404"), "not a clip");
         assert!(get(&media.origin, "/wrongtoken/7", None, None).0.contains("404"), "wrong token");
         let (status, _) = get(&media.origin, &ok, None, Some("bytes=200000-"));
         assert!(status.contains("416"), "{status}");
@@ -320,7 +340,7 @@ mod tests {
     #[ignore]
     fn serve_a_file_for_manual_testing() {
         let file = std::env::var("VODSCRIBE_MEDIA_FILE").expect("set VODSCRIBE_MEDIA_FILE");
-        let media = MediaServer::start(move |id| (id == 1).then(|| file.clone())).unwrap();
+        let media = MediaServer::start(move |id| (id == Served::Vod(1)).then(|| file.clone())).unwrap();
         println!("MEDIA_URL {}/{}/1", media.origin, media.token);
         std::thread::sleep(std::time::Duration::from_secs(300));
     }

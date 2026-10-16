@@ -464,7 +464,14 @@ pub(crate) async fn drag_clip(
     // The picture the interface drew (the frame over its waveform), if it's a
     // PNG of reasonable size; else the clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
-    let image = drawn.unwrap_or_else(|| std::fs::read(thumb_path(&app, id)).unwrap_or_else(|_| DRAG_ICON.to_vec()));
+    let image = drawn.or_else(|| std::fs::read(thumb_path(&app, id)).ok());
+    drag_file(window, path, image).await
+}
+
+/// Starts the system's drag of the file at `path` (one the app made), showing
+/// `image` (a PNG) or the app's icon.
+pub(crate) async fn drag_file(window: tauri::WebviewWindow, path: PathBuf, image: Option<Vec<u8>>) -> CmdResult<()> {
+    let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window

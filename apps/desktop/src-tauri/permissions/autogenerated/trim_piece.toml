@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-trim-piece"
+description = "Enables the trim_piece command without any pre-configured scope."
+commands.allow = ["trim_piece"]
+
+[[permission]]
+identifier = "deny-trim-piece"
+description = "Denies the trim_piece command without any pre-configured scope."
+commands.deny = ["trim_piece"]

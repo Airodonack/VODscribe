@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-move-piece"
+description = "Enables the move_piece command without any pre-configured scope."
+commands.allow = ["move_piece"]
+
+[[permission]]
+identifier = "deny-move-piece"
+description = "Denies the move_piece command without any pre-configured scope."
+commands.deny = ["move_piece"]

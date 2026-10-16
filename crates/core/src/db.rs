@@ -202,7 +202,7 @@ pub struct SearchResults {
 }
 
 pub struct Db {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 const SCHEMA: &str = r#"
@@ -361,6 +361,32 @@ CREATE TABLE marks (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX marks_by_vod ON marks (vod_id, start);";
+/// v19: edits, each one video made of stretches of clips, one after another
+/// (`crate::edits`). `version` counts changes, and `rendered_version` is the
+/// one the rendered file is of.
+const MIGRATE_V19: &str = "
+CREATE TABLE edits (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    file_path TEXT,
+    error TEXT,
+    rendered_version INTEGER
+);
+CREATE TABLE edit_pieces (
+    id INTEGER PRIMARY KEY,
+    edit_id INTEGER NOT NULL REFERENCES edits (id) ON DELETE CASCADE,
+    clip_id INTEGER NOT NULL REFERENCES clips (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    struck TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX edit_pieces_by_edit ON edit_pieces (edit_id, position);
+CREATE INDEX edit_pieces_by_clip ON edit_pieces (clip_id);";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -415,7 +441,7 @@ pub enum ClipStatus {
 }
 
 impl ClipStatus {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             ClipStatus::Waiting => "waiting",
             ClipStatus::Cutting => "cutting",
@@ -424,7 +450,7 @@ impl ClipStatus {
         }
     }
 
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "waiting" => ClipStatus::Waiting,
             "cutting" => ClipStatus::Cutting,
@@ -461,9 +487,9 @@ pub struct Mark {
     pub text: Option<String>,
 }
 
-const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
+pub(crate) const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
 
-fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
+pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     Ok(Clip {
         id: r.get("id")?,
         vod_id: r.get("vod_id")?,
@@ -477,7 +503,7 @@ fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     })
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
@@ -523,6 +549,7 @@ impl Db {
             MIGRATE_V16,
             MIGRATE_V17,
             MIGRATE_V18,
+            MIGRATE_V19,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
