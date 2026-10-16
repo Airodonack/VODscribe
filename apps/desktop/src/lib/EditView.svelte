@@ -24,6 +24,7 @@
   import { formatTime } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
+  import { load, save } from "./stored";
 
   let {
     backTo,
@@ -139,6 +140,14 @@
   const reached = $derived(
     segments.filter((s) => (usable(s.piece.vod_id) ?? -Infinity) >= s.vodFrom + s.length - 1e-3).length,
   );
+  // The note that the preview is lower quality than the render, until it's dismissed.
+  const QUALITY_NOTE = "vodscribe.previewQualityNoted";
+  let qualityNoted = $state(load(QUALITY_NOTE) === "1");
+  function noteQuality() {
+    qualityNoted = true;
+    save(QUALITY_NOTE, "1");
+  }
+
   // The preview's plan, asked for again whenever the pieces change, footage
   // of their VODs comes in, or what's downloading reaches more of them.
   let planSeq = 0;
@@ -410,11 +419,14 @@
         </p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
-      {:else}
+      {:else if !qualityNoted}
         <span
           class="quality"
           title="The preview is made quickly, at a lower quality, so the edit plays as you change it. The rendered video is full quality."
-          >Preview · lower quality</span
+          >Preview · lower quality
+          <button class="icon" onclick={noteQuality} title="Dismiss" aria-label="Dismiss"
+            ><Icon name="x" size={11} /></button
+          ></span
         >
       {/if}
     </div>
@@ -623,8 +635,25 @@
     background: rgb(0 0 0 / 0.55);
     color: rgb(255 255 255 / 0.85);
     font-size: 11px;
-    pointer-events: auto;
     cursor: default;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Small, so the note stays one line high. */
+  .quality button {
+    width: 14px;
+    height: 14px;
+    display: grid;
+    place-items: center;
+    color: inherit;
+    background: none;
+  }
+
+  .quality button.icon:hover:not(:disabled) {
+    color: #fff;
+    background: rgb(255 255 255 / 0.15);
   }
 
   .hint {
