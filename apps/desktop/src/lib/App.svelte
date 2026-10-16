@@ -303,6 +303,7 @@
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });
           vods = vods.filter((v) => v.id !== id);
+          if (selectedId === id) selectedId = null;
           if (playing?.vodId === id) playing = null;
           runSearch();
         }),

@@ -93,8 +93,10 @@ class Nav {
     this.#take(step);
   }
 
-  /** Drops the steps to `doc` (it's deleted), and then any to where they'd be already. */
+  /** Drops the steps to `doc` (it's deleted), and then any to where they'd be already;
+   *  open now, it's nowhere, so leaving it is no step back to it. */
   forget(doc: Doc) {
+    if (same(doc, this.#here)) this.#here = null;
     const keep = (list: Step[]) => {
       const out: Step[] = [];
       for (const s of list) if (!same(s.doc, doc) && !same(s.doc, out.at(-1)?.doc ?? null)) out.push(s);
