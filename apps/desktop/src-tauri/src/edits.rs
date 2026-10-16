@@ -14,6 +14,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{ClipStatus, Db};
 use vodscribe_core::edits::{self, Edit, EditPiece};
+use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, render, tools};
 
 use crate::{AppState, CmdResult, err};
@@ -88,19 +89,23 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         let db = state.db.lock().unwrap();
         let edit = db.edit(id)?.context("That edit is gone.")?;
         let version = db.edit_version(id)?;
-        let pieces = edits::render_pieces(&db.edit_pieces(id)?)?;
+        let edit_pieces = db.edit_pieces(id)?;
+        let pieces = edits::render_pieces(&edit_pieces)?;
         let ffmpeg = ffmpeg?;
+        // Sound alone if every piece's VOD is, named for the format clips are made in.
+        let format = Settings::load(&state.paths.settings()).clip_format;
+        let audio_only = edit_pieces.iter().all(|p| db.vod(p.clip.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
         // The same file as last time, if it's still named for the edit.
-        let name = format!("{}.mp4", clips::safe_name(&edit.title));
+        let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, format));
         let out = match &edit.file_path {
             Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
         db.set_edit_render(id, ClipStatus::Cutting, None, None, None)?;
         emit(app, &db, id);
-        anyhow::Ok((pieces, ffmpeg, out, version))
+        anyhow::Ok((pieces, ffmpeg, out, version, format))
     })();
-    let (pieces, ffmpeg, out, version) = match prepared {
+    let (pieces, ffmpeg, out, version, format) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -116,8 +121,7 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
             let _ = app.emit("edit-progress", Progress { id, progress });
         }
     };
-    // Sound alone makes an M4A; the name says MP4 either way, which players read.
-    let result = render::render(&ffmpeg, &pieces, None, &out, stop, report);
+    let result = render::render(&ffmpeg, &pieces, None, format, &out, stop, report);
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     match &result {

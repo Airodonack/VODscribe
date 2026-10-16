@@ -11,6 +11,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
 
+use crate::settings::ClipFormat;
 use crate::tools;
 use crate::transcript::Word;
 
@@ -57,6 +58,7 @@ pub fn file_path(
     vod_title: &str,
     (start, end): (f64, f64),
     audio_only: bool,
+    format: ClipFormat,
 ) -> (Option<String>, String) {
     let folder = channel.map(safe_name).filter(|c| c != "Clip");
     // Only a date as ISO 8601 has it (YYYY-MM-DD), as yt-dlp gives it.
@@ -64,13 +66,47 @@ pub fn file_path(
         d.len() == 10
             && d.bytes().enumerate().all(|(i, b)| if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() })
     });
-    let ext = if audio_only { "m4a" } else { "mp4" };
+    let ext = extension(audio_only, format);
     let range = format!("{}-{}", file_stamp(start), file_stamp(end));
     let name = match date {
         Some(date) => format!("{date} {} {range}.{ext}", safe_name(vod_title)),
         None => format!("{} {range}.{ext}", safe_name(vod_title)),
     };
     (folder, name)
+}
+
+/// The file extension of a clip (or rendered edit) in `format`: sound alone is
+/// M4A (AAC) or WAV (PCM).
+pub fn extension(audio_only: bool, format: ClipFormat) -> &'static str {
+    match (audio_only, format) {
+        (false, ClipFormat::Mp4) => "mp4",
+        (true, ClipFormat::Mp4) => "m4a",
+        (false, ClipFormat::Mov) => "mov",
+        (true, ClipFormat::Mov) => "wav",
+    }
+}
+
+/// ffmpeg's output options for `format`, after the streams are mapped: with a
+/// picture (`video`) or sound alone. H.264 has a keyframe a second, so editors
+/// seek it quickly; DNxHR is all keyframes.
+pub fn output_args(format: ClipFormat, video: bool) -> Vec<&'static str> {
+    let mut args = Vec::new();
+    match format {
+        ClipFormat::Mp4 => {
+            if video {
+                args.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]);
+                args.extend(["-force_key_frames", "expr:gte(t,n_forced*1)"]);
+            }
+            args.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
+        }
+        ClipFormat::Mov if video => {
+            // DNxHR LB, 4:2:2 (its sides must be even: `cut` and the render make them so).
+            args.extend(["-c:v", "dnxhd", "-profile:v", "dnxhr_lb", "-pix_fmt", "yuv422p"]);
+            args.extend(["-c:a", "pcm_s16le", "-f", "mov"]);
+        }
+        ClipFormat::Mov => args.extend(["-c:a", "pcm_s16le", "-f", "wav"]),
+    }
+    args
 }
 
 /// The longest a name made by `safe_name` is, in bytes.
@@ -139,12 +175,14 @@ pub fn selector(height: u32) -> String {
 /// Cuts `start`..`end` seconds of `source` into `out` (replacing it, only
 /// once the new one is whole), reporting progress from 0 to 1. Sound alone
 /// (`audio_only`, and cover art is left out) makes an M4A.
+#[allow(clippy::too_many_arguments)]
 pub fn cut(
     ffmpeg: &Path,
     source: &Path,
     out: &Path,
     (start, end): (f64, f64),
     audio_only: bool,
+    format: ClipFormat,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<()> {
@@ -167,10 +205,13 @@ pub fn cut(
     if audio_only {
         cmd.args(["-map", "0:a:0", "-vn"]);
     } else {
-        cmd.args(["-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18"]);
-        cmd.args(["-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*1)"]);
+        cmd.args(["-map", "0:v:0", "-map", "0:a:0?"]);
+        if format == ClipFormat::Mov {
+            cmd.args(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"]);
+        }
     }
-    cmd.args(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", "-progress", "pipe:1", "-y"]);
+    cmd.args(output_args(format, !audio_only));
+    cmd.args(["-progress", "pipe:1", "-y"]);
     cmd.arg(&part);
     tools::encode(cmd, &part, out, length, cancel, progress, "the clip")
 }
@@ -226,12 +267,16 @@ mod tests {
 
     #[test]
     fn file_names_are_safe_everywhere() {
-        let name = |title: &str, start: f64, end: f64| file_path(None, None, title, (start, end), false).1;
+        let name =
+            |title: &str, start: f64, end: f64| file_path(None, None, title, (start, end), false, ClipFormat::Mp4).1;
         assert_eq!(
             name("Day 3: the \"big\" raid?", 3723.0, 3725.5),
             "Day 3 the big raid 01h02m03.000s-01h02m05.500s.mp4"
         );
-        assert_eq!(file_path(None, None, "a/b\\c\n", (65.0, 70.0), true).1, "a b c 00h01m05.000s-00h01m10.000s.m4a");
+        assert_eq!(
+            file_path(None, None, "a/b\\c\n", (65.0, 70.0), true, ClipFormat::Mp4).1,
+            "a b c 00h01m05.000s-00h01m10.000s.m4a"
+        );
         assert_eq!(name("con", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
         assert_eq!(name("COM1", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
         assert_eq!(name("...", 0.0, 1.0), "Clip 00h00m00.000s-00h00m01.000s.mp4");
@@ -247,10 +292,13 @@ mod tests {
         assert_ne!(name("a", 1.0 / 480.0, 1.0), name("a", 2.0 / 480.0, 1.0));
         // A channel's folder, and the stream's date when it's a date.
         assert_eq!(
-            file_path(Some("Some/One"), Some("2026-10-15"), "Day 3", (61.25, 90.0), false),
+            file_path(Some("Some/One"), Some("2026-10-15"), "Day 3", (61.25, 90.0), false, ClipFormat::Mp4),
             (Some("Some One".into()), "2026-10-15 Day 3 00h01m01.250s-00h01m30.000s.mp4".into())
         );
-        assert_eq!(file_path(None, Some("20261015"), "x", (0.0, 1.0), false).1, "x 00h00m00.000s-00h00m01.000s.mp4");
+        assert_eq!(
+            file_path(None, Some("20261015"), "x", (0.0, 1.0), false, ClipFormat::Mp4).1,
+            "x 00h00m00.000s-00h00m01.000s.mp4"
+        );
     }
 
     #[test]
@@ -282,7 +330,8 @@ mod tests {
         assert!(ok.success());
         let out = dir.join("clips").join("clip.mp4");
         let mut seen = Vec::new();
-        cut(&ffmpeg, &source, &out, (2.5, 5.0), false, &AtomicBool::new(false), |p| seen.push(p)).unwrap();
+        cut(&ffmpeg, &source, &out, (2.5, 5.0), false, ClipFormat::Mp4, &AtomicBool::new(false), |p| seen.push(p))
+            .unwrap();
         assert_eq!(seen.last(), Some(&1.0));
         let probe = |args: &[&str]| {
             let out = std::process::Command::new(which::which("ffprobe").unwrap())
@@ -316,11 +365,45 @@ mod tests {
 
         // Sound alone, and a stop partway leaves nothing behind.
         let audio = dir.join("clips").join("clip.m4a");
-        cut(&ffmpeg, &source, &audio, (0.0, 1.0), true, &AtomicBool::new(false), |_| {}).unwrap();
+        cut(&ffmpeg, &source, &audio, (0.0, 1.0), true, ClipFormat::Mp4, &AtomicBool::new(false), |_| {}).unwrap();
         assert!(audio.is_file());
         let stop = AtomicBool::new(true);
-        let err = cut(&ffmpeg, &source, &dir.join("stopped.mp4"), (0.0, 9.0), false, &stop, |_| {}).unwrap_err();
+        let err = cut(&ffmpeg, &source, &dir.join("stopped.mp4"), (0.0, 9.0), false, ClipFormat::Mp4, &stop, |_| {})
+            .unwrap_err();
         assert!(crate::is_canceled(&err));
         assert!(fs::read_dir(&*dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().contains("stopped")));
+
+        // For editing (DaVinci Resolve on Linux): DNxHR and PCM in MOV, as long,
+        // and sound alone as WAV.
+        let mov = dir.join("clips").join("clip.mov");
+        cut(&ffmpeg, &source, &mov, (2.5, 5.0), false, ClipFormat::Mov, &AtomicBool::new(false), |_| {}).unwrap();
+        let o = std::process::Command::new(which::which("ffprobe").unwrap())
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name,profile:format=duration,format_name",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&mov)
+            .output()
+            .unwrap();
+        let info = String::from_utf8(o.stdout).unwrap();
+        assert!(info.contains("dnxhd,DNXHR LB") && info.contains("pcm_s16le") && info.contains("mov"), "{info}");
+        let seconds: f64 = info.lines().last().unwrap().rsplit(',').next().unwrap().parse().unwrap();
+        assert!((seconds - 2.5).abs() < 0.05, "{info}");
+        let wav = dir.join("clips").join("clip.wav");
+        cut(&ffmpeg, &source, &wav, (0.0, 1.0), true, ClipFormat::Mov, &AtomicBool::new(false), |_| {}).unwrap();
+        assert!(fs::read(&wav).unwrap().starts_with(b"RIFF"));
+        thumbnail(&ffmpeg, &mov, &png).unwrap();
+    }
+
+    #[test]
+    fn formats_name_their_files() {
+        let name = |audio, format| file_path(None, None, "x", (0.0, 1.0), audio, format).1;
+        assert!(name(false, ClipFormat::Mov).ends_with(".mov"));
+        assert!(name(true, ClipFormat::Mov).ends_with(".wav"));
+        assert!(name(false, ClipFormat::Mp4).ends_with(".mp4"));
     }
 }

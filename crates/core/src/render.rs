@@ -12,6 +12,7 @@ use std::sync::atomic::AtomicBool;
 use anyhow::{Context, Result, bail};
 
 use crate::local::{self, Media, Picture};
+use crate::settings::ClipFormat;
 use crate::tools;
 
 /// A stretch of a media file, `start` to `end` seconds into it.
@@ -89,11 +90,12 @@ pub fn render(
     ffmpeg: &Path,
     pieces: &[Piece],
     picture: Option<Picture>,
+    format: ClipFormat,
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<()> {
-    encode_pieces(ffmpeg, pieces, Quality::Final(picture), out, cancel, progress)
+    encode_pieces(ffmpeg, pieces, Quality::Final(picture, format), out, cancel, progress)
 }
 
 /// The picture previews are made at, whatever the edit's: every segment the
@@ -114,8 +116,9 @@ pub fn preview(ffmpeg: &Path, piece: &Piece, out: &Path, cancel: &AtomicBool) ->
 
 /// What a render is for.
 enum Quality {
-    /// The edit's video: at the picture given (or its first piece's), as good as it was.
-    Final(Option<Picture>),
+    /// The edit's video: at the picture given (or its first piece's), as good
+    /// as it was, in the format clips are made in.
+    Final(Option<Picture>, ClipFormat),
     /// A preview segment (`preview`).
     Preview,
 }
@@ -149,7 +152,7 @@ fn encode_pieces(
         .map(|s| local::media(ffmpeg, s).with_context(|| format!("read {}", s.display())))
         .collect::<Result<Vec<_>>>()?;
     let picture = match quality {
-        Quality::Final(given) => picture_of(&inputs, given),
+        Quality::Final(given, _) => picture_of(&inputs, given),
         Quality::Preview => Some(PREVIEW),
     };
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
@@ -166,13 +169,12 @@ fn encode_pieces(
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
     match quality {
-        Quality::Final(_) => {
+        Quality::Final(_, format) => {
             if picture.is_some() {
-                cmd.args([
-                    "-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
-                ]);
+                cmd.args(["-map", "[v]"]);
             }
-            cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4"]);
+            cmd.args(["-map", "[a]"]);
+            cmd.args(crate::clips::output_args(format, picture.is_some()));
         }
         Quality::Preview => {
             cmd.args(["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-bf", "0", "-g", "60"]);
@@ -242,7 +244,7 @@ mod tests {
         ];
         let out = dir.join("out").join("edit.mp4");
         let mut seen = Vec::new();
-        render(&ffmpeg, &pieces, None, &out, &AtomicBool::new(false), |p| seen.push(p)).unwrap();
+        render(&ffmpeg, &pieces, None, ClipFormat::Mp4, &out, &AtomicBool::new(false), |p| seen.push(p)).unwrap();
         assert_eq!(seen.last(), Some(&1.0));
         let probe = |args: &[&str]| {
             let o = std::process::Command::new(&ffprobe).args(["-v", "error"]).args(args).arg(&out).output().unwrap();

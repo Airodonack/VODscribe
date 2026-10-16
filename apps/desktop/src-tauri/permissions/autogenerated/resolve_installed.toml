@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-installed"
+description = "Enables the resolve_installed command without any pre-configured scope."
+commands.allow = ["resolve_installed"]
+
+[[permission]]
+identifier = "deny-resolve-installed"
+description = "Denies the resolve_installed command without any pre-configured scope."
+commands.deny = ["resolve_installed"]

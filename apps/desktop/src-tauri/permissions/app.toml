@@ -37,6 +37,7 @@ permissions = [
   "allow-set-mark-text",
   "allow-clip-url",
   "allow-clip-thumb",
+  "allow-resolve-installed",
   "allow-preview-plan",
   "allow-preview-segment",
   "allow-preview-codecs",

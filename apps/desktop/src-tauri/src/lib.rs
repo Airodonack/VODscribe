@@ -234,6 +234,7 @@ pub fn run() {
             clips::set_mark_text,
             media::clip_url,
             clips::clip_thumb,
+            clips::resolve_installed,
             previews::preview_plan,
             previews::preview_segment,
             previews::preview_codecs,

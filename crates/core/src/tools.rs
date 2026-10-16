@@ -226,7 +226,7 @@ pub const FFMPEG_AUDIO: &str = "aac,aac_fixed,aac_latm,mp3,mp3float,mp2,mp2float
      pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,pcm_f64le,pcm_u8,pcm_alaw,pcm_mulaw";
 /// Picture decoders (and the JPEG encoder), for a thumbnail from a file's video.
 pub const FFMPEG_PICTURE: &str = "h264,hevc,vp8,libvpx,vp9,libvpx-vp9,av1,libdav1d,libaom-av1,mpeg4,msmpeg4v3,\
-     msmpeg4v2,mpeg2video,mpeg1video,mjpeg,png,theora,vc1,wmv3,prores";
+     msmpeg4v2,mpeg2video,mpeg1video,mjpeg,png,theora,vc1,wmv3,prores,dnxhd";
 
 /// Limits the next input `-i` of an ffmpeg `cmd` to `FFMPEG_FORMATS`, the
 /// `decoders` given, and files.

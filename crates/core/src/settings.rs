@@ -22,6 +22,18 @@ pub enum Theme {
     Dark,
 }
 
+/// What clips (and rendered edits) are made as, for the editors they go to.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipFormat {
+    /// H.264 and AAC in MP4: small, and read by nearly every editor.
+    #[default]
+    Mp4,
+    /// DNxHR LB and PCM in MOV: an editing format, for DaVinci Resolve on
+    /// Linux, which reads neither H.264 (the free edition) nor AAC.
+    Mov,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Settings {
@@ -36,6 +48,8 @@ pub struct Settings {
     /// (`pipeline::keeps_video`) and for clips (`clips::selector`), in pixels;
     /// `video_height()` gives the default when unset.
     pub video_height: Option<u32>,
+    /// What clips and rendered edits are made as.
+    pub clip_format: ClipFormat,
 }
 
 /// Every known emote provider, each once, in priority order.

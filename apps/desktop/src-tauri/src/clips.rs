@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Mark};
-use vodscribe_core::settings::Settings;
+use vodscribe_core::settings::{ClipFormat, Settings};
 use vodscribe_core::{clips, fetch, tools};
 
 use crate::{AppState, CmdResult, err, media};
@@ -159,6 +159,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
+    let format = Settings::load(&state.paths.settings()).clip_format;
     // Named for its range: one already made for this range is made again in
     // place; a range moved gets a new file, and the old one stays where it is.
     let (folder, name) = clips::file_path(
@@ -167,6 +168,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         &vod.info.title,
         range,
         vod.audio_only,
+        format,
     );
     let dir = folder.map_or_else(|| clips_dir(app), |f| clips_dir(app).join(f));
     let out = match &clip.file_path {
@@ -188,8 +190,8 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         }
     };
     let result = match &source {
-        Some(source) => clips::cut(&ffmpeg, Path::new(source), &out, range, vod.audio_only, stop, report),
-        None => download_and_cut(app, &vod, id, range, &ffmpeg, &out, stop, &mut report),
+        Some(source) => clips::cut(&ffmpeg, Path::new(source), &out, range, vod.audio_only, format, stop, report),
+        None => download_and_cut(app, &vod, id, range, &ffmpeg, &out, format, stop, &mut report),
     };
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
@@ -232,6 +234,7 @@ fn download_and_cut(
     (start, end): (f64, f64),
     ffmpeg: &Path,
     out: &Path,
+    format: ClipFormat,
     stop: &AtomicBool,
     report: &mut impl FnMut(f64),
 ) -> Result<()> {
@@ -250,7 +253,7 @@ fn download_and_cut(
         let section =
             fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &stem, wanted, stop, |f| report(f * 0.8))?;
         let range = (start - from, end - from);
-        clips::cut(ffmpeg, &section, out, range, vod.audio_only, stop, |p| report(0.8 + p * 0.2))
+        clips::cut(ffmpeg, &section, out, range, vod.audio_only, format, stop, |p| report(0.8 + p * 0.2))
     })();
     // Whatever was downloaded goes, done or not.
     let prefix = format!("clip-{id}");
@@ -434,6 +437,13 @@ pub(crate) async fn move_mark(state: State<'_, AppState>, id: i64, time: f64) ->
 #[tauri::command]
 pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     state.db.lock().unwrap().delete_mark(id).map_err(err)
+}
+
+/// Whether DaVinci Resolve is installed where its Linux installer puts it:
+/// it can't read MP4 clips there, so the interface points to the setting.
+#[tauri::command]
+pub(crate) fn resolve_installed() -> bool {
+    cfg!(target_os = "linux") && Path::new("/opt/resolve/bin/resolve").is_file()
 }
 
 /// Clip `id`'s first frame, as a PNG; empty if it has none (yet, or sound alone).
