@@ -410,6 +410,12 @@
         </p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
+      {:else}
+        <span
+          class="quality"
+          title="The preview is made quickly, at a lower quality, so the edit plays as you change it. The rendered video is full quality."
+          >Preview · lower quality</span
+        >
       {/if}
     </div>
 
@@ -606,6 +612,19 @@
     aspect-ratio: 16 / 9;
     max-height: var(--player-max-height, 44vh);
     background: #000;
+  }
+
+  .quality {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: rgb(0 0 0 / 0.55);
+    color: rgb(255 255 255 / 0.85);
+    font-size: 11px;
+    pointer-events: auto;
+    cursor: default;
   }
 
   .hint {
