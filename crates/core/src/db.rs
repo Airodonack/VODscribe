@@ -572,7 +572,7 @@ impl Db {
         self.conn.execute(
             "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at, position)
              VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(position), 0) - 1 FROM vods))",
+                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(p), 0) - 1 FROM (SELECT min(position) AS p FROM vods UNION ALL SELECT min(position) FROM edits)))",
             params![
                 info.platform, info.platform_id, info.url, info.title, info.channel,
                 info.duration, info.thumbnail, info.published, now()

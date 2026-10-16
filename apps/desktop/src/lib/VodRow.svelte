@@ -4,6 +4,7 @@
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import { videoDownloads } from "./videos.svelte";
+  import { edits } from "./edits.svelte";
   // The contents of one library row: thumbnail, title, status and actions. The
   // row element itself (selection, dragging) belongs to Library, since
   // animate:flip has to sit directly inside its keyed list.
@@ -89,6 +90,14 @@
     }
     videoDownloads.keep(vod.id, pickedHeight);
   }
+  /** A sentence about the edits with this VOD's clips, between `before` and `after`; empty if none. */
+  function inEdits(before: string, after: string): string {
+    const names = edits.forVod(vod.id).map((e) => `“${e.title}”`);
+    if (!names.length) return "";
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+    return `${before}${names.length === 1 ? "the edit" : "the edits"} ${list}${after}`;
+  }
+
   async function stopKeeping() {
     if (
       await ask(
@@ -131,7 +140,10 @@
   // A video kept from a site without an embed can be deleted to free up space.
   async function deleteVideo() {
     const sure = await ask(
-      `Delete the video of “${vod.title}” to free up space? The transcript stays, and the video plays on ${siteName(vod)} instead.`,
+      `Delete the video of “${vod.title}” to free up space? The transcript stays, and the video plays on ${siteName(vod)} instead.${inEdits(
+        " Its clips in ",
+        " stay as they are, but can't be made longer without downloading again.",
+      )}`,
       "Delete video",
       "Keep",
     );
@@ -157,7 +169,10 @@
   async function remove() {
     if (
       await ask(
-        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer.`,
+        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer.${inEdits(
+          " Its clips leave VODscribe too (their files stay in your Videos folder), and are taken out of ",
+          ".",
+        )}`,
         "Remove",
         "Keep",
       )

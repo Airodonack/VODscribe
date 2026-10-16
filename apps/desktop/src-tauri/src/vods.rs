@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
+use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::{fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
@@ -206,9 +207,16 @@ pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
     crate::with_reads(app, |db| db.vods()).await
 }
 
+/// The library's list, VODs and edits, in its order.
 #[tauri::command]
-pub(crate) async fn reorder_vods(state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
-    state.db.lock().unwrap().reorder(&ids).map_err(err)
+pub(crate) async fn library_order(app: AppHandle) -> CmdResult<Vec<LibraryItem>> {
+    crate::with_reads(app, |db| db.library_order()).await
+}
+
+/// Puts the library's list, VODs and edits, in the order of `items`.
+#[tauri::command]
+pub(crate) async fn reorder_library(state: State<'_, AppState>, items: Vec<LibraryItem>) -> CmdResult<()> {
+    state.db.lock().unwrap().reorder_library(&items).map_err(err)
 }
 
 /// Rows erased at a time: a few ms each (chat; segments, a third as many), so

@@ -159,8 +159,9 @@ export interface Edit {
   pieces: number;
   /** How long it plays, in seconds. */
   length: number;
-  /** The VODs its clips are of: it shows in each one's clip bar. */
+  /** The VODs its clips are of, and the clips. */
   vod_ids: number[];
+  clip_ids: number[];
 }
 
 /** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */
@@ -178,6 +179,9 @@ export interface EditView {
   edit: Edit;
   pieces: EditPiece[];
 }
+
+/** A row of the library's list (crates/core `edits::LibraryItem`): VODs and edits share one order. */
+export type LibraryItem = { kind: "vod" | "edit"; id: number };
 
 export type MarkKind = "cut" | "chapter" | "highlight";
 
@@ -330,7 +334,8 @@ export const api = {
   deleteAllVideos: () => invoke<number>("delete_all_videos"),
   openVideosDir: () => invoke<void>("open_videos_dir"),
   listVods: () => invoke<Vod[]>("list_vods"),
-  reorderVods: (ids: number[]) => invoke<void>("reorder_vods", { ids }),
+  libraryOrder: () => invoke<LibraryItem[]>("library_order"),
+  reorderLibrary: (items: LibraryItem[]) => invoke<void>("reorder_library", { items }),
   deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),

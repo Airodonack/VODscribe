@@ -1,3 +1,15 @@
+<script module lang="ts">
+  import type { Edit, LibraryItem, Vod as VodOf } from "./api";
+
+  /** A row of the library's list: a VOD or an edit, in one order. */
+  export type LibraryRow = { kind: "vod"; vod: VodOf } | { kind: "edit"; edit: Edit };
+
+  /** A row's key for reordering (reorder.svelte.ts keys rows by number): a
+   *  VOD's id, or an edit's id made negative. */
+  export const rowKey = (row: LibraryRow) => (row.kind === "vod" ? row.vod.id : -row.edit.id);
+  const itemOf = (key: number): LibraryItem => (key > 0 ? { kind: "vod", id: key } : { kind: "edit", id: -key });
+</script>
+
 <script lang="ts">
   import { isOutgoing } from "./dragout";
   import { getVersion } from "@tauri-apps/api/app";
@@ -17,17 +29,22 @@
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
   import VodRow from "./VodRow.svelte";
+  import EditRow from "./EditRow.svelte";
+  import { clips } from "./clips.svelte";
+  import { edits } from "./edits.svelte";
 
   let {
-    vods,
+    rows,
     selectedId,
     onselect,
     onreorder,
+    onopenedit,
   }: {
-    vods: Vod[];
+    rows: LibraryRow[];
     selectedId: number | null;
     onselect: (id: number | null) => void;
-    onreorder: (ids: number[]) => void;
+    onreorder: (items: LibraryItem[]) => void;
+    onopenedit: (id: number) => void;
   } = $props();
 
   let url = $state("");
@@ -145,23 +162,17 @@
 
   const toggle = (vod: Vod) => onselect(vod.id === selectedId ? null : vod.id);
 
-  // The whole row selects, except its action buttons (and the main button,
-  // which handles itself so it also works from the keyboard).
-  function onRowClick(e: MouseEvent, vod: Vod) {
-    if ((e.target as HTMLElement).closest("button")) return;
-    toggle(vod);
-  }
-
-  // Dragging a row (anywhere but its action buttons) or Alt+↑/↓ reorders the library.
+  // Dragging a row (anywhere but its action buttons) or Alt+↑/↓ reorders the
+  // library, VODs and edits together.
   const reorder = new Reorder(
-    () => vods.map((v) => v.id),
-    (ids) => onreorder(ids),
+    () => rows.map(rowKey),
+    (keys) => onreorder(keys.map(itemOf)),
   );
-  let byId = $derived(new Map(vods.map((v) => [v.id, v])));
-  let shown = $derived(reorder.order.map((id) => byId.get(id)).filter((v) => v !== undefined));
+  let byKey = $derived(new Map(rows.map((r) => [rowKey(r), r])));
+  let shown = $derived(reorder.order.map((key) => byKey.get(key)).filter((r) => r !== undefined));
 
-  function onRowKey(e: KeyboardEvent, vod: Vod) {
-    if (reorder.key(e, vod.id)) tick().then(() => reorder.rows[vod.id]?.querySelector<HTMLElement>(".main")?.focus());
+  function onRowKey(e: KeyboardEvent, key: number) {
+    if (reorder.key(e, key)) tick().then(() => reorder.rows[key]?.querySelector<HTMLElement>(".main")?.focus());
   }
 </script>
 
@@ -238,6 +249,12 @@
   {/if}
 
   <div class="list" bind:this={reorder.list}>
+    <!-- While a clip is carried: the place to start an edit with it (dragout.ts). -->
+    {#if clips.carrying}
+      <div class="new-edit" class:target={edits.dropTarget === "new"} data-new-edit>
+        <Icon name="plus" size={15} /> Make new edit
+      </div>
+    {/if}
     <!-- Links and files being added: each stands in until its VOD arrives (new ones go on top). -->
     {#each adder.pending as p (p.key)}
       <div class="vod pending" role="status" aria-label="Adding {p.label}">
@@ -251,29 +268,47 @@
         </button>
       </div>
     {/each}
-    {#each shown as vod (vod.id)}
+    {#each shown as row (rowKey(row))}
+      {@const key = rowKey(row)}
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
       <div
         class="vod"
-        class:selected={vod.id === selectedId}
-        class:lifted={reorder.lifted(vod.id)}
-        style:transform={reorder.transform(vod.id)}
-        bind:this={reorder.rows[vod.id]}
-        animate:flip={{ duration: reorder.flipDuration(vod.id) }}
+        class:edit={row.kind === "edit"}
+        class:selected={row.kind === "vod" ? row.vod.id === selectedId : edits.openId === row.edit.id}
+        class:lifted={reorder.lifted(key)}
+        data-key={key}
+        style:transform={reorder.transform(key)}
+        bind:this={reorder.rows[key]}
+        animate:flip={{ duration: reorder.flipDuration(key) }}
         onclickcapture={reorder.clickCapture}
-        onclick={(e) => onRowClick(e, vod)}
+        onclick={(e) => {
+          if ((e.target as HTMLElement).closest("button")) return;
+          if (row.kind === "vod") toggle(row.vod);
+          else onopenedit(row.edit.id);
+        }}
         onpointerdown={(e) => {
-          if (!(e.target as HTMLElement).closest(".actions")) reorder.start(e, vod.id);
+          // A clip carried over the list is dropped, not a row dragged.
+          if (!clips.carrying && !(e.target as HTMLElement).closest(".actions")) reorder.start(e, key);
         }}
       >
-        <VodRow
-          {vod}
-          reorderable={vods.length > 1}
-          ontoggle={() => toggle(vod)}
-          onkey={(e) => onRowKey(e, vod)}
-          onremove={() => selectedId === vod.id && onselect(null)}
-          onerror={(e) => (adder.error = e)}
-        />
+        {#if row.kind === "vod"}
+          {@const vod = row.vod}
+          <VodRow
+            {vod}
+            reorderable={rows.length > 1}
+            ontoggle={() => toggle(vod)}
+            onkey={(e) => onRowKey(e, key)}
+            onremove={() => selectedId === vod.id && onselect(null)}
+            onerror={(e) => (adder.error = e)}
+          />
+        {:else}
+          <EditRow
+            edit={row.edit}
+            reorderable={rows.length > 1}
+            onopen={() => onopenedit(row.edit.id)}
+            onkey={(e) => onRowKey(e, key)}
+          />
+        {/if}
       </div>
     {:else}
       {#if adder.pending.length === 0}
@@ -431,6 +466,31 @@
 
   .vod:hover {
     background: var(--bg);
+  }
+
+  /* While a clip is carried: start an edit with it, at the top of the list. */
+  .new-edit {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin: 8px 12px;
+    padding: 12px;
+    border: 1px dashed var(--accent);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .new-edit.target {
+    border-style: solid;
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   }
 
   /* A stand-in for something being added: a row's shape, a spinner for its thumbnail. */

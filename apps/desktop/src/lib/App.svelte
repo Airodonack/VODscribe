@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
-  import { api, events, type SearchHit, type SetupStatus, type UnlistenFn, type Vod } from "./api";
-  import Library from "./Library.svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
+  import { api, events, type LibraryItem, type SearchHit, type SetupStatus, type UnlistenFn, type Vod } from "./api";
+  import Library, { type LibraryRow } from "./Library.svelte";
   import Player from "./Player.svelte";
   import Results from "./Results.svelte";
   import SearchFilter, { type Sources } from "./SearchFilter.svelte";
@@ -95,21 +95,51 @@
     else vods.unshift(vod);
   }
 
+  // The library's list: VODs and edits in one order (`library_order`), by
+  // key ("vod:3", "edit:2"). One added since it was read goes on top as it
+  // appears, as the library puts it.
+  let order = $state<string[]>([]);
+  const keyOf = (item: LibraryItem) => `${item.kind}:${item.id}`;
+  async function loadOrder() {
+    order = (await api.libraryOrder().catch(() => [])).map(keyOf);
+  }
+  $effect(() => {
+    const keys = [...vods.map((v) => `vod:${v.id}`), ...edits.list.map((e) => `edit:${e.id}`)];
+    untrack(() => {
+      const known = new Set(order);
+      const added = keys.filter((key) => !known.has(key));
+      if (added.length) order = [...added, ...order];
+    });
+  });
+  const rows = $derived.by(() => {
+    const byKey = new Map<string, LibraryRow>([
+      ...vods.map((vod) => [`vod:${vod.id}`, { kind: "vod", vod }] as const),
+      ...edits.list.map((edit) => [`edit:${edit.id}`, { kind: "edit", edit }] as const),
+    ]);
+    return order.map((key) => byKey.get(key)).filter((row) => row !== undefined);
+  });
+
   let reordering: Promise<void> = Promise.resolve();
-  // VODs missing from `ids` (added since the reorder began) stay on top.
-  function reorder(ids: number[]) {
-    const listed = new Set(ids);
-    vods = [
-      ...vods.filter((v) => !listed.has(v.id)),
-      ...ids.map((id) => vodsById.get(id)).filter((v) => v !== undefined),
+  // Rows missing from `items` (added since the reorder began) stay on top.
+  function reorder(items: LibraryItem[]) {
+    const listed = new Set(items.map(keyOf));
+    order = [
+      ...rows.map((r) => (r.kind === "vod" ? `vod:${r.vod.id}` : `edit:${r.edit.id}`)).filter((k) => !listed.has(k)),
+      ...items.map(keyOf),
     ];
+    const position = new Map(order.map((key, i) => [key, i]));
+    vods = [...vods].sort((a, b) => (position.get(`vod:${a.id}`) ?? -1) - (position.get(`vod:${b.id}`) ?? -1));
     // One save at a time, in order: holding Alt+↓ sends many.
-    const order = vods.map((v) => v.id);
+    const all = order.map((key) => {
+      const [kind, id] = key.split(":");
+      return { kind, id: Number(id) } as LibraryItem;
+    });
     reordering = reordering.then(() =>
-      api.reorderVods(order).catch(async (e) => {
+      api.reorderLibrary(all).catch(async (e) => {
         console.error("reorder failed", e);
         // If reloading fails too, the chain must still go on for the next reorder.
         vods = await api.listVods().catch(() => vods);
+        await loadOrder();
       }),
     );
     runSearch();
@@ -170,6 +200,7 @@
     try {
       await refreshSetup();
       vods = await api.listVods();
+      await loadOrder();
     } finally {
       // The busy cursor (app.css `html.starting`) goes once the library is in.
       document.documentElement.classList.remove("starting");
@@ -290,7 +321,7 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {vods} {selectedId} onselect={select} onreorder={reorder} />
+    <Library {rows} {selectedId} onselect={select} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">

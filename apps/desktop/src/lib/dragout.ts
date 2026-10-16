@@ -2,9 +2,9 @@
 // Alt-drag on the timeline (Option on a Mac, Ctrl too on Linux), a press held
 // on the picture, or a pill dragged from the clip bar. Inside the window it's
 // the app's own drag, showing the stretch's frame over its waveform. It lands
-// on the clip bar (kept as a clip), on an edit's pill there (kept as a clip
-// and put at the end of that edit), or on "Make new edit" above the bar (an
-// edit made with it); dropped anywhere else in the window, nothing happens. Taken past the
+// on the clip bar (kept as a clip), on an edit's row in the library's list
+// (kept as a clip and put at the end of that edit), or on "Make new edit" atop
+// the list (an edit made with it); dropped anywhere else, nothing happens. Taken past the
 // window's edge, it becomes the system's drag of the clip's file, into a
 // video editor or a folder: the file is made then (without a pill), and the
 // drag starts once it's there, if the button is still down.

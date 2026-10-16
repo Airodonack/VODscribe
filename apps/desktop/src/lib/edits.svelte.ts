@@ -1,8 +1,8 @@
-// Edits (crates/core edits.rs): videos made of pieces of clips. Each shows as a
-// pill in the clip bar (ClipStrip.svelte) of every VOD its clips are of, and
-// opens in the Edit view (EditView.svelte). Clips get in by being dropped on
-// an edit's pill or on "Make new edit" (dragout.ts), or with a clip's "Add to
-// an edit".
+// Edits (crates/core edits.rs): videos made of pieces of clips. They're rows of
+// the library's list among the VODs (Library.svelte, EditRow.svelte), and
+// open in the player's place (EditView.svelte). Clips get in by being dropped
+// on an edit's row or on "Make new edit" atop the list (dragout.ts), or with a
+// clip's "Add to an edit" (ClipStrip.svelte).
 
 import { SvelteMap } from "svelte/reactivity";
 import { api, events, type Edit, type EditPiece, type EditView } from "./api";
@@ -60,6 +60,14 @@ class Edits {
   /** The edits with clips of VOD `vodId`. */
   forVod(vodId: number): Edit[] {
     return this.list.filter((e) => e.vod_ids.includes(vodId));
+  }
+
+  /** Whether clip `clipId` is in an edit, and the names of those it's in. */
+  usesClip(clipId: number): boolean {
+    return this.list.some((e) => e.clip_ids.includes(clipId));
+  }
+  withClip(clipId: number): string[] {
+    return this.list.filter((e) => e.clip_ids.includes(clipId)).map((e) => `“${e.title}”`);
   }
 
   /** A new edit holding clip `clipId`. */

@@ -42,7 +42,9 @@ const commands: Record<string, (args: Args) => unknown> = {
     running: false,
   }),
   list_vods: () => backend.listVods(),
-  reorder_vods: ({ ids }) => backend.reorder(ids as number[]),
+  library_order: async () => (await backend.listVods()).map((v) => ({ kind: "vod", id: v.id })),
+  reorder_library: ({ items }) =>
+    backend.reorder((items as { kind: string; id: number }[]).filter((i) => i.kind === "vod").map((i) => i.id)),
   search: ({ query, filter }) => backend.search(query as string, (filter ?? {}) as SearchFilter),
   transcript: ({ vodId, after }) => backend.transcript(vodId as number, after as number | undefined),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),

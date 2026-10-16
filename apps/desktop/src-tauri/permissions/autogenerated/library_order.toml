@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-library-order"
+description = "Enables the library_order command without any pre-configured scope."
+commands.allow = ["library_order"]
+
+[[permission]]
+identifier = "deny-library-order"
+description = "Denies the library_order command without any pre-configured scope."
+commands.deny = ["library_order"]

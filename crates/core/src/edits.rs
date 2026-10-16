@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::db::{CLIP_COLUMNS, Clip, ClipStatus, Db, clip_from_row, now};
 use crate::render::Piece;
@@ -29,8 +29,17 @@ pub struct Edit {
     /// How many pieces it has, and how long it plays, in seconds.
     pub pieces: usize,
     pub length: f64,
-    /// The VODs its clips are of: it shows in each one's clip bar.
+    /// The VODs its clips are of, and the clips.
     pub vod_ids: Vec<i64>,
+    pub clip_ids: Vec<i64>,
+}
+
+/// A row of the library's list: VODs and edits share one order.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", content = "id", rename_all = "lowercase")]
+pub enum LibraryItem {
+    Vod(i64),
+    Edit(i64),
 }
 
 /// A piece of an edit: `start`..`end` of its clip's VOD (within the clip),
@@ -103,6 +112,33 @@ fn piece_row(r: &Row) -> rusqlite::Result<(i64, i64, i64, f64, f64, String)> {
 }
 
 impl Db {
+    /// The library's list, VODs and edits, in its order.
+    pub fn library_order(&self) -> Result<Vec<LibraryItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT 'vod', id, position FROM vods UNION ALL SELECT 'edit', id, position FROM edits
+             ORDER BY 3, 1 DESC, 2 DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let id = r.get(1)?;
+            Ok(if r.get::<_, String>(0)? == "vod" { LibraryItem::Vod(id) } else { LibraryItem::Edit(id) })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Puts the library's list in the order of `items`.
+    pub fn reorder_library(&self, items: &[LibraryItem]) -> Result<()> {
+        self.atomically(|db| {
+            for (position, item) in items.iter().enumerate() {
+                let (sql, id) = match item {
+                    LibraryItem::Vod(id) => ("UPDATE vods SET position = ?2 WHERE id = ?1", id),
+                    LibraryItem::Edit(id) => ("UPDATE edits SET position = ?2 WHERE id = ?1", id),
+                };
+                db.conn.execute(sql, params![id, position as i64])?;
+            }
+            Ok(())
+        })
+    }
+
     /// Every edit, in their order.
     pub fn edits(&self) -> Result<Vec<Edit>> {
         let mut stmt = self.conn.prepare(&format!("SELECT {EDIT_COLUMNS} FROM edits ORDER BY position, id"))?;
@@ -130,6 +166,9 @@ impl Db {
         let mut vod_ids: Vec<i64> = pieces.iter().map(|p| p.clip.vod_id).collect();
         vod_ids.sort_unstable();
         vod_ids.dedup();
+        let mut clip_ids: Vec<i64> = pieces.iter().map(|p| p.clip.id).collect();
+        clip_ids.sort_unstable();
+        clip_ids.dedup();
         Ok(Some(Edit {
             id,
             title,
@@ -140,14 +179,15 @@ impl Db {
             pieces: pieces.len(),
             length,
             vod_ids,
+            clip_ids,
         }))
     }
 
-    /// A new, empty edit, last in the list.
+    /// A new, empty edit, at the top of the library's list (as new VODs go).
     pub fn add_edit(&self, title: &str) -> Result<Edit> {
         self.conn.execute(
             "INSERT INTO edits (title, position, created_at)
-             VALUES (?1, (SELECT coalesce(max(position), 0) + 1 FROM edits), ?2)",
+             VALUES (?1, (SELECT coalesce(min(p), 0) - 1 FROM (SELECT min(position) AS p FROM vods UNION ALL SELECT min(position) FROM edits)), ?2)",
             params![title, now()],
         )?;
         Ok(self.edit(self.conn.last_insert_rowid())?.expect("just inserted"))
@@ -396,6 +436,20 @@ mod tests {
         assert_eq!(db.edit(edit.id).unwrap().unwrap().pieces, 0);
         db.delete_edit(edit.id).unwrap();
         assert!(db.edits().unwrap().is_empty());
+    }
+
+    #[test]
+    fn vods_and_edits_share_one_order() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let a = db.add_vod(&info("a")).unwrap().0.id;
+        let e = db.add_edit("e").unwrap().id;
+        let b = db.add_vod(&info("b")).unwrap().0.id;
+        use LibraryItem::{Edit, Vod};
+        assert_eq!(db.library_order().unwrap(), [Vod(b), Edit(e), Vod(a)], "newest on top");
+        db.reorder_library(&[Vod(a), Vod(b), Edit(e)]).unwrap();
+        assert_eq!(db.library_order().unwrap(), [Vod(a), Vod(b), Edit(e)]);
+        assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [a, b]);
+        assert_eq!(serde_json::to_string(&Edit(e)).unwrap(), format!(r#"{{"kind":"edit","id":{e}}}"#));
     }
 
     #[test]
