@@ -489,6 +489,7 @@
             </button>
             <button
               class="action export"
+              class:picking={!!cuts.selection}
               bind:this={exportButton}
               onclick={exportClip}
               onmouseenter={() => (exportHover = true)}
@@ -578,13 +579,17 @@
     color: var(--cut);
   }
 
-  /* A selection waits to be cut: Split takes its color. */
-  .clip.picking {
+  /* A selection (made on the timeline or in the transcript) waits to be cut
+     or exported: Split and Export take its color. (:not(:disabled) to win
+     over the bar's own style for its buttons.) */
+  .clip.picking:not(:disabled),
+  .export.picking:not(:disabled) {
     color: var(--pick);
     background: color-mix(in srgb, var(--pick) 14%, transparent);
   }
 
-  .clip.picking :global(svg) {
+  .clip.picking :global(svg),
+  .export.picking :global(svg) {
     color: var(--pick);
   }
 

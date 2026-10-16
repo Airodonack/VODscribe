@@ -5,6 +5,7 @@
   // (Player.svelte), as for every player; mounted by embed.ts, which hands
   // these functions over.
 
+  import { landingSeeks } from "./mediaSeek";
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
@@ -50,7 +51,8 @@
     const saved = Number(load(VOLUME));
     if (load(VOLUME) !== null && saved >= 0 && saved <= 1) v.volume = saved;
     v.src = src;
-    v.currentTime = start;
+    // Through seek: before its metadata is in, a video may drop where it's put.
+    seek(start, false);
     if (autoplay) v.play().catch(() => {});
     api.captions(vod.id).then(
       (c) => (cues = c),
@@ -80,24 +82,20 @@
     video?.load();
   });
 
+  // Seeks kept until they land (mediaSeek.ts).
+  let seeks: ReturnType<typeof landingSeeks> | null = null;
   export function seek(seconds: number, play: boolean) {
     if (!video) return;
-    video.currentTime = seconds;
+    seeks ??= landingSeeks(video);
+    seeks.seek(seconds);
     time = seconds;
-    // Before its metadata is in, a video may say 0 and drop the seek
-    // (WebKitGTK 2.54): kept, said, and made again once it's in.
-    wanted = video.readyState < HTMLMediaElement.HAVE_METADATA ? seconds : null;
     if (play) video.play().catch(() => {});
   }
-  /** A seek made before the video's metadata was in (`seek`). */
-  let wanted: number | null = null;
   function onMetadata() {
     noPicture = video!.videoWidth === 0;
-    if (wanted !== null && Math.abs(video!.currentTime - wanted) > 0.01) video!.currentTime = wanted;
-    wanted = null;
   }
 
-  export const currentTime = () => wanted ?? video?.currentTime ?? 0;
+  export const currentTime = () => seeks?.wanted() ?? video?.currentTime ?? 0;
   export const isPlaying = () => !!video && !video.paused;
   export const mediaDuration = () => (video && Number.isFinite(video.duration) ? video.duration : 0);
   export const frameRate = () => (pictureless ? null : fps);

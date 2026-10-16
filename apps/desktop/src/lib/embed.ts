@@ -4,6 +4,7 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
+import { landingSeeks } from "./mediaSeek";
 import { mount, unmount } from "svelte";
 import { api, type Vod } from "./api";
 import LocalPlayer from "./LocalPlayer.svelte";
@@ -272,13 +273,15 @@ function videoPlayer(
   video.addEventListener("playing", () => onerror?.(null));
   el.appendChild(video);
   const detach = attach(video);
+  const seeks = landingSeeks(video);
+  if (time > 0) seeks.seek(time);
   if (play) video.play().catch(() => {});
   return {
     seek(seconds, play) {
-      video.currentTime = seconds;
+      seeks.seek(seconds);
       if (play) video.play().catch(() => {});
     },
-    time: () => video.currentTime,
+    time: () => seeks.wanted() ?? video.currentTime,
     playing: () => !video.paused,
     togglePlay() {
       if (video.paused) video.play().catch(() => {});
