@@ -84,7 +84,6 @@
     onpiece?: {
       select: (id: number) => void;
       move: (id: number, index: number) => void;
-      remove: (id: number) => void;
       /** Makes it `start`..`end` of its VOD (an edge was dragged). */
       resize: (id: number, start: number, end: number) => void;
       /** While an edge is dragged: where it is in its VOD (null once it's let go). */
@@ -640,13 +639,6 @@
               </span>
             {/if}
             <span class="label">{piece.label}</span>
-            <button
-              class="remove"
-              onpointerdown={(e) => e.stopPropagation()}
-              onclick={() => onpiece?.remove(piece.id)}
-              title="Take it out of the edit"
-              aria-label="Take it out of the edit">×</button
-            >
           </div>
         {/if}
       {/each}
@@ -999,32 +991,6 @@
   .sizes.at-end {
     left: auto;
     right: 0;
-  }
-
-  .remove {
-    display: none;
-    flex: none;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: none;
-    border-radius: 50%;
-    background: none;
-    color: var(--muted);
-    font-size: 13px;
-    line-height: 1;
-  }
-
-  .piece:hover .remove,
-  .piece.selected .remove {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .remove:hover {
-    color: var(--text);
-    background: var(--surface);
   }
 
   .lane .insert {

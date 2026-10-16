@@ -3,9 +3,10 @@
   // player's place and laid out like it: the picture (previewPlayer.ts, its
   // pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
-  // where Split cuts the piece at the playhead in two and Render makes the
-  // video. Its pieces are bands in the timeline's lane (Scrubber.svelte):
-  // dragged to move, Alt-dragged to carry out. Under it, the edit's
+  // where Split cuts the piece at the playhead in two, Remove takes the
+  // selected piece out (Delete, too), and Render makes the video. Its pieces
+  // are bands in the timeline's lane (Scrubber.svelte): clicked to select,
+  // dragged to move, their edges dragged to resize, Alt-dragged to carry out. Under it, the edit's
   // transcript, piece by piece: a click on a line strikes it out (the edit
   // jumps over it) or brings it back.
 
@@ -203,6 +204,13 @@
     return `Piece ${n} of ${pieces.length} · ${atNow.piece.title} · ${atNow.piece.vod_title}`;
   });
 
+  /** Remove: the selected piece out of the edit. */
+  function removeSelected() {
+    if (selectedPiece === null) return;
+    edits.removePiece(selectedPiece);
+    selectedPiece = null;
+  }
+
   /** Split: the piece at the playhead in two, there. */
   function split() {
     const s = atNow;
@@ -235,10 +243,8 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
-    if ((key === "Delete" || key === "Backspace") && selectedPiece !== null) {
-      edits.removePiece(selectedPiece);
-      selectedPiece = null;
-    } else if (key === "Escape" && selectedPiece !== null && !fullscreen) selectedPiece = null;
+    if ((key === "Delete" || key === "Backspace") && selectedPiece !== null) removeSelected();
+    else if (key === "Escape" && selectedPiece !== null && !fullscreen) selectedPiece = null;
     else if (key === " " || key === "k") player.togglePlay();
     else if (key === "m") toggleMute(player);
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
@@ -337,7 +343,6 @@
   const onpiece = {
     select: (id: number) => (selectedPiece = id),
     move: (id: number, index: number) => edits.move(id, index),
-    remove: (id: number) => edits.removePiece(id),
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
@@ -534,6 +539,16 @@
             title="Split the piece at the playhead in two (B)"
           >
             <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
+          </button>
+          <button
+            class="action remove"
+            onclick={removeSelected}
+            disabled={selectedPiece === null}
+            title={selectedPiece === null
+              ? "Select a piece (click it in the timeline) to take it out of the edit"
+              : "Take the selected piece out of the edit; its VOD and clips aren't touched (Delete)"}
+          >
+            <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
           </button>
           <button
             class="action render"
@@ -773,6 +788,12 @@
 
   .render :global(svg) {
     color: var(--accent);
+  }
+
+  /* Taking a piece out: red, softened towards the muted text so it reads
+     as removing something, not as an error. */
+  .remove :global(svg) {
+    color: color-mix(in srgb, var(--danger) 85%, var(--muted));
   }
 
   .lines {
