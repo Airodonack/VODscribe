@@ -274,6 +274,8 @@ pub fn run() {
             screen::set_screen,
             player::player_available,
             player::player_open,
+            player::player_open_edit,
+            player::player_plan,
             player::player_close,
             player::player_play,
             player::player_pause,

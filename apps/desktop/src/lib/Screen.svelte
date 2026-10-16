@@ -50,13 +50,12 @@
 <div class="screen" bind:this={box}></div>
 
 <style>
-  /* Fills its box as a flex item: a percentage height would be worked out
-     from the box's aspect ratio before its max-height caps it (WebKit). */
+  /* Fills its box (which is positioned), however the box is sized: a
+     percentage height would be worked out from the box's aspect ratio
+     before its max-height caps it (WebKit). */
   .screen {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    align-self: stretch;
+    position: absolute;
+    inset: 0;
     background: #000;
   }
   :global(html.screen) .screen {

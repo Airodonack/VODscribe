@@ -42,6 +42,15 @@ export interface PlayerStatus {
 }
 
 /** What the app's own player says of what it opened: the frame rate at the start, if known, and the length. */
+/** A stretch of an edit as the app's own player plays it (player.rs `player_plan`). */
+export interface PlayerStretch {
+  at: number;
+  length: number;
+  piece_id: number | null;
+  /** Its footage is here; else it plays nothing until it is. */
+  footage: boolean;
+}
+
 export interface PlayerOpened {
   fps: number | null;
   duration: number;
@@ -352,6 +361,10 @@ export const api = {
   playerAvailable: () => invoke<boolean>("player_available"),
   /** Opens VOD `id`'s file in the app's own player at `at` seconds, playing if `play`. */
   playerOpen: (id: number, at: number, play: boolean) => invoke<PlayerOpened>("player_open", { id, at, play }),
+  /** Opens edit `id` in the app's own player, its pieces end to end, at `at` seconds. */
+  playerOpenEdit: (id: number, at: number, play: boolean) => invoke<PlayerOpened>("player_open_edit", { id, at, play }),
+  /** Edit `id`'s stretches as its pieces and footage are now; the player open for it plays them from here on. */
+  playerPlan: (id: number) => invoke<PlayerStretch[]>("player_plan", { id }),
   playerClose: () => invoke<void>("player_close"),
   playerPlay: () => invoke<PlayerStatus>("player_play"),
   playerPause: () => invoke<PlayerStatus>("player_pause"),

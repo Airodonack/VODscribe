@@ -9,7 +9,7 @@
 // there.
 // It's an EmbeddedPlayer like the others, so the same controls work it.
 
-import { api, type PreviewSegment } from "./api";
+import { api, type PreviewSegment, type PlayerStretch } from "./api";
 import type { EmbeddedPlayer } from "./embed";
 import { load, save } from "./stored";
 
@@ -32,7 +32,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
   private video: HTMLVideoElement;
   private source = new MediaSource();
   private buffer: SourceBuffer | null = null;
-  private plan: PreviewSegment[] = [];
+  private segments: PreviewSegment[] = [];
   /** Each segment of the plan: not made yet, being added, or in the buffer. */
   private states: State[] = [];
   /** Counts plans: work for an older one stops. */
@@ -112,14 +112,24 @@ export class PreviewPlayer implements EmbeddedPlayer {
 
   /** The segments to play now. Those in the buffer that are the same (key,
    *  time and length) stay in it; the rest leave it. */
+  readonly lowQuality = true;
+
+  /** The preview's plan for edit `id` from `from` on (editPlayer.ts `EditPlayback`): segments as stretches. */
+  async plan(id: number, from: number): Promise<PlayerStretch[]> {
+    const plan = await api.previewPlan(id, from);
+    this.setPlan(plan);
+    return plan.map((s) => ({ at: s.at, length: s.length, piece_id: s.piece_id, footage: s.key !== null }));
+  }
+
   setPlan(plan: PreviewSegment[]) {
     const id = (s: PreviewSegment) => `${s.key}@${s.at}+${s.length}`;
-    const old = new Map(this.plan.map((s, i) => [id(s), this.states[i]]));
+    const old = new Map(this.segments.map((s, i) => [id(s), this.states[i]]));
     const states: State[] = plan.map((s) => (s.key && old.get(id(s)) === "in" ? "in" : "missing"));
     const kept = new Set(plan.filter((_, i) => states[i] === "in").map(id));
-    const gone = this.plan.filter((s, i) => this.states[i] !== "missing" && !kept.has(id(s)));
-    if (!gone.length && plan.length === this.plan.length && plan.every((s, i) => id(s) === id(this.plan[i]))) return;
-    this.plan = plan;
+    const gone = this.segments.filter((s, i) => this.states[i] !== "missing" && !kept.has(id(s)));
+    if (!gone.length && plan.length === this.segments.length && plan.every((s, i) => id(s) === id(this.segments[i])))
+      return;
+    this.segments = plan;
     this.states = states;
     this.generation++;
     this.restart(gone);
@@ -127,11 +137,11 @@ export class PreviewPlayer implements EmbeddedPlayer {
 
   /** Segment `key` is made: added, if the plan has it. */
   made(key: string) {
-    if (this.plan.some((s) => s.key === key)) this.pump();
+    if (this.segments.some((s) => s.key === key)) this.pump();
   }
 
   private total(): number {
-    const last = this.plan[this.plan.length - 1];
+    const last = this.segments[this.segments.length - 1];
     return last ? last.at + last.length : 0;
   }
 
@@ -139,9 +149,9 @@ export class PreviewPlayer implements EmbeddedPlayer {
   private waitingFor(): string | null {
     if (this.failed) return this.failed;
     const t = this.video.currentTime;
-    const i = this.plan.findIndex((s) => t >= s.at && t < s.at + s.length);
+    const i = this.segments.findIndex((s) => t >= s.at && t < s.at + s.length);
     if (i < 0 || this.states[i] === "in") return null;
-    return this.plan[i].key ? "Making the preview here…" : "Downloading this part of the video…";
+    return this.segments[i].key ? "Making the preview here…" : "Downloading this part of the video…";
   }
 
   /** Waits for the buffer to finish what it's doing. */
@@ -201,8 +211,8 @@ export class PreviewPlayer implements EmbeddedPlayer {
       }
       this.seekWaiting();
       const t = this.video.currentTime;
-      for (let i = 0; i < this.plan.length; i++) {
-        const seg = this.plan[i];
+      for (let i = 0; i < this.segments.length; i++) {
+        const seg = this.segments[i];
         const far = seg.at + seg.length < t - BEHIND || seg.at > t + AHEAD + BEHIND;
         if (this.states[i] === "in" && far) {
           await this.removeRange(seg.at, seg.at + seg.length);
@@ -210,9 +220,9 @@ export class PreviewPlayer implements EmbeddedPlayer {
           this.states[i] = "missing";
         }
       }
-      for (let i = 0; i < this.plan.length; i++) {
+      for (let i = 0; i < this.segments.length; i++) {
         if (mine !== this.generation || this.destroyed) return;
-        const seg = this.plan[i];
+        const seg = this.segments[i];
         if (this.states[i] === "in" || !seg.key) continue;
         if (seg.at + seg.length < t - 1 || seg.at > t + AHEAD) continue;
         this.states[i] = "loading";

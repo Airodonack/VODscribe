@@ -131,23 +131,26 @@ mod linux {
                 Place::Over => {
                     overlay.add(&page);
                     overlay.add_overlay(&area);
+                    // Clicks, the pointer and the wheel go to the page, as
+                    // if the area weren't there: the overlay's pass-through
+                    // flag doesn't do it (the events still stop at the
+                    // area), so each is handed to the page's window itself.
                     overlay.set_overlay_pass_through(&area, true);
-                    let placed = canvas.layout.clone();
-                    let box_ = area.clone();
-                    // With no box open, a pixel outside the overlay (clipped
-                    // away): hidden, or left to GTK's own placement (the whole
-                    // overlay), the area blacks out the page.
-                    overlay.connect_get_child_position(move |_, child| {
-                        if *child != box_ {
-                            return None;
-                        }
-                        let Some(rect) = placed.lock().unwrap().rect else {
-                            return Some(gtk::Allocation::new(-1, -1, 1, 1));
-                        };
-                        let (x, y) = (rect.x.round() as i32, rect.y.round() as i32);
-                        let (w, h) = (rect.width.round().max(1.0) as i32, rect.height.round().max(1.0) as i32);
-                        Some(gtk::Allocation::new(x, y, w, h))
-                    });
+                    area.add_events(
+                        gtk::gdk::EventMask::BUTTON_PRESS_MASK
+                            | gtk::gdk::EventMask::BUTTON_RELEASE_MASK
+                            | gtk::gdk::EventMask::POINTER_MOTION_MASK
+                            | gtk::gdk::EventMask::SCROLL_MASK
+                            | gtk::gdk::EventMask::SMOOTH_SCROLL_MASK,
+                    );
+                    let to_page = page.clone();
+                    area.connect_button_press_event(move |area, e| hand_on(area, &to_page, e));
+                    let to_page = page.clone();
+                    area.connect_button_release_event(move |area, e| hand_on(area, &to_page, e));
+                    let to_page = page.clone();
+                    area.connect_motion_notify_event(move |area, e| hand_on(area, &to_page, e));
+                    let to_page = page.clone();
+                    area.connect_scroll_event(move |area, e| hand_on(area, &to_page, e));
                 }
             }
             parent.pack_start(&overlay, true, true, 0);
@@ -172,6 +175,33 @@ mod linux {
         pub fn show(&self, frame: Option<Arc<Frame>>) {
             self.canvas.show(frame);
         }
+    }
+
+    /// Hands pointer event `e`, had by `area`, on to `page` as the page's
+    /// own, at the same place.
+    fn hand_on(area: &gtk::GLArea, page: &gtk::Widget, e: &gtk::gdk::Event) -> glib::Propagation {
+        use gtk::glib::translate::{ToGlibPtr, ToGlibPtrMut};
+        let (Some(from), Some(to)) = (area.window(), page.window()) else { return glib::Propagation::Proceed };
+        let (Some((x, y)), Some(device)) = (e.coords(), e.device()) else { return glib::Propagation::Proceed };
+        // Both windows sit in the same parent: the area's place in the page.
+        let (ax, ay) = from.position();
+        let (px, py) = to.position();
+        let mut event = e.clone();
+        // SAFETY: a pointer event (button, motion or scroll), whose window,
+        // send_event, time, x and y fields lie the same way in each; the
+        // window is referenced for the event, which unreferences it when freed.
+        unsafe {
+            let raw = ToGlibPtrMut::<*mut gtk::gdk::ffi::GdkEvent>::to_glib_none_mut(&mut event).0
+                as *mut gtk::gdk::ffi::GdkEventButton;
+            glib::gobject_ffi::g_object_unref((*raw).window as *mut _);
+            (*raw).window = ToGlibPtr::<*mut gtk::gdk::ffi::GdkWindow>::to_glib_full(&to);
+            (*raw).send_event = 1;
+            (*raw).x = x + (ax - px) as f64;
+            (*raw).y = y + (ay - py) as f64;
+        }
+        event.set_device(Some(&device));
+        gtk::main_do_event(&mut event);
+        glib::Propagation::Stop
     }
 
     /// The page's WebKitGTK view, inside `widget`.

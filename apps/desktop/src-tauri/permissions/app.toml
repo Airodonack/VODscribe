@@ -55,6 +55,8 @@ permissions = [
   "allow-set-screen",
   "allow-player-available",
   "allow-player-open",
+  "allow-player-open-edit",
+  "allow-player-plan",
   "allow-player-close",
   "allow-player-play",
   "allow-player-pause",

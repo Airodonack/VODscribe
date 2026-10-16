@@ -36,7 +36,7 @@ export interface EmbeddedPlayer {
 }
 
 /** The players' position as last reported, advanced by the clock while playing. */
-class Clock {
+export class Clock {
   private at = performance.now();
   constructor(
     private seconds: number,

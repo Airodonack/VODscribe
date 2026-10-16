@@ -13,11 +13,12 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type Doc, type EditPiece, type Line, type PreviewSegment, type Vod } from "./api";
+  import { api, events, type Doc, type EditPiece, type Line, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
+  import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { PreviewPlayer } from "./previewPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
@@ -102,7 +103,7 @@
 
   // The player, and what the controls show, read from it every frame.
   let host = $state<HTMLDivElement>();
-  let player = $state<PreviewPlayer | null>(null);
+  let player = $state<EditPlayback | null>(null);
   let previewError = $state<string | null>(null);
   let now = $state(0);
   let playing = $state(false);
@@ -110,21 +111,33 @@
   let muted = $state(false);
   let rate = $state(1);
   let fps = $state(DEFAULT_FPS);
-  // The preview's segments (previewPlayer.ts), where the webview can play them.
+  // The app's own player (editPlayer.ts) where the window has a screen for
+  // it; else the preview's segments (previewPlayer.ts), where the webview
+  // can play them.
   onMount(() => {
     let gone = false;
     let stop: (() => void) | undefined;
-    api.previewCodecs().then(
-      (codecs) => {
+    const show = (message: string | null) => (previewError = message);
+    api.playerAvailable().then(
+      (native) => {
         if (gone) return;
-        const show = (message: string | null) => (previewError = message);
-        if (PreviewPlayer.supported(codecs)) {
-          const p = new PreviewPlayer(host!, codecs, show);
-          player = p;
-          events
-            .previewMade(({ key, error }) => (error ? (previewError = error) : p.made(key)))
-            .then((u) => (gone ? u() : (stop = u)));
-        } else previewError = "This computer's web view can't play the preview. Render the edit to watch it.";
+        if (native) {
+          player = new EditPlayer(host!, show);
+          return;
+        }
+        api.previewCodecs().then(
+          (codecs) => {
+            if (gone) return;
+            if (PreviewPlayer.supported(codecs)) {
+              const p = new PreviewPlayer(host!, codecs, show);
+              player = p;
+              events
+                .previewMade(({ key, error }) => (error ? (previewError = error) : p.made(key)))
+                .then((u) => (gone ? u() : (stop = u)));
+            } else previewError = "This computer can't play the preview. Render the edit to watch it.";
+          },
+          (e) => (edits.error = String(e)),
+        );
       },
       (e) => (edits.error = String(e)),
     );
@@ -159,7 +172,7 @@
   // of their VODs comes in, what's downloading reaches more of them, or the
   // playhead moves to another minute.
   let planSeq = 0;
-  let planned = $state.raw<PreviewSegment[]>([]);
+  let planned = $state.raw<PlayerStretch[]>([]);
   $effect(() => {
     void segments;
     void reached;
@@ -169,11 +182,10 @@
     const id = edit?.id;
     if (!p || id === undefined) return;
     const mine = ++planSeq;
-    api.previewPlan(id, from).then(
+    p.plan(id, from).then(
       (plan) => {
         if (mine !== planSeq) return;
         planned = plan;
-        p.setPlan(plan);
         // Where its playhead was left (or its start), once there's a plan to seek in.
         if (bringTime !== null && plan.length) {
           p.seek(bringTime, false);
@@ -306,7 +318,7 @@
     else if (key === " " || key === "k") player.togglePlay();
     else if (key === "m") toggleMute(player);
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
-    else if (key === "," || key === ".") player.step(key === "," ? -1 : 1);
+    else if (key === "," || key === ".") player.step?.(key === "," ? -1 : 1);
     else if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
       seekTo(Math.max(0, (bringTime ?? player.time()) + step));
@@ -353,7 +365,7 @@
   const pending = $derived.by(() => {
     const out: { start: number; end: number; done: number; pieceId: number }[] = [];
     for (const seg of planned) {
-      if (seg.key) continue;
+      if (seg.footage || seg.piece_id === null) continue;
       // The stretch it's of, and so where it is in the VOD.
       const s = segments.find((x) => x.piece.id === seg.piece_id && x.at <= seg.at + 1e-6 && seg.at < x.at + x.length);
       const vodFrom = s ? s.vodFrom + (seg.at - s.at) : 0;
@@ -562,7 +574,7 @@
         </p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
-      {:else if !qualityNoted}
+      {:else if player?.lowQuality && !qualityNoted}
         <span
           class="quality"
           title="The preview is made quickly, at a lower quality, so the edit plays as you change it. The rendered video is full quality."
