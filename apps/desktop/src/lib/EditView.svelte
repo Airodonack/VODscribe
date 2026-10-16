@@ -261,7 +261,8 @@
       const waits = pending.filter((w) => w.pieceId === piece.id);
       const wanted = waits.reduce((sum, w) => sum + w.end - w.start, 0);
       const loading = wanted > 0 ? waits.reduce((sum, w) => sum + w.done, 0) / wanted : undefined;
-      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading });
+      const range = { start: piece.start, end: piece.end, max: vods.get(piece.vod_id)?.duration ?? null };
+      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading, range });
       at += length;
     }
     return out;
@@ -297,6 +298,7 @@
     select: (id: number) => (selectedPiece = id),
     move: (id: number, index: number) => edits.move(id, index),
     remove: (id: number) => edits.removePiece(id),
+    resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
       const piece = pieces.find((p) => p.id === id);
       const vod = piece && vods.get(piece.vod_id);

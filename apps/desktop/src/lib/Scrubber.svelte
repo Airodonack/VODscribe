@@ -22,7 +22,9 @@
   // click selects one and goes to it, and dragging one (or Alt-dragging, Ctrl
   // too on Linux, the waveform under it) moves it, with a marker where it
   // would go; pulled well above or below the timeline, it's carried out
-  // instead, as a stretch is carried from a VOD's. Footage still downloading
+  // instead, as a stretch is carried from a VOD's. Dragging a band's edge
+  // moves that end of the piece in its VOD, a frame at a time, to make it
+  // shorter or longer (only that piece; later ones follow once it's let go). Footage still downloading
   // (a VOD from a site) is darker until it's in, and its piece's band shows
   // a spinner and how much is.
 
@@ -46,6 +48,8 @@
     label: string;
     /** While its footage downloads: how much is in, 0..1. */
     loading?: number;
+    /** What it is of its VOD (start, end), and the VOD's length if known: for resizing. */
+    range?: { start: number; end: number; max: number | null };
   }
   import { theme } from "./theme.svelte";
 
@@ -80,6 +84,8 @@
       select: (id: number) => void;
       move: (id: number, index: number) => void;
       remove: (id: number) => void;
+      /** Makes it `start`..`end` of its VOD (an edge was dragged). */
+      resize: (id: number, start: number, end: number) => void;
       /** Carries it out; `home` is the timeline, where coming back moves it again. */
       carry: (id: number, x: number, y: number, from: DOMRect, home: CarryHome) => void;
     };
@@ -202,6 +208,17 @@
   type Drag =
     | { kind: "scrub" }
     | { kind: "piece"; id: number; x: number; dx: number; to: number; moved: boolean }
+    | {
+        kind: "resize";
+        id: number;
+        side: "start" | "end";
+        x: number;
+        /** The piece's range in its VOD when pressed, and as dragged. */
+        from: { start: number; end: number; max: number | null };
+        start: number;
+        end: number;
+        moved: boolean;
+      }
     | { kind: "edge"; edge: "start" | "end"; at: number; x: number; moved: boolean }
     | { kind: "mark"; id: number; at: number; x: number; moved: boolean; away: boolean }
     | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
@@ -223,6 +240,18 @@
     }
     if (e.button !== 0) return;
     if (!marking) {
+      // A band's edge: resizing that piece.
+      const grip = (e.target as HTMLElement).closest<HTMLElement>("[data-grip]");
+      const gripped =
+        grip && pieces?.find((p) => p.id === Number(grip.closest<HTMLElement>("[data-piece]")?.dataset.piece));
+      if (grip && gripped?.range) {
+        e.preventDefault();
+        const { start, end } = gripped.range;
+        const side = grip.dataset.grip as "start" | "end";
+        drag = { kind: "resize", id: gripped.id, side, x: e.clientX, from: gripped.range, start, end, moved: false };
+        onpause();
+        return;
+      }
       const band = (e.target as HTMLElement).closest<HTMLElement>("[data-piece]");
       // The piece pressed on: its band, or where the waveform is.
       const piece = band
@@ -293,6 +322,8 @@
       const inLane = !!lane && e.clientY >= lane.getBoundingClientRect().top && e.clientY < box.top;
       const across = e.clientX >= box.left && e.clientX <= box.right;
       hover = inside || (inLane && across) || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
+      // Resizing a piece: its own label says the times.
+      if (drag?.kind === "resize") hover = null;
     }
     if (!drag) return;
     if (drag.kind === "view") {
@@ -306,6 +337,17 @@
       const box = bar!.getBoundingClientRect();
       const share = (e.clientX - box.left) / box.width;
       setView(drag.at - share * length, length);
+      return;
+    }
+    if (drag.kind === "resize") {
+      if (!drag.moved && Math.abs(e.clientX - drag.x) < DRAG_SLOP) return;
+      drag.moved = true;
+      // As far as the pointer went, in seconds of the view, on a frame.
+      const by = ((e.clientX - drag.x) / bar!.getBoundingClientRect().width) * span;
+      const { start, end, max } = drag.from;
+      const onFrame = (t: number) => Math.round(t * fps) / fps;
+      if (drag.side === "start") drag.start = Math.min(end - SHORTEST_PIECE, Math.max(0, onFrame(start + by)));
+      else drag.end = Math.max(start + SHORTEST_PIECE, Math.min(max ?? Infinity, onFrame(end + by)));
       return;
     }
     const t = timeAt(e.clientX);
@@ -390,12 +432,19 @@
 
   /** How far above or below an edit's timeline a piece is pulled to carry it out. */
   const CARRY_OFF = 40;
+  /** The shortest a piece is resized to, in seconds. */
+  const SHORTEST_PIECE = 0.5;
+
+  /** A time in a VOD to a tenth of a second: 1:02.4. */
+  const tenths = (t: number) => `${formatTime(t)}.${Math.floor((t % 1) * 10 + 1e-6)}`;
 
   const inFrame = (cut: number) => frameAfter(cut, fps, duration);
 
   function onUp() {
     const done = drag;
     drag = null;
+    if (done?.kind === "resize" && done.moved && (done.start !== done.from.start || done.end !== done.from.end))
+      onpiece?.resize(done.id, done.start, done.end);
     if (done?.kind === "piece") {
       // A click on a band selects the piece and goes to it; a drag moves it.
       const piece = pieces?.find((p) => p.id === done.id);
@@ -520,17 +569,33 @@
       {#each pieces as piece (piece.id)}
         {#if piece.end > viewStart && piece.start < viewStart + span}
           {@const moving = drag?.kind === "piece" && drag.id === piece.id && drag.moved ? drag : null}
+          {@const sizing = drag?.kind === "resize" && drag.id === piece.id && drag.moved ? drag : null}
+          <!-- Being resized: its dragged edge where the pointer took it. -->
+          {@const from = sizing ? piece.start + (sizing.start - sizing.from.start) : piece.start}
+          {@const to = sizing ? piece.end + (sizing.end - sizing.from.end) : piece.end}
           <div
             class="chapter piece"
             class:current={time >= piece.start && time < piece.end}
             class:selected={selectedPiece === piece.id}
             class:lifted={!!moving}
+            class:sizing={!!sizing}
             data-piece={piece.id}
-            style:left={pct(Math.max(piece.start, viewStart))}
-            style:width={widthPct(Math.max(piece.start, viewStart), Math.min(piece.end, viewStart + span))}
+            style:left={pct(Math.max(from, viewStart))}
+            style:width={widthPct(Math.max(from, viewStart), Math.min(to, viewStart + span))}
             style:transform={moving ? `translateX(${moving.dx}px)` : null}
-            title="{piece.label} · drag to move it, {os === 'mac' ? 'Option' : 'Alt'}-drag to carry it out"
+            title="{piece.label} · drag to move it, drag an edge to resize it, {os === 'mac'
+              ? 'Option'
+              : 'Alt'}-drag to carry it out"
           >
+            {#if piece.range}
+              <span class="grip start" data-grip="start"></span>
+              <span class="grip end" data-grip="end"></span>
+            {/if}
+            {#if sizing}
+              <span class="sizes" class:at-end={sizing.side === "end"}
+                >{tenths(sizing.start)} – {tenths(sizing.end)} · {(sizing.end - sizing.start).toFixed(1)} s</span
+              >
+            {/if}
             {#if piece.loading !== undefined}
               <span class="loading" title="Downloading its footage">
                 <Spinner size={10} />{Math.round(piece.loading * 100)}%
@@ -817,6 +882,54 @@
   .piece .label {
     flex: 1;
     min-width: 0;
+  }
+
+  /* A band's edges, to resize it by. */
+  .grip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: ew-resize;
+    z-index: 1;
+  }
+
+  .grip.start {
+    left: 0;
+  }
+
+  .grip.end {
+    right: 0;
+  }
+
+  .piece:hover .grip,
+  .piece.sizing .grip {
+    background: color-mix(in srgb, var(--cut) 45%, transparent);
+  }
+
+  .piece.sizing {
+    z-index: 2;
+    overflow: visible;
+  }
+
+  /* While resizing: the piece's new stretch of its VOD, above the band. */
+  .sizes {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--text);
+    color: var(--bg);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .sizes.at-end {
+    left: auto;
+    right: 0;
   }
 
   .remove {
