@@ -46,6 +46,8 @@ export class PreviewPlayer implements EmbeddedPlayer {
   private lastTime = -1;
   /** What went wrong, if the video or its buffer failed: said instead of waiting. */
   private failed: string | null = null;
+  /** A seek past the stream's length as it is yet (`seek`). */
+  private pendingSeek: { time: number; play: boolean } | null = null;
 
   /** Whether this webview can play preview segments that way. */
   static supported(codecs: string): boolean {
@@ -197,6 +199,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
           console.warn("preview duration", e);
         }
       }
+      this.seekWaiting();
       const t = this.video.currentTime;
       for (let i = 0; i < this.plan.length; i++) {
         const seg = this.plan[i];
@@ -249,12 +252,30 @@ export class PreviewPlayer implements EmbeddedPlayer {
   }
 
   seek(seconds: number, play: boolean) {
-    this.video.currentTime = Math.max(0, Math.min(this.total(), seconds));
+    const time = Math.max(0, Math.min(this.total(), seconds));
+    // The video can't go past its stream's length, which may still be the
+    // plan before's (a shorter edit's): then it goes once that's set (pump).
+    if (!(this.video.duration >= time - 1e-3)) {
+      this.pendingSeek = { time, play };
+      this.pump();
+      return;
+    }
+    this.pendingSeek = null;
+    this.video.currentTime = time;
     if (play) this.video.play().catch(() => {});
   }
 
+  /** A seek waiting for the stream's length to reach it, made now if it does. */
+  private seekWaiting() {
+    const s = this.pendingSeek;
+    if (!s || !(this.video.duration >= s.time - 1e-3)) return;
+    this.pendingSeek = null;
+    this.video.currentTime = s.time;
+    if (s.play) this.video.play().catch(() => {});
+  }
+
   time(): number {
-    return this.video.currentTime;
+    return this.pendingSeek?.time ?? this.video.currentTime;
   }
 
   playing(): boolean {

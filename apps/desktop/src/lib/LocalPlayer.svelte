@@ -84,10 +84,20 @@
     if (!video) return;
     video.currentTime = seconds;
     time = seconds;
+    // Before its metadata is in, a video may say 0 and drop the seek
+    // (WebKitGTK 2.54): kept, said, and made again once it's in.
+    wanted = video.readyState < HTMLMediaElement.HAVE_METADATA ? seconds : null;
     if (play) video.play().catch(() => {});
   }
+  /** A seek made before the video's metadata was in (`seek`). */
+  let wanted: number | null = null;
+  function onMetadata() {
+    noPicture = video!.videoWidth === 0;
+    if (wanted !== null && Math.abs(video!.currentTime - wanted) > 0.01) video!.currentTime = wanted;
+    wanted = null;
+  }
 
-  export const currentTime = () => video?.currentTime ?? 0;
+  export const currentTime = () => wanted ?? video?.currentTime ?? 0;
   export const isPlaying = () => !!video && !video.paused;
   export const mediaDuration = () => (video && Number.isFinite(video.duration) ? video.duration : 0);
   export const frameRate = () => (pictureless ? null : fps);
@@ -191,7 +201,7 @@
       onpause={follow}
       onseeked={follow}
       ontimeupdate={() => video?.paused && follow()}
-      onloadedmetadata={() => (noPicture = video!.videoWidth === 0)}
+      onloadedmetadata={onMetadata}
       onplaying={() => onerror?.(null)}
       onerror={onError}
     ></video>

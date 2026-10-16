@@ -179,6 +179,7 @@
           p.seek(bringTime, false);
           now = bringTime;
           bringTime = null;
+          playsEdit = id;
         }
       },
       (e) => (edits.error = String(e)),
@@ -188,11 +189,16 @@
   // starts where its playhead was left this session (nav.svelte.ts), paused;
   // going back to it, its scroll as it was too.
   let bringTime: number | null = null;
+  /** The edit the player's playhead is of: none while it still shows the one before. */
+  let playsEdit: number | null = null;
   let lines = $state<HTMLDivElement>();
+  // Only the edit's id: the edit itself is replaced each time it's loaded again.
+  const editId = $derived(edit?.id);
   $effect(() => {
-    const id = edit?.id;
+    const id = editId;
     if (id === undefined) return;
     untrack(() => player?.playing() && player.togglePlay());
+    playsEdit = null;
     const doc = { kind: "edit" as const, id };
     const left = untrack(() => nav.bringBack(doc));
     // (An edit not seen yet starts at its start, not where the last one was.)
@@ -212,8 +218,8 @@
     const p = player;
     if (!p) return;
     now = p.time();
-    // Not while it still shows the edit before (till the seek to this one's playhead).
-    if (edit && bringTime === null) nav.note({ kind: "edit", id: edit.id }, { time: now });
+    // Only once it's this edit's playhead (after the seek to where it was left).
+    if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: now });
     playing = p.playing();
     fps = p.fps() ?? DEFAULT_FPS;
     [volume, muted] = [p.volume.get(), p.volume.muted()];
@@ -222,6 +228,13 @@
 
   const seekTo = (time: number) => {
     now = time;
+    // Still waiting to seek to where it was left (no plan yet to seek in):
+    // this is where it goes instead, and it's what's remembered meanwhile.
+    if (bringTime !== null && edit) {
+      bringTime = time;
+      nav.note({ kind: "edit", id: edit.id }, { time });
+      return;
+    }
     player?.seek(time, false);
   };
 
@@ -296,7 +309,7 @@
     else if (key === "," || key === ".") player.step(key === "," ? -1 : 1);
     else if (key in STEPS) {
       const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
-      player.seek(Math.max(0, player.time() + step), false);
+      seekTo(Math.max(0, (bringTime ?? player.time()) + step));
     } else return;
     e.preventDefault();
   }
