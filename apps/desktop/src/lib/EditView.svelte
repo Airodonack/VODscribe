@@ -3,10 +3,10 @@
   // player's place and laid out like it: the picture (previewPlayer.ts, its
   // pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
-  // where Split cuts the piece at the playhead in two and Remove takes the
-  // selected piece out (Delete, too); Render, at the top beside the
+  // where Split cuts the piece at the playhead in two and Remove takes it
+  // out (Delete, too), the playhead's piece being the one acted on; Render, at the top beside the
   // rendered video, makes it. Its pieces
-  // are bands in the timeline's lane (Scrubber.svelte): clicked to select,
+  // are bands in the timeline's lane (Scrubber.svelte): clicked to go to,
   // dragged to move, their edges dragged to resize, Alt-dragged to carry out. Under it, the edit's
   // transcript, piece by piece: a click on a line strikes it out (the edit
   // jumps over it) or brings it back.
@@ -204,11 +204,10 @@
     return `Piece ${n} of ${pieces.length} · ${atNow.piece.title} · ${atNow.piece.vod_title}`;
   });
 
-  /** Remove: the selected piece out of the edit. */
-  function removeSelected() {
-    if (selectedPiece === null) return;
-    edits.removePiece(selectedPiece);
-    selectedPiece = null;
+  /** Remove: the piece at the playhead out of the edit (the one on screen,
+   *  as for Split: there's no other selection to keep track of). */
+  function removeCurrent() {
+    if (atNow) edits.removePiece(atNow.piece.id);
   }
 
   /** Split: the piece at the playhead in two, there. */
@@ -243,8 +242,7 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
-    if ((key === "Delete" || key === "Backspace") && selectedPiece !== null) removeSelected();
-    else if (key === "Escape" && selectedPiece !== null && !fullscreen) selectedPiece = null;
+    if ((key === "Delete" || key === "Backspace") && atNow) removeCurrent();
     else if (key === " " || key === "k") player.togglePlay();
     else if (key === "m") toggleMute(player);
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
@@ -270,7 +268,6 @@
   });
 
   // The pieces as bands in the timeline's lane: what each says, where it is.
-  let selectedPiece = $state<number | null>(null);
   const lane = $derived.by(() => {
     const out: LanePiece[] = [];
     let at = 0;
@@ -355,7 +352,6 @@
   }
 
   const onpiece = {
-    select: (id: number) => (selectedPiece = id),
     move: (id: number, index: number) => edits.move(id, index),
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
@@ -529,7 +525,7 @@
           {waveform}
           pieces={lane}
           {pending}
-          {selectedPiece}
+          selectedPiece={atNow?.piece.id ?? null}
           {onpiece}
           duration={total}
           time={now}
@@ -565,11 +561,9 @@
           </button>
           <button
             class="action remove"
-            onclick={removeSelected}
-            disabled={selectedPiece === null}
-            title={selectedPiece === null
-              ? "Select a piece (click it in the timeline) to take it out of the edit"
-              : "Take the selected piece out of the edit; its VOD and clips aren't touched (Delete)"}
+            onclick={removeCurrent}
+            disabled={!atNow}
+            title="Take the piece at the playhead out of the edit; its VOD and clips aren't touched (Delete)"
           >
             <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
           </button>

@@ -19,7 +19,8 @@
   // An edit's timeline (EditView.svelte) is the same without any of a VOD's
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
   // and the joins between them. Its pieces are bands in a lane above it: a
-  // click selects one and goes to it, and dragging one (or Alt-dragging, Ctrl
+  // click goes to one (the piece at the playhead is the one an edit's
+  // Split and Remove act on, outlined), and dragging one (or Alt-dragging, Ctrl
   // too on Linux, the waveform under it) moves it, with a marker where it
   // would go; pulled well above or below the timeline, it's carried out
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
@@ -81,10 +82,10 @@
     pieces?: LanePiece[];
     /** Stretches of an edit whose footage isn't downloaded yet, and how much of each (from its start) is. */
     pending?: { start: number; end: number; done: number }[];
+    /** The piece acted on (an edit's: the one at the playhead), outlined. */
     selectedPiece?: number | null;
     /** What's done with an edit's pieces in the lane. */
     onpiece?: {
-      select: (id: number) => void;
       move: (id: number, index: number) => void;
       /** Makes it `start`..`end` of its VOD (an edge was dragged). */
       resize: (id: number, start: number, end: number) => void;
@@ -468,13 +469,10 @@
         onpiece?.resize(done.id, done.start, done.end);
     }
     if (done?.kind === "piece") {
-      // A click on a band selects the piece and goes to it; a drag moves it.
+      // A click on a band goes to the piece; a drag moves it.
       const piece = pieces?.find((p) => p.id === done.id);
       if (done.moved && pieces?.findIndex((p) => p.id === done.id) !== done.to) onpiece?.move(done.id, done.to);
-      else if (!done.moved && piece) {
-        onpiece?.select(done.id);
-        onseek(piece.start);
-      }
+      else if (!done.moved && piece) onseek(piece.start);
     }
     if (done?.kind === "view" && !done.moved) {
       follow = true;
