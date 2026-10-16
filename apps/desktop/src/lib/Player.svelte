@@ -12,6 +12,7 @@
   import { DEFAULT_FPS, inFrame } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
+  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
@@ -216,19 +217,6 @@
   }
   const canExport = $derived(!!cuts.selection || cuts.list.length > 0);
 
-  const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
-  function nextSpeed() {
-    player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
-  }
-
-  function toggleMute() {
-    const sound = player?.volume;
-    if (!sound) return;
-    // Unmuting at no volume would stay silent: back to full.
-    if (sound.muted() && sound.get() === 0) sound.set(1);
-    else sound.setMuted(!sound.muted());
-  }
-
   // Full screen is the window's, with the player panel laid over the page:
   // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
   let fullscreen = $state(false);
@@ -282,7 +270,7 @@
       return;
     }
     if (key === "m" || key === "c") {
-      if (key === "m") toggleMute();
+      if (key === "m") toggleMute(player);
       else player?.captions?.toggle();
       e.preventDefault();
       return;
@@ -458,95 +446,50 @@
             onseek={seekTo}
           />
         {/if}
-        <div class="bar">
-          <button
-            class="control"
-            onclick={togglePlay}
-            aria-label={playing ? "Pause" : "Play"}
-            title={playing ? "Pause" : "Play"}
-          >
-            <Icon name={playing ? "pause" : "play"} size={16} />
-          </button>
-          <!-- The time takes the room of the longest it can be (the length, under it
-               unseen), so nothing beside it moves. -->
-          <span class="time"
-            ><span class="now"
-              ><span class="widest" aria-hidden="true">{formatTime(duration)}</span><span>{formatTime(now)}</span></span
-            >
-            / {formatTime(duration)}</span
-          >
-          <button
-            class="action clip"
-            class:picking={!!cuts.selection}
-            onclick={split}
-            title={cuts.selection
-              ? "Cut both ends of the selection (B)"
-              : "Cut here, between this frame and the one before; the stretches between cuts can be exported as clips (B)"}
-          >
-            <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
-          </button>
-          <button
-            class="action export"
-            bind:this={exportButton}
-            onclick={exportClip}
-            onmouseenter={() => (exportHover = true)}
-            onmouseleave={() => (exportHover = false)}
-            disabled={!canExport}
-            title="Export the lit-up stretch as a clip, to the clip bar (E). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
-          >
-            <Icon name="download" size={14} /> Export <kbd>E</kbd>
-          </button>
-          {#if cuts.error}
-            <span class="context error-text" title={cuts.error}>{cuts.error}</span>
-          {:else}
-            <span class="context muted" title={context}>{context}</span>
-          {/if}
-          {#if player?.volume && !player.ownControls}
+        <PlayerBar
+          {player}
+          {playing}
+          {now}
+          {duration}
+          {volume}
+          {muted}
+          {rate}
+          {captionsAvailable}
+          {captionsOn}
+          {fullscreen}
+          canFullscreen={!audioOnly}
+          ontoggleplay={togglePlay}
+          onfullscreen={setFullscreen}
+        >
+          {#snippet actions()}
             <button
-              class="control"
-              onclick={toggleMute}
-              aria-label={muted ? "Unmute" : "Mute"}
-              title={muted ? "Unmute (M)" : "Mute (M)"}
+              class="action clip"
+              class:picking={!!cuts.selection}
+              onclick={split}
+              title={cuts.selection
+                ? "Cut both ends of the selection (B)"
+                : "Cut here, between this frame and the one before; the stretches between cuts can be exported as clips (B)"}
             >
-              <Icon name={muted ? "volume-off" : "volume"} size={16} />
+              <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
             </button>
-            <input
-              class="volume"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={muted ? 0 : volume}
-              oninput={(e) => player?.volume?.set(Number(e.currentTarget.value))}
-              aria-label="Volume"
-            />
-          {/if}
-          {#if player?.rate && !player.ownControls}
-            <button class="control speed" onclick={nextSpeed} title="Playback speed">{rate}×</button>
-          {/if}
-          {#if captionsAvailable}
             <button
-              class="control"
-              class:on={captionsOn}
-              onclick={() => player?.captions?.toggle()}
-              aria-pressed={captionsOn}
-              aria-label="Captions"
-              title={captionsOn ? "Hide captions (C)" : "Show captions (C)"}
+              class="action export"
+              bind:this={exportButton}
+              onclick={exportClip}
+              onmouseenter={() => (exportHover = true)}
+              onmouseleave={() => (exportHover = false)}
+              disabled={!canExport}
+              title="Export the lit-up stretch as a clip, to the clip bar (E). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
             >
-              <Icon name="captions" size={16} />
+              <Icon name="download" size={14} /> Export <kbd>E</kbd>
             </button>
-          {/if}
-          {#if !audioOnly}
-            <button
-              class="control"
-              onclick={() => setFullscreen(!fullscreen)}
-              aria-label={fullscreen ? "Exit full screen" : "Full screen"}
-              title={fullscreen ? "Exit full screen (Esc)" : "Full screen (F)"}
-            >
-              <Icon name={fullscreen ? "minimize" : "maximize"} size={16} />
-            </button>
-          {/if}
-        </div>
+            {#if cuts.error}
+              <span class="context error-text" title={cuts.error}>{cuts.error}</span>
+            {:else}
+              <span class="context muted" title={context}>{context}</span>
+            {/if}
+          {/snippet}
+        </PlayerBar>
       </div>
       {#if clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length}
         <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
@@ -616,68 +559,6 @@
     padding: 8px 16px 2px;
   }
 
-  /* Not "row": that's the transcript's lines, styled app-wide. */
-  .bar {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    height: var(--controls-height);
-    margin: 0 -6px;
-  }
-
-  .control {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 30px;
-    height: 30px;
-    padding: 0 6px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: inherit;
-  }
-
-  .control:hover {
-    background: var(--surface-2);
-  }
-
-  .control.on {
-    color: var(--accent);
-  }
-
-  /* Split and Export: labelled, with their keys, but otherwise like the other controls. */
-  .action {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 30px;
-    padding: 0 6px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: inherit;
-    font-size: 12px;
-  }
-
-  .action:hover:not(:disabled) {
-    background: var(--surface-2);
-  }
-
-  .action:disabled {
-    opacity: 0.45;
-  }
-
-  .action kbd {
-    min-width: 0;
-    padding: 0 4px;
-    font-size: 10px;
-    line-height: 15px;
-    color: var(--muted);
-  }
-
   .clip :global(svg) {
     color: var(--cut);
   }
@@ -694,57 +575,6 @@
 
   .export :global(svg) {
     color: var(--accent);
-  }
-
-  .speed {
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    min-width: 42px;
-  }
-
-  .bar .time {
-    flex: none;
-    padding: 0 6px;
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  .now {
-    display: inline-grid;
-    justify-items: end;
-  }
-
-  .now > span {
-    grid-area: 1 / 1;
-  }
-
-  .widest {
-    visibility: hidden;
-  }
-
-  .context {
-    flex: 1;
-    min-width: 0;
-    padding: 0 8px;
-    font-size: 12px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .volume {
-    flex: none;
-    width: 64px;
-    accent-color: var(--accent);
-  }
-
-  @media (max-width: 560px) {
-    .volume,
-    .speed {
-      display: none;
-    }
   }
 
   .head {

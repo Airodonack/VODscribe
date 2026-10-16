@@ -247,6 +247,34 @@ impl Db {
         self.changed(edit_id)
     }
 
+    /// Splits piece `id` in two at `at` (its VOD's time), the second right
+    /// after the first; both keep what's struck. False if `at` isn't inside it.
+    pub fn split_piece(&self, id: i64, at: f64) -> Result<bool> {
+        let Some((edit_id, clip_id, start, end, struck)) = self
+            .conn
+            .query_row("SELECT * FROM edit_pieces WHERE id = ?1", [id], piece_row)
+            .optional()?
+            .map(|(_, edit_id, clip_id, start, end, struck)| (edit_id, clip_id, start, end, struck))
+        else {
+            return Ok(false);
+        };
+        if !(at > start + SLIVER && at < end - SLIVER) {
+            return Ok(false);
+        }
+        let index = self.edit_pieces(edit_id)?.iter().position(|p| p.id == id).map(|i| i + 1);
+        self.atomically(|db| {
+            db.conn.execute("UPDATE edit_pieces SET end = ?2 WHERE id = ?1", params![id, at])?;
+            db.conn.execute(
+                "INSERT INTO edit_pieces (edit_id, clip_id, position, start, end, struck) VALUES (?1, ?2, 0, ?3, ?4, ?5)",
+                params![edit_id, clip_id, at, end, struck],
+            )?;
+            let new = db.conn.last_insert_rowid();
+            db.place(edit_id, new, index)?;
+            db.changed(edit_id)
+        })?;
+        Ok(true)
+    }
+
     pub fn remove_piece(&self, id: i64) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         self.conn.execute("DELETE FROM edit_pieces WHERE id = ?1", [id])?;
@@ -344,6 +372,16 @@ mod tests {
         assert_eq!((p.start, p.end), (10.0, 18.0), "not before the clip");
         assert_eq!(p.spans(), [(10.0, 12.0), (14.0, 18.0)]);
         assert_eq!(db.edit(edit.id).unwrap().unwrap().length, 6.0 + 5.0);
+        // Split in two where it's asked, the second right after the first.
+        let before = db.edit_pieces(edit.id).unwrap();
+        assert!(db.split_piece(before[0].id, 16.0).unwrap());
+        assert!(!db.split_piece(before[0].id, 3.0).unwrap(), "not inside it");
+        let split = db.edit_pieces(edit.id).unwrap();
+        assert_eq!(split.len(), 3);
+        assert_eq!(((split[0].start, split[0].end), (split[1].start, split[1].end)), ((10.0, 16.0), (16.0, 18.0)));
+        assert_eq!(split[1].struck, [(12.0, 14.0)]);
+        db.remove_piece(split[1].id).unwrap();
+        db.set_piece_range(split[0].id, 10.0, 18.0).unwrap();
         // Rendered files say whether they're of the edit as it is.
         let version = db.edit_version(edit.id).unwrap();
         db.set_edit_render(edit.id, ClipStatus::Ready, Some("/v/e.mp4"), None, version).unwrap();

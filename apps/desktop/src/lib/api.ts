@@ -298,6 +298,7 @@ export const api = {
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   strikePiece: (id: number, struck: [number, number][]) => invoke<EditView>("strike_piece", { id, struck }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
+  splitPiece: (id: number, at: number) => invoke<EditView>("split_piece", { id, at }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),

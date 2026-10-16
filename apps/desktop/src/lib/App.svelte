@@ -330,7 +330,14 @@
       </div>
 
       {#if edits.openId !== null && !results && !searchError}
-        <EditView />
+        <EditView
+          backTo={playingVod?.title}
+          onback={() => {
+            const back = playing?.vodId ?? null;
+            edits.openEdit(null);
+            if (back !== null) selectedId = back;
+          }}
+        />
       {:else}
         {#if playing && playingVod}
           {#key playing.vodId}

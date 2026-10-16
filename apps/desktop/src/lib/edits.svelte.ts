@@ -139,6 +139,7 @@ class Edits {
   trim = (pieceId: number, start: number, end: number) => this.#change(api.trimPiece(pieceId, start, end));
   strike = (pieceId: number, struck: [number, number][]) => this.#change(api.strikePiece(pieceId, struck));
   removePiece = (pieceId: number) => this.#change(api.removePiece(pieceId));
+  split = (pieceId: number, at: number) => this.#change(api.splitPiece(pieceId, at));
 
   async render(id: number) {
     this.error = null;

@@ -252,6 +252,18 @@ pub(crate) async fn strike_piece(app: AppHandle, id: i64, struck: Vec<(f64, f64)
     changing(&app, edit, |db| db.set_piece_struck(id, &struck))
 }
 
+/// Splits piece `id` in two at `at` seconds of its VOD.
+#[tauri::command]
+pub(crate) async fn split_piece(app: AppHandle, id: i64, at: f64) -> CmdResult<EditView> {
+    let edit = edit_of(&app, id)?;
+    changing(&app, edit, |db| {
+        if !db.split_piece(id, at)? {
+            anyhow::bail!("That's not inside the piece.");
+        }
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;

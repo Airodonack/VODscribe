@@ -238,6 +238,7 @@ pub fn run() {
             edits::trim_piece,
             edits::strike_piece,
             edits::remove_piece,
+            edits::split_piece,
             edits::render_edit_now,
             edits::stop_render,
             edits::show_edit,

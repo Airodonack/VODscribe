@@ -15,6 +15,10 @@
   // each from its start to the next one's; highlights are stars on its top
   // edge. Hovering one shows its title or note, a click goes to it and selects
   // it (to move like a cut), and a double click opens its title to write.
+  //
+  // An edit's timeline (EditView.svelte) is the same without any of a VOD's
+  // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
+  // and the joins between pieces (`joins`) as plain lines.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
@@ -30,6 +34,8 @@
 
   let {
     vod,
+    waveform,
+    joins,
     duration,
     time,
     fps,
@@ -39,7 +45,12 @@
     onseek,
     onpause,
   }: {
-    vod: Vod;
+    /** The VOD shown, with its marks and clips; none for an edit. */
+    vod?: Vod;
+    /** An edit's waveform, given rather than fetched. */
+    waveform?: Uint8Array;
+    /** Where an edit's pieces meet. */
+    joins?: number[];
     duration: number;
     /** Where the player is now. */
     time: number;
@@ -63,11 +74,15 @@
   let viewStart = $state(0);
   let follow = true;
   let width = $state(0);
-  let levels = $state.raw<Uint8Array>(new Uint8Array());
+  let fetched = $state.raw<Uint8Array>(new Uint8Array());
+  const levels = $derived(waveform ?? fetched);
+  // A VOD's marks and clips, and what's done with them; an edit has none.
+  const marking = $derived(!!vod);
 
   onMount(() => {
+    if (!vod) return;
     api.peaks(vod.id).then(
-      (l) => (levels = l),
+      (l) => (fetched = l),
       (e) => console.error("waveform", e),
     );
   });
@@ -172,6 +187,13 @@
       return;
     }
     if (e.button !== 0) return;
+    if (!marking) {
+      drag = { kind: "scrub" };
+      follow = true;
+      onseek(timeAt(e.clientX));
+      e.preventDefault();
+      return;
+    }
     if (dragsOut(e)) {
       // With no cuts, there's only the whole VOD: not a clip.
       const range = cuts.list.length ? stretchAt(timeAt(e.clientX), duration) : undefined;
@@ -274,7 +296,7 @@
       HEIGHT,
     );
     try {
-      await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
+      if (vod) await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
     } finally {
       taking = null;
     }
@@ -390,7 +412,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="timeline" bind:this={root}>
-  {#if chapterSpans.length}
+  {#if marking && chapterSpans.length}
     <div class="chapters" bind:this={lane} onpointerdown={onDown}>
       {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
         {#if end > viewStart && start < viewStart + span}
@@ -435,14 +457,14 @@
     {#each ticks as t (t)}
       <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
     {/each}
-    {#if current && current.end > viewStart && current.start < viewStart + span}
+    {#if marking && current && current.end > viewStart && current.start < viewStart + span}
       <div
         class="between"
         style:left={pct(Math.max(current.start, viewStart))}
         style:width={widthPct(Math.max(current.start, viewStart), Math.min(current.end, viewStart + span))}
       ></div>
     {/if}
-    {#if cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
+    {#if marking && cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
       {@const picked = cuts.selection}
       <div
         class="selection"
@@ -472,7 +494,7 @@
         ></div>
       {/if}
     {/each}
-    {#each clips.list as clip (clip.id)}
+    {#each marking ? clips.list : [] as clip (clip.id)}
       {#if clip.end > viewStart && clip.start < viewStart + span}
         <!-- A clip made: an underline along its stretch. -->
         <span
@@ -486,7 +508,12 @@
     {#if time >= viewStart && time <= viewStart + span}
       <span class="playhead" style:left={pct(time)}></span>
     {/if}
-    {#each cuts.list as mark (mark.id)}
+    {#each joins ?? [] as join (join)}
+      {#if join > viewStart && join < viewStart + span}
+        <span class="join" style:left={pct(join)}></span>
+      {/if}
+    {/each}
+    {#each marking ? cuts.list : [] as mark (mark.id)}
       {@const at = drag?.kind === "mark" && drag.id === mark.id ? drag.at : mark.start}
       {#if at >= viewStart && at <= viewStart + span}
         <span
@@ -502,7 +529,7 @@
         </span>
       {/if}
     {/each}
-    {#each cuts.highlights as h (h.id)}
+    {#each marking ? cuts.highlights : [] as h (h.id)}
       {@const at = placed(h)}
       {#if at >= viewStart && at <= viewStart + span}
         <span
@@ -825,6 +852,16 @@
     top: 0;
     bottom: 0;
     background: color-mix(in srgb, var(--pick) 20%, transparent);
+    pointer-events: none;
+  }
+
+  /* Where an edit's pieces meet. */
+  .join {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--cut);
     pointer-events: none;
   }
 
