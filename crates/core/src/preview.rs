@@ -17,7 +17,7 @@ use crate::footage::Source;
 use crate::render::Piece;
 
 /// Changes when segments are made differently, so old ones aren't used.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 /// A segment of an edit's preview: where it plays in the edit, for how long,
 /// and its cache key (none while its clip's file isn't made).

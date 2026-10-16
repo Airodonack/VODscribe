@@ -20,6 +20,8 @@ const FPS = 30;
 const AHEAD = 60;
 /** Segments further than this behind the playhead, or `AHEAD` and this past it, leave the buffer. */
 const BEHIND = 30;
+/** The widest gap in the buffer the playhead is moved over when it stops at one (seconds). */
+const GAP = 0.5;
 
 type State = "missing" | "loading" | "in";
 
@@ -36,6 +38,11 @@ export class PreviewPlayer implements EmbeddedPlayer {
   /** Asked to add segments while adding others: it goes round again. */
   private again = false;
   private destroyed = false;
+  /** Checks, while playing, that the playhead moves (`unstick`). */
+  private watch: ReturnType<typeof setInterval>;
+  private lastTime = -1;
+  /** What went wrong, if the video or its buffer failed: said instead of waiting. */
+  private failed: string | null = null;
 
   /** Whether this webview can play preview segments that way. */
   static supported(codecs: string): boolean {
@@ -60,6 +67,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
       if (this.buffer) return;
       this.buffer = this.source.addSourceBuffer(this.codecs);
       this.buffer.mode = "segments";
+      this.buffer.addEventListener("error", () => this.fail("a segment couldn't be added"));
       this.pump();
     });
     v.addEventListener("waiting", () => this.onwaiting(this.waitingFor()));
@@ -68,6 +76,33 @@ export class PreviewPlayer implements EmbeddedPlayer {
     // As the playhead moves, what's near it comes in and what's far goes.
     v.addEventListener("seeking", () => this.pump());
     v.addEventListener("timeupdate", () => this.pump());
+    // An error stops the video for good: said, not left as a silent stop.
+    v.addEventListener("error", () => this.fail(v.error?.message || `error ${v.error?.code}`));
+    this.watch = setInterval(() => this.unstick(), 250);
+  }
+
+  private fail(why: string) {
+    console.error("preview", why, this.video.error);
+    this.failed = `The preview stopped (${why}). Open the edit again to restart it.`;
+    this.onwaiting(this.failed);
+  }
+
+  /** Moves the playhead over a small gap in the buffer it has stopped at
+   *  (between two segments, say, where a webview won't play across one). */
+  private unstick() {
+    const v = this.video;
+    const t = v.currentTime;
+    const stuck = !v.paused && !v.seeking && t === this.lastTime;
+    this.lastTime = t;
+    if (!stuck) return;
+    for (let i = 0; i < v.buffered.length; i++) {
+      const start = v.buffered.start(i);
+      if (start > t && start - t <= GAP) {
+        console.warn(`preview: over a gap at ${t.toFixed(3)} to ${start.toFixed(3)}`);
+        v.currentTime = start + 0.001;
+        return;
+      }
+    }
   }
 
   /** The segments to play now. Those in the buffer that are the same (key,
@@ -97,6 +132,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
 
   /** What the segment at the playhead waits for, if it isn't in the buffer yet. */
   private waitingFor(): string | null {
+    if (this.failed) return this.failed;
     const t = this.video.currentTime;
     const i = this.plan.findIndex((s) => t >= s.at && t < s.at + s.length);
     if (i < 0 || this.states[i] === "in") return null;
@@ -197,7 +233,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
         this.source.endOfStream();
       }
     } catch (e) {
-      console.error("preview", e);
+      this.fail(String(e));
     } finally {
       this.busy = false;
       this.onwaiting(this.waitingFor());
@@ -259,6 +295,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
 
   destroy() {
     this.destroyed = true;
+    clearInterval(this.watch);
     this.video.pause();
     URL.revokeObjectURL(this.video.src);
     this.video.removeAttribute("src");

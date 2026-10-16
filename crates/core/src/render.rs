@@ -190,6 +190,11 @@ fn encode_pieces(
             cmd.args(["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-bf", "0", "-g", "60"]);
             cmd.args(["-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0"]);
             cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]);
+            // Not shifted for the sound encoder's priming (as the muxer would, by a
+            // 21 ms AAC frame): the picture's frames then fall on the rate's steps,
+            // and the last one ends at the segment's end instead of past it, where
+            // the player's cut would drop it and leave a gap between segments.
+            cmd.args(["-avoid_negative_ts", "disabled"]);
             cmd.args(["-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4"]);
         }
     }
@@ -283,5 +288,17 @@ mod tests {
         let streams = String::from_utf8_lossy(&o.stdout).to_string();
         assert!(streams.contains("video,960,540,0.000000"), "{streams}");
         assert!(streams.lines().any(|l| l.starts_with("audio") && l.ends_with("0.000000")), "{streams}");
+
+        // Its frames on the preview's steps, the last ending at its end (none
+        // past it, for the player's cut to drop and leave a gap).
+        let o = std::process::Command::new(&ffprobe)
+            .args(["-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0"])
+            .arg(&seg)
+            .output()
+            .unwrap();
+        let times: Vec<f64> = String::from_utf8_lossy(&o.stdout).lines().map(|l| l.parse().unwrap()).collect();
+        let step = 1.0 / PREVIEW.fps;
+        assert!(times.iter().enumerate().all(|(i, t)| (t - i as f64 * step).abs() < 0.001), "{times:?}");
+        assert!((times.last().unwrap() + step - 2.0).abs() < 0.001, "{times:?}");
     }
 }
