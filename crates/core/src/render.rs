@@ -32,6 +32,10 @@ pub fn picture_of(sources: &[Media], given: Option<Picture>) -> Option<Picture> 
     Some(Picture { width: even(p.width), height: even(p.height), fps: if p.fps > 0.0 { p.fps } else { 30.0 } })
 }
 
+/// How far before a piece its file is read from: the seek there needs no
+/// decoding of what's before it, and the trim from there is to the frame.
+const READ_BEFORE: f64 = 1.0;
+
 /// Seconds a cut's time is moved earlier, so neither rounding nor a time base
 /// puts a frame that starts there before it (as in `clips::cut`).
 const EARLY: f64 = 0.0005;
@@ -137,20 +141,26 @@ fn encode_pieces(
     if let Some(p) = pieces.iter().find(|p| p.end.partial_cmp(&p.start) != Some(std::cmp::Ordering::Greater)) {
         bail!("A piece has to end after it starts ({} to {}).", p.start, p.end);
     }
-    // Each file once, as an input.
-    let mut sources: Vec<&Path> = Vec::new();
+    // Each file read once for what it holds; each piece an input of its own,
+    // read from a little before it, so a piece hours into a file starts at once.
+    let mut read: Vec<(&Path, Media)> = Vec::new();
+    let mut inputs = Vec::new();
+    let mut seeks = Vec::new();
     let mut at = Vec::new();
-    for p in pieces {
-        let i = sources.iter().position(|s| *s == p.source).unwrap_or_else(|| {
-            sources.push(&p.source);
-            sources.len() - 1
-        });
-        at.push((i, p.start, p.end));
+    for (i, p) in pieces.iter().enumerate() {
+        let media = match read.iter().find(|(s, _)| *s == p.source) {
+            Some((_, m)) => *m,
+            None => {
+                let m = local::media(ffmpeg, &p.source).with_context(|| format!("read {}", p.source.display()))?;
+                read.push((&p.source, m));
+                m
+            }
+        };
+        let seek = (p.start - READ_BEFORE).max(0.0);
+        inputs.push(media);
+        seeks.push(seek);
+        at.push((i, p.start - seek, p.end - seek));
     }
-    let inputs = sources
-        .iter()
-        .map(|s| local::media(ffmpeg, s).with_context(|| format!("read {}", s.display())))
-        .collect::<Result<Vec<_>>>()?;
     let picture = match quality {
         Quality::Final(given, _) => picture_of(&inputs, given),
         Quality::Preview => Some(PREVIEW),
@@ -164,8 +174,8 @@ fn encode_pieces(
     let mut cmd = tools::command(ffmpeg);
     tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE));
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error"]);
-    for s in &sources {
-        cmd.arg("-i").arg(s);
+    for (p, seek) in pieces.iter().zip(&seeks) {
+        cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(&p.source);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
     match quality {

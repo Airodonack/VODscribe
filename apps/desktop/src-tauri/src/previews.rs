@@ -1,6 +1,6 @@
 //! Edits' previews (`vodscribe_core::preview`): a queue that makes their
-//! segments, one at a time, the open edit's first and in order, and the
-//! commands the edit's player asks for them with. Segments are kept in the
+//! segments, one at a time, in order from the open edit's playhead to
+//! `AHEAD` past it, and the commands the edit's player asks for them with. Segments are kept in the
 //! app's data (`preview/`), the least recently used going past a cap.
 
 use std::collections::VecDeque;
@@ -22,6 +22,8 @@ use crate::{AppState, CmdResult, err};
 const KEEP_FOR: Duration = Duration::from_secs(14 * 24 * 3600);
 /// The most the segments may take; the least recently used go past it.
 const MAX_BYTES: u64 = 2 << 30;
+/// How far past the playhead segments are made (the page asks again as it moves).
+const AHEAD: f64 = 120.0;
 
 #[derive(Default)]
 pub(crate) struct Previews {
@@ -80,27 +82,25 @@ impl Previews {
         Ok(())
     }
 
-    /// Puts `planned`'s segments not made yet first in the queue, in order.
-    fn ask(&self, dir: &std::path::Path, planned: &[Planned]) {
-        let mut waiting = self.waiting.lock().unwrap();
-        let wanted: Vec<(String, Piece)> = planned
+    /// Makes, in order, `planned`'s segments not made yet from the one
+    /// playing at `at` to `AHEAD` past it, instead of what was asked before.
+    fn ask(&self, dir: &std::path::Path, planned: &[Planned], at: f64) {
+        let wanted = planned
             .iter()
+            .filter(|p| p.at + p.length > at && p.at < at + AHEAD)
             .filter_map(|p| Some((p.key.clone()?, p.source.clone()?)))
-            .filter(|(key, _)| !preview::path(dir, key).is_file())
-            .collect();
-        waiting.retain(|(key, _)| !wanted.iter().any(|(k, _)| k == key));
-        for job in wanted.into_iter().rev() {
-            waiting.push_front(job);
-        }
+            .filter(|(key, _)| !preview::path(dir, key).is_file());
+        *self.waiting.lock().unwrap() = wanted.collect();
         self.wake.notify_one();
     }
 }
 
-/// Edit `id`'s preview, segment by segment; those not made yet are made next,
-/// and each says when it is (the `preview-made` event). Footage not here yet
-/// is fetched (`footage`), after which the page asks again.
+/// Edit `id`'s preview, segment by segment; those not made yet from `at`
+/// (the playhead) on are made next, and each says when it is (the
+/// `preview-made` event). Footage not here yet is fetched (`footage`), after
+/// which the page asks again.
 #[tauri::command]
-pub(crate) async fn preview_plan(app: AppHandle, id: i64) -> CmdResult<Vec<Planned>> {
+pub(crate) async fn preview_plan(app: AppHandle, id: i64, at: f64) -> CmdResult<Vec<Planned>> {
     let handle = app.clone();
     let (planned, missing) = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
@@ -114,7 +114,7 @@ pub(crate) async fn preview_plan(app: AppHandle, id: i64) -> CmdResult<Vec<Plann
     .map_err(err)?;
     let state = app.state::<AppState>();
     state.footage.ask(missing);
-    state.previews.ask(&dir(&app), &planned);
+    state.previews.ask(&dir(&app), &planned, at);
     Ok(planned)
 }
 

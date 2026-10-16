@@ -321,8 +321,8 @@ export const api = {
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
-  /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made are made next. */
-  previewPlan: (id: number) => invoke<PreviewSegment[]>("preview_plan", { id }),
+  /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */
+  previewPlan: (id: number, at: number) => invoke<PreviewSegment[]>("preview_plan", { id, at }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
   previewSegment: (key: string) => invoke<ArrayBuffer>("preview_segment", { key }).then((b) => new Uint8Array(b)),
   /** What preview segments are in, as Media Source Extensions name it. */

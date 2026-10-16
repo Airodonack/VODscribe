@@ -1,8 +1,8 @@
 //! Previews of edits: each stretch that plays (a piece less what's struck,
-//! `edits::EditPiece::spans`) rendered on its own as a preview segment
-//! (`render::preview`), cached by what it's made of, so a change to an edit
-//! only makes the segments it changed. The page's player feeds them, in
-//! order, to one video.
+//! `edits::EditPiece::spans`), cut into segments of at most `LONGEST`, each
+//! rendered on its own (`render::preview`) and cached by what it's made of,
+//! so a change to an edit only makes the segments it changed. The page's
+//! player feeds those near its playhead, in order, to one video.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
@@ -32,23 +32,49 @@ pub struct Planned {
     pub source: Option<Piece>,
 }
 
-/// The segments `pieces` play as, in order, from the footage `find` gives.
+/// The longest a segment is, in seconds: a longer stretch is cut where its
+/// VOD's time is a multiple of it, so each is quick to make, and trimming a
+/// piece changes only the segments at its ends.
+pub const LONGEST: f64 = 10.0;
+/// The shortest a segment cut from a longer stretch is.
+const SHORTEST: f64 = 2.0;
+
+/// The segments `pieces` play as, in order, from the footage `find` gives
+/// (asked once for each stretch).
 pub fn plan(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>) -> Vec<Planned> {
     let mut out = Vec::new();
     let mut at = 0.0;
     for p in pieces {
         for (a, b) in p.spans() {
             let found = find(p.vod_id, a, b);
-            let section = found.as_ref().and_then(|f| f.section.clone());
-            let source = found.map(|f| Piece { source: f.path, start: a - f.offset, end: b - f.offset });
-            let key = source.as_ref().and_then(|piece| match &section {
-                Some(name) => Some(section_key(name, piece)),
-                None => key(piece),
-            });
-            out.push(Planned { key, at, length: b - a, piece_id: p.id, source });
-            at += b - a;
+            for (c, d) in cuts(a, b) {
+                let source =
+                    found.as_ref().map(|f| Piece { source: f.path.clone(), start: c - f.offset, end: d - f.offset });
+                let key = source.as_ref().and_then(|piece| match found.as_ref().and_then(|f| f.section.as_deref()) {
+                    Some(name) => Some(section_key(name, piece)),
+                    None => key(piece),
+                });
+                out.push(Planned { key, at, length: d - c, piece_id: p.id, source });
+                at += d - c;
+            }
         }
     }
+    out
+}
+
+/// `a`..`b` cut at each multiple of `LONGEST` in it, leaving none shorter than `SHORTEST`.
+fn cuts(a: f64, b: f64) -> Vec<(f64, f64)> {
+    let mut out = Vec::new();
+    let mut from = a;
+    let mut at = ((a / LONGEST).floor() + 1.0) * LONGEST;
+    while at < b - SHORTEST {
+        if at - from >= SHORTEST {
+            out.push((from, at));
+            from = at;
+        }
+        at += LONGEST;
+    }
+    out.push((from, b));
     out
 }
 
@@ -179,6 +205,15 @@ mod tests {
         fs::write(&section, b"all in").unwrap();
         assert!(from_section.is_some());
         assert_eq!(plan(&db.edit_pieces(edit).unwrap(), find)[2].key, from_section);
+    }
+
+    #[test]
+    fn long_stretches_are_cut_on_the_vods_tens() {
+        assert_eq!(cuts(3.0, 9.0), [(3.0, 9.0)]);
+        assert_eq!(cuts(3.0, 31.0), [(3.0, 10.0), (10.0, 20.0), (20.0, 31.0)], "none under 2 s");
+        assert_eq!(cuts(9.0, 25.0), [(9.0, 20.0), (20.0, 25.0)]);
+        assert_eq!(cuts(10.0, 20.0), [(10.0, 20.0)]);
+        assert_eq!(cuts(0.0, 3600.0).len(), 360);
     }
 
     #[test]

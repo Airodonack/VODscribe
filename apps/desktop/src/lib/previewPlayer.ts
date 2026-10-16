@@ -2,9 +2,11 @@
 // Media Source Extensions, the edit's preview segments one after another,
 // each placed at its time in the edit (crates/core preview.rs makes them, all
 // alike: the same size, rate and codecs). So it plays across pieces without a
-// gap, and every frame is the one the render will have. Segments are fetched
-// as they're made (`preview-made`); where one isn't yet (or its footage is
-// still downloading), the video waits there.
+// gap, and every frame is the one the render will have. Only those near the
+// playhead are in the buffer (`BEHIND`, `AHEAD`), so an edit hours long plays
+// like a short one. Segments are fetched as they're made (`preview-made`);
+// where one isn't yet (or its footage is still downloading), the video waits
+// there.
 // It's an EmbeddedPlayer like the others, so the same controls work it.
 
 import { api, type PreviewSegment } from "./api";
@@ -14,6 +16,10 @@ import { load, save } from "./stored";
 const VOLUME = "vodscribe.volume";
 /** Preview segments' frame rate (crates/core render.rs `PREVIEW`). */
 const FPS = 30;
+/** Seconds past the playhead whose segments are added to the buffer. */
+const AHEAD = 60;
+/** Segments further than this behind the playhead, or `AHEAD` and this past it, leave the buffer. */
+const BEHIND = 30;
 
 type State = "missing" | "loading" | "in";
 
@@ -59,18 +65,24 @@ export class PreviewPlayer implements EmbeddedPlayer {
     v.addEventListener("waiting", () => this.onwaiting(this.waitingFor()));
     v.addEventListener("playing", () => this.onwaiting(null));
     v.addEventListener("seeked", () => this.onwaiting(this.waitingFor()));
+    // As the playhead moves, what's near it comes in and what's far goes.
+    v.addEventListener("seeking", () => this.pump());
+    v.addEventListener("timeupdate", () => this.pump());
   }
 
-  /** The segments to play now. Unchanged ones are kept; otherwise the buffer starts over. */
+  /** The segments to play now. Those in the buffer that are the same (key,
+   *  time and length) stay in it; the rest leave it. */
   setPlan(plan: PreviewSegment[]) {
-    const same =
-      plan.length === this.plan.length &&
-      plan.every((s, i) => s.key === this.plan[i].key && s.at === this.plan[i].at && s.length === this.plan[i].length);
-    if (same) return;
+    const id = (s: PreviewSegment) => `${s.key}@${s.at}+${s.length}`;
+    const old = new Map(this.plan.map((s, i) => [id(s), this.states[i]]));
+    const states: State[] = plan.map((s) => (s.key && old.get(id(s)) === "in" ? "in" : "missing"));
+    const kept = new Set(plan.filter((_, i) => states[i] === "in").map(id));
+    const gone = this.plan.filter((s, i) => this.states[i] !== "missing" && !kept.has(id(s)));
+    if (!gone.length && plan.length === this.plan.length && plan.every((s, i) => id(s) === id(this.plan[i]))) return;
     this.plan = plan;
-    this.states = plan.map(() => "missing");
+    this.states = states;
     this.generation++;
-    this.restart();
+    this.restart(gone);
   }
 
   /** Segment `key` is made: added, if the plan has it. */
@@ -98,8 +110,8 @@ export class PreviewPlayer implements EmbeddedPlayer {
     return new Promise((done) => b.addEventListener("updateend", () => done(), { once: true }));
   }
 
-  /** Empties the buffer and adds the plan's segments again, from the start. */
-  private async restart() {
+  /** Takes segments `gone` out of the buffer, then adds what's missing near the playhead. */
+  private async restart(gone: PreviewSegment[]) {
     const mine = this.generation;
     const b = this.buffer;
     if (!b) return;
@@ -107,18 +119,24 @@ export class PreviewPlayer implements EmbeddedPlayer {
     if (mine !== this.generation || this.destroyed) return;
     this.busy = true;
     try {
-      await this.settled();
-      if (b.buffered.length) {
-        b.remove(0, Infinity);
-        await this.settled();
-      }
+      for (const s of gone) await this.removeRange(s.at, s.at + s.length);
     } finally {
       this.busy = false;
     }
     this.pump();
   }
 
-  /** Adds, in order, each segment not in yet whose file is made. */
+  /** Takes `from`..`to` out of the buffer. */
+  private async removeRange(from: number, to: number) {
+    const b = this.buffer;
+    if (!b) return;
+    await this.settled();
+    b.remove(from, to);
+    await this.settled();
+  }
+
+  /** Adds, in order, each segment near the playhead not in yet whose file is
+   *  made, after taking out those far from it. */
   private async pump() {
     const b = this.buffer;
     if (!b || this.destroyed) return;
@@ -130,10 +148,31 @@ export class PreviewPlayer implements EmbeddedPlayer {
     this.again = false;
     const mine = this.generation;
     try {
+      // As long as the edit, so a seek anywhere in it is kept.
+      if (this.source.readyState === "open" && !(Math.abs(this.source.duration - this.total()) < 1e-3)) {
+        await this.settled();
+        try {
+          this.source.duration = this.total();
+        } catch (e) {
+          // Shorter than what's in still (it's taken out as the plan changes): next time.
+          console.warn("preview duration", e);
+        }
+      }
+      const t = this.video.currentTime;
+      for (let i = 0; i < this.plan.length; i++) {
+        const seg = this.plan[i];
+        const far = seg.at + seg.length < t - BEHIND || seg.at > t + AHEAD + BEHIND;
+        if (this.states[i] === "in" && far) {
+          await this.removeRange(seg.at, seg.at + seg.length);
+          if (mine !== this.generation) return;
+          this.states[i] = "missing";
+        }
+      }
       for (let i = 0; i < this.plan.length; i++) {
         if (mine !== this.generation || this.destroyed) return;
         const seg = this.plan[i];
         if (this.states[i] === "in" || !seg.key) continue;
+        if (seg.at + seg.length < t - 1 || seg.at > t + AHEAD) continue;
         this.states[i] = "loading";
         const bytes = await api.previewSegment(seg.key).catch(() => new Uint8Array());
         if (mine !== this.generation) return;
@@ -151,9 +190,10 @@ export class PreviewPlayer implements EmbeddedPlayer {
         await this.settled();
         this.states[i] = "in";
       }
-      // The end, once there's a stream to end (ended with nothing in it, WebKit's player never plays).
-      const all = this.plan.length > 0 && this.states.every((s) => s === "in");
-      if (all && this.source.readyState === "open" && !b.updating) {
+      // The end, once the last segment is in (ended with nothing in it, WebKit's
+      // player never plays); adding to the buffer after opens it again.
+      const last = this.states.length > 0 && this.states[this.states.length - 1] === "in";
+      if (last && this.source.readyState === "open" && !b.updating) {
         this.source.endOfStream();
       }
     } catch (e) {

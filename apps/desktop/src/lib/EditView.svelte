@@ -135,11 +135,15 @@
     const f = edits.fetching.get(vodId);
     return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
   };
-  // How many of the edit's stretches the sections downloading reach: each
-  // one more can play already.
+  // How many tens of seconds (preview segments' longest, crates/core
+  // `preview::LONGEST`) of the sections downloading are in: each more may
+  // make one more segment playable.
   const reached = $derived(
-    segments.filter((s) => (usable(s.piece.vod_id) ?? -Infinity) >= s.vodFrom + s.length - 1e-3).length,
+    (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, usable(vodId) ?? 0) / 10), 0),
   );
+  // The minute the playhead is in: segments are made from its start on, so
+  // there's at least a minute's ahead of the playhead.
+  const minute = $derived(Math.floor(now / 60));
   // The note that the preview is lower quality than the render, until it's dismissed.
   const QUALITY_NOTE = "vodscribe.previewQualityNoted";
   let qualityNoted = $state(load(QUALITY_NOTE) === "1");
@@ -149,18 +153,20 @@
   }
 
   // The preview's plan, asked for again whenever the pieces change, footage
-  // of their VODs comes in, or what's downloading reaches more of them.
+  // of their VODs comes in, what's downloading reaches more of them, or the
+  // playhead moves to another minute.
   let planSeq = 0;
   let planned = $state.raw<PreviewSegment[]>([]);
   $effect(() => {
     void segments;
     void reached;
+    const from = minute * 60;
     for (const vodId of edit?.vod_ids ?? []) void edits.footage.get(vodId);
     const p = player;
     const id = edit?.id;
     if (!p || id === undefined) return;
     const mine = ++planSeq;
-    api.previewPlan(id).then(
+    api.previewPlan(id, from).then(
       (plan) => {
         if (mine !== planSeq) return;
         planned = plan;
@@ -264,17 +270,25 @@
   // Where the edit waits for footage still to download (a VOD from a site):
   // each such stretch of it, and how far into it the download has come (a
   // section comes in from its start on).
+  // (A stretch is planned as segments of up to 10 s; those next to each
+  // other in a piece are one here.)
   const pending = $derived.by(() => {
     const out: { start: number; end: number; done: number; pieceId: number }[] = [];
     for (const seg of planned) {
       if (seg.key) continue;
-      const s = segments.find((x) => Math.abs(x.at - seg.at) < 1e-6 && x.piece.id === seg.piece_id);
+      // The stretch it's of, and so where it is in the VOD.
+      const s = segments.find((x) => x.piece.id === seg.piece_id && x.at <= seg.at + 1e-6 && seg.at < x.at + x.length);
+      const vodFrom = s ? s.vodFrom + (seg.at - s.at) : 0;
       const f = s && edits.fetching.get(s.piece.vod_id);
       const upTo = s && usable(s.piece.vod_id);
       let done = 0;
-      if (s && f && upTo != null && f.from <= s.vodFrom + 1e-3 && f.to >= s.vodFrom + s.length - 1e-3)
-        done = Math.max(0, Math.min(seg.length, upTo - s.vodFrom));
-      out.push({ start: seg.at, end: seg.at + seg.length, done, pieceId: seg.piece_id });
+      if (s && f && upTo != null && f.from <= vodFrom + 1e-3 && f.to >= vodFrom + seg.length - 1e-3)
+        done = Math.max(0, Math.min(seg.length, upTo - vodFrom));
+      const last = out[out.length - 1];
+      if (last && last.pieceId === seg.piece_id && Math.abs(last.end - seg.at) < 1e-6) {
+        last.end = seg.at + seg.length;
+        last.done += done;
+      } else out.push({ start: seg.at, end: seg.at + seg.length, done, pieceId: seg.piece_id });
     }
     return out;
   });
