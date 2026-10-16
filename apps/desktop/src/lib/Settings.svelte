@@ -24,6 +24,7 @@
   let cacheBytes = $state<number | null>(null);
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
+  let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<DownloadProgress | null>(null);
@@ -287,6 +288,25 @@
       </button>
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
+    <p class="label">Clips and edits are made as</p>
+    <div class="themes" role="radiogroup" aria-label="Clip format">
+      {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
+        <button
+          role="radio"
+          aria-checked={clipFormat === format}
+          class:on={clipFormat === format}
+          onclick={() => appSettings.update({ clip_format: format })}
+        >
+          {name}
+        </button>
+      {/each}
+    </div>
+    <p class="muted hint">
+      {clipFormat === "mp4"
+        ? "H.264 and AAC: small, and read by nearly every video editor."
+        : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
+      Clips already made are made again when next dragged out.
+    </p>
     <p class="label">Repair VODscribe</p>
     <p class="muted hint">
       Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null

@@ -9,7 +9,9 @@
 // video editor or a folder: the file is made then (without a pill), and the
 // drag starts once it's there, if the button is still down.
 
-import { api, thumbUrl, type Clip, type Vod } from "./api";
+import { api, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
+import { settings } from "./appSettings.svelte";
+import { formatHint } from "./formatHint.svelte";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
@@ -40,6 +42,21 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   clearTimeout(forget);
   forget = setTimeout(() => (outgoing = null), 60_000);
   await api.dragClip(clip.id, image).catch((e) => console.error("drag", e));
+  formatHint.dragged();
+}
+
+/** The format clip `clip`'s file is in, by its extension. */
+const formatOf = (clip: Clip): ClipFormat => (/\.(mov|wav)$/i.test(clip.file_path ?? "") ? "mov" : "mp4");
+
+/** Clip `clip` (of VOD `vodId`) in the format clips are made in now: made
+ *  again if it's in the other, while `still()`. */
+async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promise<Clip | null> {
+  await settings.load();
+  const want = settings.value?.clip_format ?? "mp4";
+  if (formatOf(clip) === want) return clip;
+  if (clips.vodId === vodId) await clips.move(clip.id, clip.start, clip.end);
+  else if (!(await api.setClipRange(clip.id, clip.start, clip.end).catch(() => null))) return null;
+  return clips.ready(clip.id, still, vodId);
 }
 
 /** The stretch between marks that `time` is in, of a VOD `duration` seconds long. */
@@ -280,7 +297,8 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip, ho
       ghost.classList.add("making");
       try {
         const made = await make(false);
-        const ready = made && (await clips.ready(made.id, () => down, vod.id));
+        const made2 = made && (await clips.ready(made.id, () => down, vod.id));
+        const ready = made2 && (await inFormat(made2, vod.id, () => down));
         if (ready && down) {
           const image = await snapshot(await picture, wave, label);
           await dragOut(ready, image);

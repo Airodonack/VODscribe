@@ -28,6 +28,7 @@
   import Spinner from "./Spinner.svelte";
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
+  import FormatHint from "./FormatHint.svelte";
   import VodRow from "./VodRow.svelte";
   import EditRow from "./EditRow.svelte";
   import { clips } from "./clips.svelte";
@@ -213,6 +214,7 @@
   </div>
 
   <UpdateBanner />
+  <FormatHint />
 
   <form onsubmit={add}>
     <input

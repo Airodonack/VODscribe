@@ -44,7 +44,12 @@ export interface Settings {
   emote_providers: EmoteProvider[];
   /** The tallest video kept from sites without embeds; unset means 720. */
   video_height: number | null;
+  /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
+  clip_format: ClipFormat;
 }
+
+/** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
+export type ClipFormat = "mp4" | "mov";
 
 /** What this computer's webview plays, best first (crates/core `playable::Playable`). */
 export interface Playable {
@@ -302,6 +307,8 @@ export const api = {
     invoke<Mark>("add_mark", { vodId, time, kind, text }),
   setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
+  /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
+  resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** A clip's first frame, a PNG; empty if it has none. */
   clipThumb: (id: number) => invoke<ArrayBuffer>("clip_thumb", { id }).then((b) => new Uint8Array(b)),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made are made next. */
