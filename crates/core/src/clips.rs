@@ -90,7 +90,10 @@ pub fn extension(audio_only: bool, format: ClipFormat) -> &'static str {
 /// picture (`video`) or sound alone. H.264 has a keyframe a second, so editors
 /// seek it quickly; DNxHR is all keyframes.
 pub fn output_args(format: ClipFormat, video: bool) -> Vec<&'static str> {
-    let mut args = Vec::new();
+    // None of the source's tags or chapters: a phone's recording carries
+    // where it was shot, a recorder's the account's name, and the file
+    // is made to be shared.
+    let mut args = vec!["-map_metadata", "-1", "-map_chapters", "-1"];
     match format {
         ClipFormat::Mp4 => {
             if video {
@@ -324,6 +327,7 @@ mod tests {
         let ok = std::process::Command::new(&ffmpeg)
             .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=10"])
             .args(["-f", "lavfi", "-i", "sine=duration=10", "-c:v", "libvpx-vp9", "-g", "120", "-c:a", "libopus"])
+            .args(["-metadata", "artist=Someone", "-metadata", "location=+40.7128-074.0060/"])
             .arg(&source)
             .status()
             .unwrap();
@@ -346,6 +350,9 @@ mod tests {
         assert!((duration - 2.5).abs() < 0.05, "{duration}");
         let codecs = probe(&["-show_entries", "stream=codec_name", "-of", "csv=p=0"]);
         assert_eq!(codecs.split_whitespace().collect::<Vec<_>>(), ["h264", "aac"]);
+        // Nothing of where or by whom the source was recorded.
+        let tags = probe(&["-show_entries", "format_tags", "-of", "csv=p=0"]);
+        assert!(!tags.contains("Someone") && !tags.contains("40.7"), "{tags}");
         let keyframes = probe(&[
             "-select_streams",
             "v",

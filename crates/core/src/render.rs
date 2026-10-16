@@ -172,9 +172,13 @@ fn encode_pieces(
     let name = out.file_name().context("no file name for the video")?.to_string_lossy();
     let part = dir.join(format!(".{name}.part"));
     let mut cmd = tools::command(ffmpeg);
-    tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE));
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error"]);
+    // Each input limited on its own: what's allowed is set for the next
+    // input only, and a second piece's file would otherwise be read with
+    // any format and decoder ffmpeg has.
+    let decoders = format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE);
     for (p, seek) in pieces.iter().zip(&seeks) {
+        tools::ffmpeg_allow(&mut cmd, &decoders);
         cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(&p.source);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
@@ -253,7 +257,15 @@ mod tests {
             "a.mp4",
             &["-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=6", "-f", "lavfi", "-i", "sine=duration=6"],
         );
-        let b = make("b.mp4", &["-f", "lavfi", "-i", "testsrc2=size=200x200:rate=25:duration=4", "-an"]);
+        let b = make(
+            "b.mp4",
+            &["-f", "lavfi", "-i", "testsrc2=size=200x200:rate=25:duration=4", "-an", "-metadata", "artist=Someone"],
+        );
+        // A second piece in a format the app doesn't read is refused, as a first would be.
+        let nut = make("c.nut", &["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=25:duration=1", "-an"]);
+        let refused = [Piece { source: a.clone(), start: 0.0, end: 1.0 }, Piece { source: nut, start: 0.0, end: 0.5 }];
+        let bad = dir.join("out").join("bad.mp4");
+        assert!(render(&ffmpeg, &refused, None, ClipFormat::Mp4, &bad, &AtomicBool::new(false), |_| {}).is_err());
         let pieces = [
             Piece { source: a.clone(), start: 1.0, end: 2.5 },
             Piece { source: b, start: 0.0, end: 2.0 },
@@ -267,6 +279,8 @@ mod tests {
             let o = std::process::Command::new(&ffprobe).args(["-v", "error"]).args(args).arg(&out).output().unwrap();
             String::from_utf8_lossy(&o.stdout).trim().to_string()
         };
+        let tags = probe(&["-show_entries", "format_tags", "-of", "csv=p=0"]);
+        assert!(!tags.contains("Someone"), "{tags}");
         let streams = probe(&["-show_entries", "stream=codec_type,width,height,duration", "-of", "csv=p=0"]);
         let video: Vec<&str> = streams.lines().find(|l| l.starts_with("video")).unwrap().split(',').collect();
         assert_eq!(&video[1..3], ["320", "180"], "{streams}");
