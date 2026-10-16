@@ -3,8 +3,9 @@
   // player's place and laid out like it: the picture (previewPlayer.ts, its
   // pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
-  // where Split cuts the piece at the playhead in two, Remove takes the
-  // selected piece out (Delete, too), and Render makes the video. Its pieces
+  // where Split cuts the piece at the playhead in two and Remove takes the
+  // selected piece out (Delete, too); Render, at the top beside the
+  // rendered video, makes it. Its pieces
   // are bands in the timeline's lane (Scrubber.svelte): clicked to select,
   // dragged to move, their edges dragged to resize, Alt-dragged to carry out. Under it, the edit's
   // transcript, piece by piece: a click on a line strikes it out (the edit
@@ -456,7 +457,20 @@
           <Spinner size={12} /> Rendering{progress ? ` ${Math.round(progress * 100)}%` : "…"}
         </span>
         <button onclick={() => edits.stop(edit.id)}>Stop</button>
-      {:else if edit.status === "ready" && edit.file_path}
+      {:else}
+        <!-- The edit's output: made here, primary while there's something new to make. -->
+        {@const fresh = edit.status === "ready" && !!edit.file_path && edit.current}
+        <button
+          class="make"
+          class:primary={!fresh}
+          onclick={() => edits.render(edit.id)}
+          disabled={!segments.length}
+          title="Render the edit into one video, in Videos/VODscribe/Edits (E)"
+        >
+          {edit.status === "ready" ? "Render again" : "Render"} <kbd>E</kbd>
+        </button>
+      {/if}
+      {#if edit.status === "ready" && edit.file_path}
         <button
           class="out"
           onpointerdown={(e) => e.button === 0 && (outPress = { x: e.clientX, y: e.clientY })}
@@ -549,15 +563,6 @@
               : "Take the selected piece out of the edit; its VOD and clips aren't touched (Delete)"}
           >
             <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
-          </button>
-          <button
-            class="action render"
-            onclick={() => edit && edits.render(edit.id)}
-            disabled={!segments.length || edit?.status === "cutting"}
-            title="Render the edit into one video, in Videos/VODscribe/Edits (E)"
-          >
-            <Icon name="film" size={14} />
-            {edit?.status === "ready" ? "Render again" : "Render"} <kbd>E</kbd>
           </button>
           {#if edits.error}
             <span class="context error-text" title={edits.error}>{edits.error}</span>
@@ -786,8 +791,13 @@
     color: var(--cut);
   }
 
-  .render :global(svg) {
-    color: var(--accent);
+  .make kbd {
+    font: inherit;
+    font-size: 10px;
+    padding: 0 4px;
+    border: 1px solid currentColor;
+    border-radius: 3px;
+    opacity: 0.7;
   }
 
   /* Taking a piece out: red, softened towards the muted text so it reads
