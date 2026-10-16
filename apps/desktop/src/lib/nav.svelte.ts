@@ -52,6 +52,11 @@ class Nav {
     this.#now.set(k, { ...this.#now.get(k), ...part });
   }
 
+  /** How view `doc` was when last seen this session, if it was. */
+  lastSeen(doc: Doc | null): Left | null {
+    return this.#now.get(key(doc)) ?? null;
+  }
+
   /** How view `doc` was left, while it's being brought back by a step; else null. */
   bringBack(doc: Doc | null): Left | null {
     return this.#bringing?.key === key(doc) ? this.#bringing.left : null;

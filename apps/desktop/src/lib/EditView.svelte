@@ -174,7 +174,7 @@
         if (mine !== planSeq) return;
         planned = plan;
         p.setPlan(plan);
-        // Brought back (back or forward): where the playhead was, once there's a plan to seek in.
+        // Where its playhead was left (or its start), once there's a plan to seek in.
         if (bringTime !== null && plan.length) {
           p.seek(bringTime, false);
           now = bringTime;
@@ -184,14 +184,19 @@
       (e) => (edits.error = String(e)),
     );
   });
-  // Going back to this edit (nav.svelte.ts): its playhead and scroll as they were.
+  // Another edit opened in this view: the one playing pauses, and the new one
+  // starts where its playhead was left this session (nav.svelte.ts), paused;
+  // going back to it, its scroll as it was too.
   let bringTime: number | null = null;
   let lines = $state<HTMLDivElement>();
   $effect(() => {
     const id = edit?.id;
     if (id === undefined) return;
-    const left = untrack(() => nav.bringBack({ kind: "edit", id }));
-    bringTime = left?.time ?? null;
+    untrack(() => player?.playing() && player.togglePlay());
+    const doc = { kind: "edit" as const, id };
+    const left = untrack(() => nav.bringBack(doc));
+    // (An edit not seen yet starts at its start, not where the last one was.)
+    bringTime = left?.time ?? untrack(() => nav.lastSeen(doc))?.time ?? 0;
     const top = left?.scroll;
     if (top) {
       const until = performance.now() + 2000;
@@ -207,7 +212,8 @@
     const p = player;
     if (!p) return;
     now = p.time();
-    if (edit) nav.note({ kind: "edit", id: edit.id }, { time: now });
+    // Not while it still shows the edit before (till the seek to this one's playhead).
+    if (edit && bringTime === null) nav.note({ kind: "edit", id: edit.id }, { time: now });
     playing = p.playing();
     fps = p.fps() ?? DEFAULT_FPS;
     [volume, muted] = [p.volume.get(), p.volume.muted()];
