@@ -107,3 +107,12 @@ export function videoSize(height: number, hours = 1): string {
   const round = (gb: number) => String(gb < 10 ? Math.round(gb * 10) / 10 : Math.round(gb));
   return `${round(low)} to ${round(high)} GB`;
 }
+
+/**
+ * Chapters as YouTube reads them in a video's description: a line each, its
+ * start then its title ("0:00 Intro"). YouTube shows them only when the first
+ * is at 0:00, there are three or more, and each is at least 10 seconds long.
+ */
+export function chaptersText(chapters: { start: number; text: string | null }[]): string {
+  return chapters.map((c) => `${formatTime(c.start)} ${c.text ?? "Untitled chapter"}`).join("\n");
+}

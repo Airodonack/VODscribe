@@ -85,3 +85,21 @@ export function linesSpan(lines: Line[], first: number, last: number): { start: 
   const end = lines[b].end ?? lines[b + 1]?.start ?? lines[b].start + 5;
   return { start: lines[a].start, end };
 }
+
+/** About how tall a chapter's heading over a line is, in pixels, for rows not yet measured. */
+export const HEAD_HEIGHT = 44;
+
+/** The index of the line in `lines` (in time order, at least one) that starts nearest `time`. */
+export function nearestLine(lines: Line[], time: number): number {
+  let lo = 0;
+  let hi = lines.length - 1;
+  // The last line starting at or before `time` (or the first, if none does)...
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (lines[mid].start <= time) lo = mid;
+    else hi = mid - 1;
+  }
+  // ...or the one after it, if that starts nearer.
+  const next = lines[lo + 1];
+  return next && next.start - time < Math.abs(time - lines[lo].start) ? lo + 1 : lo;
+}

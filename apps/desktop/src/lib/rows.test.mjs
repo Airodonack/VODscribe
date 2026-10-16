@@ -1,7 +1,7 @@
 // The transcript view's rows (rows.ts): node --test apps/desktop/src/lib/rows.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FAR, buildRows, linesSpan } from "./rows.ts";
+import { FAR, buildRows, linesSpan, nearestLine } from "./rows.ts";
 
 /** @param {number} start @returns {import("./api").Line} */
 const line = (start) => ({ start, text: "hi" });
@@ -95,4 +95,15 @@ test("a run of lines spans from the first one's start to the last one's end", ()
   assert.deepEqual(linesSpan(lines, 1, 0), { start: 1, end: 4 }, "dragged upwards");
   assert.deepEqual(linesSpan(lines, 2, 2), { start: 6, end: 9 }, "no end: to the next line");
   assert.deepEqual(linesSpan(lines, 3, 3), { start: 9, end: 14 }, "the last, with no end");
+});
+
+test("a chapter's heading goes over the line starting nearest it", () => {
+  const lines = [0, 8, 15, 30].map(line);
+  assert.equal(nearestLine(lines, -3), 0);
+  assert.equal(nearestLine(lines, 2), 0);
+  assert.equal(nearestLine(lines, 12), 2);
+  assert.equal(nearestLine(lines, 11), 1);
+  assert.equal(nearestLine(lines, 15), 2);
+  assert.equal(nearestLine(lines, 99), 3);
+  assert.equal(nearestLine([line(5)], 0), 0);
 });

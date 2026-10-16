@@ -22,7 +22,8 @@
   import { cuts } from "./cuts.svelte";
   import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
-  import { formatTime, os } from "./platform";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+  import { chaptersText, formatTime, os } from "./platform";
   import Popover from "./Popover.svelte";
   import type { Mark } from "./api";
   import { theme } from "./theme.svelte";
@@ -351,12 +352,31 @@
     untrack(() => {
       draft = m.text ?? "";
       keep = true;
+      copied = null;
     });
     // Once it's drawn (a chapter just added makes the lane).
     queueMicrotask(() => {
       anchor = root?.querySelector<HTMLElement>(`[data-mark="${m.id}"]`) ?? bar;
     });
   });
+  // Every chapter, for a YouTube video's description, with the title being written.
+  let copied = $state<string | null>(null);
+  async function copyChapters() {
+    const id = editing?.id;
+    const chapters = cuts.chapters.map((c) => (c.id === id ? { ...c, text: draft.trim() || null } : c));
+    try {
+      await writeText(chaptersText(chapters));
+      copied =
+        chapters[0].start >= 1
+          ? "Copied. YouTube shows chapters only when the first is at 0:00."
+          : chapters.length < 3
+            ? "Copied. YouTube shows chapters only when there are three or more."
+            : "Copied, for the video's description on YouTube.";
+    } catch (e) {
+      copied = `Couldn't copy them: ${e}`;
+    }
+  }
+
   function closeEditor() {
     if (editing && keep) cuts.setText(editing.id, draft);
     cuts.editing = null;
@@ -533,6 +553,12 @@
       <p class="muted">
         {editing.kind === "chapter" ? "Chapter" : "Highlight"} at {formatTime(editing.start)} · Enter saves
       </p>
+      {#if editing.kind === "chapter"}
+        <button type="button" class="link accent" onclick={copyChapters}>
+          Copy {cuts.chapters.length === 1 ? "it" : `all ${cuts.chapters.length} chapters`} as YouTube chapters
+        </button>
+        {#if copied}<p class="muted">{copied}</p>{/if}
+      {/if}
     </form>
   {/if}
 </Popover>
@@ -638,6 +664,11 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .mark-editor .link {
+    align-self: flex-start;
+    font-size: 12px;
   }
 
   .mark-editor p {

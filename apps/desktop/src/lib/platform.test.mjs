@@ -1,7 +1,7 @@
 // Sizes and names from platform.ts: node --test apps/desktop/src/lib/platform.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_HEIGHT, HEIGHTS, hasSitePlayer, keepsVideo, videoSize } from "./platform.ts";
+import { DEFAULT_HEIGHT, chaptersText, HEIGHTS, hasSitePlayer, keepsVideo, videoSize } from "./platform.ts";
 
 test("a video's size is a range, in MB under a GB and GB above", () => {
   assert.equal(videoSize(1080), "3 to 5 GB");
@@ -22,4 +22,13 @@ test("sites with their own player don't keep their video; other sites do; files 
   for (const p of ["youtube", "twitch", "kick"]) assert.ok(hasSitePlayer(vod(p)) && !keepsVideo(vod(p)));
   assert.ok(keepsVideo(vod("rumble")) && !hasSitePlayer(vod("rumble")));
   assert.ok(!keepsVideo(vod("local")) && !hasSitePlayer(vod("local")));
+});
+
+test("chapters copy as YouTube reads them", () => {
+  const text = chaptersText([
+    { start: 0, text: "Intro" },
+    { start: 75.9, text: null },
+    { start: 3725, text: "The race" },
+  ]);
+  assert.equal(text, "0:00 Intro\n1:15 Untitled chapter\n1:02:05 The race");
 });

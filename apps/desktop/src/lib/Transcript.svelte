@@ -1,7 +1,7 @@
 <script lang="ts">
   import { flushSync, untrack } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
-  import { api, events, type ChatOverview, type ChatWindow, type Line, type Vod } from "./api";
+  import { api, events, type ChatOverview, type ChatWindow, type Line, type Mark, type Vod } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
   import TranscriptHead from "./TranscriptHead.svelte";
@@ -9,7 +9,7 @@
   import { eventColor } from "./events";
   import { Marks } from "./marks.svelte";
   import { formatTime } from "./platform";
-  import { buildRows, linesSpan, type Row } from "./rows";
+  import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
   import { cuts } from "./cuts.svelte";
   import { load, save } from "./stored";
 
@@ -86,6 +86,18 @@
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
   let rows = $derived(buildRows(lines, vod.duration ?? 0, showChat));
 
+  // Each chapter's title (cuts.svelte.ts) as a heading over the line that
+  // starts nearest its start.
+  const heads = $derived.by(() => {
+    const out = new Map<Line, Mark[]>();
+    if (cuts.vodId !== vod.id || !lines.length) return out;
+    for (const chapter of cuts.chapters) {
+      const line = lines[nearestLine(lines, chapter.start)];
+      out.set(line, [...(out.get(line) ?? []), chapter]);
+    }
+    return out;
+  });
+
   // Only the rows in and near the view are laid out; empty space of the right
   // height stands in for the rest, so a long VOD with a busy chat opens, toggles
   // chat and jumps around at once, however far it goes. Each row's height is
@@ -99,7 +111,8 @@
   let width = $state(0);
   function estimate(row: Row): number {
     const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
-    const text = row.line ? 10 + 22.5 * Math.max(1, Math.ceil((row.line.text.length * 7.8) / textWidth)) : 0;
+    const head = row.line ? (heads.get(row.line)?.length ?? 0) * HEAD_HEIGHT : 0;
+    const text = row.line ? head + 10 + 22.5 * Math.max(1, Math.ceil((row.line.text.length * 7.8) / textWidth)) : 0;
     if (!showChat) return text;
     const win = windows.get(row.key);
     if (!row.line && !win?.total) return 0;
@@ -662,6 +675,12 @@
         >
           {#if row.line}
             {@const line = row.line}
+            {#each heads.get(line) ?? [] as chapter (chapter.id)}
+              <button class="row chapter-head" onclick={() => play(chapter.start)}>
+                <span class="time">{formatTime(chapter.start)}</span>
+                <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
+              </button>
+            {/each}
             <button
               class="row"
               onpointerdown={(e) => onRowDown(e, range[0] + k)}
@@ -775,7 +794,25 @@
     cursor: ns-resize;
   }
 
-  .line.picked > :global(.row) {
+  /* A chapter's title, over its first line. */
+  .chapter-head {
+    grid-column: 1 / -1;
+    margin-top: 10px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .chapter-head .time {
+    color: var(--chapter);
+  }
+
+  .chapter-head .untitled {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--muted);
+  }
+
+  .line.picked > :global(.row:not(.chapter-head)) {
     background: color-mix(in srgb, var(--pick) 16%, transparent);
   }
 </style>
