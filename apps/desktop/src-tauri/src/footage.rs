@@ -1,12 +1,13 @@
 //! Footage for edits (`vodscribe_core::footage`): where a stretch of a VOD
 //! plays from, and a queue that downloads, one at a time, the sections of
 //! VODs from sites that edits need (into the app's data, `footage/`), telling
-//! the page how far each is (`footage-progress`) and when it's in (`footage`). Sections not used for a while, or
-//! past a cap, go when the app starts.
+//! the page how far each is (`footage-progress`) and when it's in (`footage`).
+//! What's in of the one downloading plays already (`footage::Growing`).
+//! Sections not used for a while, or past a cap, go when the app starts.
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,9 +15,9 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::Db;
-use vodscribe_core::footage::{self, Source};
+use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
-use vodscribe_core::{clips, fetch, preview, tools};
+use vodscribe_core::{clips, fetch, mkv, preview, tools};
 
 use crate::AppState;
 
@@ -24,7 +25,7 @@ use crate::AppState;
 const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 3600);
 /// The most the sections may take; the oldest go past it.
 const MAX_BYTES: u64 = 10 << 30;
-const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
 pub(crate) struct Footage {
@@ -33,16 +34,20 @@ pub(crate) struct Footage {
     wake: Condvar,
     /// Held while a section downloads, so the queue and a render don't fetch the same one.
     fetching: Mutex<()>,
+    /// The section downloading, and how far it's in.
+    growing: Mutex<Option<Growing>>,
 }
 
-/// How far a section's download is, 0..1: it comes in from its start on,
-/// so the page shows that much of it as in.
+/// How far a section's download is: to `usable` (the VOD's time) its footage
+/// can be used already; before that's known, `progress` (0..1) is a guess
+/// from what's downloaded.
 #[derive(Serialize, Clone)]
 struct Fetching {
     vod_id: i64,
     from: f64,
     to: f64,
     progress: f64,
+    usable: Option<f64>,
 }
 
 #[derive(Serialize, Clone)]
@@ -56,9 +61,13 @@ fn dir(app: &AppHandle) -> PathBuf {
     app.state::<AppState>().paths.local.join("footage")
 }
 
-/// The footage of `start`..`end` of VOD `vod_id`, if it's here.
+/// The footage of `start`..`end` of VOD `vod_id`, if it's here (or in already
+/// of the section downloading).
 pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) -> Option<Source> {
-    footage::find(db, &dir(app), vod_id, start, end).ok().flatten()
+    footage::find(db, &dir(app), vod_id, start, end)
+        .ok()
+        .flatten()
+        .or_else(|| app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.find(vod_id, start, end))
 }
 
 impl Footage {
@@ -124,31 +133,53 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
     let prefix = format!("footage-{name}");
     let info = work.join(format!("{prefix}.info.json"));
     let selector = clips::selector(Settings::load(&paths.settings()).video_height());
-    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg: &ffmpeg, start: from, end: to };
-    let tell = |progress: f64| {
-        let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress });
-    };
-    let mut last = Instant::now();
-    let report = |progress: f64| {
-        if last.elapsed() >= PROGRESS_EVERY {
-            last = Instant::now();
-            tell(progress);
-        }
-    };
-    tell(0.0);
-    let result = (|| {
-        fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-        let file =
-            fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
-        let ext = file.extension().map_or("mp4".into(), |e| e.to_string_lossy().into_owned());
-        let dir = dir(app);
-        std::fs::create_dir_all(&dir)?;
-        let out = dir.join(format!("{name}.{ext}"));
-        std::fs::rename(&file, &out).or_else(|_| std::fs::copy(&file, &out).map(|_| ()))?;
-        // Dated now, not when the site made it, for tidying.
-        preview::touch(&out);
-        anyhow::Ok(())
-    })();
+    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg: &ffmpeg, start: from, end: to, matroska: true };
+    // The download's guess of how far it is, as f64 bits; and when it ends.
+    let guess = AtomicU64::new(0);
+    let done = AtomicBool::new(false);
+    let result = std::thread::scope(|s| {
+        // What's whole of the file so far, read as it comes in: for the page, and to play.
+        s.spawn(|| {
+            let mut last = None;
+            loop {
+                let usable = part_file(&work, &prefix).and_then(|path| {
+                    let whole = from + mkv::written(&path)?;
+                    let growing = Growing { vod_id, from, to, path, whole };
+                    let usable = growing.usable();
+                    *state.footage.growing.lock().unwrap() = Some(growing);
+                    Some(usable)
+                });
+                let progress = f64::from_bits(guess.load(Ordering::Relaxed));
+                if last != Some((usable, progress)) {
+                    last = Some((usable, progress));
+                    let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress, usable });
+                }
+                let wait = Instant::now();
+                while wait.elapsed() < PROGRESS_EVERY {
+                    if done.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        });
+        let result = (|| {
+            fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
+            let report = |p: f64| guess.store(p.to_bits(), Ordering::Relaxed);
+            let file =
+                fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
+            let dir = dir(app);
+            std::fs::create_dir_all(&dir)?;
+            let out = dir.join(format!("{name}.mkv"));
+            std::fs::rename(&file, &out).or_else(|_| std::fs::copy(&file, &out).map(|_| ()))?;
+            // Dated now, not when the site made it, for tidying.
+            preview::touch(&out);
+            anyhow::Ok(())
+        })();
+        done.store(true, Ordering::Relaxed);
+        result
+    });
+    *state.footage.growing.lock().unwrap() = None;
     // Whatever was downloaded goes, done or not.
     if let Ok(entries) = std::fs::read_dir(&work) {
         for entry in entries.flatten() {
@@ -159,4 +190,12 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
         }
     }
     result
+}
+
+/// The file a section downloads into (yt-dlp's part file, under `prefix` in `work`), once it's begun.
+fn part_file(work: &std::path::Path, prefix: &str) -> Option<PathBuf> {
+    std::fs::read_dir(work).ok()?.flatten().map(|e| e.path()).find(|p| {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        name.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('.')) && name.ends_with(".part")
+    })
 }

@@ -253,7 +253,7 @@ fn download_and_cut(
     let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0) as i64, (end * 1000.0) as i64));
     let selector = clips::selector(Settings::load(&paths.settings()).video_height());
     let from = (start - LEAD_IN).max(0.0);
-    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end };
+    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end, matroska: false };
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
         let section =

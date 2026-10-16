@@ -17,6 +17,7 @@ pub mod gpu;
 pub mod kick;
 pub mod layers;
 pub mod local;
+pub mod mkv;
 pub mod model;
 pub mod net;
 pub mod peaks;

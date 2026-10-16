@@ -59,6 +59,11 @@ impl Previews {
                     }
                 };
                 let out = preview::path(&dir, &key);
+                // A section downloading moved once it was done: the page asks
+                // again then, for the same segment from where it is now.
+                if !out.is_file() && !piece.source.is_file() {
+                    continue;
+                }
                 let result = if out.is_file() {
                     Ok(())
                 } else {

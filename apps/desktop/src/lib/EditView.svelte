@@ -129,12 +129,23 @@
       stop?.();
     };
   });
-  // The preview's plan, asked for again whenever the pieces change, or
-  // footage of their VODs comes in.
+  // How far the section downloading of each VOD can be used already.
+  const usable = (vodId: number) => {
+    const f = edits.fetching.get(vodId);
+    return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
+  };
+  // How many of the edit's stretches the sections downloading reach: each
+  // one more can play already.
+  const reached = $derived(
+    segments.filter((s) => (usable(s.piece.vod_id) ?? -Infinity) >= s.vodFrom + s.length - 1e-3).length,
+  );
+  // The preview's plan, asked for again whenever the pieces change, footage
+  // of their VODs comes in, or what's downloading reaches more of them.
   let planSeq = 0;
   let planned = $state.raw<PreviewSegment[]>([]);
   $effect(() => {
     void segments;
+    void reached;
     for (const vodId of edit?.vod_ids ?? []) void edits.footage.get(vodId);
     const p = player;
     const id = edit?.id;
@@ -250,11 +261,10 @@
       if (seg.key) continue;
       const s = segments.find((x) => Math.abs(x.at - seg.at) < 1e-6 && x.piece.id === seg.piece_id);
       const f = s && edits.fetching.get(s.piece.vod_id);
+      const upTo = s && usable(s.piece.vod_id);
       let done = 0;
-      if (s && f && f.from <= s.vodFrom + 1e-3 && f.to >= s.vodFrom + s.length - 1e-3) {
-        const reached = f.from + f.progress * (f.to - f.from);
-        done = Math.max(0, Math.min(seg.length, reached - s.vodFrom));
-      }
+      if (s && f && upTo != null && f.from <= s.vodFrom + 1e-3 && f.to >= s.vodFrom + s.length - 1e-3)
+        done = Math.max(0, Math.min(seg.length, upTo - s.vodFrom));
       out.push({ start: seg.at, end: seg.at + seg.length, done, pieceId: seg.piece_id });
     }
     return out;

@@ -480,7 +480,7 @@ pub(crate) mod tests {
         let piece = db.edit_pieces(edit.id).unwrap()[0].id;
         db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
         // Footage of 5 s to 30 s of the VOD: its time 0 is the VOD's 5 s.
-        let found = |_: i64, _: f64, _: f64| Some(Source { path: "/f/x.mp4".into(), offset: 5.0 });
+        let found = |_: i64, _: f64, _: f64| Some(Source { path: "/f/x.mp4".into(), offset: 5.0, section: None });
         let pieces = render_pieces(&db.edit_pieces(edit.id).unwrap(), found).unwrap();
         assert_eq!(
             pieces,

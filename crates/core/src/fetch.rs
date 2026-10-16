@@ -148,12 +148,14 @@ pub enum Wanted<'a> {
         selector: &'a str,
         ffmpeg: &'a Path,
     },
-    /// Only `start`..`end` seconds of a video (a clip), in an MP4.
+    /// Only `start`..`end` seconds of a video (a clip), in an MP4; or, if
+    /// `matroska`, in Matroska, which can be read while it's written (`mkv`).
     Section {
         selector: &'a str,
         ffmpeg: &'a Path,
         start: f64,
         end: f64,
+        matroska: bool,
     },
 }
 
@@ -233,7 +235,10 @@ pub fn download(
         // the stream itself. It reads the stream at the URL given only: over
         // https (no local files, nor plain http), and only the formats and
         // codecs the app reads anyway, HLS playlists among them.
-        Wanted::Section { selector, ffmpeg, start, end } => cmd
+        // Matroska keeps what ffmpeg's seek reads before `start` (from the
+        // keyframe before it), where MP4 hides it, so the file's 0 wouldn't be
+        // `start`: it's dropped (`-ss 0` on the output).
+        Wanted::Section { selector, ffmpeg, start, end, matroska } => cmd
             .args(["-f", selector, "--merge-output-format", "mp4"])
             .arg("--download-sections")
             .arg(format!("*{start:.3}-{end:.3}"))
@@ -244,6 +249,7 @@ pub fn download(
                 tools::FFMPEG_AUDIO,
                 tools::FFMPEG_PICTURE
             ))
+            .args(if matroska { ["--downloader-args", "ffmpeg_o:-ss 0 -f matroska"].as_slice() } else { &[] })
             .arg("--postprocessor-args")
             .arg(ffmpeg_reading_files())
             .arg("--ffmpeg-location")

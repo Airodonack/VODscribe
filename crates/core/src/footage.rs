@@ -5,6 +5,7 @@
 //! stretch; then a section downloaded for edits into the footage folder
 //! (`section`), a little longer than asked, so a piece grown a little needs
 //! no new download. Sections are named for the VOD and the stretch they hold.
+//! One still downloading (`Growing`) plays as far as it's in.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,11 +25,52 @@ pub const KEYFRAME_GAP: f64 = 10.0;
 /// Leeway in matching a stretch to footage's ends: a millisecond.
 const EPSILON: f64 = 0.001;
 
+/// How far behind the end of what's whole of a section downloading its
+/// footage is used: its last frames may need ones after them to show.
+const BEHIND: f64 = 1.0;
+
 /// A file holding a stretch of a VOD: `offset` is the VOD's time at the file's 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Source {
     pub path: PathBuf,
     pub offset: f64,
+    /// A section's name (`section_stem`). It holds the same while it
+    /// downloads and after, so what's made of it is known by that, not by the file.
+    pub section: Option<String>,
+}
+
+/// A section of VOD `vod_id` (`from`..`to`) downloading into `path`, whole
+/// up to `whole` (the VOD's time), as `mkv::written` reads it.
+#[derive(Debug, Clone)]
+pub struct Growing {
+    pub vod_id: i64,
+    pub from: f64,
+    pub to: f64,
+    pub path: PathBuf,
+    pub whole: f64,
+}
+
+impl Growing {
+    /// How far its footage can be used: a little behind what's whole.
+    pub fn usable(&self) -> f64 {
+        (self.whole - BEHIND).min(self.to)
+    }
+
+    /// The footage of `start`..`end` of VOD `vod_id` in it, if that's in already.
+    pub fn find(&self, vod_id: i64, start: f64, end: f64) -> Option<Source> {
+        (vod_id == self.vod_id && picture_from(self.from) <= start + EPSILON && self.usable() >= end - EPSILON).then(
+            || Source {
+                path: self.path.clone(),
+                offset: self.from,
+                section: Some(section_stem(vod_id, self.from, self.to)),
+            },
+        )
+    }
+}
+
+/// Where a section from `from` has its picture from (`KEYFRAME_GAP`).
+fn picture_from(from: f64) -> f64 {
+    if from > 0.0 { from + KEYFRAME_GAP } else { 0.0 }
 }
 
 /// The footage of `start`..`end` of VOD `vod_id`, if there is some here.
@@ -36,7 +78,7 @@ pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Op
     let Some(vod) = db.vod(vod_id)? else { return Ok(None) };
     let own = vod.source_path.clone().or(db.media_path(vod_id)?);
     if let Some(path) = own.map(PathBuf::from).filter(|p| p.is_file()) {
-        return Ok(Some(Source { path, offset: 0.0 }));
+        return Ok(Some(Source { path, offset: 0.0, section: None }));
     }
     for clip in db.clips(vod_id)? {
         if clip.status == ClipStatus::Ready
@@ -44,16 +86,13 @@ pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Op
             && clip.end >= end - EPSILON
             && let Some(path) = clip.file_path.map(PathBuf::from).filter(|p| p.is_file())
         {
-            return Ok(Some(Source { path, offset: clip.start }));
+            return Ok(Some(Source { path, offset: clip.start, section: None }));
         }
     }
     Ok(sections(dir, vod_id)
         .into_iter()
-        .find(|(_, from, to)| {
-            let picture = if *from > 0.0 { from + KEYFRAME_GAP } else { 0.0 };
-            picture <= start + EPSILON && *to >= end - EPSILON
-        })
-        .map(|(path, from, _)| Source { path, offset: from }))
+        .find(|(_, from, to)| picture_from(*from) <= start + EPSILON && *to >= end - EPSILON)
+        .map(|(path, from, to)| Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) }))
 }
 
 /// The section to download for `start`..`end` of a VOD `duration` seconds
@@ -101,7 +140,10 @@ mod tests {
         let section = dir.join(format!("{}.mp4", section_stem(vod, 5.0, 50.0)));
         fs::write(&section, b"x").unwrap();
         fs::write(dir.join(format!("{}.mp4.part", section_stem(vod, 0.0, 600.0))), b"x").unwrap();
-        assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: section.clone(), offset: 5.0 }));
+        assert_eq!(
+            find(&db, &dir, vod, 20.0, 30.0).unwrap(),
+            Some(Source { path: section.clone(), offset: 5.0, section: Some(section_stem(vod, 5.0, 50.0)) })
+        );
         assert_eq!(find(&db, &dir, vod, 40.0, 60.0).unwrap(), None, "past its end (and not a part file)");
         assert_eq!(find(&db, &dir, vod, 10.0, 20.0).unwrap(), None, "maybe before its first keyframe");
 
@@ -110,13 +152,23 @@ mod tests {
         let file = dir.join("clip.mp4");
         fs::write(&file, b"x").unwrap();
         db.set_clip_file(clip.id, 8.0, 30.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
-        assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: file, offset: 8.0 }));
+        assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: file, offset: 8.0, section: None }));
 
         // The VOD's own file, before both.
         let own = dir.join("own.mp4");
         fs::write(&own, b"x").unwrap();
         db.set_media_path(vod, Some(&own.to_string_lossy())).unwrap();
-        assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: own, offset: 0.0 }));
+        assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: own, offset: 0.0, section: None }));
+    }
+
+    #[test]
+    fn a_section_downloading_plays_as_far_as_it_is_in() {
+        let g = Growing { vod_id: 3, from: 40.0, to: 120.0, path: "/w/s.part".into(), whole: 75.0 };
+        let found = g.find(3, 50.0, 74.0).unwrap();
+        assert_eq!((found.offset, found.section.as_deref()), (40.0, Some("3-40000-120000")));
+        assert!(g.find(3, 50.0, 74.5).is_none(), "too near what's whole");
+        assert!(g.find(3, 45.0, 60.0).is_none(), "maybe before its first keyframe");
+        assert!(g.find(4, 50.0, 60.0).is_none(), "another VOD");
     }
 
     #[test]

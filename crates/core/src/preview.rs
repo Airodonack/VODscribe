@@ -38,8 +38,13 @@ pub fn plan(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>
     let mut at = 0.0;
     for p in pieces {
         for (a, b) in p.spans() {
-            let source = find(p.vod_id, a, b).map(|f| Piece { source: f.path, start: a - f.offset, end: b - f.offset });
-            let key = source.as_ref().and_then(key);
+            let found = find(p.vod_id, a, b);
+            let section = found.as_ref().and_then(|f| f.section.clone());
+            let source = found.map(|f| Piece { source: f.path, start: a - f.offset, end: b - f.offset });
+            let key = source.as_ref().and_then(|piece| match &section {
+                Some(name) => Some(section_key(name, piece)),
+                None => key(piece),
+            });
             out.push(Planned { key, at, length: b - a, piece_id: p.id, source });
             at += b - a;
         }
@@ -60,7 +65,16 @@ pub fn key(piece: &Piece) -> Option<String> {
     Some(format!("{:016x}", h.finish()))
 }
 
-/// Whether `key` is one `key` makes (so it names nothing but a file in the cache).
+/// The key of a segment of a section (`footage::section_stem`): by its name,
+/// not its file, so it's the same while the section downloads and after.
+pub fn section_key(name: &str, piece: &Piece) -> String {
+    let mut h = DefaultHasher::new();
+    (VERSION, "section", name).hash(&mut h);
+    ((piece.start * 1e6).round() as i64, (piece.end * 1e6).round() as i64).hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// Whether `key` is one `key` or `section_key` makes (so it names nothing but a file in the cache).
 pub fn is_key(key: &str) -> bool {
     key.len() == 16 && key.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -155,6 +169,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         fs::write(&file, b"made again").unwrap();
         assert_ne!(plan(&db.edit_pieces(edit).unwrap(), find)[0].key, planned[0].key);
+
+        // A section's segments are known by its name: the same downloading and done.
+        fs::create_dir_all(&footage).unwrap();
+        let section = footage.join(format!("{}.mkv", crate::footage::section_stem(vod, 0.0, 64.0)));
+        fs::write(&section, b"in").unwrap();
+        let from_section = plan(&db.edit_pieces(edit).unwrap(), find)[2].key.clone();
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(&section, b"all in").unwrap();
+        assert!(from_section.is_some());
+        assert_eq!(plan(&db.edit_pieces(edit).unwrap(), find)[2].key, from_section);
     }
 
     #[test]

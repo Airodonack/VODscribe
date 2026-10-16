@@ -6,7 +6,7 @@
 // (ClipStrip.svelte). A piece is a copy: changing it changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
-import { api, events, type Edit, type EditPiece, type EditView } from "./api";
+import { api, events, type Edit, type EditPiece, type EditView, type Fetching } from "./api";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
 export type Stretch = { vodId: number; start: number; end: number; title?: string };
@@ -18,8 +18,8 @@ class Edits {
   pieces = $state.raw<EditPiece[]>([]);
   /** Counts each VOD's footage downloaded for edits, for what shows it. */
   footage = new SvelteMap<number, number>();
-  /** Each VOD's section downloading for edits: `from`..`to` of it, and how far, 0..1. */
-  fetching = new SvelteMap<number, { from: number; to: number; progress: number }>();
+  /** Each VOD's section downloading for edits, and how far it is. */
+  fetching = new SvelteMap<number, Fetching>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
@@ -44,7 +44,7 @@ class Edits {
     });
     events.editProgress((id, p) => this.progress.set(id, p));
     events.editRemoved((id) => this.#gone(id));
-    events.footageProgress(({ vod_id, from, to, progress }) => this.fetching.set(vod_id, { from, to, progress }));
+    events.footageProgress((f) => this.fetching.set(f.vod_id, f));
     events.footage(({ vod_id, error }) => {
       this.fetching.delete(vod_id);
       this.footage.set(vod_id, (this.footage.get(vod_id) ?? 0) + 1);

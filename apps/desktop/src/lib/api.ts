@@ -192,6 +192,17 @@ export interface PreviewSegment {
   piece_id: number;
 }
 
+/** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its
+ *  footage can be used up to `usable` (the VOD's time) already; before that's
+ *  known, `progress` (0..1) guesses how far it is. */
+export interface Fetching {
+  vod_id: number;
+  from: number;
+  to: number;
+  progress: number;
+  usable: number | null;
+}
+
 export interface EditView {
   edit: Edit;
   pieces: EditPiece[];
@@ -310,7 +321,6 @@ export const api = {
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
-  /** A clip's first frame, a PNG; empty if it has none. */
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made are made next. */
   previewPlan: (id: number) => invoke<PreviewSegment[]>("preview_plan", { id }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
@@ -451,9 +461,8 @@ export const events = {
   /** A preview segment made (or, with `error`, not). */
   previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
     listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),
-  /** How far a section (`from`..`to` of VOD `vod_id`) downloading for edits is, 0..1. */
-  footageProgress: (cb: (fetching: { vod_id: number; from: number; to: number; progress: number }) => void) =>
-    listen<{ vod_id: number; from: number; to: number; progress: number }>("footage-progress", (e) => cb(e.payload)),
+  /** How far a section downloading for edits is. */
+  footageProgress: (cb: (fetching: Fetching) => void) => listen<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits (or, with `error`, not). */
   footage: (cb: (fetched: { vod_id: number; error: string | null }) => void) =>
     listen<{ vod_id: number; error: string | null }>("footage", (e) => cb(e.payload)),
