@@ -5,9 +5,14 @@ version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "vodscribe-play"
+path = "src/bin/play.rs"
+
 [dependencies]
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+vodscribe-core = { path = "../core" }
 
 # Linux draws into a GL area in the window's GTK widget tree, under the page.
 [target.'cfg(target_os = "linux")'.dependencies]

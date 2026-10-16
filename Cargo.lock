@@ -6314,6 +6314,7 @@ dependencies = [
  "gtk",
  "libloading 0.8.9",
  "serde",
+ "vodscribe-core",
 ]
 
 [[package]]

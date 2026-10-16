@@ -1,27 +1,32 @@
-//! The native surface the picture is drawn on, under the page.
+//! The native surface the picture is drawn on.
 //!
-//! On Linux the window is a GTK widget tree with the page's WebKitWebView in
-//! a box. The view is moved into a GtkOverlay with a GtkGLArea, placed one of
-//! two ways (`Place`). Over the page, the area covers just the player's box,
-//! where the page can't draw: that works. Under the page, the area paints
-//! the page's background everywhere and the picture in the box, and the
-//! page is drawn transparent over it, so it could draw over the picture;
-//! but with the area in the tree GTK 3 draws the window through GL, and the
-//! transparent view then shows nothing at all (WebKitGTK 2.54 on X11, with
-//! and without its DMA-BUF renderer). It's kept to try elsewhere. Other
-//! platforms have no surface yet.
+//! On Linux it's a GtkGLArea (`Canvas`: a frame drawn into one with GL,
+//! letterboxed in its box). In the app's window, which is a GTK widget tree
+//! with the page's WebKitWebView in a box, the view is moved into a
+//! GtkOverlay with the area (`Screen`), placed one of two ways (`Place`).
+//! Over the page, the area covers just the player's box, where the page
+//! can't draw: that works. Under the page, the area paints the page's
+//! background everywhere and the picture in the box, and the page is drawn
+//! transparent over it, so it could draw over the picture; but with the area
+//! in the tree GTK 3 draws the window through GL, and the transparent view
+//! then shows nothing at all (WebKitGTK 2.54 on X11, with and without its
+//! DMA-BUF renderer). It's kept to try elsewhere. Other platforms have no
+//! surface yet.
 
 #[cfg(target_os = "linux")]
-pub use linux::{Place, Screen};
+pub use linux::{Canvas, Place, Screen};
 
 #[cfg(target_os = "linux")]
 mod linux {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::sync::{Arc, Mutex, OnceLock};
 
     use anyhow::{Context, Result, anyhow};
     use gtk::prelude::*;
 
     use crate::Layout;
+    use crate::decode::Frame;
 
     /// Where the surface is in the window's widget tree, relative to the page.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,12 +37,66 @@ mod linux {
         Over,
     }
 
-    /// The surface, to tell what to show.
+    /// A GL area a frame is drawn into: in the layout's box (`Place::Under`,
+    /// the rest painted the background) or filling it (`Place::Over`).
     #[derive(Clone)]
-    pub struct Screen {
+    pub struct Canvas {
         place: Place,
         layout: Arc<Mutex<Layout>>,
+        frame: Arc<Mutex<Option<Arc<Frame>>>>,
         area: glib::SendWeakRef<gtk::GLArea>,
+    }
+
+    impl Canvas {
+        /// Makes `area` a canvas.
+        pub fn new(area: &gtk::GLArea, place: Place) -> Canvas {
+            area.set_has_alpha(false);
+            area.set_auto_render(true);
+            let layout = Arc::new(Mutex::new(Layout::default()));
+            let frame = Arc::new(Mutex::new(None));
+            let painter: Rc<RefCell<Option<Painter>>> = Rc::default();
+            let (shown, picture, drawn) = (layout.clone(), frame.clone(), painter.clone());
+            area.connect_render(move |area, _| {
+                let mut painter = drawn.borrow_mut();
+                let painter = painter.get_or_insert_with(Painter::new);
+                painter.paint(area, *shown.lock().unwrap(), picture.lock().unwrap().as_deref(), place);
+                glib::Propagation::Stop
+            });
+            // Its GL objects die with the context.
+            area.connect_unrealize(move |_| *painter.borrow_mut() = None);
+            Canvas { place, layout, frame, area: glib::SendWeakRef::from(area.downgrade()) }
+        }
+
+        pub fn layout(&self) -> Layout {
+            *self.layout.lock().unwrap()
+        }
+
+        /// Shows `layout`, from any thread.
+        pub fn set_layout(&self, layout: Layout) {
+            *self.layout.lock().unwrap() = layout;
+            self.redraw();
+        }
+
+        /// Shows `frame` (none: black), from any thread.
+        pub fn show(&self, frame: Option<Arc<Frame>>) {
+            *self.frame.lock().unwrap() = frame;
+            self.redraw();
+        }
+
+        fn redraw(&self) {
+            let area = self.area.clone();
+            glib::MainContext::default().invoke(move || {
+                if let Some(area) = area.upgrade() {
+                    area.queue_render();
+                }
+            });
+        }
+    }
+
+    /// The surface in the app's window, to tell what to show.
+    #[derive(Clone)]
+    pub struct Screen {
+        canvas: Canvas,
         overlay: glib::SendWeakRef<gtk::Overlay>,
     }
 
@@ -49,14 +108,7 @@ mod linux {
             let parent =
                 page.parent().and_then(|p| p.downcast::<gtk::Box>().ok()).context("the page isn't in a box")?;
             let area = gtk::GLArea::new();
-            area.set_has_alpha(false);
-            area.set_auto_render(true);
-            let layout = Arc::new(Mutex::new(Layout::default()));
-            let shown = layout.clone();
-            area.connect_render(move |area, _| {
-                paint(area, *shown.lock().unwrap(), place);
-                glib::Propagation::Stop
-            });
+            let canvas = Canvas::new(&area, place);
             let overlay = gtk::Overlay::new();
             parent.remove(&page);
             match place {
@@ -68,7 +120,7 @@ mod linux {
                     overlay.add(&page);
                     overlay.add_overlay(&area);
                     overlay.set_overlay_pass_through(&area, true);
-                    let placed = layout.clone();
+                    let placed = canvas.layout.clone();
                     let box_ = area.clone();
                     // With no box open, a pixel outside the overlay (clipped
                     // away): hidden, or left to GTK's own placement (the whole
@@ -81,38 +133,32 @@ mod linux {
                             return Some(gtk::Allocation::new(-1, -1, 1, 1));
                         };
                         let (x, y) = (rect.x.round() as i32, rect.y.round() as i32);
-                        Some(gtk::Allocation::new(
-                            x,
-                            y,
-                            rect.width.round().max(1.0) as i32,
-                            rect.height.round().max(1.0) as i32,
-                        ))
+                        let (w, h) = (rect.width.round().max(1.0) as i32, rect.height.round().max(1.0) as i32);
+                        Some(gtk::Allocation::new(x, y, w, h))
                     });
                 }
             }
             parent.pack_start(&overlay, true, true, 0);
             overlay.show_all();
-            Ok(Screen {
-                place,
-                layout,
-                area: glib::SendWeakRef::from(area.downgrade()),
-                overlay: glib::SendWeakRef::from(overlay.downgrade()),
-            })
+            Ok(Screen { canvas, overlay: glib::SendWeakRef::from(overlay.downgrade()) })
         }
 
         /// Shows `layout`, from any thread.
         pub fn set(&self, layout: Layout) {
-            *self.layout.lock().unwrap() = layout;
-            let (area, overlay, place) = (self.area.clone(), self.overlay.clone(), self.place);
-            glib::MainContext::default().invoke(move || {
-                let Some(area) = area.upgrade() else { return };
-                if place == Place::Over
-                    && let Some(overlay) = overlay.upgrade()
-                {
-                    overlay.queue_resize();
-                }
-                area.queue_render();
-            });
+            self.canvas.set_layout(layout);
+            if self.canvas.place == Place::Over {
+                let overlay = self.overlay.clone();
+                glib::MainContext::default().invoke(move || {
+                    if let Some(overlay) = overlay.upgrade() {
+                        overlay.queue_resize();
+                    }
+                });
+            }
+        }
+
+        /// Shows `frame`, from any thread.
+        pub fn show(&self, frame: Option<Arc<Frame>>) {
+            self.canvas.show(frame);
         }
     }
 
@@ -142,31 +188,122 @@ mod linux {
         });
     }
 
-    /// Paints `layout` into `area`: under the page, its background and the
-    /// picture's box; over it, the area is the box.
-    fn paint(area: &gtk::GLArea, layout: Layout, place: Place) {
-        load_gl();
-        // Nothing to show yet: black, as a screen with no picture.
-        let picture = [0.0, 0.0, 0.0];
-        let [r, g, b] = if place == Place::Over { picture } else { layout.background };
-        let scale = area.scale_factor() as f64;
-        let height = area.allocated_height() as f64 * scale;
-        unsafe {
-            gl::Disable(gl::SCISSOR_TEST);
-            gl::ClearColor(r, g, b, 1.0);
-            gl::Clear(gl::COLOR_BUFFER_BIT);
-            if let (Place::Under, Some(rect)) = (place, layout.rect) {
-                // GL counts rows from the bottom; the page from the top.
-                let x = (rect.x * scale).round() as i32;
-                let y = (height - (rect.y + rect.height) * scale).round() as i32;
-                let w = (rect.width * scale).round() as i32;
-                let h = (rect.height * scale).round() as i32;
-                gl::Enable(gl::SCISSOR_TEST);
-                gl::Scissor(x, y, w, h);
-                let [r, g, b] = picture;
+    const VERTEX: &str = "#version 150
+uniform vec4 box_;  // left, bottom, right, top in clip space
+out vec2 uv;
+void main() {
+    vec2 corner = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+    uv = vec2(corner.x, 1.0 - corner.y);
+    gl_Position = vec4(mix(box_.xy, box_.zw, corner), 0.0, 1.0);
+}
+";
+
+    const FRAGMENT: &str = "#version 150
+uniform sampler2D picture;
+in vec2 uv;
+out vec4 color;
+void main() {
+    color = vec4(texture(picture, uv).rgb, 1.0);
+}
+";
+
+    /// The GL objects a canvas draws with, made in its context.
+    struct Painter {
+        program: u32,
+        box_: i32,
+        vao: u32,
+        texture: u32,
+        /// The frame in the texture, by address.
+        uploaded: Option<*const Frame>,
+    }
+
+    impl Painter {
+        fn new() -> Painter {
+            load_gl();
+            unsafe {
+                let program = gl::CreateProgram();
+                for (kind, source) in [(gl::VERTEX_SHADER, VERTEX), (gl::FRAGMENT_SHADER, FRAGMENT)] {
+                    let shader = gl::CreateShader(kind);
+                    let (ptr, len) = (source.as_ptr() as *const i8, source.len() as i32);
+                    gl::ShaderSource(shader, 1, &ptr, &len);
+                    gl::CompileShader(shader);
+                    gl::AttachShader(program, shader);
+                    gl::DeleteShader(shader);
+                }
+                gl::LinkProgram(program);
+                let box_ = gl::GetUniformLocation(program, c"box_".as_ptr());
+                let mut vao = 0;
+                gl::GenVertexArrays(1, &mut vao);
+                let mut texture = 0;
+                gl::GenTextures(1, &mut texture);
+                gl::BindTexture(gl::TEXTURE_2D, texture);
+                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+                gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+                Painter { program, box_, vao, texture, uploaded: None }
+            }
+        }
+
+        /// Paints `layout` into `area`: under the page, its background and the
+        /// picture's box; over it, the area is the box. `frame` goes in the
+        /// box, letterboxed, on black.
+        fn paint(&mut self, area: &gtk::GLArea, layout: Layout, frame: Option<&Frame>, place: Place) {
+            let scale = area.scale_factor() as f64;
+            let (width, height) = (area.allocated_width() as f64 * scale, area.allocated_height() as f64 * scale);
+            // The box, in pixels from the bottom left.
+            let (bx, by, bw, bh) = match (place, layout.rect) {
+                (Place::Under, Some(r)) => {
+                    (r.x * scale, height - (r.y + r.height) * scale, r.width * scale, r.height * scale)
+                }
+                (Place::Under, None) => (0.0, 0.0, 0.0, 0.0),
+                (Place::Over, _) => (0.0, 0.0, width, height),
+            };
+            let [r, g, b] = if place == Place::Over { [0.0; 3] } else { layout.background };
+            unsafe {
+                gl::Disable(gl::SCISSOR_TEST);
                 gl::ClearColor(r, g, b, 1.0);
                 gl::Clear(gl::COLOR_BUFFER_BIT);
+                if bw < 1.0 || bh < 1.0 {
+                    return;
+                }
+                gl::Enable(gl::SCISSOR_TEST);
+                gl::Scissor(bx.round() as i32, by.round() as i32, bw.round() as i32, bh.round() as i32);
+                gl::ClearColor(0.0, 0.0, 0.0, 1.0);
+                gl::Clear(gl::COLOR_BUFFER_BIT);
                 gl::Disable(gl::SCISSOR_TEST);
+                let Some(frame) = frame else { return };
+                gl::BindTexture(gl::TEXTURE_2D, self.texture);
+                if self.uploaded != Some(frame as *const Frame) {
+                    gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+                    gl::TexImage2D(
+                        gl::TEXTURE_2D,
+                        0,
+                        gl::RGB8 as i32,
+                        frame.width as i32,
+                        frame.height as i32,
+                        0,
+                        gl::RGB,
+                        gl::UNSIGNED_BYTE,
+                        frame.rgb.as_ptr() as *const _,
+                    );
+                    self.uploaded = Some(frame as *const Frame);
+                }
+                // The frame fitted in the box, centred.
+                let fit = (bw / frame.width as f64).min(bh / frame.height as f64);
+                let (fw, fh) = ((frame.width as f64 * fit).round(), (frame.height as f64 * fit).round());
+                let (fx, fy) = (bx + ((bw - fw) / 2.0).round(), by + ((bh - fh) / 2.0).round());
+                let clip = |v: f64, size: f64| (v / size * 2.0 - 1.0) as f32;
+                gl::UseProgram(self.program);
+                gl::Uniform4f(
+                    self.box_,
+                    clip(fx, width),
+                    clip(fy, height),
+                    clip(fx + fw, width),
+                    clip(fy + fh, height),
+                );
+                gl::BindVertexArray(self.vao);
+                gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
             }
         }
     }

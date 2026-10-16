@@ -206,9 +206,11 @@ fn encode_pieces(
 mod tests {
     use super::*;
 
-    const VIDEO: Media = Media { picture: Some(Picture { width: 1920, height: 1080, fps: 30.0 }), audio: true };
-    const SILENT: Media = Media { picture: Some(Picture { width: 1280, height: 720, fps: 60.0 }), audio: false };
-    const SOUND: Media = Media { picture: None, audio: true };
+    const VIDEO: Media =
+        Media { picture: Some(Picture { width: 1920, height: 1080, fps: 30.0 }), audio: true, duration: None };
+    const SILENT: Media =
+        Media { picture: Some(Picture { width: 1280, height: 720, fps: 60.0 }), audio: false, duration: None };
+    const SOUND: Media = Media { picture: None, audio: true, duration: None };
 
     #[test]
     fn the_graph_trims_fits_and_joins_each_piece() {

@@ -141,6 +141,8 @@ pub struct Media {
     /// Its first video stream's size and frame rate, if it has a picture.
     pub picture: Option<Picture>,
     pub audio: bool,
+    /// Its length in seconds, as ffmpeg reads it.
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -172,7 +174,7 @@ fn parse_media(details: &str) -> Media {
         })?;
         Some(Picture { width: size.0, height: size.1, fps: parse_frame_rate(line).unwrap_or(30.0) })
     });
-    Media { picture, audio: streams().any(|l| l.contains(": Audio: ")) }
+    Media { picture, audio: streams().any(|l| l.contains(": Audio: ")), duration: parse_streams(details).duration }
 }
 
 fn parse_frame_rate(details: &str) -> Option<f64> {
@@ -266,7 +268,7 @@ mod tests {
         assert!(media.audio);
         let cover = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 320 kb/s
   Stream #0:1: Video: mjpeg (Baseline), yuvj420p(pc, bt470bg/unknown/unknown), 600x600 [SAR 1:1 DAR 1:1], 90k tbr, 90k tbn (attached pic)";
-        assert_eq!(parse_media(cover), Media { picture: None, audio: true });
+        assert_eq!(parse_media(cover), Media { picture: None, audio: true, duration: None });
     }
 
     #[test]

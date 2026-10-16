@@ -2,14 +2,16 @@
 //! video differently on each platform and version (and wrongly on some);
 //! here the app does those itself, and the page keeps only the controls.
 //!
-//! The picture reaches the window through a native surface under the page
-//! (`present`): the page is drawn with a transparent background, leaves the
-//! player's box clear, and tells the surface where the box is. The surface
-//! paints the page's background colour everywhere else, so the window looks
-//! as it did.
+//! `decode` reads frames and sound with the ffmpeg the app ships, `clock`
+//! keeps the time and picks each frame's moment, and `present` draws it on a
+//! native surface in the window, which the page tells where its player's
+//! box is. `vodscribe-play` (src/bin) plays a file in a bare window with the
+//! same pieces.
 
 use serde::{Deserialize, Serialize};
 
+pub mod clock;
+pub mod decode;
 pub mod present;
 
 /// A box on the page, in CSS pixels from the window's top-left corner.
