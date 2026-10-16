@@ -5,6 +5,7 @@
 //! time between by its own clock.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -16,7 +17,12 @@ use crate::{AppState, CmdResult, err};
 
 /// The player open, if one is.
 #[derive(Default)]
-pub(crate) struct Native(Mutex<Option<Open>>);
+pub(crate) struct Native {
+    open: Mutex<Option<Open>>,
+    /// Counted up at every open and close, so an open that takes a while
+    /// (the file is probed first) finds out the page has moved on since.
+    asked: AtomicU64,
+}
 
 struct Open {
     player: Player,
@@ -53,12 +59,14 @@ pub(crate) fn player_available(app: AppHandle) -> bool {
 }
 
 /// Opens VOD `id`'s file at `at` seconds, playing if `play`; the one open
-/// for it already is kept, moved there.
+/// for it already is kept, moved there. Fails if the page closed the
+/// player, or opened another, while the file was being probed.
 #[tauri::command]
 pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) -> CmdResult<Opened> {
     let state = app.state::<AppState>();
+    let asked = state.player.asked.fetch_add(1, Ordering::AcqRel) + 1;
     let same = {
-        let open = state.player.0.lock().unwrap();
+        let open = state.player.open.lock().unwrap();
         open.as_ref().filter(|o| o.vod_id == id).map(|o| Opened {
             fps: o.player.fps(),
             duration: o.player.duration(),
@@ -81,7 +89,7 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
             let last = Mutex::new(Instant::now() - TOLD);
             player.on_frame(Box::new(move || {
                 let state = shown.state::<AppState>();
-                let open = state.player.0.lock().unwrap();
+                let open = state.player.open.lock().unwrap();
                 let Some(open) = open.as_ref() else { return };
                 if let Some(frame) = open.player.frame() {
                     crate::screen::show(&shown, Some(frame));
@@ -92,12 +100,18 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
                     let _ = told.emit("player-time", status(&open.player));
                 }
             }));
-            let mut open = state.player.0.lock().unwrap();
+            let mut open = state.player.open.lock().unwrap();
+            if state.player.asked.load(Ordering::Acquire) != asked {
+                return Err(CLOSED.into());
+            }
             *open = Some(Open { player, vod_id: id });
             opened
         }
     };
-    let open = state.player.0.lock().unwrap();
+    let open = state.player.open.lock().unwrap();
+    if state.player.asked.load(Ordering::Acquire) != asked {
+        return Err(CLOSED.into());
+    }
     if let Some(o) = open.as_ref() {
         o.player.seek(at);
         if play {
@@ -110,18 +124,22 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
     Ok(opened)
 }
 
+/// What an open that the page moved on from is told.
+pub(crate) const CLOSED: &str = "The player was closed while opening.";
+
 /// Closes the player, clearing the screen.
 #[tauri::command]
-pub(crate) fn player_close(app: AppHandle, state: State<'_, AppState>) {
-    let was = state.player.0.lock().unwrap().take();
-    drop(was);
+pub(crate) fn player_close(app: AppHandle) {
+    let state = app.state::<AppState>();
+    state.player.asked.fetch_add(1, Ordering::AcqRel);
+    drop(state.player.open.lock().unwrap().take());
     crate::screen::show(&app, None);
 }
 
 /// Does `f` with the player open, telling the page the time after.
 fn with(app: &AppHandle, f: impl FnOnce(&Player)) -> CmdResult<Status> {
     let state = app.state::<AppState>();
-    let open = state.player.0.lock().unwrap();
+    let open = state.player.open.lock().unwrap();
     let open = open.as_ref().ok_or("No player is open.")?;
     f(&open.player);
     let status = status(&open.player);
@@ -159,7 +177,7 @@ pub(crate) fn player_step(app: AppHandle, frames: i64) -> CmdResult<Status> {
 #[tauri::command]
 pub(crate) fn player_status(app: AppHandle) -> CmdResult<Status> {
     let state = app.state::<AppState>();
-    let open = state.player.0.lock().unwrap();
+    let open = state.player.open.lock().unwrap();
     let open = open.as_ref().ok_or("No player is open.")?;
     Ok(status(&open.player))
 }
@@ -167,7 +185,7 @@ pub(crate) fn player_status(app: AppHandle) -> CmdResult<Status> {
 /// The loudness, 0 to 1.
 #[tauri::command]
 pub(crate) fn player_set_volume(state: State<'_, AppState>, volume: f32) -> CmdResult<()> {
-    let open = state.player.0.lock().unwrap();
+    let open = state.player.open.lock().unwrap();
     open.as_ref().ok_or("No player is open.")?.player.set_volume(volume);
     Ok(())
 }

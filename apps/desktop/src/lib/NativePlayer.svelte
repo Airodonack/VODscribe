@@ -49,6 +49,9 @@
   let muted = $state(false);
   let destroyed = false;
   let unlisten: UnlistenFn | null = null;
+  // Until the player is open, what's asked of it is kept for then.
+  let ready = false;
+  let wanted: { time: number; play: boolean } | null = null;
 
   const cue = $derived(captionsOn ? cueAt(cues, time) : null);
 
@@ -59,12 +62,15 @@
     api.playerOpen(vod.id, start, autoplay).then(
       (opened) => {
         if (destroyed) return;
+        ready = true;
         fps = opened.fps;
         length = opened.duration ?? 0;
         api.playerSetVolume(muted ? 0 : volume).catch(() => {});
         onerror?.(null);
+        if (wanted) seek(wanted.time, wanted.play);
       },
-      (e) => onerror?.(String(e)),
+      // Closed before it opened (the page moved on): nothing to say.
+      (e) => !destroyed && onerror?.(String(e)),
     );
     api.captions(vod.id).then(
       (c) => (cues = c),
@@ -91,6 +97,10 @@
 
   export function seek(seconds: number, play: boolean) {
     tell({ time: seconds, playing: play });
+    if (!ready) {
+      wanted = { time: seconds, play };
+      return;
+    }
     api.playerSeek(seconds, play).then(tell, () => {});
   }
 
@@ -102,12 +112,16 @@
   export function togglePlay() {
     const playing = !told.playing;
     tell({ time: now(), playing });
+    if (!ready) {
+      wanted = { time: told.time, play: playing };
+      return;
+    }
     (playing ? api.playerPlay() : api.playerPause()).then(tell, () => {});
   }
 
   /** Steps `frames` frames on (back, if negative), paused. */
   export function step(frames: number) {
-    api.playerStep(frames).then(tell, () => {});
+    if (ready) api.playerStep(frames).then(tell, () => {});
   }
 
   export const sound = {
