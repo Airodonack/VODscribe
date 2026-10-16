@@ -25,6 +25,8 @@ class Edits {
   error = $state<string | null>(null);
   /** The edit whose link in a clip bar is hovered: what it plays of that VOD lights up. */
   hovered = $state<number | null>(null);
+  /** An edit whose source link was followed to VOD `vodId`: what it plays of it stays lit there. */
+  lit = $state<{ editId: number; vodId: number } | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
   #started = false;
@@ -113,6 +115,7 @@ class Edits {
 
   openEdit(id: number | null) {
     this.hovered = null;
+    this.lit = null;
     this.openId = id;
     this.pieces = [];
     this.error = null;

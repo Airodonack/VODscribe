@@ -299,6 +299,17 @@
   }
 
   // Selecting a VOD opens its player paused at the start, ready to jump around.
+  /** Out of the open edit to VOD `vodId`, paused at `time` (a source link was
+   *  followed); what the edit plays of it stays lit (`edits.lit`). */
+  function openVodAt(vodId: number, time: number) {
+    const lit = edits.lit;
+    edits.openEdit(null);
+    edits.lit = lit;
+    selectedId = vodId;
+    if (playing?.vodId === vodId) playing.at = { time, play: false };
+    else playing = { vodId, at: { time, play: false } };
+  }
+
   /** Back out of the open edit, to the VOD that was open before it. */
   function closeEdit() {
     const back = playing?.vodId ?? null;
@@ -307,6 +318,7 @@
   }
 
   function select(id: number | null) {
+    if (id !== edits.lit?.vodId) edits.lit = null;
     edits.openEdit(null);
     selectedId = id;
     if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time: 0, play: false } };
@@ -374,7 +386,7 @@
       </div>
 
       {#if edits.openId !== null && !results && !searchError}
-        <EditView vods={vodsById} />
+        <EditView vods={vodsById} onopenvod={openVodAt} />
       {:else}
         {#if playing && playingVod}
           {#key playing.vodId}

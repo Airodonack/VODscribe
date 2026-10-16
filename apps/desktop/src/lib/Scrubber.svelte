@@ -51,6 +51,8 @@
     loading?: number;
     /** What it is of its VOD (start, end), and the VOD's length if known: for resizing. */
     range?: { start: number; end: number; max: number | null };
+    /** Lit up: its VOD's source link is hovered. */
+    lit?: boolean;
   }
   import { theme } from "./theme.svelte";
 
@@ -612,6 +614,7 @@
             class:selected={selectedPiece === piece.id}
             class:lifted={!!moving}
             class:sizing={!!sizing}
+            class:lit={piece.lit}
             data-piece={piece.id}
             style:left={pct(Math.max(from, viewStart))}
             style:width={widthPct(Math.max(from, viewStart), Math.min(to, viewStart + span))}
@@ -899,6 +902,13 @@
     cursor: grab;
     padding-right: 2px;
     box-shadow: inset 2px 0 0 var(--cut);
+  }
+
+  .piece.lit {
+    background: var(--accent-soft);
+    box-shadow:
+      inset 2px 0 0 var(--cut),
+      inset 0 0 0 1px var(--accent);
   }
 
   .piece.lifted {

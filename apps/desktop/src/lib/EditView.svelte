@@ -30,9 +30,12 @@
 
   let {
     vods,
+    onopenvod,
   }: {
     /** The library's VODs, for carrying a piece out (its ghost, its VOD). */
     vods: Map<number, Vod>;
+    /** Opens VOD `vodId` with the playhead at `at` (a source link was followed). */
+    onopenvod: (vodId: number, at: number) => void;
   } = $props();
 
   const edit = $derived(edits.open);
@@ -253,6 +256,19 @@
     e.preventDefault();
   }
 
+  // The VODs the edit's pieces come from, in the order they're first used,
+  // each a link back to it; the one hovered lights up its pieces.
+  let hoveredSource = $state<number | null>(null);
+  const sources = $derived.by(() => {
+    const out: { vodId: number; title: string; count: number; first: number }[] = [];
+    for (const p of pieces) {
+      const known = out.find((s) => s.vodId === p.vod_id);
+      if (known) known.count++;
+      else out.push({ vodId: p.vod_id, title: vods.get(p.vod_id)?.title ?? p.vod_title, count: 1, first: p.start });
+    }
+    return out;
+  });
+
   // The pieces as bands in the timeline's lane: what each says, where it is.
   let selectedPiece = $state<number | null>(null);
   const lane = $derived.by(() => {
@@ -265,7 +281,8 @@
       const wanted = waits.reduce((sum, w) => sum + w.end - w.start, 0);
       const loading = wanted > 0 ? waits.reduce((sum, w) => sum + w.done, 0) / wanted : undefined;
       const range = { start: piece.start, end: piece.end, max: vods.get(piece.vod_id)?.duration ?? null };
-      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading, range });
+      const lit = hoveredSource === piece.vod_id;
+      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading, range, lit });
       at += length;
     }
     return out;
@@ -566,6 +583,30 @@
         {/snippet}
       </PlayerBar>
     </div>
+    {#if sources.length}
+      <div class="sources" aria-label="Where its pieces come from">
+        {#each sources as source (source.vodId)}
+          <button
+            class="source"
+            onclick={() => {
+              hoveredSource = null;
+              if (edit) edits.lit = { editId: edit.id, vodId: source.vodId };
+              onopenvod(source.vodId, source.first);
+            }}
+            onmouseenter={() => (hoveredSource = source.vodId)}
+            onmouseleave={() => hoveredSource === source.vodId && (hoveredSource = null)}
+            title="{source.count === 1
+              ? 'A piece comes'
+              : `${source.count} pieces come`} from “{source.title}”, lit up in the timeline · open it there"
+          >
+            <Icon name="play" size={12} />
+            <span class="name">{source.title}</span>
+            <span class="count muted">· {source.count} {source.count === 1 ? "piece" : "pieces"}</span>
+            <Icon name="external" size={11} />
+          </button>
+        {/each}
+      </div>
+    {/if}
   </section>
 
   <div class="lines">
@@ -763,6 +804,52 @@
 
   .split :global(svg) {
     color: var(--cut);
+  }
+
+  /* Links back to the VODs its pieces come from, as a VOD's clip bar links to its edits. */
+  .sources {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 40px;
+    padding: 6px 16px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .source {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 320px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
+    border-radius: 14px;
+    background: var(--accent-soft);
+    color: var(--text);
+    font-size: 12px;
+  }
+
+  .source :global(svg) {
+    flex: none;
+    color: var(--accent);
+  }
+
+  .source .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .source .count {
+    flex: none;
+  }
+
+  .source:hover {
+    border-style: solid;
   }
 
   .make :global(svg) {

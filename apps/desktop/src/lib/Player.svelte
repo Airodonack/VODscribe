@@ -173,14 +173,14 @@
   }
 
   // What a pill hovered in the clip bar (ClipStrip.svelte) is of this VOD: a
-  // clip's stretch, or what an edit plays of it.
-  const editRanges = $derived(
-    clips.hovered
-      ? [clips.hovered]
-      : edits.hovered === null
-        ? []
-        : (edits.list.find((e) => e.id === edits.hovered)?.ranges.filter((r) => r.vod_id === vod.id) ?? []),
-  );
+  // clip's stretch, or what an edit plays of it; or, with neither, what the
+  // edit whose source link led here plays of it.
+  const editRanges = $derived.by(() => {
+    if (clips.hovered) return [clips.hovered];
+    const lit = edits.lit?.vodId === vod.id ? edits.lit.editId : null;
+    const id = edits.hovered ?? lit;
+    return id === null ? [] : (edits.list.find((e) => e.id === id)?.ranges.filter((r) => r.vod_id === vod.id) ?? []);
+  });
 
   // Export: the stretch the playhead is in becomes a clip, a pill in the clip
   // bar. Hovering the button lights the stretch up on the timeline.
