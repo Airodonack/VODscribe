@@ -41,10 +41,10 @@ export interface PlayerStatus {
   playing: boolean;
 }
 
+/** What the app's own player says of what it opened: the frame rate at the start, if known, and the length. */
 export interface PlayerOpened {
-  fps: number;
-  duration: number | null;
-  audio: boolean;
+  fps: number | null;
+  duration: number;
 }
 
 export type ThemeChoice = "system" | "light" | "dark";

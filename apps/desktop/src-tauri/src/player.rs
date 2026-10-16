@@ -37,12 +37,16 @@ pub(crate) struct Status {
     playing: bool,
 }
 
-/// What a player opened says of its file.
+/// What a player opened says of what it plays.
 #[derive(Serialize, Clone, Copy)]
 pub(crate) struct Opened {
-    fps: f64,
-    duration: Option<f64>,
-    audio: bool,
+    /// The frame rate at the start, if known.
+    fps: Option<f64>,
+    duration: f64,
+}
+
+fn opened(player: &Player) -> Opened {
+    Opened { fps: player.fps_at(0.0), duration: player.duration() }
 }
 
 /// How often the page hears the time while playing, apart from changes.
@@ -67,11 +71,7 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
     let asked = state.player.asked.fetch_add(1, Ordering::AcqRel) + 1;
     let same = {
         let open = state.player.open.lock().unwrap();
-        open.as_ref().filter(|o| o.vod_id == id).map(|o| Opened {
-            fps: o.player.fps(),
-            duration: o.player.duration(),
-            audio: o.player.info().audio,
-        })
+        open.as_ref().filter(|o| o.vod_id == id).map(|o| opened(&o.player))
     };
     let opened = match same {
         Some(opened) => opened,
@@ -79,11 +79,11 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
             let file = crate::media::playable_file(&state.db.lock().unwrap(), id)
                 .ok_or_else(|| "This VOD has no file here to play.".to_string())?;
             let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| crate::worker::NO_FFMPEG.to_string())?;
-            let player = tauri::async_runtime::spawn_blocking(move || Player::open(&ffmpeg, file.as_ref()))
+            let player = tauri::async_runtime::spawn_blocking(move || Player::open_file(&ffmpeg, file.as_ref()))
                 .await
                 .map_err(err)?
                 .map_err(err)?;
-            let opened = Opened { fps: player.fps(), duration: player.duration(), audio: player.info().audio };
+            let opened = opened(&player);
             // Each frame due goes to the screen; the time to the page now and then.
             let (shown, told) = (app.clone(), app.clone());
             let last = Mutex::new(Instant::now() - TOLD);

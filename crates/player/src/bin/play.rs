@@ -2,8 +2,10 @@
 //! has it (decode, clock, present), to run and look at on its own.
 //!
 //!   vodscribe-play <file> [ffmpeg]
+//!   vodscribe-play --edl <file>:<start>-<end>[,<file>:<start>-<end>…] [ffmpeg]
 //!   vodscribe-play --bench <file> [ffmpeg]
 //!
+//! `--edl` plays parts of files one after another, as an edit does.
 //! ffmpeg is the one on PATH unless given. Space plays and pauses, the
 //! arrows seek 5 s, J and L 10 s, comma and period step a frame, Home goes
 //! to the start, Q quits. The title shows the time and frame; on quitting,
@@ -24,7 +26,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut args = std::env::args_os().skip(1).peekable();
     let bench = args.next_if(|a| a == "--bench").is_some();
-    let usage = || anyhow::anyhow!("usage: vodscribe-play [--bench] <file> [ffmpeg]");
+    let edl = args.next_if(|a| a == "--edl").is_some();
+    let usage = || anyhow::anyhow!("usage: vodscribe-play [--bench | --edl] <file> [ffmpeg]");
     let file = PathBuf::from(args.next().ok_or_else(usage)?);
     let ffmpeg = args.next().map(PathBuf::from).unwrap_or_else(|| "ffmpeg".into());
     if bench {
@@ -32,13 +35,18 @@ fn main() -> anyhow::Result<()> {
     }
 
     gtk::init()?;
-    let player = Arc::new(Player::open(&ffmpeg, &file)?);
+    let player = if edl {
+        Player::open(&ffmpeg, parse_edl(&file.to_string_lossy())?)?
+    } else {
+        Player::open_file(&ffmpeg, &file)?
+    };
+    // VODSCRIBE_PLAY_AT=<seconds> starts there, paused (for scripted checks).
+    if let Some(at) = std::env::var("VODSCRIBE_PLAY_AT").ok().and_then(|v| v.parse::<f64>().ok()) {
+        player.seek(at);
+    }
+    let player = Arc::new(player);
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
-    let picture = player.info().picture.unwrap();
-    window.set_default_size(
-        picture.width.min(1280) as i32,
-        (picture.height * picture.width.min(1280) / picture.width) as i32,
-    );
+    window.set_default_size(960, 540);
     let area = gtk::GLArea::new();
     let canvas = Canvas::new(&area, Place::Over);
     window.add(&area);
@@ -49,7 +57,7 @@ fn main() -> anyhow::Result<()> {
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     player.on_frame(Box::new(move |_| {
         shown.show(drawn.frame());
-        let (time, fps, playing) = (drawn.time(), drawn.fps(), drawn.playing());
+        let (time, fps, playing) = (drawn.time(), drawn.fps().unwrap_or(30.0), drawn.playing());
         let title = title.clone();
         let name = name.clone();
         glib::MainContext::default().invoke(move || {
@@ -93,6 +101,24 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Stretches written `file:start-end`, separated by commas.
+#[cfg(target_os = "linux")]
+fn parse_edl(text: &str) -> anyhow::Result<vodscribe_player::timeline::Timeline> {
+    use vodscribe_core::footage::Source;
+    use vodscribe_player::timeline::{Stretch, Timeline};
+    let mut stretches = Vec::new();
+    let mut at = 0.0;
+    for part in text.split(',') {
+        let (file, range) = part.rsplit_once(':').ok_or_else(|| anyhow::anyhow!("{part}: not file:start-end"))?;
+        let (start, end) = range.split_once('-').ok_or_else(|| anyhow::anyhow!("{part}: not file:start-end"))?;
+        let (start, end): (f64, f64) = (start.parse()?, end.parse()?);
+        let source = Some(Source { path: file.into(), offset: 0.0, section: None });
+        stretches.push(Stretch { at, length: end - start, piece_id: None, source, from: start });
+        at += end - start;
+    }
+    Ok(Timeline::from_stretches(stretches))
+}
+
 /// Measures the player on `file`, printing what it finds.
 #[cfg(target_os = "linux")]
 fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<()> {
@@ -127,7 +153,7 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
     drop(stream);
 
     // Seeks, paused: from asking to the frame there showing.
-    let player = Player::open(ffmpeg, file)?;
+    let player = Player::open_file(ffmpeg, file)?;
     let (tx, rx) = mpsc::channel();
     player.on_frame(Box::new(move |event| {
         let _ = tx.send(event);

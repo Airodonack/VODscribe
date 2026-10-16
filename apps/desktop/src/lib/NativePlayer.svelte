@@ -67,7 +67,7 @@
         if (destroyed) return;
         ready = true;
         fps = opened.fps;
-        length = opened.duration ?? 0;
+        length = opened.duration;
         api.playerSetVolume(muted ? 0 : volume).catch(() => {});
         onerror?.(null);
         if (wanted) seek(wanted.time, wanted.play);
