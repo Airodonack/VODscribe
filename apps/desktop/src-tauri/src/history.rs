@@ -188,7 +188,12 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let db = state.db.lock().unwrap();
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
-    restore(app, &db, entry.doc, if undo { &entry.before } else { &entry.after }).map_err(err)?;
+    if let Err(e) = restore(app, &db, entry.doc, if undo { &entry.before } else { &entry.after }) {
+        // Kept, to try again: it's the newest of its stack still.
+        let stacks = if undo { &mut s.undo } else { &mut s.redo };
+        stacks.entry(entry.doc).or_default().push(entry);
+        return Err(err(e));
+    }
     s.count += 1;
     entry.at = s.count;
     let done = Done { doc: entry.doc, label: entry.label };

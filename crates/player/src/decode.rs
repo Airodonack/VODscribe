@@ -36,6 +36,8 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<Info> {
 
 /// One decoded picture: `width` by `height` pixels of packed 8-bit RGB.
 pub struct Frame {
+    /// Its own number, unlike any other frame's this run: what's drawn is told apart by it.
+    pub id: u64,
     /// Seconds into the file at which it shows.
     pub pts: f64,
     pub width: u32,
@@ -53,6 +55,9 @@ pub const CHANNELS: usize = 2;
 
 /// Frames kept decoded ahead of being taken.
 const AHEAD: usize = 4;
+
+/// Frame numbers given out (`Frame::id`).
+static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A stream of frames or samples from one ffmpeg process.
 pub struct Stream<T> {
@@ -143,7 +148,8 @@ impl Video {
                 if out.read_exact(&mut rgb).is_err() {
                     return;
                 }
-                let frame = Frame { pts: from + n as f64 / fps, width, height, rgb };
+                let id = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let frame = Frame { id, pts: from + n as f64 / fps, width, height, rgb };
                 if tx.send(Arc::new(frame)).is_err() {
                     return;
                 }

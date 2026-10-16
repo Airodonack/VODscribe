@@ -213,8 +213,8 @@ void main() {
         box_: i32,
         vao: u32,
         texture: u32,
-        /// The frame in the texture, by address.
-        uploaded: Option<*const Frame>,
+        /// The frame in the texture (`Frame::id`).
+        uploaded: Option<u64>,
     }
 
     impl Painter {
@@ -274,7 +274,7 @@ void main() {
                 gl::Disable(gl::SCISSOR_TEST);
                 let Some(frame) = frame else { return };
                 gl::BindTexture(gl::TEXTURE_2D, self.texture);
-                if self.uploaded != Some(frame as *const Frame) {
+                if self.uploaded != Some(frame.id) {
                     gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
                     gl::TexImage2D(
                         gl::TEXTURE_2D,
@@ -287,7 +287,7 @@ void main() {
                         gl::UNSIGNED_BYTE,
                         frame.rgb.as_ptr() as *const _,
                     );
-                    self.uploaded = Some(frame as *const Frame);
+                    self.uploaded = Some(frame.id);
                 }
                 // The frame fitted in the box, centred.
                 let fit = (bw / frame.width as f64).min(bh / frame.height as f64);
