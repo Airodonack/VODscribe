@@ -93,7 +93,8 @@ fn start<T: Send + 'static>(
     let mut cmd = tools::command(ffmpeg);
     let mut child = tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE))
         .args(["-hide_banner", "-nostdin", "-loglevel", "error"])
-        .args(["-ss", &format!("{:.6}", from.max(0.0)), "-i"])
+        // Rotated phone videos are read as stored: the frame size stays the probe's.
+        .args(["-noautorotate", "-ss", &format!("{:.6}", from.max(0.0)), "-i"])
         .arg(path)
         .args(["-map", map])
         .args(output)
@@ -126,10 +127,14 @@ impl Video {
     }
 
     /// The frame showing at `from` seconds and every one after, at the
-    /// file's rate (`Picture::fps`; a variable-rate file is made constant).
+    /// file's rate (`Picture::fps`). ffmpeg is told that rate: left to
+    /// itself it makes a variable-rate file constant at the stream's nominal
+    /// rate, which can differ from the average the probe reads, and the
+    /// frames would be stamped at the wrong speed.
     pub fn from(&self, from: f64) -> Result<Stream<Arc<Frame>>> {
         let Picture { width, height, fps } = self.picture;
-        let output = ["-fps_mode", "cfr", "-f", "rawvideo", "-pix_fmt", "rgb24"];
+        let rate = format!("{fps}");
+        let output = ["-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "rgb24"];
         start(&self.ffmpeg, &self.path, from, "0:v:0", &output, move |mut out, tx| {
             let size = width as usize * height as usize * 3;
             let mut n = 0u64;
