@@ -135,6 +135,46 @@ pub fn frame_rate(ffmpeg: &Path, path: &Path) -> Result<Option<f64>> {
     Ok(parse_frame_rate(&String::from_utf8_lossy(&out.stderr)))
 }
 
+/// What's in a media file, for putting it in a sequence (render.rs).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Media {
+    /// Its first video stream's size and frame rate, if it has a picture.
+    pub picture: Option<Picture>,
+    pub audio: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Picture {
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+}
+
+/// What's in `path` (`Media`), as ffmpeg reads it.
+pub fn media(ffmpeg: &Path, path: &Path) -> Result<Media> {
+    let mut cmd = tools::command(ffmpeg);
+    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+        .args(["-hide_banner", "-nostdin", "-i"])
+        .arg(path)
+        .stdin(Stdio::null())
+        .output()
+        .context("run ffmpeg")?;
+    Ok(parse_media(&String::from_utf8_lossy(&out.stderr)))
+}
+
+fn parse_media(details: &str) -> Media {
+    let streams = || details.lines().filter(|l| l.trim_start().starts_with("Stream #"));
+    let picture = streams().find(|l| l.contains(": Video: ") && !l.contains("(attached pic)")).and_then(|line| {
+        // "…, yuv420p(tv, bt709), 1920x1080 [SAR 1:1 DAR 16:9], 6000 kb/s, 30 fps, …"
+        let size = line.split([',', ' ']).find_map(|w| {
+            let (w, h) = w.split_once('x')?;
+            Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)).filter(|(w, h)| *w > 0 && *h > 0)
+        })?;
+        Some(Picture { width: size.0, height: size.1, fps: parse_frame_rate(line).unwrap_or(30.0) })
+    });
+    Media { picture, audio: streams().any(|l| l.contains(": Audio: ")) }
+}
+
 fn parse_frame_rate(details: &str) -> Option<f64> {
     let line = details
         .lines()
@@ -216,6 +256,18 @@ pub fn source(path: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_what_a_file_holds() {
+        let details = "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 5000 kb/s, 29.97 fps, 29.97 tbr, 30k tbn (default)
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)";
+        let media = parse_media(details);
+        assert_eq!(media.picture, Some(Picture { width: 1920, height: 1080, fps: 29.97 }));
+        assert!(media.audio);
+        let cover = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 320 kb/s
+  Stream #0:1: Video: mjpeg (Baseline), yuvj420p(pc, bt470bg/unknown/unknown), 600x600 [SAR 1:1 DAR 1:1], 90k tbr, 90k tbn (attached pic)";
+        assert_eq!(parse_media(cover), Media { picture: None, audio: true });
+    }
 
     #[test]
     fn reads_codecs_from_ffmpegs_details() {

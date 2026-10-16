@@ -5,10 +5,9 @@
 //! through them. Clips are short, so encoding takes seconds.
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
 
@@ -147,7 +146,7 @@ pub fn cut(
     (start, end): (f64, f64),
     audio_only: bool,
     cancel: &AtomicBool,
-    mut progress: impl FnMut(f64),
+    progress: impl FnMut(f64),
 ) -> Result<()> {
     if end.partial_cmp(&start) != Some(std::cmp::Ordering::Greater) {
         bail!("A clip has to end after it starts.");
@@ -172,38 +171,8 @@ pub fn cut(
         cmd.args(["-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*1)"]);
     }
     cmd.args(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-f", "mp4", "-progress", "pipe:1", "-y"]);
-    let mut child = cmd
-        .arg(&part)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start ffmpeg")?;
-    let errors = tools::drain(child.stderr.take().unwrap());
-    let mut canceled = false;
-    for line in BufReader::new(child.stdout.take().unwrap()).lines() {
-        if cancel.load(Ordering::Relaxed) {
-            canceled = true;
-            tools::kill_tree(&mut child);
-            break;
-        }
-        if let Some(us) = line?.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
-            progress((us / 1e6 / length).clamp(0.0, 1.0));
-        }
-    }
-    let status = child.wait()?;
-    let errors = errors.join().unwrap_or_default();
-    if canceled {
-        let _ = fs::remove_file(&part);
-        return Err(crate::Canceled.into());
-    }
-    if !status.success() {
-        let _ = fs::remove_file(&part);
-        bail!("ffmpeg couldn't cut the clip: {}", tools::last_lines(errors.trim(), 3));
-    }
-    fs::rename(&part, out)?;
-    progress(1.0);
-    Ok(())
+    cmd.arg(&part);
+    tools::encode(cmd, &part, out, length, cancel, progress, "the clip")
 }
 
 /// A small picture of `clip`'s first frame, as a PNG at `out`, to show

@@ -295,6 +295,51 @@ pub fn command(program: &Path) -> Command {
     cmd
 }
 
+/// Runs ffmpeg's `cmd`, which writes to `part` and was given `-progress
+/// pipe:1`, reporting how far it is through `length` seconds of output from 0
+/// to 1; once done, `part` becomes `out` (so `out` is never half written).
+/// `what` says what it was making, for its error.
+pub fn encode(
+    mut cmd: Command,
+    part: &Path,
+    out: &Path,
+    length: f64,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(f64),
+    what: &str,
+) -> Result<()> {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::atomic::Ordering;
+    let mut child =
+        cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("start ffmpeg")?;
+    let errors = drain(child.stderr.take().context("ffmpeg's errors")?);
+    let mut canceled = false;
+    for line in BufReader::new(child.stdout.take().context("ffmpeg's progress")?).lines() {
+        if cancel.load(Ordering::Relaxed) {
+            canceled = true;
+            kill_tree(&mut child);
+            break;
+        }
+        if let Some(us) = line?.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<f64>().ok()) {
+            progress((us / 1e6 / length).clamp(0.0, 1.0));
+        }
+    }
+    let status = child.wait()?;
+    let errors = errors.join().unwrap_or_default();
+    if canceled {
+        let _ = fs::remove_file(part);
+        return Err(crate::Canceled.into());
+    }
+    if !status.success() {
+        let _ = fs::remove_file(part);
+        bail!("ffmpeg couldn't make {what}: {}", last_lines(errors.trim(), 3));
+    }
+    fs::rename(part, out)?;
+    progress(1.0);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
