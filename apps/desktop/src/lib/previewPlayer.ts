@@ -20,6 +20,9 @@ const FPS = 30;
 const AHEAD = 60;
 /** Segments further than this behind the playhead, or `AHEAD` and this past it, leave the buffer. */
 const BEHIND = 30;
+/** How much wider than a segment the append window is, each side (seconds):
+ *  under half a frame, so nothing of the segments either side gets in. */
+const WINDOW_SLACK = 0.005;
 /** The widest gap in the buffer the playhead is moved over when it stops at one (seconds). */
 const GAP = 0.5;
 
@@ -218,10 +221,14 @@ export class PreviewPlayer implements EmbeddedPlayer {
         }
         await this.settled();
         // Placed at its time, cut to its length (its sound runs a little over).
+        // The window opens a little early and closes a little late: its first
+        // and last frames are right on its ends, and a frame the webview's
+        // rounding put just outside would be dropped, and with the first, all
+        // up to the next keyframe (WebKitGTK 2.54 lost each segment's first 2 s).
         b.timestampOffset = seg.at;
         b.appendWindowStart = 0;
-        b.appendWindowEnd = seg.at + seg.length;
-        b.appendWindowStart = seg.at;
+        b.appendWindowEnd = seg.at + seg.length + WINDOW_SLACK;
+        b.appendWindowStart = Math.max(0, seg.at - WINDOW_SLACK);
         b.appendBuffer(bytes as BufferSource);
         await this.settled();
         this.states[i] = "in";
