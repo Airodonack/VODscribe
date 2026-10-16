@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The hint for DaVinci Resolve on Linux (formatHint.svelte.ts), at the top of the library.
-  import { formatHint } from "./formatHint.svelte";
+  // The hint for DaVinci Resolve on Linux (resolveHint.svelte.ts), at the top of the library.
+  import { formatHint } from "./resolveHint.svelte";
   import Icon from "./Icon.svelte";
 </script>
 

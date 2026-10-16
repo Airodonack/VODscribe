@@ -11,7 +11,7 @@
 
 import { api, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
-import { formatHint } from "./formatHint.svelte";
+import { formatHint } from "./resolveHint.svelte";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
