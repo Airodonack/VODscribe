@@ -1,7 +1,7 @@
 // The player's and timeline's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { columns, cueAt, frameStart, inFrame, nudge, stepTime, stretches, tickStep } from "./media.ts";
+import { columns, cueAt, playedSpans, frameStart, inFrame, nudge, stepTime, stretches, tickStep } from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
   const cues = [
@@ -83,4 +83,47 @@ test("a seek to a cut lands a quarter of a frame into the frame it starts, short
   assert.equal(inFrame(1, 4, 10), 1.0625);
   assert.equal(frameStart(inFrame(2 / 30, 30, 10), 30), 2 / 30);
   assert.equal(inFrame(10, 30, 10), 10);
+});
+
+test("an edit's piece plays what isn't struck, as the render does", () => {
+  assert.deepEqual(playedSpans(0, 10, []), [[0, 10]]);
+  assert.deepEqual(
+    playedSpans(0, 10, [
+      [6, 7],
+      [2, 3],
+    ]),
+    [
+      [0, 2],
+      [3, 6],
+      [7, 10],
+    ],
+  );
+  assert.deepEqual(
+    playedSpans(0, 10, [
+      [-1, 1],
+      [9, 12],
+    ]),
+    [[1, 9]],
+  );
+  assert.deepEqual(
+    playedSpans(0, 10, [
+      [2, 5],
+      [4, 6],
+    ]),
+    [
+      [0, 2],
+      [6, 10],
+    ],
+  );
+  assert.deepEqual(playedSpans(0, 10, [[0, 10]]), []);
+  assert.deepEqual(
+    playedSpans(0, 10, [
+      [2, 5],
+      [5.02, 8],
+    ]),
+    [
+      [0, 2],
+      [8, 10],
+    ],
+  );
 });

@@ -8,6 +8,8 @@
   import Settings from "./Settings.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
+  import EditView from "./EditView.svelte";
+  import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { load, save } from "./stored";
   import Popover from "./Popover.svelte";
@@ -214,6 +216,7 @@
   });
 
   function play(vodId: number, time: number) {
+    edits.openEdit(null);
     keepPressedInPlace();
     if (playing?.vodId === vodId) playing.at = { time, play: true };
     else playing = { vodId, at: { time, play: true } };
@@ -266,8 +269,15 @@
 
   // Selecting a VOD opens its player paused at the start, ready to jump around.
   function select(id: number | null) {
+    edits.openEdit(null);
     selectedId = id;
     if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time: 0, play: false } };
+  }
+
+  // An edit open takes the main area; a VOD picked (or played) takes it back.
+  function openEdit(id: number) {
+    selectedId = null;
+    edits.openEdit(id);
   }
 </script>
 
@@ -279,7 +289,7 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {vods} {selectedId} onselect={select} onreorder={reorder} />
+    <Library {vods} {selectedId} onselect={select} onreorder={reorder} onopenedit={openEdit} />
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
@@ -318,65 +328,68 @@
         </div>
       </div>
 
-      {#if playing && playingVod}
-        {#key playing.vodId}
-          <Player vod={playingVod} at={playing.at} />
-        {/key}
-      {/if}
-
-      <div class="body" bind:this={body}>
-        {#if searchError}
-          <p class="error-text pad">{searchError}</p>
-        {:else if results}
-          <Results
-            hits={results.hits}
-            truncated={results.truncated}
-            vods={vodsById}
-            query={query.trim()}
-            scope={scopeAll ? undefined : selected}
-            columns={sources.audio && sources.chat}
-            onplay={play}
-            onclearscope={() => (scopeAll = true)}
-          />
-        {:else if selected}
-          <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
-               heights, a seek in progress) shows under the next while it loads. -->
-          {#key selected.id}
-            <Transcript vod={selected} onplay={play} />
+      {#if edits.openId !== null && !results && !searchError}
+        <EditView />
+      {:else}
+        {#if playing && playingVod}
+          {#key playing.vodId}
+            <Player vod={playingVod} at={playing.at} />
           {/key}
-        {:else}
-          <div class="home">
-            <div class="empty">
-              <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
-              {#if vods.length === 0}
-                <h2>Your library is empty</h2>
-                <p class="muted">
-                  Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file here.
-                  VODscribe turns what's said into text on your computer, and then you can search every word.
-                </p>
-              {:else}
-                <h2>Search every VOD</h2>
-                <p class="muted">
-                  Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
-                  one on the left to read its transcript.
-                </p>
-                <p class="keys muted">
-                  <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause, <kbd>←</kbd><kbd
-                    >→</kbd
-                  >
-                  5 s,
-                  <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
-                </p>
-              {/if}
-            </div>
-            <button class="credit" onclick={() => openUrl(SUPPORT)}>
-              Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-                >Help cover hosting on Ko-fi</span
-              >
-            </button>
-          </div>
         {/if}
-      </div>
+
+        <div class="body" bind:this={body}>
+          {#if searchError}
+            <p class="error-text pad">{searchError}</p>
+          {:else if results}
+            <Results
+              hits={results.hits}
+              truncated={results.truncated}
+              vods={vodsById}
+              query={query.trim()}
+              scope={scopeAll ? undefined : selected}
+              columns={sources.audio && sources.chat}
+              onplay={play}
+              onclearscope={() => (scopeAll = true)}
+            />
+          {:else if selected}
+            <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
+               heights, a seek in progress) shows under the next while it loads. -->
+            {#key selected.id}
+              <Transcript vod={selected} onplay={play} />
+            {/key}
+          {:else}
+            <div class="home">
+              <div class="empty">
+                <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
+                {#if vods.length === 0}
+                  <h2>Your library is empty</h2>
+                  <p class="muted">
+                    Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file
+                    here. VODscribe turns what's said into text on your computer, and then you can search every word.
+                  </p>
+                {:else}
+                  <h2>Search every VOD</h2>
+                  <p class="muted">
+                    Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
+                    one on the left to read its transcript.
+                  </p>
+                  <p class="keys muted">
+                    <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause,
+                    <kbd>←</kbd><kbd>→</kbd>
+                    5 s,
+                    <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
+                  </p>
+                {/if}
+              </div>
+              <button class="credit" onclick={() => openUrl(SUPPORT)}>
+                Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
+                  >Help cover hosting on Ko-fi</span
+                >
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </svelte:element>
   </div>
 {/if}

@@ -89,3 +89,21 @@ export function stretches(cuts: number[], duration: number): { start: number; en
     if (edges[i + 1] > edges[i]) out.push({ start: edges[i], end: edges[i + 1] });
   return out;
 }
+
+/**
+ * What plays of `start`..`end` with the `struck` stretches jumped over (as an
+ * edit's piece plays; crates/core edits.rs `spans`): what's left, in order,
+ * less slivers under 0.04 s.
+ */
+export function playedSpans(start: number, end: number, struck: [number, number][]): [number, number][] {
+  const cuts = struck.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+  const out: [number, number][] = [];
+  let at = start;
+  for (const [a, b] of cuts) {
+    if (a > at) out.push([at, Math.min(a, end)]);
+    at = Math.max(at, b);
+    if (at >= end) break;
+  }
+  if (at < end) out.push([at, end]);
+  return out.filter(([a, b]) => b - a >= 0.04);
+}

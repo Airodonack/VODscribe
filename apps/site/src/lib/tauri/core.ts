@@ -82,6 +82,8 @@ const commands: Record<string, (args: Args) => unknown> = {
     if (mark) mark.text = text as string | null;
   },
   delete_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
+  // Edits are made in the app only.
+  list_edits: () => [],
   // No waveforms: their audio isn't here.
   peaks: () => new ArrayBuffer(0),
 };

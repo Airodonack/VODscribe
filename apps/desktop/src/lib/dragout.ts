@@ -1,9 +1,10 @@
 // Carrying a stretch of the timeline (or a clip's pill) somewhere: an
 // Alt-drag on the timeline (Option on a Mac, Ctrl too on Linux), a press held
 // on the picture, or a pill dragged from the clip bar. Inside the window it's
-// the app's own drag, showing the stretch's frame over its waveform, and the
-// one place it lands is the clip bar (the editor's, when there is one);
-// dropped anywhere else in the window, nothing happens. Taken past the
+// the app's own drag, showing the stretch's frame over its waveform. It lands
+// on the clip bar (kept as a clip) or on an edit in the sidebar's list (kept as
+// a clip, and put at the end of that edit); dropped anywhere else in the
+// window, nothing happens. Taken past the
 // window's edge, it becomes the system's drag of the clip's file, into a
 // video editor or a folder: the file is made then (without a pill), and the
 // drag starts once it's there, if the button is still down.
@@ -12,6 +13,7 @@ import { api, thumbUrl, type Clip, type Vod } from "./api";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
+import { edits } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretches } from "./media";
 import { formatTime } from "./platform";
 
@@ -201,12 +203,17 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
     let down = true;
     let leaving = false;
     const overBar = (px: number, py: number) => !!document.elementFromPoint(px, py)?.closest(".clip-bar");
+    const overEdit = (px: number, py: number) => {
+      const row = document.elementFromPoint(px, py)?.closest<HTMLElement>("[data-edit-drop]");
+      return row ? Number(row.dataset.editDrop) : null;
+    };
     const finish = () => {
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("keydown", onKey, true);
       clips.carrying = null;
       clips.overBar = false;
+      edits.dropTarget = null;
       document.body.classList.remove("timeline-drag");
       ghost.remove();
       if (made) URL.revokeObjectURL(made);
@@ -216,6 +223,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       if (leaving) return;
       place(e.clientX, e.clientY);
       clips.overBar = overBar(e.clientX, e.clientY);
+      edits.dropTarget = overEdit(e.clientX, e.clientY);
       const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
       if (outside) takeOut();
     };
@@ -223,8 +231,10 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y }: Carry)
       down = false;
       if (leaving) return;
       const keep = overBar(e.clientX, e.clientY);
+      const edit = overEdit(e.clientX, e.clientY);
       finish();
       if (keep) exportStretch(start, end, true);
+      else if (edit !== null) exportStretch(start, end, true).then((clip) => clip && edits.add(edit, clip.id));
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {

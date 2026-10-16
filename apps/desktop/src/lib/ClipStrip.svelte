@@ -1,7 +1,8 @@
 <script lang="ts">
   // The clip bar: the open VOD's clips as pills under the player. Clicking one
   // plays it; double-clicking its name renames it; once its file is made, it
-  // drags out of the window (into a video editor or a folder).
+  // drags out of the window (into a video editor or a folder), or onto an
+  // edit in the sidebar. "Add to edit" puts it in one from a list.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -9,6 +10,8 @@
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
+  import Popover from "./Popover.svelte";
+  import { edits } from "./edits.svelte";
 
   let { vod, ownPlayer, onplay }: { vod: Vod; ownPlayer: boolean; onplay: (time: number) => void } = $props();
 
@@ -60,6 +63,20 @@
     } catch (e) {
       clips.error = String(e);
     }
+  }
+
+  // "Add to edit": the edits to pick from, by the clip's button.
+  let adding = $state<{ clip: Clip; anchor: HTMLElement } | null>(null);
+  let added = $state<string | null>(null);
+  async function addTo(editId: number | null) {
+    const clip = adding?.clip;
+    adding = null;
+    if (!clip) return;
+    const edit = editId === null ? await edits.create() : edits.list.find((e) => e.id === editId);
+    if (!edit) return;
+    await edits.add(edit.id, clip.id);
+    added = edits.error ? null : `Added to “${edit.title}”`;
+    setTimeout(() => (added = null), 2500);
   }
 
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
@@ -119,6 +136,14 @@
           <Icon name="folder" size={13} />
         </button>
       {/if}
+      <button
+        class="act"
+        onclick={(e) => (adding = { clip, anchor: e.currentTarget as HTMLElement })}
+        title="Add to an edit"
+        aria-label="Add to an edit"
+      >
+        <Icon name="plus" size={13} />
+      </button>
       <button class="act" onclick={() => clips.remove(clip.id)} title="Delete clip" aria-label="Delete clip">
         <Icon name="x" size={13} />
       </button>
@@ -136,7 +161,25 @@
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
   {/if}
+  {#if added}
+    <span class="muted added">{added}</span>
+  {/if}
 </div>
+
+<Popover
+  bind:open={() => !!adding, (open) => !open && (adding = null)}
+  anchor={adding?.anchor}
+  label="Add to an edit"
+  width={240}
+  padding={6}
+>
+  <div class="pick">
+    {#each edits.list as edit (edit.id)}
+      <button onclick={() => addTo(edit.id)}>{edit.title}</button>
+    {/each}
+    <button class="new" onclick={() => addTo(null)}><Icon name="plus" size={13} /> New edit</button>
+  </div>
+</Popover>
 
 <style>
   .strip.over {
@@ -269,5 +312,35 @@
   .error-text {
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  .added {
+    font-size: 12px;
+    align-self: center;
+  }
+
+  .pick {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pick button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    text-align: left;
+    font-size: 13px;
+  }
+
+  .pick button:hover {
+    background: var(--surface-2);
+  }
+
+  .pick .new {
+    color: var(--accent);
   }
 </style>

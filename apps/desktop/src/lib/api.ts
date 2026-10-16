@@ -146,6 +146,37 @@ export interface Clip {
   shown: boolean;
 }
 
+/** A video made of pieces of clips (crates/core `edits::Edit`). */
+export interface Edit {
+  id: number;
+  title: string;
+  /** Its rendered video's: waiting (not rendered), cutting (rendering), ready or error. */
+  status: ClipStatus;
+  file_path: string | null;
+  error: string | null;
+  /** Whether the rendered video is of the edit as it is now. */
+  current: boolean;
+  pieces: number;
+  /** How long it plays, in seconds. */
+  length: number;
+}
+
+/** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */
+export interface EditPiece {
+  id: number;
+  edit_id: number;
+  start: number;
+  end: number;
+  struck: [number, number][];
+  clip: Clip;
+  vod_title: string;
+}
+
+export interface EditView {
+  edit: Edit;
+  pieces: EditPiece[];
+}
+
 export type MarkKind = "cut" | "chapter" | "highlight";
 
 /** A mark on a VOD's timeline (crates/core `db::Mark`): a cut between two
@@ -253,6 +284,22 @@ export const api = {
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     invoke<Mark>("add_mark", { vodId, time, kind, text }),
   setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
+  clipUrl: (id: number) => invoke<string>("clip_url", { id }),
+  listEdits: () => invoke<Edit[]>("list_edits"),
+  createEdit: () => invoke<Edit>("create_edit"),
+  getEdit: (id: number) => invoke<EditView>("get_edit", { id }),
+  renameEdit: (id: number, title: string) => invoke<EditView>("rename_edit", { id, title }),
+  deleteEdit: (id: number) => invoke<void>("delete_edit", { id }),
+  addToEdit: (editId: number, clipId: number, index?: number) =>
+    invoke<EditView>("add_to_edit", { editId, clipId, index }),
+  movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
+  trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
+  strikePiece: (id: number, struck: [number, number][]) => invoke<EditView>("strike_piece", { id, struck }),
+  removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
+  renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
+  stopRender: (id: number) => invoke<void>("stop_render", { id }),
+  showEdit: (id: number) => invoke<void>("show_edit", { id }),
+  dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
   moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
   deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
@@ -355,6 +402,10 @@ export const events = {
   clipProgress: (cb: (id: number, progress: number) => void) =>
     listen<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
   clipRemoved: (cb: (id: number) => void) => listen<number>("clip-removed", (e) => cb(e.payload)),
+  edit: (cb: (edit: Edit) => void) => listen<Edit>("edit", (e) => cb(e.payload)),
+  editProgress: (cb: (id: number, progress: number) => void) =>
+    listen<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
+  editRemoved: (cb: (id: number) => void) => listen<number>("edit-removed", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };
