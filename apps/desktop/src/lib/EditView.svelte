@@ -533,7 +533,9 @@
     </div>
 
     <div class="stage">
-      <div class="frame" bind:this={host}></div>
+      <!-- A click on the picture plays or pauses, as on a VOD's player. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
       {#if !segments.length}
         <p class="hint">
           Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a
