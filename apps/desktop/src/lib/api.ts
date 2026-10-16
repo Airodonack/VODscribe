@@ -35,6 +35,18 @@ export interface Vod {
 
 export type Device = "cpu" | "gpu";
 
+/** The app's own player's time, and whether it's playing (player.rs). */
+export interface PlayerStatus {
+  time: number;
+  playing: boolean;
+}
+
+export interface PlayerOpened {
+  fps: number;
+  duration: number | null;
+  audio: boolean;
+}
+
 export type ThemeChoice = "system" | "light" | "dark";
 
 export interface Settings {
@@ -336,6 +348,17 @@ export const api = {
   undo: (view: Doc) => invoke<Undone | null>("undo", { view }),
   /** Redoes what was undone last in `view`'s history. */
   redo: (view: Doc) => invoke<Undone | null>("redo", { view }),
+  /** Whether the app's own player can play here (a native screen in the window). */
+  playerAvailable: () => invoke<boolean>("player_available"),
+  /** Opens VOD `id`'s file in the app's own player at `at` seconds, playing if `play`. */
+  playerOpen: (id: number, at: number, play: boolean) => invoke<PlayerOpened>("player_open", { id, at, play }),
+  playerClose: () => invoke<void>("player_close"),
+  playerPlay: () => invoke<PlayerStatus>("player_play"),
+  playerPause: () => invoke<PlayerStatus>("player_pause"),
+  playerSeek: (time: number, play: boolean) => invoke<PlayerStatus>("player_seek", { time, play }),
+  playerStep: (frames: number) => invoke<PlayerStatus>("player_step", { frames }),
+  playerStatus: () => invoke<PlayerStatus>("player_status"),
+  playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
   /** Where the page's player box is (Screen.svelte) and the page's background colour; whether the page is to be transparent. */
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null, background: string) =>
     invoke<boolean>("set_screen", { rect, background }),
@@ -447,6 +470,8 @@ export const api = {
 };
 
 export const events = {
+  /** The app's own player's time and state, at every change and now and then while playing. */
+  playerTime: (cb: (status: PlayerStatus) => void) => listen<PlayerStatus>("player-time", (e) => cb(e.payload)),
   /** A document put back as it was by undo or redo: what shows it reloads it. */
   restored: (cb: (doc: Doc) => void) => listen<Doc>("restored", (e) => cb(e.payload)),
   vod: (cb: (vod: Vod) => void) => listen<Vod>("vod", (e) => cb(e.payload)),

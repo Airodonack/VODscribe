@@ -13,7 +13,7 @@ use vodscribe_player::{Layout, Rect};
 
 /// The native screen, once the window has one.
 #[derive(Default)]
-pub(crate) struct Screen(#[allow(dead_code)] Mutex<Option<vodscribe_player::present::Screen>>);
+pub(crate) struct Screen(Mutex<Option<vodscribe_player::present::Screen>>);
 
 /// Whether the page is drawn transparent, over the screen: so far only
 /// when asked (VODSCRIBE_SCREEN=under), to try that placement (present.rs).
@@ -33,6 +33,21 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
     #[cfg(not(target_os = "linux"))]
     let _ = (app, window);
     Ok(())
+}
+
+/// Whether the window has a screen.
+pub(crate) fn attached(app: &AppHandle) -> bool {
+    app.state::<Screen>().0.lock().unwrap().is_some()
+}
+
+/// Shows `frame` on the screen (none: black), if there is one.
+pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_player::decode::Frame>>) {
+    #[cfg(target_os = "linux")]
+    if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
+        screen.show(frame);
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (app, frame);
 }
 
 /// Where the page's player box is (none when no player is open) and the

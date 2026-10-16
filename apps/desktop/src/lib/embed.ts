@@ -8,6 +8,7 @@ import { landingSeeks } from "./mediaSeek";
 import { mount, unmount } from "svelte";
 import { api, type Vod } from "./api";
 import LocalPlayer from "./LocalPlayer.svelte";
+import NativePlayer from "./NativePlayer.svelte";
 import { isTwitchClip, twitchId, twitchTime } from "./platform";
 
 export interface EmbeddedPlayer {
@@ -360,8 +361,12 @@ async function twitchClip(
   );
 }
 
-/** A file on this computer, streamed by the app's local media server, in a
- *  player of the app's own (LocalPlayer.svelte). */
+/** Whether the app's own player (NativePlayer.svelte) plays here; asked once. */
+let nativeHere: Promise<boolean> | null = null;
+
+/** A file on this computer in the app's own player (NativePlayer.svelte),
+ *  or where that can't draw yet, or the file is sound alone, streamed by
+ *  the app's local media server into the webview's (LocalPlayer.svelte). */
 async function local(
   el: HTMLElement,
   vod: Vod,
@@ -369,6 +374,22 @@ async function local(
   play: boolean,
   onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> {
+  nativeHere ??= api.playerAvailable().catch(() => false);
+  if (!vod.audio_only && (await nativeHere)) {
+    const player = mount(NativePlayer, { target: el, props: { vod, start: time, autoplay: play, onerror } });
+    return {
+      seek: player.seek,
+      time: player.currentTime,
+      playing: player.isPlaying,
+      togglePlay: player.togglePlay,
+      step: player.step,
+      duration: player.mediaDuration,
+      fps: player.frameRate,
+      volume: player.sound,
+      captions: player.captions,
+      destroy: () => unmount(player),
+    };
+  }
   const src = await api.mediaUrl(vod.id);
   const player = mount(LocalPlayer, {
     target: el,

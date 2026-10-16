@@ -13,6 +13,7 @@ mod footage;
 mod history;
 mod loopback;
 mod media;
+mod player;
 mod previews;
 mod screen;
 mod setup;
@@ -53,6 +54,8 @@ struct AppState {
     videos: videos::Videos,
     /// What can be undone and redone (`history`).
     history: history::History,
+    /// The app's own player, playing a VOD's file (player.rs).
+    player: player::Native,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -167,6 +170,7 @@ pub fn run() {
                 previews: previews::Previews::default(),
                 videos: videos::Videos::default(),
                 history: history::History::default(),
+                player: player::Native::default(),
                 adding: Mutex::default(),
             });
             app.state::<AppState>().clips.run(app.handle().clone())?;
@@ -268,6 +272,15 @@ pub fn run() {
             history::undo,
             history::redo,
             screen::set_screen,
+            player::player_available,
+            player::player_open,
+            player::player_close,
+            player::player_play,
+            player::player_pause,
+            player::player_seek,
+            player::player_step,
+            player::player_status,
+            player::player_set_volume,
             edits::move_piece,
             edits::trim_piece,
             edits::strike_piece,

@@ -9,7 +9,7 @@
 //! is exactly one frame.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -69,6 +69,8 @@ impl State {
 
 struct Inner {
     info: Info,
+    /// The loudness asked for, 0 to 1, as bits of an f32 (the output's own, once there is one).
+    volume: Mutex<Arc<AtomicU32>>,
     fps: f64,
     duration: f64,
     state: Mutex<State>,
@@ -104,6 +106,7 @@ impl Player {
             frame: Mutex::new(None),
             on_frame: Mutex::new(None),
             quit: AtomicBool::new(false),
+            volume: Mutex::new(Arc::new(AtomicU32::new(1f32.to_bits()))),
             info,
         });
         let video = Video::new(ffmpeg, path, picture);
@@ -127,6 +130,15 @@ impl Player {
 
     pub fn duration(&self) -> Option<f64> {
         self.inner.info.duration
+    }
+
+    /// The loudness, 0 to 1.
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.inner.volume.lock().unwrap().load(Ordering::Acquire))
+    }
+
+    pub fn set_volume(&self, volume: f32) {
+        self.inner.volume.lock().unwrap().store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
     }
 
     /// Told what to do when a frame is due (shown by `frame`), from the player's thread.
@@ -275,6 +287,12 @@ const START: f64 = 0.1;
 /// playing; once it's playing out, the time follows it.
 fn run_sound(inner: &Inner, audio: &Audio) {
     let Some(out) = Output::open() else { return };
+    {
+        // The output's own gain takes over, at the loudness asked so far.
+        let mut volume = inner.volume.lock().unwrap();
+        out.volume().store(volume.load(Ordering::Acquire), Ordering::Release);
+        *volume = out.volume();
+    }
     {
         let mut s = inner.state.lock().unwrap();
         s.output = true;

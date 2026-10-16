@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-player-step"
+description = "Enables the player_step command without any pre-configured scope."
+commands.allow = ["player_step"]
+
+[[permission]]
+identifier = "deny-player-step"
+description = "Denies the player_step command without any pre-configured scope."
+commands.deny = ["player_step"]

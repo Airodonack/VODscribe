@@ -6,7 +6,7 @@
 //! sound and the player keeps time by the computer's clock.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -21,6 +21,7 @@ pub struct Output {
     queue: Arc<Mutex<VecDeque<i16>>>,
     played: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
+    volume: Arc<AtomicU32>,
 }
 
 impl Output {
@@ -36,7 +37,8 @@ impl Output {
         let queue: Arc<Mutex<VecDeque<i16>>> = Arc::default();
         let played = Arc::new(AtomicU64::new(0));
         let running = Arc::new(AtomicBool::new(false));
-        let (taken, counted, on) = (queue.clone(), played.clone(), running.clone());
+        let volume = Arc::new(AtomicU32::new(1f32.to_bits()));
+        let (taken, counted, on, gain) = (queue.clone(), played.clone(), running.clone(), volume.clone());
         let stream = device
             .build_output_stream(
                 config,
@@ -44,12 +46,13 @@ impl Output {
                     // Silence unless playing, or when the queue runs dry
                     // (decoding behind): then the time stands too.
                     let mut queue = if on.load(Ordering::Acquire) { taken.try_lock().ok() } else { None };
+                    let gain = f32::from_bits(gain.load(Ordering::Acquire));
                     let mut got = 0;
                     for sample in out.iter_mut() {
                         *sample = match queue.as_mut().and_then(|q| q.pop_front()) {
                             Some(s) => {
                                 got += 1;
-                                s as f32 / i16::MAX as f32
+                                s as f32 / i16::MAX as f32 * gain
                             }
                             None => 0.0,
                         };
@@ -61,7 +64,7 @@ impl Output {
             )
             .ok()?;
         stream.play().ok()?;
-        Some(Output { _stream: stream, rate, queue, played, running })
+        Some(Output { _stream: stream, rate, queue, played, running, volume })
     }
 
     /// Samples a second, as the output takes them.
@@ -72,6 +75,11 @@ impl Output {
     /// Stereo sample pairs played since the queue was last cleared.
     pub fn played(&self) -> Arc<AtomicU64> {
         self.played.clone()
+    }
+
+    /// The loudness it plays at, 0 to 1 (its count goes on at 0).
+    pub fn volume(&self) -> Arc<AtomicU32> {
+        self.volume.clone()
     }
 
     /// Whether sound is let out (and counted).
