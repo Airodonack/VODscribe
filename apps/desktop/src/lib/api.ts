@@ -151,7 +151,7 @@ export interface Clip {
   shown: boolean;
 }
 
-/** A video made of pieces of clips (crates/core `edits::Edit`). */
+/** A video made of pieces of VODs (crates/core `edits::Edit`). */
 export interface Edit {
   id: number;
   title: string;
@@ -164,28 +164,27 @@ export interface Edit {
   pieces: number;
   /** How long it plays, in seconds. */
   length: number;
-  /** The VODs its clips are of, and the clips. */
+  /** The VODs its pieces are of. */
   vod_ids: number[];
-  clip_ids: number[];
-  /** The clip its first piece is of: its first frame is the edit's picture. */
-  first_clip: number | null;
   /** What it plays of each VOD, in order: its pieces less what's struck. */
   ranges: { vod_id: number; start: number; end: number }[];
 }
 
-/** A piece of an edit: `start`..`end` of its clip's VOD, less what's `struck` (crates/core `edits::EditPiece`). */
+/** A piece of an edit: `start`..`end` of its VOD, less what's `struck`; its
+ *  own, copied from a clip or the timeline (crates/core `edits::EditPiece`). */
 export interface EditPiece {
   id: number;
   edit_id: number;
+  vod_id: number;
   start: number;
   end: number;
+  title: string;
   struck: [number, number][];
-  clip: Clip;
   vod_title: string;
 }
 
 /** A segment of an edit's preview: where it plays in the edit, how long, and
- *  its key (null while its clip's file isn't made). */
+ *  its key (null while its footage isn't here: it's being downloaded). */
 export interface PreviewSegment {
   key: string | null;
   at: number;
@@ -312,7 +311,6 @@ export const api = {
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** A clip's first frame, a PNG; empty if it has none. */
-  clipThumb: (id: number) => invoke<ArrayBuffer>("clip_thumb", { id }).then((b) => new Uint8Array(b)),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made are made next. */
   previewPlan: (id: number) => invoke<PreviewSegment[]>("preview_plan", { id }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
@@ -324,8 +322,14 @@ export const api = {
   getEdit: (id: number) => invoke<EditView>("get_edit", { id }),
   renameEdit: (id: number, title: string) => invoke<EditView>("rename_edit", { id, title }),
   deleteEdit: (id: number) => invoke<void>("delete_edit", { id }),
+  /** Puts a copy of clip `clipId`'s stretch in edit `editId`. */
   addToEdit: (editId: number, clipId: number, index?: number) =>
     invoke<EditView>("add_to_edit", { editId, clipId, index }),
+  /** Puts `start`..`end` of VOD `vodId` in edit `editId`, named `title` (else for what's said). */
+  addRangeToEdit: (editId: number, vodId: number, start: number, end: number, title?: string, index?: number) =>
+    invoke<EditView>("add_range_to_edit", { editId, vodId, start, end, title, index }),
+  /** Edit `id`'s picture (its first frame, or its VOD's thumbnail); empty if none. */
+  editThumb: (id: number) => invoke<ArrayBuffer>("edit_thumb", { id }).then((b) => new Uint8Array(b)),
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   strikePiece: (id: number, struck: [number, number][]) => invoke<EditView>("strike_piece", { id, struck }),
@@ -447,6 +451,9 @@ export const events = {
   /** A preview segment made (or, with `error`, not). */
   previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
     listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),
+  /** Footage of VOD `vod_id` downloaded for edits (or, with `error`, not). */
+  footage: (cb: (fetched: { vod_id: number; error: string | null }) => void) =>
+    listen<{ vod_id: number; error: string | null }>("footage", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

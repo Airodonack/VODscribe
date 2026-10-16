@@ -1,19 +1,23 @@
-// Edits (crates/core edits.rs): videos made of pieces of clips. They're rows of
+// Edits (crates/core edits.rs): videos made of pieces of VODs. They're rows of
 // the library's list among the VODs (Library.svelte, EditRow.svelte), and
-// open in the player's place (EditView.svelte). Clips get in by being dropped
-// on an edit's row or on "Make new edit" atop the list (dragout.ts), or with a
-// clip's "Add to an edit" (ClipStrip.svelte).
+// open in the player's place (EditView.svelte). Pieces get in by a clip, or a
+// stretch of the timeline, being dropped on an edit's row or on "Make new
+// edit" atop the list (dragout.ts), or with a clip's "Add to an edit"
+// (ClipStrip.svelte). A piece is a copy: changing it changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
 import { api, events, type Edit, type EditPiece, type EditView } from "./api";
+
+/** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
+export type Stretch = { vodId: number; start: number; end: number; title?: string };
 
 class Edits {
   list = $state.raw<Edit[]>([]);
   /** The edit open in the Edit view, and its pieces. */
   openId = $state<number | null>(null);
   pieces = $state.raw<EditPiece[]>([]);
-  /** Counts each clip's changes (its file made, say), for what shows its picture. */
-  clipChanges = new SvelteMap<number, number>();
+  /** Counts each VOD's footage downloaded for edits, for what shows it. */
+  footage = new SvelteMap<number, number>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
   error = $state<string | null>(null);
@@ -38,16 +42,9 @@ class Edits {
     });
     events.editProgress((id, p) => this.progress.set(id, p));
     events.editRemoved((id) => this.#gone(id));
-    // A clip's file made, or the clip gone: the open edit's pieces show it.
-    events.clip((clip) => {
-      this.clipChanges.set(clip.id, (this.clipChanges.get(clip.id) ?? 0) + 1);
-      if (this.pieces.some((p) => p.clip.id === clip.id))
-        this.pieces = this.pieces.map((p) => (p.clip.id === clip.id ? { ...p, clip } : p));
-    });
-    // A clip deleted (or its VOD) leaves the edits it was in.
-    events.clipRemoved((id) => {
-      if (this.pieces.some((p) => p.clip.id === id) && this.openId !== null) this.#load(this.openId);
-      this.#reloadList();
+    events.footage(({ vod_id, error }) => {
+      this.footage.set(vod_id, (this.footage.get(vod_id) ?? 0) + 1);
+      if (error && this.open?.vod_ids.includes(vod_id)) this.error = `Couldn't download the footage: ${error}`;
     });
     events.vodRemoved(() => {
       this.#reloadList();
@@ -62,15 +59,15 @@ class Edits {
     );
   }
 
-  /** The edits with clips of VOD `vodId`. */
+  /** The edits with pieces of VOD `vodId`. */
   forVod(vodId: number): Edit[] {
     return this.list.filter((e) => e.vod_ids.includes(vodId));
   }
 
-  /** A new edit holding clip `clipId`. */
-  async createWith(clipId: number): Promise<Edit | null> {
+  /** A new edit holding a stretch of a VOD. */
+  async createWith(stretch: Stretch): Promise<Edit | null> {
     const edit = await this.create();
-    if (edit) await this.add(edit.id, clipId);
+    if (edit) await this.addRange(edit.id, stretch);
     return edit;
   }
 
@@ -138,8 +135,11 @@ class Edits {
     }
   }
 
-  /** Puts clip `clipId` in edit `editId` (last, or at `index`). */
+  /** Puts a copy of clip `clipId` in edit `editId` (last, or at `index`). */
   add = (editId: number, clipId: number, index?: number) => this.#change(api.addToEdit(editId, clipId, index));
+  /** Puts a stretch of a VOD in edit `editId` (last, or at `index`). */
+  addRange = (editId: number, s: Stretch, index?: number) =>
+    this.#change(api.addRangeToEdit(editId, s.vodId, s.start, s.end, s.title, index));
   rename = (id: number, title: string) => this.#change(api.renameEdit(id, title));
   move = (pieceId: number, index: number) => this.#change(api.movePiece(pieceId, index));
   trim = (pieceId: number, start: number, end: number) => this.#change(api.trimPiece(pieceId, start, end));

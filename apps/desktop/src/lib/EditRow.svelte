@@ -27,18 +27,21 @@
 
   const progress = $derived(edits.progress.get(edit.id));
 
-  // Its picture: the first frame of its first piece's clip, kept until the next one's in.
+  // Its picture: its first frame (edit_thumb), kept until the next one's in;
+  // asked again when its first piece changes, or footage of it comes in.
   let picture = $state<string | null>(null);
+  const first = $derived.by(() => {
+    const r = edit.ranges[0];
+    return r ? `${r.vod_id} ${r.start} ${edits.footage.get(r.vod_id) ?? 0}` : null;
+  });
   $effect(() => {
-    const id = edit.first_clip;
-    void (id !== null && edits.clipChanges.get(id));
     let stale = false;
-    if (id === null) {
+    if (first === null) {
       untrack(() => replace(null));
       return;
     }
-    api.clipThumb(id).then(
-      (png) => !stale && png.length && replace(URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }))),
+    api.editThumb(untrack(() => edit.id)).then(
+      (bytes) => !stale && bytes.length && replace(URL.createObjectURL(new Blob([bytes as BlobPart]))),
       () => {},
     );
     return () => (stale = true);
@@ -59,7 +62,7 @@
 
   async function remove() {
     const sure = await ask(
-      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}? Its clips stay.`,
+      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}?`,
       "Delete",
       "Keep",
     );

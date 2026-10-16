@@ -387,6 +387,28 @@ CREATE TABLE edit_pieces (
 );
 CREATE INDEX edit_pieces_by_edit ON edit_pieces (edit_id, position);
 CREATE INDEX edit_pieces_by_clip ON edit_pieces (clip_id);";
+/// v20: an edit's pieces are their own stretches of VODs, with a title,
+/// rather than of clips (so one can change without another); clips record
+/// whether their file was dragged out of the app (`handed_out`), as then it's
+/// another app's to keep.
+const MIGRATE_V20: &str = "
+CREATE TABLE pieces (
+    id INTEGER PRIMARY KEY,
+    edit_id INTEGER NOT NULL REFERENCES edits (id) ON DELETE CASCADE,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    start REAL NOT NULL,
+    end REAL NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    struck TEXT NOT NULL DEFAULT '[]'
+);
+INSERT INTO pieces (id, edit_id, vod_id, position, start, end, title, struck)
+    SELECT p.id, p.edit_id, c.vod_id, p.position, max(p.start, c.start), min(p.end, c.end), c.title, p.struck
+    FROM edit_pieces p JOIN clips c ON c.id = p.clip_id;
+DROP TABLE edit_pieces;
+ALTER TABLE pieces RENAME TO edit_pieces;
+CREATE INDEX edit_pieces_by_edit ON edit_pieces (edit_id, position);
+ALTER TABLE clips ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
@@ -550,6 +572,7 @@ impl Db {
             MIGRATE_V17,
             MIGRATE_V18,
             MIGRATE_V19,
+            MIGRATE_V20,
         ];
         if (version as usize) < migrations.len() {
             let pending = migrations[version as usize..].join("\n");
@@ -643,10 +666,25 @@ impl Db {
         Ok(())
     }
 
-    /// Takes clip `id` out of the clip bar, keeping it (and its file) for the edits it's in.
-    pub fn hide_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET shown = 0 WHERE id = ?1", [id])?;
+    /// Notes that clip `id`'s file was dragged out of the app: it's someone
+    /// else's now, so it stays when the clip goes.
+    pub fn hand_out_clip(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clips SET handed_out = 1 WHERE id = ?1", [id])?;
         Ok(())
+    }
+
+    /// Whether clip `id`'s file was dragged out of the app (`hand_out_clip`).
+    pub fn clip_handed_out(&self, id: i64) -> Result<bool> {
+        let out = self.conn.query_row("SELECT handed_out FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(out.unwrap_or(false))
+    }
+
+    /// Forgets the clips not in the clip bar (made only to be dragged out),
+    /// leaving their files; gives their ids.
+    pub fn forget_hidden_clips(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("DELETE FROM clips WHERE shown = 0 RETURNING id")?;
+        let ids = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
     }
 
     pub fn rename_clip(&self, id: i64, title: &str) -> Result<()> {
@@ -1450,6 +1488,54 @@ mod tests {
     }
 
     #[test]
+    fn pieces_of_clips_become_their_own() {
+        let dir = crate::TempDir::new("migrate-v19");
+        let path = dir.join("library.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+                MIGRATE_V12,
+                MIGRATE_V13,
+                MIGRATE_V14,
+                MIGRATE_V15,
+                MIGRATE_V16,
+                MIGRATE_V17,
+                MIGRATE_V18,
+                MIGRATE_V19,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 19;", before.join("\n"))).unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'a', 'u', 't', 'done', 0);
+                 INSERT INTO clips (vod_id, start, end, title, position, created_at) VALUES (1, 10.0, 20.0, 'Lunch', 1, 0);
+                 INSERT INTO edits (title, position, created_at) VALUES ('e', 0, 0);
+                 INSERT INTO edit_pieces (edit_id, clip_id, position, start, end, struck)
+                     VALUES (1, 1, 0, 5.0, 18.0, '[[12.0,13.0]]');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let pieces = db.edit_pieces(1).unwrap();
+        assert_eq!(pieces.len(), 1);
+        let p = &pieces[0];
+        assert_eq!((p.vod_id, p.start, p.end, p.title.as_str()), (1, 10.0, 18.0, "Lunch"), "within the clip it was of");
+        assert_eq!(p.struck, [(12.0, 13.0)]);
+        // The clip's gone; the piece stays.
+        db.delete_clip(1).unwrap();
+        assert_eq!(db.edit_pieces(1).unwrap().len(), 1);
+    }
+
+    #[test]
     fn canceled_vods_say_stopped() {
         let dir = crate::TempDir::new("migrate-v12");
         let path = dir.join("library.sqlite");
@@ -1604,6 +1690,13 @@ mod tests {
         assert_eq!((a.status, a.file_path.as_deref()), (ClipStatus::Waiting, Some("/c/a.mp4")));
         db.rename_clip(b.id, "renamed").unwrap();
         db.delete_clip(a.id).unwrap();
+        assert_eq!(titles(&db), ["renamed"]);
+        // One made only to drag out is forgotten later; its file was handed out.
+        let c = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap();
+        assert!(!db.clip_handed_out(c.id).unwrap());
+        db.hand_out_clip(c.id).unwrap();
+        assert!(db.clip_handed_out(c.id).unwrap());
+        assert_eq!(db.forget_hidden_clips().unwrap(), [c.id]);
         assert_eq!(titles(&db), ["renamed"]);
         // They go with their VOD.
         db.delete_vod(vod).unwrap();

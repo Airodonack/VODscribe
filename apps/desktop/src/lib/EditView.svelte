@@ -1,6 +1,6 @@
 <script lang="ts">
   // An edit (edits.svelte.ts), opened from its row in the library's list, in the
-  // player's place and laid out like it: the picture (editPlayer.ts, its
+  // player's place and laid out like it: the picture (previewPlayer.ts, its
   // pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
   // where Split cuts the piece at the playhead in two and Render makes the
@@ -10,13 +10,12 @@
   // jumps over it) or brings it back.
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type Clip, type EditPiece, type Line, type Vod } from "./api";
+  import { onDestroy, onMount } from "svelte";
+  import { api, events, type EditPiece, type Line, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
-  import { EditPlayer, type Segment } from "./editPlayer";
   import { PreviewPlayer } from "./previewPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
@@ -32,7 +31,7 @@
     onback,
   }: {
     backTo?: string;
-    /** The library's VODs, for carrying a piece out (its ghost, its clip's VOD). */
+    /** The library's VODs, for carrying a piece out (its ghost, its VOD). */
     vods: Map<number, Vod>;
     onback: () => void;
   } = $props();
@@ -50,43 +49,20 @@
     else title = edit?.title ?? "";
   }
 
-  // Where each clip's file is served from (media.rs), known before it plays.
-  let urls = $state.raw(new Map<number, string>());
-  const asked = new Set<number>();
-  $effect(() => {
-    for (const piece of pieces) {
-      const id = piece.clip.id;
-      if (asked.has(id)) continue;
-      asked.add(id);
-      api.clipUrl(id).then((url) => (urls = new Map(urls).set(id, url)));
-    }
-  });
-
-  // What plays: each piece's spans (its VOD's time), as stretches of its clip's file.
-  type Played = Segment & { piece: EditPiece; vodFrom: number };
+  // What plays: each piece's spans (its VOD's time), one after another.
+  type Played = { piece: EditPiece; at: number; vodFrom: number; length: number };
   const segments = $derived.by(() => {
     const out: Played[] = [];
     let at = 0;
     for (const piece of pieces) {
-      const start = Math.max(piece.start, piece.clip.start);
-      const end = Math.min(piece.end, piece.clip.end);
-      for (const [a, b] of playedSpans(start, end, piece.struck)) {
-        out.push({
-          clipId: piece.clip.id,
-          url: piece.clip.status === "ready" ? (urls.get(piece.clip.id) ?? null) : null,
-          title: piece.clip.title,
-          from: a - piece.clip.start,
-          to: b - piece.clip.start,
-          at,
-          piece,
-          vodFrom: a,
-        });
+      for (const [a, b] of playedSpans(piece.start, piece.end, piece.struck)) {
+        out.push({ piece, at, vodFrom: a, length: b - a });
         at += b - a;
       }
     }
     return out;
   });
-  const total = $derived(segments.reduce((sum, s) => sum + (s.to - s.from), 0));
+  const total = $derived(segments.reduce((sum, s) => sum + s.length, 0));
 
   // The waveform: each segment's stretch of its VOD's, end to end.
   const peaksOf = new Map<number, Promise<Uint8Array>>();
@@ -97,11 +73,11 @@
     const mine = ++waveSeq;
     Promise.all(
       segs.map((s) => {
-        const vodId = s.piece.clip.vod_id;
+        const vodId = s.piece.vod_id;
         let got = peaksOf.get(vodId);
         if (!got) peaksOf.set(vodId, (got = api.peaks(vodId).catch(() => new Uint8Array())));
         return got.then((levels) => {
-          const n = Math.max(0, Math.round((s.to - s.from) * PEAKS_RATE));
+          const n = Math.max(0, Math.round(s.length * PEAKS_RATE));
           const first = Math.floor(s.vodFrom * PEAKS_RATE);
           const part = new Uint8Array(n);
           part.set(levels.subarray(first, first + n));
@@ -122,7 +98,7 @@
 
   // The player, and what the controls show, read from it every frame.
   let host = $state<HTMLDivElement>();
-  let player = $state<EditPlayer | PreviewPlayer | null>(null);
+  let player = $state<PreviewPlayer | null>(null);
   let previewError = $state<string | null>(null);
   let now = $state(0);
   let playing = $state(false);
@@ -130,8 +106,7 @@
   let muted = $state(false);
   let rate = $state(1);
   let fps = $state(DEFAULT_FPS);
-  // The preview's segments (previewPlayer.ts), where the webview plays them;
-  // else the clips' files one after another (editPlayer.ts).
+  // The preview's segments (previewPlayer.ts), where the webview can play them.
   onMount(() => {
     let gone = false;
     let stop: (() => void) | undefined;
@@ -145,7 +120,7 @@
           events
             .previewMade(({ key, error }) => (error ? (previewError = error) : p.made(key)))
             .then((u) => (gone ? u() : (stop = u)));
-        } else player = new EditPlayer(host!, show);
+        } else previewError = "This computer's web view can't play the preview. Render the edit to watch it.";
       },
       (e) => (edits.error = String(e)),
     );
@@ -154,34 +129,20 @@
       stop?.();
     };
   });
-  // The preview's plan, asked for again whenever the pieces change.
+  // The preview's plan, asked for again whenever the pieces change, or
+  // footage of their VODs comes in.
   let planSeq = 0;
   $effect(() => {
     void segments;
+    for (const vodId of edit?.vod_ids ?? []) void edits.footage.get(vodId);
     const p = player;
     const id = edit?.id;
-    if (!(p instanceof PreviewPlayer) || id === undefined) return;
+    if (!p || id === undefined) return;
     const mine = ++planSeq;
     api.previewPlan(id).then(
       (plan) => mine === planSeq && p.setPlan(plan),
       (e) => (edits.error = String(e)),
     );
-  });
-  // The pieces' frame rate: their first VOD's, where it's known.
-  let frameRate = $state<number | null>(null);
-  $effect(() => {
-    const vodId = pieces[0]?.clip.vod_id;
-    if (vodId === undefined) return;
-    api.frameRate(vodId).then(
-      (f) => (frameRate = f),
-      () => (frameRate = null),
-    );
-  });
-  $effect(() => {
-    const segs = segments;
-    const f = frameRate;
-    const p = player;
-    if (p instanceof EditPlayer) untrack(() => p.setSegments(segs, f));
   });
   let poll = requestAnimationFrame(function read() {
     poll = requestAnimationFrame(read);
@@ -208,7 +169,7 @@
   const context = $derived.by(() => {
     if (!atNow) return "";
     const n = pieces.findIndex((p) => p.id === atNow.piece.id) + 1;
-    return `Piece ${n} of ${pieces.length} · ${atNow.piece.clip.title} · ${atNow.piece.vod_title}`;
+    return `Piece ${n} of ${pieces.length} · ${atNow.piece.title} · ${atNow.piece.vod_title}`;
   });
 
   /** Split: the piece at the playhead in two, there. */
@@ -265,29 +226,11 @@
     let at = 0;
     for (const piece of pieces) {
       const length = pieceLength(piece);
-      out.push({ id: piece.id, start: at, end: at + length, label: piece.clip.title });
+      out.push({ id: piece.id, start: at, end: at + length, label: piece.title });
       at += length;
     }
     return out;
   });
-
-  /** The clip a piece is, for carrying it out: its own, if it's all of it;
-   *  else one made of the stretch it keeps (what's struck isn't left out). */
-  function clipOf(piece: EditPiece) {
-    return async (shown: boolean): Promise<Clip | null> => {
-      const start = Math.max(piece.start, piece.clip.start);
-      const end = Math.min(piece.end, piece.clip.end);
-      try {
-        if (start <= piece.clip.start + 1e-3 && end >= piece.clip.end - 1e-3) {
-          return shown && !piece.clip.shown ? await api.keepClip(piece.clip.id) : piece.clip;
-        }
-        return await api.addClip(piece.clip.vod_id, start, end, shown);
-      } catch (e) {
-        edits.error = String(e);
-        return null;
-      }
-    };
-  }
 
   const onpiece = {
     select: (id: number) => (selectedPiece = id),
@@ -295,25 +238,20 @@
     remove: (id: number) => edits.removePiece(id),
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
       const piece = pieces.find((p) => p.id === id);
-      const vod = piece && vods.get(piece.clip.vod_id);
+      const vod = piece && vods.get(piece.vod_id);
       if (!piece || !vod) return;
-      const start = Math.max(piece.start, piece.clip.start);
-      const end = Math.min(piece.end, piece.clip.end);
-      carry({ vod, start, end, ownPlayer: playsHere(vod), from, x, y, clip: clipOf(piece), home });
+      const { start, end, title } = piece;
+      carry({ vod, start, end, title, ownPlayer: playsHere(vod), from, x, y, home });
     },
   };
 
-  const pieceLength = (p: EditPiece) =>
-    playedSpans(Math.max(p.start, p.clip.start), Math.min(p.end, p.clip.end), p.struck).reduce(
-      (sum, [a, b]) => sum + b - a,
-      0,
-    );
+  const pieceLength = (p: EditPiece) => playedSpans(p.start, p.end, p.struck).reduce((sum, [a, b]) => sum + b - a, 0);
 
   // The transcript: each piece's lines, within it.
   const linesOf = new Map<number, Promise<Line[]>>();
   let transcripts = $state.raw<Map<number, Line[]>>(new Map());
   $effect(() => {
-    for (const vodId of new Set(pieces.map((p) => p.clip.vod_id))) {
+    for (const vodId of new Set(pieces.map((p) => p.vod_id))) {
       if (linesOf.has(vodId)) continue;
       const got = api.transcript(vodId);
       linesOf.set(vodId, got);
@@ -325,9 +263,8 @@
   });
   type PieceLine = { start: number; end: number; text: string };
   function linesIn(piece: EditPiece): PieceLine[] {
-    const all = transcripts.get(piece.clip.vod_id) ?? [];
-    const from = Math.max(piece.start, piece.clip.start);
-    const to = Math.min(piece.end, piece.clip.end);
+    const all = transcripts.get(piece.vod_id) ?? [];
+    const { start: from, end: to } = piece;
     const out: PieceLine[] = [];
     all.forEach((l, i) => {
       const end = l.end ?? all[i + 1]?.start ?? l.start + 5;
@@ -354,7 +291,7 @@
   function editTimeOf(piece: EditPiece, line: PieceLine): number | null {
     for (const s of segments) {
       if (s.piece.id !== piece.id) continue;
-      const end = s.vodFrom + (s.to - s.from);
+      const end = s.vodFrom + s.length;
       if (line.start < end && line.end > s.vodFrom) return s.at + Math.max(0, line.start - s.vodFrom);
     }
     return null;
@@ -371,7 +308,7 @@
   async function remove() {
     if (!edit) return;
     const sure = await ask(
-      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}? Its clips stay.`,
+      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}?`,
       "Delete",
       "Keep",
     );
@@ -431,7 +368,7 @@
       {#if !segments.length}
         <p class="hint">
           Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a
-          stretch of a VOD's timeline), or use a clip's “Add to an edit”.
+          stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.
         </p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
@@ -501,7 +438,7 @@
     {#each pieces as piece, n (piece.id)}
       <p class="piece-head muted">
         <span class="num">{n + 1}</span>
-        {piece.clip.title} · {piece.vod_title}
+        {piece.title} · {piece.vod_title}
       </p>
       {#each linesIn(piece) as line (line.start)}
         {@const struck = isStruck(piece, line)}

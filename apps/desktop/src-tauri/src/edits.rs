@@ -81,35 +81,56 @@ fn edits_dir(app: &AppHandle) -> PathBuf {
     crate::clips::clips_dir(app).join("Edits")
 }
 
-/// Renders edit `id` into its file.
+/// The stretches (VOD, start, end) of `pieces` whose footage isn't here: of
+/// each piece some of whose spans have none, all of it.
+pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i64, f64, f64)> {
+    pieces
+        .iter()
+        .filter(|p| p.spans().iter().any(|&(a, b)| crate::footage::find(app, db, p.vod_id, a, b).is_none()))
+        .map(|p| (p.vod_id, p.start, p.end))
+        .collect()
+}
+
+/// Renders edit `id` into its file, fetching any footage it needs first.
 fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG);
     let prepared = (|| {
+        let missing = {
+            let db = state.db.lock().unwrap();
+            db.set_edit_render(id, ClipStatus::Cutting, None, None, None)?;
+            emit(app, &db, id);
+            missing(app, &db, &db.edit_pieces(id)?)
+        };
+        for (vod_id, start, end) in missing {
+            crate::footage::ensure(app, vod_id, start, end, stop)?;
+        }
         let db = state.db.lock().unwrap();
         let edit = db.edit(id)?.context("That edit is gone.")?;
         let version = db.edit_version(id)?;
         let edit_pieces = db.edit_pieces(id)?;
-        let pieces = edits::render_pieces(&edit_pieces)?;
+        let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
         let format = Settings::load(&state.paths.settings()).clip_format;
-        let audio_only = edit_pieces.iter().all(|p| db.vod(p.clip.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
+        let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
         // The same file as last time, if it's still named for the edit.
         let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, format));
         let out = match &edit.file_path {
             Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
-        db.set_edit_render(id, ClipStatus::Cutting, None, None, None)?;
-        emit(app, &db, id);
         anyhow::Ok((pieces, ffmpeg, out, version, format))
     })();
     let (pieces, ffmpeg, out, version, format) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
-            db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?;
+            if vodscribe_core::is_canceled(&e) {
+                db.set_edit_render(id, ClipStatus::Waiting, None, None, None)?;
+            } else {
+                db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?;
+            }
             emit(app, &db, id);
             return Ok(());
         }
@@ -216,7 +237,8 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Puts all of clip `clip_id` in edit `edit_id`, at `index` (or last).
+/// Puts a copy of clip `clip_id`'s stretch in edit `edit_id`, at `index`
+/// (or last); it's the edit's own from then on.
 #[tauri::command]
 pub(crate) async fn add_to_edit(
     app: AppHandle,
@@ -226,7 +248,36 @@ pub(crate) async fn add_to_edit(
 ) -> CmdResult<EditView> {
     changing(&app, edit_id, |db| {
         db.edit(edit_id)?.context("That edit is gone.")?;
-        db.add_piece(edit_id, clip_id, index)
+        let clip = db.clip(clip_id)?.context("That clip is gone.")?;
+        db.add_piece(edit_id, clip.vod_id, (clip.start, clip.end), &clip.title, index)
+    })
+}
+
+/// Puts `start`..`end` of VOD `vod_id` in edit `edit_id`, at `index` (or
+/// last), named `title` (a clip's it was), or for what's said in it as a clip
+/// would be.
+#[tauri::command]
+pub(crate) async fn add_range_to_edit(
+    app: AppHandle,
+    edit_id: i64,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    title: Option<String>,
+    index: Option<usize>,
+) -> CmdResult<EditView> {
+    let title = title.map(|t| t.trim().chars().take(200).collect::<String>()).filter(|t| !t.is_empty());
+    if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
+        return Err("A piece has to end after it starts.".into());
+    }
+    changing(&app, edit_id, |db| {
+        db.edit(edit_id)?.context("That edit is gone.")?;
+        db.vod(vod_id)?.context("That VOD is gone.")?;
+        let title = match title {
+            Some(title) => title,
+            None => clips::title(&db.words_between(vod_id, start, end)?, start),
+        };
+        db.add_piece(edit_id, vod_id, (start, end), &title, index)
     })
 }
 
@@ -236,7 +287,7 @@ pub(crate) async fn move_piece(app: AppHandle, id: i64, index: usize) -> CmdResu
     changing(&app, edit, |db| db.move_piece(id, index))
 }
 
-/// Trims piece `id` to `start`..`end` of its VOD (within its clip).
+/// Trims piece `id` to `start`..`end` of its VOD.
 #[tauri::command]
 pub(crate) async fn trim_piece(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<EditView> {
     if !(start.is_finite() && end.is_finite() && end > start) {
@@ -308,4 +359,29 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
     let path = rendered(&app, id)?;
     crate::clips::drag_file(window, path, None).await
+}
+
+/// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing
+/// that (its footage isn't here yet) its VOD's thumbnail; empty if neither.
+#[tauri::command]
+pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc::Response> {
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let (source, thumb) = {
+            let db = state.db.lock().unwrap();
+            let pieces = db.edit_pieces(id).ok().unwrap_or_default();
+            let Some((p, (a, b))) = pieces.iter().find_map(|p| Some((p, *p.spans().first()?))) else {
+                return Vec::new();
+            };
+            let source = crate::footage::find(&app, &db, p.vod_id, a, b).map(|s| (s.path, a - s.offset));
+            (source, db.vod(p.vod_id).ok().flatten().and_then(|v| v.thumb).filter(|t| !t.is_empty()))
+        };
+        let frame = source
+            .zip(tools::find_ffmpeg(&state.paths.bin()))
+            .and_then(|((path, at), ffmpeg)| vodscribe_core::local::frame(&ffmpeg, &path, at, 320).ok());
+        frame.or_else(|| std::fs::read(state.paths.thumbs().join(thumb?)).ok()).unwrap_or_default()
+    })
+    .await
+    .map_err(err)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }

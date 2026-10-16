@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-edit-thumb"
+description = "Enables the edit_thumb command without any pre-configured scope."
+commands.allow = ["edit_thumb"]
+
+[[permission]]
+identifier = "deny-edit-thumb"
+description = "Denies the edit_thumb command without any pre-configured scope."
+commands.deny = ["edit_thumb"]

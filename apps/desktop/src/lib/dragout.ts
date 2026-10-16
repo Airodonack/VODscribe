@@ -3,11 +3,12 @@
 // on the picture, or a pill dragged from the clip bar. Inside the window it's
 // the app's own drag, showing the stretch's frame over its waveform. It lands
 // on the clip bar (kept as a clip), on an edit's row in the library's list
-// (kept as a clip and put at the end of that edit), or on "Make new edit" atop
-// the list (an edit made with it); dropped anywhere else, nothing happens. Taken past the
-// window's edge, it becomes the system's drag of the clip's file, into a
-// video editor or a folder: the file is made then (without a pill), and the
-// drag starts once it's there, if the button is still down.
+// (a copy of the stretch put at the end of that edit; no clip), or on "Make
+// new edit" atop the list (an edit made with it); dropped anywhere else,
+// nothing happens. Taken past the window's edge, it becomes the system's drag
+// of the clip's file, into a video editor or a folder: the file is made then
+// (without a pill, and forgotten once the drag's over: the file is the other
+// app's then), and the drag starts once it's there, if the button is still down.
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
@@ -55,6 +56,8 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   const over = () => {
     clearTimeout(limit);
     stop?.();
+    // Made only for this: forgotten (the file stays, if it was handed out).
+    if (!clip.shown) api.deleteClip(clip.id).catch(() => {});
     setTimeout(() => mine === drags && (out = false), 1000);
   };
   const limit = setTimeout(over, 60_000);
@@ -184,9 +187,8 @@ export interface Carry {
   from: DOMRect;
   x: number;
   y: number;
-  /** The clip it is, made if need be (in the clip bar if `shown`): an edit's
-   *  piece's own. Otherwise the stretch of the VOD shown becomes one. */
-  clip?: (shown: boolean) => Promise<Clip | null>;
+  /** Its name, if it's a clip's: a copy put in an edit keeps it. */
+  title?: string;
   /** Where it came from, if coming back there ends the carry (an edit's timeline). */
   home?: CarryHome;
 }
@@ -201,8 +203,15 @@ export interface CarryHome {
  * Carries a stretch from (`x`, `y`) while the button is down: see the top of
  * this file. Resolves once it's dropped, taken out of the window, or let go.
  */
-export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip, home }: Carry): Promise<void> {
-  const make = clip ?? ((shown: boolean) => exportStretch(start, end, shown));
+export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, home }: Carry): Promise<void> {
+  // A stretch of the VOD shown is made a clip through its clip bar; another's (an edit's piece) directly.
+  const make = async (shown: boolean): Promise<Clip | null> => {
+    if (vod.id === clips.vodId) return exportStretch(start, end, shown);
+    return api.addClip(vod.id, start, end, shown).catch((e) => {
+      clips.error = String(e);
+      return null;
+    });
+  };
   const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
   const ghost = document.createElement("div");
   ghost.className = "carry-ghost";
@@ -301,8 +310,9 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, clip, ho
       if (leaving) return;
       const { edit, bar } = targetAt(e.clientX, e.clientY);
       finish();
-      if (edit === "new") make(true).then((made) => made && edits.createWith(made.id));
-      else if (edit !== null) make(true).then((made) => made && edits.add(edit, made.id));
+      const stretch = { vodId: vod.id, start, end, title };
+      if (edit === "new") edits.createWith(stretch);
+      else if (edit !== null) edits.addRange(edit, stretch);
       else if (bar) make(true);
     };
     const onKey = (e: KeyboardEvent) => {

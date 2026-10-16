@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::preview::{self, Planned};
 use vodscribe_core::render::{self, Piece};
 use vodscribe_core::tools;
@@ -92,19 +92,24 @@ impl Previews {
 }
 
 /// Edit `id`'s preview, segment by segment; those not made yet are made next,
-/// and each says when it is (the `preview-made` event).
+/// and each says when it is (the `preview-made` event). Footage not here yet
+/// is fetched (`footage`), after which the page asks again.
 #[tauri::command]
-pub(crate) async fn preview_plan(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<Vec<Planned>> {
-    let pieces = state.db.lock().unwrap().edit_pieces(id).map_err(err)?;
-    let dir = dir(&app);
-    let planned = tauri::async_runtime::spawn_blocking(move || {
-        let planned = preview::plan(&pieces);
-        (planned, dir)
+pub(crate) async fn preview_plan(app: AppHandle, id: i64) -> CmdResult<Vec<Planned>> {
+    let handle = app.clone();
+    let (planned, missing) = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        let pieces = db.edit_pieces(id)?;
+        let planned = preview::plan(&pieces, |vod, a, b| crate::footage::find(&handle, &db, vod, a, b));
+        anyhow::Ok((planned, crate::edits::missing(&handle, &db, &pieces)))
     })
     .await
+    .map_err(err)?
     .map_err(err)?;
-    let (planned, dir) = planned;
-    state.previews.ask(&dir, &planned);
+    let state = app.state::<AppState>();
+    state.footage.ask(missing);
+    state.previews.ask(&dir(&app), &planned);
     Ok(planned)
 }
 

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-range-to-edit"
+description = "Enables the add_range_to_edit command without any pre-configured scope."
+commands.allow = ["add_range_to_edit"]
+
+[[permission]]
+identifier = "deny-add-range-to-edit"
+description = "Denies the add_range_to_edit command without any pre-configured scope."
+commands.deny = ["add_range_to_edit"]

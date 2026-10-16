@@ -12,8 +12,8 @@ use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
 
-use crate::db::ClipStatus;
 use crate::edits::EditPiece;
+use crate::footage::Source;
 use crate::render::Piece;
 
 /// Changes when segments are made differently, so old ones aren't used.
@@ -32,18 +32,13 @@ pub struct Planned {
     pub source: Option<Piece>,
 }
 
-/// The segments `pieces` play as, in order.
-pub fn plan(pieces: &[EditPiece]) -> Vec<Planned> {
+/// The segments `pieces` play as, in order, from the footage `find` gives.
+pub fn plan(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>) -> Vec<Planned> {
     let mut out = Vec::new();
     let mut at = 0.0;
     for p in pieces {
-        let file = match (&p.clip.status, &p.clip.file_path) {
-            (ClipStatus::Ready, Some(file)) => Some(PathBuf::from(file)),
-            _ => None,
-        };
         for (a, b) in p.spans() {
-            let source =
-                file.as_ref().map(|f| Piece { source: f.clone(), start: a - p.clip.start, end: b - p.clip.start });
+            let source = find(p.vod_id, a, b).map(|f| Piece { source: f.path, start: a - f.offset, end: b - f.offset });
             let key = source.as_ref().and_then(key);
             out.push(Planned { key, at, length: b - a, piece_id: p.id, source });
             at += b - a;
@@ -114,7 +109,7 @@ pub fn touch(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::Db;
+    use crate::db::{ClipStatus, Db};
     use crate::fetch::VodInfo;
 
     #[test]
@@ -132,32 +127,34 @@ mod tests {
             published: None,
         };
         let vod = db.add_vod(&info).unwrap().0.id;
+        // Clip a's file is the footage of 10 s to 20 s; there's none of 30 s to 34 s.
         let a = db.add_clip(vod, 10.0, 20.0, "a", true).unwrap();
-        let b = db.add_clip(vod, 30.0, 34.0, "b", true).unwrap();
         let file = dir.join("a.mp4");
         fs::write(&file, b"made").unwrap();
         db.set_clip_file(a.id, 10.0, 20.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
         let edit = db.add_edit("e").unwrap().id;
-        db.add_piece(edit, a.id, None).unwrap();
-        db.add_piece(edit, b.id, None).unwrap();
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, vod, (30.0, 34.0), "b", None).unwrap();
+        let footage = dir.join("footage");
+        let find = |vod: i64, a: f64, b: f64| crate::footage::find(&db, &footage, vod, a, b).unwrap();
         let first = db.edit_pieces(edit).unwrap()[0].id;
         db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
 
-        let planned = plan(&db.edit_pieces(edit).unwrap());
+        let planned = plan(&db.edit_pieces(edit).unwrap(), find);
         let spans: Vec<(f64, f64)> = planned.iter().map(|p| (p.at, p.length)).collect();
         assert_eq!(spans, [(0.0, 2.0), (2.0, 6.0), (8.0, 4.0)], "two stretches of a, then b");
         assert!(planned[0].key.is_some() && planned[0].key != planned[1].key);
         assert_eq!(planned[1].source.as_ref().map(|s| (s.start, s.end)), Some((4.0, 10.0)), "in its clip's file");
-        assert_eq!(planned[2].key, None, "b's file isn't made");
+        assert_eq!(planned[2].key, None, "no footage of b yet");
         assert!(is_key(planned[0].key.as_deref().unwrap()));
         assert!(!is_key("../../etc/passwd") && !is_key("0123456789abcdeg"));
 
         // The same stretch of the same file is the same segment; the file made again isn't.
-        let again = plan(&db.edit_pieces(edit).unwrap());
+        let again = plan(&db.edit_pieces(edit).unwrap(), find);
         assert_eq!(again[0].key, planned[0].key);
         std::thread::sleep(Duration::from_millis(20));
         fs::write(&file, b"made again").unwrap();
-        assert_ne!(plan(&db.edit_pieces(edit).unwrap())[0].key, planned[0].key);
+        assert_ne!(plan(&db.edit_pieces(edit).unwrap(), find)[0].key, planned[0].key);
     }
 
     #[test]

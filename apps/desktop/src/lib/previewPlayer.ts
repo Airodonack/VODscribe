@@ -3,9 +3,9 @@
 // each placed at its time in the edit (crates/core preview.rs makes them, all
 // alike: the same size, rate and codecs). So it plays across pieces without a
 // gap, and every frame is the one the render will have. Segments are fetched
-// as they're made (`preview-made`); where one isn't yet, the video waits there.
+// as they're made (`preview-made`); where one isn't yet (or its footage is
+// still downloading), the video waits there.
 // It's an EmbeddedPlayer like the others, so the same controls work it.
-// Where the webview can't (no MSE), editPlayer.ts plays the clips' files.
 
 import { api, type PreviewSegment } from "./api";
 import type { EmbeddedPlayer } from "./embed";
@@ -56,9 +56,9 @@ export class PreviewPlayer implements EmbeddedPlayer {
       this.buffer.mode = "segments";
       this.pump();
     });
-    v.addEventListener("waiting", () => this.onwaiting(this.atNowMissing() ? "Making the preview here…" : null));
+    v.addEventListener("waiting", () => this.onwaiting(this.waitingFor()));
     v.addEventListener("playing", () => this.onwaiting(null));
-    v.addEventListener("seeked", () => this.onwaiting(this.atNowMissing() ? "Making the preview here…" : null));
+    v.addEventListener("seeked", () => this.onwaiting(this.waitingFor()));
   }
 
   /** The segments to play now. Unchanged ones are kept; otherwise the buffer starts over. */
@@ -83,11 +83,12 @@ export class PreviewPlayer implements EmbeddedPlayer {
     return last ? last.at + last.length : 0;
   }
 
-  /** Whether the segment at the playhead isn't in the buffer yet. */
-  private atNowMissing(): boolean {
+  /** What the segment at the playhead waits for, if it isn't in the buffer yet. */
+  private waitingFor(): string | null {
     const t = this.video.currentTime;
     const i = this.plan.findIndex((s) => t >= s.at && t < s.at + s.length);
-    return i >= 0 && this.states[i] !== "in";
+    if (i < 0 || this.states[i] === "in") return null;
+    return this.plan[i].key ? "Making the preview here…" : "Downloading this part of the video…";
   }
 
   /** Waits for the buffer to finish what it's doing. */
@@ -159,7 +160,7 @@ export class PreviewPlayer implements EmbeddedPlayer {
       console.error("preview", e);
     } finally {
       this.busy = false;
-      if (!this.atNowMissing()) this.onwaiting(null);
+      this.onwaiting(this.waitingFor());
       if (this.again) this.pump();
     }
   }

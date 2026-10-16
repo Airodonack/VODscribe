@@ -9,6 +9,7 @@ mod app_server;
 mod chats;
 mod clips;
 mod edits;
+mod footage;
 mod loopback;
 mod media;
 mod previews;
@@ -42,6 +43,8 @@ struct AppState {
     clips: clips::Cutter,
     /// Edits being rendered (`edits`).
     renders: edits::Renderer,
+    /// Footage for edits being downloaded (`footage`).
+    footage: footage::Footage,
     /// Edits' preview segments being made (`previews`).
     previews: previews::Previews,
     /// Whole videos downloaded on request (`videos`).
@@ -156,6 +159,7 @@ pub fn run() {
                 chat,
                 clips: clips::Cutter::new(),
                 renders: edits::Renderer::new(),
+                footage: footage::Footage::default(),
                 previews: previews::Previews::default(),
                 videos: videos::Videos::default(),
                 adding: Mutex::default(),
@@ -164,6 +168,7 @@ pub fn run() {
             app.state::<AppState>().videos.run(app.handle().clone())?;
             app.state::<AppState>().renders.run(app.handle().clone())?;
             app.state::<AppState>().previews.run(app.handle().clone())?;
+            app.state::<AppState>().footage.run(app.handle().clone())?;
             let handle = app.handle().clone();
             std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
             let handle = app.handle().clone();
@@ -233,7 +238,6 @@ pub fn run() {
             clips::move_mark,
             clips::set_mark_text,
             media::clip_url,
-            clips::clip_thumb,
             clips::resolve_installed,
             previews::preview_plan,
             previews::preview_segment,
@@ -244,6 +248,8 @@ pub fn run() {
             edits::rename_edit,
             edits::delete_edit,
             edits::add_to_edit,
+            edits::add_range_to_edit,
+            edits::edit_thumb,
             edits::move_piece,
             edits::trim_piece,
             edits::strike_piece,

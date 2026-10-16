@@ -49,7 +49,13 @@ impl Cutter {
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let jobs = self.jobs.lock().unwrap().take().context("the clip queue is already running")?;
         let running = self.current.clone();
-        let unfinished = app.state::<AppState>().db.lock().unwrap().unfinished_clips()?;
+        let unfinished = {
+            let state = app.state::<AppState>();
+            let db = state.db.lock().unwrap();
+            // Clips made only to be dragged out: their files are someone else's now.
+            db.forget_hidden_clips()?;
+            db.unfinished_clips()?
+        };
         {
             // Pictures of clips no longer there (deleted with their VOD).
             let thumbs = thumbs_dir(&app);
@@ -351,23 +357,19 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
-/// Deletes clip `id` and its file; one in an edit is only taken out of the clip bar.
+/// Deletes clip `id`, and its file unless that was dragged out of the app
+/// (it's someone else's then).
 #[tauri::command]
 pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let clip = {
+    let file = {
         let db = state.db.lock().unwrap();
-        // An edit's: only taken out of the clip bar, kept with its file for the edit.
-        if !db.edits_with_clip(id).map_err(err)?.is_empty() {
-            db.hide_clip(id).map_err(err)?;
-            emit(&app, &db, id);
-            return Ok(());
-        }
         state.clips.stop(id);
         let clip = db.clip(id).map_err(err)?;
+        let handed_out = db.clip_handed_out(id).map_err(err)?;
         db.delete_clip(id).map_err(err)?;
-        clip
+        clip.and_then(|c| c.file_path).filter(|_| !handed_out)
     };
-    if let Some(path) = clip.and_then(|c| c.file_path) {
+    if let Some(path) = file {
         let _ = std::fs::remove_file(path);
     }
     let _ = std::fs::remove_file(thumb_path(&app, id));
@@ -452,15 +454,6 @@ pub(crate) fn resolve_installed() -> bool {
     cfg!(target_os = "linux") && Path::new("/opt/resolve/bin/resolve").is_file()
 }
 
-/// Clip `id`'s first frame, as a PNG; empty if it has none (yet, or sound alone).
-#[tauri::command]
-pub(crate) async fn clip_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc::Response> {
-    let path = thumb_path(&app, id);
-    let png =
-        tauri::async_runtime::spawn_blocking(move || std::fs::read(path).unwrap_or_default()).await.map_err(err)?;
-    Ok(tauri::ipc::Response::new(png))
-}
-
 /// Clip `id`'s file, if it's made.
 fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
@@ -486,6 +479,7 @@ pub(crate) async fn drag_clip(
     image: Option<Vec<u8>>,
 ) -> CmdResult<()> {
     let path = ready_file(&app, id)?;
+    app.state::<AppState>().db.lock().unwrap().hand_out_clip(id).map_err(err)?;
     // The picture the interface drew (the frame over its waveform), if it's a
     // PNG of reasonable size; else the clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));

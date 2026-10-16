@@ -53,7 +53,7 @@
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 500);
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
-    carry({ vod, start: clip.start, end: clip.end, ownPlayer, from, x: e.clientX, y: e.clientY });
+    carry({ vod, start: clip.start, end: clip.end, title: clip.title, ownPlayer, from, x: e.clientX, y: e.clientY });
   }
   function play(time: number) {
     if (!swallowClick) onplay(time);
@@ -82,9 +82,8 @@
     setTimeout(() => (added = null), 2500);
   }
 
-  // Each edit with this VOD's clips: a link to it. The pills are the bar's
-  // own: one put in an edit stays, and deleting one an edit uses only takes
-  // it off the bar (crates/core clips' `delete_clip`).
+  // Each edit with pieces of this VOD: a link to it. An edit's pieces are
+  // copies, so the pills are the bar's own, and deleting one changes no edit.
   const linked = $derived(edits.forVod(vod.id));
 
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
@@ -205,7 +204,7 @@
 </Popover>
 
 <style>
-  /* A link to an edit holding this VOD's clips: tinted, dashed, with an arrow. */
+  /* A link to an edit with pieces of this VOD: tinted, dashed, with an arrow. */
   .chip.edit-link {
     gap: 6px;
     padding: 0 10px;

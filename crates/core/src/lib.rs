@@ -12,6 +12,7 @@ pub mod deps;
 pub mod edits;
 pub mod emotes;
 pub mod fetch;
+pub mod footage;
 pub mod gpu;
 pub mod kick;
 pub mod layers;
