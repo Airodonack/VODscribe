@@ -381,3 +381,41 @@ fn run_sound(inner: &Inner, audio: &Audio) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paused_at(at: f64) -> State {
+        State { playing: false, at, since: Instant::now(), epoch: 0, ended: false, sound: None, output: false }
+    }
+
+    #[test]
+    fn the_time_stands_while_paused_and_follows_the_sound_while_playing() {
+        let mut s = paused_at(3.0);
+        assert_eq!(s.time(10.0), 3.0);
+        s.playing = true;
+        let played = Arc::new(AtomicU64::new(0));
+        s.sound = Some(Sound { played: played.clone(), rate: 100 });
+        assert_eq!(s.time(10.0), 3.0, "nothing played yet");
+        played.store(150, Ordering::Release);
+        assert_eq!(s.time(10.0), 4.5);
+        played.store(100_000, Ordering::Release);
+        assert_eq!(s.time(10.0), 10.0, "never past the end");
+    }
+
+    #[test]
+    fn a_restart_waits_for_the_sound_only_where_there_is_an_output() {
+        let mut s = paused_at(0.0);
+        s.playing = true;
+        s.restart(2.0);
+        assert_eq!(s.epoch, 1);
+        assert!(s.sound.is_none(), "no output: the computer's clock runs at once");
+        assert!(s.time(10.0) >= 2.0);
+        s.output = true;
+        s.restart(5.0);
+        assert_eq!(s.epoch, 2);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(s.time(10.0), 5.0, "with an output, the time stands until the sound plays");
+    }
+}
