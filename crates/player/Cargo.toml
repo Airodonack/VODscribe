@@ -11,6 +11,7 @@ path = "src/bin/play.rs"
 
 [dependencies]
 anyhow = "1"
+cpal = "0.18.2"
 serde = { version = "1", features = ["derive"] }
 vodscribe-core = { path = "../core" }
 

@@ -43,14 +43,12 @@ pub struct Frame {
     pub rgb: Vec<u8>,
 }
 
-/// Samples: interleaved stereo 16-bit at `RATE`, from `pts` on.
+/// Samples: interleaved stereo 16-bit, from `pts` on.
 pub struct Samples {
     pub pts: f64,
     pub pcm: Vec<i16>,
 }
 
-/// The sample rate sound is decoded to.
-pub const RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
 
 /// Frames kept decoded ahead of being taken.
@@ -164,10 +162,10 @@ impl Audio {
         Audio { ffmpeg: ffmpeg.into(), path: path.into() }
     }
 
-    /// The sound from `from` seconds on, in chunks.
-    pub fn from(&self, from: f64) -> Result<Stream<Samples>> {
-        let rate = RATE.to_string();
-        let output = ["-f", "s16le", "-ac", "2", "-ar", &rate];
+    /// The sound from `from` seconds on, in chunks, at `rate` samples a second.
+    pub fn from(&self, from: f64, rate: u32) -> Result<Stream<Samples>> {
+        let rate_ = rate.to_string();
+        let output = ["-f", "s16le", "-ac", "2", "-ar", &rate_];
         start(&self.ffmpeg, &self.path, from, "0:a:0", &output, move |mut out, tx| {
             let mut done = 0u64;
             loop {
@@ -184,7 +182,7 @@ impl Audio {
                     return;
                 }
                 let pcm: Vec<i16> = bytes[..got].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
-                let samples = Samples { pts: from + done as f64 / RATE as f64, pcm };
+                let samples = Samples { pts: from + done as f64 / rate as f64, pcm };
                 done += (got / (CHANNELS * 2)) as u64;
                 if tx.send(samples).is_err() {
                     return;

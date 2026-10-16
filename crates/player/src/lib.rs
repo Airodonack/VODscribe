@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 pub mod clock;
 pub mod decode;
 pub mod present;
+pub mod sound;
 
 /// A box on the page, in CSS pixels from the window's top-left corner.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

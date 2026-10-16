@@ -1,37 +1,69 @@
 //! The player's clock: what time it is in the file, and which frame shows.
-//! Playing, the time runs with the computer's clock from where play began
-//! (sound will take over as the master when it's in); paused, it stands.
-//! A thread decodes from the time asked (`decode`), waits for each frame's
-//! moment and shows it; a seek, or play after a pause, starts it over from
-//! the new time, so a paused seek shows the frame there. Time is kept in
-//! seconds but every seek lands on a frame of the file's rate, so a step is
-//! exactly one frame.
+//! Playing, the time follows the sound as it's played out (`sound`), or the
+//! computer's clock from where play began when there's no sound; paused,
+//! it stands. A thread decodes frames from the time asked (`decode`),
+//! waits for each one's moment and shows it; another decodes the sound and
+//! keeps the output fed. A seek, or play after a pause, starts both over
+//! from the new time, so a paused seek shows the frame there. Time is kept
+//! in seconds but every seek lands on a frame of the file's rate, so a step
+//! is exactly one frame.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use crate::decode::{self, Frame, Info, Video};
+use crate::decode::{self, Audio, Frame, Info, Video};
+use crate::sound::{self, Output};
 
 /// What the player does when a frame is due, if anything's told to be.
 pub type OnFrame = Box<dyn Fn() + Send + 'static>;
 
+/// The sound's clock: sample pairs played out since the time was set.
+struct Sound {
+    played: Arc<AtomicU64>,
+    rate: u32,
+}
+
 struct State {
     playing: bool,
-    /// The time, when paused; when playing, the time at `since`.
+    /// The time, when paused; when playing, the time at `since` (or when
+    /// the sound's count began).
     at: f64,
     since: Instant,
-    /// Counted up at every seek and play, so the decoder starts over.
+    /// Counted up at every seek and play, so the decoders start over.
     epoch: u64,
     /// Played to the end.
     ended: bool,
+    /// The sound playing out, while it is: the time follows it. Until it
+    /// does, where there's an output, a count standing at zero: the time
+    /// waits for the sound rather than running ahead of it.
+    sound: Option<Sound>,
+    /// There's a sound output (the sound thread says so once it has one).
+    output: bool,
 }
 
 impl State {
     fn time(&self, duration: f64) -> f64 {
-        if self.playing { (self.at + self.since.elapsed().as_secs_f64()).min(duration) } else { self.at }
+        if !self.playing {
+            return self.at;
+        }
+        let run = match &self.sound {
+            Some(s) => s.played.load(Ordering::Acquire) as f64 / s.rate as f64,
+            None => self.since.elapsed().as_secs_f64(),
+        };
+        (self.at + run).min(duration)
+    }
+
+    /// Starts over from `at` (a seek, or play): the decoders will, and the
+    /// time runs from here once the sound does again.
+    fn restart(&mut self, at: f64) {
+        self.at = at;
+        self.since = Instant::now();
+        self.epoch += 1;
+        self.sound = self.output.then(|| Sound { played: Arc::new(AtomicU64::new(0)), rate: 1 });
     }
 }
 
@@ -43,7 +75,7 @@ struct Inner {
     wake: Condvar,
     frame: Mutex<Option<Arc<Frame>>>,
     on_frame: Mutex<Option<OnFrame>>,
-    quit: Mutex<bool>,
+    quit: AtomicBool,
 }
 
 /// A file, playing or paused at a time.
@@ -59,16 +91,29 @@ impl Player {
         let inner = Arc::new(Inner {
             fps: picture.fps,
             duration: info.duration.unwrap_or(f64::MAX),
-            info,
-            state: Mutex::new(State { playing: false, at: 0.0, since: Instant::now(), epoch: 0, ended: false }),
+            state: Mutex::new(State {
+                playing: false,
+                at: 0.0,
+                since: Instant::now(),
+                epoch: 0,
+                ended: false,
+                sound: None,
+                output: false,
+            }),
             wake: Condvar::new(),
             frame: Mutex::new(None),
             on_frame: Mutex::new(None),
-            quit: Mutex::new(false),
+            quit: AtomicBool::new(false),
+            info,
         });
         let video = Video::new(ffmpeg, path, picture);
         let shared = inner.clone();
         std::thread::Builder::new().name("player".into()).spawn(move || run(&shared, &video))?;
+        if inner.info.audio {
+            let audio = Audio::new(ffmpeg, path);
+            let shared = inner.clone();
+            std::thread::Builder::new().name("sound".into()).spawn(move || run_sound(&shared, &audio))?;
+        }
         Ok(Player { inner })
     }
 
@@ -112,8 +157,8 @@ impl Player {
             s.ended = false;
         }
         s.playing = true;
-        s.since = Instant::now();
-        s.epoch += 1;
+        let at = s.at;
+        s.restart(at);
         self.inner.wake.notify_all();
     }
 
@@ -124,6 +169,7 @@ impl Player {
         }
         s.at = s.time(self.inner.duration);
         s.playing = false;
+        s.sound = None;
         self.inner.wake.notify_all();
     }
 
@@ -136,10 +182,8 @@ impl Player {
         let fps = self.inner.fps;
         let time = ((time.max(0.0) * fps + 1e-6).floor() / fps).min(self.inner.duration);
         let mut s = self.inner.state.lock().unwrap();
-        s.at = time;
-        s.since = Instant::now();
         s.ended = false;
-        s.epoch += 1;
+        s.restart(time);
         self.inner.wake.notify_all();
     }
 
@@ -153,7 +197,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        *self.inner.quit.lock().unwrap() = true;
+        self.inner.quit.store(true, Ordering::Release);
         self.inner.wake.notify_all();
     }
 }
@@ -164,7 +208,7 @@ const LATE: f64 = 0.5;
 /// The player's thread: decodes from the time, shows each frame at its moment.
 fn run(inner: &Inner, video: &Video) {
     'start: loop {
-        if *inner.quit.lock().unwrap() {
+        if inner.quit.load(Ordering::Acquire) {
             return;
         }
         let (epoch, from) = {
@@ -180,8 +224,9 @@ fn run(inner: &Inner, video: &Video) {
                 if s.epoch == epoch {
                     s.at = s.time(inner.duration);
                     s.playing = false;
+                    s.sound = None;
                     s.ended = true;
-                    while s.epoch == epoch && !*inner.quit.lock().unwrap() {
+                    while s.epoch == epoch && !inner.quit.load(Ordering::Acquire) {
                         s = inner.wake.wait(s).unwrap();
                     }
                 }
@@ -191,7 +236,7 @@ fn run(inner: &Inner, video: &Video) {
             // and it's the first (the frame at the time); dropped if late.
             let mut s = inner.state.lock().unwrap();
             loop {
-                if s.epoch != epoch || *inner.quit.lock().unwrap() {
+                if s.epoch != epoch || inner.quit.load(Ordering::Acquire) {
                     continue 'start;
                 }
                 if !s.playing {
@@ -201,12 +246,13 @@ fn run(inner: &Inner, video: &Video) {
                     s = inner.wake.wait(s).unwrap();
                     continue;
                 }
-                let now = s.time(inner.duration);
-                let wait = frame.pts - now;
+                let wait = frame.pts - s.time(inner.duration);
                 if wait <= 0.0 {
                     break;
                 }
-                s = inner.wake.wait_timeout(s, Duration::from_secs_f64(wait)).unwrap().0;
+                // The sound's clock isn't signalled, so looked at often.
+                let wait = Duration::from_secs_f64(wait.min(0.01));
+                s = inner.wake.wait_timeout(s, wait).unwrap().0;
             }
             let late = s.playing && s.time(inner.duration) - frame.pts > LATE;
             drop(s);
@@ -217,6 +263,78 @@ fn run(inner: &Inner, video: &Video) {
             *inner.frame.lock().unwrap() = Some(frame);
             if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
                 f();
+            }
+        }
+    }
+}
+
+/// Sound queued before it's let out, so it doesn't run dry at once.
+const START: f64 = 0.1;
+
+/// The sound's thread: decodes from the time and keeps the output fed while
+/// playing; once it's playing out, the time follows it.
+fn run_sound(inner: &Inner, audio: &Audio) {
+    let Some(out) = Output::open() else { return };
+    {
+        let mut s = inner.state.lock().unwrap();
+        s.output = true;
+        if s.playing {
+            let at = s.time(inner.duration);
+            s.restart(at);
+        }
+    }
+    'start: loop {
+        out.set_running(false);
+        out.clear();
+        let (epoch, from) = {
+            let mut s = inner.state.lock().unwrap();
+            while !s.playing && !inner.quit.load(Ordering::Acquire) {
+                s = inner.wake.wait(s).unwrap();
+            }
+            if inner.quit.load(Ordering::Acquire) {
+                return;
+            }
+            (s.epoch, s.time(inner.duration))
+        };
+        let Ok(mut stream) = audio.from(from, out.rate()) else { return };
+        let mut started = false;
+        loop {
+            {
+                let s = inner.state.lock().unwrap();
+                if s.epoch != epoch || !s.playing || inner.quit.load(Ordering::Acquire) {
+                    continue 'start;
+                }
+            }
+            if out.queued() < sound::AHEAD {
+                match stream.next() {
+                    Some(samples) => out.push(&samples.pcm),
+                    None => {
+                        // The sound ended before the picture: the time goes
+                        // on by the computer's clock from here.
+                        let mut s = inner.state.lock().unwrap();
+                        if s.epoch == epoch && s.sound.is_some() {
+                            s.at = s.time(inner.duration);
+                            s.since = Instant::now();
+                            s.sound = None;
+                        }
+                        while s.epoch == epoch && s.playing && !inner.quit.load(Ordering::Acquire) {
+                            s = inner.wake.wait(s).unwrap();
+                        }
+                        continue 'start;
+                    }
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if !started && out.queued() >= START {
+                let mut s = inner.state.lock().unwrap();
+                if s.epoch != epoch {
+                    continue 'start;
+                }
+                out.recount();
+                s.sound = Some(Sound { played: out.played(), rate: out.rate() });
+                out.set_running(true);
+                started = true;
             }
         }
     }
