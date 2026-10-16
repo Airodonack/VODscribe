@@ -20,6 +20,7 @@ use vodscribe_core::db::{Clip, ClipStatus, Db, Mark};
 use vodscribe_core::settings::{ClipFormat, Settings};
 use vodscribe_core::{clips, fetch, tools};
 
+use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err, media};
 
 /// The longest clip: longer than any highlight, short of a whole VOD.
@@ -86,7 +87,7 @@ impl Cutter {
         Ok(())
     }
 
-    fn queue(&self, id: i64) {
+    pub(crate) fn queue(&self, id: i64) {
         let _ = self.queue.send(id);
     }
 
@@ -101,7 +102,7 @@ impl Cutter {
     }
 
     /// Stops clip `id`'s cut, if it's the one being cut.
-    fn stop(&self, id: i64) {
+    pub(crate) fn stop(&self, id: i64) {
         if let Some((current, stop)) = &*self.current.lock().unwrap()
             && *current == id
         {
@@ -311,7 +312,11 @@ pub(crate) async fn add_clip(
         let end = vod.info.duration.map_or(end, |d| end.min(d));
         check_range(start, end, vod.info.duration)?;
         let words = db.words_between(vod_id, start, end).map_err(err)?;
-        db.add_clip(vod_id, start, end, &clips::title(&words, start), shown.unwrap_or(true)).map_err(err)?
+        let doc = Doc::Vod(vod_id);
+        let before = history::snapshot(&db, doc).ok().flatten();
+        let clip = db.add_clip(vod_id, start, end, &clips::title(&words, start), shown.unwrap_or(true)).map_err(err)?;
+        state.history.record(&db, doc, "Clip added", before);
+        clip
     };
     state.clips.queue(clip.id);
     Ok(clip)
@@ -327,7 +332,10 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
         let duration = db.vod(clip.vod_id).map_err(err)?.and_then(|v| v.info.duration);
         let end = duration.map_or(end, |d| end.min(d));
         check_range(start, end, duration)?;
+        let doc = Doc::Vod(clip.vod_id);
+        let before = history::snapshot(&db, doc).ok().flatten();
         db.set_clip_range(id, start, end).map_err(err)?;
+        state.history.record(&db, doc, "Clip resized", before);
         db.clip(id).map_err(err)?.ok_or("That clip is gone.")?
     };
     state.clips.stop(id);
@@ -340,7 +348,10 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
 pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
+    let doc = Doc::Vod(db.clip(id).map_err(err)?.ok_or("That clip is gone.")?.vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
     db.show_clip(id).map_err(err)?;
+    state.history.record(&db, doc, "Clip added", before);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
@@ -353,7 +364,10 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     let title: String = title.chars().take(200).collect();
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
+    let doc = Doc::Vod(db.clip(id).map_err(err)?.ok_or("That clip is gone.")?.vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
     db.rename_clip(id, &title).map_err(err)?;
+    state.history.record(&db, doc, "Clip renamed", before);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
@@ -361,18 +375,27 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
 /// (it's someone else's then).
 #[tauri::command]
 pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let file = {
-        let db = state.db.lock().unwrap();
-        state.clips.stop(id);
-        let clip = db.clip(id).map_err(err)?;
-        let handed_out = db.clip_handed_out(id).map_err(err)?;
-        db.delete_clip(id).map_err(err)?;
-        clip.and_then(|c| c.file_path).filter(|_| !handed_out)
-    };
-    if let Some(path) = file {
+    let db = state.db.lock().unwrap();
+    let Some(clip) = db.clip(id).map_err(err)? else { return Ok(()) };
+    let doc = Doc::Vod(clip.vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    remove(&app, &db, id).map_err(err)?;
+    state.history.record(&db, doc, if clip.shown { "Clip deleted" } else { "Clip dropped" }, before);
+    Ok(())
+}
+
+/// Deletes clip `id` (stopping its cut), and its file unless that was
+/// dragged out of the app, and tells the page (`clip-removed`).
+pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
+    let state = app.state::<AppState>();
+    state.clips.stop(id);
+    let clip = db.clip(id)?;
+    let handed_out = db.clip_handed_out(id)?;
+    db.delete_clip(id)?;
+    if let Some(path) = clip.and_then(|c| c.file_path).filter(|_| !handed_out) {
         let _ = std::fs::remove_file(path);
     }
-    let _ = std::fs::remove_file(thumb_path(&app, id));
+    let _ = std::fs::remove_file(thumb_path(app, id));
     let _ = app.emit("clip-removed", id);
     Ok(())
 }
@@ -419,15 +442,39 @@ pub(crate) async fn add_mark(
     }
     let db = state.db.lock().unwrap();
     db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-    db.add_mark(vod_id, &kind, time, mark_text(text).as_deref()).map_err(err)
+    let doc = Doc::Vod(vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    let mark = db.add_mark(vod_id, &kind, time, mark_text(text).as_deref()).map_err(err)?;
+    let label = match kind.as_str() {
+        "chapter" => "Chapter added",
+        "highlight" => "Highlight added",
+        _ => "Cut added",
+    };
+    state.history.record(&db, doc, label, before);
+    Ok(mark)
 }
 
 /// Sets mark `id`'s title (a chapter's) or note (a highlight's).
 #[tauri::command]
 pub(crate) async fn set_mark_text(state: State<'_, AppState>, id: i64, text: Option<String>) -> CmdResult<()> {
-    if !state.db.lock().unwrap().set_mark_text(id, mark_text(text).as_deref()).map_err(err)? {
+    marking(&state, id, "Text changed", |db| db.set_mark_text(id, mark_text(text).as_deref()))
+}
+
+/// Runs `change` on mark `id` (false if it's gone), recording it in its VOD's history as `label`.
+fn marking(
+    state: &AppState,
+    id: i64,
+    label: &'static str,
+    change: impl FnOnce(&Db) -> anyhow::Result<bool>,
+) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    let Some(vod_id) = db.mark_vod(id).map_err(err)? else { return Err("That mark is gone.".into()) };
+    let doc = Doc::Vod(vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    if !change(&db).map_err(err)? {
         return Err("That mark is gone.".into());
     }
+    state.history.record(&db, doc, label, before);
     Ok(())
 }
 
@@ -436,15 +483,15 @@ pub(crate) async fn move_mark(state: State<'_, AppState>, id: i64, time: f64) ->
     if !(time.is_finite() && time >= 0.0) {
         return Err("A mark has to be within the video.".into());
     }
-    if !state.db.lock().unwrap().move_mark(id, time).map_err(err)? {
-        return Err("That mark is gone.".into());
-    }
-    Ok(())
+    marking(&state, id, "Mark moved", |db| db.move_mark(id, time))
 }
 
 #[tauri::command]
 pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    state.db.lock().unwrap().delete_mark(id).map_err(err)
+    if state.db.lock().unwrap().mark_vod(id).map_err(err)?.is_none() {
+        return Ok(());
+    }
+    marking(&state, id, "Mark removed", |db| db.delete_mark(id).map(|()| true))
 }
 
 /// Whether DaVinci Resolve is installed where its Linux installer puts it:

@@ -51,6 +51,24 @@ pub enum LibraryItem {
     Edit(i64),
 }
 
+/// What an edit holds, as `Db::edit_state` takes it and `Db::restore_edit`
+/// puts it back: for undo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditState {
+    pub title: String,
+    pub pieces: Vec<PieceState>,
+}
+
+/// A piece as an `EditState` holds it: what it is, not which row it was.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieceState {
+    pub vod_id: i64,
+    pub start: f64,
+    pub end: f64,
+    pub title: String,
+    pub struck: Vec<(f64, f64)>,
+}
+
 /// A piece of an edit: `start`..`end` of VOD `vod_id`, less the `struck` stretches.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct EditPiece {
@@ -229,6 +247,42 @@ impl Db {
             out.push(EditPiece { id, edit_id, vod_id, start, end, title, struck, vod_title });
         }
         Ok(out)
+    }
+
+    /// What edit `id` holds (its title and pieces), to be put back later
+    /// with `restore_edit` (for undo); None if it's gone.
+    pub fn edit_state(&self, id: i64) -> Result<Option<EditState>> {
+        let Some(title) =
+            self.conn.query_row("SELECT title FROM edits WHERE id = ?1", [id], |r| r.get(0)).optional()?
+        else {
+            return Ok(None);
+        };
+        let pieces = self
+            .edit_pieces(id)?
+            .into_iter()
+            .map(|p| PieceState { vod_id: p.vod_id, start: p.start, end: p.end, title: p.title, struck: p.struck })
+            .collect();
+        Ok(Some(EditState { title, pieces }))
+    }
+
+    /// Puts edit `id` back as `state` had it: its title, and its pieces in
+    /// order (made anew, so with new ids), less any of a VOD since deleted.
+    /// Nothing if the edit's gone.
+    pub fn restore_edit(&self, id: i64, state: &EditState) -> Result<()> {
+        self.atomically(|db| {
+            if db.conn.execute("UPDATE edits SET title = ?2 WHERE id = ?1", params![id, state.title])? == 0 {
+                return Ok(());
+            }
+            db.conn.execute("DELETE FROM edit_pieces WHERE edit_id = ?1", [id])?;
+            for (position, p) in state.pieces.iter().enumerate() {
+                db.conn.execute(
+                    "INSERT INTO edit_pieces (edit_id, vod_id, position, start, end, title, struck)
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM vods WHERE id = ?2)",
+                    params![id, p.vod_id, position as i64, p.start, p.end, p.title, serde_json::to_string(&p.struck)?],
+                )?;
+            }
+            db.changed(id)
+        })
     }
 
     /// The edit piece `id` is in, if it's there.
@@ -466,6 +520,27 @@ pub(crate) mod tests {
         assert_eq!(db.library_order().unwrap(), [Vod(a), Vod(b), Edit(e)]);
         assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [a, b]);
         assert_eq!(serde_json::to_string(&Edit(e)).unwrap(), format!(r#"{{"kind":"edit","id":{e}}}"#));
+    }
+
+    #[test]
+    fn an_edit_is_put_back_as_it_was() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, vod, (30.0, 34.0), "b", None).unwrap();
+        let a = db.edit_pieces(edit).unwrap()[0].id;
+        db.set_piece_struck(a, &[(12.0, 13.0)]).unwrap();
+        let before = db.edit_state(edit).unwrap().unwrap();
+
+        db.remove_piece(a).unwrap();
+        db.rename_edit(edit, "renamed").unwrap();
+        db.add_piece(edit, vod, (1.0, 2.0), "c", Some(0)).unwrap();
+        assert_ne!(db.edit_state(edit).unwrap().unwrap(), before);
+
+        db.restore_edit(edit, &before).unwrap();
+        assert_eq!(db.edit_state(edit).unwrap().unwrap(), before, "title, pieces, order and strikes");
+        assert_eq!(db.edit_state(9999).unwrap(), None);
     }
 
     #[test]

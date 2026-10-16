@@ -250,6 +250,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     // the rest of the app isn't kept waiting on the library while they're
     // erased. (No more chat is fetched for it.)
     state.chat.stop(id);
+    state.history.forget(crate::history::Doc::Vod(id));
     let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
     state.clips.stop_vod(&state.db.lock().unwrap(), id);
     erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;

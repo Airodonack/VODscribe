@@ -17,6 +17,7 @@ use vodscribe_core::edits::{self, Edit, EditPiece};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, render, tools};
 
+use crate::history::{self, Doc};
 use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -172,11 +173,20 @@ fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
     Ok(EditView { edit, pieces })
 }
 
-/// Runs `change` on the library, then gives edit `edit_id` as it is now.
-fn changing(app: &AppHandle, edit_id: i64, change: impl FnOnce(&Db) -> Result<()>) -> CmdResult<EditView> {
+/// Runs `change` on the library, recording it in edit `edit_id`'s history as
+/// `label`, then gives the edit as it is now.
+fn changing(
+    app: &AppHandle,
+    edit_id: i64,
+    label: &'static str,
+    change: impl FnOnce(&Db) -> Result<()>,
+) -> CmdResult<EditView> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
+    let doc = Doc::Edit(edit_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
     change(&db).map_err(err)?;
+    state.history.record(&db, doc, label, before);
     view(app, &db, edit_id)
 }
 
@@ -217,7 +227,7 @@ pub(crate) async fn get_edit(app: AppHandle, id: i64) -> CmdResult<EditView> {
 #[tauri::command]
 pub(crate) async fn rename_edit(app: AppHandle, id: i64, title: String) -> CmdResult<EditView> {
     let title = self::title(&title)?;
-    changing(&app, id, |db| db.rename_edit(id, &title))
+    changing(&app, id, "Edit renamed", |db| db.rename_edit(id, &title))
 }
 
 /// Deletes edit `id`, and its video if it was rendered.
@@ -228,6 +238,7 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
         let db = state.db.lock().unwrap();
         let file = db.edit(id).map_err(err)?.and_then(|e| e.file_path);
         db.delete_edit(id).map_err(err)?;
+        state.history.forget(Doc::Edit(id));
         file
     };
     if let Some(file) = file {
@@ -246,7 +257,7 @@ pub(crate) async fn add_to_edit(
     clip_id: i64,
     index: Option<usize>,
 ) -> CmdResult<EditView> {
-    changing(&app, edit_id, |db| {
+    changing(&app, edit_id, "Piece added", |db| {
         db.edit(edit_id)?.context("That edit is gone.")?;
         let clip = db.clip(clip_id)?.context("That clip is gone.")?;
         db.add_piece(edit_id, clip.vod_id, (clip.start, clip.end), &clip.title, index)
@@ -270,7 +281,7 @@ pub(crate) async fn add_range_to_edit(
     if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
         return Err("A piece has to end after it starts.".into());
     }
-    changing(&app, edit_id, |db| {
+    changing(&app, edit_id, "Piece added", |db| {
         db.edit(edit_id)?.context("That edit is gone.")?;
         db.vod(vod_id)?.context("That VOD is gone.")?;
         let title = match title {
@@ -284,7 +295,7 @@ pub(crate) async fn add_range_to_edit(
 #[tauri::command]
 pub(crate) async fn move_piece(app: AppHandle, id: i64, index: usize) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;
-    changing(&app, edit, |db| db.move_piece(id, index))
+    changing(&app, edit, "Piece moved", |db| db.move_piece(id, index))
 }
 
 /// Trims piece `id` to `start`..`end` of its VOD.
@@ -294,7 +305,7 @@ pub(crate) async fn trim_piece(app: AppHandle, id: i64, start: f64, end: f64) ->
         return Err("A piece has to end after it starts.".into());
     }
     let edit = edit_of(&app, id)?;
-    changing(&app, edit, |db| db.set_piece_range(id, start, end))
+    changing(&app, edit, "Piece resized", |db| db.set_piece_range(id, start, end))
 }
 
 /// Sets the stretches of piece `id` (in its VOD's time) to jump over.
@@ -304,14 +315,14 @@ pub(crate) async fn strike_piece(app: AppHandle, id: i64, struck: Vec<(f64, f64)
         return Err("Those aren't times in the video.".into());
     }
     let edit = edit_of(&app, id)?;
-    changing(&app, edit, |db| db.set_piece_struck(id, &struck))
+    changing(&app, edit, "Lines struck", |db| db.set_piece_struck(id, &struck))
 }
 
 /// Splits piece `id` in two at `at` seconds of its VOD.
 #[tauri::command]
 pub(crate) async fn split_piece(app: AppHandle, id: i64, at: f64) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;
-    changing(&app, edit, |db| {
+    changing(&app, edit, "Piece split", |db| {
         if !db.split_piece(id, at)? {
             anyhow::bail!("That's not inside the piece.");
         }
@@ -322,7 +333,7 @@ pub(crate) async fn split_piece(app: AppHandle, id: i64, at: f64) -> CmdResult<E
 #[tauri::command]
 pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;
-    changing(&app, edit, |db| db.remove_piece(id))
+    changing(&app, edit, "Piece removed", |db| db.remove_piece(id))
 }
 
 /// Renders edit `id` (after any being rendered).

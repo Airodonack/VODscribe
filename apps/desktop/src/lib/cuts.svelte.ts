@@ -41,6 +41,11 @@ class Cuts {
     this.#reload();
   }
 
+  /** Loads VOD `vodId`'s marks again (undo or redo changed them), if it's the one open. */
+  reload(vodId: number) {
+    if (vodId === this.vodId) this.#reload();
+  }
+
   #reload() {
     const vodId = this.vodId;
     if (vodId === null) return;

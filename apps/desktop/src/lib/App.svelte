@@ -22,6 +22,11 @@
   import { savePlayable } from "./playable";
   import { settings } from "./appSettings.svelte";
   import { theme } from "./theme.svelte";
+  import { cuts } from "./cuts.svelte";
+  import { clips } from "./clips.svelte";
+  import { toast } from "./toasts.svelte";
+  import Toast from "./Toast.svelte";
+  import type { Doc } from "./api";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -63,8 +68,45 @@
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
   const searchKey = os === "mac" ? "⌘F" : "Ctrl+F";
+  // The document in view, whose history undo and redo go through: the edit
+  // open, or else the VOD shown (its marks and clip bar). The backend's told,
+  // as changes made now are made from it.
+  const view = $derived<Doc | null>(
+    edits.openId !== null
+      ? { kind: "edit", id: edits.openId }
+      : selectedId !== null
+        ? { kind: "vod", id: selectedId }
+        : null,
+  );
+  $effect(() => {
+    if (!DEMO) api.setView(view).catch(() => {});
+  });
+
+  /** Undoes (or redoes) the newest change in the view's history, and says what it was. */
+  function undoRedo(redo: boolean) {
+    const doc = view;
+    if (!doc || DEMO) return;
+    (redo ? api.redo(doc) : api.undo(doc)).then(
+      (done) =>
+        toast.show(
+          done ? `${redo ? "Redone" : "Undone"}: ${done.label}` : redo ? "Nothing to redo" : "Nothing to undo",
+          done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo) } : undefined,
+        ),
+      (e) => toast.show(`Couldn't ${redo ? "redo" : "undo"}: ${e}`),
+    );
+  }
+
   function onWindowKey(e: KeyboardEvent) {
     if (!keysForApp()) return;
+    // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
+    const target = e.target as HTMLElement | null;
+    const typing = !!target?.closest("input, textarea, select, [contenteditable]");
+    const key = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing && (key === "z" || key === "y")) {
+      e.preventDefault();
+      undoRedo(key === "y" || e.shiftKey);
+      return;
+    }
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
@@ -171,6 +213,16 @@
       .show()
       .catch(() => {});
     unlisten.push(updates.start());
+    // A document put back by undo or redo: what shows it loads it again.
+    unlisten.push(
+      await events.restored((doc) => {
+        if (doc.kind === "edit") edits.reload(doc.id);
+        else {
+          cuts.reload(doc.id);
+          clips.reload(doc.id);
+        }
+      }),
+    );
     // What this computer plays, for videos kept from other sites; in the background.
     void savePlayable();
     unlisten.push(
@@ -449,6 +501,7 @@
       {/if}
     </svelte:element>
   </div>
+  <Toast />
 {/if}
 
 <style>

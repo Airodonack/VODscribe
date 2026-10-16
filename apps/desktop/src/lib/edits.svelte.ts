@@ -90,6 +90,16 @@ class Edits {
     }
   }
 
+  /** Loads edit `id` again (undo or redo changed it), if it's in the list or open. */
+  reload(id: number) {
+    if (id === this.openId) this.#load(id);
+    else if (this.list.some((e) => e.id === id))
+      api.getEdit(id).then(
+        (view) => this.#put(view.edit),
+        () => {},
+      );
+  }
+
   #load(id: number) {
     const mine = ++this.#seq;
     api.getEdit(id).then(
@@ -104,12 +114,14 @@ class Edits {
   }
 
   /** Runs a change to an edit; what comes back is the edit as it is now. */
-  async #change(action: Promise<EditView>) {
+  async #change(action: Promise<EditView>): Promise<boolean> {
     try {
       this.#show(await action);
       this.error = null;
+      return true;
     } catch (e) {
       this.error = String(e);
+      return false;
     }
   }
 

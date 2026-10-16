@@ -291,6 +291,15 @@ export interface ChatLine {
   amount: number | null;
 }
 
+/** A document with an undo history (crates' history.rs): an edit, or a VOD's marks and clip bar. */
+export type Doc = { kind: "edit" | "vod"; id: number };
+
+/** What an undo or redo did: to which document, and what it was ("Piece removed"). */
+export interface Undone {
+  doc: Doc;
+  label: string;
+}
+
 export const api = {
   setupStatus: () => invoke<SetupStatus>("setup_status"),
   runSetup: () => invoke<void>("run_setup"),
@@ -321,6 +330,12 @@ export const api = {
   clipUrl: (id: number) => invoke<string>("clip_url", { id }),
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
+  /** The view open (an edit or a VOD's), for the history: what changes are made from. */
+  setView: (view: Doc | null) => invoke<void>("set_view", { view }),
+  /** Undoes the newest change in `view`'s history (or one made from it); null if there's none. */
+  undo: (view: Doc) => invoke<Undone | null>("undo", { view }),
+  /** Redoes what was undone last in `view`'s history. */
+  redo: (view: Doc) => invoke<Undone | null>("redo", { view }),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */
   previewPlan: (id: number, at: number) => invoke<PreviewSegment[]>("preview_plan", { id, at }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
@@ -429,6 +444,8 @@ export const api = {
 };
 
 export const events = {
+  /** A document put back as it was by undo or redo: what shows it reloads it. */
+  restored: (cb: (doc: Doc) => void) => listen<Doc>("restored", (e) => cb(e.payload)),
   vod: (cb: (vod: Vod) => void) => listen<Vod>("vod", (e) => cb(e.payload)),
   vodProgress: (cb: (id: number, status: Status, progress: number) => void) =>
     listen<[number, Status, number]>("vod-progress", (e) => cb(...e.payload)),

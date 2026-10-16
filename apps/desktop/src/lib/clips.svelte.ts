@@ -47,6 +47,16 @@ class Clips {
     );
   }
 
+  /** Loads VOD `vodId`'s clips again (undo or redo changed its clip bar), if it's the one shown. */
+  reload(vodId: number) {
+    if (vodId !== this.vodId) return;
+    const mine = ++this.#seq;
+    api.listClips(vodId).then(
+      (list) => mine === this.#seq && (this.list = list),
+      (e) => mine === this.#seq && (this.error = String(e)),
+    );
+  }
+
   #listen() {
     if (this.#listening) return;
     this.#listening = true;

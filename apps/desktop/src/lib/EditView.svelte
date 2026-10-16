@@ -13,7 +13,7 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount } from "svelte";
-  import { api, events, type EditPiece, type Line, type PreviewSegment, type Vod } from "./api";
+  import { api, events, type Doc, type EditPiece, type Line, type PreviewSegment, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
@@ -27,6 +27,7 @@
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
   import { load, save } from "./stored";
+  import { toast } from "./toasts.svelte";
 
   let {
     vods,
@@ -207,7 +208,21 @@
   /** Remove: the piece at the playhead out of the edit (the one on screen,
    *  as for Split: there's no other selection to keep track of). */
   function removeCurrent() {
-    if (atNow) edits.removePiece(atNow.piece.id);
+    const id = edit?.id;
+    if (!atNow || id === undefined) return;
+    edits
+      .removePiece(atNow.piece.id)
+      .then(
+        (removed) => removed && toast.show("Piece removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
+      );
+  }
+
+  /** Undoes the newest change in `doc`'s history (from the toast's Undo). */
+  function undoIn(doc: Doc) {
+    api.undo(doc).then(
+      (done) => done && toast.show(`Undone: ${done.label}`),
+      (e) => toast.show(`Couldn't undo: ${e}`),
+    );
   }
 
   /** Split: the piece at the playhead in two, there. */

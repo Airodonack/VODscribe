@@ -509,6 +509,15 @@ pub struct Mark {
     pub text: Option<String>,
 }
 
+/// A mark as `Db::mark_states` takes it and `Db::restore_marks` puts it back:
+/// what it is, not which row it was.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkState {
+    pub kind: String,
+    pub start: f64,
+    pub text: Option<String>,
+}
+
 pub(crate) const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
@@ -743,6 +752,27 @@ impl Db {
     /// Moves mark `id` to `start`; false if it's gone.
     pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
         Ok(self.conn.execute("UPDATE marks SET start = ?2 WHERE id = ?1", params![id, start])? > 0)
+    }
+
+    /// The VOD mark `id` is on, if it's there.
+    pub fn mark_vod(&self, id: i64) -> Result<Option<i64>> {
+        Ok(self.conn.query_row("SELECT vod_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+    }
+
+    /// VOD `vod_id`'s marks, to be put back later with `restore_marks` (for undo).
+    pub fn mark_states(&self, vod_id: i64) -> Result<Vec<MarkState>> {
+        Ok(self.marks(vod_id)?.into_iter().map(|m| MarkState { kind: m.kind, start: m.start, text: m.text }).collect())
+    }
+
+    /// Makes VOD `vod_id`'s marks those of `marks` (made anew, so with new ids).
+    pub fn restore_marks(&self, vod_id: i64, marks: &[MarkState]) -> Result<()> {
+        self.atomically(|db| {
+            db.conn.execute("DELETE FROM marks WHERE vod_id = ?1", [vod_id])?;
+            for m in marks {
+                db.add_mark(vod_id, &m.kind, m.start, m.text.as_deref())?;
+            }
+            Ok(())
+        })
     }
 
     pub fn delete_mark(&self, id: i64) -> Result<()> {
@@ -1389,6 +1419,21 @@ fn highlight(words: &[Word], ranges: &[(usize, usize)]) -> Vec<TextPart> {
 mod tests {
     use super::*;
     use crate::transcript::{Segment, Segmenter};
+
+    #[test]
+    fn marks_are_put_back_as_they_were() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+        let cut = db.add_mark(vod, "cut", 5.0, None).unwrap();
+        db.add_mark(vod, "chapter", 1.0, Some("Intro")).unwrap();
+        let before = db.mark_states(vod).unwrap();
+        assert_eq!(db.mark_vod(cut.id).unwrap(), Some(vod));
+
+        db.move_mark(cut.id, 7.0).unwrap();
+        db.add_mark(vod, "highlight", 3.0, Some("note")).unwrap();
+        db.restore_marks(vod, &before).unwrap();
+        assert_eq!(db.mark_states(vod).unwrap(), before);
+    }
 
     /// How search results mark their matches, against the cases the website's
     /// demo is tested against too (crates/core/tests/phrase-search.json):

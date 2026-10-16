@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-view"
+description = "Enables the set_view command without any pre-configured scope."
+commands.allow = ["set_view"]
+
+[[permission]]
+identifier = "deny-set-view"
+description = "Denies the set_view command without any pre-configured scope."
+commands.deny = ["set_view"]

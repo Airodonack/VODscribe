@@ -10,6 +10,7 @@ mod chats;
 mod clips;
 mod edits;
 mod footage;
+mod history;
 mod loopback;
 mod media;
 mod previews;
@@ -49,6 +50,8 @@ struct AppState {
     previews: previews::Previews,
     /// Whole videos downloaded on request (`videos`).
     videos: videos::Videos,
+    /// What can be undone and redone (`history`).
+    history: history::History,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -162,6 +165,7 @@ pub fn run() {
                 footage: footage::Footage::default(),
                 previews: previews::Previews::default(),
                 videos: videos::Videos::default(),
+                history: history::History::default(),
                 adding: Mutex::default(),
             });
             app.state::<AppState>().clips.run(app.handle().clone())?;
@@ -251,6 +255,9 @@ pub fn run() {
             edits::add_range_to_edit,
             edits::edit_thumb,
             footage::vod_frame,
+            history::set_view,
+            history::undo,
+            history::redo,
             edits::move_piece,
             edits::trim_piece,
             edits::strike_piece,
