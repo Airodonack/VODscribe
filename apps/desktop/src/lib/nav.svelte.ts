@@ -3,7 +3,8 @@
 // moves or a search is typed; each remembers the search box and how its view
 // was left (the playhead, the timeline's zoom, how far it was scrolled), which
 // the views write here as they go (`note`) and read when brought back
-// (`bringBack`). Opening a VOD from the library still opens it at its start.
+// (`bringBack`). What they noted last also has a VOD or an edit opened any
+// other way start where its playhead was left this session (`lastSeen`).
 
 import type { Doc } from "./api";
 

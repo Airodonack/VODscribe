@@ -409,7 +409,7 @@
     requestAnimationFrame(step);
   }
 
-  // Selecting a VOD opens its player paused at the start, ready to jump around.
+  // Selecting a VOD opens its player paused, ready to jump around.
   /** Out of the open edit to VOD `vodId`, paused at `time` (a source link was
    *  followed); what the edit plays of it stays lit (`edits.lit`). */
   function openVodAt(vodId: number, time: number) {
@@ -421,11 +421,13 @@
     else playing = { vodId, at: { time, play: false } };
   }
 
+  /** Opens VOD `id` (or none), paused where its playhead was left this session (its start if it's new). */
   function select(id: number | null) {
     if (id !== edits.lit?.vodId) edits.lit = null;
     edits.openEdit(null);
     selectedId = id;
-    if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time: 0, play: false } };
+    const time = id === null ? 0 : (nav.lastSeen({ kind: "vod", id })?.time ?? 0);
+    if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time, play: false } };
   }
 
   // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
