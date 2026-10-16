@@ -27,6 +27,7 @@
   import { toast } from "./toasts.svelte";
   import Toast from "./Toast.svelte";
   import type { Doc } from "./api";
+  import { nav, type Step } from "./nav.svelte";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -82,6 +83,53 @@
     if (!DEMO) api.setView(view).catch(() => {});
   });
 
+  // Back and forward (nav.svelte.ts): a step each time what's open changes.
+  $effect(() => {
+    const doc = view;
+    untrack(() => nav.arrived(doc));
+  });
+  nav.attach(goTo, () => query);
+  /** Takes step `step`: its view open again, paused where it was, with its search. */
+  function goTo(step: Step) {
+    query = step.query;
+    const doc = step.doc;
+    if (doc?.kind === "edit") {
+      edits.openEdit(doc.id);
+      return;
+    }
+    edits.openEdit(null);
+    selectedId = doc?.id ?? null;
+    if (doc) {
+      const at = { time: step.left.time ?? 0, play: false };
+      if (playing?.vodId === doc.id) playing.at = at;
+      else playing = { vodId: doc.id, at };
+    }
+    if (step.left.scroll) bringScroll(step.left.scroll);
+  }
+  /** Scrolls the transcript (or results) back to `top`, as it fills in. */
+  function bringScroll(top: number) {
+    const until = performance.now() + 2000;
+    const step = () => {
+      const list = body;
+      if (list) list.scrollTop = top;
+      if (performance.now() < until && (!list || Math.abs(list.scrollTop - top) > 1)) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+  /** What a step goes to, for the arrows' titles. */
+  function named(step: Step | undefined): string {
+    const doc = step?.doc;
+    if (!doc) return "the library";
+    if (doc.kind === "vod") return `“${vodsById.get(doc.id)?.title ?? "the VOD"}”`;
+    return `“${edits.list.find((e) => e.id === doc.id)?.title ?? "the edit"}”`;
+  }
+  // The mouse's back and forward buttons.
+  function onMouseNav(e: MouseEvent) {
+    if (e.button !== 3 && e.button !== 4) return;
+    e.preventDefault();
+    if (e.type === "mouseup") e.button === 3 ? nav.goBack() : nav.goForward();
+  }
+
   /** Undoes (or redoes) the newest change in the view's history, and says what it was. */
   function undoRedo(redo: boolean) {
     const doc = view;
@@ -105,6 +153,16 @@
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing && (key === "z" || key === "y")) {
       e.preventDefault();
       undoRedo(key === "y" || e.shiftKey);
+      return;
+    }
+    // Back and forward: Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac.
+    const back = os === "mac" ? e.metaKey && !e.altKey && key === "[" : e.altKey && !e.ctrlKey && key === "arrowleft";
+    const forward =
+      os === "mac" ? e.metaKey && !e.altKey && key === "]" : e.altKey && !e.ctrlKey && key === "arrowright";
+    if (!typing && (back || forward)) {
+      e.preventDefault();
+      if (back) nav.goBack();
+      else nav.goForward();
       return;
     }
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
@@ -243,6 +301,7 @@
       ),
       await events.vodRemoved(
         afterLoad((id) => {
+          nav.forget({ kind: "vod", id });
           vods = vods.filter((v) => v.id !== id);
           if (playing?.vodId === id) playing = null;
           runSearch();
@@ -362,13 +421,6 @@
     else playing = { vodId, at: { time, play: false } };
   }
 
-  /** Back out of the open edit, to the VOD that was open before it. */
-  function closeEdit() {
-    const back = playing?.vodId ?? null;
-    edits.openEdit(null);
-    if (back !== null) selectedId = back;
-  }
-
   function select(id: number | null) {
     if (id !== edits.lit?.vodId) edits.lit = null;
     edits.openEdit(null);
@@ -384,7 +436,13 @@
   });
 </script>
 
-<svelte:window onkeydown={onWindowKey} ondragover={keepDropsInApp} ondrop={keepDropsInApp} />
+<svelte:window
+  onkeydown={onWindowKey}
+  ondragover={keepDropsInApp}
+  ondrop={keepDropsInApp}
+  onmousedown={onMouseNav}
+  onmouseup={onMouseNav}
+/>
 
 {#if setup === null}
   <!-- Loading -->
@@ -396,12 +454,29 @@
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
-        {#if edits.openId !== null}
-          <!-- Out of the edit, to the VOD that was open: the window's way back. -->
-          <button class="icon back" onclick={closeEdit} title="Back to {playingVod?.title ?? 'the VOD'}">
+        <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
+        <div class="nav">
+          <button
+            class="icon back"
+            onclick={() => nav.goBack()}
+            disabled={!nav.back.length}
+            title={nav.back.length ? `Back to ${named(nav.back.at(-1))} (${os === "mac" ? "⌘[" : "Alt+←"})` : "Back"}
+            aria-label="Back"
+          >
             <Icon name="arrow-left" size={18} />
           </button>
-        {/if}
+          <button
+            class="icon forward"
+            onclick={() => nav.goForward()}
+            disabled={!nav.forward.length}
+            title={nav.forward.length
+              ? `Forward to ${named(nav.forward.at(-1))} (${os === "mac" ? "⌘]" : "Alt+→"})`
+              : "Forward"}
+            aria-label="Forward"
+          >
+            <Icon name="arrow-right" size={18} />
+          </button>
+        </div>
         <div class="search">
           <span class="search-icon muted"><Icon name="search" /></span>
           <input
@@ -446,7 +521,7 @@
           {/key}
         {/if}
 
-        <div class="body" bind:this={body}>
+        <div class="body" bind:this={body} onscroll={() => nav.note(view, { scroll: body?.scrollTop ?? 0 })}>
           {#if searchError}
             <p class="error-text pad">{searchError}</p>
           {:else if results}
@@ -517,6 +592,11 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+
+  .nav {
+    display: flex;
+    gap: 2px;
   }
 
   .toolbar {

@@ -12,7 +12,7 @@
   // jumps over it) or brings it back.
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { api, events, type Doc, type EditPiece, type Line, type PreviewSegment, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
@@ -28,6 +28,7 @@
   import Spinner from "./Spinner.svelte";
   import { load, save } from "./stored";
   import { toast } from "./toasts.svelte";
+  import { nav } from "./nav.svelte";
 
   let {
     vods,
@@ -173,15 +174,40 @@
         if (mine !== planSeq) return;
         planned = plan;
         p.setPlan(plan);
+        // Brought back (back or forward): where the playhead was, once there's a plan to seek in.
+        if (bringTime !== null && plan.length) {
+          p.seek(bringTime, false);
+          now = bringTime;
+          bringTime = null;
+        }
       },
       (e) => (edits.error = String(e)),
     );
+  });
+  // Going back to this edit (nav.svelte.ts): its playhead and scroll as they were.
+  let bringTime: number | null = null;
+  let lines = $state<HTMLDivElement>();
+  $effect(() => {
+    const id = edit?.id;
+    if (id === undefined) return;
+    const left = untrack(() => nav.bringBack({ kind: "edit", id }));
+    bringTime = left?.time ?? null;
+    const top = left?.scroll;
+    if (top) {
+      const until = performance.now() + 2000;
+      const step = () => {
+        if (lines) lines.scrollTop = top;
+        if (performance.now() < until && (!lines || Math.abs(lines.scrollTop - top) > 1)) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }
   });
   let poll = requestAnimationFrame(function read() {
     poll = requestAnimationFrame(read);
     const p = player;
     if (!p) return;
     now = p.time();
+    if (edit) nav.note({ kind: "edit", id: edit.id }, { time: now });
     playing = p.playing();
     fps = p.fps() ?? DEFAULT_FPS;
     [volume, muted] = [p.volume.get(), p.volume.muted()];
@@ -537,6 +563,7 @@
     <div class="controls">
       {#if total}
         <Scrubber
+          memo={edit ? { kind: "edit", id: edit.id } : undefined}
           {waveform}
           pieces={lane}
           {pending}
@@ -618,7 +645,11 @@
     {/if}
   </section>
 
-  <div class="lines">
+  <div
+    class="lines"
+    bind:this={lines}
+    onscroll={() => edit && nav.note({ kind: "edit", id: edit.id }, { scroll: lines?.scrollTop ?? 0 })}
+  >
     {#each pieces as piece, n (piece.id)}
       <p class="piece-head muted">
         <span class="num">{n + 1}</span>

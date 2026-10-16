@@ -19,6 +19,7 @@
   import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import { formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
+  import { nav } from "./nav.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
   // jump, so jumping to the same timestamp twice still seeks.
@@ -146,6 +147,7 @@
     const p = player;
     if (!p) return;
     now = p.time();
+    nav.note({ kind: "vod", id: vod.id }, { time: now });
     playing = p.playing();
     playerDuration = p.duration?.() ?? 0;
     fps = p.fps?.() ?? DEFAULT_FPS;
@@ -446,6 +448,7 @@
         {#if duration}
           <Scrubber
             {vod}
+            memo={{ kind: "vod", id: vod.id }}
             {duration}
             time={now}
             {fps}

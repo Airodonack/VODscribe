@@ -56,9 +56,12 @@
     lit?: boolean;
   }
   import { theme } from "./theme.svelte";
+  import { nav } from "./nav.svelte";
+  import type { Doc } from "./api";
 
   let {
     vod,
+    memo,
     waveform,
     pieces,
     pending = [],
@@ -76,6 +79,8 @@
   }: {
     /** The VOD shown, with its marks and clips; none for an edit. */
     vod?: Vod;
+    /** What it's the timeline of, so its zoom is kept for going back to it (nav.svelte.ts). */
+    memo?: Doc;
     /** An edit's waveform, given rather than fetched. */
     waveform?: Uint8Array;
     /** An edit's pieces, in its time, with what their bands say. */
@@ -144,6 +149,21 @@
     untrack(() => {
       if (follow && span < duration && (now < viewStart || now > viewStart + span * 0.92)) setView(now - span * 0.08);
     });
+  });
+
+  // Its zoom kept as it changes, and brought back with the view (back and forward).
+  const memoKey = $derived(memo ? `${memo.kind}:${memo.id}` : null);
+  $effect(() => {
+    void memoKey;
+    const left = untrack(() => memo && nav.bringBack(memo)?.zoom);
+    if (left) {
+      follow = false;
+      untrack(() => setView(left.start, left.span));
+    }
+  });
+  $effect(() => {
+    const zoom = { start: viewStart, span };
+    if (memo) untrack(() => nav.note(memo, { zoom }));
   });
 
   function setView(start: number, length = span) {

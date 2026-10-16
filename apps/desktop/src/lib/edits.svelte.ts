@@ -6,6 +6,7 @@
 // (ClipStrip.svelte). A piece is a copy: changing it changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
+import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching } from "./api";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
@@ -45,7 +46,10 @@ class Edits {
       this.#put(edit);
     });
     events.editProgress((id, p) => this.progress.set(id, p));
-    events.editRemoved((id) => this.#gone(id));
+    events.editRemoved((id) => {
+      nav.forget({ kind: "edit", id });
+      this.#gone(id);
+    });
     events.footageProgress((f) => this.fetching.set(f.vod_id, f));
     events.footage(({ vod_id, error }) => {
       this.fetching.delete(vod_id);
