@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
     let (shown, drawn) = (canvas.clone(), player.clone());
     let title = glib::SendWeakRef::from(window.downgrade());
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    player.on_frame(Box::new(move || {
+    player.on_frame(Box::new(move |_| {
         shown.show(drawn.frame());
         let (time, fps, playing) = (drawn.time(), drawn.fps(), drawn.playing());
         let title = title.clone();

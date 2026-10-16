@@ -33,7 +33,10 @@
   // The time as last told, run on by the page's clock while playing.
   let told: PlayerStatus = { time: untrack(() => start), playing: false };
   let toldAt = performance.now();
-  const now = () => told.time + (told.playing ? (performance.now() - toldAt) / 1000 : 0);
+  const now = () => {
+    const t = told.time + (told.playing ? (performance.now() - toldAt) / 1000 : 0);
+    return length ? Math.min(t, length) : t;
+  };
   function tell(status: PlayerStatus) {
     told = status;
     toldAt = performance.now();

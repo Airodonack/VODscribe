@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::tools;
-use vodscribe_player::clock::Player;
+use vodscribe_player::clock::{Event, Player};
 
 use crate::{AppState, CmdResult, err};
 
@@ -87,15 +87,17 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
             // Each frame due goes to the screen; the time to the page now and then.
             let (shown, told) = (app.clone(), app.clone());
             let last = Mutex::new(Instant::now() - TOLD);
-            player.on_frame(Box::new(move || {
+            player.on_frame(Box::new(move |event| {
                 let state = shown.state::<AppState>();
                 let open = state.player.open.lock().unwrap();
                 let Some(open) = open.as_ref() else { return };
-                if let Some(frame) = open.player.frame() {
+                if event == Event::Frame
+                    && let Some(frame) = open.player.frame()
+                {
                     crate::screen::show(&shown, Some(frame));
                 }
                 let mut last = last.lock().unwrap();
-                if last.elapsed() >= TOLD {
+                if event == Event::Ended || last.elapsed() >= TOLD {
                     *last = Instant::now();
                     let _ = told.emit("player-time", status(&open.player));
                 }

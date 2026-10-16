@@ -18,8 +18,17 @@ use anyhow::{Context, Result};
 use crate::decode::{self, Audio, Frame, Info, Video};
 use crate::sound::{self, Output};
 
-/// What the player does when a frame is due, if anything's told to be.
-pub type OnFrame = Box<dyn Fn() + Send + 'static>;
+/// What the player does when a frame is due, or the file ends, if anything's told to be.
+pub type OnFrame = Box<dyn Fn(Event) + Send + 'static>;
+
+/// What the player's thread tells of (`Player::on_frame`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event {
+    /// A frame is due, and is the one `Player::frame` gives now.
+    Frame,
+    /// The file played to its end: paused there.
+    Ended,
+}
 
 /// The sound's clock: sample pairs played out since the time was set.
 struct Sound {
@@ -141,7 +150,8 @@ impl Player {
         self.inner.volume.lock().unwrap().store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
     }
 
-    /// Told what to do when a frame is due (shown by `frame`), from the player's thread.
+    /// Told what to do when a frame is due (shown by `frame`) or the file
+    /// ends, from the player's thread.
     pub fn on_frame(&self, f: OnFrame) {
         *self.inner.on_frame.lock().unwrap() = Some(f);
     }
@@ -238,6 +248,11 @@ fn run(inner: &Inner, video: &Video) {
                     s.playing = false;
                     s.sound = None;
                     s.ended = true;
+                    drop(s);
+                    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+                        f(Event::Ended);
+                    }
+                    s = inner.state.lock().unwrap();
                     while s.epoch == epoch && !inner.quit.load(Ordering::Acquire) {
                         s = inner.wake.wait(s).unwrap();
                     }
@@ -274,7 +289,7 @@ fn run(inner: &Inner, video: &Video) {
             }
             *inner.frame.lock().unwrap() = Some(frame);
             if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
-                f();
+                f(Event::Frame);
             }
         }
     }
@@ -314,7 +329,16 @@ fn run_sound(inner: &Inner, audio: &Audio) {
             }
             (s.epoch, s.time(inner.duration))
         };
-        let Ok(mut stream) = audio.from(from, out.rate()) else { return };
+        let Ok(mut stream) = audio.from(from, out.rate()) else {
+            // No sound to be had after all: the time runs by the computer's clock.
+            let mut s = inner.state.lock().unwrap();
+            s.output = false;
+            if s.sound.is_some() {
+                s.since = Instant::now();
+                s.sound = None;
+            }
+            return;
+        };
         let mut started = false;
         loop {
             {
