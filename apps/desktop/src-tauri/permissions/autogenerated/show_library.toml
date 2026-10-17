@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-show-library"
+description = "Enables the show_library command without any pre-configured scope."
+commands.allow = ["show_library"]
+
+[[permission]]
+identifier = "deny-show-library"
+description = "Denies the show_library command without any pre-configured scope."
+commands.deny = ["show_library"]

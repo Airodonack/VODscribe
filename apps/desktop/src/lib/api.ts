@@ -328,6 +328,12 @@ export interface Undone {
 }
 
 export const api = {
+  /** Why the library didn't open when the app started (recovery.rs); null if it did. */
+  libraryProblem: () => invoke<string | null>("library_problem"),
+  /** Sets the library that won't open aside, so a new one is made on restart; returns its new name. */
+  setLibraryAside: () => invoke<string>("set_library_aside"),
+  /** Shows the library's file in the file manager. */
+  showLibrary: () => invoke<void>("show_library"),
   setupStatus: () => invoke<SetupStatus>("setup_status"),
   runSetup: () => invoke<void>("run_setup"),
   /** Stops setup's downloads; tools and model files that finished stay. `setupDone` then fires with null. */

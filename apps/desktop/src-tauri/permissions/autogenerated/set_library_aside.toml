@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-library-aside"
+description = "Enables the set_library_aside command without any pre-configured scope."
+commands.allow = ["set_library_aside"]
+
+[[permission]]
+identifier = "deny-set-library-aside"
+description = "Denies the set_library_aside command without any pre-configured scope."
+commands.deny = ["set_library_aside"]

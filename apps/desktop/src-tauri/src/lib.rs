@@ -15,6 +15,7 @@ mod loopback;
 mod media;
 mod player;
 mod previews;
+mod recovery;
 mod screen;
 mod setup;
 mod thumbnails;
@@ -108,6 +109,60 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Everything that runs on the library: the state the commands use, the
+/// queues and the background jobs.
+fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
+    // Kept videos' leftovers from VODs no longer in the library; only
+    // tidying, so a library that can't be read here isn't a reason not
+    // to start.
+    if let Ok(vods) = db.vods() {
+        let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
+        vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
+        vodscribe_core::peaks::tidy(&paths.peaks(), &library);
+    }
+    let db = Mutex::new(db);
+    let reads = Mutex::new(Db::open_reader(&paths.db())?);
+    let worker = Worker::start(app.handle().clone(), paths.clone())?;
+    let handle = app.handle().clone();
+    let media = media::MediaServer::start(move |asked| {
+        let state = handle.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        match asked {
+            media::Served::Vod(id) => media::playable_file(&db, id),
+            media::Served::Clip(id) => db.clip(id).ok().flatten().and_then(|c| c.file_path),
+        }
+    })?;
+    let (chat, chat_rx) = chats::ChatQueue::new();
+    app.manage(AppState {
+        paths,
+        db,
+        reads,
+        worker,
+        setup: setup::Install::new(),
+        gpu: setup::Install::new(),
+        media,
+        chat,
+        clips: clips::Cutter::new(),
+        renders: edits::Renderer::new(),
+        footage: footage::Footage::default(),
+        previews: previews::Previews::default(),
+        videos: videos::Videos::default(),
+        history: history::History::default(),
+        player: player::Native::default(),
+        adding: Mutex::default(),
+    });
+    app.state::<AppState>().clips.run(app.handle().clone())?;
+    app.state::<AppState>().videos.run(app.handle().clone())?;
+    app.state::<AppState>().renders.run(app.handle().clone())?;
+    app.state::<AppState>().previews.run(app.handle().clone())?;
+    app.state::<AppState>().footage.run(app.handle().clone())?;
+    let handle = app.handle().clone();
+    std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || chats::run(handle, chat_rx));
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         // One copy at a time: two would share the library and the queue, and on Linux
@@ -133,55 +188,19 @@ pub fn run() {
             if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
                 model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
             }
-            let db = Db::open(&paths.db())?;
-            // Kept videos' leftovers from VODs no longer in the library; only
-            // tidying, so a library that can't be read here isn't a reason not
-            // to start.
-            if let Ok(vods) = db.vods() {
-                let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
-                vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
-                vodscribe_core::peaks::tidy(&paths.peaks(), &library);
-            }
-            let db = Mutex::new(db);
-            let reads = Mutex::new(Db::open_reader(&paths.db())?);
-            let worker = Worker::start(app.handle().clone(), paths.clone())?;
-            let handle = app.handle().clone();
-            let media = media::MediaServer::start(move |asked| {
-                let state = handle.state::<AppState>();
-                let db = state.db.lock().unwrap();
-                match asked {
-                    media::Served::Vod(id) => media::playable_file(&db, id),
-                    media::Served::Clip(id) => db.clip(id).ok().flatten().and_then(|c| c.file_path),
+            // A library that won't open: the window opens on the recovery
+            // screen (recovery.rs) instead of the app failing to start.
+            let db_path = paths.db();
+            match Db::open(&db_path) {
+                Ok(db) => {
+                    app.manage(recovery::Problem::none(db_path));
+                    start_library(app, paths, db)?;
                 }
-            })?;
-            let (chat, chat_rx) = chats::ChatQueue::new();
-            app.manage(AppState {
-                paths,
-                db,
-                reads,
-                worker,
-                setup: setup::Install::new(),
-                gpu: setup::Install::new(),
-                media,
-                chat,
-                clips: clips::Cutter::new(),
-                renders: edits::Renderer::new(),
-                footage: footage::Footage::default(),
-                previews: previews::Previews::default(),
-                videos: videos::Videos::default(),
-                history: history::History::default(),
-                player: player::Native::default(),
-                adding: Mutex::default(),
-            });
-            app.state::<AppState>().clips.run(app.handle().clone())?;
-            app.state::<AppState>().videos.run(app.handle().clone())?;
-            app.state::<AppState>().renders.run(app.handle().clone())?;
-            app.state::<AppState>().previews.run(app.handle().clone())?;
-            app.state::<AppState>().footage.run(app.handle().clone())?;
-            let handle = app.handle().clone();
-            std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
-            let handle = app.handle().clone();
-            std::thread::spawn(move || chats::run(handle, chat_rx));
+                Err(e) => {
+                    eprintln!("The library couldn't be opened: {e:#}");
+                    app.manage(recovery::Problem::new(format!("{e:#}"), db_path));
+                }
+            }
             // The window is created here rather than from the config, so release builds
             // open it only once the app server is listening (see app_server.rs).
             let window = app.config().app.windows.first().cloned().ok_or("no window configured")?;
@@ -220,6 +239,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            recovery::library_problem,
+            recovery::set_library_aside,
+            recovery::show_library,
             setup::setup_status,
             setup::self_updatable,
             setup::data_dir,

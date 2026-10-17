@@ -4,6 +4,9 @@
 identifier = "app"
 description = "VODscribe's own commands."
 permissions = [
+  "allow-library-problem",
+  "allow-set-library-aside",
+  "allow-show-library",
   "allow-setup-status",
   "allow-self-updatable",
   "allow-data-dir",
