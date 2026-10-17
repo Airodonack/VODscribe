@@ -73,10 +73,17 @@ export class EditPlayer implements EditPlayback {
           api.playerSetVolume(this.quiet ? 0 : this.loud).catch(() => {});
           this.onerror(null);
         },
-        (e) => !this.gone && this.onerror(String(e)),
+        (e) => {
+          if (this.gone || this.editId !== id) return;
+          // Opened again at the next plan, rather than never.
+          this.editId = null;
+          this.onerror(String(e));
+        },
       );
     }
     await this.opening;
+    // It didn't open (said by `onerror`): nothing to plan, till it's tried again.
+    if (this.editId !== id) return [];
     const stretches = await api.playerPlan(id);
     this.length = stretches.reduce((end, s) => Math.max(end, s.at + s.length), 0);
     return stretches;
