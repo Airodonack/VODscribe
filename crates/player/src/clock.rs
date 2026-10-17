@@ -62,6 +62,8 @@ struct State {
     sound: Option<Sound>,
     /// There's a sound output (the sound thread says so once it has one).
     output: bool,
+    /// How many seconds of the timeline a second of play is.
+    speed: f64,
 }
 
 impl State {
@@ -73,7 +75,7 @@ impl State {
             Some(s) => s.played.load(Ordering::Acquire) as f64 / s.rate as f64,
             None => self.since.elapsed().as_secs_f64(),
         };
-        (self.at + run).min(duration)
+        (self.at + run * self.speed).min(duration)
     }
 
     /// Whether the time moves: playing, and not waiting for the sound.
@@ -165,6 +167,7 @@ impl Player {
                 ended: false,
                 sound: None,
                 output: false,
+                speed: 1.0,
             }),
             wake: Condvar::new(),
             frame: Mutex::new(None),
@@ -300,6 +303,30 @@ impl Player {
         (self.inner.shown.load(Ordering::Relaxed), self.inner.dropped.load(Ordering::Relaxed))
     }
 
+    /// How many seconds of the timeline a second of play is.
+    pub fn speed(&self) -> f64 {
+        self.inner.state.lock().unwrap().speed
+    }
+
+    /// Plays `speed` times as fast (within 0.25 to 4), the sound at the
+    /// same pitch. Playing, it starts over from the time now, as a seek
+    /// does: the sound's decoder is made for one speed.
+    pub fn set_speed(&self, speed: f64) {
+        let speed = speed.clamp(0.25, 4.0);
+        let mut s = self.inner.state.lock().unwrap();
+        if s.speed == speed {
+            return;
+        }
+        if s.playing {
+            let at = s.time(self.inner.duration());
+            s.speed = speed;
+            s.restart(at);
+        } else {
+            s.speed = speed;
+        }
+        self.inner.wake.notify_all();
+    }
+
     /// The loudness, 0 to 1.
     pub fn volume(&self) -> f32 {
         f32::from_bits(self.inner.volume.lock().unwrap().load(Ordering::Acquire))
@@ -325,6 +352,8 @@ const PREFETCH: f64 = 1.0;
 /// What a thread walks the timeline with: where it is, and what's next.
 struct Walk {
     epoch: u64,
+    /// The speed, as it was when this epoch began (a change starts a new one).
+    speed: f64,
     timeline: Timeline,
     /// The stretch being played, by index.
     index: usize,
@@ -339,7 +368,7 @@ impl Walk {
         let timeline = inner.timeline.lock().unwrap().clone();
         let from = s.time(timeline.duration());
         let index = timeline.index_at(from)?;
-        Some(Walk { epoch: s.epoch, timeline, index, from })
+        Some(Walk { epoch: s.epoch, speed: s.speed, timeline, index, from })
     }
 
     fn stretch(&self) -> &Stretch {
@@ -532,7 +561,9 @@ fn run_sound(inner: &Inner) {
             return;
         }
         let Some(mut walk) = Walk::start(inner) else { continue };
-        let epoch = walk.epoch;
+        let (epoch, speed) = (walk.epoch, walk.speed);
+        // Seconds of the timeline a sample pair plays.
+        let pair = speed / rate as f64;
         let mut started = false;
         let mut next: Option<Stream<decode::Samples>> = None;
         let mut first = true;
@@ -546,7 +577,7 @@ fn run_sound(inner: &Inner) {
             // Where there's no sound, silence for as long as the stretch.
             let mut stream = match (audio, next.take()) {
                 (Some(_), Some(stream)) if !first => Some(stream),
-                (Some(audio), _) => audio.from(stretch.file_time(walk.from), rate).ok(),
+                (Some(audio), _) => audio.from(stretch.file_time(walk.from), rate, speed).ok(),
                 (None, _) => None,
             };
             let mut at = walk.from;
@@ -581,14 +612,15 @@ fn run_sound(inner: &Inner) {
                     Some(samples) => {
                         // Cut at the stretch's end: the rest is the next one's.
                         let time = stretch.time(samples.pts);
-                        let pairs = (((end - time) * rate as f64).round().max(0.0) as usize).min(samples.pcm.len() / 2);
-                        at = time + pairs as f64 / rate as f64;
+                        let pairs = ((end - time) / pair).round().max(0.0) as usize;
+                        let pairs = pairs.min(samples.pcm.len() / 2);
+                        at = time + pairs as f64 * pair;
                         samples.pcm[..pairs * 2].to_vec()
                     }
                     None => {
                         // The file ran out, or has no sound: silence to the end.
-                        let pairs = (((end - at) * rate as f64).round().max(0.0) as usize).min(1024);
-                        at += pairs as f64 / rate as f64;
+                        let pairs = (((end - at) / pair).round().max(0.0) as usize).min(1024);
+                        at += pairs as f64 * pair;
                         if pairs == 0 {
                             break;
                         }
@@ -602,7 +634,7 @@ fn run_sound(inner: &Inner) {
                     && let Some(source) = coming.source.as_ref()
                     && inner.info(&source.path).is_some_and(|i| i.audio)
                 {
-                    next = Audio::new(&inner.ffmpeg, &source.path).from(coming.from, rate).ok();
+                    next = Audio::new(&inner.ffmpeg, &source.path).from(coming.from, rate, speed).ok();
                 }
             }
             first = false;
@@ -624,7 +656,16 @@ mod tests {
     use super::*;
 
     fn paused_at(at: f64) -> State {
-        State { playing: false, at, since: Instant::now(), epoch: 0, ended: false, sound: None, output: false }
+        State {
+            playing: false,
+            at,
+            since: Instant::now(),
+            epoch: 0,
+            ended: false,
+            sound: None,
+            output: false,
+            speed: 1.0,
+        }
     }
 
     #[test]
@@ -657,5 +698,16 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
         assert_eq!(s.time(10.0), 5.0, "with an output, the time stands until the sound plays");
         assert!(!s.running(), "and isn't said to move");
+    }
+
+    #[test]
+    fn the_time_runs_at_the_speed() {
+        let mut s = paused_at(2.0);
+        s.playing = true;
+        s.speed = 1.5;
+        let played = Arc::new(AtomicU64::new(0));
+        s.sound = Some(Sound { played: played.clone(), rate: 100, live: true });
+        played.store(200, Ordering::Release);
+        assert_eq!(s.time(10.0), 5.0, "two seconds played out are three of the timeline");
     }
 }

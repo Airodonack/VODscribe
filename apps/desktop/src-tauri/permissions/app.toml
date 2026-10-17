@@ -63,6 +63,7 @@ permissions = [
   "allow-player-seek",
   "allow-player-step",
   "allow-player-status",
+  "allow-player-set-speed",
   "allow-player-set-volume",
   "allow-move-piece",
   "allow-trim-piece",

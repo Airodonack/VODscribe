@@ -201,6 +201,31 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
         player.time(),
         if player.has_sound() { "through an output" } else { "none" }
     );
+
+    // Five seconds at each other speed, from the start: how far the time
+    // goes against how far it should.
+    for speed in [0.5, 2.0] {
+        player.set_speed(speed);
+        player.seek(0.0);
+        while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
+        let before = player.counts();
+        player.play();
+        let began = Instant::now();
+        while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Running) && player.has_sound() {}
+        let started = player.time();
+        let waited = began.elapsed().as_secs_f64();
+        std::thread::sleep(Duration::from_secs(5));
+        player.pause();
+        let after = player.counts();
+        println!(
+            "play 5 s at {speed}x: time went {:.2} s (expected {:.2}) after {:.0} ms to start, {} frames shown, {} dropped",
+            player.time() - started,
+            5.0 * speed,
+            waited * 1e3,
+            after.0 - before.0,
+            after.1 - before.1,
+        );
+    }
     Ok(())
 }
 

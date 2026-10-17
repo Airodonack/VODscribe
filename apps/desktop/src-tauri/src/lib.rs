@@ -279,6 +279,7 @@ pub fn run() {
             player::player_seek,
             player::player_step,
             player::player_status,
+            player::player_set_speed,
             player::player_set_volume,
             edits::move_piece,
             edits::trim_piece,

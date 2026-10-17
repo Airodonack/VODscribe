@@ -34,12 +34,13 @@ struct Open {
 
 /// What the page is told of the player: `running` once the time moves
 /// (playing, it stands until the sound starts), for the page's clock to run
-/// from then rather than from the play.
+/// from then rather than from the play, and at `speed`.
 #[derive(Serialize, Clone, Copy)]
 pub(crate) struct Status {
     time: f64,
     playing: bool,
     running: bool,
+    speed: f64,
 }
 
 /// What a player opened says of what it plays.
@@ -58,7 +59,7 @@ fn opened(player: &Player) -> Opened {
 const TOLD: Duration = Duration::from_millis(250);
 
 fn status(player: &Player) -> Status {
-    Status { time: player.time(), playing: player.playing(), running: player.running() }
+    Status { time: player.time(), playing: player.playing(), running: player.running(), speed: player.speed() }
 }
 
 /// Whether there's a player here: a screen to draw on.
@@ -260,6 +261,12 @@ pub(crate) fn player_status(app: AppHandle) -> CmdResult<Status> {
     let open = state.player.open.lock().unwrap();
     let open = open.as_ref().ok_or("No player is open.")?;
     Ok(status(&open.player))
+}
+
+/// Plays `speed` times as fast, the sound at the same pitch.
+#[tauri::command]
+pub(crate) fn player_set_speed(app: AppHandle, speed: f64) -> CmdResult<Status> {
+    with(&app, |p| p.set_speed(speed))
 }
 
 /// The loudness, 0 to 1.

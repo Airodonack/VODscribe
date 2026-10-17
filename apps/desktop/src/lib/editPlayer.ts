@@ -57,13 +57,14 @@ export class EditPlayer implements EditPlayback {
   private tell(status: PlayerStatus) {
     this.clock.set(status.time);
     this.clock.playing = status.running;
+    this.clock.speed = status.speed;
     this.isPlaying = status.playing;
   }
 
   async plan(id: number, from: number): Promise<PlayerStretch[]> {
     if (this.editId !== id) {
       this.editId = id;
-      this.tell({ time: from, playing: false, running: false });
+      this.tell({ time: from, playing: false, running: false, speed: 1 });
       this.opening = api.playerOpenEdit(id, from, false).then(
         (opened) => {
           if (this.gone || this.editId !== id) return;
@@ -92,7 +93,7 @@ export class EditPlayer implements EditPlayback {
 
   togglePlay() {
     const playing = !this.isPlaying;
-    this.tell({ time: this.time(), playing, running: false });
+    this.tell({ time: this.time(), playing, running: false, speed: this.clock.speed });
     (playing ? api.playerPlay() : api.playerPause()).then(
       (s) => this.tell(s),
       () => {},
@@ -100,7 +101,7 @@ export class EditPlayer implements EditPlayback {
   }
 
   seek(seconds: number, play: boolean) {
-    this.tell({ time: seconds, playing: play, running: false });
+    this.tell({ time: seconds, playing: play, running: false, speed: this.clock.speed });
     api.playerSeek(seconds, play).then(
       (s) => this.tell(s),
       () => {},
@@ -117,6 +118,17 @@ export class EditPlayer implements EditPlayback {
   fps() {
     return this.rateAtStart;
   }
+
+  rate = {
+    get: () => this.clock.speed,
+    set: (speed: number) => {
+      this.tell({ time: this.time(), playing: this.isPlaying, running: false, speed });
+      api.playerSetSpeed(speed).then(
+        (s) => this.tell(s),
+        () => {},
+      );
+    },
+  };
 
   volume = {
     get: () => this.loud,

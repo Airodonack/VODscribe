@@ -32,10 +32,10 @@
 
   // The time as last told, run on by the page's clock once the player's
   // runs: after play it stands until the sound starts, and so does the playhead.
-  let told: PlayerStatus = { time: untrack(() => start), playing: false, running: false };
+  let told: PlayerStatus = { time: untrack(() => start), playing: false, running: false, speed: 1 };
   let toldAt = performance.now();
   const now = () => {
-    const t = told.time + (told.running ? (performance.now() - toldAt) / 1000 : 0);
+    const t = told.time + (told.running ? ((performance.now() - toldAt) / 1000) * told.speed : 0);
     return length ? Math.min(t, length) : t;
   };
   function tell(status: PlayerStatus) {
@@ -56,6 +56,7 @@
   // Until the player is open, what's asked of it is kept for then.
   let ready = false;
   let wanted: { time: number; play: boolean } | null = null;
+  let wantedSpeed: number | null = null;
 
   const cue = $derived(captionsOn ? cueAt(cues, time) : null);
 
@@ -71,6 +72,7 @@
         length = opened.duration;
         api.playerSetVolume(muted ? 0 : volume).catch(() => {});
         onerror?.(null);
+        if (wantedSpeed !== null) speed.set(wantedSpeed);
         if (wanted) seek(wanted.time, wanted.play);
       },
       // Closed before it opened (the page moved on): nothing to say.
@@ -100,7 +102,7 @@
   });
 
   export function seek(seconds: number, play: boolean) {
-    tell({ time: seconds, playing: play, running: false });
+    tell({ time: seconds, playing: play, running: false, speed: told.speed });
     if (!ready) {
       wanted = { time: seconds, play };
       return;
@@ -115,7 +117,7 @@
 
   export function togglePlay() {
     const playing = !told.playing;
-    tell({ time: now(), playing, running: false });
+    tell({ time: now(), playing, running: false, speed: told.speed });
     if (!ready) {
       wanted = { time: told.time, play: playing };
       return;
@@ -140,6 +142,18 @@
     setMuted(m: boolean) {
       muted = m;
       api.playerSetVolume(m ? 0 : volume).catch(() => {});
+    },
+  };
+
+  export const speed = {
+    get: () => told.speed,
+    set(s: number) {
+      tell({ ...told, time: now(), running: false, speed: s });
+      if (!ready) {
+        wantedSpeed = s;
+        return;
+      }
+      api.playerSetSpeed(s).then(tell, () => {});
     },
   };
 

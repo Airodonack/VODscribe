@@ -35,12 +35,14 @@ export interface Vod {
 
 export type Device = "cpu" | "gpu";
 
-/** The app's own player's time, whether it's playing, and whether the time
- *  moves yet: playing, it stands until the sound starts (player.rs). */
+/** The app's own player's time, whether it's playing, whether the time
+ *  moves yet (playing, it stands until the sound starts), and how fast it
+ *  plays (player.rs). */
 export interface PlayerStatus {
   time: number;
   playing: boolean;
   running: boolean;
+  speed: number;
 }
 
 /** What the app's own player says of what it opened: the frame rate at the start, if known, and the length. */
@@ -373,6 +375,8 @@ export const api = {
   playerSeek: (time: number, play: boolean) => invoke<PlayerStatus>("player_seek", { time, play }),
   playerStep: (frames: number) => invoke<PlayerStatus>("player_step", { frames }),
   playerStatus: () => invoke<PlayerStatus>("player_status"),
+  /** Plays `speed` times as fast, the sound at the same pitch. */
+  playerSetSpeed: (speed: number) => invoke<PlayerStatus>("player_set_speed", { speed }),
   playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
   /** Where the page's player box is (Screen.svelte); none when no player is open. */
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null) =>

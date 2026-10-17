@@ -38,6 +38,8 @@ export interface EmbeddedPlayer {
 /** The players' position as last reported, advanced by the clock while playing. */
 export class Clock {
   private at = performance.now();
+  /** Seconds of the media a second of play is. */
+  speed = 1;
   constructor(
     private seconds: number,
     public playing: boolean,
@@ -47,7 +49,7 @@ export class Clock {
     this.at = performance.now();
   }
   now() {
-    return this.seconds + (this.playing ? (performance.now() - this.at) / 1000 : 0);
+    return this.seconds + (this.playing ? ((performance.now() - this.at) / 1000) * this.speed : 0);
   }
 }
 
@@ -386,6 +388,7 @@ async function local(
       duration: player.mediaDuration,
       fps: player.frameRate,
       volume: player.sound,
+      rate: player.speed,
       captions: player.captions,
       destroy: () => unmount(player),
     };
