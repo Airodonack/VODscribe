@@ -40,7 +40,7 @@ pub enum Event {
 
 /// The sound's clock: sample pairs played out since the time was set.
 struct Sound {
-    played: Arc<AtomicU64>,
+    played: Arc<sound::Played>,
     rate: u32,
     /// Let out to the output; until it is, the count stands at zero.
     live: bool,
@@ -72,7 +72,7 @@ impl State {
             return self.at;
         }
         let run = match &self.sound {
-            Some(s) => s.played.load(Ordering::Acquire) as f64 / s.rate as f64,
+            Some(s) => s.played.seconds(s.rate),
             None => self.since.elapsed().as_secs_f64(),
         };
         (self.at + run * self.speed).min(duration)
@@ -89,7 +89,7 @@ impl State {
         self.at = at;
         self.since = Instant::now();
         self.epoch += 1;
-        self.sound = self.output.then(|| Sound { played: Arc::new(AtomicU64::new(0)), rate: 1, live: false });
+        self.sound = self.output.then(|| Sound { played: Arc::default(), rate: 1, live: false });
     }
 }
 
@@ -685,13 +685,13 @@ mod tests {
         let mut s = paused_at(3.0);
         assert_eq!(s.time(10.0), 3.0);
         s.playing = true;
-        let played = Arc::new(AtomicU64::new(0));
+        let played = Arc::new(sound::Played::default());
         s.sound = Some(Sound { played: played.clone(), rate: 100, live: true });
         assert!(s.running());
         assert_eq!(s.time(10.0), 3.0, "nothing played yet");
-        played.store(150, Ordering::Release);
+        played.set(150);
         assert_eq!(s.time(10.0), 4.5);
-        played.store(100_000, Ordering::Release);
+        played.set(100_000);
         assert_eq!(s.time(10.0), 10.0, "never past the end");
     }
 
@@ -717,9 +717,9 @@ mod tests {
         let mut s = paused_at(2.0);
         s.playing = true;
         s.speed = 1.5;
-        let played = Arc::new(AtomicU64::new(0));
+        let played = Arc::new(sound::Played::default());
         s.sound = Some(Sound { played: played.clone(), rate: 100, live: true });
-        played.store(200, Ordering::Release);
+        played.set(200);
         assert_eq!(s.time(10.0), 5.0, "two seconds played out are three of the timeline");
     }
 }

@@ -6,15 +6,60 @@
 //! sound and the player keeps time by the computer's clock.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SizedSample};
 
 /// What the output stream shares with the player: the queue, the count of
 /// stereo sample pairs played, whether it's running, and the loudness.
-type Shared = (Arc<Mutex<VecDeque<i16>>>, Arc<AtomicU64>, Arc<AtomicBool>, Arc<AtomicU32>);
+type Shared = (Arc<Mutex<VecDeque<i16>>>, Arc<Played>, Arc<AtomicBool>, Arc<AtomicU32>);
+
+/// The stereo sample pairs played, counted as the output takes them, a
+/// chunk at a time (512 pairs, about 11 ms, on a desktop's PipeWire): the
+/// sound's clock. Read as time it runs on smoothly between chunks, so
+/// frames timed by it come evenly rather than on the chunks' beat.
+#[derive(Default)]
+pub struct Played(Mutex<Tick>);
+
+#[derive(Default)]
+struct Tick {
+    count: u64,
+    /// When the count last moved, and by how many seconds' worth.
+    at: Option<Instant>,
+    step: f64,
+}
+
+impl Played {
+    /// `pairs` more played, of `rate` a second.
+    fn add(&self, pairs: u64, rate: u32) {
+        let mut t = self.0.lock().unwrap();
+        t.count += pairs;
+        t.at = Some(Instant::now());
+        t.step = pairs as f64 / rate as f64;
+    }
+
+    /// Starts the count over.
+    pub fn reset(&self) {
+        *self.0.lock().unwrap() = Tick::default();
+    }
+
+    /// Sets the count, as if that many had just been played (tests).
+    pub fn set(&self, count: u64) {
+        *self.0.lock().unwrap() = Tick { count, at: None, step: 0.0 };
+    }
+
+    /// Seconds played at `rate` a second: the count, and the time since it
+    /// last moved, up to as much as it moved then (it won't run ahead of
+    /// the next chunk where the sound stops).
+    pub fn seconds(&self, rate: u32) -> f64 {
+        let t = self.0.lock().unwrap();
+        let since = t.at.map_or(0.0, |at| at.elapsed().as_secs_f64().min(t.step));
+        t.count as f64 / rate as f64 + since
+    }
+}
 
 /// The output's configuration: its default if that's stereo, else a stereo
 /// one it supports at a rate near the default's, else the default as it is.
@@ -36,6 +81,7 @@ fn build<T: SizedSample + FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     channels: usize,
+    rate: u32,
     (taken, counted, on, gain): Shared,
 ) -> Option<cpal::Stream> {
     device
@@ -65,7 +111,9 @@ fn build<T: SizedSample + FromSample<f32>>(
                         });
                     }
                 }
-                counted.fetch_add(got, Ordering::AcqRel);
+                if got > 0 {
+                    counted.add(got, rate);
+                }
             },
             |e| eprintln!("sound: {e}"),
             None,
@@ -81,7 +129,7 @@ pub struct Output {
     _stream: cpal::Stream,
     rate: u32,
     queue: Arc<Mutex<VecDeque<i16>>>,
-    played: Arc<AtomicU64>,
+    played: Arc<Played>,
     running: Arc<AtomicBool>,
     volume: Arc<AtomicU32>,
 }
@@ -97,16 +145,16 @@ impl Output {
         let format = config.sample_format();
         let config: cpal::StreamConfig = config.into();
         let queue: Arc<Mutex<VecDeque<i16>>> = Arc::default();
-        let played = Arc::new(AtomicU64::new(0));
+        let played = Arc::new(Played::default());
         let running = Arc::new(AtomicBool::new(false));
         let volume = Arc::new(AtomicU32::new(1f32.to_bits()));
         let shared = (queue.clone(), played.clone(), running.clone(), volume.clone());
         let stream = match format {
-            cpal::SampleFormat::F32 => build::<f32>(&device, &config, channels, shared),
-            cpal::SampleFormat::I16 => build::<i16>(&device, &config, channels, shared),
-            cpal::SampleFormat::U16 => build::<u16>(&device, &config, channels, shared),
-            cpal::SampleFormat::I32 => build::<i32>(&device, &config, channels, shared),
-            cpal::SampleFormat::F64 => build::<f64>(&device, &config, channels, shared),
+            cpal::SampleFormat::F32 => build::<f32>(&device, &config, channels, rate, shared),
+            cpal::SampleFormat::I16 => build::<i16>(&device, &config, channels, rate, shared),
+            cpal::SampleFormat::U16 => build::<u16>(&device, &config, channels, rate, shared),
+            cpal::SampleFormat::I32 => build::<i32>(&device, &config, channels, rate, shared),
+            cpal::SampleFormat::F64 => build::<f64>(&device, &config, channels, rate, shared),
             _ => return None,
         }?;
         stream.play().ok()?;
@@ -119,7 +167,7 @@ impl Output {
     }
 
     /// Stereo sample pairs played since the queue was last cleared.
-    pub fn played(&self) -> Arc<AtomicU64> {
+    pub fn played(&self) -> Arc<Played> {
         self.played.clone()
     }
 
@@ -147,11 +195,11 @@ impl Output {
     pub fn clear(&self) {
         let mut queue = self.queue.lock().unwrap();
         queue.clear();
-        self.played.store(0, Ordering::Release);
+        self.played.reset();
     }
 
     /// Starts the count over, keeping what's queued.
     pub fn recount(&self) {
-        self.played.store(0, Ordering::Release);
+        self.played.reset();
     }
 }

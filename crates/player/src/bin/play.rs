@@ -15,7 +15,8 @@
 //!
 //! `--bench` measures without a window: how fast the file decodes (frames
 //! and megabytes a second, against its rate), how long seeks take to show
-//! their frame, and how many frames are dropped over ten seconds of play.
+//! their frame, and over ten seconds of play how many frames are dropped
+//! and how evenly they come.
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -228,17 +229,30 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
     let began = Instant::now();
     while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Running) && player.has_sound() {}
     let waited = began.elapsed();
-    std::thread::sleep(Duration::from_secs(10).saturating_sub(waited));
+    // When each frame showed: how evenly they come.
+    let mut shown = Vec::new();
+    while began.elapsed() < Duration::from_secs(10) {
+        if rx.recv_timeout(Duration::from_millis(50)).is_ok_and(|e| e == Event::Frame) {
+            shown.push(Instant::now());
+        }
+    }
     player.pause();
     let after = player.counts();
+    let mut gaps: Vec<f64> = shown.windows(2).map(|w| (w[1] - w[0]).as_secs_f64() * 1e3).collect();
+    gaps.sort_by(f64::total_cmp);
+    let at = |q: f64| gaps.get(((gaps.len() as f64 - 1.0) * q).round() as usize).copied().unwrap_or(0.0);
     println!(
-        "play 10 s: {} frames shown, {} dropped (expected about {:.0}), time {:.2} s after {:.0} ms to start, sound {}",
+        "play 10 s: {} frames shown, {} dropped (expected about {:.0}), time {:.2} s after {:.0} ms to start, sound {}; \
+         frames {:.1} ms apart (median), 95% within {:.1} ms, longest {:.0} ms",
         after.0 - before.0,
         after.1 - before.1,
         10.0 * picture.fps,
         player.time(),
         waited.as_secs_f64() * 1e3,
-        if player.has_sound() { "through an output" } else { "none" }
+        if player.has_sound() { "through an output" } else { "none" },
+        at(0.5),
+        at(0.95),
+        at(1.0)
     );
 
     // Five seconds at each other speed, from the start: how far the time
