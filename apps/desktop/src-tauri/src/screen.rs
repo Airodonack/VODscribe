@@ -10,9 +10,15 @@ use gtk::prelude::*;
 use tauri::{AppHandle, Manager};
 use vodscribe_player::Rect;
 
+#[cfg(any(target_os = "linux", windows))]
+type Native = vodscribe_player::present::Screen;
+/// No screen on this platform yet: never set.
+#[cfg(not(any(target_os = "linux", windows)))]
+type Native = ();
+
 /// The native screen, once the window has one.
 #[derive(Default)]
-pub(crate) struct Screen(#[allow(dead_code)] Mutex<Option<vodscribe_player::present::Screen>>);
+pub(crate) struct Screen(#[allow(dead_code)] Mutex<Option<Native>>);
 
 /// Puts the screen in `window`, on platforms that have one.
 pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::Result<()> {
