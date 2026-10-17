@@ -353,6 +353,7 @@ fn main() -> anyhow::Result<()> {
         match msg {
             WM_SIZE => {
                 let (w, h) = ((lparam.0 & 0xffff) as f64, ((lparam.0 >> 16) & 0xffff) as f64);
+                // SAFETY: the window this message is for.
                 let scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0;
                 if let Some(screen) = SCREEN.get() {
                     let rect = Rect { x: 0.0, y: 0.0, width: w / scale, height: h / scale };
@@ -375,6 +376,7 @@ fn main() -> anyhow::Result<()> {
                         0x24 => p.seek(0.0),
                         0xdb => p.set_speed(p.speed() / 2.0),
                         0xdd => p.set_speed(p.speed() * 2.0),
+                        // SAFETY: posts to this thread's own queue.
                         0x51 | 0x1b => unsafe { PostQuitMessage(0) },
                         _ => {}
                     }
@@ -382,13 +384,17 @@ fn main() -> anyhow::Result<()> {
                 LRESULT(0)
             }
             WM_DESTROY => {
+                // SAFETY: posts to this thread's own queue.
                 unsafe { PostQuitMessage(0) };
                 LRESULT(0)
             }
+            // SAFETY: the message as Windows gave it.
             _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         }
     }
 
+    // SAFETY: the window class and window are made, shown and run on this
+    // thread, with a procedure of the right signature.
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let instance = GetModuleHandleW(None)?;

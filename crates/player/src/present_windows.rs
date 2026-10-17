@@ -60,26 +60,32 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
         WM_ERASEBKGND => LRESULT(1),
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
+            // SAFETY: Windows' own window, in its WM_PAINT; ended below.
             unsafe { BeginPaint(hwnd, &mut ps) };
             // What GDI drew is gone where the window was covered: drawn
             // again (unless a paint is under way, which draws it anyway).
+            // SAFETY: one of the screen's windows (only they have this procedure).
             if let Some(inner) = unsafe { screen_of(hwnd) }
                 && let Ok(mut inner) = inner.try_lock()
                 && matches!(inner.painter, Draw::Gdi(_))
             {
                 inner.paint();
             }
+            // SAFETY: the paint begun above.
             let _ = unsafe { EndPaint(hwnd, &ps) };
             LRESULT(0)
         }
         WM_NCDESTROY => {
+            // SAFETY: the window's own slot, emptied as it goes.
             let held = unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
             if held != 0 {
                 // SAFETY: put there by `attach` from `Weak::into_raw`, taken back once.
                 drop(unsafe { Weak::from_raw(held as *const Mutex<Inner>) });
             }
+            // SAFETY: the message as Windows gave it.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
+        // SAFETY: the message as Windows gave it.
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
 }
@@ -106,7 +112,13 @@ fn layer(hwnd: HWND) {
 }
 
 /// The screen whose window `hwnd` is, if it's still there.
+///
+/// # Safety
+///
+/// `hwnd` is a window of the screen's class, whose user data is null or a
+/// `Weak` put there by `attach`.
 unsafe fn screen_of(hwnd: HWND) -> Option<Arc<Mutex<Inner>>> {
+    // SAFETY: reading a window's slot is sound for any window.
     let held = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Mutex<Inner>;
     if held.is_null() {
         return None;
@@ -121,6 +133,7 @@ fn class() -> Result<PCWSTR> {
     if CLASS.load(Ordering::Acquire) == 0 {
         let class = WNDCLASSW {
             lpfnWndProc: Some(window_proc),
+            // SAFETY: the running program's own module, not kept past it.
             hInstance: unsafe { GetModuleHandleW(None)? }.into(),
             lpszClassName: name,
             ..Default::default()
@@ -177,6 +190,7 @@ impl Screen {
     /// window moves to that box.
     pub fn set(&self, rect: Option<Rect>) {
         let mut inner = self.inner.lock().unwrap();
+        // SAFETY: the app's window, there while the screen is.
         let scale = unsafe { GetDpiForWindow(HWND(inner.parent as *mut _)) } as f64 / 96.0;
         let (x, y, w, h) = match rect {
             Some(r) => (
@@ -219,6 +233,7 @@ impl Inner {
     fn paint(&mut self) {
         let (size, frame, overlay) = (self.size, self.frame.clone(), self.overlay.clone());
         // Device pixels to the page's CSS pixels.
+        // SAFETY: the app's window, there while the screen is.
         let scale = unsafe { GetDpiForWindow(HWND(self.parent as *mut _)) } as f64 / 96.0;
         let overlay = overlay.as_deref().map(|o| (o, scale));
         let began = std::time::Instant::now();

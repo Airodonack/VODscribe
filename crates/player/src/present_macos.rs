@@ -96,6 +96,7 @@ impl Screen {
         let Some(mtm) = MainThreadMarker::new() else { bail!("the screen is made on the main thread") };
         // SAFETY: the window's WKWebView, an NSView, alive while the window is.
         let Some(webview) = (unsafe { (webview as *mut NSView).as_ref() }) else { bail!("no page view") };
+        // SAFETY: NSView's initialiser, on a freshly allocated view of a subclass that adds nothing to it.
         let cover: Retained<Cover> = unsafe { msg_send![Cover::alloc(mtm), initWithFrame: webview.bounds()] };
         // A layer the view hosts, not one AppKit backs it with: its sublayers
         // are the screen's own to arrange.
@@ -223,6 +224,7 @@ fn image(size: (u32, u32), pixels: &[u8], info: CGBitmapInfo) -> Option<CFRetain
 fn set_contents(layer: &CALayer, image: Option<&CGImage>) {
     // SAFETY: a CGImage is what a layer's contents may be.
     let contents = image.map(|image| unsafe { &*(image as *const CGImage).cast::<AnyObject>() });
+    // SAFETY: an image, or none, as a layer's contents may be.
     unsafe { layer.setContents(contents) };
 }
 
