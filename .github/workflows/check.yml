@@ -54,6 +54,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm check
+      # Our copy of Tauri's installer template still matches the CLI in use.
+      - run: python3 -I scripts/check-nsis-template.py
       # The demo's search against the cases the Rust search is tested with.
       - run: node --test apps/site/src/lib/tauri/search.test.mjs apps/site/src/lib/changelog.test.mjs
       - run: node --test apps/desktop/src/lib/events.test.mjs apps/desktop/src/lib/rows.test.mjs apps/desktop/src/lib/chatParts.test.mjs apps/desktop/src/lib/theme.test.mjs apps/desktop/src/lib/modules.test.mjs apps/desktop/src/lib/media.test.mjs apps/desktop/src/lib/platform.test.mjs apps/desktop/colorMix.test.mjs

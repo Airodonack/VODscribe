@@ -56,6 +56,9 @@
     "category": "Video",
     "publisher": "Airodonack",
     "copyright": "© 2026 Airodonack",
+    "windows": {
+      "nsis": { "template": "windows/installer.nsi" }
+    },
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "12.0"
