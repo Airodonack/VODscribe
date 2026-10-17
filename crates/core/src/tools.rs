@@ -207,7 +207,7 @@ pub fn sidecar(name: &str) -> Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let path = exe.parent().context("executable has no parent dir")?.join(format!("{name}{EXE}"));
     if !path.is_file() {
-        bail!("{} is missing", path.display());
+        bail!("{} is missing", shown(path));
     }
     Ok(path)
 }
@@ -340,6 +340,18 @@ pub fn encode(
     Ok(())
 }
 
+/// `path` for a message a person may paste into an issue: the home folder,
+/// whose name is often theirs, written `~`.
+pub fn shown(path: impl AsRef<Path>) -> String {
+    let path = path.as_ref();
+    let rest = std::env::home_dir().filter(|h| !h.as_os_str().is_empty()).and_then(|h| path.strip_prefix(h).ok());
+    match rest {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => Path::new("~").join(rest).display().to_string(),
+        None => path.display().to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +420,17 @@ mod tests {
         tampered[0] ^= 1;
         assert!(signed_sha256(&tampered, sig, "yt-dlp_linux").is_err());
         assert!(signed_sha256(sums, sig, "yt-dlp_nonexistent").is_err());
+    }
+
+    #[test]
+    fn paths_in_messages_hide_the_home_folder() {
+        let home = std::env::home_dir().unwrap();
+        assert_eq!(shown(&home), "~");
+        assert_eq!(
+            shown(home.join("Videos").join("a.mp4")),
+            Path::new("~").join("Videos").join("a.mp4").display().to_string()
+        );
+        let elsewhere = if cfg!(windows) { Path::new(r"D:\clips\a.mp4") } else { Path::new("/mnt/clips/a.mp4") };
+        assert_eq!(shown(elsewhere), elsewhere.display().to_string());
     }
 }

@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::{Context, Result, bail};
 
-use crate::{Progress, net};
+use crate::{Progress, net, tools};
 
 const EXE: &str = std::env::consts::EXE_SUFFIX;
 
@@ -142,7 +142,7 @@ pub fn install_executable(new: &Path, dest: &Path) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(new, fs::Permissions::from_mode(0o755))?;
     }
-    fs::rename(new, dest).with_context(|| format!("install {}", dest.display()))
+    fs::rename(new, dest).with_context(|| format!("install {}", tools::shown(dest)))
 }
 
 /// Downloads and checks `dep`, then unpacks just its program into `bin_dir`.

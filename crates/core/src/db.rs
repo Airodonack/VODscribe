@@ -540,7 +540,7 @@ pub(crate) fn now() -> i64 {
 
 impl Db {
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_inner(path).with_context(|| format!("open the library at {}", path.display()))
+        Self::open_inner(path).with_context(|| format!("open the library at {}", crate::tools::shown(path)))
     }
 
     /// A second connection to the library at `path`, for reading only, opened
@@ -549,7 +549,7 @@ impl Db {
     /// saved, a VOD being deleted), and the other way around.
     pub fn open_reader(path: &Path) -> Result<Self> {
         let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .with_context(|| format!("open the library at {} for reading", path.display()))?;
+            .with_context(|| format!("open the library at {} for reading", crate::tools::shown(path)))?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         Ok(Self { conn })
     }

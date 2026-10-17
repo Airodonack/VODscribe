@@ -155,7 +155,7 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     let info = local::probe(&ffmpeg, path)?;
     let canonical = Path::new(&info.url);
     if local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local) {
-        anyhow::bail!("{} is part of VODscribe's own data.", path.display());
+        anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     let db = state.db.lock().unwrap();
     // One transaction, so a file never shows up as an online VOD with a path for a link.

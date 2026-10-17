@@ -58,18 +58,18 @@ fn is_remote(path: &Path) -> bool {
 /// The file's absolute path is its id, so adding it twice finds the first one.
 pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
     if is_remote(path) {
-        bail!("{} is on another computer. Copy it to this one first.", path.display());
+        bail!("{} is on another computer. Copy it to this one first.", tools::shown(path));
     }
     if !is_media(path) {
-        bail!("{} isn't a video or audio file VODscribe can use.", path.display());
+        bail!("{} isn't a video or audio file VODscribe can use.", tools::shown(path));
     }
     // dunce gives plain C:\ paths on Windows, not \\?\C:\.
-    let path = dunce::canonicalize(path).with_context(|| format!("{} can't be opened.", path.display()))?;
+    let path = dunce::canonicalize(path).with_context(|| format!("{} can't be opened.", tools::shown(path)))?;
     if !is_media(&path) {
-        bail!("{} isn't a video or audio file VODscribe can use.", path.display());
+        bail!("{} isn't a video or audio file VODscribe can use.", tools::shown(&path));
     }
     if !path.is_file() {
-        bail!("{} isn't a file.", path.display());
+        bail!("{} isn't a file.", tools::shown(&path));
     }
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     // With no output, ffmpeg prints the file's details to stderr and exits with an error.
@@ -250,7 +250,7 @@ fn parse_streams(details: &str) -> Streams {
 pub fn source(path: &str) -> Result<PathBuf> {
     let path = PathBuf::from(path);
     if !path.is_file() {
-        bail!("The file is no longer at {}.", path.display());
+        bail!("The file is no longer at {}.", tools::shown(&path));
     }
     Ok(path)
 }

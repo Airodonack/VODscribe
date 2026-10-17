@@ -151,7 +151,7 @@ fn encode_pieces(
         let media = match read.iter().find(|(s, _)| *s == p.source) {
             Some((_, m)) => *m,
             None => {
-                let m = local::media(ffmpeg, &p.source).with_context(|| format!("read {}", p.source.display()))?;
+                let m = local::media(ffmpeg, &p.source).with_context(|| format!("read {}", tools::shown(&p.source)))?;
                 read.push((&p.source, m));
                 m
             }

@@ -29,7 +29,7 @@ pub struct Info {
 pub fn probe(ffmpeg: &Path, path: &Path) -> Result<Info> {
     let media = local::media(ffmpeg, path)?;
     if media.picture.is_none() && !media.audio {
-        bail!("{} has no picture and no sound.", path.display());
+        bail!("{} has no picture and no sound.", tools::shown(path));
     }
     Ok(Info { picture: media.picture, audio: media.audio, duration: media.duration })
 }
@@ -108,7 +108,7 @@ fn start<T: Send + 'static>(
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
-        .with_context(|| format!("run {}", ffmpeg.display()))?;
+        .with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
     let stdout = child.stdout.take().context("ffmpeg's output")?;
     let (tx, frames) = mpsc::sync_channel(AHEAD);
     let reader = std::thread::Builder::new().name("decode".into()).spawn(move || read(stdout, tx))?;
