@@ -1,4 +1,4 @@
-//! The app's own player (crates/player) playing a VOD's file on the screen
+//! The app's own player (crates/player) playing a VOD's file or an edit on the screen
 //! (screen.rs), driven by the page's controls (NativePlayer.svelte): one
 //! player at a time. The page is told the time and whether it's playing at
 //! every change and now and then while playing (`player-time`), and keeps
@@ -252,14 +252,6 @@ pub(crate) fn player_seek(app: AppHandle, time: f64, play: bool) -> CmdResult<St
 #[tauri::command]
 pub(crate) fn player_step(app: AppHandle, frames: i64) -> CmdResult<Status> {
     with(&app, |p| p.step(frames))
-}
-
-#[tauri::command]
-pub(crate) fn player_status(app: AppHandle) -> CmdResult<Status> {
-    let state = app.state::<AppState>();
-    let open = state.player.open.lock().unwrap();
-    let open = open.as_ref().ok_or("No player is open.")?;
-    Ok(status(&open.player))
 }
 
 /// Plays `speed` times as fast, the sound at the same pitch.

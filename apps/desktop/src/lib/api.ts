@@ -351,7 +351,6 @@ export const api = {
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     invoke<Mark>("add_mark", { vodId, time, kind, text }),
   setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
-  clipUrl: (id: number) => invoke<string>("clip_url", { id }),
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** The view open (an edit or a VOD's), for the history: what changes are made from. */
@@ -373,7 +372,6 @@ export const api = {
   playerPause: () => invoke<PlayerStatus>("player_pause"),
   playerSeek: (time: number, play: boolean) => invoke<PlayerStatus>("player_seek", { time, play }),
   playerStep: (frames: number) => invoke<PlayerStatus>("player_step", { frames }),
-  playerStatus: () => invoke<PlayerStatus>("player_status"),
   /** Plays `speed` times as fast, the sound at the same pitch. */
   playerSetSpeed: (speed: number) => invoke<PlayerStatus>("player_set_speed", { speed }),
   playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),

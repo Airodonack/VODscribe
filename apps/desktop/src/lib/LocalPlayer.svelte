@@ -1,6 +1,7 @@
 <script lang="ts">
-  // The player for files played here (a file on this computer, or a video
-  // kept): the webview's <video>, with captions from the transcript over it.
+  // The player for files played here where the app's own player can't
+  // (sound only, or no screen to draw on): the webview's <video>, with
+  // captions from the transcript over it.
   // Its controls, timeline and full screen are the player panel's
   // (Player.svelte), as for every player; mounted by embed.ts, which hands
   // these functions over.

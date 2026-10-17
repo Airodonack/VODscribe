@@ -1,6 +1,6 @@
 //! The native surface the picture is drawn on, over the page's box in the
 //! app's window, which the page reports (Screen.svelte). On Linux it's a
-//! Wayland subsurface or a child X window with its own EGL context
+//! Wayland subsurface or a child X window drawn with the compositor
 //! (present_linux.rs); on Windows a child window drawn with Direct3D or GDI
 //! (present_windows.rs); on macOS a view over the page whose layer shows
 //! each frame as an image (present_macos.rs).

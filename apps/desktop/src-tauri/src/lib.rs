@@ -105,7 +105,6 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
 fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
@@ -124,13 +123,9 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     let reads = Mutex::new(Db::open_reader(&paths.db())?);
     let worker = Worker::start(app.handle().clone(), paths.clone())?;
     let handle = app.handle().clone();
-    let media = media::MediaServer::start(move |asked| {
+    let media = media::MediaServer::start(move |id| {
         let state = handle.state::<AppState>();
-        let db = state.db.lock().unwrap();
-        match asked {
-            media::Served::Vod(id) => media::playable_file(&db, id),
-            media::Served::Clip(id) => db.clip(id).ok().flatten().and_then(|c| c.file_path),
-        }
+        media::playable_file(&state.db.lock().unwrap(), id)
     })?;
     let (chat, chat_rx) = chats::ChatQueue::new();
     app.manage(AppState {
@@ -161,6 +156,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     Ok(())
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         // One copy at a time: two would share the library and the queue, and on Linux
@@ -271,7 +267,6 @@ pub fn run() {
             clips::add_mark,
             clips::move_mark,
             clips::set_mark_text,
-            media::clip_url,
             clips::resolve_installed,
             edits::list_edits,
             edits::create_edit,
@@ -296,7 +291,6 @@ pub fn run() {
             player::player_pause,
             player::player_seek,
             player::player_step,
-            player::player_status,
             player::player_set_speed,
             player::player_set_volume,
             edits::move_piece,

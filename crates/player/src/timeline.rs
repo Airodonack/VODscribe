@@ -2,7 +2,7 @@
 //! a file (or nothing yet, where the footage isn't here), in the player's
 //! own time. A file alone is one stretch; an edit is one stretch for each
 //! of its pieces' spans (crates/core `edits`), from the footage found for
-//! them, as a render or the preview are planned.
+//! them, as a render is planned.
 
 use std::path::Path;
 

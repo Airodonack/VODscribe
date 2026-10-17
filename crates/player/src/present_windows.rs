@@ -1,6 +1,5 @@
 //! The surface on Windows: a child window of the app's window, over the
-//! page's WebView2 control, covering the player's box (`Place::Over` on
-//! Linux; there's no other placement here), drawn into with Direct3D
+//! page's WebView2 control, covering the player's box, drawn into with Direct3D
 //! through wgpu. Where Direct3D has only WARP (software: a VM, a remote
 //! session, a CI runner), it's drawn with GDI instead: WARP took 160 ms a
 //! 720p frame in a VM, a GDI blit a few. VODSCRIBE_DRAW=gpu or gdi picks.

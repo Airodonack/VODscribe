@@ -1,7 +1,7 @@
 //! The compositor: what the player shows, drawn with the GPU (wgpu) into a
 //! target the size of the box: the picture fitted and centred on black,
 //! then what's drawn over it (captions, notes: `Overlay`). It draws into a
-//! window's surface (Windows' screen) or into a texture of its own that's
+//! window's surface (the screen on Linux and Windows) or into a texture of its own that's
 //! read back (`render`): stills, and tests that check frames by their
 //! pixels, come from the same drawing as the screen. Effects and tracks will
 //! be more passes here.

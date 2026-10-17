@@ -12,7 +12,7 @@ path = "src/bin/play.rs"
 [dependencies]
 anyhow = "1"
 cpal = "0.18.2"
-# The compositor (compose.rs) on every platform; Windows also paints with it.
+# The compositor (compose.rs) on every platform; Linux and Windows also paint with it.
 pollster = "1.0.1"
 raw-window-handle = "0.6.2"
 wgpu = "30.0.1"

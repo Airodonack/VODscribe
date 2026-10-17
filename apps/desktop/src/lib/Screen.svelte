@@ -50,7 +50,4 @@
     inset: 0;
     background: #000;
   }
-  :global(html.screen) .screen {
-    background: transparent;
-  }
 </style>
