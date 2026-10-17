@@ -54,7 +54,9 @@ fn is_remote(path: &Path) -> bool {
     p.starts_with("\\\\") || p.starts_with("//")
 }
 
-/// Reads a file's details with ffmpeg, refusing anything without an audio track.
+/// Reads a file's details with ffmpeg, refusing anything with neither a
+/// picture nor sound (a video without sound is kept to play and edit, with
+/// nothing to transcribe).
 /// The file's absolute path is its id, so adding it twice finds the first one.
 pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
     if is_remote(path) {
@@ -82,8 +84,8 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
         .context("run ffmpeg")?;
     let details = String::from_utf8_lossy(&out.stderr);
     let streams = parse_streams(&details);
-    if !streams.audio {
-        bail!("{name} has no audio to transcribe.");
+    if !streams.audio && !streams.picture {
+        bail!("{name} has no picture and no sound.");
     }
     let title = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or(name);
     Ok(VodInfo {
@@ -232,6 +234,8 @@ pub fn is_inside(path: &Path, dir: &Path) -> bool {
 struct Streams {
     duration: Option<f64>,
     audio: bool,
+    /// A video stream that isn't cover art.
+    picture: bool,
 }
 
 fn parse_streams(details: &str) -> Streams {
@@ -242,8 +246,12 @@ fn parse_streams(details: &str) -> Streams {
         let (h, m, s) = (parts.next()??, parts.next()??, parts.next()??);
         Some(h * 3600.0 + m * 60.0 + s)
     });
-    let audio = details.lines().any(|l| l.trim_start().starts_with("Stream #") && l.contains(": Audio:"));
-    Streams { duration, audio }
+    let stream = |kind: &str| {
+        details
+            .lines()
+            .any(|l| l.trim_start().starts_with("Stream #") && l.contains(kind) && !l.contains("(attached pic)"))
+    };
+    Streams { duration, audio: stream(": Audio:"), picture: stream(": Video:") }
 }
 
 /// A local VOD's file, if it's still where it was added.
@@ -324,7 +332,8 @@ mod tests {
         let info = probe(&ffmpeg, &video).unwrap();
         assert_eq!((info.platform.as_str(), info.title.as_str()), (PLATFORM, "clip"));
         assert!((info.duration.unwrap() - 2.0).abs() < 0.2, "{:?}", info.duration);
-        assert!(probe(&ffmpeg, &silent).unwrap_err().to_string().contains("no audio"));
+        // A video without sound is taken (to play and edit; nothing to transcribe).
+        assert!(probe(&ffmpeg, &silent).is_ok());
 
         let thumbs = dir.join("thumbs");
         let name = thumbnail(&ffmpeg, &video, &thumbs, 7, info.duration).unwrap().unwrap();

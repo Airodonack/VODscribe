@@ -187,6 +187,12 @@ pub fn transcribe(
     report: &mut impl FnMut(Status, f64),
     notice: Notice,
 ) -> Result<()> {
+    // A video without sound has nothing to transcribe: done, with no lines.
+    if crate::local::codecs(ffmpeg, audio_path)?.audio.is_none() {
+        db.set_status(vod.id, Status::Done, 1.0, None)?;
+        report(Status::Done, 1.0);
+        return Ok(());
+    }
     let attempt = |spec: &WorkerSpec, db: &mut Db, report: &mut dyn FnMut(Status, f64)| {
         run_worker(db, vod, spec, ffmpeg, audio_path, cancel, report)
     };
@@ -317,6 +323,42 @@ fn run_worker(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A video without sound is done at once, with no lines: no worker runs
+    /// (the one given doesn't exist). Skipped where ffmpeg isn't installed.
+    #[test]
+    fn a_video_without_sound_is_done_without_transcribing() {
+        let Ok(ffmpeg) = which::which("ffmpeg") else {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        };
+        let dir = crate::TempDir::new("silent");
+        let file = dir.join("silent.mp4");
+        let made = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=d=1:s=160x90"])
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let (vod, _) = db.add_vod(&crate::local::probe(&ffmpeg, &file).unwrap()).unwrap();
+        let none = WorkerSpec {
+            program: dir.join("no-such-worker"),
+            model_id: "none",
+            model_dir: dir.join("none"),
+            provider: "cpu",
+            batch: 1,
+            lib_dirs: Vec::new(),
+        };
+        let transcription = Transcription { worker: none, fallback: None };
+        let mut seen = Vec::new();
+        let (cancel, mut notice) = (AtomicBool::new(false), |_: String| {});
+        transcribe(&mut db, &vod, &ffmpeg, &file, &transcription, &cancel, &mut |s, _| seen.push(s), &mut notice)
+            .unwrap();
+        assert_eq!(seen, [Status::Done]);
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().status, Status::Done);
+        assert_eq!(db.transcribed_until(vod.id).unwrap(), 0.0, "no lines");
+    }
 
     #[test]
     fn tidies_media_of_vods_gone() {
