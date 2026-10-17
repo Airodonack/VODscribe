@@ -19,14 +19,14 @@ test("shown runs on from a report only while the player said it was moving", asy
   assert.equal(clock.shown(), 12, "said paused: it stands");
 });
 
-test("a player that goes quiet stops showing as moving half a second on", async () => {
+test("a player that goes quiet stops showing as moving a second and a half on", async () => {
   const clock = new Clock(0, true);
   clock.heardAt(10, true);
-  await wait(700);
+  await wait(1700);
   const shown = clock.shown() ?? 0;
-  assert.ok(Math.abs(shown - 10.5) < 0.01, `${shown}`);
+  assert.ok(Math.abs(shown - 11.5) < 0.01, `${shown}`);
   // The page's own clock runs on regardless: that's the faint line.
-  assert.ok(clock.now() > 10.6);
+  assert.ok(clock.now() > 11.6);
 });
 
 test("a seek moves the page's clock at once, and shown only when the player says", () => {

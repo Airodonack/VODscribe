@@ -64,9 +64,9 @@ export class Clock {
   }
 }
 
-/** How far past an embed's last report its position is taken to run (it
- *  reports a few times a second while playing). */
-const STALE = 0.5;
+/** How far past an embed's last report its position is taken to run:
+ *  Twitch reports once a second while playing. */
+const STALE = 1.5;
 /** How near a seek's target a report must be to count as there, and how
  *  long reports from elsewhere are set aside before the seek is given up on. */
 const NEAR = 2;
