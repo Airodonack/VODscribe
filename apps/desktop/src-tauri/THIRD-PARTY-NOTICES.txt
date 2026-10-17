@@ -1963,7 +1963,7 @@ Apache License
 
 ------------------------------------------------------------------------------
 Apache License 2.0
-Used by: constant_time_eq 0.3.1, dunce 1.0.5, gl 0.14.0, gl_generator 0.14.0, khronos_api 3.1.0, spirv 0.4.0+sdk-1.4.341.0, sync_wrapper 1.0.2
+Used by: constant_time_eq 0.3.1, dunce 1.0.5, gl_generator 0.14.0, khronos_api 3.1.0, spirv 0.4.0+sdk-1.4.341.0, sync_wrapper 1.0.2
 
 Apache License
 Version 2.0, January 2004

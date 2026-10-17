@@ -14,27 +14,25 @@ anyhow = "1"
 cpal = "0.18.2"
 # The compositor (compose.rs) on every platform; Windows also paints with it.
 pollster = "1.0.1"
+raw-window-handle = "0.6.2"
 wgpu = "30.0.1"
 serde = { version = "1", features = ["derive"] }
 vodscribe-core = { path = "../core" }
 
-# Linux draws with its own EGL context on a native surface over the window:
+# Linux draws (through the compositor) on a native surface over the window:
 # a Wayland subsurface or a child X window. The libraries are loaded when
 # used, so either session works without the other's.
 [target.'cfg(target_os = "linux")'.dependencies]
 gdkwayland-sys = "0.18.2"
 gdkx11-sys = "0.18.2"
-gl = "0.14"
 glib = "0.18"
 gtk = "0.18"
-khronos-egl = { version = "6.0.0", features = ["dynamic"] }
 wayland-backend = { version = "0.3.17", features = ["client_system", "dlopen"] }
 wayland-client = "0.31.15"
-wayland-sys = { version = "0.31.11", features = ["client", "egl", "dlopen"] }
+wayland-sys = { version = "0.31.11", features = ["client", "dlopen"] }
 x11-dl = "2.21.0"
 
 [target."cfg(windows)".dependencies]
-raw-window-handle = "0.6.2"
 windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"] }
 
 # macOS shows frames as images in a Core Animation layer of its own, over
