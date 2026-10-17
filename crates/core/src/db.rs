@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -534,6 +534,78 @@ pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     })
 }
 
+/// How many copies of the library from before upgrades are kept.
+const KEPT_COPIES: usize = 2;
+
+/// Copies the library at `path` (format `version`, open on `conn`) to
+/// `library-v<version>.sqlite` beside it before it's upgraded, whole and as
+/// it stands (VACUUM INTO), and removes all but the newest copies.
+fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<()> {
+    let Some(dir) = path.parent().filter(|_| path.is_file()) else { return Ok(()) };
+    let copy = dir.join(format!("library-v{version}.sqlite"));
+    let _ = std::fs::remove_file(&copy);
+    let made = conn.execute("VACUUM INTO ?1", [copy.to_string_lossy()]).and_then(|_| {
+        // VACUUM INTO doesn't carry the format's number over.
+        Connection::open(&copy)?.execute_batch(&format!("PRAGMA user_version = {version};"))
+    });
+    made.with_context(|| format!("keep a copy of the library at {} before upgrading it", crate::tools::shown(&copy)))?;
+    // The newest kept, by when they were made (the one just made among them).
+    let mut copies: Vec<(SystemTime, PathBuf)> = std::fs::read_dir(dir)?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.strip_prefix("library-v")?.strip_suffix(".sqlite")?.parse::<i32>().ok()?;
+            Some((e.metadata().ok()?.modified().ok()?, e.path()))
+        })
+        .collect();
+    copies.sort_by_key(|(made, _)| std::cmp::Reverse(*made));
+    for (_, old) in copies.into_iter().skip(KEPT_COPIES) {
+        let _ = std::fs::remove_file(old);
+    }
+    Ok(())
+}
+
+/// Moves the library at `path` out of the way (with its WAL and shared
+/// memory files), to `library-broken-<date>.sqlite` beside it (`-2`… if
+/// taken), so a new one is made in its place: never deleted, for recovering
+/// or sending with a bug report. Returns where it went.
+pub fn set_aside(path: &Path) -> Result<PathBuf> {
+    let dir = path.parent().context("the library has no folder")?;
+    let date = date_of(now());
+    let mut n = 1;
+    let aside = loop {
+        let name =
+            if n == 1 { format!("library-broken-{date}.sqlite") } else { format!("library-broken-{date}-{n}.sqlite") };
+        let aside = dir.join(name);
+        if !aside.exists() {
+            break aside;
+        }
+        n += 1;
+    };
+    std::fs::rename(path, &aside).with_context(|| format!("move the library to {}", crate::tools::shown(&aside)))?;
+    for suffix in ["-wal", "-shm"] {
+        let side = PathBuf::from(format!("{}{suffix}", path.display()));
+        if side.exists() {
+            let _ = std::fs::rename(&side, format!("{}{suffix}", aside.display()));
+        }
+    }
+    Ok(aside)
+}
+
+/// `secs` since 1970 as a UTC date, YYYY-MM-DD (Howard Hinnant's civil_from_days).
+fn date_of(secs: i64) -> String {
+    let z = secs.div_euclid(86400) + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
 pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -584,6 +656,11 @@ impl Db {
             MIGRATE_V20,
         ];
         if (version as usize) < migrations.len() {
+            // A copy as it was first, so an upgrade that turns out wrong can be
+            // undone; no copy, no upgrade.
+            if version > 0 {
+                keep_before_upgrade(&conn, path, version)?;
+            }
             let pending = migrations[version as usize..].join("\n");
             let latest = migrations.len();
             conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {latest}; COMMIT;"))?;
@@ -1476,6 +1553,69 @@ mod tests {
             .enumerate()
             .map(|(i, t)| Word { text: t.into(), start: start + i as f64, end: start + i as f64 + 0.5 })
             .collect()
+    }
+
+    #[test]
+    fn an_upgrade_keeps_a_copy_from_before_and_only_the_last_two() {
+        let dir = crate::TempDir::new("before-upgrade");
+        let path = dir.join("library.sqlite");
+        let version = |p: &Path| -> i32 {
+            Connection::open(p).unwrap().query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+        };
+        // Copies left by earlier upgrades, 3 the older.
+        for v in [3, 9] {
+            std::fs::write(dir.join(format!("library-v{v}.sqlite")), b"old").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = 1;")).unwrap();
+            conn.execute(
+                "INSERT INTO vods (platform, platform_id, url, title, status, added_at) VALUES ('kick', 'x', 'u', 't', 'done', 0)",
+                [],
+            )
+            .unwrap();
+        }
+        drop(Db::open(&path).unwrap());
+        let copy = dir.join("library-v1.sqlite");
+        assert_eq!(version(&copy), 1, "the copy is as it was before");
+        let vods: i64 =
+            Connection::open(&copy).unwrap().query_row("SELECT count(*) FROM vods", [], |r| r.get(0)).unwrap();
+        assert_eq!(vods, 1);
+        assert!(version(&path) > 1, "and the library upgraded");
+        // The two newest kept: the one just made and 9; 3, the oldest, goes.
+        let mut kept: Vec<String> = std::fs::read_dir(&*dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("library-v"))
+            .collect();
+        kept.sort();
+        assert_eq!(kept, ["library-v1.sqlite", "library-v9.sqlite"]);
+        // Opened again, nothing to upgrade: no copy made.
+        std::fs::remove_file(&copy).unwrap();
+        drop(Db::open(&path).unwrap());
+        assert!(!copy.exists());
+    }
+
+    #[test]
+    fn a_broken_library_is_set_aside_not_deleted() {
+        let dir = crate::TempDir::new("set-aside");
+        let path = dir.join("library.sqlite");
+        std::fs::write(&path, b"not a database").unwrap();
+        assert!(Db::open(&path).is_err());
+        std::fs::write(dir.join("library.sqlite-wal"), b"wal").unwrap();
+        let aside = set_aside(&path).unwrap();
+        let name = aside.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("library-broken-") && name.ends_with(".sqlite"), "{name}");
+        assert_eq!(std::fs::read(&aside).unwrap(), b"not a database");
+        assert!(dir.join(format!("{name}-wal")).exists(), "its WAL goes with it");
+        assert!(!path.exists());
+        // A new library opens in its place; a second one set aside the same day gets -2.
+        drop(Db::open(&path).unwrap());
+        let again = set_aside(&path).unwrap();
+        assert!(again.to_string_lossy().ends_with("-2.sqlite"), "{}", again.display());
+        assert_eq!(date_of(0), "1970-01-01");
+        assert_eq!(date_of(1790632794), "2026-09-28");
     }
 
     #[test]
