@@ -322,7 +322,18 @@ impl Drop for Tracked {
 /// little) till they're gone: for quitting, so no download or transcription
 /// goes on after the app. Processes started after it are tracked as usual.
 pub fn stop_tracked() {
-    let ids = std::mem::take(&mut *TRACKED.lock().unwrap());
+    stop_tracked_where(|_| true)
+}
+
+/// `stop_tracked` for the tracked processes `which` picks (a test stops only
+/// its own, as others run beside it).
+fn stop_tracked_where(which: impl Fn(u32) -> bool) {
+    let ids: Vec<u32> = {
+        let mut tracked = TRACKED.lock().unwrap();
+        let (ids, kept) = tracked.drain(..).partition(|&id| which(id));
+        *tracked = kept;
+        ids
+    };
     #[cfg(unix)]
     {
         // Each leads its own process group (`command`).
@@ -459,7 +470,8 @@ mod tests {
         let guard = track(&child);
         let mut other = command(&script).arg(&other_out).spawn().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        stop_tracked();
+        let id = child.id();
+        stop_tracked_where(|tracked| tracked == id);
         let _ = child.wait();
         let written = std::fs::read_dir(&tracked_out).unwrap().count();
         assert!(written > 0, "it was writing");
