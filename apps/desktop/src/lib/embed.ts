@@ -126,11 +126,6 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       } catch {
         return false;
       }
-      // What it reports, in the developer console of a dev build (`tauri dev`).
-      if (import.meta.env.DEV && data.info)
-        console.debug(
-          `youtube ${performance.now().toFixed(0)} at ${data.info.currentTime} state ${data.info.playerState}`,
-        );
       // State 1 is "playing", 3 is "buffering" (moving soon, not yet).
       const state = data.info?.playerState;
       const moving = typeof state === "number" ? state === 1 : undefined;
@@ -146,7 +141,6 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       seek(seconds, play) {
         command("seekTo", [seconds, true]);
         if (play) command("playVideo");
-        if (import.meta.env.DEV) console.debug(`seek ${performance.now().toFixed(0)} to ${seconds} play ${play}`);
         clock.asked(seconds, play);
       },
       time: () => clock.now(),
@@ -224,14 +218,7 @@ function twitch(
         eventName?: string;
         params?: { currentTime?: number; playback?: string };
       };
-      if (import.meta.env.DEV && data?.namespace === TWITCH_PROXY && data.eventName !== "UPDATE_STATE")
-        console.debug(`twitch event ${performance.now().toFixed(0)} ${data.namespace}/${data.eventName}`);
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
-        // What it reports, in the developer console of a dev build (`tauri dev`).
-        if (import.meta.env.DEV)
-          console.debug(
-            `twitch ${performance.now().toFixed(0)} at ${data.params?.currentTime} ${data.params?.playback}`,
-          );
         const playback = data.params?.playback;
         const moving = playback ? playback === "Playing" : undefined;
         if (typeof data.params?.currentTime === "number") clock.heardAt(data.params.currentTime, moving);
@@ -239,20 +226,12 @@ function twitch(
         if (playback) clock.playing = ["Playing", "Buffering"].includes(playback);
         return true;
       }
-      // Its other messages (the events its embed script turns into named
-      // ones: playing, pause, seek…), in a dev build's console, to see what
-      // could say a seek is done.
-      if (import.meta.env.DEV && data?.namespace !== TWITCH_PROXY)
-        console.debug(
-          `twitch event ${performance.now().toFixed(0)} ${data?.namespace}/${data?.eventName} ${JSON.stringify(data?.params ?? null)}`,
-        );
       return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
     },
     (cleanup) => ({
       seek(seconds, play) {
         command(TWITCH_SEEK, seconds);
         if (play) command(TWITCH_PLAY);
-        if (import.meta.env.DEV) console.debug(`seek ${performance.now().toFixed(0)} to ${seconds} play ${play}`);
         clock.asked(seconds, play);
       },
       time: () => clock.now(),
