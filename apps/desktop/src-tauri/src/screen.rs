@@ -1,7 +1,6 @@
 //! The screen the player draws on, a native surface in the window
 //! (crates/player `present`), over the page's player box. The page says
-//! where its box is (Screen.svelte). Where there's no screen yet (macOS),
-//! the box stays the page's.
+//! where its box is (Screen.svelte).
 
 use std::sync::Mutex;
 
@@ -10,17 +9,11 @@ use gtk::prelude::*;
 use tauri::{AppHandle, Manager};
 use vodscribe_player::Rect;
 
-#[cfg(any(target_os = "linux", windows))]
-type Native = vodscribe_player::present::Screen;
-/// No screen on this platform yet: never set.
-#[cfg(not(any(target_os = "linux", windows)))]
-type Native = ();
-
 /// The native screen, once the window has one.
 #[derive(Default)]
-pub(crate) struct Screen(#[allow(dead_code)] Mutex<Option<Native>>);
+pub(crate) struct Screen(Mutex<Option<vodscribe_player::present::Screen>>);
 
-/// Puts the screen in `window`, on platforms that have one.
+/// Puts the screen in `window`.
 pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -35,8 +28,15 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
         let screen = vodscribe_player::present::Screen::attach(window.hwnd()?.0 as isize)?;
         *app.state::<Screen>().0.lock().unwrap() = Some(screen);
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
-    let _ = (app, window);
+    #[cfg(target_os = "macos")]
+    {
+        // Over the page's WKWebView, from the main thread, where it's handed out.
+        let app = app.clone();
+        window.with_webview(move |webview| match vodscribe_player::present::Screen::attach(webview.inner()) {
+            Ok(screen) => *app.state::<Screen>().0.lock().unwrap() = Some(screen),
+            Err(e) => eprintln!("no screen: {e:#}"),
+        })?;
+    }
     Ok(())
 }
 
@@ -56,22 +56,16 @@ pub(crate) fn attached(app: &AppHandle) -> bool {
 
 /// Shows `frame` on the screen (none: black), if there is one.
 pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_player::decode::Frame>>) {
-    #[cfg(any(target_os = "linux", windows))]
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.show(frame);
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
-    let _ = (app, frame);
 }
 
 /// Where the page's player box is, in CSS pixels from the page's top-left
 /// corner (none when no player is open).
 #[tauri::command]
 pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>) {
-    #[cfg(any(target_os = "linux", windows))]
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.set(rect);
-        return;
     }
-    let _ = (app, rect);
 }

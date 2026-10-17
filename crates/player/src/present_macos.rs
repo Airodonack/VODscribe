@@ -1,0 +1,196 @@
+//! The surface on macOS: a view in the page's WKWebView, covering the page,
+//! that hosts a layer of its own, and in that layer the picture's layer,
+//! moved to the page's player box. The picture is each frame as an image,
+//! which Core Animation fits in the box (black around it) and draws. That
+//! needs no Metal of ours, so it also works where Metal doesn't (a VM). The
+//! view hit-tests as nothing, so clicks and the pointer reach the page.
+
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Result, bail};
+use dispatch2::MainThreadBound;
+use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
+use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2_app_kit::NSView;
+use objc2_core_foundation::{CFData, CFRetained, CGFloat, CGPoint, CGRect, CGSize};
+use objc2_core_graphics::{
+    CGBitmapInfo, CGColor, CGColorRenderingIntent, CGColorSpace, CGDataProvider, CGImage, CGImageAlphaInfo,
+    CGImageByteOrderInfo, kCGColorSpaceSRGB,
+};
+use objc2_quartz_core::{CALayer, CATransaction, kCAGravityResizeAspect};
+
+use crate::Rect;
+use crate::decode::Frame;
+
+define_class!(
+    /// The view over the page: draws only through its layer, and is never
+    /// what the pointer is over.
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "VODscribeScreen"]
+    struct Overlay;
+
+    impl Overlay {
+        #[unsafe(method(hitTest:))]
+        fn hit_test(&self, _point: CGPoint) -> *mut NSView {
+            std::ptr::null_mut()
+        }
+
+        // Measured from the top, as the page's boxes are.
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+    }
+);
+
+impl Overlay {
+    /// Covers the page: the WKWebView less its safe area. The view reaches
+    /// under a see-through title bar, and the page starts below it, except
+    /// in full screen. WKWebView doesn't resize the views in it, so this is
+    /// done each time the page says where its box is (`set`), which it does
+    /// whenever its layout changes.
+    fn fill(&self) {
+        // SAFETY: the view's own superview, which holds it.
+        let Some(page) = (unsafe { self.superview() }) else { return };
+        let (bounds, inset) = (page.bounds(), page.safeAreaInsets());
+        // WKWebView is flipped: its top is at its bounds' origin.
+        self.setFrame(CGRect::new(
+            CGPoint::new(bounds.origin.x + inset.left, bounds.origin.y + inset.top),
+            CGSize::new(bounds.size.width - inset.left - inset.right, bounds.size.height - inset.top - inset.bottom),
+        ));
+    }
+}
+
+/// The surface in the app's window, to tell what to show.
+#[derive(Clone)]
+pub struct Screen {
+    overlay: Arc<MainThreadBound<Retained<Overlay>>>,
+    inner: Arc<Mutex<Inner>>,
+}
+
+struct Inner {
+    picture: Layer,
+    /// The frame shown, and its pixels as 32-bit BGRX, which Core Animation
+    /// takes without converting.
+    id: Option<u64>,
+    bgrx: Vec<u8>,
+    /// Paints done, and the time they took in all (for measuring).
+    painted: (u64, std::time::Duration),
+}
+
+/// The picture's layer.
+struct Layer(Retained<CALayer>);
+
+// SAFETY: Core Animation's layers may be changed from any thread, inside a
+// transaction (`changed`); the view, which is the main thread's, isn't kept.
+unsafe impl Send for Layer {}
+
+impl Screen {
+    /// Puts a surface over `webview` (a WKWebView, as a pointer). Call on the
+    /// main thread.
+    pub fn attach(webview: *mut std::ffi::c_void) -> Result<Screen> {
+        let Some(mtm) = MainThreadMarker::new() else { bail!("the screen is made on the main thread") };
+        // SAFETY: the window's WKWebView, an NSView, alive while the window is.
+        let Some(webview) = (unsafe { (webview as *mut NSView).as_ref() }) else { bail!("no page view") };
+        let overlay: Retained<Overlay> = unsafe { msg_send![Overlay::alloc(mtm), initWithFrame: webview.bounds()] };
+        // A layer the view hosts, not one AppKit backs it with: its sublayers
+        // are the screen's own to arrange.
+        let root = CALayer::new();
+        let picture = CALayer::new();
+        picture.setHidden(true);
+        picture.setBackgroundColor(Some(&CGColor::new_generic_gray(0.0, 1.0)));
+        // SAFETY: one of Core Animation's gravity names.
+        picture.setContentsGravity(unsafe { kCAGravityResizeAspect });
+        root.addSublayer(&picture);
+        overlay.setLayer(Some(&root));
+        overlay.setWantsLayer(true);
+        // Flipped, so boxes measure from the top as the page's do; after
+        // AppKit takes the layer, which sets it unflipped.
+        root.setGeometryFlipped(true);
+        webview.addSubview(&overlay);
+        overlay.fill();
+        let inner = Inner { picture: Layer(picture), id: None, bgrx: Vec::new(), painted: Default::default() };
+        let overlay = Arc::new(MainThreadBound::new(overlay, mtm));
+        Ok(Screen { overlay, inner: Arc::new(Mutex::new(inner)) })
+    }
+
+    /// Shows the picture in `rect` (none: nowhere), from any thread.
+    pub fn set(&self, rect: Option<Rect>) {
+        self.overlay.get_on_main(|overlay| overlay.fill());
+        let inner = self.inner.lock().unwrap();
+        changed(|| match rect {
+            Some(r) => {
+                let frame = CGRect::new(CGPoint::new(r.x, r.y), CGSize::new(r.width, r.height));
+                inner.picture.0.setFrame(frame);
+                inner.picture.0.setHidden(false);
+            }
+            None => inner.picture.0.setHidden(true),
+        });
+    }
+
+    /// Shows `frame` (none: black), from any thread.
+    pub fn show(&self, frame: Option<Arc<Frame>>) {
+        let mut inner = self.inner.lock().unwrap();
+        let began = std::time::Instant::now();
+        let image = frame.as_deref().and_then(|frame| inner.image(frame));
+        changed(|| {
+            // SAFETY: a CGImage is what a layer's contents may be.
+            let contents = image.as_deref().map(|image| unsafe { &*(image as *const CGImage).cast::<AnyObject>() });
+            unsafe { inner.picture.0.setContents(contents) };
+        });
+        inner.painted.0 += 1;
+        inner.painted.1 += began.elapsed();
+    }
+
+    /// Paints done, and the time they took in all.
+    pub fn painted(&self) -> (u64, std::time::Duration) {
+        self.inner.lock().unwrap().painted
+    }
+}
+
+impl Inner {
+    /// `frame` as an image.
+    fn image(&mut self, frame: &Frame) -> Option<CFRetained<CGImage>> {
+        if self.id != Some(frame.id) {
+            self.bgrx.resize(frame.width as usize * frame.height as usize * 4, 0);
+            for (to, from) in self.bgrx.as_chunks_mut::<4>().0.iter_mut().zip(frame.rgb.as_chunks::<3>().0) {
+                to[0] = from[2];
+                to[1] = from[1];
+                to[2] = from[0];
+            }
+            self.id = Some(frame.id);
+        }
+        let data = CFData::from_bytes(&self.bgrx);
+        let provider = CGDataProvider::with_cf_data(Some(&data))?;
+        // SAFETY: a constant name of a color space.
+        let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))?;
+        // Little-endian 32-bit with the top byte unused: B, G, R, X in memory.
+        let info = CGBitmapInfo(CGImageAlphaInfo::NoneSkipFirst.0 | CGImageByteOrderInfo::Order32Little.0);
+        // SAFETY: the pixels are `width` by `height` of 4 bytes, as said; no decode array.
+        unsafe {
+            CGImage::new(
+                frame.width as usize,
+                frame.height as usize,
+                8,
+                32,
+                frame.width as usize * 4,
+                Some(&space),
+                info,
+                Some(&provider),
+                std::ptr::null::<CGFloat>(),
+                true,
+                CGColorRenderingIntent::RenderingIntentDefault,
+            )
+        }
+    }
+}
+
+/// Changes layers at once and without Core Animation's fades, from any thread.
+fn changed(f: impl FnOnce()) {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    f();
+    CATransaction::commit();
+}

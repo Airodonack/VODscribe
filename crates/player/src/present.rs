@@ -2,7 +2,8 @@
 //! app's window, which the page reports (Screen.svelte). On Linux it's a
 //! Wayland subsurface or a child X window with its own EGL context
 //! (present_linux.rs); on Windows a child window drawn with Direct3D or GDI
-//! (present_windows.rs). macOS has no surface yet.
+//! (present_windows.rs); on macOS a view over the page whose layer shows
+//! each frame as an image (present_macos.rs).
 
 #[cfg(target_os = "linux")]
 #[path = "present_linux.rs"]
@@ -15,3 +16,9 @@ pub use linux::Screen;
 mod windows;
 #[cfg(windows)]
 pub use windows::Screen;
+
+#[cfg(target_os = "macos")]
+#[path = "present_macos.rs"]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::Screen;

@@ -35,3 +35,13 @@ pollster = "1.0.1"
 raw-window-handle = "0.6.2"
 wgpu = "30.0.1"
 windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"] }
+
+# macOS shows frames as images in a Core Animation layer of its own, over
+# the page's view: no Metal needed.
+[target.'cfg(target_os = "macos")'.dependencies]
+dispatch2 = "0.3.1"
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSView", "objc2-quartz-core", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFData"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColor", "CGColorSpace", "CGDataProvider", "CGImage"] }
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
