@@ -23,7 +23,8 @@ export interface EditPlayback {
   step?(frames: number): void;
   fps(): number | null;
   volume: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
-  rate: { get(): number; set(rate: number): void };
+  /** None where the player has no speed (the bar then hides its control). */
+  rate?: { get(): number; set(rate: number): void };
   /** Made quickly at a lower quality than the render (the preview). */
   lowQuality: boolean;
   destroy(): void;
@@ -129,12 +130,6 @@ export class EditPlayer implements EditPlayback {
       this.quiet = muted;
       api.playerSetVolume(muted ? 0 : this.loud).catch(() => {});
     },
-  };
-
-  // The app's player has no speed yet.
-  rate = {
-    get: () => 1,
-    set: () => {},
   };
 
   destroy() {

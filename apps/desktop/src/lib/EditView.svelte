@@ -235,7 +235,7 @@
     playing = p.playing();
     fps = p.fps() ?? DEFAULT_FPS;
     [volume, muted] = [p.volume.get(), p.volume.muted()];
-    rate = p.rate.get();
+    rate = p.rate?.get() ?? 1;
   });
 
   const seekTo = (time: number) => {
