@@ -33,7 +33,7 @@
 
   // The time as last told, run on by the page's clock once the player's
   // runs: after play it stands until the sound starts, and so does the playhead.
-  let told: PlayerStatus = { time: untrack(() => start), playing: false, running: false, speed: 1 };
+  let told: PlayerStatus = { time: untrack(() => start), playing: false, running: false, speed: 1, shown: null };
   let toldAt = performance.now();
   const now = () => {
     const t = told.time + (told.running ? ((performance.now() - toldAt) / 1000) * told.speed : 0);
@@ -123,7 +123,8 @@
   });
 
   export function seek(seconds: number, play: boolean) {
-    tell({ time: seconds, playing: play, running: false, speed: told.speed });
+    // The picture shows what it did until the player has the new frame.
+    tell({ ...told, time: seconds, playing: play, running: false });
     if (!ready) {
       wanted = { time: seconds, play };
       return;
@@ -133,12 +134,14 @@
 
   export const currentTime = () => now();
   export const isPlaying = () => told.playing;
+  /** Where the frame on screen is, as the player last said (null: none shows). */
+  export const shownTime = () => told.shown;
   export const mediaDuration = () => length;
   export const frameRate = () => fps;
 
   export function togglePlay() {
     const playing = !told.playing;
-    tell({ time: now(), playing, running: false, speed: told.speed });
+    tell({ ...told, time: now(), playing, running: false });
     if (!ready) {
       wanted = { time: told.time, play: playing };
       return;

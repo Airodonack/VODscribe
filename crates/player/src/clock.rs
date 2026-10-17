@@ -116,10 +116,12 @@ struct Inner {
     state: Mutex<State>,
     wake: Condvar,
     frame: Mutex<Option<Arc<Frame>>>,
+    /// Where in the timeline the frame showing is (none: no frame shows).
+    shown: Mutex<Option<f64>>,
     on_frame: Mutex<Option<OnFrame>>,
     quit: AtomicBool,
     /// Frames shown, and dropped for being late (for measuring).
-    shown: AtomicU64,
+    shown_count: AtomicU64,
     dropped: AtomicU64,
 }
 
@@ -184,9 +186,10 @@ impl Player {
             }),
             wake: Condvar::new(),
             frame: Mutex::new(None),
+            shown: Mutex::new(None),
             on_frame: Mutex::new(None),
             quit: AtomicBool::new(false),
-            shown: AtomicU64::new(0),
+            shown_count: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
         });
         let shared = inner.clone();
@@ -247,6 +250,13 @@ impl Player {
     /// The frame showing now.
     pub fn frame(&self) -> Option<Arc<Frame>> {
         self.inner.frame.lock().unwrap().clone()
+    }
+
+    /// Where in the timeline the frame showing is: where the picture really
+    /// is, which the time runs ahead of between frames, and stands apart
+    /// from while a seek finds its frame. None while no frame shows.
+    pub fn shown(&self) -> Option<f64> {
+        *self.inner.shown.lock().unwrap()
     }
 
     pub fn time(&self) -> f64 {
@@ -320,7 +330,7 @@ impl Player {
 
     /// Frames shown, and dropped for being late, since the player was opened.
     pub fn counts(&self) -> (u64, u64) {
-        (self.inner.shown.load(Ordering::Relaxed), self.inner.dropped.load(Ordering::Relaxed))
+        (self.inner.shown_count.load(Ordering::Relaxed), self.inner.dropped.load(Ordering::Relaxed))
     }
 
     /// How many seconds of the timeline a second of play is.
@@ -463,6 +473,7 @@ fn run(inner: &Inner) {
         let Some(mut walk) = Walk::start(inner) else {
             // Nothing to play (an edit emptied): no frame shows. Then wait
             // for a timeline, or to quit.
+            *inner.shown.lock().unwrap() = None;
             if inner.frame.lock().unwrap().take().is_some()
                 && let Some(f) = inner.on_frame.lock().unwrap().as_ref()
             {
@@ -483,6 +494,7 @@ fn run(inner: &Inner) {
                 .and_then(|s| inner.info(&s.path)?.picture.map(|p| Video::new(&inner.ffmpeg, &s.path, p)));
             let Some(video) = video else {
                 // No footage, or no picture: nothing shows while the time passes it.
+                *inner.shown.lock().unwrap() = None;
                 mark_ready(inner, epoch);
                 next = None;
                 if !wait_until(inner, epoch, stretch.end()) {
@@ -547,8 +559,9 @@ fn run(inner: &Inner) {
                     inner.dropped.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
-                inner.shown.fetch_add(1, Ordering::Relaxed);
+                inner.shown_count.fetch_add(1, Ordering::Relaxed);
                 *inner.frame.lock().unwrap() = Some(frame);
+                *inner.shown.lock().unwrap() = Some(time);
                 if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
                     f(Event::Frame);
                 }

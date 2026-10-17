@@ -36,13 +36,15 @@ export interface Vod {
 export type Device = "cpu" | "gpu";
 
 /** The app's own player's time, whether it's playing, whether the time
- *  moves yet (playing, it stands until the sound starts), and how fast it
- *  plays (player.rs). */
+ *  moves yet (playing, it stands until the picture and sound start), how
+ *  fast it plays, and where the frame on screen is (null: none shows),
+ *  which the playhead follows (player.rs). */
 export interface PlayerStatus {
   time: number;
   playing: boolean;
   running: boolean;
   speed: number;
+  shown: number | null;
 }
 
 /** What the app's own player says of what it opened: the frame rate at the start, if known, and the length. */

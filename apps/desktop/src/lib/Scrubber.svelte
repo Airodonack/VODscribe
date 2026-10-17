@@ -69,6 +69,7 @@
     onpiece,
     duration,
     time,
+    shown = null,
     fps,
     highlight = null,
     ranges = [],
@@ -100,8 +101,12 @@
       carry: (id: number, x: number, y: number, from: DOMRect, home: CarryHome) => void;
     };
     duration: number;
-    /** Where the player is now. */
+    /** Where the player is asked to be, or runs on to between frames. */
     time: number;
+    /** Where the frame on screen is, where the player knows (the app's
+     *  own): the playhead, solid. While `time` is apart from it (a seek still
+     *  finding its frame, frames late), `time` shows faint. */
+    shown?: number | null;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
     /** A stretch to light up: the one the Export button would make a clip of, while it's hovered. */
@@ -173,6 +178,10 @@
 
   const x = (t: number) => ((t - viewStart) / span) * width;
   const pct = (t: number) => `${((t - viewStart) / span) * 100}%`;
+  // The playhead where the picture really is, and where it's going while
+  // that's apart from it by more than a few frames' worth.
+  const actual = $derived(shown ?? time);
+  const going = $derived(shown !== null && Math.abs(time - shown) > 0.1 ? time : null);
   const widthPct = (a: number, b: number) => `${((x(b) - x(a)) / (width || 1)) * 100}%`;
 
   let bar = $state<HTMLDivElement>();
@@ -198,7 +207,7 @@
     const style = getComputedStyle(bar);
     const played = style.getPropertyValue("--played").trim();
     const rest = style.getPropertyValue("--unplayed").trim();
-    const at = x(time) * ratio;
+    const at = x(actual) * ratio;
     const mid = h / 2 + 6 * ratio;
     if (!levels.length) {
       ctx.fillStyle = rest;
@@ -779,8 +788,11 @@
         ></span>
       {/if}
     {/each}
-    {#if time >= viewStart && time <= viewStart + span}
-      <span class="playhead" style:left={pct(time)}></span>
+    {#if going !== null && going >= viewStart && going <= viewStart + span}
+      <span class="playhead going" style:left={pct(going)}></span>
+    {/if}
+    {#if actual >= viewStart && actual <= viewStart + span}
+      <span class="playhead" style:left={pct(actual)}></span>
     {/if}
     {#each joins ?? [] as join (join)}
       {#if join > viewStart && join < viewStart + span}
@@ -1291,6 +1303,11 @@
     margin-left: -1px;
     background: var(--text);
     pointer-events: none;
+  }
+
+  /* Where it's going, while the picture isn't there yet. */
+  .playhead.going {
+    opacity: 0.35;
   }
 
   .hover {

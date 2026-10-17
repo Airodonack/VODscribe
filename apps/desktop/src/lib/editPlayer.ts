@@ -17,6 +17,8 @@ export interface EditPlayback {
    *  its stretches, and which have their footage. */
   plan(id: number, from: number): Promise<PlayerStretch[]>;
   time(): number;
+  /** Where the frame on screen is, where the player knows (null: none shows). */
+  shown?(): number | null;
   playing(): boolean;
   togglePlay(): void;
   seek(seconds: number, play: boolean): void;
@@ -37,6 +39,8 @@ export class EditPlayer implements EditPlayback {
   // until the sound starts.
   private clock = new Clock(0, false);
   private isPlaying = false;
+  /** Where the frame on screen is, as the player last said (null: none shows). */
+  private shownAt: number | null = null;
   private editId: number | null = null;
   private opening: Promise<unknown> | null = null;
   private rateAtStart: number | null = null;
@@ -59,12 +63,13 @@ export class EditPlayer implements EditPlayback {
     this.clock.playing = status.running;
     this.clock.speed = status.speed;
     this.isPlaying = status.playing;
+    this.shownAt = status.shown;
   }
 
   async plan(id: number, from: number): Promise<PlayerStretch[]> {
     if (this.editId !== id) {
       this.editId = id;
-      this.tell({ time: from, playing: false, running: false, speed: 1 });
+      this.tell({ time: from, playing: false, running: false, speed: 1, shown: null });
       this.opening = api.playerOpenEdit(id, from, false).then(
         (opened) => {
           if (this.gone || this.editId !== id) return;
@@ -91,9 +96,13 @@ export class EditPlayer implements EditPlayback {
     return this.isPlaying;
   }
 
+  shown() {
+    return this.shownAt;
+  }
+
   togglePlay() {
     const playing = !this.isPlaying;
-    this.tell({ time: this.time(), playing, running: false, speed: this.clock.speed });
+    this.tell({ time: this.time(), playing, running: false, speed: this.clock.speed, shown: this.shownAt });
     (playing ? api.playerPlay() : api.playerPause()).then(
       (s) => this.tell(s),
       () => {},
@@ -101,7 +110,8 @@ export class EditPlayer implements EditPlayback {
   }
 
   seek(seconds: number, play: boolean) {
-    this.tell({ time: seconds, playing: play, running: false, speed: this.clock.speed });
+    // The picture shows what it did until the player has the new frame.
+    this.tell({ time: seconds, playing: play, running: false, speed: this.clock.speed, shown: this.shownAt });
     api.playerSeek(seconds, play).then(
       (s) => this.tell(s),
       () => {},
@@ -122,7 +132,7 @@ export class EditPlayer implements EditPlayback {
   rate = {
     get: () => this.clock.speed,
     set: (speed: number) => {
-      this.tell({ time: this.time(), playing: this.isPlaying, running: false, speed });
+      this.tell({ time: this.time(), playing: this.isPlaying, running: false, speed, shown: this.shownAt });
       api.playerSetSpeed(speed).then(
         (s) => this.tell(s),
         () => {},

@@ -6,7 +6,6 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -33,14 +32,17 @@ struct Open {
 }
 
 /// What the page is told of the player: `running` once the time moves
-/// (playing, it stands until the sound starts), for the page's clock to run
-/// from then rather than from the play, and at `speed`.
+/// (playing, it stands until the picture and sound start), for the page's
+/// clock to run from then rather than from the play, and at `speed`; and
+/// `shown`, where the frame on screen is (none: no frame shows), which the
+/// timeline's playhead follows. Told at every frame and every change.
 #[derive(Serialize, Clone, Copy)]
 pub(crate) struct Status {
     time: f64,
     playing: bool,
     running: bool,
     speed: f64,
+    shown: Option<f64>,
 }
 
 /// What a player opened says of what it plays.
@@ -55,11 +57,14 @@ fn opened(player: &Player) -> Opened {
     Opened { fps: player.fps_at(0.0), duration: player.duration() }
 }
 
-/// How often the page hears the time while playing, apart from changes.
-const TOLD: Duration = Duration::from_millis(250);
-
 fn status(player: &Player) -> Status {
-    Status { time: player.time(), playing: player.playing(), running: player.running(), speed: player.speed() }
+    Status {
+        time: player.time(),
+        playing: player.playing(),
+        running: player.running(),
+        speed: player.speed(),
+        shown: player.shown(),
+    }
 }
 
 /// Whether there's a player here: a screen to draw on.
@@ -165,7 +170,6 @@ async fn open_with(
             // Each frame due goes to the screen; the time to the page now and
             // then, and at once when it starts to move or the end is reached.
             let (shown, told) = (app.clone(), app.clone());
-            let last = Mutex::new(Instant::now() - TOLD);
             player.on_frame(Box::new(move |event| {
                 let state = shown.state::<AppState>();
                 let open = state.player.open.lock().unwrap();
@@ -174,11 +178,7 @@ async fn open_with(
                     // None when there's nothing to play: black.
                     crate::screen::show(&shown, open.player.frame());
                 }
-                let mut last = last.lock().unwrap();
-                if event != Event::Frame || last.elapsed() >= TOLD {
-                    *last = Instant::now();
-                    let _ = told.emit("player-time", status(&open.player));
-                }
+                let _ = told.emit("player-time", status(&open.player));
             }));
             let mut open = state.player.open.lock().unwrap();
             if state.player.asked.load(Ordering::Acquire) != asked {

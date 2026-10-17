@@ -107,6 +107,8 @@
   let player = $state<EditPlayback | null>(null);
   let previewError = $state<string | null>(null);
   let now = $state(0);
+  // Where the frame on screen is, where the player knows (the app's own).
+  let shown = $state<number | null>(null);
   let playing = $state(false);
   let volume = $state(1);
   let muted = $state(false);
@@ -234,6 +236,7 @@
     const p = player;
     if (!p) return;
     now = p.time();
+    shown = p.shown?.() ?? null;
     // Only once it's this edit's playhead (after the seek to where it was left).
     if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: now });
     playing = p.playing();
@@ -649,6 +652,7 @@
           {onpiece}
           duration={total}
           time={now}
+          {shown}
           {fps}
           onseek={seekTo}
           onpause={() => player?.playing() && player.togglePlay()}

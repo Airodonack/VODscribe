@@ -24,6 +24,9 @@ export interface EmbeddedPlayer {
   duration?(): number;
   /** Its frame rate, where known exactly (the app's own player). */
   fps?(): number | null;
+  /** Where the frame on screen is, where the player knows (the app's own;
+   *  null: none shows). The playhead follows it; `time` may run ahead. */
+  shown?(): number | null;
   /** Its sound, where the app's controls set it (0..1). */
   volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
   /** Its speed, where the app's controls set it. */
@@ -387,6 +390,7 @@ async function local(
       step: player.step,
       duration: player.mediaDuration,
       fps: player.frameRate,
+      shown: player.shownTime,
       volume: player.sound,
       rate: player.speed,
       captions: player.captions,

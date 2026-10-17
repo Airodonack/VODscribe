@@ -132,6 +132,8 @@
   // What the controls show, read from the player every frame (it may be in
   // an iframe that only reports by message, so there's nothing to bind to).
   let now = $state(untrack(() => at.time));
+  // Where the frame on screen is, where the player knows (the app's own).
+  let shown = $state<number | null>(null);
   let playing = $state(false);
   let volume = $state(1);
   let muted = $state(false);
@@ -147,6 +149,7 @@
     const p = player;
     if (!p) return;
     now = p.time();
+    shown = p.shown?.() ?? null;
     nav.note({ kind: "vod", id: vod.id }, { time: now });
     playing = p.playing();
     playerDuration = p.duration?.() ?? 0;
@@ -451,6 +454,7 @@
             memo={{ kind: "vod", id: vod.id }}
             {duration}
             time={now}
+            {shown}
             {fps}
             highlight={exportHover && canExport ? (cuts.selection ?? stretch) : null}
             ranges={editRanges}
