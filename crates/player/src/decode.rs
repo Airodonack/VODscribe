@@ -115,6 +115,22 @@ fn start<T: Send + 'static>(
     Ok(Stream { child, frames, _reader: reader })
 }
 
+/// The largest frame side the player decodes to: a GPU texture can be no
+/// larger than 8192 (wgpu's default limit), and a frame 4096 across is
+/// already more than a screen shows.
+pub const MAX_SIDE: u32 = 4096;
+
+/// `width` by `height` scaled down, keeping its shape, so neither side is
+/// over `max` (and both are even, for ffmpeg's scaler); as it is if neither is.
+pub fn within(width: u32, height: u32, max: u32) -> (u32, u32) {
+    if width <= max && height <= max {
+        return (width, height);
+    }
+    let k = max as f64 / width.max(height) as f64;
+    let side = |n: u32| (((n as f64 * k / 2.0).round() as u32) * 2).clamp(2, max);
+    (side(width), side(height))
+}
+
 /// A file's frames, decoded by `ffmpeg`.
 pub struct Video {
     ffmpeg: PathBuf,
@@ -136,10 +152,15 @@ impl Video {
     /// itself it makes a variable-rate file constant at the stream's nominal
     /// rate, which can differ from the average the probe reads, and the
     /// frames would be stamped at the wrong speed.
+    /// Frames are scaled to the probe's size, or down to `MAX_SIDE` where
+    /// that's larger, so each is the size read (even where the stream's
+    /// size changes partway).
     pub fn from(&self, from: f64) -> Result<Stream<Arc<Frame>>> {
         let Picture { width, height, fps } = self.picture;
+        let (width, height) = within(width, height, MAX_SIDE);
         let rate = format!("{fps}");
-        let output = ["-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "rgb24"];
+        let scale = format!("scale={width}:{height}");
+        let output = ["-vf", &scale, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "rgb24"];
         start(&self.ffmpeg, &self.path, from, "0:v:0", &output, move |mut out, tx| {
             let size = width as usize * height as usize * 3;
             let mut n = 0u64;
@@ -206,5 +227,19 @@ impl Audio {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_too_large_are_scaled_down_keeping_their_shape() {
+        assert_eq!(within(1920, 1080, MAX_SIDE), (1920, 1080));
+        assert_eq!(within(4096, 2160, MAX_SIDE), (4096, 2160));
+        assert_eq!(within(11520, 5760, MAX_SIDE), (4096, 2048));
+        assert_eq!(within(1080, 9000, MAX_SIDE), (492, 4096));
+        assert_eq!(within(100_000, 1, MAX_SIDE), (4096, 2));
     }
 }

@@ -65,6 +65,7 @@ pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_playe
 /// corner (none when no player is open).
 #[tauri::command]
 pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>) {
+    let rect = rect.filter(Rect::sane);
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.set(rect);
     }
@@ -89,7 +90,11 @@ pub(crate) fn set_screen_overlay(app: AppHandle, request: tauri::ipc::Request<'_
     } else {
         let header = request.headers().get("overlay").ok_or("No overlay header.")?;
         let placed: Placed = serde_json::from_slice(header.as_bytes()).map_err(|e| e.to_string())?;
-        if rgba.len() != placed.size.0 as usize * placed.size.1 as usize * 4 {
+        let max = vodscribe_player::MAX_CSS as u32;
+        if !placed.rect.sane() || placed.size.0 > max || placed.size.1 > max {
+            return Err("The overlay is larger than a screen.".into());
+        }
+        if rgba.len() as u64 != placed.size.0 as u64 * placed.size.1 as u64 * 4 {
             return Err("The overlay's pixels don't fill its size.".into());
         }
         let mut pixels = rgba.clone();

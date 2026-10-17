@@ -27,6 +27,25 @@ pub struct Rect {
     pub height: f64,
 }
 
+/// The largest a box's side, or its distance from the corner, may be in CSS
+/// pixels: well past any screen, and small enough that it's a texture's size
+/// and fits an i32 at any pixel density.
+pub const MAX_CSS: f64 = 8192.0;
+
+impl Rect {
+    /// Whether it's a box the screens can be placed at: finite, not
+    /// negative in size, and within `MAX_CSS`.
+    pub fn sane(&self) -> bool {
+        let within = |v: f64| v.is_finite() && v.abs() <= MAX_CSS;
+        within(self.x)
+            && within(self.y)
+            && within(self.width)
+            && within(self.height)
+            && self.width >= 0.0
+            && self.height >= 0.0
+    }
+}
+
 /// An image drawn over the picture (captions, notes): `pixels` is `size.0`
 /// by `size.1` pixels of 8-bit RGBA, premultiplied by its alpha, shown in
 /// `rect`, a box in the page's CSS pixels from the player box's top-left
@@ -46,5 +65,20 @@ impl Overlay {
     pub fn new(rect: Rect, size: (u32, u32), pixels: Vec<u8>) -> Overlay {
         static IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Overlay { rect, size, pixels, id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_boxes_a_screen_could_have_are_sane() {
+        let rect = |x, y, width, height| Rect { x, y, width, height };
+        assert!(rect(10.0, -20.0, 1280.0, 720.0).sane());
+        assert!(!rect(0.0, 0.0, f64::NAN, 720.0).sane());
+        assert!(!rect(0.0, 0.0, -1.0, 720.0).sane());
+        assert!(!rect(0.0, 0.0, 1e12, 720.0).sane());
+        assert!(!rect(f64::INFINITY, 0.0, 10.0, 10.0).sane());
     }
 }

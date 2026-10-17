@@ -173,3 +173,43 @@ fn play_from_the_last_frame_ends() {
     drop(player);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A video wider than a GPU texture can be plays, scaled down, rather than
+/// failing in the compositor.
+#[test]
+fn an_oversized_video_plays_scaled_down() {
+    let dir = std::env::temp_dir().join(format!("vodscribe-wide-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let need = std::env::var_os("VODSCRIBE_TESTS_NEED_ALL").is_some();
+    let path = dir.join("wide.mkv");
+    let made = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=9000x60:r=30:d=1", "-c:v", "png"])
+        .arg(&path)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        assert!(!need, "no ffmpeg on PATH");
+        eprintln!("skipped: no ffmpeg on PATH");
+        return;
+    }
+    let mut compositor = match Compositor::new(Gpu::Software) {
+        Ok(c) => c,
+        Err(e) if !need => {
+            eprintln!("skipped: {e:#}");
+            return;
+        }
+        Err(e) => panic!("{e:#}"),
+    };
+    let player = Player::open_file(Path::new("ffmpeg"), &path).unwrap();
+    let (tx, rx) = mpsc::channel();
+    player.on_frame(Box::new(move |event| {
+        let _ = tx.send(event);
+    }));
+    player.seek(0.5);
+    while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
+    let frame = player.frame().expect("a frame showing");
+    assert_eq!((frame.width, frame.height), (4096, 28));
+    let image = compositor.render((frame.width, frame.height), Some(&frame), None).unwrap();
+    assert!(image.rgba[0] > 240 && image.rgba[1] < 16, "red, not {:?}", &image.rgba[..3]);
+    drop(player);
+    let _ = std::fs::remove_dir_all(&dir);
+}
