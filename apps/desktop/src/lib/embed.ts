@@ -5,6 +5,7 @@
 // seek(), so jumping between timestamps doesn't reload the player.
 
 import { landingSeeks } from "./mediaSeek";
+import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
 import { api, type Vod } from "./api";
 import LocalPlayer from "./LocalPlayer.svelte";
@@ -36,24 +37,6 @@ export interface EmbeddedPlayer {
   /** Shows controls of its own that can't be hidden (Twitch's), so the app's leave out sound and speed. */
   ownControls?: boolean;
   destroy(): void;
-}
-
-/** The players' position as last reported, advanced by the clock while playing. */
-export class Clock {
-  private at = performance.now();
-  /** Seconds of the media a second of play is. */
-  speed = 1;
-  constructor(
-    private seconds: number,
-    public playing: boolean,
-  ) {}
-  set(seconds: number) {
-    this.seconds = seconds;
-    this.at = performance.now();
-  }
-  now() {
-    return this.seconds + (this.playing ? ((performance.now() - this.at) / 1000) * this.speed : 0);
-  }
 }
 
 function sandboxedFrame(el: HTMLElement, src: string): HTMLIFrameElement {
@@ -143,9 +126,12 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       } catch {
         return false;
       }
-      if (typeof data.info?.currentTime === "number") clock.set(data.info.currentTime);
-      // State 1 is "playing", 3 is "buffering".
-      if (typeof data.info?.playerState === "number") clock.playing = [1, 3].includes(data.info.playerState);
+      // State 1 is "playing", 3 is "buffering" (moving soon, not yet).
+      const state = data.info?.playerState;
+      const moving = typeof state === "number" ? state === 1 : undefined;
+      if (typeof data.info?.currentTime === "number") clock.heardAt(data.info.currentTime, moving);
+      else if (moving !== undefined) clock.heardMoving(moving);
+      if (typeof state === "number") clock.playing = [1, 3].includes(state);
       if (typeof data.info?.volume === "number") sound.volume = data.info.volume / 100;
       if (typeof data.info?.muted === "boolean") sound.muted = data.info.muted;
       if (typeof data.info?.playbackRate === "number") sound.rate = data.info.playbackRate;
@@ -158,6 +144,7 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
         clock.set(seconds);
       },
       time: () => clock.now(),
+      shown: () => clock.shown(),
       playing: () => clock.playing,
       togglePlay() {
         command(clock.playing ? "pauseVideo" : "playVideo");
@@ -232,8 +219,11 @@ function twitch(
         params?: { currentTime?: number; playback?: string };
       };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
-        if (typeof data.params?.currentTime === "number") clock.set(data.params.currentTime);
-        if (data.params?.playback) clock.playing = ["Playing", "Buffering"].includes(data.params.playback);
+        const playback = data.params?.playback;
+        const moving = playback ? playback === "Playing" : undefined;
+        if (typeof data.params?.currentTime === "number") clock.heardAt(data.params.currentTime, moving);
+        else if (moving !== undefined) clock.heardMoving(moving);
+        if (playback) clock.playing = ["Playing", "Buffering"].includes(playback);
         return true;
       }
       return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
@@ -245,6 +235,7 @@ function twitch(
         clock.set(seconds);
       },
       time: () => clock.now(),
+      shown: () => clock.shown(),
       playing: () => clock.playing,
       togglePlay() {
         command(clock.playing ? TWITCH_PAUSE : TWITCH_PLAY);
@@ -280,14 +271,22 @@ function videoPlayer(
   el.appendChild(video);
   const detach = attach(video);
   const seeks = landingSeeks(video);
-  if (time > 0) seeks.seek(time);
+  // Where it was before a seek: the element says it's at the new place at
+  // once, before it has the picture there.
+  let before: number | null = null;
+  const seekTo = (seconds: number) => {
+    before = seeks.wanted() === null && !video.seeking ? video.currentTime : before;
+    seeks.seek(seconds);
+  };
+  if (time > 0) seekTo(time);
   if (play) video.play().catch(() => {});
   return {
     seek(seconds, play) {
-      seeks.seek(seconds);
+      seekTo(seconds);
       if (play) video.play().catch(() => {});
     },
     time: () => seeks.wanted() ?? video.currentTime,
+    shown: () => (seeks.wanted() !== null || video.seeking ? before : video.currentTime),
     playing: () => !video.paused,
     togglePlay() {
       if (video.paused) video.play().catch(() => {});

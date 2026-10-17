@@ -8,7 +8,7 @@
 
 import { mount, unmount } from "svelte";
 import { api, events, type PlayerStatus, type PlayerStretch, type UnlistenFn } from "./api";
-import { Clock } from "./embed";
+import { Clock } from "./playerClock";
 import Screen from "./Screen.svelte";
 
 /** What the edit view drives: the preview, or the app's own player. */
