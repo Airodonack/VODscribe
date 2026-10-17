@@ -70,12 +70,25 @@ fn main() -> anyhow::Result<()> {
     });
     let bar = std::sync::Mutex::new((0.0, 0.0, 0));
 
-    // Each frame due is drawn, and the title brought up to date.
+    // Each frame due is drawn, and the title brought up to date. While
+    // playing, how long each frame took to draw and how far the time had
+    // run past it once drawn are kept, for the summary on quitting.
     let (shown, drawn) = (screen.clone(), player.clone());
     let title = glib::SendWeakRef::from(window.downgrade());
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    player.on_frame(Box::new(move |_| {
+    let timings = Arc::new(std::sync::Mutex::new((Vec::new(), Vec::new())));
+    let kept = timings.clone();
+    player.on_frame(Box::new(move |event| {
+        let began = std::time::Instant::now();
         shown.show(drawn.frame());
+        if event == vodscribe_player::clock::Event::Frame
+            && drawn.running()
+            && let Some(at) = drawn.shown()
+        {
+            let mut kept = kept.lock().unwrap();
+            kept.0.push(began.elapsed().as_secs_f64() * 1e3);
+            kept.1.push((drawn.time() - at) * 1e3);
+        }
         let (time, fps, playing) = (drawn.time(), drawn.fps().unwrap_or(30.0), drawn.playing());
         if let Some(overlay) = progress(*size.lock().unwrap(), time / drawn.duration(), &bar) {
             shown.overlay(Some(overlay));
@@ -124,7 +137,20 @@ fn main() -> anyhow::Result<()> {
             took.as_secs_f64() * 1e3 / paints as f64
         );
     }
+    let (mut draw, mut behind) = std::mem::take(&mut *timings.lock().unwrap());
+    if !draw.is_empty() {
+        println!("while playing, a frame took {} to draw", spread(&mut draw));
+        println!("and once drawn, the time was past it by {}", spread(&mut behind));
+    }
     Ok(())
+}
+
+/// `values` (ms) as their median, 95th percentile and most.
+#[cfg(target_os = "linux")]
+fn spread(values: &mut [f64]) -> String {
+    values.sort_by(f64::total_cmp);
+    let at = |q: f64| values[((values.len() - 1) as f64 * q).round() as usize];
+    format!("{:.1} ms (median), {:.1} ms (95%), {:.1} ms (most)", at(0.5), at(0.95), at(1.0))
 }
 
 /// A bar along the bottom of a box `size` (CSS pixels) a `fraction` of
