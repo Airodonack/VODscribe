@@ -1,5 +1,6 @@
 //! Footage: where the picture and sound of a stretch of a VOD come from, for
-//! edits' previews and renders (`edits::render_pieces`, `preview::plan`).
+//! edits as they play (the app's own player) and as they're rendered
+//! (`edits::render_pieces`).
 //! First the VOD's own file, where it plays from one here (a file on this
 //! computer, or its video downloaded); then any clip's file covering the
 //! stretch; then a section downloaded for edits into the footage folder
@@ -9,6 +10,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 
@@ -132,6 +134,42 @@ fn sections(dir: &Path, vod_id: i64) -> Vec<(PathBuf, f64, f64)> {
         .collect()
 }
 
+/// Removes files in `dir` not used for `max_age`, then the least recently
+/// used until they take at most `max_bytes`.
+pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut files: Vec<(PathBuf, SystemTime, u64)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let meta = e.metadata().ok()?;
+            meta.is_file().then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+        })
+        .collect();
+    let now = SystemTime::now();
+    files.retain(|(path, used, _)| {
+        let old = now.duration_since(*used).unwrap_or_default() > max_age;
+        if old {
+            let _ = fs::remove_file(path);
+        }
+        !old
+    });
+    files.sort_by_key(|(_, used, _)| std::cmp::Reverse(*used));
+    let mut total = 0;
+    for (path, _, size) in files {
+        total += size;
+        if total > max_bytes {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// Marks `path` used now, so `tidy` keeps it.
+pub fn touch(path: &Path) {
+    if let Ok(f) = fs::File::options().append(true).open(path) {
+        let _ = f.set_modified(SystemTime::now());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,5 +233,19 @@ mod tests {
         assert_eq!(section(100.0, 590.0, Some(600.0)), (70.0, 600.0));
         assert_eq!(section(100.0, 120.0, None), (70.0, 150.0));
         assert_eq!(section_stem(7, 70.0, 150.5), "7-70000-150500");
+    }
+
+    #[test]
+    fn tidying_keeps_the_newest_within_the_cap() {
+        let dir = crate::TempDir::new("footage-tidy");
+        for (name, age) in [("old", 100), ("mid", 20), ("new", 0)] {
+            let p = dir.join(format!("{name}.mp4"));
+            fs::write(&p, [0u8; 100]).unwrap();
+            let when = SystemTime::now() - Duration::from_secs(age * 86_400);
+            fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
+        }
+        tidy(&dir, Duration::from_secs(30 * 86_400), 150);
+        let left: Vec<bool> = ["old", "mid", "new"].iter().map(|n| dir.join(format!("{n}.mp4")).exists()).collect();
+        assert_eq!(left, [false, false, true], "too old, then over the cap");
     }
 }

@@ -99,38 +99,14 @@ pub fn render(
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<()> {
-    encode_pieces(ffmpeg, pieces, Quality::Final(picture, format), out, cancel, progress)
-}
-
-/// The picture previews are made at, whatever the edit's: every segment the
-/// same, so one player plays them one after another (`preview`).
-pub const PREVIEW: Picture = Picture { width: 960, height: 540, fps: 30.0 };
-
-/// The codecs a preview segment is in, as Media Source Extensions name them
-/// (H.264 High at level 4.0, AAC-LC).
-pub const PREVIEW_CODECS: &str = r#"video/mp4; codecs="avc1.640028, mp4a.40.2""#;
-
-/// Renders `piece` as a preview segment into `out`: at `PREVIEW`'s size and
-/// rate, picture and sound both always there (black, or silence, where its
-/// file has none), as fragmented MP4 without B-frames, so its first frame is
-/// at 0 and segments can be fed one after another to one player.
-pub fn preview(ffmpeg: &Path, piece: &Piece, out: &Path, cancel: &AtomicBool) -> Result<()> {
-    encode_pieces(ffmpeg, std::slice::from_ref(piece), Quality::Preview, out, cancel, |_| {})
-}
-
-/// What a render is for.
-enum Quality {
-    /// The edit's video: at the picture given (or its first piece's), as good
-    /// as it was, in the format clips are made in.
-    Final(Option<Picture>, ClipFormat),
-    /// A preview segment (`preview`).
-    Preview,
+    encode_pieces(ffmpeg, pieces, picture, format, out, cancel, progress)
 }
 
 fn encode_pieces(
     ffmpeg: &Path,
     pieces: &[Piece],
-    quality: Quality,
+    given: Option<Picture>,
+    format: ClipFormat,
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
@@ -161,10 +137,7 @@ fn encode_pieces(
         seeks.push(seek);
         at.push((i, p.start - seek, p.end - seek));
     }
-    let picture = match quality {
-        Quality::Final(given, _) => picture_of(&inputs, given),
-        Quality::Preview => Some(PREVIEW),
-    };
+    let picture = picture_of(&inputs, given);
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
 
     let dir = out.parent().context("no folder for the video")?;
@@ -182,26 +155,11 @@ fn encode_pieces(
         cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(&p.source);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
-    match quality {
-        Quality::Final(_, format) => {
-            if picture.is_some() {
-                cmd.args(["-map", "[v]"]);
-            }
-            cmd.args(["-map", "[a]"]);
-            cmd.args(crate::clips::output_args(format, picture.is_some()));
-        }
-        Quality::Preview => {
-            cmd.args(["-map", "[v]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-bf", "0", "-g", "60"]);
-            cmd.args(["-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0"]);
-            cmd.args(["-map", "[a]", "-c:a", "aac", "-b:a", "128k"]);
-            // Not shifted for the sound encoder's priming (as the muxer would, by a
-            // 21 ms AAC frame): the picture's frames then fall on the rate's steps,
-            // and the last one ends at the segment's end instead of past it, where
-            // the player's cut would drop it and leave a gap between segments.
-            cmd.args(["-avoid_negative_ts", "disabled"]);
-            cmd.args(["-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-f", "mp4"]);
-        }
+    if picture.is_some() {
+        cmd.args(["-map", "[v]"]);
     }
+    cmd.args(["-map", "[a]"]);
+    cmd.args(crate::clips::output_args(format, picture.is_some()));
     cmd.args(["-progress", "pipe:1", "-y"]).arg(&part);
     tools::encode(cmd, &part, out, length, cancel, progress, "the video")
 }
@@ -290,31 +248,5 @@ mod tests {
         assert!((seconds("video") - 4.5).abs() < 0.05, "{streams}");
         assert!((seconds("audio") - 4.5).abs() < 0.06, "{streams}");
         assert!(!dir.join("out").join(".edit.mp4.part").exists());
-
-        // A preview segment of the silent file: at the preview's size, with
-        // (silent) sound, starting at 0.
-        let seg = dir.join("seg.mp4");
-        let silent = Piece { source: dir.join("b.mp4"), start: 1.0, end: 3.0 };
-        preview(&ffmpeg, &silent, &seg, &AtomicBool::new(false)).unwrap();
-        let o = std::process::Command::new(&ffprobe)
-            .args(["-v", "error", "-show_entries", "stream=codec_type,width,height,start_time", "-of", "csv=p=0"])
-            .arg(&seg)
-            .output()
-            .unwrap();
-        let streams = String::from_utf8_lossy(&o.stdout).to_string();
-        assert!(streams.contains("video,960,540,0.000000"), "{streams}");
-        assert!(streams.lines().any(|l| l.starts_with("audio") && l.ends_with("0.000000")), "{streams}");
-
-        // Its frames on the preview's steps, the last ending at its end (none
-        // past it, for the player's cut to drop and leave a gap).
-        let o = std::process::Command::new(&ffprobe)
-            .args(["-v", "error", "-select_streams", "v", "-show_entries", "packet=pts_time", "-of", "csv=p=0"])
-            .arg(&seg)
-            .output()
-            .unwrap();
-        let times: Vec<f64> = String::from_utf8_lossy(&o.stdout).lines().map(|l| l.parse().unwrap()).collect();
-        let step = 1.0 / PREVIEW.fps;
-        assert!(times.iter().enumerate().all(|(i, t)| (t - i as f64 * step).abs() < 0.001), "{times:?}");
-        assert!((times.last().unwrap() + step - 2.0).abs() < 0.001, "{times:?}");
     }
 }

@@ -210,15 +210,6 @@ export interface EditPiece {
   vod_title: string;
 }
 
-/** A segment of an edit's preview: where it plays in the edit, how long, and
- *  its key (null while its footage isn't here: it's being downloaded). */
-export interface PreviewSegment {
-  key: string | null;
-  at: number;
-  length: number;
-  piece_id: number;
-}
-
 /** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its
  *  footage can be used up to `usable` (the VOD's time) already; before that's
  *  known, `progress` (0..1) guesses how far it is. */
@@ -403,12 +394,6 @@ export const api = {
       : invoke<void>("set_screen_overlay", new Uint8Array(0)),
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null) =>
     invoke<void>("set_screen", { rect }),
-  /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */
-  previewPlan: (id: number, at: number) => invoke<PreviewSegment[]>("preview_plan", { id, at }),
-  /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */
-  previewSegment: (key: string) => invoke<ArrayBuffer>("preview_segment", { key }).then((b) => new Uint8Array(b)),
-  /** What preview segments are in, as Media Source Extensions name it. */
-  previewCodecs: () => invoke<string>("preview_codecs"),
   listEdits: () => invoke<Edit[]>("list_edits"),
   createEdit: () => invoke<Edit>("create_edit"),
   getEdit: (id: number) => invoke<EditView>("get_edit", { id }),
@@ -547,9 +532,6 @@ export const events = {
   editRemoved: (cb: (id: number) => void) => listen<number>("edit-removed", (e) => cb(e.payload)),
   /** The system's drag of a clip's file (out of the window) is over, dropped or not. */
   dragEnded: (cb: () => void) => listen("drag-ended", () => cb()),
-  /** A preview segment made (or, with `error`, not). */
-  previewMade: (cb: (made: { key: string; error: string | null }) => void) =>
-    listen<{ key: string; error: string | null }>("preview-made", (e) => cb(e.payload)),
   /** How far a section downloading for edits is. */
   footageProgress: (cb: (fetching: Fetching) => void) => listen<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits (or, with `error`, not). */

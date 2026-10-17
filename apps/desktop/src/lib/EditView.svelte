@@ -1,7 +1,7 @@
 <script lang="ts">
   // An edit (edits.svelte.ts), opened from its row in the library's list, in the
-  // player's place and laid out like it: the picture (previewPlayer.ts, its
-  // pieces one after another), the timeline in the edit's own time with its
+  // player's place and laid out like it: the picture (editPlayer.ts, the app's
+  // own player playing its pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
   // where Split cuts the piece at the playhead in two and Remove takes it
   // out (Delete, too), the playhead's piece being the one acted on; Render, at the top beside the
@@ -13,13 +13,12 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type Doc, type EditPiece, type Line, type PlayerStretch, type Vod } from "./api";
+  import { api, type Doc, type EditPiece, type Line, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
-  import { PreviewPlayer } from "./previewPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
@@ -27,7 +26,6 @@
   import { formatTime } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
-  import { load, save } from "./stored";
   import { toast } from "./toasts.svelte";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
@@ -105,7 +103,7 @@
   // The player, and what the controls show, read from it every frame.
   let host = $state<HTMLDivElement>();
   let player = $state<EditPlayback | null>(null);
-  let previewError = $state<string | null>(null);
+  let playError = $state<string | null>(null);
   let now = $state(0);
   // Where the frame on screen is, where the player knows (the app's own).
   let shown = $state<number | null>(null);
@@ -114,39 +112,21 @@
   let muted = $state(false);
   let rate = $state(1);
   let fps = $state(DEFAULT_FPS);
-  // The app's own player (editPlayer.ts) where the window has a screen for
-  // it; else the preview's segments (previewPlayer.ts), where the webview
-  // can play them.
+  // The app's own player (editPlayer.ts), drawing on the window's screen;
+  // where the screen couldn't be put in the window, the edit can't play here.
   onMount(() => {
     let gone = false;
-    let stop: (() => void) | undefined;
-    const show = (message: string | null) => (previewError = message);
+    const show = (message: string | null) => (playError = message);
     api.playerAvailable().then(
       (native) => {
         if (gone) return;
-        if (native) {
-          player = new EditPlayer(host!, show);
-          return;
-        }
-        api.previewCodecs().then(
-          (codecs) => {
-            if (gone) return;
-            if (PreviewPlayer.supported(codecs)) {
-              const p = new PreviewPlayer(host!, codecs, show);
-              player = p;
-              events
-                .previewMade(({ key, error }) => (error ? (previewError = error) : p.made(key)))
-                .then((u) => (gone ? u() : (stop = u)));
-            } else previewError = "This computer can't play the preview. Render the edit to watch it.";
-          },
-          (e) => (edits.error = String(e)),
-        );
+        if (native) player = new EditPlayer(host!, show);
+        else playError = "Edits can't play in this window. Render the edit to watch it.";
       },
       (e) => (edits.error = String(e)),
     );
     return () => {
       gone = true;
-      stop?.();
     };
   });
   // How far the section downloading of each VOD can be used already.
@@ -154,35 +134,24 @@
     const f = edits.fetching.get(vodId);
     return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
   };
-  // How many tens of seconds (preview segments' longest, crates/core
-  // `preview::LONGEST`) of the sections downloading are in: each more may
-  // make one more segment playable.
+  // How many tens of seconds of the sections downloading are in: each ten
+  // more, the edit is planned again, so the player plays further into them.
   const reached = $derived(
     (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, usable(vodId) ?? 0) / 10), 0),
   );
-  // The minute the playhead is in: segments are made from its start on, so
-  // there's at least a minute's ahead of the playhead.
-  const minute = $derived(Math.floor(now / 60));
-  // The note that the preview is lower quality than the render, until it's dismissed.
-  const QUALITY_NOTE = "vodscribe.previewQualityNoted";
   const EMPTY =
     "Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a " +
     "stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.";
-  let qualityNoted = $state(load(QUALITY_NOTE) === "1");
-  function noteQuality() {
-    qualityNoted = true;
-    save(QUALITY_NOTE, "1");
-  }
 
-  // The preview's plan, asked for again whenever the pieces change, footage
-  // of their VODs comes in, what's downloading reaches more of them, or the
-  // playhead moves to another minute.
+  // The player's plan, asked for again whenever the pieces change, footage
+  // of their VODs comes in, or what's downloading reaches more of them.
   let planSeq = 0;
   let planned = $state.raw<PlayerStretch[]>([]);
   $effect(() => {
     void segments;
     void reached;
-    const from = minute * 60;
+    // Where it opens, the first time (it plays on from wherever it is after).
+    const from = untrack(() => now);
     for (const vodId of edit?.vod_ids ?? []) void edits.footage.get(vodId);
     const p = player;
     const id = edit?.id;
@@ -367,8 +336,6 @@
   // Where the edit waits for footage still to download (a VOD from a site):
   // each such stretch of it, and how far into it the download has come (a
   // section comes in from its start on).
-  // (A stretch is planned as segments of up to 10 s; those next to each
-  // other in a piece are one here.)
   const pending = $derived.by(() => {
     const out: { start: number; end: number; done: number; pieceId: number }[] = [];
     for (const seg of planned) {
@@ -430,7 +397,7 @@
     if (!width || !height) return;
     if (edgeFrame) overlay.show(overlay.framed(edgePicture, edgeLabel, width, height));
     else if (!segments.length) overlay.show(overlay.hint(EMPTY, width, height));
-    else if (previewError) overlay.show(overlay.hint(previewError, width, height));
+    else if (playError) overlay.show(overlay.hint(playError, width, height));
     else overlay.show(null);
   });
   onDestroy(() => overlay.show(null));
@@ -620,17 +587,8 @@
       <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
       {#if !segments.length}
         <p class="hint">{EMPTY}</p>
-      {:else if previewError}
-        <p class="hint">{previewError}</p>
-      {:else if player?.lowQuality && !qualityNoted}
-        <span
-          class="quality"
-          title="The preview is made quickly, at a lower quality, so the edit plays as you change it. The rendered video is full quality."
-          >Preview · lower quality
-          <button class="icon" onclick={noteQuality} title="Dismiss" aria-label="Dismiss"
-            ><Icon name="x" size={11} /></button
-          ></span
-        >
+      {:else if playError}
+        <p class="hint">{playError}</p>
       {/if}
       <!-- Over the player and its notes while an edge is dragged. -->
       {#if edgeFrame}
@@ -880,36 +838,6 @@
     color: #fff;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .quality {
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    background: rgb(0 0 0 / 0.55);
-    color: rgb(255 255 255 / 0.85);
-    font-size: 11px;
-    cursor: default;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  /* Small, so the note stays one line high. */
-  .quality button {
-    width: 14px;
-    height: 14px;
-    display: grid;
-    place-items: center;
-    color: inherit;
-    background: none;
-  }
-
-  .quality button.icon:hover:not(:disabled) {
-    color: #fff;
-    background: rgb(255 255 255 / 0.15);
   }
 
   .hint {

@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
-use vodscribe_core::{clips, fetch, mkv, preview, tools};
+use vodscribe_core::{clips, fetch, mkv, tools};
 
 use crate::AppState;
 
@@ -110,7 +110,7 @@ impl Footage {
     /// Starts fetching what's asked, once the app's state is in place; first, tidies the folder.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         std::thread::Builder::new().name("footage".into()).spawn(move || {
-            preview::tidy(&dir(&app), KEEP_FOR, MAX_BYTES);
+            footage::tidy(&dir(&app), KEEP_FOR, MAX_BYTES);
             let state = app.state::<AppState>();
             loop {
                 let (vod_id, start, end) = {
@@ -209,7 +209,7 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
             let out = dir.join(format!("{name}.mkv"));
             std::fs::rename(&file, &out).or_else(|_| std::fs::copy(&file, &out).map(|_| ()))?;
             // Dated now, not when the site made it, for tidying.
-            preview::touch(&out);
+            footage::touch(&out);
             anyhow::Ok(())
         })();
         done.store(true, Ordering::Relaxed);

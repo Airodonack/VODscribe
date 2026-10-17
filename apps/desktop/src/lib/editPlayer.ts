@@ -2,16 +2,14 @@
 // player (player.rs, crates/player) playing the edit's pieces end to end
 // from their footage, drawn on the screen under the view's frame
 // (Screen.svelte). Its time runs on the page's clock between what the
-// player tells (`player-time`). Where the window has no screen yet, the
-// view uses the Media Source preview (previewPlayer.ts) instead; both are an
-// `EditPlayback`.
+// player tells (`player-time`).
 
 import { mount, unmount } from "svelte";
 import { api, events, type PlayerStatus, type PlayerStretch, type UnlistenFn } from "./api";
 import { Clock } from "./playerClock";
 import Screen from "./Screen.svelte";
 
-/** What the edit view drives: the preview, or the app's own player. */
+/** What the edit view drives. */
 export interface EditPlayback {
   /** Plays edit `id` (opening it if it's another), planned again from its pieces and footage as they are now:
    *  its stretches, and which have their footage. */
@@ -27,13 +25,10 @@ export interface EditPlayback {
   volume: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
   /** None where the player has no speed (the bar then hides its control). */
   rate?: { get(): number; set(rate: number): void };
-  /** Made quickly at a lower quality than the render (the preview). */
-  lowQuality: boolean;
   destroy(): void;
 }
 
 export class EditPlayer implements EditPlayback {
-  readonly lowQuality = false;
   private screen: ReturnType<typeof mount>;
   // Runs once the player's time does (`running`): after play it stands
   // until the sound starts.

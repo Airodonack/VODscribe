@@ -14,7 +14,6 @@ mod history;
 mod loopback;
 mod media;
 mod player;
-mod previews;
 mod recovery;
 mod screen;
 mod setup;
@@ -49,8 +48,6 @@ struct AppState {
     renders: edits::Renderer,
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
-    /// Edits' preview segments being made (`previews`).
-    previews: previews::Previews,
     /// Whole videos downloaded on request (`videos`).
     videos: videos::Videos,
     /// What can be undone and redone (`history`).
@@ -112,6 +109,9 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
 fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
+    // Edits' preview segments, from before edits played in the app's own
+    // player (up to 2 GB): nothing reads them now.
+    let _ = std::fs::remove_dir_all(paths.local.join("preview"));
     // Kept videos' leftovers from VODs no longer in the library; only
     // tidying, so a library that can't be read here isn't a reason not
     // to start.
@@ -145,7 +145,6 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         clips: clips::Cutter::new(),
         renders: edits::Renderer::new(),
         footage: footage::Footage::default(),
-        previews: previews::Previews::default(),
         videos: videos::Videos::default(),
         history: history::History::default(),
         player: player::Native::default(),
@@ -154,7 +153,6 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     app.state::<AppState>().clips.run(app.handle().clone())?;
     app.state::<AppState>().videos.run(app.handle().clone())?;
     app.state::<AppState>().renders.run(app.handle().clone())?;
-    app.state::<AppState>().previews.run(app.handle().clone())?;
     app.state::<AppState>().footage.run(app.handle().clone())?;
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
@@ -275,9 +273,6 @@ pub fn run() {
             clips::set_mark_text,
             media::clip_url,
             clips::resolve_installed,
-            previews::preview_plan,
-            previews::preview_segment,
-            previews::preview_codecs,
             edits::list_edits,
             edits::create_edit,
             edits::get_edit,
