@@ -18,6 +18,13 @@ const PLATFORM_COLORS: Record<string, string> = { youtube: "#ff0033", twitch: "#
 /** The events' color on `platform`'s VODs. */
 export const eventColor = (platform: string): string => PLATFORM_COLORS[platform] ?? "#888888";
 
+/** The same as an "r g b" triplet, set beside it as `--event-rgb` for the
+ *  fallbacks colorMix.js writes where there's no color-mix. */
+export const eventRgb = (platform: string): string => {
+  const hex = eventColor(platform);
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(" ");
+};
+
 /** A sub's price by tier, in US dollars (Twitch's; Kick subs and YouTube memberships are taken as tier 1). */
 const SUB_USD = [5, 5, 10, 25];
 /** Bits and KICKs are each about a cent. */

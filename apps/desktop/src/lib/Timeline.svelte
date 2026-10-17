@@ -2,7 +2,7 @@
   import type { Layer, Vod } from "./api";
   import Emote from "./Emote.svelte";
   import Icon from "./Icon.svelte";
-  import { EVENTS, eventColor, eventName, type EventKind } from "./events";
+  import { EVENTS, eventColor, eventName, eventRgb, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
   import Popover from "./Popover.svelte";
 
@@ -96,6 +96,7 @@
             class="event"
             class:on
             style:--event={eventColor(vod.platform)}
+            style:--event-rgb={eventRgb(vod.platform)}
             onclick={() => layers.toggleEvent(event.kind)}
             aria-pressed={on}
             title={on ? "Hide from the timeline" : "Show on the timeline"}

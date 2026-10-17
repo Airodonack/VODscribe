@@ -100,13 +100,15 @@ function fallbackOf(value) {
 /** `css` with its colour tokens' rgb triplets and color-mix fallbacks added.
  * @param {string} css */
 export function colorMixFallbacks(css) {
-  if (!css.includes("color-mix(") && !/--[\w-]+\s*:\s*#/.test(css)) return css;
+  if (!css.includes("color-mix(") && !/--[\w-]+\s*:\s*(#|var\()/.test(css)) return css;
   const root = postcss.parse(css);
   /** @type {Map<import("postcss").Rule, import("postcss").Declaration[]>} */
   const fallbacks = new Map();
   root.walkDecls((decl) => {
     if (decl.prop.startsWith("--") && !decl.prop.endsWith("-rgb")) {
-      const rgb = rgbOf(decl.value);
+      // A token that's another (`--chapter: var(--accent)`) takes its triplet too.
+      const alias = /^var\((--[\w-]+)\)$/.exec(decl.value.trim())?.[1];
+      const rgb = alias ? `var(${alias}-rgb)` : rgbOf(decl.value);
       if (rgb) decl.cloneAfter({ prop: `${decl.prop}-rgb`, value: rgb });
     }
     if (!decl.value.includes("color-mix(") || decl.parent?.type !== "rule") return;

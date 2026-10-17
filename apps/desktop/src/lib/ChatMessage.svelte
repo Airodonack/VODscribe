@@ -3,7 +3,7 @@
   import { pieces } from "./chatParts";
   import { DEMO_NAMES } from "./demo";
   import Emote from "./Emote.svelte";
-  import { eventBadge, eventColor } from "./events";
+  import { eventBadge, eventColor, eventRgb } from "./events";
   import { formatTime } from "./platform";
 
   let {
@@ -34,8 +34,10 @@
   onclick={() => onplay(message.time)}
   title="Play from {formatTime(message.time)}"
 >
-  {#if message.kind !== "message"}<span class="badge" style:--event={eventColor(platform)}
-      >{eventBadge(message, platform)}</span
+  {#if message.kind !== "message"}<span
+      class="badge"
+      style:--event={eventColor(platform)}
+      style:--event-rgb={eventRgb(platform)}>{eventBadge(message, platform)}</span
     >{/if}
   <span class="chat-author" style:--author={message.color} title={DEMO_NAMES}>{message.author}</span>
   {#each shown as piece, i (i)}{#if piece.type === "text"}{piece.text}{:else if piece.overlays.length}<span

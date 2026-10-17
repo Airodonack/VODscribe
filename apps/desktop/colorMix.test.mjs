@@ -56,3 +56,8 @@ test("stylesheets without color-mix or tokens come back unchanged", () => {
   const css = ".a { color: red; }";
   assert.equal(colorMixFallbacks(css), css);
 });
+
+test("a token that's another token takes that one's triplet", () => {
+  const out = colorMixFallbacks(":root { --accent: #3366ff; --chapter: var(--accent); }");
+  assert.match(out, /--chapter: var\(--accent\);\s*--chapter-rgb: var\(--accent-rgb\);/);
+});
