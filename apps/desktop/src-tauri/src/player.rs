@@ -170,10 +170,9 @@ async fn open_with(
                 let state = shown.state::<AppState>();
                 let open = state.player.open.lock().unwrap();
                 let Some(open) = open.as_ref() else { return };
-                if event == Event::Frame
-                    && let Some(frame) = open.player.frame()
-                {
-                    crate::screen::show(&shown, Some(frame));
+                if event == Event::Frame {
+                    // None when there's nothing to play: black.
+                    crate::screen::show(&shown, open.player.frame());
                 }
                 let mut last = last.lock().unwrap();
                 if event != Event::Frame || last.elapsed() >= TOLD {

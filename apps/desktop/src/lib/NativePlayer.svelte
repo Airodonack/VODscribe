@@ -5,13 +5,13 @@
   // screen are the player panel's (Player.svelte), as for every player;
   // mounted by embed.ts, which hands these functions over. Captions from
   // the transcript are drawn over the picture by the screen
-  // (captionOverlay.ts): nothing of the page can draw over it.
+  // (screenOverlay.ts): nothing of the page can draw over it.
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, events, type Cue, type PlayerStatus, type UnlistenFn, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
-  import { showCaption } from "./captionOverlay";
+  import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
   import Screen from "./Screen.svelte";
   import { load, save } from "./stored";
@@ -66,7 +66,8 @@
   let boxSize = $state({ width: 0, height: 0, fullscreen: false });
   $effect(() => {
     const { width, height, fullscreen } = boxSize;
-    showCaption(width && height ? (cue?.text ?? null) : null, width, height, fullscreen);
+    const text = width && height ? cue?.text : null;
+    overlay.show(text ? overlay.caption(text, width, height, fullscreen) : null);
   });
   $effect(() => {
     const el = picture;

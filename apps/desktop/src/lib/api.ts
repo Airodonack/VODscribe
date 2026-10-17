@@ -379,7 +379,7 @@ export const api = {
   playerSetSpeed: (speed: number) => invoke<PlayerStatus>("player_set_speed", { speed }),
   playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
   /** Where the page's player box is (Screen.svelte); none when no player is open. */
-  /** What's drawn over the screen's picture (captionOverlay.ts): RGBA pixels as a canvas gives
+  /** What's drawn over the screen's picture (screenOverlay.ts): RGBA pixels as a canvas gives
    *  them, `size` of them, shown in `rect` (CSS pixels in the player box); none takes it away. */
   setScreenOverlay: (
     overlay: {

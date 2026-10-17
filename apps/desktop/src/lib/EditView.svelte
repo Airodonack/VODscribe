@@ -30,6 +30,7 @@
   import { load, save } from "./stored";
   import { toast } from "./toasts.svelte";
   import { nav } from "./nav.svelte";
+  import * as overlay from "./screenOverlay";
 
   let {
     vods,
@@ -162,6 +163,9 @@
   const minute = $derived(Math.floor(now / 60));
   // The note that the preview is lower quality than the render, until it's dismissed.
   const QUALITY_NOTE = "vodscribe.previewQualityNoted";
+  const EMPTY =
+    "Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a " +
+    "stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.";
   let qualityNoted = $state(load(QUALITY_NOTE) === "1");
   function noteQuality() {
     qualityNoted = true;
@@ -386,6 +390,47 @@
   // While a piece's edge is dragged: the frame it's on, over the player, and
   // what it is. One frame is asked for at a time, the latest edge's next.
   let edgeFrame = $state<{ url: string | null; label: string; missing?: boolean } | null>(null);
+  const edgeLabel = $derived(
+    edgeFrame
+      ? `${edgeFrame.label}${edgeFrame.missing ? " · not downloaded yet; it's fetched once you let go" : ""}`
+      : "",
+  );
+
+  // With the app's own player, nothing of the page shows over the picture:
+  // the hint and a dragged edge's frame are drawn over it by its screen
+  // (screenOverlay.ts) instead.
+  let hostSize = $state({ width: 0, height: 0 });
+  $effect(() => {
+    const el = host;
+    if (!el) return;
+    const sizes = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      hostSize = { width: r.width, height: r.height };
+    });
+    sizes.observe(el);
+    return () => sizes.disconnect();
+  });
+  let edgePicture = $state.raw<HTMLImageElement | null>(null);
+  $effect(() => {
+    const url = edgeFrame?.url;
+    if (!url) {
+      edgePicture = null;
+      return;
+    }
+    const picture = new Image();
+    picture.onload = () => (edgePicture = picture);
+    picture.src = url;
+  });
+  $effect(() => {
+    if (!(player instanceof EditPlayer)) return;
+    const { width, height } = hostSize;
+    if (!width || !height) return;
+    if (edgeFrame) overlay.show(overlay.framed(edgePicture, edgeLabel, width, height));
+    else if (!segments.length) overlay.show(overlay.hint(EMPTY, width, height));
+    else if (previewError) overlay.show(overlay.hint(previewError, width, height));
+    else overlay.show(null);
+  });
+  onDestroy(() => overlay.show(null));
   let edgeWanted: { vodId: number; at: number; label: string } | null = null;
   let edgeAsking = false;
   function showEdge(id: number, side: "start" | "end", at: number | null) {
@@ -571,10 +616,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
       {#if !segments.length}
-        <p class="hint">
-          Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a
-          stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.
-        </p>
+        <p class="hint">{EMPTY}</p>
       {:else if previewError}
         <p class="hint">{previewError}</p>
       {:else if player?.lowQuality && !qualityNoted}
@@ -591,7 +633,7 @@
       {#if edgeFrame}
         <div class="edge-frame">
           {#if edgeFrame.url}<img src={edgeFrame.url} alt="" />{/if}
-          <span>{edgeFrame.label}{edgeFrame.missing ? " · not downloaded yet; it's fetched once you let go" : ""}</span>
+          <span>{edgeLabel}</span>
         </div>
       {/if}
     </div>

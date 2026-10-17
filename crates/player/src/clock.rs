@@ -420,7 +420,13 @@ fn run(inner: &Inner) {
             return;
         }
         let Some(mut walk) = Walk::start(inner) else {
-            // Nothing to play: wait for a timeline, or to quit.
+            // Nothing to play (an edit emptied): no frame shows. Then wait
+            // for a timeline, or to quit.
+            if inner.frame.lock().unwrap().take().is_some()
+                && let Some(f) = inner.on_frame.lock().unwrap().as_ref()
+            {
+                f(Event::Frame);
+            }
             let s = inner.state.lock().unwrap();
             let _ = inner.wake.wait_timeout(s, Duration::from_millis(100));
             continue;
