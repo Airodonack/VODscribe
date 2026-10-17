@@ -12,6 +12,9 @@ path = "src/bin/play.rs"
 [dependencies]
 anyhow = "1"
 cpal = "0.18.2"
+# The compositor (compose.rs) on every platform; Windows also paints with it.
+pollster = "1.0.1"
+wgpu = "30.0.1"
 serde = { version = "1", features = ["derive"] }
 vodscribe-core = { path = "../core" }
 
@@ -31,9 +34,7 @@ wayland-sys = { version = "0.31.11", features = ["client", "egl", "dlopen"] }
 x11-dl = "2.21.0"
 
 [target."cfg(windows)".dependencies]
-pollster = "1.0.1"
 raw-window-handle = "0.6.2"
-wgpu = "30.0.1"
 windows = { version = "0.62.2", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_Input_KeyboardAndMouse"] }
 
 # macOS shows frames as images in a Core Animation layer of its own, over

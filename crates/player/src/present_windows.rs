@@ -28,6 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
+use crate::compose::Compositor;
 use crate::decode::Frame;
 use crate::{Overlay, Rect};
 
@@ -258,10 +259,7 @@ impl Draw {
 /// Where `frame` goes in a box of `size` pixels: fitted and centred, as
 /// x, y, width, height.
 fn fit(frame: &Frame, size: (u32, u32)) -> (f64, f64, f64, f64) {
-    let (w, h) = (size.0 as f64, size.1 as f64);
-    let fit = (w / frame.width as f64).min(h / frame.height as f64);
-    let (fw, fh) = ((frame.width as f64 * fit).round(), (frame.height as f64 * fit).round());
-    (((w - fw) / 2.0).round(), ((h - fh) / 2.0).round(), fw, fh)
+    crate::compose::fit(frame, (size.0 as f64, size.1 as f64))
 }
 
 /// Drawing with GDI: the frame stretched from memory into a bitmap the
@@ -390,60 +388,12 @@ impl Gdi {
     }
 }
 
-/// A texture drawn in a box, as a quad in clip space: the picture, fitted
-/// and centred, opaque (`fs`); the overlay, premultiplied, blended (`fs_over`).
-const SHADER: &str = "
-struct Box_ { corners: vec4<f32> };
-@group(0) @binding(0) var picture: texture_2d<f32>;
-@group(0) @binding(1) var smp: sampler;
-@group(0) @binding(2) var<uniform> box_: Box_;
-
-struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
-
-@vertex
-fn vs(@builtin(vertex_index) i: u32) -> Out {
-    let corner = vec2<f32>(f32(i & 1u), f32(i >> 1u));
-    var out: Out;
-    out.uv = vec2<f32>(corner.x, 1.0 - corner.y);
-    out.pos = vec4<f32>(mix(box_.corners.xy, box_.corners.zw, corner), 0.0, 1.0);
-    return out;
-}
-
-@fragment
-fn fs(in: Out) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSample(picture, smp, in.uv).rgb, 1.0);
-}
-
-@fragment
-fn fs_over(in: Out) -> @location(0) vec4<f32> {
-    return textureSample(picture, smp, in.uv);
-}
-";
-
-/// What the surface draws with.
+/// Drawing with Direct3D: the compositor (compose.rs) drawing into the
+/// window's surface.
 struct Painter {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
-    over_pipeline: wgpu::RenderPipeline,
-    layout: wgpu::BindGroupLayout,
-    sampler: wgpu::Sampler,
-    picture: Option<Quad>,
-    over: Option<Quad>,
-    /// RGB to RGBA, kept to reuse.
-    rgba: Vec<u8>,
-}
-
-/// A texture and the box it's drawn in.
-struct Quad {
-    texture: wgpu::Texture,
-    corners: wgpu::Buffer,
-    bind: wgpu::BindGroup,
-    size: (u32, u32),
-    /// What's in it (`Frame::id`, `Overlay::id`).
-    id: u64,
+    compositor: Compositor,
 }
 
 impl Painter {
@@ -464,96 +414,8 @@ impl Painter {
         let mut config = surface.get_default_config(&adapter, size.0.max(1), size.1.max(1)).context("no surface")?;
         config.format = config.format.remove_srgb_suffix();
         surface.configure(&device, &config);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("picture"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("picture"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("picture"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = |fragment: &str, blend: Option<wgpu::BlendState>| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(fragment),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fragment),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: config.format,
-                        blend,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: Default::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let (picture_pipeline, over_pipeline) =
-            (pipeline("fs", None), pipeline("fs_over", Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)));
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        Ok(Painter {
-            device,
-            queue,
-            surface,
-            config,
-            pipeline: picture_pipeline,
-            over_pipeline,
-            layout,
-            sampler,
-            picture: None,
-            over: None,
-            rgba: Vec::new(),
-        })
+        let compositor = Compositor::with_device(device, queue, config.format, adapter.get_info());
+        Ok(Painter { surface, config, compositor })
     }
 
     /// Draws `frame` fitted in the window of `size` pixels, on black, and
@@ -563,127 +425,15 @@ impl Painter {
         if (self.config.width, self.config.height) != (width, height) {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+            self.surface.configure(self.compositor.device(), &self.config);
         }
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             _ => return,
         };
         let view = output.texture.create_view(&Default::default());
-        let (w, h) = (width as f64, height as f64);
-        // A box in pixels from the top-left, in clip space (rows count from the bottom).
-        let clip = |x: f64, y: f64, bw: f64, bh: f64| {
-            let c = |v: f64, size: f64| (v / size * 2.0 - 1.0) as f32;
-            [c(x, w), -c(y + bh, h), c(x + bw, w), -c(y, h)]
-        };
-        if let Some(frame) = frame {
-            if self.picture.as_ref().is_none_or(|q| q.id != frame.id) {
-                // RGB to RGBA: the texture takes four bytes a pixel.
-                let pixels = frame.width as usize * frame.height as usize;
-                self.rgba.resize(pixels * 4, 255);
-                for (to, from) in self.rgba.as_chunks_mut::<4>().0.iter_mut().zip(frame.rgb.as_chunks::<3>().0) {
-                    to[..3].copy_from_slice(from);
-                }
-                let rgba = std::mem::take(&mut self.rgba);
-                let quad = self.picture.take();
-                self.picture = Some(self.fill(quad, (frame.width, frame.height), &rgba, frame.id));
-                self.rgba = rgba;
-            }
-            let (fx, fy, fw, fh) = fit(frame, (width, height));
-            self.queue.write_buffer(&self.picture.as_ref().unwrap().corners, 0, bytemuck_cast(&clip(fx, fy, fw, fh)));
-        }
-        if let Some((overlay, scale)) = overlay {
-            if self.over.as_ref().is_none_or(|q| q.id != overlay.id) {
-                let quad = self.over.take();
-                self.over = Some(self.fill(quad, overlay.size, &overlay.pixels, overlay.id));
-            }
-            let r = overlay.rect;
-            let corners = clip(r.x * scale, r.y * scale, r.width * scale, r.height * scale);
-            self.queue.write_buffer(&self.over.as_ref().unwrap().corners, 0, bytemuck_cast(&corners));
-        }
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("picture"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            if let (Some(_), Some(quad)) = (frame, self.picture.as_ref()) {
-                pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &quad.bind, &[]);
-                pass.draw(0..4, 0..1);
-            }
-            if let (Some(_), Some(quad)) = (overlay, self.over.as_ref()) {
-                pass.set_pipeline(&self.over_pipeline);
-                pass.set_bind_group(0, &quad.bind, &[]);
-                pass.draw(0..4, 0..1);
-            }
-        }
-        self.queue.submit([encoder.finish()]);
-        self.queue.present(output);
+        let drawn = self.compositor.draw(&view, (width, height), frame, overlay);
+        self.compositor.submit(drawn);
+        self.compositor.present(output);
     }
-
-    /// `quad` (made anew if there's none or its size differs) holding
-    /// `rgba`, `size` pixels of four bytes, known as `id`.
-    fn fill(&self, quad: Option<Quad>, size: (u32, u32), rgba: &[u8], id: u64) -> Quad {
-        let mut quad = match quad {
-            Some(quad) if quad.size == size => quad,
-            _ => {
-                let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("quad"),
-                    size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                let corners = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("box"),
-                    size: 16,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                let view = texture.create_view(&Default::default());
-                let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("quad"),
-                    layout: &self.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                        wgpu::BindGroupEntry { binding: 2, resource: corners.as_entire_binding() },
-                    ],
-                });
-                Quad { texture, corners, bind, size, id: u64::MAX }
-            }
-        };
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &quad.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size.0 * 4), rows_per_image: Some(size.1) },
-            wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
-        );
-        quad.id = id;
-        quad
-    }
-}
-
-/// Four floats as bytes, for a uniform buffer.
-fn bytemuck_cast(values: &[f32; 4]) -> &[u8] {
-    // SAFETY: f32s are plain bytes, and the slice covers exactly them.
-    unsafe { std::slice::from_raw_parts(values.as_ptr() as *const u8, 16) }
 }

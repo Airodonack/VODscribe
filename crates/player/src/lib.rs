@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod clock;
+pub mod compose;
 pub mod decode;
 pub mod present;
 pub mod sound;
