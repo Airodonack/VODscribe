@@ -28,8 +28,12 @@ fn main() {
     }
     // Tauri wants the names for the life of the program; a build script ends right after.
     let commands: &'static [&'static str] = commands.into_iter().map(|c| &*c.leak()).collect::<Vec<_>>().leak();
+    println!("cargo:rerun-if-changed=windows-app-manifest.xml");
+    let windows = tauri_build::WindowsAttributes::new().app_manifest(include_str!("windows-app-manifest.xml"));
     tauri_build::try_build(
-        tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(commands)),
+        tauri_build::Attributes::new()
+            .app_manifest(tauri_build::AppManifest::new().commands(commands))
+            .windows_attributes(windows),
     )
     .expect("failed to run tauri-build");
 }

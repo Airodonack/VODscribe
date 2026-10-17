@@ -204,7 +204,10 @@ pub fn run() {
             };
             let main = builder.build()?;
             app.manage(screen::Screen::default());
-            screen::attach(app.handle(), &main)?;
+            // Without a screen, the page plays files itself as before.
+            if let Err(e) = screen::attach(app.handle(), &main) {
+                eprintln!("The player's screen couldn't be put in the window: {e:#}");
+            }
             // Behind the page, the theme's background (--bg in app.css), not
             // white; unless the page is transparent and the screen paints it.
             if !screen::page_transparent() {

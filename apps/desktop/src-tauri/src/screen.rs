@@ -13,7 +13,7 @@ use vodscribe_player::{Layout, Rect};
 
 /// The native screen, once the window has one.
 #[derive(Default)]
-pub(crate) struct Screen(Mutex<Option<vodscribe_player::present::Screen>>);
+pub(crate) struct Screen(#[allow(dead_code)] Mutex<Option<vodscribe_player::present::Screen>>);
 
 /// Whether the page is drawn transparent, over the screen: so far only
 /// when asked (VODSCRIBE_SCREEN=under), to try that placement (present.rs).
@@ -30,7 +30,12 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
         let screen = Native::attach(window.gtk_window()?.upcast_ref(), place)?;
         *app.state::<Screen>().0.lock().unwrap() = Some(screen);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let screen = vodscribe_player::present::Screen::attach(window.hwnd()?.0 as isize)?;
+        *app.state::<Screen>().0.lock().unwrap() = Some(screen);
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     let _ = (app, window);
     Ok(())
 }
@@ -42,11 +47,11 @@ pub(crate) fn attached(app: &AppHandle) -> bool {
 
 /// Shows `frame` on the screen (none: black), if there is one.
 pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_player::decode::Frame>>) {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.show(frame);
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     let _ = (app, frame);
 }
 
@@ -55,7 +60,7 @@ pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_playe
 /// transparent over the screen.
 #[tauri::command]
 pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>, background: String) -> bool {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.set(Layout::with_background(rect, &background));
         return page_transparent();

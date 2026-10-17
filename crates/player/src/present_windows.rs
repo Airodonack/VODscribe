@@ -4,14 +4,14 @@
 //! through wgpu. Where Direct3D has only WARP (software: a VM, a remote
 //! session, a CI runner), it's drawn with GDI instead: WARP took 160 ms a
 //! 720p frame in a VM, a GDI blit a few. VODSCRIBE_DRAW=gpu or gdi picks.
-//! Clicks and the pointer go through to the page: the window answers
-//! hit-tests as transparent, so Windows hands them to the control below.
+//! The window is layered and transparent to the pointer (`layer`), so it's
+//! composed over WebView2 and clicks and the pointer go through to the page.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use anyhow::{Context, Result};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACKNESS, BeginPaint, DIB_RGB_COLORS, EndPaint, GetDC, HALFTONE,
     PAINTSTRUCT, PatBlt, ReleaseDC, SRCCOPY, SetBrushOrgEx, SetStretchBltMode, StretchDIBits,
@@ -19,9 +19,10 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GetWindowLongPtrW, HTTRANSPARENT, HWND_TOP, RegisterClassW,
-    SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY,
-    WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, HTTRANSPARENT, HWND_TOP, LWA_ALPHA,
+    RegisterClassW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+    WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -81,6 +82,27 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
     }
 }
 
+/// Makes `hwnd` a layered window that the pointer goes through. A plain
+/// child's GDI drawing goes to its parent's surface, under WebView2, which
+/// draws through DirectComposition; a layered child is composed on its own,
+/// in its place among its siblings. And hit-testing as transparent only hands
+/// the pointer on to windows of the same thread, while WebView2's take it in
+/// another process; a layered window that's also WS_EX_TRANSPARENT is passed
+/// over by hit-testing altogether. Windows allows layered children only to a
+/// program whose manifest says it's for Windows 8 or later (the app's does);
+/// otherwise the window stays plain, which does where nothing is over its
+/// parent (the dev binary).
+fn layer(hwnd: HWND) {
+    // SAFETY: the screen's own window.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | (WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0) as isize);
+        if SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA).is_err() {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+        }
+    }
+}
+
 /// The screen whose window `hwnd` is, if it's still there.
 unsafe fn screen_of(hwnd: HWND) -> Option<Arc<Mutex<Inner>>> {
     let held = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Mutex<Inner>;
@@ -132,6 +154,7 @@ impl Screen {
                 None,
             )
         }?;
+        layer(hwnd);
         let painter = Draw::new(hwnd.0 as isize)?;
         let inner = Inner {
             hwnd: hwnd.0 as isize,
