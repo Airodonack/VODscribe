@@ -126,6 +126,8 @@
               bind:value={layer.name}
               oninput={() => layers.save()}
               aria-label="Layer name"
+              autocorrect="off"
+              autocapitalize="off"
               spellcheck="false"
             />
             {#if isShown && counts.has(layer.id)}<span class="count muted">{counts.get(layer.id)}</span>{/if}
@@ -167,6 +169,8 @@
               onkeydown={(e) => onTermKey(e, layer)}
               onblur={(e) => addTerm(layer, e.currentTarget)}
               aria-label="Add a term to {layer.name}"
+              autocorrect="off"
+              autocapitalize="off"
               spellcheck="false"
             />
           </div>

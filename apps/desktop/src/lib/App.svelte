@@ -488,6 +488,9 @@
             bind:value={query}
             bind:this={searchInput}
             aria-label="Search"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
             title="Search ({searchKey})"
           />
         </div>

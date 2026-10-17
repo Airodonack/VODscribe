@@ -141,6 +141,9 @@
             e.stopPropagation();
           }}
           aria-label="Clip name"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
         />
       {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->

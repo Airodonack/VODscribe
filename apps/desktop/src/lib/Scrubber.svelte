@@ -848,6 +848,9 @@
         use:focus
         bind:value={draft}
         maxlength="200"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
         placeholder={editing.kind === "chapter" ? "Chapter title" : "What happens here (optional)"}
         onkeydown={(e) => e.key === "Escape" && (keep = false)}
       />

@@ -227,6 +227,9 @@
       disabled={adder.adding}
       readonly={DEMO}
       aria-label="VOD link"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
       {...demoOff(
         "The web demo can't transcribe. In the app, paste a Kick, Twitch, YouTube or other video link here and it's transcribed on your computer.",
       )}

@@ -527,6 +527,9 @@
         onblur={rename}
         onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         aria-label="Edit name"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
       />
       <span class="grow"></span>
       {#if edit.status === "ready" && edit.file_path}
