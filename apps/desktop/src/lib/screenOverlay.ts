@@ -31,6 +31,19 @@ function canvasOf(
   return canvas;
 }
 
+/** A path round the box at `x`, `y`, `w` by `h`, its corners of radius `r`
+ *  (as `roundRect`, which macOS 12's WebKit lacks). */
+function rounded(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 /** The page's font at `size` pixels. */
 function fontOf(size: number) {
   return `${size}px ${getComputedStyle(document.body).fontFamily}`;
@@ -72,8 +85,7 @@ export function caption(text: string, width: number, height: number, fullscreen:
       const lw = widths[i] + 2 * pad;
       const top = i * lineHeight;
       ctx.fillStyle = "rgb(0 0 0 / 0.72)";
-      ctx.beginPath();
-      ctx.roundRect((w - lw) / 2, top, lw, lineHeight, 4);
+      rounded(ctx, (w - lw) / 2, top, lw, lineHeight, 4);
       ctx.fill();
       ctx.fillStyle = "#fff";
       ctx.fillText(line, w / 2, top + lineHeight / 2);
@@ -95,8 +107,7 @@ export function hint(text: string, width: number, height: number): Drawn | null 
   const h = Math.ceil(lines.length * lineHeight + 2 * padY);
   const canvas = canvasOf(w, h, (ctx) => {
     ctx.fillStyle = "rgb(0 0 0 / 0.7)";
-    ctx.beginPath();
-    ctx.roundRect(0, 0, w, h, 6);
+    rounded(ctx, 0, 0, w, h, 6);
     ctx.fill();
     ctx.font = font;
     ctx.fillStyle = "#fff";
@@ -122,8 +133,7 @@ export function framed(picture: HTMLImageElement | null, label: string, width: n
     ctx.font = fontOf(12);
     const lw = Math.min(ctx.measureText(label).width + 20, width - 16);
     ctx.fillStyle = "rgb(0 0 0 / 0.7)";
-    ctx.beginPath();
-    ctx.roundRect((width - lw) / 2, 12, lw, 24, 6);
+    rounded(ctx, (width - lw) / 2, 12, lw, 24, 6);
     ctx.fill();
     ctx.fillStyle = "#fff";
     ctx.textAlign = "center";

@@ -227,7 +227,11 @@
     width: 100%;
     aspect-ratio: 16 / 9;
     /* The website's demo, a window within a page, sets a smaller share of its own height. */
-    max-height: var(--player-max-height, 44vh);
+    /* Capped by a width, not max-height: macOS 12's WebKit (17.6) turned
+       max-height and aspect-ratio together into a max-width, and the box
+       shrank to the left. */
+    max-width: calc(var(--player-max-height, 44vh) * 16 / 9);
+    margin: 0 auto;
     background: #000;
   }
 
@@ -236,7 +240,7 @@
     flex: 1;
     min-height: 0;
     aspect-ratio: auto;
-    max-height: none;
+    max-width: none;
   }
 
   .pictureless .picture {

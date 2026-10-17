@@ -779,7 +779,7 @@
 
   .fullscreen .frame {
     height: 100%;
-    max-height: none;
+    max-width: none;
     aspect-ratio: auto;
   }
 
@@ -833,6 +833,7 @@
 
   .stage {
     position: relative;
+    background: #000;
   }
 
   /* As large as the VOD's player. */
@@ -840,7 +841,11 @@
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
-    max-height: var(--player-max-height, 44vh);
+    /* Capped by a width, not max-height: macOS 12's WebKit (17.6) turned
+       max-height and aspect-ratio together into a max-width, and the box
+       shrank to the left. */
+    max-width: calc(var(--player-max-height, 44vh) * 16 / 9);
+    margin: 0 auto;
     background: #000;
   }
 
