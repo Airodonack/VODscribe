@@ -24,6 +24,8 @@
   --danger-soft: #fee2e2;
   --ok: #15803d;
   --stage: #0d0d0c;
+  /* Text on the stage, which is dark in either theme. */
+  --stage-text: #ecece9;
   --shadow: 0 10px 30px rgb(0 0 0 / 0.14), 0 1px 3px rgb(0 0 0 / 0.08);
   --radius: 8px;
   --radius-sm: 5px;

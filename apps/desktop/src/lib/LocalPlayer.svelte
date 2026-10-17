@@ -280,7 +280,7 @@
     position: static;
     padding: 8px 16px 0;
     font-size: 13px;
-    color: var(--text);
+    color: var(--stage-text);
     text-align: left;
     pointer-events: auto;
   }
