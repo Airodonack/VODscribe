@@ -56,8 +56,13 @@ impl Levels {
     }
 }
 
-/// Reads `input`'s levels with ffmpeg.
+/// Reads `input`'s levels with ffmpeg: none for a video without sound
+/// (saved as such, so it isn't read again each time).
 pub fn read(ffmpeg: &Path, input: &Path, cancel: &AtomicBool) -> Result<Vec<u8>> {
+    let streams = crate::local::codecs(ffmpeg, input)?;
+    if streams.audio.is_none() && streams.video.is_some() {
+        return Ok(Vec::new());
+    }
     let mut levels = Levels::default();
     audio::decode(ffmpeg, input, 0.0, cancel, |samples| {
         levels.push(samples);
@@ -162,5 +167,17 @@ mod tests {
         assert!((29..=31).contains(&levels.len()), "{}", levels.len());
         assert!(levels[5..15].iter().all(|&l| l > 150), "{levels:?}");
         assert!(levels[24..28].iter().all(|&l| l < 20), "{levels:?}");
+
+        // A video without sound has no levels, rather than failing.
+        let silent = dir.join("silent.mkv");
+        let ok = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=64x36:d=1", "-c:v", "png"])
+            .arg(&silent)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        assert_eq!(read(&ffmpeg, &silent, &AtomicBool::new(false)).unwrap(), Vec::<u8>::new());
+        // A file that isn't there still fails.
+        assert!(read(&ffmpeg, &dir.join("gone.mkv"), &AtomicBool::new(false)).is_err());
     }
 }
