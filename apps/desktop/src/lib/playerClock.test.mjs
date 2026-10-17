@@ -49,32 +49,44 @@ test("a report of moving without a position keeps where it was shown", async () 
   assert.equal(clock.shown(), at);
 });
 
-test("while a seek is under way, reports from elsewhere are set aside", () => {
+test("while a seek is under way, positions from elsewhere count as the target", () => {
   const clock = new Clock(0, true);
   clock.heardAt(100, true);
   clock.asked(5000, true);
-  // A long VOD reloading for the seek: 0, or the old place.
-  clock.heardAt(0, false);
+  // A long VOD reloading for the seek: the old place, or 0.
   clock.heardAt(100, false);
+  clock.heardAt(0, false);
   assert.ok(Math.abs(clock.now() - 5000) < 0.05, "the page's clock stays at the target");
-  assert.ok(Math.abs((clock.shown() ?? 0) - 100) < 0.6, "the solid line where it last was");
-  // There, still buffering: shown there, the seek not through yet.
+  assert.equal(clock.shown(), 5000, "the solid line at the target, standing");
+  // There, still buffering: shown where it says.
   clock.heardAt(5000.2, false);
   assert.equal(clock.shown(), 5000.2);
   clock.heardAt(0, false);
-  assert.equal(clock.shown(), 5000.2, "still set aside");
+  assert.equal(clock.shown(), 5000.2, "not back to the target");
   // Playing there: through, and reports are taken as they come again.
   clock.heardAt(5000.5, true);
   clock.heardAt(10, true);
   assert.ok(Math.abs(clock.now() - 10) < 0.05, "taken again");
 });
 
+test("Twitch saying it plays, at the old place, after a seek: playing from the target", async () => {
+  const clock = new Clock(7500, true);
+  clock.heardAt(7500.7, true);
+  clock.asked(20849.4, true);
+  clock.heardAt(7500.7, false); // Buffering
+  clock.heardAt(7501.7, true); // Playing, the old place still
+  await wait(100);
+  const shown = clock.shown() ?? 0;
+  assert.ok(shown > 20849.45 && shown < 20849.7, `${shown}`);
+});
+
 test("a seek while paused is through once the player says it's there", () => {
   const clock = new Clock(0, false);
   clock.heardAt(30, false);
   clock.asked(200, false);
+  // Twitch: the old place once, Idle, then nothing till played.
   clock.heardAt(30, false);
-  assert.equal(clock.shown(), 30, "the old place set aside");
+  assert.equal(clock.shown(), 200, "at the target, standing");
   clock.heardAt(200, false);
   clock.heardAt(31, false);
   assert.equal(clock.shown(), 31, "through: taken as it comes");

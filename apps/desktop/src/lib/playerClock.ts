@@ -30,9 +30,11 @@ export class Clock {
     return this.seconds + (this.playing ? ((performance.now() - this.at) / 1000) * this.speed : 0);
   }
   /** Asks the player to go to `seconds` (`play`: playing there): the page's
-   *  clock goes there at once, and until the player is seen there, what it
-   *  says of anywhere else is set aside (Twitch, reloading a long VOD for a
-   *  seek, reports 0 or the old place meanwhile). */
+   *  clock goes there at once, and until the player is seen there, the
+   *  positions it reports from anywhere else are taken as the target, and
+   *  only its state believed. Twitch, after a seek, reports the old place
+   *  while buffering there, and still as it starts playing there; paused,
+   *  it reports the old place once, Idle, and then nothing until played. */
   asked(seconds: number, play: boolean) {
     this.set(seconds);
     this.seeking = { target: seconds, play, until: performance.now() + SEEK_GIVE_UP * 1000 };
@@ -42,7 +44,14 @@ export class Clock {
     const now = performance.now();
     if (this.seeking && now > this.seeking.until) this.seeking = null;
     if (this.seeking) {
-      if (Math.abs(seconds - this.seeking.target) > NEAR) return;
+      const target = this.seeking.target;
+      if (Math.abs(seconds - target) > NEAR) {
+        // At the target, as near as it's been seen there; moving or not as it says.
+        const shown = this.shown();
+        const there = shown !== null && Math.abs(shown - target) <= NEAR ? shown : target;
+        this.heard = { seconds: there, at: now, moving: moving ?? this.heard?.moving ?? false };
+        return;
+      }
       // There: the seek is through once it plays there, or at once if it stays paused.
       if (!this.seeking.play || moving) this.seeking = null;
     }
