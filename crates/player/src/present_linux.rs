@@ -27,8 +27,8 @@ use wayland_client::protocol::{
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
 use x11_dl::xlib;
 
-use crate::Rect;
 use crate::decode::Frame;
+use crate::{Overlay, Rect};
 
 type Egl = egl::DynamicInstance<egl::EGL1_5>;
 
@@ -48,6 +48,7 @@ pub struct Screen {
 struct Inner {
     rect: Option<Rect>,
     frame: Option<Arc<Frame>>,
+    overlay: Option<Arc<Overlay>>,
     /// The surface and its GL, while there's a box (and the window is shown).
     drawn: Option<Drawn>,
     /// The surface's size in pixels.
@@ -61,7 +62,8 @@ impl Screen {
     /// the anchor's coordinates (for the app, the page's view). Call on the
     /// main thread. Nothing shows until a box is set.
     pub fn attach(anchor: &gtk::Widget) -> Screen {
-        let inner = Inner { rect: None, frame: None, drawn: None, size: (1, 1), painted: Default::default() };
+        let inner =
+            Inner { rect: None, frame: None, overlay: None, drawn: None, size: (1, 1), painted: Default::default() };
         let screen = Screen { inner: Arc::new(Mutex::new(inner)), anchor: glib::SendWeakRef::from(anchor.downgrade()) };
         // A box set before the window was on screen is placed once it is.
         let again = screen.clone();
@@ -91,6 +93,13 @@ impl Screen {
     pub fn show(&self, frame: Option<Arc<Frame>>) {
         let mut inner = self.inner.lock().unwrap();
         inner.frame = frame;
+        inner.paint();
+    }
+
+    /// Shows `overlay` over the picture (none: nothing), from any thread.
+    pub fn overlay(&self, overlay: Option<Arc<Overlay>>) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.overlay = overlay;
         inner.paint();
     }
 
@@ -141,7 +150,10 @@ impl Inner {
     fn paint(&mut self) {
         let Some(drawn) = self.drawn.as_mut() else { return };
         let began = std::time::Instant::now();
-        if let Err(e) = drawn.paint(self.size, self.frame.as_deref()) {
+        // Device pixels to the page's CSS pixels.
+        let scale = self.rect.map_or(1.0, |r| self.size.0 as f64 / r.width.max(1.0));
+        let overlay = self.overlay.as_deref().map(|o| (o, scale));
+        if let Err(e) = drawn.paint(self.size, self.frame.as_deref(), overlay) {
             eprintln!("The player's screen couldn't draw: {e:#}");
             return;
         }
@@ -198,11 +210,11 @@ impl Drawn {
         Ok(Drawn { gl, native })
     }
 
-    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>) -> Result<()> {
+    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) -> Result<()> {
         let gl = &mut self.gl;
         let egl = gl.egl;
         egl.make_current(gl.display, Some(gl.surface), Some(gl.surface), Some(gl.context))?;
-        gl.painter.paint(size, frame);
+        gl.painter.paint(size, frame, overlay);
         let swapped = egl.swap_buffers(gl.display, gl.surface);
         egl.make_current(gl.display, None, None, None)?;
         if let Native::Wayland(w) = &mut self.native {
@@ -543,6 +555,16 @@ void main() {
 }
 ";
 
+/// The overlay: premultiplied, blended over what's drawn.
+const FRAGMENT_OVER: &str = "#version 150
+uniform sampler2D picture;
+in vec2 uv;
+out vec4 color;
+void main() {
+    color = texture(picture, uv);
+}
+";
+
 /// The GL objects the surface draws with, made in its context.
 struct Painter {
     program: u32,
@@ -551,45 +573,131 @@ struct Painter {
     texture: u32,
     /// The frame in the texture (`Frame::id`).
     uploaded: Option<u64>,
+    /// The overlay's program, its box, its texture and what's in it.
+    over: u32,
+    over_box: i32,
+    over_texture: u32,
+    over_uploaded: Option<u64>,
+}
+
+/// A program of the vertex shader and `fragment`.
+///
+/// # Safety
+/// A GL context is current.
+unsafe fn program(fragment: &str) -> u32 {
+    unsafe {
+        let program = gl::CreateProgram();
+        for (kind, source) in [(gl::VERTEX_SHADER, VERTEX), (gl::FRAGMENT_SHADER, fragment)] {
+            let shader = gl::CreateShader(kind);
+            let (ptr, len) = (source.as_ptr() as *const i8, source.len() as i32);
+            gl::ShaderSource(shader, 1, &ptr, &len);
+            gl::CompileShader(shader);
+            gl::AttachShader(program, shader);
+            gl::DeleteShader(shader);
+        }
+        gl::LinkProgram(program);
+        program
+    }
+}
+
+/// A texture sampled smoothly, its edges clamped.
+///
+/// # Safety
+/// A GL context is current.
+unsafe fn texture() -> u32 {
+    unsafe {
+        let mut texture = 0;
+        gl::GenTextures(1, &mut texture);
+        gl::BindTexture(gl::TEXTURE_2D, texture);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        texture
+    }
 }
 
 impl Painter {
     fn new() -> Painter {
         // SAFETY: GL calls with the context current (`Gl::new`).
         unsafe {
-            let program = gl::CreateProgram();
-            for (kind, source) in [(gl::VERTEX_SHADER, VERTEX), (gl::FRAGMENT_SHADER, FRAGMENT)] {
-                let shader = gl::CreateShader(kind);
-                let (ptr, len) = (source.as_ptr() as *const i8, source.len() as i32);
-                gl::ShaderSource(shader, 1, &ptr, &len);
-                gl::CompileShader(shader);
-                gl::AttachShader(program, shader);
-                gl::DeleteShader(shader);
-            }
-            gl::LinkProgram(program);
+            let program = program(FRAGMENT);
             let box_ = gl::GetUniformLocation(program, c"box_".as_ptr());
+            let over = self::program(FRAGMENT_OVER);
+            let over_box = gl::GetUniformLocation(over, c"box_".as_ptr());
             let mut vao = 0;
             gl::GenVertexArrays(1, &mut vao);
-            let mut texture = 0;
-            gl::GenTextures(1, &mut texture);
-            gl::BindTexture(gl::TEXTURE_2D, texture);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
-            Painter { program, box_, vao, texture, uploaded: None }
+            Painter {
+                program,
+                box_,
+                vao,
+                texture: texture(),
+                uploaded: None,
+                over,
+                over_box,
+                over_texture: texture(),
+                over_uploaded: None,
+            }
         }
     }
 
-    /// Paints `frame` fitted in a surface of `size` pixels, centred, on black.
-    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>) {
+    /// Paints `frame` fitted in a surface of `size` pixels, centred, on
+    /// black, and `overlay` over it (its box in CSS pixels, `scale` device
+    /// pixels each).
+    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) {
         let (width, height) = (size.0.max(1) as f64, size.1.max(1) as f64);
         // SAFETY: GL calls with the context current (`Drawn::paint`).
         unsafe {
             gl::Viewport(0, 0, width as i32, height as i32);
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
             gl::Clear(gl::COLOR_BUFFER_BIT);
-            let Some(frame) = frame else { return };
+            let clip = |v: f64, size: f64| (v / size * 2.0 - 1.0) as f32;
+            if let Some(frame) = frame {
+                self.picture(frame, width, height);
+            }
+            let Some((overlay, scale)) = overlay else { return };
+            gl::BindTexture(gl::TEXTURE_2D, self.over_texture);
+            if self.over_uploaded != Some(overlay.id) {
+                gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+                gl::TexImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    gl::RGBA8 as i32,
+                    overlay.size.0 as i32,
+                    overlay.size.1 as i32,
+                    0,
+                    gl::RGBA,
+                    gl::UNSIGNED_BYTE,
+                    overlay.pixels.as_ptr() as *const _,
+                );
+                self.over_uploaded = Some(overlay.id);
+            }
+            let r = overlay.rect;
+            let (left, right) = (r.x * scale, (r.x + r.width) * scale);
+            // GL's y goes up from the bottom; the page's down from the top.
+            let (bottom, top) = (height - (r.y + r.height) * scale, height - r.y * scale);
+            gl::Enable(gl::BLEND);
+            gl::BlendFunc(gl::ONE, gl::ONE_MINUS_SRC_ALPHA);
+            gl::UseProgram(self.over);
+            gl::Uniform4f(
+                self.over_box,
+                clip(left, width),
+                clip(bottom, height),
+                clip(right, width),
+                clip(top, height),
+            );
+            gl::BindVertexArray(self.vao);
+            gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
+            gl::Disable(gl::BLEND);
+        }
+    }
+
+    /// Paints `frame` fitted in `width` by `height` pixels, centred.
+    ///
+    /// # Safety
+    /// The surface's GL context is current.
+    unsafe fn picture(&mut self, frame: &Frame, width: f64, height: f64) {
+        unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.texture);
             if self.uploaded != Some(frame.id) {
                 gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -622,8 +730,10 @@ impl Painter {
         // SAFETY: GL calls with the context current (`Gl::drop`).
         unsafe {
             gl::DeleteProgram(self.program);
+            gl::DeleteProgram(self.over);
             gl::DeleteVertexArrays(1, &self.vao);
             gl::DeleteTextures(1, &self.texture);
+            gl::DeleteTextures(1, &self.over_texture);
         }
     }
 }

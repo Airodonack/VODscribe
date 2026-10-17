@@ -269,6 +269,7 @@ pub fn run() {
             history::undo,
             history::redo,
             screen::set_screen,
+            screen::set_screen_overlay,
             player::player_available,
             player::player_open,
             player::player_open_edit,

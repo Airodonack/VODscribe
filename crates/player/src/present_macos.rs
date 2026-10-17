@@ -20,8 +20,8 @@ use objc2_core_graphics::{
 };
 use objc2_quartz_core::{CALayer, CATransaction, kCAGravityResizeAspect};
 
-use crate::Rect;
 use crate::decode::Frame;
+use crate::{Overlay, Rect};
 
 define_class!(
     /// The view over the page: draws only through its layer, and is never
@@ -29,9 +29,9 @@ define_class!(
     #[unsafe(super(NSView))]
     #[thread_kind = MainThreadOnly]
     #[name = "VODscribeScreen"]
-    struct Overlay;
+    struct Cover;
 
-    impl Overlay {
+    impl Cover {
         #[unsafe(method(hitTest:))]
         fn hit_test(&self, _point: CGPoint) -> *mut NSView {
             std::ptr::null_mut()
@@ -45,7 +45,7 @@ define_class!(
     }
 );
 
-impl Overlay {
+impl Cover {
     /// Covers the page: the WKWebView less its safe area. The view reaches
     /// under a see-through title bar, and the page starts below it, except
     /// in full screen. WKWebView doesn't resize the views in it, so this is
@@ -66,12 +66,14 @@ impl Overlay {
 /// The surface in the app's window, to tell what to show.
 #[derive(Clone)]
 pub struct Screen {
-    overlay: Arc<MainThreadBound<Retained<Overlay>>>,
+    cover: Arc<MainThreadBound<Retained<Cover>>>,
     inner: Arc<Mutex<Inner>>,
 }
 
 struct Inner {
     picture: Layer,
+    /// The overlay's layer, in the picture's.
+    over: Layer,
     /// The frame shown, and its pixels as 32-bit BGRX, which Core Animation
     /// takes without converting.
     id: Option<u64>,
@@ -94,7 +96,7 @@ impl Screen {
         let Some(mtm) = MainThreadMarker::new() else { bail!("the screen is made on the main thread") };
         // SAFETY: the window's WKWebView, an NSView, alive while the window is.
         let Some(webview) = (unsafe { (webview as *mut NSView).as_ref() }) else { bail!("no page view") };
-        let overlay: Retained<Overlay> = unsafe { msg_send![Overlay::alloc(mtm), initWithFrame: webview.bounds()] };
+        let cover: Retained<Cover> = unsafe { msg_send![Cover::alloc(mtm), initWithFrame: webview.bounds()] };
         // A layer the view hosts, not one AppKit backs it with: its sublayers
         // are the screen's own to arrange.
         let root = CALayer::new();
@@ -104,21 +106,31 @@ impl Screen {
         // SAFETY: one of Core Animation's gravity names.
         picture.setContentsGravity(unsafe { kCAGravityResizeAspect });
         root.addSublayer(&picture);
-        overlay.setLayer(Some(&root));
-        overlay.setWantsLayer(true);
+        // Over the picture, in its box: captions and notes.
+        let over = CALayer::new();
+        over.setHidden(true);
+        picture.addSublayer(&over);
+        cover.setLayer(Some(&root));
+        cover.setWantsLayer(true);
         // Flipped, so boxes measure from the top as the page's do; after
         // AppKit takes the layer, which sets it unflipped.
         root.setGeometryFlipped(true);
-        webview.addSubview(&overlay);
-        overlay.fill();
-        let inner = Inner { picture: Layer(picture), id: None, bgrx: Vec::new(), painted: Default::default() };
-        let overlay = Arc::new(MainThreadBound::new(overlay, mtm));
-        Ok(Screen { overlay, inner: Arc::new(Mutex::new(inner)) })
+        webview.addSubview(&cover);
+        cover.fill();
+        let inner = Inner {
+            picture: Layer(picture),
+            over: Layer(over),
+            id: None,
+            bgrx: Vec::new(),
+            painted: Default::default(),
+        };
+        let cover = Arc::new(MainThreadBound::new(cover, mtm));
+        Ok(Screen { cover, inner: Arc::new(Mutex::new(inner)) })
     }
 
     /// Shows the picture in `rect` (none: nowhere), from any thread.
     pub fn set(&self, rect: Option<Rect>) {
-        self.overlay.get_on_main(|overlay| overlay.fill());
+        self.cover.get_on_main(|cover| cover.fill());
         let inner = self.inner.lock().unwrap();
         changed(|| match rect {
             Some(r) => {
@@ -135,13 +147,28 @@ impl Screen {
         let mut inner = self.inner.lock().unwrap();
         let began = std::time::Instant::now();
         let image = frame.as_deref().and_then(|frame| inner.image(frame));
-        changed(|| {
-            // SAFETY: a CGImage is what a layer's contents may be.
-            let contents = image.as_deref().map(|image| unsafe { &*(image as *const CGImage).cast::<AnyObject>() });
-            unsafe { inner.picture.0.setContents(contents) };
-        });
+        changed(|| set_contents(&inner.picture.0, image.as_deref()));
         inner.painted.0 += 1;
         inner.painted.1 += began.elapsed();
+    }
+
+    /// Shows `overlay` over the picture (none: nothing), from any thread.
+    pub fn overlay(&self, overlay: Option<Arc<Overlay>>) {
+        let inner = self.inner.lock().unwrap();
+        // RGBA in memory, premultiplied.
+        let info = CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0);
+        let image = overlay.as_deref().and_then(|o| Some((o.rect, image(o.size, &o.pixels, info)?)));
+        changed(|| match image {
+            Some((r, image)) => {
+                inner.over.0.setFrame(CGRect::new(CGPoint::new(r.x, r.y), CGSize::new(r.width, r.height)));
+                set_contents(&inner.over.0, Some(&image));
+                inner.over.0.setHidden(false);
+            }
+            None => {
+                inner.over.0.setHidden(true);
+                set_contents(&inner.over.0, None);
+            }
+        });
     }
 
     /// Paints done, and the time they took in all.
@@ -162,29 +189,41 @@ impl Inner {
             }
             self.id = Some(frame.id);
         }
-        let data = CFData::from_bytes(&self.bgrx);
-        let provider = CGDataProvider::with_cf_data(Some(&data))?;
-        // SAFETY: a constant name of a color space.
-        let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))?;
         // Little-endian 32-bit with the top byte unused: B, G, R, X in memory.
         let info = CGBitmapInfo(CGImageAlphaInfo::NoneSkipFirst.0 | CGImageByteOrderInfo::Order32Little.0);
-        // SAFETY: the pixels are `width` by `height` of 4 bytes, as said; no decode array.
-        unsafe {
-            CGImage::new(
-                frame.width as usize,
-                frame.height as usize,
-                8,
-                32,
-                frame.width as usize * 4,
-                Some(&space),
-                info,
-                Some(&provider),
-                std::ptr::null::<CGFloat>(),
-                true,
-                CGColorRenderingIntent::RenderingIntentDefault,
-            )
-        }
+        image((frame.width, frame.height), &self.bgrx, info)
     }
+}
+
+/// `pixels`, `size.0` by `size.1` of 4 bytes laid out as `info` says, as an image.
+fn image(size: (u32, u32), pixels: &[u8], info: CGBitmapInfo) -> Option<CFRetained<CGImage>> {
+    let data = CFData::from_bytes(pixels);
+    let provider = CGDataProvider::with_cf_data(Some(&data))?;
+    // SAFETY: a constant name of a color space.
+    let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))?;
+    // SAFETY: the pixels are `size` of 4 bytes, as said; no decode array.
+    unsafe {
+        CGImage::new(
+            size.0 as usize,
+            size.1 as usize,
+            8,
+            32,
+            size.0 as usize * 4,
+            Some(&space),
+            info,
+            Some(&provider),
+            std::ptr::null::<CGFloat>(),
+            true,
+            CGColorRenderingIntent::RenderingIntentDefault,
+        )
+    }
+}
+
+/// A layer's contents: an image, or none.
+fn set_contents(layer: &CALayer, image: Option<&CGImage>) {
+    // SAFETY: a CGImage is what a layer's contents may be.
+    let contents = image.map(|image| unsafe { &*(image as *const CGImage).cast::<AnyObject>() });
+    unsafe { layer.setContents(contents) };
 }
 
 /// Changes layers at once and without Core Animation's fades, from any thread.

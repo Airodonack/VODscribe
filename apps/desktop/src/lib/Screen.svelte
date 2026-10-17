@@ -2,8 +2,7 @@
   The player's screen: a box the picture shows in. The app's player draws
   outside the page, on a native surface over the window (crates/player
   present) that covers the box, so nothing of the page shows over it. The
-  box tells the surface where it is whenever that changes. Where there's no surface (macOS, for now), the box stays
-  black.
+  box tells the surface where it is whenever that changes. Where there's no surface, the box stays black.
 -->
 <script lang="ts">
   import { onMount } from "svelte";

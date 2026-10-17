@@ -379,6 +379,20 @@ export const api = {
   playerSetSpeed: (speed: number) => invoke<PlayerStatus>("player_set_speed", { speed }),
   playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
   /** Where the page's player box is (Screen.svelte); none when no player is open. */
+  /** What's drawn over the screen's picture (captionOverlay.ts): RGBA pixels as a canvas gives
+   *  them, `size` of them, shown in `rect` (CSS pixels in the player box); none takes it away. */
+  setScreenOverlay: (
+    overlay: {
+      rect: { x: number; y: number; width: number; height: number };
+      size: [number, number];
+      pixels: Uint8ClampedArray;
+    } | null,
+  ) =>
+    overlay
+      ? invoke<void>("set_screen_overlay", new Uint8Array(overlay.pixels.buffer), {
+          headers: { overlay: JSON.stringify({ rect: overlay.rect, size: overlay.size }) },
+        })
+      : invoke<void>("set_screen_overlay", new Uint8Array(0)),
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null) =>
     invoke<void>("set_screen", { rect }),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */

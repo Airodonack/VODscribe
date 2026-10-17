@@ -53,6 +53,7 @@ permissions = [
   "allow-undo",
   "allow-redo",
   "allow-set-screen",
+  "allow-set-screen-overlay",
   "allow-player-available",
   "allow-player-open",
   "allow-player-open-edit",

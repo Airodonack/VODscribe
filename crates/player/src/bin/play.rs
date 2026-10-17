@@ -7,8 +7,10 @@
 //!
 //! `--edl` plays parts of files one after another, as an edit does.
 //! ffmpeg is the one on PATH unless given. Space plays and pauses, the
-//! arrows seek 5 s, J and L 10 s, comma and period step a frame, Home goes
-//! to the start, Q quits. The title shows the time and frame; on quitting,
+//! arrows seek 5 s, J and L 10 s, comma and period step a frame, [ and ]
+//! halve and double the speed, Home goes to the start, Q quits. The title
+//! shows the time and frame, and a bar over the picture how far it's
+//! played (drawn by the screen as the app's captions are); on quitting,
 //! how long paints took is printed.
 //!
 //! `--bench` measures without a window: how fast the file decodes (frames
@@ -58,10 +60,14 @@ fn main() -> anyhow::Result<()> {
     window.add(&area);
     let screen = Screen::attach(area.upcast_ref());
     let placed = screen.clone();
+    let size = Arc::new(std::sync::Mutex::new((0.0, 0.0)));
+    let sized = size.clone();
     area.connect_size_allocate(move |_, a| {
         let rect = Rect { x: 0.0, y: 0.0, width: a.width() as f64, height: a.height() as f64 };
+        *sized.lock().unwrap() = (rect.width, rect.height);
         placed.set(Some(rect));
     });
+    let bar = std::sync::Mutex::new((0.0, 0.0, 0));
 
     // Each frame due is drawn, and the title brought up to date.
     let (shown, drawn) = (screen.clone(), player.clone());
@@ -70,6 +76,9 @@ fn main() -> anyhow::Result<()> {
     player.on_frame(Box::new(move |_| {
         shown.show(drawn.frame());
         let (time, fps, playing) = (drawn.time(), drawn.fps().unwrap_or(30.0), drawn.playing());
+        if let Some(overlay) = progress(*size.lock().unwrap(), time / drawn.duration(), &bar) {
+            shown.overlay(Some(overlay));
+        }
         let title = title.clone();
         let name = name.clone();
         glib::MainContext::default().invoke(move || {
@@ -96,6 +105,8 @@ fn main() -> anyhow::Result<()> {
             k::comma => keys.step(-1),
             k::period => keys.step(1),
             k::Home => keys.seek(0.0),
+            k::bracketleft => keys.set_speed(keys.speed() / 2.0),
+            k::bracketright => keys.set_speed(keys.speed() * 2.0),
             k::q | k::Q | k::Escape => gtk::main_quit(),
             _ => return glib::Propagation::Proceed,
         }
@@ -113,6 +124,31 @@ fn main() -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+/// A bar along the bottom of a box `size` (CSS pixels) a `fraction` of
+/// the way filled, for the screen to draw over the picture; None when the
+/// last one drawn (`last`: the box and the filled width) would do.
+#[cfg(any(target_os = "linux", windows))]
+fn progress(
+    size: (f64, f64),
+    fraction: f64,
+    last: &std::sync::Mutex<(f64, f64, u32)>,
+) -> Option<std::sync::Arc<vodscribe_player::Overlay>> {
+    let (w, h) = ((size.0 - 32.0).max(1.0).round() as u32, 6u32);
+    let filled = (fraction.clamp(0.0, 1.0) * w as f64).round() as u32;
+    let mut last = last.lock().unwrap();
+    if *last == (size.0, size.1, filled) {
+        return None;
+    }
+    *last = (size.0, size.1, filled);
+    // Premultiplied white: brighter where played.
+    let pixels = (0..h)
+        .flat_map(|_| (0..w).map(move |x| if x < filled { 230u8 } else { 77 }))
+        .flat_map(|v| [v, v, v, v])
+        .collect();
+    let rect = vodscribe_player::Rect { x: 16.0, y: size.1 - 16.0 - h as f64, width: w as f64, height: h as f64 };
+    Some(std::sync::Arc::new(vodscribe_player::Overlay::new(rect, (w, h), pixels)))
 }
 
 /// Stretches written `file:start-end`, separated by commas.
@@ -269,6 +305,8 @@ fn main() -> anyhow::Result<()> {
     // The player and the screen, for the window procedure (one window).
     static PLAYER: std::sync::OnceLock<Arc<Player>> = std::sync::OnceLock::new();
     static SCREEN: std::sync::OnceLock<Screen> = std::sync::OnceLock::new();
+    // The window's size in CSS pixels, for the bar over the picture.
+    static SIZE: std::sync::Mutex<(f64, f64)> = std::sync::Mutex::new((0.0, 0.0));
     let _ = PLAYER.set(player.clone());
 
     unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -278,6 +316,7 @@ fn main() -> anyhow::Result<()> {
                 let scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0;
                 if let Some(screen) = SCREEN.get() {
                     let rect = Rect { x: 0.0, y: 0.0, width: w / scale, height: h / scale };
+                    *SIZE.lock().unwrap() = (rect.width, rect.height);
                     screen.set(Some(rect));
                 }
                 LRESULT(0)
@@ -294,6 +333,8 @@ fn main() -> anyhow::Result<()> {
                         0xbc => p.step(-1),
                         0xbe => p.step(1),
                         0x24 => p.seek(0.0),
+                        0xdb => p.set_speed(p.speed() / 2.0),
+                        0xdd => p.set_speed(p.speed() * 2.0),
                         0x51 | 0x1b => unsafe { PostQuitMessage(0) },
                         _ => {}
                     }
@@ -336,10 +377,14 @@ fn main() -> anyhow::Result<()> {
         // Each frame due is drawn, and the title brought up to date.
         let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let shown = hwnd.0 as isize;
+        let bar = std::sync::Mutex::new((0.0, 0.0, 0));
         player.on_frame(Box::new(move |_| {
             let Some((screen, p)) = SCREEN.get().zip(PLAYER.get()) else { return };
             screen.show(p.frame());
             let (time, fps, playing) = (p.time(), p.fps().unwrap_or(30.0), p.playing());
+            if let Some(overlay) = progress(*SIZE.lock().unwrap(), time / p.duration(), &bar) {
+                screen.overlay(Some(overlay));
+            }
             let frame = (time * fps + 1e-6).floor() as u64;
             let state = if playing { "" } else { " (paused)" };
             let title: Vec<u16> = format!("{name} - {time:.3} s, frame {frame}{state}\0").encode_utf16().collect();

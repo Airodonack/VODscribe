@@ -69,3 +69,40 @@ pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>) {
         screen.set(rect);
     }
 }
+
+/// What the page draws over the picture (captions): the body is RGBA pixels
+/// as a canvas gives them (not premultiplied), the `overlay` header its box
+/// and size as JSON (`{"rect": Rect, "size": [w, h]}`). An empty body takes
+/// it away.
+#[tauri::command]
+pub(crate) fn set_screen_overlay(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct Placed {
+        rect: Rect,
+        size: (u32, u32),
+    }
+    let tauri::ipc::InvokeBody::Raw(rgba) = request.body() else {
+        return Err("Send the overlay's pixels as bytes.".into());
+    };
+    let overlay = if rgba.is_empty() {
+        None
+    } else {
+        let header = request.headers().get("overlay").ok_or("No overlay header.")?;
+        let placed: Placed = serde_json::from_slice(header.as_bytes()).map_err(|e| e.to_string())?;
+        if rgba.len() != placed.size.0 as usize * placed.size.1 as usize * 4 {
+            return Err("The overlay's pixels don't fill its size.".into());
+        }
+        let mut pixels = rgba.clone();
+        for p in pixels.as_chunks_mut::<4>().0 {
+            let a = p[3] as u16;
+            for c in &mut p[..3] {
+                *c = ((*c as u16 * a + 127) / 255) as u8;
+            }
+        }
+        Some(std::sync::Arc::new(vodscribe_player::Overlay::new(placed.rect, placed.size, pixels)))
+    };
+    if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
+        screen.overlay(overlay);
+    }
+    Ok(())
+}

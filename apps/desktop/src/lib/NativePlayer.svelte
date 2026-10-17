@@ -4,13 +4,14 @@
   // by the page, which keeps the controls. Its controls, timeline and full
   // screen are the player panel's (Player.svelte), as for every player;
   // mounted by embed.ts, which hands these functions over. Captions from
-  // the transcript go under the picture: nothing of the page can draw over
-  // the screen.
+  // the transcript are drawn over the picture by the screen
+  // (captionOverlay.ts): nothing of the page can draw over it.
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, events, type Cue, type PlayerStatus, type UnlistenFn, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
+  import { showCaption } from "./captionOverlay";
   import { cueAt } from "./media";
   import Screen from "./Screen.svelte";
   import { load, save } from "./stored";
@@ -60,6 +61,24 @@
 
   const cue = $derived(captionsOn ? cueAt(cues, time) : null);
 
+  // The caption, over the picture: drawn again when it, the box's size or
+  // full screen changes.
+  let boxSize = $state({ width: 0, height: 0, fullscreen: false });
+  $effect(() => {
+    const { width, height, fullscreen } = boxSize;
+    showCaption(width && height ? (cue?.text ?? null) : null, width, height, fullscreen);
+  });
+  $effect(() => {
+    const el = picture;
+    if (!el) return;
+    const sizes = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      boxSize = { width: r.width, height: r.height, fullscreen: !!el.closest(".fullscreen") };
+    });
+    sizes.observe(el);
+    return () => sizes.disconnect();
+  });
+
   onMount(() => {
     events.playerTime((s) => !destroyed && tell(s)).then((u) => (destroyed ? u() : (unlisten = u)));
     const saved = Number(load(VOLUME));
@@ -98,6 +117,7 @@
     cancelAnimationFrame(frame);
     clearTimeout(hold);
     unlisten?.();
+    api.setScreenOverlay(null).catch(() => {});
     api.playerClose().catch(() => {});
   });
 
@@ -211,9 +231,6 @@
   >
     <Screen />
   </div>
-  {#if cue}
-    <p class="caption">{cue.text}</p>
-  {/if}
 </div>
 
 <style>
@@ -239,12 +256,5 @@
     min-height: 0;
     aspect-ratio: auto;
     max-height: none;
-  }
-
-  .caption {
-    margin: 0;
-    padding: 8px 16px 0;
-    font-size: 13px;
-    color: var(--stage-text);
   }
 </style>
