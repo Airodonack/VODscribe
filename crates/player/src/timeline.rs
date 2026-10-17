@@ -26,6 +26,16 @@ impl Stretch {
         self.at + self.length
     }
 
+    /// Whether `other` is this stretch, or this one played further (more
+    /// of its footage in): what plays up to this one's end is the same.
+    pub fn continued_by(&self, other: &Stretch) -> bool {
+        self.at == other.at
+            && self.from == other.from
+            && self.source == other.source
+            && self.piece_id == other.piece_id
+            && other.length >= self.length
+    }
+
     /// Seconds into the source at timeline time `time`.
     pub fn file_time(&self, time: f64) -> f64 {
         self.from + (time - self.at)
@@ -55,16 +65,27 @@ impl Timeline {
     }
 
     /// An edit's `pieces`, each span of each from the footage `find` gives
-    /// for it (none: the stretch plays nothing, for now).
-    pub fn of(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>) -> Timeline {
+    /// for it, and how far into the span (the VOD's time) that reaches: all
+    /// of it, or part, where footage is still downloading. What it doesn't
+    /// reach plays nothing, for now.
+    pub fn of(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<(Source, f64)>) -> Timeline {
         let mut stretches = Vec::new();
         let mut at = 0.0;
         for p in pieces {
             for (a, b) in p.spans() {
-                let source = find(p.vod_id, a, b);
-                let from = source.as_ref().map_or(0.0, |s| a - s.offset);
-                stretches.push(Stretch { at, length: b - a, piece_id: Some(p.id), source, from });
-                at += b - a;
+                let (source, until) = match find(p.vod_id, a, b) {
+                    Some((source, until)) if until > a + SLIVER => (Some(source), until.min(b)),
+                    _ => (None, a),
+                };
+                if let Some(source) = source {
+                    let from = a - source.offset;
+                    stretches.push(Stretch { at, length: until - a, piece_id: Some(p.id), source: Some(source), from });
+                    at += until - a;
+                }
+                if b - until >= SLIVER {
+                    stretches.push(Stretch { at, length: b - until, piece_id: Some(p.id), source: None, from: 0.0 });
+                    at += b - until;
+                }
             }
         }
         Timeline { stretches }
@@ -120,8 +141,8 @@ mod tests {
     fn an_edit_is_laid_end_to_end_from_the_footage_found() {
         let pieces = [piece(1, 7, 10.0, 20.0, &[(14.0, 16.0)]), piece(2, 8, 5.0, 8.0, &[])];
         // VOD 7's footage is a section from 8 s; VOD 8 has none yet.
-        let find = |vod: i64, _: f64, _: f64| {
-            (vod == 7).then(|| Source { path: PathBuf::from("7.mkv"), offset: 8.0, section: Some("s".into()) })
+        let find = |vod: i64, _: f64, b: f64| {
+            (vod == 7).then(|| (Source { path: PathBuf::from("7.mkv"), offset: 8.0, section: Some("s".into()) }, b))
         };
         let t = Timeline::of(&pieces, find);
         let s = t.stretches();
@@ -141,5 +162,28 @@ mod tests {
         assert_eq!(t.index_at(11.0), Some(2));
         assert_eq!(t.index_at(99.0), Some(2));
         assert_eq!(Timeline::default().index_at(0.0), None);
+    }
+
+    #[test]
+    fn footage_still_coming_plays_as_far_as_it_is_in() {
+        let pieces = [piece(1, 7, 10.0, 20.0, &[])];
+        let source = Source { path: PathBuf::from("7.mkv"), offset: 0.0, section: Some("s".into()) };
+        // In to 13 s of the VOD: three seconds play, seven wait.
+        let t = Timeline::of(&pieces, |_, _, _| Some((source.clone(), 13.0)));
+        let s = t.stretches();
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].at, s[0].length, s[0].from), (0.0, 3.0, 10.0));
+        assert!(s[0].source.is_some());
+        assert_eq!((s[1].at, s[1].length), (3.0, 7.0));
+        assert!(s[1].source.is_none());
+        assert_eq!(t.duration(), 10.0);
+        // More in: the first stretch is the same one, played further.
+        let later = Timeline::of(&pieces, |_, _, _| Some((source.clone(), 18.0)));
+        assert!(s[0].continued_by(&later.stretches()[0]));
+        assert!(!later.stretches()[0].continued_by(&s[0]), "not shorter");
+        // None in yet: the whole span waits.
+        let none = Timeline::of(&pieces, |_, _, _| Some((source.clone(), 10.0)));
+        assert_eq!(none.stretches().len(), 1);
+        assert!(none.stretches()[0].source.is_none());
     }
 }

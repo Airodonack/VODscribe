@@ -58,13 +58,21 @@ impl Growing {
 
     /// The footage of `start`..`end` of VOD `vod_id` in it, if that's in already.
     pub fn find(&self, vod_id: i64, start: f64, end: f64) -> Option<Source> {
-        (vod_id == self.vod_id && picture_from(self.from) <= start + EPSILON && self.usable() >= end - EPSILON).then(
-            || Source {
+        self.reach(vod_id, start, end).filter(|(_, until)| *until >= end - EPSILON).map(|(source, _)| source)
+    }
+
+    /// The footage of VOD `vod_id` from `start` in it, and how far towards
+    /// `end` it's in already (the VOD's time), if some is.
+    pub fn reach(&self, vod_id: i64, start: f64, end: f64) -> Option<(Source, f64)> {
+        let until = self.usable().min(end);
+        (vod_id == self.vod_id && picture_from(self.from) <= start + EPSILON && until > start + EPSILON).then(|| {
+            let source = Source {
                 path: self.path.clone(),
                 offset: self.from,
                 section: Some(section_stem(vod_id, self.from, self.to)),
-            },
-        )
+            };
+            (source, until)
+        })
     }
 }
 
@@ -169,6 +177,16 @@ mod tests {
         assert!(g.find(3, 50.0, 74.5).is_none(), "too near what's whole");
         assert!(g.find(3, 45.0, 60.0).is_none(), "maybe before its first keyframe");
         assert!(g.find(4, 50.0, 60.0).is_none(), "another VOD");
+    }
+
+    #[test]
+    fn a_section_downloading_reaches_as_far_as_it_is_in() {
+        let g = Growing { vod_id: 3, from: 40.0, to: 120.0, path: "/w/s.part".into(), whole: 75.0 };
+        let (source, until) = g.reach(3, 50.0, 100.0).unwrap();
+        assert_eq!((source.offset, until), (40.0, 74.0), "a second behind what's whole");
+        assert_eq!(g.reach(3, 50.0, 60.0).unwrap().1, 60.0, "all of a span that's in");
+        assert!(g.reach(3, 74.0, 100.0).is_none(), "none of it in yet");
+        assert!(g.reach(3, 45.0, 60.0).is_none(), "maybe before its first keyframe");
     }
 
     #[test]

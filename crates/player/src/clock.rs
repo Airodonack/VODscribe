@@ -190,7 +190,13 @@ impl Player {
         let mut s = self.inner.state.lock().unwrap();
         let time = s.time(self.inner.duration());
         let mut held = self.inner.timeline.lock().unwrap();
-        let same = held.at(time) == timeline.at(time);
+        // Unchanged under the playhead, or only played further: no break
+        // (the threads take the new timeline up at that stretch's end).
+        let same = match (held.at(time), timeline.at(time)) {
+            (Some(old), Some(new)) => old.continued_by(new),
+            (None, None) => true,
+            _ => false,
+        };
         *held = timeline;
         let duration = held.duration();
         drop(held);

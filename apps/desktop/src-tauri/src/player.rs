@@ -103,7 +103,7 @@ fn edit_timeline(app: &AppHandle, id: i64) -> anyhow::Result<(Timeline, Vec<Plan
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let pieces = db.edit_pieces(id)?;
-    let timeline = Timeline::of(&pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b));
+    let timeline = Timeline::of(&pieces, |vod, a, b| crate::footage::reach(app, &db, vod, a, b));
     let missing = crate::edits::missing(app, &db, &pieces);
     drop(db);
     state.footage.ask(missing);

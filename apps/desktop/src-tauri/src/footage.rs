@@ -70,6 +70,16 @@ pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) 
         .or_else(|| app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.find(vod_id, start, end))
 }
 
+/// The footage of VOD `vod_id` from `start`, and how far towards `end` (the
+/// VOD's time) it's here: all the way if it's downloaded, else as far as the
+/// section downloading is in.
+pub(crate) fn reach(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) -> Option<(Source, f64)> {
+    if let Some(source) = footage::find(db, &dir(app), vod_id, start, end).ok().flatten() {
+        return Some((source, end));
+    }
+    app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.reach(vod_id, start, end)
+}
+
 /// The frame of VOD `vod_id` at `at` seconds, a JPEG `width` wide (at most
 /// 960), from its footage here; empty if there's none of that moment yet.
 #[tauri::command]
