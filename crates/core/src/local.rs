@@ -157,7 +157,7 @@ pub struct Picture {
 /// What's in `path` (`Media`), as ffmpeg reads it.
 pub fn media(ffmpeg: &Path, path: &Path) -> Result<Media> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_AUDIO)
+    let out = tools::ffmpeg_allow_for(&mut cmd, tools::FFMPEG_AUDIO, path)
         .args(["-hide_banner", "-nostdin", "-i"])
         .arg(path)
         .stdin(Stdio::null())
@@ -190,7 +190,7 @@ fn parse_frame_rate(details: &str) -> Option<f64> {
 /// The frame showing at `time` seconds into `path`, as a JPEG `width` pixels wide.
 pub fn frame(ffmpeg: &Path, path: &Path, time: f64, width: u32) -> Result<Vec<u8>> {
     let mut cmd = tools::command(ffmpeg);
-    let out = tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE))
+    let out = tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
         .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{:.3}", time.max(0.0)), "-i"])
         .arg(path)
         .args(["-frames:v", "1", "-vf", &format!("scale={width}:-2"), "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"])

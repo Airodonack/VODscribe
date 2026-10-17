@@ -247,6 +247,19 @@ pub fn ffmpeg_allow<'a>(cmd: &'a mut Command, decoders: &str) -> &'a mut Command
     cmd.args(["-format_whitelist", FFMPEG_FORMATS, "-codec_whitelist", decoders, "-protocol_whitelist", "file"])
 }
 
+/// `ffmpeg_allow` for an `input` that may be the app's own media server
+/// rather than a file (`served`): then HTTP over TCP instead of files.
+pub fn ffmpeg_allow_for<'a>(cmd: &'a mut Command, decoders: &str, input: &Path) -> &'a mut Command {
+    let protocols = if served(input) { "http,tcp" } else { "file" };
+    cmd.args(["-format_whitelist", FFMPEG_FORMATS, "-codec_whitelist", decoders, "-protocol_whitelist", protocols])
+}
+
+/// Whether `input` is a URL of the app's media server on this computer (footage still
+/// downloading is read through it: ffmpeg holding the file would stop its renaming on Windows).
+pub fn served(input: &Path) -> bool {
+    input.to_str().is_some_and(|s| s.starts_with("http://127.0.0.1:"))
+}
+
 /// Stops `child` and everything it started, and waits until they're gone, so
 /// nothing writes after the caller cleans up. The managed yt-dlp unpacks
 /// itself and runs as a child of a small launcher; killing only the launcher

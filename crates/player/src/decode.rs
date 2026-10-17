@@ -96,19 +96,20 @@ fn start<T: Send + 'static>(
     read: impl FnOnce(std::process::ChildStdout, SyncSender<T>) + Send + 'static,
 ) -> Result<Stream<T>> {
     let mut cmd = tools::command(ffmpeg);
-    let mut child = tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE))
-        .args(["-hide_banner", "-nostdin", "-loglevel", "error"])
-        // Rotated phone videos are read as stored: the frame size stays the probe's.
-        .args(["-noautorotate", "-ss", &format!("{:.6}", from.max(0.0)), "-i"])
-        .arg(path)
-        .args(["-map", map])
-        .args(output)
-        .arg("pipe:1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
+    let mut child =
+        tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), path)
+            .args(["-hide_banner", "-nostdin", "-loglevel", "error"])
+            // Rotated phone videos are read as stored: the frame size stays the probe's.
+            .args(["-noautorotate", "-ss", &format!("{:.6}", from.max(0.0)), "-i"])
+            .arg(path)
+            .args(["-map", map])
+            .args(output)
+            .arg("pipe:1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .with_context(|| format!("run {}", tools::shown(ffmpeg)))?;
     let stdout = child.stdout.take().context("ffmpeg's output")?;
     let (tx, frames) = mpsc::sync_channel(AHEAD);
     let reader = std::thread::Builder::new().name("decode".into()).spawn(move || read(stdout, tx))?;

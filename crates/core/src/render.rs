@@ -151,7 +151,7 @@ fn encode_pieces(
     // any format and decoder ffmpeg has.
     let decoders = format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE);
     for (p, seek) in pieces.iter().zip(&seeks) {
-        tools::ffmpeg_allow(&mut cmd, &decoders);
+        tools::ffmpeg_allow_for(&mut cmd, &decoders, &p.source);
         cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(&p.source);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);

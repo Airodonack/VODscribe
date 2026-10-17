@@ -123,9 +123,9 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     let reads = Mutex::new(Db::open_reader(&paths.db())?);
     let worker = Worker::start(app.handle().clone(), paths.clone())?;
     let handle = app.handle().clone();
-    let media = media::MediaServer::start(move |id| {
-        let state = handle.state::<AppState>();
-        media::playable_file(&state.db.lock().unwrap(), id)
+    let media = media::MediaServer::start(move |asked| match asked {
+        media::Served::Vod(id) => media::playable_file(&handle.state::<AppState>().db.lock().unwrap(), id),
+        media::Served::Footage(name) => crate::footage::section_file(&handle, &name).map(|p| p.display().to_string()),
     })?;
     let (chat, chat_rx) = chats::ChatQueue::new();
     app.manage(AppState {

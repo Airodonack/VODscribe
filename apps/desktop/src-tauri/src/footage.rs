@@ -64,10 +64,11 @@ fn dir(app: &AppHandle) -> PathBuf {
 /// The footage of `start`..`end` of VOD `vod_id`, if it's here (or in already
 /// of the section downloading).
 pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) -> Option<Source> {
-    footage::find(db, &dir(app), vod_id, start, end)
-        .ok()
-        .flatten()
-        .or_else(|| app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.find(vod_id, start, end))
+    footage::find(db, &dir(app), vod_id, start, end).ok().flatten().or_else(|| {
+        let state = app.state::<AppState>();
+        let source = state.footage.growing.lock().unwrap().as_ref()?.find(vod_id, start, end)?;
+        Some(served(&state, source))
+    })
 }
 
 /// The footage of VOD `vod_id` from `start`, and how far towards `end` (the
@@ -77,7 +78,47 @@ pub(crate) fn reach(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64)
     if let Some(source) = footage::find(db, &dir(app), vod_id, start, end).ok().flatten() {
         return Some((source, end));
     }
-    app.state::<AppState>().footage.growing.lock().unwrap().as_ref()?.reach(vod_id, start, end)
+    let state = app.state::<AppState>();
+    let (source, until) = state.footage.growing.lock().unwrap().as_ref()?.reach(vod_id, start, end)?;
+    Some((served(&state, source), until))
+}
+
+/// `source`, of the section downloading, read through the media server
+/// rather than from its file, which the download renames when it's done:
+/// on Windows that fails while ffmpeg has the file open (media.rs).
+fn served(state: &AppState, source: Source) -> Source {
+    match &source.section {
+        Some(name) => Source { path: crate::media::footage_url(state, name), ..source },
+        None => source,
+    }
+}
+
+/// The file footage section `name` is in now (`footage::section_stem`): the
+/// part file while it downloads, then yt-dlp's finished file beside it, then
+/// the one kept in the footage folder.
+pub(crate) fn section_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
+    let state = app.state::<AppState>();
+    let growing = state
+        .footage
+        .growing
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|g| (footage::section_stem(g.vod_id, g.from, g.to) == name).then(|| g.path.clone()));
+    let prefix = format!("footage-{name}.");
+    let finished = || {
+        std::fs::read_dir(state.paths.work()).ok()?.flatten().map(|e| e.path()).find(|p| {
+            let file = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            file.starts_with(&prefix)
+                && !file.ends_with(".part")
+                && !file.ends_with(".json")
+                && !file.ends_with(".ytdl")
+        })
+    };
+    growing
+        .filter(|p| p.is_file())
+        .or_else(finished)
+        .or_else(|| Some(dir(app).join(format!("{name}.mkv"))).filter(|p| p.is_file()))
 }
 
 /// The frame of VOD `vod_id` at `at` seconds, a JPEG `width` wide (at most

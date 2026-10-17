@@ -5,13 +5,20 @@
 //! It only listens on the loopback interface, every URL carries a random token
 //! made at launch, requests must name the server's own host (so a web page
 //! can't reach it through DNS rebinding), and it serves only the files of local
-//! VODs, looked up by id. Byte ranges are supported so the player can seek.
+//! VODs, looked up by id, and edits' footage sections, looked up by name. Byte
+//! ranges are supported so the player can seek.
+//!
+//! The app's own player (ffmpeg) reads a section still downloading through
+//! here rather than from the file: ffmpeg opens files on Windows without
+//! letting them be renamed while open, and the download's file is renamed
+//! when it's done, which then failed. Each request finds the file anew, so
+//! a seek after the renaming reads it where it went.
 //!
 //! The player's waveform (`peaks`) and frame rate are asked for here too.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -27,6 +34,14 @@ use crate::{AppState, CmdResult, err, loopback};
 /// Requests served at once.
 const MAX_ACTIVE: usize = 32;
 
+/// What a URL asks for: a VOD's file (`/<token>/<id>`) or a footage
+/// section's (`/<token>/footage/<name>`, `footage::section_stem`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Served {
+    Vod(i64),
+    Footage(String),
+}
+
 pub(crate) struct MediaServer {
     /// `http://127.0.0.1:<port>`
     origin: String,
@@ -34,8 +49,8 @@ pub(crate) struct MediaServer {
 }
 
 impl MediaServer {
-    /// `find` gives the file of the VOD asked for (`/<token>/<id>`), if there is one.
-    pub(crate) fn start(find: impl Fn(i64) -> Option<String> + Send + Sync + 'static) -> Result<Self> {
+    /// `find` gives the file asked for, if there is one.
+    pub(crate) fn start(find: impl Fn(Served) -> Option<String> + Send + Sync + 'static) -> Result<Self> {
         let find = Arc::new(find);
         let server = Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!("start the media server: {e}"))?;
         let port = server.server_addr().to_ip().context("media server address")?.port();
@@ -70,6 +85,13 @@ impl MediaServer {
 pub(crate) async fn media_url(state: State<'_, AppState>, id: i64) -> CmdResult<String> {
     let media = &state.media;
     Ok(format!("{}/{}/{id}", media.origin, media.token))
+}
+
+/// The URL the app's own player reads footage section `name` from while it
+/// downloads (`footage::section_stem`).
+pub(crate) fn footage_url(state: &AppState, name: &str) -> PathBuf {
+    let media = &state.media;
+    PathBuf::from(format!("{}/{}/footage/{name}", media.origin, media.token))
 }
 
 /// The file VOD `id` plays from here: a file on this computer, or a video kept
@@ -138,7 +160,7 @@ pub(crate) async fn frame_rate(state: State<'_, AppState>, id: i64) -> CmdResult
         .map_err(err)
 }
 
-type Find = dyn Fn(i64) -> Option<String> + Send + Sync;
+type Find = dyn Fn(Served) -> Option<String> + Send + Sync;
 
 fn serve(find: &Find, request: Request, host: &str, prefix: &str) {
     let response = match respond(find, &request, host, prefix) {
@@ -160,8 +182,15 @@ fn respond(find: &Find, request: &Request, host: &str, prefix: &str) -> Result<R
     };
     loopback::check(request, host)?;
     let rest = request.url().strip_prefix(prefix).ok_or(404u16)?;
-    let id = rest.parse().map_err(|_| 404u16)?;
-    let source = find(id).ok_or(404u16)?;
+    let asked = match rest.strip_prefix("footage/") {
+        // Only a section's name: digits and dashes.
+        Some(name) if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
+            Served::Footage(name.to_string())
+        }
+        Some(_) => return Err(404),
+        None => Served::Vod(rest.parse().map_err(|_| 404u16)?),
+    };
+    let source = find(asked).ok_or(404u16)?;
     let mut file = open_regular(Path::new(&source)).ok_or(404u16)?;
     let size = file.metadata().map_err(|_| 500u16)?.len();
 
@@ -284,7 +313,7 @@ mod tests {
         let data: Vec<u8> = (0..100_000u32).map(|i| (i % 10) as u8 + b'0').collect();
         std::fs::write(&path, &data).unwrap();
         let file = path.to_string_lossy().into_owned();
-        let media = MediaServer::start(move |id| (id == 7).then(|| file.clone())).unwrap();
+        let media = MediaServer::start(move |asked| (asked == Served::Vod(7)).then(|| file.clone())).unwrap();
         let ok = format!("/{}/7", media.token);
 
         let (status, body) = get(&media.origin, &ok, None, None);
@@ -297,6 +326,8 @@ mod tests {
 
         assert!(get(&media.origin, &format!("/{}/8", media.token), None, None).0.contains("404"), "not a local VOD");
         assert!(get(&media.origin, &format!("/{}/clip/7", media.token), None, None).0.contains("404"), "no clips");
+        assert!(get(&media.origin, &format!("/{}/footage/7-0-9", media.token), None, None).0.contains("404"), "none");
+        assert!(get(&media.origin, &format!("/{}/footage/..%2f7", media.token), None, None).0.contains("404"), "name");
         assert!(get(&media.origin, "/wrongtoken/7", None, None).0.contains("404"), "wrong token");
         let (status, _) = get(&media.origin, &ok, None, Some("bytes=200000-"));
         assert!(status.contains("416"), "{status}");
@@ -318,11 +349,60 @@ mod tests {
 
     /// Serves $VODSCRIBE_MEDIA_FILE as VOD 1 for a few minutes and prints its
     /// URL, for trying the server with a real player: `-- --ignored --nocapture`.
+    /// ffmpeg reads a section through the server, allowed HTTP for it alone
+    /// (`tools::ffmpeg_allow_for`), seeking in it, and finds it where it went
+    /// when it's renamed between requests (as a download's file is when done).
+    #[test]
+    fn ffmpeg_reads_footage_through_it() {
+        let ffmpeg = PathBuf::from("ffmpeg");
+        if std::process::Command::new(&ffmpeg).arg("-version").output().is_err() {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("vodscribe-served-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (part, done) = (dir.join("s.mkv.part"), dir.join("s.mkv"));
+        let made = std::process::Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=s=160x90:r=30:d=4",
+                "-c:v",
+                "mjpeg",
+                "-f",
+                "matroska",
+            ])
+            .arg(&part)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (p, d) = (part.clone(), done.clone());
+        let media = MediaServer::start(move |asked| {
+            (asked == Served::Footage("7-0-4000".into()))
+                .then(|| if p.is_file() { &p } else { &d }.display().to_string())
+        })
+        .unwrap();
+        let url = PathBuf::from(format!("{}/{}/footage/7-0-4000", media.origin, media.token));
+        assert!(vodscribe_core::tools::served(&url));
+        let frame = vodscribe_core::local::frame(&ffmpeg, &url, 2.5, 160).unwrap();
+        assert_eq!(frame[..2], [0xff, 0xd8], "a JPEG");
+        std::fs::rename(&part, &done).unwrap();
+        assert!(vodscribe_core::local::frame(&ffmpeg, &url, 3.5, 160).is_ok(), "read where it went");
+        // Elsewhere, files only: the same URL handed in as a file's isn't read over HTTP.
+        let elsewhere = PathBuf::from(format!("http://localhost:{}/x", media.origin.rsplit(':').next().unwrap()));
+        assert!(!vodscribe_core::tools::served(&elsewhere));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     #[ignore]
     fn serve_a_file_for_manual_testing() {
         let file = std::env::var("VODSCRIBE_MEDIA_FILE").expect("set VODSCRIBE_MEDIA_FILE");
-        let media = MediaServer::start(move |id| (id == 1).then(|| file.clone())).unwrap();
+        let media = MediaServer::start(move |asked| (asked == Served::Vod(1)).then(|| file.clone())).unwrap();
         println!("MEDIA_URL {}/{}/1", media.origin, media.token);
         std::thread::sleep(std::time::Duration::from_secs(300));
     }
