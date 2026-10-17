@@ -64,11 +64,15 @@ struct State {
     output: bool,
     /// How many seconds of the timeline a second of play is.
     speed: f64,
+    /// The picture has the first frame from where this epoch began, or has
+    /// nothing to show there: until it does, the time stands and the sound
+    /// waits, so picture and sound start together.
+    ready: bool,
 }
 
 impl State {
     fn time(&self, duration: f64) -> f64 {
-        if !self.playing {
+        if !self.playing || !self.ready {
             return self.at;
         }
         let run = match &self.sound {
@@ -78,17 +82,25 @@ impl State {
         (self.at + run * self.speed).min(duration)
     }
 
-    /// Whether the time moves: playing, and not waiting for the sound.
+    /// Whether the time moves: playing, and not waiting for the picture or
+    /// the sound.
     fn running(&self) -> bool {
-        self.playing && self.sound.as_ref().is_none_or(|s| s.live)
+        self.playing && self.ready && self.sound.as_ref().is_none_or(|s| s.live)
     }
 
-    /// Starts over from `at` (a seek, or play): the decoders will, and the
-    /// time runs from here once the sound does again.
+    /// Starts over from `at` (a seek): the decoders will, and the time runs
+    /// from here once the picture has its frame and the sound plays again.
     fn restart(&mut self, at: f64) {
         self.at = at;
-        self.since = Instant::now();
         self.epoch += 1;
+        self.ready = false;
+        self.resume();
+    }
+
+    /// Runs on from where it stands (play after a pause): the picture keeps
+    /// its decoder and the frame it holds; the sound starts again from here.
+    fn resume(&mut self) {
+        self.since = Instant::now();
         self.sound = self.output.then(|| Sound { played: Arc::default(), rate: 1, live: false });
     }
 }
@@ -168,6 +180,7 @@ impl Player {
                 sound: None,
                 output: false,
                 speed: 1.0,
+                ready: false,
             }),
             wake: Condvar::new(),
             frame: Mutex::new(None),
@@ -256,13 +269,14 @@ impl Player {
         if s.playing {
             return;
         }
-        if s.ended {
-            s.at = 0.0;
-            s.ended = false;
-        }
         s.playing = true;
-        let at = s.at;
-        s.restart(at);
+        if s.ended {
+            // From the start again: the decoders start over.
+            s.ended = false;
+            s.restart(0.0);
+        } else {
+            s.resume();
+        }
         self.inner.wake.notify_all();
     }
 
@@ -419,6 +433,27 @@ fn wait_until(inner: &Inner, epoch: u64, until: f64) -> bool {
     }
 }
 
+/// The picture is ready for epoch `epoch` (its first frame is in hand, or
+/// there's none to show): the time may run, and without a sound output it
+/// runs from now (told as `Event::Running`).
+fn mark_ready(inner: &Inner, epoch: u64) {
+    let mut s = inner.state.lock().unwrap();
+    if s.epoch != epoch || s.ready {
+        return;
+    }
+    s.ready = true;
+    let by_clock = s.sound.is_none();
+    if by_clock {
+        s.since = Instant::now();
+    }
+    let running = s.playing && by_clock;
+    drop(s);
+    inner.wake.notify_all();
+    if running && let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+        f(Event::Running);
+    }
+}
+
 /// The player's thread: decodes from the time, shows each frame at its moment.
 fn run(inner: &Inner) {
     'start: loop {
@@ -448,6 +483,7 @@ fn run(inner: &Inner) {
                 .and_then(|s| inner.info(&s.path)?.picture.map(|p| Video::new(&inner.ffmpeg, &s.path, p)));
             let Some(video) = video else {
                 // No footage, or no picture: nothing shows while the time passes it.
+                mark_ready(inner, epoch);
                 next = None;
                 if !wait_until(inner, epoch, stretch.end()) {
                     continue 'start;
@@ -461,8 +497,16 @@ fn run(inner: &Inner) {
                 Some(stream) if !first => Some(stream),
                 _ => video.from(stretch.file_time(walk.from)).ok(),
             };
-            let Some(mut stream) = stream else { return };
+            let Some(mut stream) = stream else {
+                // ffmpeg wouldn't start: nothing to show till the next seek.
+                mark_ready(inner, epoch);
+                wait_until(inner, epoch, f64::INFINITY);
+                continue 'start;
+            };
             while let Some(frame) = stream.recv() {
+                if first {
+                    mark_ready(inner, epoch);
+                }
                 let time = stretch.time(frame.pts);
                 if time >= stretch.end() - 1e-6 {
                     break;
@@ -510,6 +554,7 @@ fn run(inner: &Inner) {
                 }
             }
             drop(stream);
+            mark_ready(inner, epoch);
             // The file ran out before the stretch's end: the time passes the rest.
             if !wait_until(inner, epoch, stretch.end()) {
                 continue 'start;
@@ -601,19 +646,23 @@ fn run_sound(inner: &Inner) {
                         continue 'start;
                     }
                 }
-                // Let out once a little is queued, so it doesn't run dry at once.
+                // Let out once a little is queued, so it doesn't run dry at
+                // once, and the picture is ready to start with it (till then
+                // the queue fills, and waits full).
                 if !started && out.queued() >= START {
                     let mut s = inner.state.lock().unwrap();
                     if s.epoch != epoch {
                         continue 'start;
                     }
-                    out.recount();
-                    s.sound = Some(Sound { played: out.played(), rate, live: true });
-                    out.set_running(true);
-                    started = true;
-                    drop(s);
-                    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
-                        f(Event::Running);
+                    if s.ready {
+                        out.recount();
+                        s.sound = Some(Sound { played: out.played(), rate, live: true });
+                        out.set_running(true);
+                        started = true;
+                        drop(s);
+                        if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+                            f(Event::Running);
+                        }
                     }
                 }
                 if out.queued() >= sound::AHEAD {
@@ -677,6 +726,7 @@ mod tests {
             sound: None,
             output: false,
             speed: 1.0,
+            ready: true,
         }
     }
 
@@ -696,20 +746,36 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_waits_for_the_sound_only_where_there_is_an_output() {
+    fn a_restart_waits_for_the_picture_and_then_for_the_sound_where_there_is_an_output() {
         let mut s = paused_at(0.0);
         s.playing = true;
         s.restart(2.0);
         assert_eq!(s.epoch, 1);
-        assert!(s.sound.is_none(), "no output: the computer's clock runs at once");
-        assert!(s.time(10.0) >= 2.0);
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(s.time(10.0), 2.0, "the time stands until the picture has its frame");
+        assert!(!s.running());
+        // No output: the computer's clock runs once the picture is ready.
+        s.ready = true;
+        s.since = Instant::now();
+        assert!(s.sound.is_none());
         assert!(s.running());
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(s.time(10.0) > 2.0);
+        // With an output, the picture ready isn't enough: the sound must play.
         s.output = true;
         s.restart(5.0);
-        assert_eq!(s.epoch, 2);
+        s.ready = true;
         std::thread::sleep(Duration::from_millis(5));
         assert_eq!(s.time(10.0), 5.0, "with an output, the time stands until the sound plays");
         assert!(!s.running(), "and isn't said to move");
+    }
+
+    #[test]
+    fn play_after_a_pause_keeps_the_picture_s_place() {
+        let mut s = paused_at(3.0);
+        s.playing = true;
+        s.resume();
+        assert_eq!((s.epoch, s.ready), (0, true), "no new epoch: the decoders keep where they are");
     }
 
     #[test]
