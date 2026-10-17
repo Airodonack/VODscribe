@@ -390,7 +390,7 @@ fn parse_progress(rest: &str) -> Option<f64> {
 pub(crate) fn clean_error(stderr: &str) -> String {
     eprintln!("yt-dlp: {}", tools::last_lines(stderr, 10));
     let errors: Vec<&str> = stderr.lines().filter_map(|l| l.strip_prefix("ERROR: ")).collect();
-    let raw = if errors.is_empty() { tools::last_lines(stderr, 3) } else { errors.join("\n") };
+    let raw = if errors.is_empty() { tools::last_lines(stderr, 3) } else { tools::hide_home(&errors.join("\n")) };
     let msg = strip_tag(&raw);
     friendly(msg).map_or_else(|| format!("Couldn't get this video: {msg}"), str::to_string)
 }

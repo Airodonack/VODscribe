@@ -199,7 +199,20 @@ pub fn send_lines(
 /// The last `n` non-blank lines of `text`, for error messages from a tool's log.
 pub fn last_lines(text: &str, n: usize) -> String {
     let tail: Vec<&str> = text.lines().rev().filter(|l| !l.trim().is_empty()).take(n).collect();
-    tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+    hide_home(&tail.into_iter().rev().collect::<Vec<_>>().join("\n"))
+}
+
+/// `text` (a tool's error lines, which name the files it was given) with
+/// the home folder written `~`, as `shown` writes a path.
+pub fn hide_home(text: &str) -> String {
+    let Some(home) = std::env::home_dir().filter(|h| !h.as_os_str().is_empty()) else { return text.into() };
+    let home = home.display().to_string();
+    let home = home.trim_end_matches(['/', '\\']);
+    if home.is_empty() {
+        return text.into();
+    }
+    // Windows tools may write it either way round.
+    text.replace(home, "~").replace(&home.replace('\\', "/"), "~")
 }
 
 /// A helper binary shipped next to the running executable, such as the worker.
@@ -396,6 +409,9 @@ mod tests {
     fn keeps_the_last_non_blank_lines() {
         assert_eq!(last_lines("a\nb\n\nc\n  \n", 2), "b\nc");
         assert_eq!(last_lines("", 3), "");
+        let home = std::env::home_dir().unwrap().display().to_string();
+        let error = format!("{home}/Videos/a.mp4.part: No space left on device");
+        assert_eq!(last_lines(&error, 1), format!("~{}Videos/a.mp4.part: No space left on device", "/"));
     }
 
     /// Installs the latest release into $VODSCRIBE_TEST_BIN_DIR, then again (a no-op).
