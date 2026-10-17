@@ -269,6 +269,18 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
     result
 }
 
+/// Removes footage sections' files from `work`: a section downloads there,
+/// and moves to the footage folder once done, so at startup any there are
+/// left by a quit or a crash mid-download (and are fetched again if needed).
+pub(crate) fn tidy_work(work: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(work) else { return };
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with("footage-") && entry.path().is_file() {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// The file a section downloads into (yt-dlp's part file, under `prefix` in `work`), once it's begun.
 fn part_file(work: &std::path::Path, prefix: &str) -> Option<PathBuf> {
     std::fs::read_dir(work).ok()?.flatten().map(|e| e.path()).find(|p| {

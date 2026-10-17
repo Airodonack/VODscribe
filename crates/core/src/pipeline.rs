@@ -279,6 +279,7 @@ fn run_worker(
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start {}", tools::shown(&spec.program)))?;
+    let _tracked = tools::track(&child);
 
     // sherpa-onnx logs to stderr; keep the tail for error messages.
     let stderr_thread = tools::drain(child.stderr.take().unwrap());

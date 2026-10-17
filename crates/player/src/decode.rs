@@ -64,6 +64,8 @@ pub struct Stream<T> {
     child: Child,
     frames: Receiver<T>,
     _reader: JoinHandle<()>,
+    /// Stopped with the app (`tools::stop_tracked`); untracked once `child` is waited for.
+    _tracked: tools::Tracked,
 }
 
 impl<T: Send + 'static> Stream<T> {
@@ -113,7 +115,8 @@ fn start<T: Send + 'static>(
     let stdout = child.stdout.take().context("ffmpeg's output")?;
     let (tx, frames) = mpsc::sync_channel(AHEAD);
     let reader = std::thread::Builder::new().name("decode".into()).spawn(move || read(stdout, tx))?;
-    Ok(Stream { child, frames, _reader: reader })
+    let tracked = tools::track(&child);
+    Ok(Stream { child, frames, _reader: reader, _tracked: tracked })
 }
 
 /// The largest frame side the player decodes to: a GPU texture can be no

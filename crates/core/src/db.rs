@@ -626,6 +626,14 @@ impl Db {
         Ok(Self { conn })
     }
 
+    /// Takes the library's write lock and keeps it: nothing more is written,
+    /// on this connection or another, till the process ends. For quitting,
+    /// so jobs whose processes are stopped then don't record a failure.
+    pub fn stop_writes(&self) -> Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(())
+    }
+
     fn open_inner(path: &Path) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;

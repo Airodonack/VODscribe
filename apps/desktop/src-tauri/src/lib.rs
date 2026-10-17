@@ -111,6 +111,8 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
     let _ = std::fs::remove_dir_all(paths.local.join("preview"));
+    // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
+    footage::tidy_work(&paths.work());
     // Kept videos' leftovers from VODs no longer in the library; only
     // tidying, so a library that can't be read here isn't a reason not
     // to start.
@@ -343,8 +345,27 @@ pub fn run() {
             vods::delete_video,
             setup::clear_cache,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                quit(app);
+            }
+        });
+}
+
+/// As the app quits: what it started (downloads, transcription, encodes)
+/// stops with it rather than running on without it. The library's writes
+/// stop first, so the jobs whose processes stop don't record that as a
+/// failure: they carry on at the next start as after any quit.
+fn quit(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = db.stop_writes();
+        // Held till the process ends.
+        std::mem::forget(db);
+    }
+    vodscribe_core::tools::stop_tracked();
 }
 
 #[cfg(test)]

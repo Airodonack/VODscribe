@@ -105,6 +105,7 @@ fn dump_json(mut cmd: std::process::Command, url: &str, cancel: &AtomicBool) -> 
         .stderr(Stdio::piped())
         .spawn()
         .context("run yt-dlp")?;
+    let _tracked = tools::track(&child);
     let read = |mut pipe: Box<dyn std::io::Read + Send>| {
         std::thread::spawn(move || {
             let mut out = Vec::new();
@@ -278,6 +279,7 @@ pub fn download(
         .stderr(Stdio::piped())
         .spawn()
         .context("start yt-dlp")?;
+    let _tracked = tools::track(&child);
 
     // Where progress lands depends on yt-dlp's flags, so read both streams.
     let (tx, rx) = mpsc::channel::<String>();

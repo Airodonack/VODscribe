@@ -34,6 +34,7 @@ pub fn decode(
         .stderr(Stdio::piped())
         .spawn()
         .context("start ffmpeg")?;
+    let _tracked = tools::track(&child);
 
     let stderr_thread = tools::drain(child.stderr.take().unwrap());
 

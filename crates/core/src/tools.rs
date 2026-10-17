@@ -297,6 +297,61 @@ pub fn kill_tree(child: &mut std::process::Child) {
     }
 }
 
+/// The processes `track`ed, by id: the long-running ones (downloads,
+/// transcription, encodes, the player's decoders), stopped with what they
+/// started when the app quits (`stop_tracked`).
+static TRACKED: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+
+/// A tracked process, untracked when dropped: held beside its `Child` (made
+/// after it, so dropped first), till it's been waited for.
+pub struct Tracked(u32);
+
+/// Tracks `child` (made by `command`) until the returned guard is dropped.
+pub fn track(child: &std::process::Child) -> Tracked {
+    TRACKED.lock().unwrap().push(child.id());
+    Tracked(child.id())
+}
+
+impl Drop for Tracked {
+    fn drop(&mut self) {
+        TRACKED.lock().unwrap().retain(|&id| id != self.0);
+    }
+}
+
+/// Stops every process tracked now, and what each started, and waits (a
+/// little) till they're gone: for quitting, so no download or transcription
+/// goes on after the app. Processes started after it are tracked as usual.
+pub fn stop_tracked() {
+    let ids = std::mem::take(&mut *TRACKED.lock().unwrap());
+    #[cfg(unix)]
+    {
+        // Each leads its own process group (`command`).
+        for &id in &ids {
+            // SAFETY: plain syscalls on a process group of ours.
+            unsafe { libc::killpg(id as libc::pid_t, libc::SIGKILL) };
+        }
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        // SAFETY: as above; signal 0 only asks whether any is left.
+        while ids.iter().any(|&id| unsafe { libc::killpg(id as libc::pid_t, 0) } == 0)
+            && std::time::Instant::now() < until
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    #[cfg(windows)]
+    {
+        let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+        let mut kill = command(&Path::new(&windows).join(r"System32\taskkill.exe"));
+        kill.args(["/T", "/F"]);
+        for id in &ids {
+            kill.args(["/PID", &id.to_string()]);
+        }
+        if !ids.is_empty() {
+            let _ = kill.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+        }
+    }
+}
+
 /// A `Command` that doesn't flash a console window on Windows.
 /// Runs in the program's own directory rather than wherever the app was launched
 /// from, so nothing in an untrusted working dir (configs, DLLs) gets picked up.
@@ -339,6 +394,7 @@ pub fn encode(
     use std::sync::atomic::Ordering;
     let mut child =
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("start ffmpeg")?;
+    let _tracked = track(&child);
     let errors = drain(child.stderr.take().context("ffmpeg's errors")?);
     let mut canceled = false;
     for line in BufReader::new(child.stdout.take().context("ffmpeg's progress")?).lines() {
@@ -381,6 +437,40 @@ pub fn shown(path: impl AsRef<Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What quitting stops: a tracked launcher and its child, and nothing
+    /// that isn't tracked.
+    #[cfg(unix)]
+    #[test]
+    fn stop_tracked_stops_what_quitting_would_leave_running() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = crate::TempDir::new("stop-tracked");
+        let script = dir.join("launcher");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\n(i=0; while true; do i=$((i+1)); : > \"$1/f$i\"; sleep 0.05; done) &\nwait\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (tracked_out, other_out) = (dir.join("tracked"), dir.join("other"));
+        std::fs::create_dir_all(&tracked_out).unwrap();
+        std::fs::create_dir_all(&other_out).unwrap();
+        let mut child = command(&script).arg(&tracked_out).spawn().unwrap();
+        let guard = track(&child);
+        let mut other = command(&script).arg(&other_out).spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        stop_tracked();
+        let _ = child.wait();
+        let written = std::fs::read_dir(&tracked_out).unwrap().count();
+        assert!(written > 0, "it was writing");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(std::fs::read_dir(&tracked_out).unwrap().count(), written, "it and its child stopped");
+        let before = std::fs::read_dir(&other_out).unwrap().count();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(std::fs::read_dir(&other_out).unwrap().count() > before, "what isn't tracked runs on");
+        kill_tree(&mut other);
+        drop(guard);
+    }
 
     /// Like the managed yt-dlp: a launcher whose child does the work. Once
     /// stopped, nothing more is written.

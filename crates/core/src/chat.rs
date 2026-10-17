@@ -961,6 +961,7 @@ fn fetch_youtube(
         .stderr(Stdio::piped())
         .spawn()
         .context("start yt-dlp")?;
+    let _tracked = crate::tools::track(&child);
     let (tx, rx) = std::sync::mpsc::channel::<String>();
     let stderr = crate::tools::send_lines(child.stderr.take().unwrap(), tx);
     let mut log = Vec::new();
