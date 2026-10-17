@@ -44,46 +44,15 @@ pub fn written(path: &Path) -> Option<f64> {
         if child_end > len {
             break;
         }
-        match id {
-            INFO => {
-                while r.pos < child_end {
-                    let (id, size) = r.header()?;
-                    let size = size?;
-                    if id == TIMESTAMP_SCALE {
-                        scale = r.uint(size)?;
-                    } else {
-                        r.skip(size)?;
-                    }
-                }
-            }
-            CLUSTER => {
-                let mut at = 0i64;
-                while r.pos < child_end {
-                    let (id, size) = r.header()?;
-                    let size = size?;
-                    let next = r.pos + size;
-                    match id {
-                        CLUSTER_TIMESTAMP => at = r.uint(size)? as i64,
-                        SIMPLE_BLOCK => r.block(at, &mut last)?,
-                        BLOCK_GROUP => {
-                            while r.pos < next {
-                                let (id, size) = r.header()?;
-                                let size = size?;
-                                let inner = r.pos + size;
-                                if id == BLOCK {
-                                    r.block(at, &mut last)?;
-                                }
-                                r.to(inner)?;
-                            }
-                        }
-                        _ => {}
-                    }
-                    r.to(next)?;
-                }
-            }
-            _ => {}
+        // Something malformed in it: what came before still counts.
+        let read = match id {
+            INFO => r.info(child_end, &mut scale),
+            CLUSTER => r.cluster(child_end, &mut last),
+            _ => Some(()),
+        };
+        if read.and_then(|()| r.to(child_end)).is_none() {
+            break;
         }
-        r.to(child_end)?;
     }
     let least = last.values().min()?;
     Some(*least as f64 * scale as f64 / 1e9)
@@ -150,6 +119,46 @@ impl Reader {
         Some(())
     }
 
+    /// The segment's info, to `end`: its timestamp scale goes in `scale`.
+    fn info(&mut self, end: u64, scale: &mut u64) -> Option<()> {
+        while self.pos < end {
+            let (id, size) = self.header()?;
+            let size = size?;
+            if id == TIMESTAMP_SCALE {
+                *scale = self.uint(size)?;
+            } else {
+                self.skip(size)?;
+            }
+        }
+        Some(())
+    }
+
+    /// A whole cluster, to `end`: each track's latest frame in it goes in `last`.
+    fn cluster(&mut self, end: u64, last: &mut HashMap<u64, i64>) -> Option<()> {
+        let mut at = 0i64;
+        while self.pos < end {
+            let (id, size) = self.header()?;
+            let next = self.pos + size?;
+            match id {
+                CLUSTER_TIMESTAMP => at = self.uint(next - self.pos)? as i64,
+                SIMPLE_BLOCK => self.block(at, last)?,
+                BLOCK_GROUP => {
+                    while self.pos < next {
+                        let (id, size) = self.header()?;
+                        let inner = self.pos + size?;
+                        if id == BLOCK {
+                            self.block(at, last)?;
+                        }
+                        self.to(inner)?;
+                    }
+                }
+                _ => {}
+            }
+            self.to(next)?;
+        }
+        Some(())
+    }
+
     fn skip(&mut self, size: u64) -> Option<()> {
         self.to(self.pos + size)
     }
@@ -201,5 +210,40 @@ mod tests {
         assert_eq!(written(&half), None, "no cluster yet");
         std::fs::write(&half, b"not matroska at all").unwrap();
         assert_eq!(written(&half), None);
+    }
+
+    /// Clusters before one with a malformed child (here a child of unknown
+    /// size, which only some masters may have) still count.
+    #[test]
+    fn a_malformed_cluster_keeps_what_came_before() {
+        // An element: its ID's bytes, its size as one byte (with the marker), its body.
+        fn el(id: &[u8], body: &[u8]) -> Vec<u8> {
+            let mut out = id.to_vec();
+            out.push(0x80 | body.len() as u8);
+            out.extend_from_slice(body);
+            out
+        }
+        // A cluster at `ms` with one frame of track 1 at its start.
+        let cluster = |ms: u16| {
+            let mut body = el(&[0xE7], &ms.to_be_bytes());
+            body.extend(el(&[0xA3], &[0x81, 0, 0, 0x80, 0xAA]));
+            el(&[0x1F, 0x43, 0xB6, 0x75], &body)
+        };
+        let mut segment = el(&[0x15, 0x49, 0xA9, 0x66], &el(&[0x2A, 0xD7, 0xB1], &[0x0F, 0x42, 0x40]));
+        segment.extend(cluster(0));
+        segment.extend(cluster(1000));
+        // A third cluster whose child says its size is unknown (all ones).
+        let mut bad = el(&[0xE7], &2000u16.to_be_bytes());
+        bad.extend([0xA3, 0xFF, 0x81, 0, 0, 0x80]);
+        segment.extend(el(&[0x1F, 0x43, 0xB6, 0x75], &bad));
+        let mut file = el(&[0x1A, 0x45, 0xDF, 0xA3], &[]);
+        // The segment's size unknown, as while it's written.
+        file.extend([0x18, 0x53, 0x80, 0x67, 0xFF]);
+        file.extend(segment);
+
+        let dir = crate::TempDir::new("mkv-bad");
+        let path = dir.join("bad.mkv");
+        std::fs::write(&path, &file).unwrap();
+        assert_eq!(written(&path), Some(1.0));
     }
 }
