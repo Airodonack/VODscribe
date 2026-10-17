@@ -188,7 +188,12 @@ pub fn transcribe(
     notice: Notice,
 ) -> Result<()> {
     // A video without sound has nothing to transcribe: done, with no lines.
-    if crate::local::codecs(ffmpeg, audio_path)?.audio.is_none() {
+    // Nothing found at all is a file ffmpeg couldn't read, not a silent one.
+    let streams = crate::local::codecs(ffmpeg, audio_path)?;
+    if streams.audio.is_none() && streams.video.is_none() {
+        bail!("{} couldn't be read.", tools::shown(audio_path));
+    }
+    if streams.audio.is_none() {
         db.set_status(vod.id, Status::Done, 1.0, None)?;
         report(Status::Done, 1.0);
         return Ok(());
