@@ -105,3 +105,39 @@ test("a speed change runs both positions on at the new speed from where they are
   assert.ok(now > 0.35 && now < 0.5, `ran ${now} s in 0.2 s`);
   assert.ok(shown > 0.35 && shown < 0.5, `shown ran ${shown} s in 0.2 s`);
 });
+
+// Recorded from Twitch's embed (win-11, WebView2 155, October 17): while
+// playing it says where it is twice a second, the second time repeating
+// the first's position; after a seek, it says the place before it once more.
+
+test("Twitch repeating its last position while playing doesn't pull the solid line back", async () => {
+  const clock = new Clock(18.51, true);
+  clock.heardAt(18.51, true);
+  await wait(500);
+  const before = clock.shown() ?? 0;
+  clock.heardAt(18.51, true); // said again, half a second on
+  const after = clock.shown() ?? 0;
+  assert.ok(after >= before, `${after} after ${before}`);
+  clock.heardAt(19.57, true);
+  assert.ok(Math.abs((clock.shown() ?? 0) - 19.57) < 0.01, "a new position is taken");
+});
+
+test("a seek of a second while playing isn't undone by the place before it, said again", () => {
+  const clock = new Clock(15.63, true);
+  clock.heardAt(15.63, true);
+  clock.asked(17.22, true);
+  clock.heardAt(15.63, true); // the old place, Playing
+  assert.ok(Math.abs((clock.shown() ?? 0) - 17.22) < 0.05, `${clock.shown()}`);
+  assert.ok(Math.abs(clock.now() - 17.22) < 0.05, `${clock.now()}`);
+  clock.heardAt(17.44, true);
+  assert.ok(Math.abs((clock.shown() ?? 0) - 17.44) < 0.01, "there: through");
+});
+
+test("a seek of a second while paused stays at the target when the old place is said again", () => {
+  const clock = new Clock(32.77, false);
+  clock.heardAt(32.77, false);
+  clock.asked(33.77, false);
+  clock.heardAt(32.77, false); // the old place once, Idle
+  assert.equal(clock.shown(), 33.77);
+  assert.equal(clock.now(), 33.77);
+});

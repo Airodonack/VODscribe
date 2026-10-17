@@ -13,9 +13,12 @@ export class Clock {
   /** What the player itself last said: where it was, when, and whether it
    *  was moving (playing, not buffering). */
   private heard: { seconds: number; at: number; moving: boolean } | null = null;
+  /** The position the player last reported, as it said it. */
+  private said: number | null = null;
   /** A seek asked of the player and not yet seen through: to `target`,
-   *  playing after it or not, given up at `until` (ms). */
-  private seeking: { target: number; play: boolean; until: number } | null = null;
+   *  playing after it or not, given up at `until` (ms); `seen`: reported
+   *  near the target since. */
+  private seeking: { target: number; play: boolean; until: number; seen: boolean } | null = null;
   private seconds: number;
   playing: boolean;
   constructor(seconds: number, playing: boolean) {
@@ -46,24 +49,32 @@ export class Clock {
    *  it reports the old place once, Idle, and then nothing until played. */
   asked(seconds: number, play: boolean) {
     this.set(seconds);
-    this.seeking = { target: seconds, play, until: performance.now() + SEEK_GIVE_UP * 1000 };
+    this.seeking = { target: seconds, play, until: performance.now() + SEEK_GIVE_UP * 1000, seen: false };
   }
   /** The player said it's at `seconds`, moving or not (unknown: as it last said). */
   heardAt(seconds: number, moving?: boolean) {
     const now = performance.now();
+    // Twitch says its last position again: a second time each second while
+    // playing, and once after a seek (the place before it). Said again, it's
+    // where the player was, not where it is.
+    const again = seconds === this.said;
+    this.said = seconds;
     if (this.seeking && now > this.seeking.until) this.seeking = null;
     if (this.seeking) {
       const target = this.seeking.target;
-      if (Math.abs(seconds - target) > NEAR) {
-        // At the target, as near as it's been seen there; moving or not as it says.
+      if (again || Math.abs(seconds - target) > NEAR) {
+        // At the target, or where it's been seen near it since; moving or not as it says.
         const shown = this.shown();
-        const there = shown !== null && Math.abs(shown - target) <= NEAR ? shown : target;
+        const there = this.seeking.seen && shown !== null ? shown : target;
         this.heard = { seconds: there, at: now, moving: moving ?? this.heard?.moving ?? false };
         return;
       }
       // There: the seek is through once it plays there, or at once if it stays paused.
+      this.seeking.seen = true;
       if (!this.seeking.play || moving) this.seeking = null;
     }
+    // Playing still, it's run on from where it first said.
+    if (again && this.heard?.moving && (moving ?? true)) return;
     this.set(seconds);
     this.heard = { seconds, at: now, moving: moving ?? this.heard?.moving ?? false };
   }
