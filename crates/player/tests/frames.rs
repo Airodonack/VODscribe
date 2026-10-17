@@ -3,7 +3,8 @@
 //! lets ffmpeg decode) is sought and stepped through, and what the
 //! compositor draws of the frame showing is read back and its number
 //! checked. Skipped where there's no ffmpeg on PATH or no software GPU
-//! adapter (the compositor is asked for one only).
+//! adapter (the compositor is asked for one only), except where
+//! VODSCRIBE_TESTS_NEED_ALL is set (CI).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,16 +33,20 @@ fn numbered(dir: &Path) -> Option<PathBuf> {
 fn seeks_and_steps_show_exactly_the_frame_asked_for() {
     let dir = std::env::temp_dir().join(format!("vodscribe-frames-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    // Skipped without them, unless VODSCRIBE_TESTS_NEED_ALL is set (CI).
+    let need = std::env::var_os("VODSCRIBE_TESTS_NEED_ALL").is_some();
     let Some(file) = numbered(&dir) else {
+        assert!(!need, "no ffmpeg on PATH");
         eprintln!("skipped: no ffmpeg on PATH");
         return;
     };
     let mut compositor = match Compositor::new(Gpu::Software) {
         Ok(c) => c,
-        Err(e) => {
+        Err(e) if !need => {
             eprintln!("skipped: {e:#}");
             return;
         }
+        Err(e) => panic!("{e:#}"),
     };
     let player = Player::open_file(Path::new("ffmpeg"), &file).unwrap();
     let (tx, rx) = mpsc::channel();

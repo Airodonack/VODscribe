@@ -428,14 +428,16 @@ mod tests {
         image.rgba[i..i + 4].try_into().unwrap()
     }
 
-    /// A software adapter, or None where there isn't one (skipped then).
+    /// A software adapter, or None where there isn't one (skipped then,
+    /// unless VODSCRIBE_TESTS_NEED_ALL is set, as in CI).
     fn compositor() -> Option<Compositor> {
         match Compositor::new(Gpu::Software) {
             Ok(c) => Some(c),
-            Err(e) => {
+            Err(e) if std::env::var_os("VODSCRIBE_TESTS_NEED_ALL").is_none() => {
                 eprintln!("skipped: {e:#}");
                 None
             }
+            Err(e) => panic!("{e:#}"),
         }
     }
 
