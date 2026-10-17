@@ -29,6 +29,11 @@
       VODscribe's data folder (Settings shows where). Video files you add from your computer are read where they are,
       and never copied or uploaded.
     </li>
+    <li>
+      Before an update changes how the library is stored, VODscribe keeps a copy of it as it was, in the same folder, in
+      case the update goes wrong. A copy holds what the library held then, transcripts you've deleted since included,
+      and is removed after 30 days.
+    </li>
     <li>VODscribe has no analytics, telemetry or crash reporting.</li>
   </ul>
   <p>It goes online only to:</p>

@@ -537,6 +537,11 @@ pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
 /// How many copies of the library from before upgrades are kept.
 const KEPT_COPIES: usize = 2;
 
+/// How long a copy from before an upgrade is kept: time to find an upgrade
+/// gone wrong, but not for good, as a copy keeps what's been deleted since
+/// (the privacy page says so).
+const COPIES_KEPT_FOR: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 3600);
+
 /// Copies the library at `path` (format `version`, open on `conn`) to
 /// `library-v<version>.sqlite` beside it before it's upgraded, whole and as
 /// it stands (VACUUM INTO), and removes all but the newest copies.
@@ -563,6 +568,22 @@ fn keep_before_upgrade(conn: &Connection, path: &Path, version: i32) -> Result<(
         let _ = std::fs::remove_file(old);
     }
     Ok(())
+}
+
+/// Removes the copies from before upgrades (`keep_before_upgrade`) beside
+/// the library at `path` that were made more than `max_age` ago.
+fn tidy_copies(path: &Path, max_age: std::time::Duration) {
+    let Some(entries) = path.parent().and_then(|dir| std::fs::read_dir(dir).ok()) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let copy =
+            name.strip_prefix("library-v").and_then(|n| n.strip_suffix(".sqlite")).and_then(|v| v.parse::<i32>().ok());
+        let old =
+            entry.metadata().and_then(|m| m.modified()).is_ok_and(|made| made.elapsed().is_ok_and(|age| age > max_age));
+        if copy.is_some() && old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Moves the library at `path` out of the way (with its WAL and shared
@@ -677,6 +698,7 @@ impl Db {
             // Migrations so far only add, so carry on rather than refuse to start.
             eprintln!("{}: library format {version} is newer than this version knows", path.display());
         }
+        tidy_copies(path, COPIES_KEPT_FOR);
         Ok(Self { conn })
     }
 
@@ -1561,6 +1583,26 @@ mod tests {
             .enumerate()
             .map(|(i, t)| Word { text: t.into(), start: start + i as f64, end: start + i as f64 + 0.5 })
             .collect()
+    }
+
+    #[test]
+    fn copies_from_before_upgrades_go_after_thirty_days() {
+        let dir = crate::TempDir::new("old-copies");
+        let path = dir.join("library.sqlite");
+        drop(Db::open(&path).unwrap());
+        let (old, new, other) =
+            (dir.join("library-v3.sqlite"), dir.join("library-v9.sqlite"), dir.join("notes.sqlite"));
+        for p in [&old, &new, &other] {
+            std::fs::write(p, b"copy").unwrap();
+        }
+        let long_ago = SystemTime::now() - std::time::Duration::from_secs(31 * 24 * 3600);
+        for p in [&old, &other] {
+            std::fs::File::options().write(true).open(p).unwrap().set_modified(long_ago).unwrap();
+        }
+        drop(Db::open(&path).unwrap());
+        assert!(!old.exists(), "a copy 31 days old goes");
+        assert!(new.exists(), "a new one stays");
+        assert!(other.exists(), "only the library's copies");
     }
 
     #[test]
