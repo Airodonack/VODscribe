@@ -216,7 +216,10 @@ impl Player {
         *held = timeline;
         let duration = held.duration();
         drop(held);
-        if !same {
+        // Ended, a timeline that now goes further plays on from the end,
+        // rather than from the start again.
+        let longer = s.ended && duration > time + 1e-6;
+        if !same || longer {
             s.ended = false;
             s.restart(time.min(duration));
         }
@@ -369,6 +372,9 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
+        // Under the state's lock, so no thread between reading `quit` and
+        // waiting misses the wake.
+        let _s = self.inner.state.lock().unwrap();
         self.inner.quit.store(true, Ordering::Release);
         self.inner.wake.notify_all();
     }
@@ -420,6 +426,13 @@ impl Walk {
     /// The stretch after this one, if there is one and it has footage.
     fn next(&self) -> Option<&Stretch> {
         self.timeline.stretches().get(self.index + 1).filter(|s| s.source.is_some())
+    }
+
+    /// `next`'s stream, if it was readied for the stretch now being
+    /// played, from where it plays: a timeline planned again since may
+    /// have changed what comes after.
+    fn readied<T>(&self, next: Option<(Stretch, T)>) -> Option<T> {
+        next.filter(|(stretch, _)| stretch == self.stretch() && stretch.at == self.from).map(|(_, stream)| stream)
     }
 }
 
@@ -485,7 +498,7 @@ fn run(inner: &Inner) {
         };
         let epoch = walk.epoch;
         let mut first = true;
-        let mut next: Option<Stream<Arc<Frame>>> = None;
+        let mut next: Option<(Stretch, Stream<Arc<Frame>>)> = None;
         loop {
             let stretch = walk.stretch().clone();
             let video = stretch
@@ -505,7 +518,7 @@ fn run(inner: &Inner) {
                 }
                 continue;
             };
-            let stream = match next.take() {
+            let stream = match walk.readied(next.take()) {
                 Some(stream) if !first => Some(stream),
                 _ => video.from(stretch.file_time(walk.from)).ok(),
             };
@@ -529,7 +542,10 @@ fn run(inner: &Inner) {
                     && let Some(source) = coming.source.as_ref()
                     && let Some(picture) = inner.info(&source.path).and_then(|i| i.picture)
                 {
-                    next = Video::new(&inner.ffmpeg, &source.path, picture).from(coming.from).ok();
+                    next = Video::new(&inner.ffmpeg, &source.path, picture)
+                        .from(coming.from)
+                        .ok()
+                        .map(|stream| (coming.clone(), stream));
                 }
                 // Its moment: when the time reaches it; at once if paused and
                 // it's the first (the frame at the time); dropped if late.
@@ -635,7 +651,7 @@ fn run_sound(inner: &Inner) {
         // Seconds of the timeline a sample pair plays.
         let pair = speed / rate as f64;
         let mut started = false;
-        let mut next: Option<Stream<decode::Samples>> = None;
+        let mut next: Option<(Stretch, Stream<decode::Samples>)> = None;
         let mut first = true;
         loop {
             let stretch = walk.stretch().clone();
@@ -645,7 +661,7 @@ fn run_sound(inner: &Inner) {
                 .filter(|s| inner.info(&s.path).is_some_and(|i| i.audio))
                 .map(|s| Audio::new(&inner.ffmpeg, &s.path));
             // Where there's no sound, silence for as long as the stretch.
-            let mut stream = match (audio, next.take()) {
+            let mut stream = match (audio, walk.readied(next.take())) {
                 (Some(_), Some(stream)) if !first => Some(stream),
                 (Some(audio), _) => audio.from(stretch.file_time(walk.from), rate, speed).ok(),
                 (None, _) => None,
@@ -653,29 +669,16 @@ fn run_sound(inner: &Inner) {
             let mut at = walk.from;
             let end = stretch.end();
             while at < end - 1e-6 {
-                {
-                    let s = inner.state.lock().unwrap();
-                    if s.epoch != epoch || !s.playing || inner.quit.load(Ordering::Acquire) {
-                        continue 'start;
-                    }
+                if !still_playing(inner, &out, epoch, started) {
+                    continue 'start;
                 }
                 // Let out once a little is queued, so it doesn't run dry at
                 // once, and the picture is ready to start with it (till then
                 // the queue fills, and waits full).
                 if !started && out.queued() >= START {
-                    let mut s = inner.state.lock().unwrap();
-                    if s.epoch != epoch {
-                        continue 'start;
-                    }
-                    if s.ready {
-                        out.recount();
-                        s.sound = Some(Sound { played: out.played(), rate, live: true });
-                        out.set_running(true);
-                        started = true;
-                        drop(s);
-                        if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
-                            f(Event::Running);
-                        }
+                    match let_out(inner, &out, epoch, rate) {
+                        None => continue 'start,
+                        Some(live) => started = live,
                     }
                 }
                 if out.queued() >= sound::AHEAD {
@@ -708,7 +711,10 @@ fn run_sound(inner: &Inner) {
                     && let Some(source) = coming.source.as_ref()
                     && inner.info(&source.path).is_some_and(|i| i.audio)
                 {
-                    next = Audio::new(&inner.ffmpeg, &source.path).from(coming.from, rate, speed).ok();
+                    next = Audio::new(&inner.ffmpeg, &source.path)
+                        .from(coming.from, rate, speed)
+                        .ok()
+                        .map(|stream| (coming.clone(), stream));
                 }
             }
             first = false;
@@ -716,13 +722,60 @@ fn run_sound(inner: &Inner) {
                 break;
             }
         }
-        // The timeline's sound is all queued: it plays out, and the picture
-        // ends the play.
+        // The timeline's sound is all queued (less of it, near the end, than
+        // is let out at): it's let out once the picture is ready.
+        while !started {
+            if !still_playing(inner, &out, epoch, started) {
+                continue 'start;
+            }
+            match let_out(inner, &out, epoch, rate) {
+                None => continue 'start,
+                Some(live) => started = live,
+            }
+            if !started {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        // It plays out, and the picture ends the play.
         let mut s = inner.state.lock().unwrap();
-        while s.epoch == epoch && s.playing && !inner.quit.load(Ordering::Acquire) {
+        while s.epoch == epoch && s.playing && ours(&s, &out) && !inner.quit.load(Ordering::Acquire) {
             s = inner.wake.wait(s).unwrap();
         }
     }
+}
+
+/// Whether the time follows `out`'s count: a pause and play since it was
+/// let out set a new count, which nothing counts.
+fn ours(s: &State, out: &Output) -> bool {
+    s.sound.as_ref().is_some_and(|sound| Arc::ptr_eq(&sound.played, &out.played()))
+}
+
+/// Whether the sound thread plays on in epoch `epoch`: not paused, sought,
+/// quit, or (once `started`) paused and played again in between.
+fn still_playing(inner: &Inner, out: &Output, epoch: u64, started: bool) -> bool {
+    let s = inner.state.lock().unwrap();
+    s.epoch == epoch && s.playing && !inner.quit.load(Ordering::Acquire) && (!started || ours(&s, out))
+}
+
+/// Lets the sound queued out, if the picture's ready, and the time follows
+/// it from now (told as `Event::Running`); whether it did, or None if it's
+/// no longer epoch `epoch`.
+fn let_out(inner: &Inner, out: &Output, epoch: u64, rate: u32) -> Option<bool> {
+    let mut s = inner.state.lock().unwrap();
+    if s.epoch != epoch {
+        return None;
+    }
+    if !s.ready {
+        return Some(false);
+    }
+    out.recount();
+    s.sound = Some(Sound { played: out.played(), rate, live: true });
+    out.set_running(true);
+    drop(s);
+    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+        f(Event::Running);
+    }
+    Some(true)
 }
 
 #[cfg(test)]
