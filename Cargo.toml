@@ -8,6 +8,12 @@ edition = "2024"
 publish = false
 
 # See https://tauri.app/concept/size/#cargo-configuration
+# The player's per-pixel work is far too slow unoptimised: in `tauri dev`
+# a 1080p frame took 57 ms to draw and the picture fell half a second
+# behind the sound (release: 4 ms). Optimised in dev builds too.
+[profile.dev.package.vodscribe-player]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true
