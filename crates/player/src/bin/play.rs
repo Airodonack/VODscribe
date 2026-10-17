@@ -21,8 +21,9 @@ fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use gtk::prelude::*;
+    use vodscribe_player::Rect;
     use vodscribe_player::clock::Player;
-    use vodscribe_player::present::{Canvas, Place};
+    use vodscribe_player::present::Screen;
 
     let mut args = std::env::args_os().skip(1).peekable();
     let bench = args.next_if(|a| a == "--bench").is_some();
@@ -47,12 +48,23 @@ fn main() -> anyhow::Result<()> {
     let player = Arc::new(player);
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     window.set_default_size(960, 540);
-    let area = gtk::GLArea::new();
-    let canvas = Canvas::new(&area, Place::Over);
+    // The screen covers the window's content, black underneath.
+    let area = gtk::DrawingArea::new();
+    area.connect_draw(|_, cr| {
+        cr.set_source_rgb(0.0, 0.0, 0.0);
+        let _ = cr.paint();
+        glib::Propagation::Stop
+    });
     window.add(&area);
+    let screen = Screen::attach(area.upcast_ref());
+    let placed = screen.clone();
+    area.connect_size_allocate(move |_, a| {
+        let rect = Rect { x: 0.0, y: 0.0, width: a.width() as f64, height: a.height() as f64 };
+        placed.set(Some(rect));
+    });
 
     // Each frame due is drawn, and the title brought up to date.
-    let (shown, drawn) = (canvas.clone(), player.clone());
+    let (shown, drawn) = (screen.clone(), player.clone());
     let title = glib::SendWeakRef::from(window.downgrade());
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     player.on_frame(Box::new(move |_| {
@@ -68,6 +80,8 @@ fn main() -> anyhow::Result<()> {
             }
         });
     }));
+    // A frame that came before the window listened (a start at VODSCRIBE_PLAY_AT).
+    screen.show(player.frame());
 
     let keys = player.clone();
     window.connect_key_press_event(move |_, key| {
@@ -90,7 +104,7 @@ fn main() -> anyhow::Result<()> {
     window.connect_destroy(|_| gtk::main_quit());
     window.show_all();
     gtk::main();
-    let (paints, took) = canvas.painted();
+    let (paints, took) = screen.painted();
     let (shown, dropped) = player.counts();
     if paints > 0 {
         println!(
@@ -196,9 +210,9 @@ fn main() -> anyhow::Result<()> {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use vodscribe_player::Rect;
     use vodscribe_player::clock::Player;
     use vodscribe_player::present::Screen;
-    use vodscribe_player::{Layout, Rect};
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
@@ -236,7 +250,7 @@ fn main() -> anyhow::Result<()> {
                 let scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) } as f64 / 96.0;
                 if let Some(screen) = SCREEN.get() {
                     let rect = Rect { x: 0.0, y: 0.0, width: w / scale, height: h / scale };
-                    screen.set(Layout { rect: Some(rect), background: [0.0; 3] });
+                    screen.set(Some(rect));
                 }
                 LRESULT(0)
             }

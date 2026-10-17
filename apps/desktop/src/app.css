@@ -106,13 +106,6 @@
   box-sizing: border-box;
 }
 
-/* While the player's screen is open under the page (Screen.svelte), the page
-   is drawn transparent over it, and the screen paints --bg behind it. */
-html.screen,
-html.screen body {
-  background: transparent;
-}
-
 html,
 body {
   margin: 0;

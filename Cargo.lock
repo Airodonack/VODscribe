@@ -4985,6 +4985,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "scoped-tls"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1cf6437eb19a8f4a6cc0f7dca544973b0b78843adbfeb3683d1a94a0024a294"
+
+[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6732,16 +6738,22 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "cpal",
+ "gdkwayland-sys",
+ "gdkx11-sys",
  "gl",
  "glib",
  "gtk",
- "libloading 0.8.9",
+ "khronos-egl",
  "pollster",
  "raw-window-handle",
  "serde",
  "vodscribe-core",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-sys",
  "wgpu",
  "windows 0.62.2",
+ "x11-dl",
 ]
 
 [[package]]
@@ -6885,6 +6897,7 @@ dependencies = [
  "cc",
  "downcast-rs",
  "rustix",
+ "scoped-tls",
  "smallvec",
  "wayland-sys",
 ]

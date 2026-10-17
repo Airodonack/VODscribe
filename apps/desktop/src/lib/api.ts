@@ -372,9 +372,9 @@ export const api = {
   playerStep: (frames: number) => invoke<PlayerStatus>("player_step", { frames }),
   playerStatus: () => invoke<PlayerStatus>("player_status"),
   playerSetVolume: (volume: number) => invoke<void>("player_set_volume", { volume }),
-  /** Where the page's player box is (Screen.svelte) and the page's background colour; whether the page is to be transparent. */
-  setScreen: (rect: { x: number; y: number; width: number; height: number } | null, background: string) =>
-    invoke<boolean>("set_screen", { rect, background }),
+  /** Where the page's player box is (Screen.svelte); none when no player is open. */
+  setScreen: (rect: { x: number; y: number; width: number; height: number } | null) =>
+    invoke<void>("set_screen", { rect }),
   /** Edit `id`'s preview, segment by segment (crates/core `preview::plan`); those not made from `at` (the playhead) on are made next. */
   previewPlan: (id: number, at: number) => invoke<PreviewSegment[]>("preview_plan", { id, at }),
   /** A preview segment's bytes (fragmented MP4); empty if it isn't made. */

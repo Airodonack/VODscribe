@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, w};
 
-use crate::Layout;
+use crate::Rect;
 use crate::decode::Frame;
 
 /// The surface in the app's window, to tell what to show.
@@ -39,7 +39,6 @@ struct Inner {
     /// The child window (an HWND, kept as a number: it's used from any thread).
     hwnd: isize,
     parent: isize,
-    layout: Layout,
     frame: Option<Arc<Frame>>,
     painter: Draw,
     /// The window's size in pixels, as last set.
@@ -156,27 +155,20 @@ impl Screen {
         }?;
         layer(hwnd);
         let painter = Draw::new(hwnd.0 as isize)?;
-        let inner = Inner {
-            hwnd: hwnd.0 as isize,
-            parent,
-            layout: Layout::default(),
-            frame: None,
-            painter,
-            size: (1, 1),
-            painted: Default::default(),
-        };
+        let inner =
+            Inner { hwnd: hwnd.0 as isize, parent, frame: None, painter, size: (1, 1), painted: Default::default() };
         let inner = Arc::new(Mutex::new(inner));
         // SAFETY: the window's own data, taken back at WM_NCDESTROY.
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Weak::into_raw(Arc::downgrade(&inner)) as isize) };
         Ok(Screen { inner })
     }
 
-    /// Shows `layout`, from any thread: the window moves to its box.
-    pub fn set(&self, layout: Layout) {
+    /// Shows the picture in `rect` (none: nowhere), from any thread: the
+    /// window moves to that box.
+    pub fn set(&self, rect: Option<Rect>) {
         let mut inner = self.inner.lock().unwrap();
-        inner.layout = layout;
         let scale = unsafe { GetDpiForWindow(HWND(inner.parent as *mut _)) } as f64 / 96.0;
-        let (x, y, w, h) = match layout.rect {
+        let (x, y, w, h) = match rect {
             Some(r) => (
                 (r.x * scale).round() as i32,
                 (r.y * scale).round() as i32,

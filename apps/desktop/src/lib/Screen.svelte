@@ -1,12 +1,9 @@
 <!--
   The player's screen: a box the picture shows in. The app's player draws
-  outside the page, on a native surface in the window (crates/player
-  present.rs) that covers the box, so nothing of the page shows over it. The
-  box tells the surface where it is and the page's background colour as
-  either changes. Where the surface is placed under the page instead, the
-  page is drawn transparent while a box is open (html.screen, app.css), and
-  the surface paints the background. Where there's no surface (other
-  platforms, for now), the box stays black.
+  outside the page, on a native surface over the window (crates/player
+  present) that covers the box, so nothing of the page shows over it. The
+  box tells the surface where it is whenever that changes. Where there's no surface (macOS, for now), the box stays
+  black.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -21,18 +18,15 @@
       if (stopped) return;
       const r = box.getBoundingClientRect();
       const rect = { x: r.x, y: r.y, width: r.width, height: r.height };
-      const background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
-      const now = JSON.stringify([rect, background]);
+      const now = JSON.stringify(rect);
       if (now === last) return;
       last = now;
-      api.setScreen(rect, background).then((transparent) => {
-        if (!stopped) document.documentElement.classList.toggle("screen", transparent);
-      });
+      api.setScreen(rect).catch(() => {});
     };
     const sizes = new ResizeObserver(report);
     sizes.observe(box);
     sizes.observe(document.documentElement);
-    // Moved by anything else (a panel opening, a scroll, the theme): checked each frame.
+    // Moved by anything else (a panel opening, a scroll): checked each frame.
     let frame = requestAnimationFrame(function tick() {
       report();
       frame = requestAnimationFrame(tick);
@@ -41,8 +35,7 @@
       stopped = true;
       cancelAnimationFrame(frame);
       sizes.disconnect();
-      document.documentElement.classList.remove("screen");
-      api.setScreen(null, getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+      api.setScreen(null).catch(() => {});
     };
   });
 </script>
