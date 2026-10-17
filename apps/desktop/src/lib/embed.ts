@@ -126,6 +126,8 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       } catch {
         return false;
       }
+      // What it reports, in the developer console of a dev build (`tauri dev`).
+      if (import.meta.env.DEV && data.info) console.debug("youtube", performance.now().toFixed(0), data.info);
       // State 1 is "playing", 3 is "buffering" (moving soon, not yet).
       const state = data.info?.playerState;
       const moving = typeof state === "number" ? state === 1 : undefined;
@@ -141,7 +143,7 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       seek(seconds, play) {
         command("seekTo", [seconds, true]);
         if (play) command("playVideo");
-        clock.set(seconds);
+        clock.asked(seconds, play);
       },
       time: () => clock.now(),
       shown: () => clock.shown(),
@@ -219,6 +221,8 @@ function twitch(
         params?: { currentTime?: number; playback?: string };
       };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
+        // What it reports, in the developer console of a dev build (`tauri dev`).
+        if (import.meta.env.DEV) console.debug("twitch", performance.now().toFixed(0), data.params);
         const playback = data.params?.playback;
         const moving = playback ? playback === "Playing" : undefined;
         if (typeof data.params?.currentTime === "number") clock.heardAt(data.params.currentTime, moving);
@@ -232,7 +236,7 @@ function twitch(
       seek(seconds, play) {
         command(TWITCH_SEEK, seconds);
         if (play) command(TWITCH_PLAY);
-        clock.set(seconds);
+        clock.asked(seconds, play);
       },
       time: () => clock.now(),
       shown: () => clock.shown(),

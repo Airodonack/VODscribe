@@ -48,3 +48,34 @@ test("a report of moving without a position keeps where it was shown", async () 
   await wait(100);
   assert.equal(clock.shown(), at);
 });
+
+test("while a seek is under way, reports from elsewhere are set aside", () => {
+  const clock = new Clock(0, true);
+  clock.heardAt(100, true);
+  clock.asked(5000, true);
+  // A long VOD reloading for the seek: 0, or the old place.
+  clock.heardAt(0, false);
+  clock.heardAt(100, false);
+  assert.ok(Math.abs(clock.now() - 5000) < 0.05, "the page's clock stays at the target");
+  assert.ok(Math.abs((clock.shown() ?? 0) - 100) < 0.6, "the solid line where it last was");
+  // There, still buffering: shown there, the seek not through yet.
+  clock.heardAt(5000.2, false);
+  assert.equal(clock.shown(), 5000.2);
+  clock.heardAt(0, false);
+  assert.equal(clock.shown(), 5000.2, "still set aside");
+  // Playing there: through, and reports are taken as they come again.
+  clock.heardAt(5000.5, true);
+  clock.heardAt(10, true);
+  assert.ok(Math.abs(clock.now() - 10) < 0.05, "taken again");
+});
+
+test("a seek while paused is through once the player says it's there", () => {
+  const clock = new Clock(0, false);
+  clock.heardAt(30, false);
+  clock.asked(200, false);
+  clock.heardAt(30, false);
+  assert.equal(clock.shown(), 30, "the old place set aside");
+  clock.heardAt(200, false);
+  clock.heardAt(31, false);
+  assert.equal(clock.shown(), 31, "through: taken as it comes");
+});
