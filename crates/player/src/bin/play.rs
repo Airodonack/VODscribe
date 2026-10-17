@@ -134,7 +134,6 @@ fn parse_edl(text: &str) -> anyhow::Result<vodscribe_player::timeline::Timeline>
 }
 
 /// Measures the player on `file`, printing what it finds.
-#[cfg(any(target_os = "linux", windows))]
 fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<()> {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -190,21 +189,25 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
     while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
     let before = player.counts();
     player.play();
-    std::thread::sleep(Duration::from_secs(10));
+    let began = Instant::now();
+    while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Running) && player.has_sound() {}
+    let waited = began.elapsed();
+    std::thread::sleep(Duration::from_secs(10).saturating_sub(waited));
     player.pause();
     let after = player.counts();
     println!(
-        "play 10 s: {} frames shown, {} dropped (expected about {:.0}), time {:.2} s, sound {}",
+        "play 10 s: {} frames shown, {} dropped (expected about {:.0}), time {:.2} s after {:.0} ms to start, sound {}",
         after.0 - before.0,
         after.1 - before.1,
         10.0 * picture.fps,
         player.time(),
+        waited.as_secs_f64() * 1e3,
         if player.has_sound() { "through an output" } else { "none" }
     );
 
     // Five seconds at each other speed, from the start: how far the time
     // goes against how far it should.
-    for speed in [0.5, 2.0] {
+    for speed in [0.5, 2.0, 1.0] {
         player.set_speed(speed);
         player.seek(0.0);
         while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
@@ -362,7 +365,19 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Elsewhere (macOS): only `--bench`, which needs no window.
 #[cfg(not(any(target_os = "linux", windows)))]
-fn main() {
-    eprintln!("The player's window is built for Linux and Windows only so far.");
+fn main() -> anyhow::Result<()> {
+    let mut args = std::env::args_os().skip(1);
+    let usage = || {
+        anyhow::anyhow!(
+            "usage: vodscribe-play --bench <file> [ffmpeg] (the window is for Linux and Windows only so far)"
+        )
+    };
+    if args.next().is_none_or(|a| a != "--bench") {
+        return Err(usage());
+    }
+    let file = std::path::PathBuf::from(args.next().ok_or_else(usage)?);
+    let ffmpeg = args.next().map(std::path::PathBuf::from).unwrap_or_else(|| "ffmpeg".into());
+    measure(&ffmpeg, &file)
 }
