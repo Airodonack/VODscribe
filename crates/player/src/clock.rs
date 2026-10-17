@@ -33,12 +33,17 @@ pub enum Event {
     Frame,
     /// The timeline played to its end: paused there.
     Ended,
+    /// Playing, the time began to move: the sound began playing out
+    /// (`Player::running`). From the sound's thread.
+    Running,
 }
 
 /// The sound's clock: sample pairs played out since the time was set.
 struct Sound {
     played: Arc<AtomicU64>,
     rate: u32,
+    /// Let out to the output; until it is, the count stands at zero.
+    live: bool,
 }
 
 struct State {
@@ -71,13 +76,18 @@ impl State {
         (self.at + run).min(duration)
     }
 
+    /// Whether the time moves: playing, and not waiting for the sound.
+    fn running(&self) -> bool {
+        self.playing && self.sound.as_ref().is_none_or(|s| s.live)
+    }
+
     /// Starts over from `at` (a seek, or play): the decoders will, and the
     /// time runs from here once the sound does again.
     fn restart(&mut self, at: f64) {
         self.at = at;
         self.since = Instant::now();
         self.epoch += 1;
-        self.sound = self.output.then(|| Sound { played: Arc::new(AtomicU64::new(0)), rate: 1 });
+        self.sound = self.output.then(|| Sound { played: Arc::new(AtomicU64::new(0)), rate: 1, live: false });
     }
 }
 
@@ -223,6 +233,13 @@ impl Player {
 
     pub fn playing(&self) -> bool {
         self.inner.state.lock().unwrap().playing
+    }
+
+    /// Whether the time moves: playing, and the sound (where there's an
+    /// output) playing out. After play or a seek while playing the time
+    /// stands until the sound starts (`Event::Running` tells when).
+    pub fn running(&self) -> bool {
+        self.inner.state.lock().unwrap().running()
     }
 
     pub fn play(&self) {
@@ -548,9 +565,13 @@ fn run_sound(inner: &Inner) {
                         continue 'start;
                     }
                     out.recount();
-                    s.sound = Some(Sound { played: out.played(), rate });
+                    s.sound = Some(Sound { played: out.played(), rate, live: true });
                     out.set_running(true);
                     started = true;
+                    drop(s);
+                    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+                        f(Event::Running);
+                    }
                 }
                 if out.queued() >= sound::AHEAD {
                     std::thread::sleep(Duration::from_millis(10));
@@ -612,7 +633,8 @@ mod tests {
         assert_eq!(s.time(10.0), 3.0);
         s.playing = true;
         let played = Arc::new(AtomicU64::new(0));
-        s.sound = Some(Sound { played: played.clone(), rate: 100 });
+        s.sound = Some(Sound { played: played.clone(), rate: 100, live: true });
+        assert!(s.running());
         assert_eq!(s.time(10.0), 3.0, "nothing played yet");
         played.store(150, Ordering::Release);
         assert_eq!(s.time(10.0), 4.5);
@@ -628,10 +650,12 @@ mod tests {
         assert_eq!(s.epoch, 1);
         assert!(s.sound.is_none(), "no output: the computer's clock runs at once");
         assert!(s.time(10.0) >= 2.0);
+        assert!(s.running());
         s.output = true;
         s.restart(5.0);
         assert_eq!(s.epoch, 2);
         std::thread::sleep(Duration::from_millis(5));
         assert_eq!(s.time(10.0), 5.0, "with an output, the time stands until the sound plays");
+        assert!(!s.running(), "and isn't said to move");
     }
 }

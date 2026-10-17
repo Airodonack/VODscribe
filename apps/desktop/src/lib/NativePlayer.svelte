@@ -30,11 +30,12 @@
   const VOLUME = "vodscribe.volume";
   const CAPTIONS = "vodscribe.captions";
 
-  // The time as last told, run on by the page's clock while playing.
-  let told: PlayerStatus = { time: untrack(() => start), playing: false };
+  // The time as last told, run on by the page's clock once the player's
+  // runs: after play it stands until the sound starts, and so does the playhead.
+  let told: PlayerStatus = { time: untrack(() => start), playing: false, running: false };
   let toldAt = performance.now();
   const now = () => {
-    const t = told.time + (told.playing ? (performance.now() - toldAt) / 1000 : 0);
+    const t = told.time + (told.running ? (performance.now() - toldAt) / 1000 : 0);
     return length ? Math.min(t, length) : t;
   };
   function tell(status: PlayerStatus) {
@@ -86,7 +87,7 @@
   let frame = 0;
   function follow() {
     if (destroyed) return;
-    if (told.playing) time = now();
+    if (told.running) time = now();
     frame = requestAnimationFrame(follow);
   }
 
@@ -99,7 +100,7 @@
   });
 
   export function seek(seconds: number, play: boolean) {
-    tell({ time: seconds, playing: play });
+    tell({ time: seconds, playing: play, running: false });
     if (!ready) {
       wanted = { time: seconds, play };
       return;
@@ -114,7 +115,7 @@
 
   export function togglePlay() {
     const playing = !told.playing;
-    tell({ time: now(), playing });
+    tell({ time: now(), playing, running: false });
     if (!ready) {
       wanted = { time: told.time, play: playing };
       return;

@@ -32,7 +32,10 @@ export interface EditPlayback {
 export class EditPlayer implements EditPlayback {
   readonly lowQuality = false;
   private screen: ReturnType<typeof mount>;
+  // Runs once the player's time does (`running`): after play it stands
+  // until the sound starts.
   private clock = new Clock(0, false);
+  private isPlaying = false;
   private editId: number | null = null;
   private opening: Promise<unknown> | null = null;
   private rateAtStart: number | null = null;
@@ -52,14 +55,14 @@ export class EditPlayer implements EditPlayback {
 
   private tell(status: PlayerStatus) {
     this.clock.set(status.time);
-    this.clock.playing = status.playing;
+    this.clock.playing = status.running;
+    this.isPlaying = status.playing;
   }
 
   async plan(id: number, from: number): Promise<PlayerStretch[]> {
     if (this.editId !== id) {
       this.editId = id;
-      this.clock.set(from);
-      this.clock.playing = false;
+      this.tell({ time: from, playing: false, running: false });
       this.opening = api.playerOpenEdit(id, from, false).then(
         (opened) => {
           if (this.gone || this.editId !== id) return;
@@ -83,12 +86,12 @@ export class EditPlayer implements EditPlayback {
   }
 
   playing() {
-    return this.clock.playing;
+    return this.isPlaying;
   }
 
   togglePlay() {
-    const playing = !this.clock.playing;
-    this.tell({ time: this.time(), playing });
+    const playing = !this.isPlaying;
+    this.tell({ time: this.time(), playing, running: false });
     (playing ? api.playerPlay() : api.playerPause()).then(
       (s) => this.tell(s),
       () => {},
@@ -96,7 +99,7 @@ export class EditPlayer implements EditPlayback {
   }
 
   seek(seconds: number, play: boolean) {
-    this.tell({ time: seconds, playing: play });
+    this.tell({ time: seconds, playing: play, running: false });
     api.playerSeek(seconds, play).then(
       (s) => this.tell(s),
       () => {},

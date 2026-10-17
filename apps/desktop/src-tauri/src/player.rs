@@ -32,11 +32,14 @@ struct Open {
     doc: Doc,
 }
 
-/// What the page is told of the player.
+/// What the page is told of the player: `running` once the time moves
+/// (playing, it stands until the sound starts), for the page's clock to run
+/// from then rather than from the play.
 #[derive(Serialize, Clone, Copy)]
 pub(crate) struct Status {
     time: f64,
     playing: bool,
+    running: bool,
 }
 
 /// What a player opened says of what it plays.
@@ -55,7 +58,7 @@ fn opened(player: &Player) -> Opened {
 const TOLD: Duration = Duration::from_millis(250);
 
 fn status(player: &Player) -> Status {
-    Status { time: player.time(), playing: player.playing() }
+    Status { time: player.time(), playing: player.playing(), running: player.running() }
 }
 
 /// Whether there's a player here: a screen to draw on.
@@ -158,7 +161,8 @@ async fn open_with(
             let player =
                 tauri::async_runtime::spawn_blocking(move || make(&handle)).await.map_err(err)?.map_err(err)?;
             let opened = opened(&player);
-            // Each frame due goes to the screen; the time to the page now and then.
+            // Each frame due goes to the screen; the time to the page now and
+            // then, and at once when it starts to move or the end is reached.
             let (shown, told) = (app.clone(), app.clone());
             let last = Mutex::new(Instant::now() - TOLD);
             player.on_frame(Box::new(move |event| {
@@ -171,7 +175,7 @@ async fn open_with(
                     crate::screen::show(&shown, Some(frame));
                 }
                 let mut last = last.lock().unwrap();
-                if event == Event::Ended || last.elapsed() >= TOLD {
+                if event != Event::Frame || last.elapsed() >= TOLD {
                     *last = Instant::now();
                     let _ = told.emit("player-time", status(&open.player));
                 }
