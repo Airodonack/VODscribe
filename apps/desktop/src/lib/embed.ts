@@ -224,6 +224,8 @@ function twitch(
         eventName?: string;
         params?: { currentTime?: number; playback?: string };
       };
+      if (import.meta.env.DEV && data?.namespace === TWITCH_PROXY && data.eventName !== "UPDATE_STATE")
+        console.debug(`twitch event ${performance.now().toFixed(0)} ${data.namespace}/${data.eventName}`);
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         // What it reports, in the developer console of a dev build (`tauri dev`).
         if (import.meta.env.DEV)
@@ -237,6 +239,13 @@ function twitch(
         if (playback) clock.playing = ["Playing", "Buffering"].includes(playback);
         return true;
       }
+      // Its other messages (the events its embed script turns into named
+      // ones: playing, pause, seek…), in a dev build's console, to see what
+      // could say a seek is done.
+      if (import.meta.env.DEV && data?.namespace !== TWITCH_PROXY)
+        console.debug(
+          `twitch event ${performance.now().toFixed(0)} ${data?.namespace}/${data?.eventName} ${JSON.stringify(data?.params ?? null)}`,
+        );
       return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
     },
     (cleanup) => ({
