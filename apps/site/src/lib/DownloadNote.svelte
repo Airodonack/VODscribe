@@ -74,19 +74,20 @@
       </p>
       <p>
         <strong>To open it:</strong> open the download and drag VODscribe into <strong>Applications</strong>, then open
-        it from there, so it can update itself. When macOS refuses, click <strong>Done</strong>, then open
-        <strong>System Settings › Privacy & Security</strong>, scroll down, and click
-        <strong>Open Anyway</strong>. You only have to do this once.
+        it from there, so it can update itself. When macOS refuses, click <strong>Done</strong> (not the blue Move to
+        Trash), then open <strong>System Settings › Privacy & Security</strong>, scroll down, and click
+        <strong>Open Anyway</strong>. macOS asks once more: click <strong>Open Anyway</strong> again and enter your Mac's
+        password. You only have to do this once.
       </p>
-      <div class="sketches" aria-hidden="true">
+      <div class="sketches three" aria-hidden="true">
         <figure>
           <span class="step">1</span>
           <div class="mac-alert">
             <span class="app"></span>
             <b>“VODscribe” Not Opened</b>
             <i></i><i class="short"></i>
+            <span class="wide default">Move to Trash</span>
             <span class="target wide">Done</span>
-            <span class="wide">Move to Trash</span>
           </div>
         </figure>
         <figure>
@@ -98,6 +99,17 @@
               <small>“VODscribe” was blocked to protect your Mac.</small>
               <span class="target">Open Anyway</span>
             </div>
+          </div>
+        </figure>
+        <figure>
+          <span class="step">3</span>
+          <div class="mac-alert">
+            <span class="app"></span>
+            <b>Open “VODscribe”?</b>
+            <i></i><i class="short"></i>
+            <span class="wide default">Move to Trash</span>
+            <span class="target wide">Open Anyway</span>
+            <span class="wide">Done</span>
           </div>
         </figure>
       </div>
@@ -214,8 +226,13 @@
     margin: 16px 0 20px;
   }
 
+  .sketches.three {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+
   @media (max-width: 480px) {
-    .sketches {
+    .sketches,
+    .sketches.three {
       grid-template-columns: 1fr;
     }
   }
@@ -347,9 +364,10 @@
     background: var(--surface);
   }
 
-  .mac-alert .wide.target {
-    background: var(--accent);
-    color: var(--accent-text);
+  /* macOS's own default button, blue: not always the one to press. */
+  .mac-alert .wide.default {
+    background: #0a84ff;
+    color: #fff;
   }
 
   .mac-settings {
@@ -390,8 +408,13 @@
     line-height: 1.35;
   }
 
+  .sketches.three .mac-settings .side {
+    width: 30%;
+  }
+
   .mac-settings .pane .target {
     padding: 2px 8px;
+    white-space: nowrap;
     border-radius: 5px;
     background: var(--accent);
     color: var(--accent-text);

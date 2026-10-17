@@ -44,7 +44,7 @@
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, then go to System Settings › Privacy & Security and choose Open Anyway (on macOS 14 or earlier, Control-click it in Applications and choose Open).",
+      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, choose Done (not Move to Trash), then go to System Settings › Privacy & Security, choose Open Anyway, choose Open Anyway again when macOS asks, and enter your password (on macOS 14 or earlier, Control-click it in Applications and choose Open).",
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
