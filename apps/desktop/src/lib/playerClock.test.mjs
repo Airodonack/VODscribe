@@ -91,3 +91,17 @@ test("a seek while paused is through once the player says it's there", () => {
   clock.heardAt(31, false);
   assert.equal(clock.shown(), 31, "through: taken as it comes");
 });
+
+test("a speed change runs both positions on at the new speed from where they are", async () => {
+  const clock = new Clock(10, true);
+  clock.heardAt(10, true);
+  await wait(100);
+  const before = clock.now();
+  clock.setSpeed(2);
+  assert.ok(Math.abs(clock.now() - before) < 0.02, "no jump");
+  await wait(200);
+  const now = clock.now() - before;
+  const shown = (clock.shown() ?? 0) - before;
+  assert.ok(now > 0.35 && now < 0.5, `ran ${now} s in 0.2 s`);
+  assert.ok(shown > 0.35 && shown < 0.5, `shown ran ${shown} s in 0.2 s`);
+});

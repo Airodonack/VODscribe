@@ -29,6 +29,15 @@ export class Clock {
   now() {
     return this.seconds + (this.playing ? ((performance.now() - this.at) / 1000) * this.speed : 0);
   }
+  /** Plays `speed` times as fast from now: both positions run on from
+   *  where they are, rather than jumping. */
+  setSpeed(speed: number) {
+    if (speed === this.speed) return;
+    this.set(this.now());
+    const shown = this.shown();
+    if (this.heard && shown !== null) this.heard = { ...this.heard, seconds: shown, at: performance.now() };
+    this.speed = speed;
+  }
   /** Asks the player to go to `seconds` (`play`: playing there): the page's
    *  clock goes there at once, and until the player is seen there, the
    *  positions it reports from anywhere else are taken as the target, and

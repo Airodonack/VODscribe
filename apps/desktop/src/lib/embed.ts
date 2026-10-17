@@ -134,7 +134,10 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       if (typeof state === "number") clock.playing = [1, 3].includes(state);
       if (typeof data.info?.volume === "number") sound.volume = data.info.volume / 100;
       if (typeof data.info?.muted === "boolean") sound.muted = data.info.muted;
-      if (typeof data.info?.playbackRate === "number") sound.rate = data.info.playbackRate;
+      if (typeof data.info?.playbackRate === "number") {
+        sound.rate = data.info.playbackRate;
+        clock.setSpeed(sound.rate);
+      }
       return data.event === "onReady" || data.event === "initialDelivery";
     },
     (cleanup) => ({
@@ -168,6 +171,7 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
         get: () => sound.rate,
         set(rate) {
           sound.rate = rate;
+          clock.setSpeed(rate);
           command("setPlaybackRate", [rate]);
         },
       },
