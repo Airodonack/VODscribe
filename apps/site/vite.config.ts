@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { sveltekit } from "@sveltejs/kit/vite";
 import { defineConfig } from "vite";
+import { colorMix, colorMixStyles } from "../desktop/colorMix.js";
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 // The app's version, from the Cargo workspace, for the download button and the demo.
@@ -11,8 +12,10 @@ const version = readFileSync(here("../../Cargo.toml"), "utf8").match(/^version =
 
 export default defineConfig({
   plugins: [
+    // As in the app: color-mix() fallbacks for older Safari (apps/desktop/colorMix.js).
+    colorMix(),
     sveltekit({
-      preprocess: vitePreprocess(),
+      preprocess: [vitePreprocess(), colorMixStyles],
       // As in the app (see its vite.config.js), and the demo's components come from there.
       compilerOptions: { css: "injected" },
 

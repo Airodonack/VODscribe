@@ -3,13 +3,16 @@ import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import process from "node:process";
+import { colorMix, colorMixStyles } from "./colorMix.js";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [
+    // color-mix() fallbacks for macOS 12's web view (colorMix.js).
+    colorMix(),
     sveltekit({
-      preprocess: vitePreprocess(),
+      preprocess: [vitePreprocess(), colorMixStyles],
       // Ship each component's styles inside its JS. With separate CSS modules, the
       // dev server sometimes serves a component's CSS before compiling it and the
       // styles go missing (seen with vite-plugin-svelte 7.3 on Vite 8).
