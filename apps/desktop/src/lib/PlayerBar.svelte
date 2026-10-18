@@ -1,5 +1,5 @@
 <script module lang="ts">
-  /** Mutes or unmutes `player` (M); unmuting at no volume goes back to full, or it would stay silent. */
+  /** Mutes or unmutes `player`; unmuting at no volume goes back to full, or it would stay silent. */
   export function toggleMute(player: EmbeddedPlayer | null | undefined) {
     const sound = player?.volume;
     if (!sound) return;
@@ -115,7 +115,7 @@
       class="control"
       onclick={() => toggleMute(player)}
       aria-label={muted ? "Unmute" : "Mute"}
-      title={muted ? "Unmute (M)" : "Mute (M)"}
+      title={muted ? "Unmute" : "Mute"}
     >
       <Icon name={muted ? "volume-off" : "volume"} size={16} />
     </button>

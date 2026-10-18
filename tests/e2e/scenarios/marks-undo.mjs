@@ -1,4 +1,4 @@
-// Marks and undo: a highlight (H) and a chapter (N), each written a title in
+// Marks and undo: a highlight (M, as in video editors; H does nothing) and a chapter (N), each written a title in
 // its popover; the chapter deleted (Delete), brought back with Ctrl+Z, and
 // deleted again with Ctrl+Shift+Z, each told in a toast.
 
@@ -39,7 +39,14 @@ export default {
     await to(0);
     await app.key("ArrowRight", { shift: true });
     await to(1);
-    await mark("h", "Highlight note", "Tranquility Base");
+    // H does nothing (M took its place), and M marks rather than mutes.
+    await app.key("h");
+    await new Promise((r) => setTimeout(r, 500));
+    if (await app.js(`return !!document.querySelector("[role=dialog]")`)) throw new Error("H opened a box");
+    if ((await marks()).length) throw new Error("H made a mark");
+    await mark("m", "Highlight note", "Tranquility Base");
+    if (await app.js(`return !!document.querySelector('.bar button[aria-label="Unmute"]')`))
+      throw new Error("M muted the player");
     await app.key("Escape");
     await app.key("ArrowRight", { shift: true });
     await app.key("ArrowRight", { shift: true });

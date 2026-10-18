@@ -1,7 +1,7 @@
 // The open VOD's marks. Cuts between frames split it into stretches, each of
 // which can become a clip: Split (B) puts one where the playhead is (or takes
 // away the one there). Chapters (N) name the part of the VOD from their start
-// to the next one's, and highlights (H) note a moment. A selected mark moves
+// to the next one's, and highlights (M) note a moment. A selected mark moves
 // by frames with , and . or by seconds with the arrows, J and L
 // (Player.svelte), or by dragging it on the timeline (Scrubber.svelte).
 // Saved per VOD (crates/core db.rs `marks`); changes show at once and are

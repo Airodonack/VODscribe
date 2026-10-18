@@ -22,7 +22,7 @@
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
-  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
+  import PlayerBar from "./PlayerBar.svelte";
   import { formatTime } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
@@ -292,7 +292,6 @@
     if (e.ctrlKey || e.metaKey) return;
     if ((key === "Delete" || key === "Backspace") && atNow) removeCurrent();
     else if (key === " " || key === "k") player.togglePlay();
-    else if (key === "m") toggleMute(player);
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
     else if (key === "," || key === ".") player.step?.(key === "," ? -1 : 1);
     else if (key in STEPS) {

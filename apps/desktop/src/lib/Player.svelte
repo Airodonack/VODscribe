@@ -12,7 +12,7 @@
   import { DEFAULT_FPS, inFrame } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
-  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
+  import PlayerBar from "./PlayerBar.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
@@ -277,16 +277,16 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
-    // H marks a highlight here, N starts a chapter, each with its title to write.
-    if (key === "h" || key === "n") {
-      if (!e.repeat) cuts.add(key === "h" ? "highlight" : "chapter", now, fps);
+    // M marks a highlight here (a marker, as in video editors), N starts a
+    // chapter, each with its title to write.
+    if (key === "m" || key === "n") {
+      if (!e.repeat) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
       collapsed = false;
       e.preventDefault();
       return;
     }
-    if (key === "m" || key === "c") {
-      if (key === "m") toggleMute(player);
-      else player?.captions?.toggle();
+    if (key === "c") {
+      player?.captions?.toggle();
       e.preventDefault();
       return;
     }
@@ -410,9 +410,8 @@
       selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
       <kbd>E</kbd> clip the stretch <span class="sep">·</span>
-      <kbd>H</kbd> highlight here <span class="sep">·</span>
+      <kbd>M</kbd> highlight here <span class="sep">·</span>
       <kbd>N</kbd> new chapter here (double-click one to rename it) <span class="sep">·</span>
-      <kbd>M</kbd> mute <span class="sep">·</span>
       <kbd>C</kbd> captions <span class="sep">·</span>
       <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
