@@ -2,6 +2,20 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.4.0 (unreleased)
+
+- Edits: put clips and stretches of your VODs together into one video. An edit sits in the library's list beside your VODs; drop a clip, a stretch dragged from a timeline, or the Clip button onto it, or use a clip's "Add to an edit". In an edit, drag pieces to reorder them and their edges to make them shorter or longer, split at the playhead (B), click lines of the transcript to strike them out, and render it to one video (E). What's put in an edit is its own copy.
+- Clips: Clip (E) makes the lit-up stretch a clip (with no cuts, the whole video), a pill in the clip bar under the player: play it, rename it, save it, add it to an edit, or drag it into your video editor. Drag the Clip button, or Alt-drag (Option on a Mac) a stretch of the timeline, to take it straight out.
+- Clips and edits can be made as MOV (DNxHR video, PCM sound), the format video editors take best: Settings → Clip format. DaVinci Resolve on Linux needs it, and says so once.
+- Chapters and highlights on the timeline: N starts a chapter and M marks a highlight (M, as in video editors), each with a title to write. Chapters head the transcript and copy as YouTube chapters. Pressed by mistake, Escape takes it back. Muting is now the speaker button's alone.
+- Undo and redo (Ctrl+Z and Ctrl+Shift+Z, or ⌘Z and ⇧⌘Z) for edits, marks and the clip bar.
+- Back and forward (Alt+← and Alt+→, or ⌘[ and ⌘]) between the VODs and edits you've opened, each as you left it.
+- VODscribe's own player plays your files, downloaded videos and edits, on Windows, macOS and Linux: smooth, frame-exact (, and . step a frame), with captions over the picture. Videos without sound can be added.
+- YouTube's and Twitch's players keep the playhead in step: at other speeds, after seeks, and while Twitch reloads a long VOD.
+- A copy of your library is kept before each upgrade of its format (for 30 days), and if the library won't open, VODscribe says so and offers a way out.
+- Files you made and no longer use don't pile up in Videos/VODscribe: a clip's earlier file goes when it's resized, and an edit's when it's renamed and rendered again, unless you dragged that file into another app.
+- Fixes: adding several files at once could fail with "database is locked". On Linux without Vulkan, on Wayland, or with NVIDIA's driver, the picture or the window could be black. Installing a new version over an old one on Windows could offer to delete your library. Quitting left downloads and transcription running. Undo didn't work while a search result played. Error messages showed your home folder's full path. A file ffmpeg can't read passed as silent instead of failing. Videos larger than 4096 pixels crashed the player. Captions were hard to read in the light theme. The Linux packages now declare ALSA, which the app needs for sound.
+
 ## 0.3.0 — 2026-10-15
 
 - VODs from other sites: paste a link from any site the video downloader knows (Dailymotion, SoundCloud, Bandcamp and well over a thousand more), not only Kick, Twitch and YouTube. Their video, or audio, is kept on your computer to play in VODscribe, in a format your computer plays, up to 720p. Settings → Storage chooses 480p to 1080p and shows the space they take; the crossed-out camera in its row deletes the video and keeps the transcript. Sites that need you to sign in aren't supported.
