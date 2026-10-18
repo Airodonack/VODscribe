@@ -17,8 +17,9 @@
 //
 // A scenario exports { name, before?(ctx), run(app, ctx) }: `before` sets up
 // the data folder before the app starts; `run` gets an App (lib/app.mjs) and
-// ctx: { fixtures, out, log, quit(), start(), restart() }: quit ends the app,
-// start starts it again and returns the new App, restart does both.
+// ctx: { fixtures, out, log, quit(), start(), restart(), skip(why) }: quit
+// ends the app, start starts it again and returns the new App, restart does
+// both; skip ends the scenario as skipped (it can't run here), not failed.
 
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -58,6 +59,9 @@ if (only) {
   if (unknown.length) throw new Error(`no scenario ${unknown.join(", ")} (there are: ${names.join(", ")})`);
 }
 
+/** Thrown by ctx.skip: the scenario can't run here (said in the results, not a failure). */
+class Skip extends Error {}
+
 const started = Date.now();
 const results = [];
 for (const name of names.filter((n) => !only || only.includes(n))) {
@@ -83,12 +87,16 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
       await closing?.driver.close();
     },
     start: launch,
+    skip: (why) => {
+      throw new Skip(why);
+    },
     restart: async () => {
       await ctx.quit();
       return launch();
     },
   };
   let error;
+  let skipped;
   try {
     resetData();
     // What a scenario sets up in the data folder before the app starts.
@@ -98,14 +106,18 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     const errors = current ? await current.app.errors() : [];
     if (errors.length) throw new Error(`the page shows: ${errors.join(" | ")}`);
   } catch (e) {
-    error = e.message;
-    console.error(`${name}: FAILED: ${error}`);
-    if (current) await diagnose(current.driver, name);
+    if (e instanceof Skip) {
+      skipped = e.message;
+    } else {
+      error = e.message;
+      console.error(`${name}: FAILED: ${error}`);
+      if (current) await diagnose(current.driver, name);
+    }
   } finally {
     await current?.driver.close();
   }
-  results.push({ name, ok: !error, error, seconds: Math.round((Date.now() - begun) / 1000) });
-  log(error ? "failed" : "passed");
+  results.push({ name, ok: !error, error, skipped, seconds: Math.round((Date.now() - begun) / 1000) });
+  log(error ? "failed" : skipped ? `skipped: ${skipped}` : "passed");
 }
 
 mkdirSync(out, { recursive: true });
@@ -113,7 +125,9 @@ writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
 const failed = results.filter((r) => !r.ok);
 console.log(`\ne2e: ${results.length - failed.length} of ${results.length} passed`);
 for (const r of results)
-  console.log(`  ${r.ok ? "ok  " : "FAIL"} ${r.name} (${r.seconds} s)${r.ok ? "" : `: ${r.error}`}`);
+  console.log(
+    `  ${r.skipped ? "skip" : r.ok ? "ok  " : "FAIL"} ${r.name} (${r.seconds} s)${r.error ? `: ${r.error}` : r.skipped ? `: ${r.skipped}` : ""}`,
+  );
 process.exit(failed.length ? 1 : 0);
 
 /** With E2E_TRACE=1, logs each call into the page and how long it took. */

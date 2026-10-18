@@ -75,7 +75,7 @@ jobs:
           cargo install tauri-driver --version 2.1.0 --locked
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
-            sudo apt-get install -y webkit2gtk-driver xvfb ./build/deb/*.deb
+            sudo apt-get install -y webkit2gtk-driver xvfb xdotool ./build/deb/*.deb
             echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
           else
             # The installer, silently, for this user (its usual mode).

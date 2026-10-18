@@ -56,3 +56,39 @@ export function longSpeech(dir) {
   mkdirSync(dir, { recursive: true });
   return make(dir, "landed-10-minutes.m4a", ["-stream_loop", "119", "-i", LANDED, "-c:a", "aac", "-b:a", "64k"]);
 }
+
+/** The colour of each second of colours.mp4, in order. */
+export const COLOURS = [
+  ["red", [255, 0, 0]],
+  ["lime", [0, 255, 0]],
+  ["blue", [0, 0, 255]],
+  ["yellow", [255, 255, 0]],
+  ["magenta", [255, 0, 255]],
+  ["cyan", [0, 255, 255]],
+];
+
+/**
+ * A video whose picture says where it is: each second one flat colour
+ * (COLOURS), so a screenshot tells which frame shows without reading it.
+ * No sound. Made in `dir` once.
+ */
+export function colours(dir) {
+  mkdirSync(dir, { recursive: true });
+  const inputs = COLOURS.flatMap(([name]) => ["-f", "lavfi", "-i", `color=c=${name}:s=640x360:r=30:d=1`]);
+  const joined = `${COLOURS.map((_, i) => `[${i}:v]`).join("")}concat=n=${COLOURS.length}:v=1:a=0[v]`;
+  return make(dir, "colours.mp4", [
+    ...inputs,
+    "-filter_complex",
+    joined,
+    "-map",
+    "[v]",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    "30",
+  ]);
+}
