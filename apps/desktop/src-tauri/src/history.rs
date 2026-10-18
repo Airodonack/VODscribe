@@ -110,6 +110,20 @@ impl History {
         s.redo.remove(&doc);
     }
 
+    /// Forgets `doc`'s newest change if what it holds now is what it was
+    /// before that change (the change taken back), as if it had never been
+    /// made; false, and nothing forgotten, otherwise.
+    pub(crate) fn unrecord(&self, db: &Db, doc: Doc) -> bool {
+        let Ok(Some(now)) = snapshot(db, doc) else { return false };
+        let mut s = self.0.lock().unwrap();
+        let Some(stack) = s.undo.get_mut(&doc) else { return false };
+        if stack.last().is_none_or(|e| e.before != now) {
+            return false;
+        }
+        stack.pop();
+        true
+    }
+
     /// Forgets `doc`'s history (it's deleted).
     pub(crate) fn forget(&self, doc: Doc) {
         let mut s = self.0.lock().unwrap();

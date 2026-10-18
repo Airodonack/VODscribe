@@ -1,6 +1,8 @@
 // Marks and undo: a highlight (M, as in video editors; H does nothing) and a chapter (N), each written a title in
 // its popover; the chapter deleted (Delete), brought back with Ctrl+Z, and
-// deleted again with Ctrl+Shift+Z, each told in a toast.
+// deleted again with Ctrl+Shift+Z, each told in a toast. Then a chapter made
+// by mistake (N) and cancelled with Escape in its box: gone, and not in undo's
+// history (Ctrl+Z undoes the change before it).
 
 import { until } from "../lib/app.mjs";
 
@@ -97,5 +99,39 @@ export default {
     log(`${undone}; ${redone}`);
     if ((await marks()).find((m) => m.kind === "highlight")?.text !== "Tranquility Base")
       throw new Error("undo and redo of the chapter changed the highlight");
+
+    await app.key("ArrowRight", { shift: true });
+    await to(4);
+    await app.key("n");
+    const box = `[role=dialog][aria-label="Chapter title"] input`;
+    await until("the chapter box", () => app.js(`return !!document.querySelector(arguments[0])`, box), 10_000);
+    await app.js(
+      `document.querySelector(arguments[0]).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+      box,
+    );
+    await until("the box to close", () => app.js(`return !document.querySelector(arguments[0])`, box), 10_000);
+    await until(
+      "the cancelled chapter gone",
+      async () => {
+        const left = (await marks()).filter((m) => m.kind === "chapter");
+        if (!left.length) return true;
+        throw new Error(`chapters: ${JSON.stringify(left.map((m) => [m.start, m.text]))}`);
+      },
+      10_000,
+    );
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
+    );
+    const back = await until(
+      "the removed chapter back",
+      async () => {
+        const left = (await marks()).filter((m) => m.kind === "chapter");
+        if (left.length === 1 && left[0].text === "The landing") return left[0];
+        throw new Error(`chapters: ${JSON.stringify(left.map((m) => [m.start, m.text]))}; "${await toast()}"`);
+      },
+      10_000,
+    );
+    if (Math.abs(back.start - 3) > 0.05) throw new Error(`the chapter came back at ${back.start}, not 3`);
+    log("a chapter cancelled with Escape: gone, and Ctrl+Z undid the change before it");
   },
 };

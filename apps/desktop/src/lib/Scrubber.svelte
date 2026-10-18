@@ -599,9 +599,13 @@
     }
   }
 
+  // Enter, or a click away, keeps what's written; Escape doesn't, and takes
+  // away a mark just added (its key pressed by mistake).
   function closeEditor() {
     if (editing && keep) cuts.setText(editing.id, draft);
+    else if (editing && editing.id === cuts.fresh) cuts.cancel(editing.id);
     cuts.editing = null;
+    cuts.fresh = null;
   }
   const focus = (el: HTMLInputElement) => {
     requestAnimationFrame(() => el.focus());

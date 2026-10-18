@@ -309,6 +309,7 @@ pub fn run() {
             edits::show_edit,
             edits::drag_edit,
             clips::delete_mark,
+            clips::cancel_mark,
             videos::keep_video,
             videos::stop_video,
             videos::video_downloads,

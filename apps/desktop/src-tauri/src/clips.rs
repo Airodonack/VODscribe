@@ -494,6 +494,22 @@ pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResul
     marking(&state, id, "Mark removed", |db| db.delete_mark(id).map(|()| true))
 }
 
+/// Takes away mark `id`, just added and cancelled (Escape in its title box),
+/// as if it had never been made: its adding leaves undo's history too. With
+/// anything changed since, it's an ordinary removal.
+#[tauri::command]
+pub(crate) async fn cancel_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    let Some(vod_id) = db.mark_vod(id).map_err(err)? else { return Ok(()) };
+    let doc = Doc::Vod(vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    db.delete_mark(id).map_err(err)?;
+    if !state.history.unrecord(&db, doc) {
+        state.history.record(&db, doc, "Mark removed", before);
+    }
+    Ok(())
+}
+
 /// Whether DaVinci Resolve is installed where its Linux installer puts it:
 /// it can't read MP4 clips there, so the interface points to the setting.
 #[tauri::command]

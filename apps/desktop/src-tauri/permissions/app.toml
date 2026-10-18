@@ -74,6 +74,7 @@ permissions = [
   "allow-show-edit",
   "allow-drag-edit",
   "allow-delete-mark",
+  "allow-cancel-mark",
   "allow-keep-video",
   "allow-stop-video",
   "allow-video-downloads",

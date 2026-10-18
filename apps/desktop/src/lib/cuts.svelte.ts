@@ -21,6 +21,8 @@ class Cuts {
   selected = $state<number | null>(null);
   /** A chapter or highlight whose title or note is being written. */
   editing = $state<number | null>(null);
+  /** The mark just added whose title or note is being written: Escape takes it away. */
+  fresh: number | null = null;
   /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends. */
   selection = $state<{ start: number; end: number } | null>(null);
   /** The selection's edge selected, to drag or move a frame at a time. */
@@ -36,6 +38,7 @@ class Cuts {
     this.all = [];
     this.selected = null;
     this.editing = null;
+    this.fresh = null;
     this.selection = null;
     this.selectedEdge = null;
     this.#reload();
@@ -105,6 +108,7 @@ class Cuts {
       this.clearSelection();
       this.selected = mark.id;
       this.editing = mark.id;
+      this.fresh = there ? null : mark.id;
       this.error = null;
     } catch (e) {
       this.error = String(e);
@@ -185,6 +189,14 @@ class Cuts {
     if (this.selected === id) this.selected = null;
     if (this.editing === id) this.editing = null;
     this.#save(api.deleteMark(id));
+  }
+
+  /** Takes away mark `id`, just added by mistake, as if it had never been. */
+  cancel(id: number) {
+    this.all = this.all.filter((m) => m.id !== id);
+    if (this.selected === id) this.selected = null;
+    if (this.editing === id) this.editing = null;
+    this.#save(api.cancelMark(id));
   }
 }
 

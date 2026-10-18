@@ -419,6 +419,8 @@ export const api = {
   dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
   moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
   deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
+  /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
+  cancelMark: (id: number) => invoke<void>("cancel_mark", { id }),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */
