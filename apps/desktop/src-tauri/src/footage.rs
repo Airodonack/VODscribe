@@ -216,7 +216,17 @@ impl Footage {
 /// downloading a section (`footage::section`) of it if not.
 pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
-    let _one = state.footage.fetching.lock().unwrap();
+    // Behind another download (the queue's, for an edit playing), stoppable.
+    let _one = loop {
+        match state.footage.fetching.try_lock() {
+            Ok(one) => break one,
+            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if stop.load(Ordering::Relaxed) => {
+                return Err(vodscribe_core::Canceled.into());
+            }
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(100)),
+        }
+    };
     let vod = {
         let db = state.db.lock().unwrap();
         if find(app, &db, vod_id, start, end).is_some() {
