@@ -25,6 +25,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -43,9 +44,22 @@ const out = path.join(here, "out", name);
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
+// One connection for every command, kept open a while: OpenSSH 9.8+ servers
+// refuse an address for minutes after many connections from it
+// (PerSourcePenalties), which polling with a new one each time set off.
+const shared = [
+  "-o",
+  "BatchMode=yes",
+  "-o",
+  "ControlMaster=auto",
+  "-o",
+  `ControlPath=${path.join(tmpdir(), `vodscribe-e2e-${name}-%C`)}`,
+  "-o",
+  "ControlPersist=120",
+];
 const ssh = (command, opts = {}) =>
-  execFileSync("ssh", ["-o", "BatchMode=yes", runner.host, command], { encoding: "utf8", ...opts });
-const scp = (...args) => execFileSync("scp", ["-q", "-o", "BatchMode=yes", ...args], { stdio: "inherit" });
+  execFileSync("ssh", [...shared, runner.host, command], { encoding: "utf8", ...opts });
+const scp = (...args) => execFileSync("scp", ["-q", ...shared, ...args], { stdio: "inherit" });
 const log = (what) => console.log(`[${name}] ${what}`);
 
 /** Copies the harness (tests/e2e, as committed plus what's new) to the runner's folder. */
@@ -60,7 +74,7 @@ function sendHarness(mkdir) {
   const tar = spawnSync("tar", ["-cf", "-", ...files], { cwd: repo, maxBuffer: 1 << 30 });
   if (tar.status !== 0) throw new Error(`tar: ${tar.stderr}`);
   const unpack = runner.os === "windows" ? `tar -xf - -C "${runner.dir}"` : `tar -xf - -C '${runner.dir}'`;
-  execFileSync("ssh", ["-o", "BatchMode=yes", runner.host, unpack], { input: tar.stdout });
+  execFileSync("ssh", [...shared, runner.host, unpack], { input: tar.stdout });
 }
 
 async function windows() {
@@ -128,14 +142,14 @@ async function windows() {
   const begun = Date.now();
   let shown = 0;
   for (let lost = 0; ;) {
-    await sleep(5000);
+    await sleep(15_000);
     // The tests go on in the task if the connection drops: keep asking.
     let text;
     try {
       text = ps(`if (Test-Path '${dir}\\out\\run.log') { Get-Content -Raw '${dir}\\out\\run.log' }`);
       lost = 0;
     } catch (e) {
-      if (++lost > 60) throw e;
+      if (++lost > 40) throw e;
       if (lost === 1) log(`lost the connection (${e.message.split("\n").at(-2) ?? e.message}); still waiting`);
       continue;
     }
@@ -161,8 +175,7 @@ function mac() {
   const run = spawnSync(
     "ssh",
     [
-      "-o",
-      "BatchMode=yes",
+      ...shared,
       runner.host,
       `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'` +
         `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}; ` +
@@ -172,7 +185,7 @@ function mac() {
   );
   for (const l of run.stdout.split("\n").filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL)|FAILED/.test(l)))
     console.log(`  ${l}`);
-  spawnSync("scp", ["-q", "-r", `${runner.host}:${runner.dir}/out/*`, out], { stdio: "inherit" });
+  spawnSync("scp", ["-q", ...shared, "-r", `${runner.host}:${runner.dir}/out/*`, out], { stdio: "inherit" });
   return run.status;
 }
 

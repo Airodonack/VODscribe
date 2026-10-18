@@ -172,9 +172,11 @@ export async function rectOf(app, selector) {
      const at = await call("plugin:window|inner_position", { label: "main" });
      const size = await call("plugin:window|inner_size", { label: "main" });
      const scale = await call("plugin:window|scale_factor", { label: "main" });
-     // On macOS the "inner" box still has the title bar on top: the page starts below it.
-     const top = Math.max(0, size.height - innerHeight * scale);
-     const left = Math.max(0, (size.width - innerWidth * scale) / 2);
+     // On macOS the "inner" box still has the title bar on top: the page
+     // starts below it. Elsewhere it's the page's own (Windows' would count twice).
+     const mac = navigator.platform.startsWith("Mac");
+     const top = mac ? Math.max(0, size.height - innerHeight * scale) : 0;
+     const left = mac ? Math.max(0, (size.width - innerWidth * scale) / 2) : 0;
      return { x: at.x + left + box.left * scale, y: at.y + top + box.top * scale, w: box.width * scale, h: box.height * scale, scale };`,
     selector,
   );

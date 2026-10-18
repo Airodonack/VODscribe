@@ -66,25 +66,28 @@ export default {
       throw new Error(`turning them back on didn't bring the same picture back (${same.toFixed(1)})`);
     await ctx.checkpoint("captions-on");
 
-    // Full screen: the window as big as the screen, then back.
+    // Full screen: the window says it is, as big as the screen; then back
+    // as it was (a small screen's window may fill it before as well).
     const screen = os.sizeOf(os.screenshot());
+    const full = () =>
+      app.js(`return window.__TAURI_INTERNALS__.invoke("plugin:window|is_fullscreen", { label: "main" })`);
     const before = await os.windowRect(app);
     await app.key("f");
     await until(
-      "the window to fill the screen",
+      "the window full screen, filling the screen",
       async () => {
         const r = await os.windowRect(app);
-        return r.w >= screen.w * 0.95 && r.h >= screen.h * 0.9 && r;
+        return (await full()) && r.w >= screen.w * 0.95 && r.h >= screen.h * 0.9 && r;
       },
       10_000,
     );
     await ctx.checkpoint("fullscreen");
     await app.key("Escape");
     const after = await until(
-      "the window back",
+      "the window back as it was",
       async () => {
         const r = await os.windowRect(app);
-        return r.w < screen.w * 0.95 && r;
+        return !(await full()) && Math.abs(r.w - before.w) <= 4 && Math.abs(r.h - before.h) <= 4 && r;
       },
       10_000,
     );

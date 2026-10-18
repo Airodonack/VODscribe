@@ -47,6 +47,16 @@ export default {
       10_000,
     );
     ctx.log(`chose ${JSON.stringify(CHOICES)} (were ${JSON.stringify(before)})`);
+    // Shown at once, saved a moment later: restart once they're saved (the
+    // saves go one after another; quitting at once could beat the last).
+    await until(
+      "the choices saved",
+      async () => {
+        const s = await app.invoke("get_settings");
+        return s.theme === "dark" && s.video_height === 480 && s.clip_format === "mov";
+      },
+      10_000,
+    );
 
     app = await ctx.restart();
     await app.toLibrary();

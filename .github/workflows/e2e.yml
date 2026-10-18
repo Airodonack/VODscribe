@@ -116,6 +116,8 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             # Under a window manager, as on a desktop: full screen is the window manager's to do.
+            # (The inner shell expands $1, the app's path.)
+            # shellcheck disable=SC2016
             dbus-run-session -- xvfb-run -a sh -c 'openbox & sleep 1; exec node tests/e2e/run.mjs "$1"' sh "$APP"
           else
             node tests/e2e/run.mjs "$APP"
