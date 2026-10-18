@@ -373,6 +373,7 @@ fn quit(app: &AppHandle) {
         std::mem::forget(db);
     }
     vodscribe_core::tools::stop_tracked();
+    clips::delete_leftovers();
 }
 
 #[cfg(test)]

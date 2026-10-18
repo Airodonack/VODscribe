@@ -220,7 +220,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     };
     if result.is_ok() && db.clip(id)?.is_none() {
         // Deleted while it was being cut.
-        let _ = std::fs::remove_file(&out);
+        delete_file(&out);
     }
     // Its file for the range before goes, unless another app took it (then
     // it stays there, and the new one is the app's own).
@@ -228,7 +228,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         if db.clip_handed_out(id)? {
             db.take_back_clip(id)?;
         } else {
-            let _ = std::fs::remove_file(old);
+            delete_file(old);
         }
     }
     if recorded && result.is_ok() && !vod.audio_only {
@@ -240,6 +240,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     } else if recorded {
         emit(app, &db, id);
     }
+    delete_leftovers();
     Ok(())
 }
 
@@ -415,11 +416,29 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     let handed_out = db.clip_handed_out(id)?;
     db.delete_clip(id)?;
     if let Some(path) = clip.and_then(|c| c.file_path).filter(|_| !handed_out) {
-        let _ = std::fs::remove_file(path);
+        delete_file(path);
     }
     let _ = std::fs::remove_file(thumb_path(app, id));
     let _ = app.emit("clip-removed", id);
     Ok(())
+}
+
+/// Files that couldn't be deleted when they were to go: on Windows a file
+/// can't be while something has it open (a render or the player reading a
+/// clip's file). Tried again as renders and cuts end, and as the app quits.
+static LEFTOVERS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// Deletes `path` now, or once nothing has it open (`delete_leftovers`).
+pub(crate) fn delete_file(path: impl AsRef<Path>) {
+    let path = path.as_ref();
+    if std::fs::remove_file(path).is_err() && path.exists() {
+        LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()).push(path.to_path_buf());
+    }
+}
+
+/// Deletes what couldn't be deleted before, if it can be now.
+pub(crate) fn delete_leftovers() {
+    LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| std::fs::remove_file(p).is_err() && p.exists());
 }
 
 /// Shows clip `id`'s file in the system file manager.
@@ -809,6 +828,25 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On Windows a file another program has open can't be deleted: it goes
+    /// once that program lets go.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_in_use_goes_once_let_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let path = std::env::temp_dir().join(format!("vodscribe-in-use-{}.mp4", std::process::id()));
+        std::fs::write(&path, b"video").unwrap();
+        // Shared for reading only, as ffmpeg opens what it reads.
+        let reader = std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+        delete_file(&path);
+        assert!(path.exists(), "still open");
+        delete_leftovers();
+        assert!(path.exists(), "still open");
+        drop(reader);
+        delete_leftovers();
+        assert!(!path.exists(), "gone once let go");
+    }
 
     #[test]
     fn ranges_must_be_clips() {

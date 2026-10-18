@@ -4,7 +4,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.4.1 (unreleased)
 
-- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted. A chapter or highlight taken back with Escape left nothing to redo. Removing a VOD while its clips waited to be made could still download them, leaving their files behind.
+- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted. A chapter or highlight taken back with Escape left nothing to redo. Removing a VOD while its clips waited to be made could still download them, leaving their files behind. On Windows, a clip deleted while an edit was rendering from it kept its file.
 
 ## 0.4.0 — 2026-10-18
 
