@@ -289,4 +289,11 @@
     text-align: left;
     pointer-events: auto;
   }
+
+  /* A sound-only file's stage is the panel's own surface (Player.svelte,
+     .stage.audio), light in the light theme: the panel's text, not the
+     dark stage's. */
+  :global(.stage.audio) .caption.under {
+    color: var(--text);
+  }
 </style>

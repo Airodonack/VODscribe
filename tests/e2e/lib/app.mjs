@@ -108,6 +108,31 @@ export class App {
     );
   }
 
+  /**
+   * The contrast ratio (WCAG, 1 to 21) of `selector`'s text against the
+   * first solid background behind it, as the page computes their colours.
+   */
+  contrast(selector) {
+    return this.js(
+      `const el = document.querySelector(arguments[0]);
+       if (!el) throw new Error("no " + arguments[0]);
+       const rgba = (c) => c.match(/[\\d.]+/g).map(Number);
+       let bg = null;
+       for (let e = el; e && !bg; e = e.parentElement) {
+         const c = rgba(getComputedStyle(e).backgroundColor);
+         if (c.length < 4 || c[3] > 0.95) bg = c;
+       }
+       bg ??= [255, 255, 255];
+       const luminance = ([r, g, b]) => {
+         const lin = (v) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+         return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+       };
+       const [a, b] = [luminance(rgba(getComputedStyle(el).color)), luminance(bg)].sort((x, y) => y - x);
+       return (a + 0.05) / (b + 0.05);`,
+      selector,
+    );
+  }
+
   /** Error text the page shows, if any. */
   errors() {
     return this.js(

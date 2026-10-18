@@ -42,6 +42,28 @@ export default {
       MINUTE,
     );
     if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
+    // Readable on what's behind it, in each theme (a sound-only file's
+    // caption sits on the panel, not on a video's dark stage).
+    for (const theme of ["Light", "Dark"]) {
+      await app.click('button[aria-label="Settings"]');
+      await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
+      await app.js(
+        `[...document.querySelectorAll('[role="radiogroup"][aria-label="Theme"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
+        theme,
+      );
+      await app.key("Escape");
+      await until(
+        `the ${theme.toLowerCase()} theme`,
+        async () => (await app.invoke("get_settings")).theme === theme.toLowerCase(),
+        10_000,
+      );
+      const contrast = await until("the caption", () => app.contrast(".player .caption"), 10_000);
+      app.log(`${theme}: the caption's contrast is ${contrast.toFixed(1)}:1`);
+      if (contrast < 4.5)
+        throw new Error(
+          `in the ${theme.toLowerCase()} theme the caption's contrast is ${contrast.toFixed(2)}:1, under 4.5:1`,
+        );
+    }
     app.log(`waveform and captions: "${caption}"`);
     await checkpoint("player-caption");
   },
