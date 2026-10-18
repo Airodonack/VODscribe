@@ -183,8 +183,19 @@ fn parse_frame_rate(details: &str) -> Option<f64> {
     let line = details
         .lines()
         .find(|l| l.trim_start().starts_with("Stream #") && l.contains(": Video: ") && !l.contains("(attached pic)"))?;
-    // "…, 1920x1080, 6000 kb/s, 29.97 fps, 29.97 tbr, …"
-    line.split(", ").find_map(|part| part.strip_suffix(" fps")?.parse::<f64>().ok()).filter(|f| *f > 0.0)
+    // "…, 1920x1080, 6000 kb/s, 29.97 fps, 29.97 tbr, …". Rates ffmpeg shows
+    // as "120k" are a timebase, not a picture rate: unknown.
+    let shown = line.split(", ").find_map(|part| part.strip_suffix(" fps")?.parse::<f64>().ok())?;
+    (shown > 0.0).then(|| exact_rate(shown))
+}
+
+/// The exact rate behind ffmpeg's two decimals: 23.98, 29.97 and 59.94 are
+/// 24000/1001, 30000/1001 and 60000/1001, and stepping or decoding at the
+/// rounded rate would repeat a frame every few minutes.
+fn exact_rate(shown: f64) -> f64 {
+    let whole = (shown * 1.001).round();
+    let ntsc = whole * 1000.0 / 1001.0;
+    if shown.fract() != 0.0 && (shown - ntsc).abs() < 0.006 { ntsc } else { shown }
 }
 
 /// The frame showing at `time` seconds into `path`, as a JPEG `width` pixels wide.
@@ -272,7 +283,7 @@ mod tests {
         let details = "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 5000 kb/s, 29.97 fps, 29.97 tbr, 30k tbn (default)
   Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)";
         let media = parse_media(details);
-        assert_eq!(media.picture, Some(Picture { width: 1920, height: 1080, fps: 29.97 }));
+        assert_eq!(media.picture, Some(Picture { width: 1920, height: 1080, fps: 30000.0 / 1001.0 }));
         assert!(media.audio);
         let cover = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 320 kb/s
   Stream #0:1: Video: mjpeg (Baseline), yuvj420p(pc, bt470bg/unknown/unknown), 600x600 [SAR 1:1 DAR 1:1], 90k tbr, 90k tbn (attached pic)";
@@ -296,7 +307,15 @@ mod tests {
         assert_eq!((s.video, s.audio.as_deref()), (None, Some("mp3")), "cover art isn't video");
         assert_eq!(parse_frame_rate(song), None);
         let film = "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 29.97 fps, 29.97 tbr, 1k tbn (default)";
-        assert_eq!(parse_frame_rate(film), Some(29.97));
+        assert_eq!(parse_frame_rate(film), Some(30000.0 / 1001.0), "29.97 is 30000/1001");
+        let rate =
+            |shown: &str| parse_frame_rate(&format!("  Stream #0:0: Video: h264, yuv420p, 1280x720, {shown} fps"));
+        assert_eq!(rate("23.98"), Some(24000.0 / 1001.0));
+        assert_eq!(rate("59.94"), Some(60000.0 / 1001.0));
+        assert_eq!(rate("119.88"), Some(120000.0 / 1001.0));
+        assert_eq!(rate("12.5"), Some(12.5), "not a 1001 rate");
+        assert_eq!(rate("60"), Some(60.0));
+        assert_eq!(rate("120k"), None, "a timebase, not a frame rate");
     }
 
     /// Probes real files made with ffmpeg; skipped where ffmpeg isn't installed.
@@ -322,6 +341,8 @@ mod tests {
         );
         let silent = make("silent.mp4", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90"]);
         assert_eq!(frame_rate(&ffmpeg, &video).unwrap(), Some(25.0));
+        let film = make("film.mkv", &["-f", "lavfi", "-i", "testsrc=d=1:s=160x90:r=24000/1001"]);
+        assert_eq!(frame_rate(&ffmpeg, &film).unwrap(), Some(24000.0 / 1001.0));
         let jpeg = frame(&ffmpeg, &video, 1.0, 80).unwrap();
         assert!(jpeg.starts_with(&[0xff, 0xd8]), "a JPEG");
         // Real audio with a program's extension is still refused.

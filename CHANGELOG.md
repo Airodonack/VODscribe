@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.4.1 (unreleased)
 
+- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted.
+
 ## 0.4.0 — 2026-10-18
 
 - Edits: put clips and stretches of your VODs together into one video. An edit sits in the library's list beside your VODs; drop a clip, a stretch dragged from a timeline, or the Clip button onto it, or use a clip's "Add to an edit". In an edit, drag pieces to reorder them and their edges to make them shorter or longer, split at the playhead (B), click lines of the transcript to strike them out, and render it to one video (E). What's put in an edit is its own copy.
