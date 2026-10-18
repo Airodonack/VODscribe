@@ -15,7 +15,8 @@
 // a library. On failure: the page's errors and a screenshot in E2E_OUT
 // (default tests/e2e/out). Every scenario runs; the exit code says if any failed.
 //
-// A scenario exports { name, before?(ctx), run(app, ctx), allowErrors? }: `before` sets up
+// A scenario exports { name, before?(ctx), run(app, ctx), allowErrors?,
+// needs? } (needs: ["network"] runs only with E2E_NETWORK=1): `before` sets up
 // the data folder before the app starts; `run` gets an App (lib/app.mjs) and
 // ctx: { fixtures, out, log, quit(), start(), restart(), skip(why),
 // checkpoint(label) }: quit ends the app, start starts it again and returns
@@ -105,6 +106,9 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
   let error;
   let skipped;
   try {
+    // Scenarios that reach the sites run only when asked: E2E_NETWORK=1.
+    if (scenario.needs?.includes("network") && process.env.E2E_NETWORK !== "1")
+      throw new Skip("needs the network: set E2E_NETWORK=1");
     resetData();
     // What a scenario sets up in the data folder before the app starts.
     await scenario.before?.(ctx);

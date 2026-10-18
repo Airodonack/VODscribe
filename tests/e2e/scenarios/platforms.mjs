@@ -1,0 +1,96 @@
+// The sites (needs the network, so only with E2E_NETWORK=1, and not in CI):
+// the test video on Twitch, Kick and YouTube (the project's own uploads,
+// 70 s), each added by its link, transcribed, its chat replay fetched where
+// the site has one, and played in the app. YouTube may ask to confirm
+// "you're not a bot": that's YouTube's block on the computer's address, not
+// the app's fault, so it's said, not failed (the app never signs in).
+
+import { MINUTE, until } from "../lib/app.mjs";
+import * as os from "../lib/os.mjs";
+
+const SITES = [
+  ["twitch", "https://www.twitch.tv/videos/2901646294"],
+  ["kick", "https://kick.com/airodonack/videos/01a14106-89f0-7a9c-977f-aa0d3247c810"],
+  ["youtube", "https://www.youtube.com/watch?v=IaIo3d6cUuo"],
+];
+
+export default {
+  name: "platforms",
+  needs: ["network"],
+  allowErrors: true,
+  async run(app, ctx) {
+    await app.toLibrary();
+    const failures = [];
+    for (const [site, url] of SITES) {
+      try {
+        await app.type('input[aria-label="VOD link"]', url);
+        await app.js(`document.querySelector('input[aria-label="VOD link"]').closest("form").requestSubmit()`);
+        const vod = await until(
+          `the ${site} VOD, transcribed`,
+          async () => {
+            const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
+            if (error) return { error };
+            const v = (await app.invoke("list_vods")).find((v) => v.platform === site);
+            if (v?.status === "error") return { error: v.error };
+            return v?.status === "done" && v;
+          },
+          15 * MINUTE,
+        );
+        if (vod.error) {
+          if (site === "youtube" && /not a bot|sign in/i.test(vod.error)) {
+            ctx.log(`youtube: blocked by YouTube's bot check (not the app's doing): ${vod.error.slice(0, 120)}`);
+            continue;
+          }
+          throw new Error(vod.error);
+        }
+        const lines = await app.invoke("transcript", { vodId: vod.id });
+        if (lines.length < 3) throw new Error(`the transcript has ${lines.length} lines, for 70 s of speech`);
+        const chat = await until(
+          `${site}'s chat`,
+          async () => {
+            const c = (await app.invoke("list_vods")).find((v) => v.id === vod.id).chat;
+            return c !== "pending" && c;
+          },
+          5 * MINUTE,
+        );
+        if (chat === "failed") throw new Error("its chat replay failed");
+
+        // Played in the app: the site's embed, or the app's own player.
+        await app.openVod(vod.id);
+        await until(
+          "the Play button",
+          () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+          MINUTE,
+        );
+        // An embedded player may start only on a real click (a page's own
+        // click isn't trusted): the OS's where it can, else the page's.
+        if (!os.unavailable()) {
+          os.activate();
+          const play = await os.rectOf(app, '.bar button[aria-label="Play"]');
+          os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
+        } else {
+          await app.click('.bar button[aria-label="Play"]');
+        }
+        const from = await app.shownTime();
+        const to = await until(
+          `${site} to play`,
+          async () => {
+            const t = await app.shownTime();
+            return t >= from + 3 && t;
+          },
+          2 * MINUTE,
+        );
+        await ctx.checkpoint(`${site}-playing`);
+        await app.pause().catch(() => {});
+        ctx.log(`${site}: ${lines.length} lines, chat ${chat}, played ${from} to ${to} s`);
+        // Each site on its own: the next one's link goes in a cleared box.
+        await app.type('input[aria-label="VOD link"]', "");
+      } catch (e) {
+        failures.push(`${site}: ${e.message}`);
+        ctx.log(`${site}: FAILED: ${e.message}`);
+        await app.type('input[aria-label="VOD link"]', "").catch(() => {});
+      }
+    }
+    if (failures.length) throw new Error(failures.join("; "));
+  },
+};
