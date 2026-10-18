@@ -4,9 +4,11 @@
 // `arguments`, the awaited result).
 //
 // - webdriver: tauri-driver and the platform's driver (WebKitWebDriver on
-//   Linux, msedgedriver on Windows: NATIVE_DRIVER), for the installed app.
+//   Linux, msedgedriver on Windows: NATIVE_DRIVER), for the installed app
+//   (on Windows, only a build with the `e2e` feature lets it in).
 // - bridge: the app's own test hook (src-tauri/src/e2e.rs), in a build made
-//   with the `e2e` feature, for macOS, whose webview has no WebDriver.
+//   with the `e2e` feature, for macOS, whose webview has no WebDriver, and
+//   Windows.
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";

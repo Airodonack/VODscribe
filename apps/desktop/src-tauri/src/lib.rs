@@ -82,9 +82,11 @@ fn err(e: impl Into<anyhow::Error>) -> String {
 /// in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. WebView2 ignores that variable
 /// once an app passes arguments itself, which wry always does, and it's how
 /// msedgedriver asks for a debugging port (the end-to-end tests, tests/e2e).
+/// Only in a build for those tests (the `e2e` feature): in a release, anything
+/// that set the variable could open the page to any program here.
 /// The features each disables are merged: of two --disable-features, only the
 /// last would count.
-#[cfg(any(windows, test))]
+#[cfg(any(all(windows, feature = "e2e"), test))]
 fn webview_args(extra: &str) -> String {
     const WRY: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
     let (mut disabled, mut rest) = (Vec::new(), Vec::new());
@@ -211,7 +213,7 @@ pub fn run() {
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
             let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?;
-            #[cfg(windows)]
+            #[cfg(all(windows, feature = "e2e"))]
             let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
                 Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
                 _ => builder,

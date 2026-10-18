@@ -3,12 +3,14 @@
 //
 //   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge]
 //
-// The webdriver driver (the default on Linux and Windows) runs the installed
-// app through tauri-driver, which must be on PATH (or TAURI_DRIVER), with the
-// platform's native driver: WebKitWebDriver on Linux, msedgedriver on Windows
-// (NATIVE_DRIVER). macOS has no WebDriver for its webview, so there (the
-// default) the bridge driver runs a build made with the `e2e` feature, a .app
-// or its binary, through the app's own test hook (src-tauri/src/e2e.rs).
+// The webdriver driver (the default on Linux) runs the installed app through
+// tauri-driver, which must be on PATH (or TAURI_DRIVER), with the platform's
+// native driver: WebKitWebDriver on Linux, msedgedriver on Windows
+// (NATIVE_DRIVER; only a build with the `e2e` feature lets it in). macOS
+// has no WebDriver for its webview, and a Windows release none either, so
+// there (the default) the bridge driver runs a build made with the `e2e`
+// feature, a .app or its binary, through the app's own test hook
+// (src-tauri/src/e2e.rs).
 //
 // Each scenario empties the app's data folder first (lib/data.mjs), keeping
 // the tools and speech model; set E2E_RESET_DATA=1 to allow it once there's
@@ -44,7 +46,7 @@ if (!app) {
   console.error("usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge]");
   process.exit(2);
 }
-const driverName = opts.driver ?? (process.platform === "darwin" ? "bridge" : "webdriver");
+const driverName = opts.driver ?? (process.platform === "linux" ? "webdriver" : "bridge");
 const startDriver = drivers[driverName];
 if (!startDriver) throw new Error(`no driver ${driverName}`);
 

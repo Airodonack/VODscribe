@@ -1,16 +1,18 @@
 // Runs the end-to-end tests on other computers ("runners"), reached over SSH,
 // and brings the results back to tests/e2e/out/<runner>/.
 //
-//   node tests/e2e/runners.mjs <runner> <app> [run.mjs options, e.g. --only a,b]
+//   node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] [run.mjs options, e.g. --only a,b]
 //
 // Runners are listed in tests/e2e/runners.json (not in the repository; see
 // runners.example.json): a name, the SSH host, its OS, a folder there to
 // work in, and optionally `path`: folders put first on PATH for the tests
 // (Windows), for tools installed only for the user. <app> is what to test, on this computer:
 //
-// - Windows: an NSIS installer (*-setup.exe). It's installed for the user,
-//   silently, and driven over WebDriver; the runner needs Node and
-//   tauri-driver on PATH. The msedgedriver matching its WebView2 is fetched.
+// - Windows: an NSIS installer (*-setup.exe), and with --test-app the app
+//   built with the `e2e` feature (vodscribe.exe): the installer is run for
+//   the user, silently, the test build put over the vodscribe.exe it
+//   installed, and that driven through the app's own test hook (a release
+//   doesn't let WebDriver in). The runner needs Node on PATH.
 //   The tests run as a scheduled task, so the app has the user's desktop
 //   (over SSH it would have none); someone must be signed in.
 // - macOS: a .app built with the `e2e` feature (its webview has no
@@ -33,9 +35,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, "..", "..");
 const [name, app, ...rest] = process.argv.slice(2);
 if (!name || !app) {
-  console.error("usage: node tests/e2e/runners.mjs <runner> <app> [run.mjs options]");
+  console.error("usage: node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] [run.mjs options]");
   process.exit(2);
 }
+const testAt = rest.indexOf("--test-app");
+const testApp = testAt >= 0 ? rest.splice(testAt, 2)[1] : null;
 const listed = path.join(here, "runners.json");
 if (!existsSync(listed)) throw new Error(`no ${listed}: copy runners.example.json and fill it in`);
 const runner = JSON.parse(readFileSync(listed, "utf8")).find((r) => r.name === name);
@@ -104,17 +108,12 @@ async function windows() {
   if (!exe) throw new Error("the installer put no vodscribe.exe in %LOCALAPPDATA%\\VODscribe");
   log(`installed ${exe}`);
 
-  // WebView2 is driven by the msedgedriver of its exact version.
-  const version = ps(
-    `$k = 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'; (Get-ItemProperty $k).pv`,
-  );
-  const driver = `${dir}\\edgedriver-${version}\\msedgedriver.exe`;
-  if (ps(`Test-Path '${driver}'`) !== "True") {
-    ps(
-      `Invoke-WebRequest 'https://msedgedriver.microsoft.com/${version}/edgedriver_win64.zip' -OutFile '${dir}\\edgedriver.zip'; Expand-Archive -Force '${dir}\\edgedriver.zip' -DestinationPath '${dir}\\edgedriver-${version}'`,
-    );
-  }
-  log(`WebView2 ${version}`);
+  // A release doesn't let WebDriver in (lib.rs webview_args): the test build,
+  // over the one installed, with everything else as installed.
+  if (!testApp) throw new Error("Windows needs --test-app: vodscribe.exe built with the e2e feature");
+  scp(testApp, `${runner.host}:${runner.dir}/vodscribe-e2e.exe`);
+  ps(`Copy-Item -Force '${dir}\\vodscribe-e2e.exe' '${exe}'`);
+  log("the test build put over it");
 
   // A scheduled task runs in the signed-in user's session, with a desktop.
   const args = rest.map((a) => `"${a}"`).join(" ");
@@ -125,12 +124,11 @@ async function windows() {
     "set E2E_RESET_DATA=1",
     "set VODSCRIBE_NO_UPDATE_CHECK=1",
     ...(process.env.E2E_NETWORK === "1" ? ["set E2E_NETWORK=1"] : []),
-    `set NATIVE_DRIVER=${driver}`,
     `set E2E_OUT=${dir}\\out`,
     `cd /d "${dir}"`,
     `if exist out rmdir /s /q out`,
     "mkdir out",
-    `node tests\\e2e\\run.mjs "${exe}" ${args} > out\\run.log 2>&1`,
+    `node tests\\e2e\\run.mjs "${exe}" --driver bridge ${args} > out\\run.log 2>&1`,
     "echo %ERRORLEVEL% > out\\exit.txt",
   ].join("\r\n");
   const local = path.join(out, "run.cmd");

@@ -164,6 +164,23 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # On Windows the app again, with the end-to-end tests' hook (the `e2e`
+      # feature), for e2e.yml to drive: a release doesn't let WebDriver in
+      # (lib.rs webview_args). Made after the release is checked and kept,
+      # under a name the release never takes files from.
+      - name: Build the app for the end-to-end tests
+        if: runner.os == 'Windows'
+        shell: bash
+        run: pnpm --filter desktop tauri build --target ${{ matrix.target }} --features e2e --no-bundle
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: e2e-app-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/vodscribe.exe
+          if-no-files-found: error
+          retention-days: 14
+
   # Installs each Linux and Windows build and drives it end to end (e2e.yml).
   e2e:
     needs: build
@@ -193,9 +210,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The installers only (vodscribe-<target>), never the tests' builds.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
+          pattern: vodscribe-*
 
       - name: Check the tag matches the app's version
         run: |
