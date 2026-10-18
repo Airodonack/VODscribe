@@ -204,6 +204,22 @@ impl Drawn {
     }
 }
 
+/// The display the native surface is on, for a wgpu instance to use.
+#[derive(Debug)]
+struct Display(RawDisplayHandle);
+
+// SAFETY: the handle points at GTK's display connection (an X11 `Display`
+// or a `wl_display`), which lasts as long as the app; wgpu only reads it.
+unsafe impl Send for Display {}
+unsafe impl Sync for Display {}
+
+impl raw_window_handle::HasDisplayHandle for Display {
+    fn display_handle(&self) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        // SAFETY: as above: valid for as long as anything here can borrow it.
+        Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(self.0) })
+    }
+}
+
 /// The compositor drawing into a wgpu surface on the native one.
 struct Painter {
     surface: wgpu::Surface<'static>,
@@ -218,7 +234,11 @@ impl Painter {
         // lavapipe), else OpenGL.
         let mut last = None;
         for backends in [wgpu::Backends::VULKAN, wgpu::Backends::GL] {
-            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            // The instance on the surface's own display: OpenGL's (EGL's)
+            // display is chosen when the instance is made, and without it
+            // no GL adapter suits an X11 window ("gl not compatible with
+            // provided surface"), so with no Vulkan the picture stayed black.
+            let mut desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(Display(display)));
             desc.backends = backends;
             let instance = wgpu::Instance::new(desc);
             let target =
