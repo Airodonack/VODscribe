@@ -94,7 +94,9 @@ class Cuts {
     if (there) return this.remove(there.id);
     try {
       const mark = await api.addMark(vodId, frameStart(time, fps));
-      if (this.vodId === vodId) this.all = this.#sorted([...this.all, mark]);
+      // Another VOD open by now: the mark is that one's, not to select here.
+      if (this.vodId !== vodId) return;
+      this.all = this.#sorted([...this.all, mark]);
       if (select) this.selected = mark.id;
       this.error = null;
     } catch (e) {
@@ -143,10 +145,14 @@ class Cuts {
    *  returns that stretch, from cut to cut. */
   async cutSelection(): Promise<{ start: number; end: number } | null> {
     const picked = this.selection;
+    const vodId = this.vodId;
     if (!picked) return null;
     this.clearSelection();
     await this.ensure(picked.start);
+    // Another VOD opened meanwhile: its own marks aren't cut, nor is a clip made.
+    if (this.vodId !== vodId) return null;
     await this.ensure(picked.end);
+    if (this.vodId !== vodId) return null;
     return { start: frameStart(picked.start, this.fps), end: frameStart(picked.end, this.fps) };
   }
 

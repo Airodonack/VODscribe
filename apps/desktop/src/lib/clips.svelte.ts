@@ -1,5 +1,5 @@
 // The open VOD's clips (crates/core clips.rs): stretches between marks
-// (cuts.svelte.ts) exported with the Export button, an Alt-drag on the
+// (cuts.svelte.ts) made with the Clip button, an Alt-drag on the
 // timeline or a press held on the picture, shown as pills in the clip bar
 // under the player (ClipStrip.svelte).
 
@@ -62,10 +62,23 @@ class Clips {
     this.#listening = true;
     events.clip((clip) => {
       if (clip.status !== "cutting") this.progress.delete(clip.id);
+      this.#news.set(clip.id, ++this.#serial);
       this.#put(clip);
     });
     events.clipProgress((id, progress) => this.progress.set(id, progress));
     events.clipRemoved((id) => (this.list = this.list.filter((c) => c.id !== id)));
+  }
+
+  // Each clip's latest news (its "clip" event), numbered: a command's answer
+  // is older than news that came after it was sent (a quick cut's "ready"
+  // can beat the answer's "waiting"), and isn't put over it.
+  #serial = 0;
+  #news = new Map<number, number>();
+
+  /** Puts `clip`, a command's answer to one sent when the news was at `since`,
+   *  unless news of it has come since. */
+  #answer(clip: Clip, since: number) {
+    if ((this.#news.get(clip.id) ?? 0) <= since) this.#put(clip);
   }
 
   /** Adds or updates `clip`, if it's of the VOD shown. */
@@ -121,8 +134,9 @@ class Clips {
       if (!download) return null;
     }
     try {
+      const since = this.#serial;
       const clip = await api.addClip(vodId, start, end, shown);
-      this.#put(clip);
+      this.#answer(clip, since);
       this.error = null;
       return clip;
     } catch (e) {
@@ -147,9 +161,10 @@ class Clips {
   }
 
   async #run(action: Promise<Clip | void>) {
+    const since = this.#serial;
     try {
       const clip = await action;
-      if (clip) this.#put(clip);
+      if (clip) this.#answer(clip, since);
       this.error = null;
     } catch (e) {
       this.error = String(e);
