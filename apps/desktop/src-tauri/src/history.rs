@@ -54,6 +54,9 @@ struct Entry {
     after: Snapshot,
     /// When it was made, or last undone or redone (one count for all documents).
     at: u64,
+    /// What could be redone when it was made, which it took away: given back
+    /// if it's taken back unmade (`unrecord`).
+    cleared: Vec<Entry>,
 }
 
 #[derive(Default)]
@@ -100,14 +103,8 @@ impl History {
             return;
         }
         let mut s = self.0.lock().unwrap();
-        s.count += 1;
-        let entry = Entry { doc, origin: s.view.filter(|v| *v != doc), label, before, after, at: s.count };
-        let stack = s.undo.entry(doc).or_default();
-        stack.push(entry);
-        if stack.len() > KEEP {
-            stack.remove(0);
-        }
-        s.redo.remove(&doc);
+        let origin = s.view.filter(|v| *v != doc);
+        s.add(doc, origin, label, before, after);
     }
 
     /// Forgets `doc`'s newest change if what it holds now is what it was
@@ -115,13 +112,7 @@ impl History {
     /// made; false, and nothing forgotten, otherwise.
     pub(crate) fn unrecord(&self, db: &Db, doc: Doc) -> bool {
         let Ok(Some(now)) = snapshot(db, doc) else { return false };
-        let mut s = self.0.lock().unwrap();
-        let Some(stack) = s.undo.get_mut(&doc) else { return false };
-        if stack.last().is_none_or(|e| e.before != now) {
-            return false;
-        }
-        stack.pop();
-        true
+        self.0.lock().unwrap().take_back(doc, &now)
     }
 
     /// Forgets `doc`'s history (it's deleted).
@@ -144,6 +135,32 @@ impl History {
             .map(|(doc, _)| doc)?;
         let stacks = if undo { &mut s.undo } else { &mut s.redo };
         stacks.get_mut(&doc)?.pop()
+    }
+}
+
+impl Stacks {
+    fn add(&mut self, doc: Doc, origin: Option<Doc>, label: &'static str, before: Snapshot, after: Snapshot) {
+        self.count += 1;
+        let cleared = self.redo.remove(&doc).unwrap_or_default();
+        let entry = Entry { doc, origin, label, before, after, at: self.count, cleared };
+        let stack = self.undo.entry(doc).or_default();
+        stack.push(entry);
+        if stack.len() > KEEP {
+            stack.remove(0);
+        }
+    }
+
+    /// `History::unrecord`, given what `doc` holds now.
+    fn take_back(&mut self, doc: Doc, now: &Snapshot) -> bool {
+        let Some(stack) = self.undo.get_mut(&doc) else { return false };
+        if stack.last().is_none_or(|e| e.before != *now) {
+            return false;
+        }
+        let entry = stack.pop().expect("checked above");
+        if !entry.cleared.is_empty() {
+            self.redo.insert(doc, entry.cleared);
+        }
+        true
     }
 }
 
@@ -210,6 +227,8 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     }
     s.count += 1;
     entry.at = s.count;
+    // Undone or redone, it's no longer the change that took those away.
+    entry.cleared.clear();
     let done = Done { doc: entry.doc, label: entry.label };
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
@@ -245,8 +264,31 @@ mod tests {
 
     fn push(s: &mut Stacks, doc: Doc, origin: Option<Doc>, label: &'static str) {
         s.count += 1;
-        let entry = Entry { doc, origin, label, before: empty(), after: empty(), at: s.count };
+        let entry = Entry { doc, origin, label, before: empty(), after: empty(), at: s.count, cleared: Vec::new() };
         s.undo.entry(doc).or_default().push(entry);
+    }
+
+    #[test]
+    fn a_change_taken_back_gives_back_what_could_be_redone() {
+        let vod = Doc::Vod(1);
+        let marked =
+            Snapshot::Vod { marks: vec![MarkState { kind: "cut".into(), start: 1.0, text: None }], clips: Vec::new() };
+        let mut s = Stacks::default();
+        s.add(vod, None, "Cut added", empty(), marked.clone());
+        // Undone: the cut can be redone.
+        let undone = History::take(&mut s, vod, true).unwrap();
+        s.redo.entry(vod).or_default().push(undone);
+        // A chapter started, which takes the redo away...
+        let chapter = Snapshot::Vod {
+            marks: vec![MarkState { kind: "chapter".into(), start: 2.0, text: None }],
+            clips: Vec::new(),
+        };
+        s.add(vod, None, "Chapter added", empty(), chapter);
+        assert!(s.redo.get(&vod).is_none_or(Vec::is_empty));
+        // ...then Escape takes it back: the cut can be redone again.
+        assert!(s.take_back(vod, &empty()));
+        assert_eq!(History::take(&mut s, vod, false).map(|e| e.label), Some("Cut added"));
+        assert!(s.undo.get(&vod).is_none_or(Vec::is_empty));
     }
 
     #[test]
