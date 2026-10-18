@@ -39,6 +39,10 @@ function powershell(script, env = {}) {
 
 /** Why the OS layer can't run here, or null if it can. */
 export function unavailable() {
+  // Under Wayland the app's window is Wayland's: x11grab and xdotool would
+  // see and click Xwayland's screen instead (DISPLAY is set there too).
+  if (process.platform === "linux" && process.env.WAYLAND_DISPLAY && process.env.GDK_BACKEND !== "x11")
+    return "a Wayland session (this layer drives X11 only, so far)";
   if (process.platform === "linux" && !process.env.DISPLAY) return "no X display (DISPLAY)";
   if (process.platform === "linux") {
     try {
