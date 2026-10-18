@@ -2,7 +2,8 @@
 // its popover; the chapter deleted (Delete), brought back with Ctrl+Z, and
 // deleted again with Ctrl+Shift+Z, each told in a toast. Then a chapter made
 // by mistake (N) and cancelled with Escape in its box: gone, and not in undo's
-// history (Ctrl+Z undoes the change before it).
+// history (Ctrl+Z undoes the change before it). Last, a cut undone at once:
+// the arrow keys seek again.
 
 import { until } from "../lib/app.mjs";
 
@@ -133,5 +134,22 @@ export default {
     );
     if (Math.abs(back.start - 3) > 0.05) throw new Error(`the chapter came back at ${back.start}, not 3`);
     log("a chapter cancelled with Escape: gone, and Ctrl+Z undid the change before it");
+
+    // A cut (B, selected as it's made) undone: the arrows seek again, rather
+    // than moving a cut that isn't there.
+    const at = await app.shownTime();
+    await app.key("b");
+    await until("the cut", async () => (await marks()).some((m) => m.kind === "cut"), 10_000);
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
+    );
+    await until("the cut undone", async () => !(await marks()).some((m) => m.kind === "cut"), 10_000);
+    await app.key("ArrowRight", { shift: true });
+    await until(
+      `the player at ${at + 1} s (the arrow seeking)`,
+      async () => (await app.shownTime()) === at + 1,
+      10_000,
+    );
+    log("a cut undone: the arrows seek again");
   },
 };

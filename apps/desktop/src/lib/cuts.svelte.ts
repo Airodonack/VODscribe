@@ -54,7 +54,15 @@ class Cuts {
     if (vodId === null) return;
     const mine = ++this.#seq;
     api.listMarks(vodId).then(
-      (list) => mine === this.#seq && (this.all = list),
+      (list) => {
+        if (mine !== this.#seq) return;
+        this.all = list;
+        // A mark gone (undone, or a save that failed) is selected or open no more.
+        const there = (id: number | null) => id !== null && list.some((m) => m.id === id);
+        if (!there(this.selected)) this.selected = null;
+        if (!there(this.editing)) this.editing = null;
+        if (!there(this.fresh)) this.fresh = null;
+      },
       (e) => mine === this.#seq && (this.error = String(e)),
     );
   }
