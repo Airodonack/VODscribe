@@ -151,10 +151,12 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         // Sound alone if every piece's VOD is, named for the format clips are made in.
         let format = Settings::load(&state.paths.settings()).clip_format;
         let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
-        // The same file as last time, if it's still named for the edit.
+        // The same file as last time, if it's still named for the edit (its
+        // extension may be the one for sound alone, found only by rendering).
         let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, format));
         let out = match &edit.file_path {
-            Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
+            // (render() gives it the extension for what it holds: the same, written over.)
+            Some(path) if Path::new(path).file_stem() == Path::new(&name).file_stem() => PathBuf::from(path),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
         anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path))
@@ -429,10 +431,7 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
     let path = rendered(&app, id)?;
     let taken = move || {
-        let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
-        });
+        let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
     crate::clips::drag_file(window, path, None, taken).await
 }

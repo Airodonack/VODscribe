@@ -362,6 +362,8 @@ pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
     let before = history::snapshot(&db, doc).ok().flatten();
     db.show_clip(id).map_err(err)?;
     state.history.record(&db, doc, "Clip added", before);
+    // News of it too, in order with the cutter's (the page keeps the newest).
+    emit(&app, &db, id);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
@@ -378,6 +380,7 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     let before = history::snapshot(&db, doc).ok().flatten();
     db.rename_clip(id, &title).map_err(err)?;
     state.history.record(&db, doc, "Clip renamed", before);
+    emit(&app, &db, id);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
@@ -559,22 +562,20 @@ pub(crate) async fn drag_clip(
     // Another app's once one takes it (not when the drag begins: called off,
     // or dropped on nothing, the file is still the app's to delete).
     let taken = move || {
-        let app = app.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let _ = app.state::<AppState>().db.lock().unwrap().hand_out_clip(id);
-        });
+        let _ = app.state::<AppState>().db.lock().unwrap().hand_out_clip(id);
     };
     drag_file(window, path, image, taken).await
 }
 
 /// Starts the system's drag of the file at `path` (one the app made), showing
-/// `image` (a PNG) or the app's icon; `taken` is called once if something
-/// takes the file.
+/// `image` (a PNG) or the app's icon. When it's over, `taken` runs if it was
+/// dropped on something that took it, then the page hears "drag-ended", so
+/// what it does next (deleting a clip made only for the drag) knows.
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
     path: PathBuf,
     image: Option<Vec<u8>>,
-    taken: impl Fn() + Send + 'static,
+    taken: impl Fn() + Send + Sync + 'static,
 ) -> CmdResult<()> {
     let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
@@ -588,7 +589,12 @@ pub(crate) async fn drag_file(
 }
 
 #[cfg(target_os = "linux")]
-fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>, taken: impl Fn() + 'static) -> Result<()> {
+fn start_drag(
+    window: &tauri::WebviewWindow,
+    path: &Path,
+    image: Vec<u8>,
+    taken: impl Fn() + Send + Sync + 'static,
+) -> Result<()> {
     use gtk::prelude::*;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -599,28 +605,41 @@ fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>, taken:
     let targets = gtk::TargetList::new(&[]);
     targets.add_uri_targets(0);
     let handlers: Rc<RefCell<Vec<glib::SignalHandlerId>>> = Rc::default();
-    // Asked for the file's address: something it's dropped on takes it.
-    let once = std::cell::Cell::new(false);
+    // Taken: something asked for the file's address, and the drag didn't
+    // fail (a file manager asks as it's dragged over; called off, it fails).
+    let (asked, failed) = (Rc::new(std::cell::Cell::new(false)), Rc::new(std::cell::Cell::new(false)));
+    let asking = asked.clone();
     let data = source.connect_drag_data_get(move |_, _, data, _, _| {
         data.set_uris(&[uri.as_str()]);
-        if !once.replace(true) {
-            taken();
-        }
+        asking.set(true);
     });
     handlers.borrow_mut().push(data);
     // Dropped where nothing takes it: no animation of it flying back, which
     // holds on to the pointer (losing the next press) until it's done.
-    let failed = source.connect_drag_failed(|_, _, _| glib::Propagation::Stop);
-    handlers.borrow_mut().push(failed);
+    let failing = failed.clone();
+    let on_failed = source.connect_drag_failed(move |_, _, _| {
+        failing.set(true);
+        glib::Propagation::Stop
+    });
+    handlers.borrow_mut().push(on_failed);
     // Once it's over, dropped or not, the window stops answering for it.
     let ended = handlers.clone();
     let told = window.clone();
+    let taken = std::sync::Arc::new(taken);
     let end = source.connect_drag_end(move |source, _| {
         for handler in ended.borrow_mut().drain(..) {
             source.disconnect(handler);
         }
-        // The page, so a drag of its own coming back in isn't taken for one to add.
-        let _ = told.emit("drag-ended", ());
+        // Taken (above), then the page told, so a drag of its own coming back
+        // in isn't taken for one to add. Off the main thread, for the
+        // library's lock.
+        let (dropped, taken, told) = (asked.get() && !failed.get(), taken.clone(), told.clone());
+        std::thread::spawn(move || {
+            if dropped {
+                taken();
+            }
+            let _ = told.emit("drag-ended", ());
+        });
         // The press that started the drag never comes back up in the page:
         // the drag took the release. Without one, its next press is lost.
         if let Some(page) = find_webview(source.upcast_ref()) {
@@ -689,19 +708,24 @@ fn start_drag(
     window: &tauri::WebviewWindow,
     path: &Path,
     image: Vec<u8>,
-    taken: impl Fn() + Send + 'static,
+    taken: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
     let told = window.clone();
+    let taken = std::sync::Arc::new(taken);
     drag::start_drag(
         window,
         drag::DragItem::Files(vec![path.to_path_buf()]),
         drag::Image::Raw(image),
         move |result, _| {
-            if matches!(result, drag::DragResult::Dropped) {
-                taken();
-            }
-            // The page, so a drag of its own coming back in isn't taken for one to add.
-            let _ = told.emit("drag-ended", ());
+            // Taken, then the page told (so a drag of its own coming back in
+            // isn't taken for one to add), in that order, off the UI thread.
+            let (dropped, taken, told) = (matches!(result, drag::DragResult::Dropped), taken.clone(), told.clone());
+            std::thread::spawn(move || {
+                if dropped {
+                    taken();
+                }
+                let _ = told.emit("drag-ended", ());
+            });
         },
         drag::Options::default(),
     )

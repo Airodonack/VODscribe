@@ -285,10 +285,17 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
             let dir = dir(app);
             std::fs::create_dir_all(&dir)?;
             let out = dir.join(format!("{name}.mkv"));
-            // Into place only while the VOD's still there (removing it deletes its footage).
+            // Beside its place first (copied, if it can't be moved: a long
+            // while), then into place, only while the VOD's still there
+            // (removing it deletes its footage, a part file too).
+            let part = dir.join(format!("{name}.part.mkv"));
+            std::fs::rename(&file, &part).or_else(|_| std::fs::copy(&file, &part).map(|_| ()))?;
             let db = state.db.lock().unwrap();
-            db.vod(vod_id)?.context("That VOD is gone.")?;
-            std::fs::rename(&file, &out).or_else(|_| std::fs::copy(&file, &out).map(|_| ()))?;
+            if db.vod(vod_id)?.is_none() {
+                let _ = std::fs::remove_file(&part);
+                anyhow::bail!("That VOD is gone.");
+            }
+            std::fs::rename(&part, &out)?;
             // Dated now, not when the site made it, for tidying.
             footage::touch(&out);
             anyhow::Ok(())

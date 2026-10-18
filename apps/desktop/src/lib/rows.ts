@@ -89,7 +89,9 @@ export function linesSpan(
 ): { start: number; end: number } {
   const [a, b] = first <= last ? [first, last] : [last, first];
   const end = lines[b].end ?? lines[b + 1]?.start ?? lines[b].start + 5;
-  return { start: lines[a].start, end: duration ? Math.min(end, duration) : end };
+  // (A line starting past the stated length, as a VOD's can: to its own end.)
+  const start = lines[a].start;
+  return { start, end: duration && start < duration ? Math.min(end, duration) : end };
 }
 
 /** About how tall a chapter's heading over a line is, in pixels, for rows not yet measured. */

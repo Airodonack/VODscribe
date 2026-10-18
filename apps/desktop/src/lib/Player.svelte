@@ -243,16 +243,26 @@
   }
   function onClipMove(e: PointerEvent) {
     if (!clipPress || Math.hypot(e.clientX - clipPress.x, e.clientY - clipPress.y) < DRAG_SLOP) return;
+    // Its release missed (it happened elsewhere): a press no more.
+    if (!(e.buttons & 1)) return void (clipPress = null);
     clipPress = null;
     const picked = cuts.selection;
     const range = picked ? { start: frameStart(picked.start, fps), end: frameStart(picked.end, fps) } : stretch;
     if (!range || range.end <= range.start) return;
-    // The let-go may land on the button again: not a click too.
+    // The let-go may land on the button again: not a click too (the click
+    // comes just after the carry ends).
     clipDragged = true;
-    setTimeout(() => (clipDragged = false), 500);
     clipHover = false;
     const from = clipButton?.getBoundingClientRect() ?? new DOMRect(e.clientX, e.clientY);
-    carry({ vod, start: range.start, end: range.end, ownPlayer: playsHere(vod), from, x: e.clientX, y: e.clientY });
+    carry({
+      vod,
+      start: range.start,
+      end: range.end,
+      ownPlayer: playsHere(vod),
+      from,
+      x: e.clientX,
+      y: e.clientY,
+    }).then(() => setTimeout(() => (clipDragged = false)));
   }
   function onClipClick() {
     if (clipDragged) clipDragged = false;

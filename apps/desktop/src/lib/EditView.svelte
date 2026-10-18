@@ -46,9 +46,11 @@
   // The name, written in place: put back when the saved name changes, not
   // whenever the edit's news comes (a render's), which would undo typing.
   let title = $state("");
-  const savedTitle = $derived(edit?.title ?? "");
+  // (Keyed by the edit too: another edit of the same name gets its own.)
+  const saved = $derived(`${edit?.id ?? ""}\u0000${edit?.title ?? ""}`);
   $effect(() => {
-    title = savedTitle;
+    void saved;
+    title = untrack(() => edit?.title ?? "");
   });
   function rename() {
     if (edit && title.trim() && title.trim() !== edit.title) edits.rename(edit.id, title);

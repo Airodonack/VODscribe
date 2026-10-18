@@ -100,6 +100,7 @@ test("a run of lines spans from the first one's start to the last one's end", ()
   ];
   assert.deepEqual(linesSpan(last, 0, 1), { start: 1, end: 13 });
   assert.deepEqual(linesSpan(last, 0, 1, 10), { start: 1, end: 10 }, "within the VOD");
+  assert.deepEqual(linesSpan(last, 1, 1, 7.5), { start: 8, end: 13 }, "a line past the stated length: not inverted");
   assert.deepEqual(linesSpan(lines, 2, 2), { start: 6, end: 9 }, "no end: to the next line");
   assert.deepEqual(linesSpan(lines, 3, 3), { start: 9, end: 14 }, "the last, with no end");
 });
