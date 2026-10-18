@@ -313,6 +313,7 @@ impl Db {
         title: &str,
         index: Option<usize>,
     ) -> Result<()> {
+        let (start, end) = self.within_vod(vod_id, start, end)?;
         self.atomically(|db| {
             db.conn.execute(
                 "INSERT INTO edit_pieces (edit_id, vod_id, position, start, end, title) VALUES (?1, ?2, 0, ?3, ?4, ?5)",
@@ -345,16 +346,24 @@ impl Db {
         Ok(())
     }
 
+    /// `start`..`end` of VOD `vod_id`, within it; an error if none of it is.
+    fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(f64, f64)> {
+        let duration: Option<f64> = self
+            .conn
+            .query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        let (start, end) = (start.max(0.0), duration.map_or(end, |d| end.min(d)));
+        anyhow::ensure!(end > start, "That's past the end of the video.");
+        Ok((start, end))
+    }
+
     /// Sets piece `id` to `start`..`end` of its VOD (within the VOD).
     pub fn set_piece_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        self.conn.execute(
-            "UPDATE edit_pieces SET
-               start = max(?2, 0),
-               end = min(?3, coalesce((SELECT duration FROM vods WHERE id = vod_id), ?3))
-             WHERE id = ?1",
-            params![id, start, end],
-        )?;
+        let vod_id: i64 = self.conn.query_row("SELECT vod_id FROM edit_pieces WHERE id = ?1", [id], |r| r.get(0))?;
+        let (start, end) = self.within_vod(vod_id, start, end)?;
+        self.conn.execute("UPDATE edit_pieces SET start = ?2, end = ?3 WHERE id = ?1", params![id, start, end])?;
         self.changed(edit_id)
     }
 
@@ -472,6 +481,20 @@ pub(crate) mod tests {
             thumbnail: None,
             published: None,
         }
+    }
+
+    #[test]
+    fn pieces_stay_within_their_vod() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap();
+        assert!(db.add_piece(edit.id, vod, (700.0, 800.0), "past", None).is_err(), "all past the end (600 s)");
+        db.add_piece(edit.id, vod, (590.0, 650.0), "a", None).unwrap();
+        let piece = &db.edit_pieces(edit.id).unwrap()[0];
+        assert_eq!((piece.start, piece.end), (590.0, 600.0), "cut at the end");
+        assert!(db.set_piece_range(piece.id, 700.0, 800.0).is_err(), "trimmed past the end");
+        let piece = &db.edit_pieces(edit.id).unwrap()[0];
+        assert_eq!((piece.start, piece.end), (590.0, 600.0), "left as it was");
     }
 
     #[test]
