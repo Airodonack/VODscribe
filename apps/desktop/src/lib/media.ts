@@ -90,6 +90,13 @@ export function stretches(cuts: number[], duration: number): { start: number; en
   return out;
 }
 
+/** The stretch between `cuts` that `time` is in, of a VOD `duration` long; at
+ *  the very end (or past it, as a site's player can be), the last one. */
+export function stretchIn(cuts: number[], duration: number, time: number): { start: number; end: number } | undefined {
+  const all = stretches(cuts, duration);
+  return all.find((s) => time >= s.start && time < s.end) ?? (time >= duration ? all.at(-1) : undefined);
+}
+
 /**
  * What plays of `start`..`end` with the `struck` stretches jumped over (as an
  * edit's piece plays; crates/core edits.rs `spans`): what's left, in order,

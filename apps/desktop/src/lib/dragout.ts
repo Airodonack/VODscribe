@@ -17,7 +17,7 @@ import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { edits } from "./edits.svelte";
-import { PEAKS_RATE, columns, stretches } from "./media";
+import { PEAKS_RATE, columns, stretchIn } from "./media";
 import { formatTime } from "./platform";
 
 /** How long a press is held before it picks the clip up. */
@@ -85,10 +85,11 @@ async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promis
 
 /** The stretch between marks that `time` is in, of a VOD `duration` seconds long. */
 export function stretchAt(time: number, duration: number): { start: number; end: number } | undefined {
-  return stretches(
+  return stretchIn(
     cuts.list.map((m) => m.start),
     duration,
-  ).find((s) => time >= s.start && time < s.end);
+    time,
+  );
 }
 
 /** A download from a site longer than this asks first. */

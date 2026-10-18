@@ -141,10 +141,17 @@
     );
   });
 
-  // A VOD whose length was unknown (or wrong) until the player said: keep the view inside it.
+  // A VOD whose length was unknown (or wrong) until the player said, or an
+  // edit's that changed: keep the view inside it, and all of it if it showed
+  // all of it before (an edit grown, its line struck brought back).
+  let shownLength = 0;
   $effect(() => {
     void duration;
-    untrack(() => setView(viewStart, span >= duration ? duration : span));
+    untrack(() => {
+      const whole = span >= shownLength - 1e-6 || span >= duration;
+      shownLength = duration;
+      setView(viewStart, whole ? duration : span);
+    });
   });
 
   // Zoomed in, the view keeps the playhead in sight while it plays.

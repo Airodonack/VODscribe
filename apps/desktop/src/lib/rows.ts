@@ -78,12 +78,18 @@ export function buildRows(lines: Line[], duration: number, withChat: boolean): R
 /**
  * The time `lines[first]` to `lines[last]` (either way round) take: from the
  * first one's start to the last one's end, or where the next line starts if
- * its end isn't known (the website's demo), or 5 s on for the very last.
+ * its end isn't known (the website's demo), or 5 s on for the very last; not
+ * past the VOD's `duration`, if known.
  */
-export function linesSpan(lines: Line[], first: number, last: number): { start: number; end: number } {
+export function linesSpan(
+  lines: Line[],
+  first: number,
+  last: number,
+  duration?: number | null,
+): { start: number; end: number } {
   const [a, b] = first <= last ? [first, last] : [last, first];
   const end = lines[b].end ?? lines[b + 1]?.start ?? lines[b].start + 5;
-  return { start: lines[a].start, end };
+  return { start: lines[a].start, end: duration ? Math.min(end, duration) : end };
 }
 
 /** About how tall a chapter's heading over a line is, in pixels, for rows not yet measured. */

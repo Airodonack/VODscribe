@@ -1,7 +1,18 @@
 // The player's and timeline's arithmetic (media.ts): node --test apps/desktop/src/lib/media.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { columns, cueAt, playedSpans, frameStart, inFrame, nudge, stepTime, stretches, tickStep } from "./media.ts";
+import {
+  columns,
+  cueAt,
+  playedSpans,
+  frameStart,
+  inFrame,
+  nudge,
+  stepTime,
+  stretchIn,
+  stretches,
+  tickStep,
+} from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
   const cues = [
@@ -126,4 +137,13 @@ test("an edit's piece plays what isn't struck, as the render does", () => {
       [8, 10],
     ],
   );
+});
+
+test("the stretch the playhead is in, the last one at the very end", () => {
+  assert.deepEqual(stretchIn([2], 5, 1), { start: 0, end: 2 });
+  assert.deepEqual(stretchIn([2], 5, 2), { start: 2, end: 5 });
+  // Played to the end (the time stops at the length), or a site's player past it.
+  assert.deepEqual(stretchIn([2], 5, 5), { start: 2, end: 5 });
+  assert.deepEqual(stretchIn([], 5, 5.3), { start: 0, end: 5 });
+  assert.equal(stretchIn([], 0, 0), undefined);
 });

@@ -93,6 +93,13 @@ test("a run of lines spans from the first one's start to the last one's end", ()
   ];
   assert.deepEqual(linesSpan(lines, 0, 1), { start: 1, end: 4 });
   assert.deepEqual(linesSpan(lines, 1, 0), { start: 1, end: 4 }, "dragged upwards");
+  // The last line with no end known: 5 s on, but not past the VOD's end.
+  const last = [
+    { start: 1, text: "a" },
+    { start: 8, text: "b" },
+  ];
+  assert.deepEqual(linesSpan(last, 0, 1), { start: 1, end: 13 });
+  assert.deepEqual(linesSpan(last, 0, 1, 10), { start: 1, end: 10 }, "within the VOD");
   assert.deepEqual(linesSpan(lines, 2, 2), { start: 6, end: 9 }, "no end: to the next line");
   assert.deepEqual(linesSpan(lines, 3, 3), { start: 9, end: 14 }, "the last, with no end");
 });

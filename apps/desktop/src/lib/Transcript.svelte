@@ -440,7 +440,7 @@
     const first = lines.indexOf(rows[from].line!);
     const last = lines.indexOf(rows[to].line!);
     if (first < 0 || last < 0) return;
-    const { start, end } = linesSpan(lines, first, last);
+    const { start, end } = linesSpan(lines, first, last, vod.duration);
     // The lines selected (Split then cuts either side of them), and the
     // playhead to their start, showing the VOD in the player if it wasn't.
     cuts.open(vod.id);

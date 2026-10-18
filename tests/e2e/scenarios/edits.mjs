@@ -86,14 +86,57 @@ export default {
       () => app.js(`return !!document.querySelector(".lines .line button.text")`),
       10_000,
     );
+    // The timeline shows all of the edit, before the strike and after it's undone.
+    const spanNow = () =>
+      app.js(`return Number(document.querySelector("section.edit-view .scrubber")?.dataset.span ?? 0)`);
+    const whole = await spanNow();
     await app.click(".lines .line button.text");
     await until("the line struck", () => app.js(`return !!document.querySelector(".lines .line.struck")`), 10_000);
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
     );
     await until("the strike undone", () => app.js(`return !document.querySelector(".lines .line.struck")`), 10_000);
+    await until(
+      "the timeline showing all of the edit again",
+      async () => {
+        const span = await spanNow();
+        if (Math.abs(span - whole) < 0.01) return true;
+        throw new Error(`it shows ${span} s of ${whole} s`);
+      },
+      10_000,
+    );
     const toast = await app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
     ctx.log(`split in two; struck a line, then "${toast}"`);
+
+    // Two lines of a piece struck in quick succession, before the first is
+    // saved: both are struck. Then both brought back.
+    const quick = await app.js(
+      `const groups = [];
+       for (const el of document.querySelector(".lines").children) {
+         if (el.matches(".piece-head")) groups.push([]);
+         else if (el.matches(".line")) groups.at(-1)?.push(el.querySelector("button.text"));
+       }
+       const piece = groups.find((g) => g.length >= 2);
+       if (!piece) return 0;
+       const [a, b] = piece;
+       a.click();
+       b.click();
+       return 2;`,
+    );
+    if (quick) {
+      await until(
+        "both lines struck",
+        async () => {
+          const struck = (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
+          if (struck >= 2) return true;
+          throw new Error(`${struck} struck`);
+        },
+        10_000,
+      );
+      await app.js(`for (const b of document.querySelectorAll(".lines .line.struck button.text")) b.click();`);
+      await until("the strikes taken back", async () => (await edit()).pieces.every((p) => !p.struck.length), 10_000);
+      ctx.log("two lines struck at once: both struck");
+    } else ctx.log("no piece with two lines: the quick strikes weren't tried");
 
     // Rendered: E.
     await app.key("e");
