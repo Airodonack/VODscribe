@@ -1,4 +1,4 @@
-// Exporting with no cuts: E makes the whole video a clip, start to end.
+// Clip with no cuts: E makes the whole video a clip, start to end.
 
 import { existsSync } from "node:fs";
 
@@ -12,7 +12,7 @@ export default {
     await app.openPaused(vod.id);
     if ((await app.invoke("list_marks", { vodId: vod.id })).length) throw new Error("the new VOD has cuts already");
     if (await app.js(`return document.querySelector("button.action.clip")?.disabled ?? true`))
-      throw new Error("Export is off with no cuts");
+      throw new Error("Clip is off with no cuts");
     await app.key("e");
     const clip = await until(
       "the whole video's clip",

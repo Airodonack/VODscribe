@@ -1,9 +1,10 @@
 //! Rendering an edit: pieces of media files (stretches of clips, say), one
-//! after another, as one MP4. Each piece is trimmed to the frame, brought to
+//! after another, as one file in the format clips are made in (`ClipFormat`:
+//! MP4, or MOV for editors). Each piece is trimmed to the frame, brought to
 //! one picture size and frame rate (scaled to fit, with black bars) and one
 //! sound format, then they're joined. A piece without sound gets silence, and
 //! one without a picture a black one; an edit with no pictures at all makes
-//! an M4A.
+//! sound alone (an M4A, or a WAV).
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};

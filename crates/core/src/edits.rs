@@ -447,7 +447,8 @@ impl Db {
         Ok(())
     }
 
-    /// Edits left rendering when the app stopped: failed, to render again.
+    /// Edits left rendering (or waiting to) when the app stopped: waiting
+    /// again, to be rendered when asked.
     pub fn reset_renders(&self) -> Result<()> {
         self.conn.execute("UPDATE edits SET status = 'waiting' WHERE status = 'cutting'", [])?;
         Ok(())

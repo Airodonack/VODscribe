@@ -1,7 +1,9 @@
 //! Edits (`vodscribe_core::edits`): the commands the Edit view makes and
 //! changes them with, and the queue that renders them, one at a time, into
 //! the Videos folder beside the clips (VODscribe/Edits). Rendering again
-//! replaces the same file, so a video editor linked to it gets the new one.
+//! replaces the same file, so a video editor linked to it gets the new one;
+//! renamed, it's a new file, and the one before goes unless it was dragged
+//! out to another app.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};

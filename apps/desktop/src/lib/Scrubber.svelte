@@ -669,9 +669,7 @@
               : aside(piece.id)
                 ? `translateX(${aside(piece.id)}px)`
                 : null}
-            title="{piece.label} · drag to move it, drag an edge to resize it, {os === 'mac'
-              ? 'Option'
-              : 'Alt'}-drag to carry it out"
+            title="{piece.label} · drag to move it (pull it off the timeline to carry it out), drag an edge to resize it"
           >
             {#if piece.range}
               <span class="grip start" data-grip="start"></span>

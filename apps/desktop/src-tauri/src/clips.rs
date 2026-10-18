@@ -4,8 +4,9 @@
 //! range is downloaded (`fetch::Wanted::Section`) and cut from that.
 //!
 //! Clip files go in the computer's Videos folder, under VODscribe: they're for
-//! taking elsewhere, and video editors link to a file where it is, so a clip
-//! whose range changes is made again at the same path.
+//! taking elsewhere. Each is named for its range, so a clip whose range
+//! changes is a new file; the one before goes, unless it was dragged out to
+//! another app (`handed_out`), which may link to it where it is.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -331,7 +332,7 @@ pub(crate) async fn add_clip(
     Ok(clip)
 }
 
-/// Moves clip `id` to `start`..`end`; its file is made again, at the same path.
+/// Moves clip `id` to `start`..`end`; its file is made again, named for the new range.
 #[tauri::command]
 pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
@@ -722,7 +723,7 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
             .file()
             .set_parent(&window)
             .set_file_name(&name)
-            .add_filter(if ext == "m4a" { "Audio" } else { "Video" }, &[ext.as_str()])
+            .add_filter(if matches!(ext.as_str(), "m4a" | "wav") { "Audio" } else { "Video" }, &[ext.as_str()])
             .blocking_save_file();
         let Some(to) = picked else { return Ok(false) };
         let to = to.into_path().map_err(err)?;

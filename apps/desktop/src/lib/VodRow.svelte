@@ -12,7 +12,7 @@
   import { demoOff } from "./demo";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, siteName, videoSize } from "./platform";
+  import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, os, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
@@ -193,7 +193,7 @@
   class:removing
   onclick={ontoggle}
   onkeydown={onkey}
-  title={reorderable ? "Drag to reorder (Alt+↑/↓)" : undefined}
+  title={reorderable ? `Drag to reorder (${os === "mac" ? "Option" : "Alt"}+↑/↓)` : undefined}
 >
   <span class="thumb {vod.platform}">
     <!-- The platform tile shows until (and unless) the thumbnail covers it. -->
@@ -295,7 +295,7 @@
         ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
         : keepError
           ? `The video couldn't be downloaded: ${keepError} Click to try again.`
-          : `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and exporting work without it.`}
+          : `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`}
       aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
       {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
     >

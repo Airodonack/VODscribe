@@ -148,7 +148,12 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let streams = local::codecs(&ffmpeg, &file)?;
     if !playable.plays(&streams) {
         let _ = std::fs::remove_file(&file);
-        anyhow::bail!("This video came in a format that doesn't play here ({streams:?}).");
+        let named = [
+            streams.video.as_ref().map(|v| format!("{v} video")),
+            streams.audio.as_ref().map(|a| format!("{a} sound")),
+        ];
+        let named = named.into_iter().flatten().collect::<Vec<_>>().join(", ");
+        anyhow::bail!("This video came in a format that doesn't play here ({named}).");
     }
     let db = state.db.lock().unwrap();
     if stop.load(Ordering::Relaxed) {

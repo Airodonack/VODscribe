@@ -11,7 +11,7 @@
 <script lang="ts">
   // The row of controls under every player's timeline (the VOD's, Player.svelte;
   // an edit's, EditView.svelte): play, the time, the panel's own actions (Split
-  // and Export, or what an edit has instead) with a line of context, then
+  // and Clip, or what an edit has instead) with a line of context, then
   // sound, speed, captions and full screen, where the player has them.
 
   import type { Snippet } from "svelte";

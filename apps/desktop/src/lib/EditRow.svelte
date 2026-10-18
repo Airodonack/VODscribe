@@ -10,7 +10,7 @@
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { formatTime } from "./platform";
+  import { formatTime, os } from "./platform";
   import Spinner from "./Spinner.svelte";
 
   let {
@@ -74,7 +74,11 @@
   class="main"
   onclick={onopen}
   onkeydown={onkey}
-  title={clips.carrying ? `Drop to add it to “${edit.title}”` : reorderable ? "Drag to reorder (Alt+↑/↓)" : undefined}
+  title={clips.carrying
+    ? `Drop to add it to “${edit.title}”`
+    : reorderable
+      ? `Drag to reorder (${os === "mac" ? "Option" : "Alt"}+↑/↓)`
+      : undefined}
 >
   <span class="thumb">
     {#if picture}<img src={picture} alt="" />{:else}<Icon name="film" size={18} />{/if}

@@ -389,8 +389,6 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// Serves $VODSCRIBE_MEDIA_FILE as VOD 1 for a few minutes and prints its
-    /// URL, for trying the server with a real player: `-- --ignored --nocapture`.
     /// ffmpeg reads a section through the server, allowed HTTP for it alone
     /// (`tools::ffmpeg_allow_for`), seeking in it, and finds it where it went
     /// when it's renamed between requests (as a download's file is when done).
@@ -440,6 +438,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Serves $VODSCRIBE_MEDIA_FILE as VOD 1 for a few minutes and prints its
+    /// URL, for trying the server with a real player: `-- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn serve_a_file_for_manual_testing() {

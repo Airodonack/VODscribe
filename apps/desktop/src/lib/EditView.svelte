@@ -7,7 +7,7 @@
   // out (Delete, too), the playhead's piece being the one acted on; Render, at the top beside the
   // rendered video, makes it. Its pieces
   // are bands in the timeline's lane (Scrubber.svelte): clicked to go to,
-  // dragged to move, their edges dragged to resize, Alt-dragged to carry out. Under it, the edit's
+  // dragged to move (pulled off the timeline, carried out), their edges dragged to resize. Under it, the edit's
   // transcript, piece by piece: a click on a line strikes it out (the edit
   // jumps over it) or brings it back.
 
@@ -23,7 +23,7 @@
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
   import PlayerBar from "./PlayerBar.svelte";
-  import { formatFraction, formatTime } from "./platform";
+  import { formatFraction, formatTime, os } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
   import { toast } from "./toasts.svelte";
@@ -142,7 +142,7 @@
     (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, usable(vodId) ?? 0) / 10), 0),
   );
   const EMPTY =
-    "Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or Alt-drag a " +
+    `Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or ${os === "mac" ? "Option" : "Alt"}-drag a ` +
     "stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.";
 
   // The player's plan, asked for again whenever the pieces change, footage

@@ -317,7 +317,7 @@ export class App {
   }
 
   /**
-   * In the open VOD (5 s or longer): cuts at 1 and 3 s (B), then Export with
+   * In the open VOD (5 s or longer): cuts at 1 and 3 s (B), then Clip (E) with
    * the playhead between them; returns the clip once its file is made.
    *
    * Moved as a person would, with the keys (Player.svelte): ← back 5 s,
