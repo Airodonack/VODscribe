@@ -212,6 +212,15 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         // Deleted while it was being cut.
         let _ = std::fs::remove_file(&out);
     }
+    // Its file for the range before goes, unless another app took it (then
+    // it stays there, and the new one is the app's own).
+    if let Some(old) = clip.file_path.as_deref().filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
+        if db.clip_handed_out(id)? {
+            db.take_back_clip(id)?;
+        } else {
+            let _ = std::fs::remove_file(old);
+        }
+    }
     if recorded && result.is_ok() && !vod.audio_only {
         drop(db);
         if let Err(e) = clips::thumbnail(&ffmpeg, &out, &thumb_path(app, id)) {
@@ -542,30 +551,43 @@ pub(crate) async fn drag_clip(
     image: Option<Vec<u8>>,
 ) -> CmdResult<()> {
     let path = ready_file(&app, id)?;
-    app.state::<AppState>().db.lock().unwrap().hand_out_clip(id).map_err(err)?;
     // The picture the interface drew (the frame over its waveform), if it's a
     // PNG of reasonable size; else the clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
     let image = drawn.or_else(|| std::fs::read(thumb_path(&app, id)).ok());
-    drag_file(window, path, image).await
+    // Another app's once one takes it (not when the drag begins: called off,
+    // or dropped on nothing, the file is still the app's to delete).
+    let taken = move || {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = app.state::<AppState>().db.lock().unwrap().hand_out_clip(id);
+        });
+    };
+    drag_file(window, path, image, taken).await
 }
 
 /// Starts the system's drag of the file at `path` (one the app made), showing
-/// `image` (a PNG) or the app's icon.
-pub(crate) async fn drag_file(window: tauri::WebviewWindow, path: PathBuf, image: Option<Vec<u8>>) -> CmdResult<()> {
+/// `image` (a PNG) or the app's icon; `taken` is called once if something
+/// takes the file.
+pub(crate) async fn drag_file(
+    window: tauri::WebviewWindow,
+    path: PathBuf,
+    image: Option<Vec<u8>>,
+    taken: impl Fn() + Send + 'static,
+) -> CmdResult<()> {
     let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(start_drag(&on_main, &path, image).map_err(|e| format!("{e:#}")));
+            let _ = tx.send(start_drag(&on_main, &path, image, taken).map_err(|e| format!("{e:#}")));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
 }
 
 #[cfg(target_os = "linux")]
-fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Result<()> {
+fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>, taken: impl Fn() + 'static) -> Result<()> {
     use gtk::prelude::*;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -576,8 +598,13 @@ fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Res
     let targets = gtk::TargetList::new(&[]);
     targets.add_uri_targets(0);
     let handlers: Rc<RefCell<Vec<glib::SignalHandlerId>>> = Rc::default();
+    // Asked for the file's address: something it's dropped on takes it.
+    let once = std::cell::Cell::new(false);
     let data = source.connect_drag_data_get(move |_, _, data, _, _| {
         data.set_uris(&[uri.as_str()]);
+        if !once.replace(true) {
+            taken();
+        }
     });
     handlers.borrow_mut().push(data);
     // Dropped where nothing takes it: no animation of it flying back, which
@@ -657,14 +684,22 @@ fn release_button(page: &gtk::Widget) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start_drag(window: &tauri::WebviewWindow, path: &Path, image: Vec<u8>) -> Result<()> {
+fn start_drag(
+    window: &tauri::WebviewWindow,
+    path: &Path,
+    image: Vec<u8>,
+    taken: impl Fn() + Send + 'static,
+) -> Result<()> {
     let told = window.clone();
     drag::start_drag(
         window,
         drag::DragItem::Files(vec![path.to_path_buf()]),
         drag::Image::Raw(image),
-        // The page, so a drag of its own coming back in isn't taken for one to add.
-        move |_, _| {
+        move |result, _| {
+            if matches!(result, drag::DragResult::Dropped) {
+                taken();
+            }
+            // The page, so a drag of its own coming back in isn't taken for one to add.
             let _ = told.emit("drag-ended", ());
         },
         drag::Options::default(),

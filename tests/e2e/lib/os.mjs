@@ -164,6 +164,28 @@ export function click(x, y, scale = 1) {
 }
 
 /**
+ * The OS's mouse and keys, a step at a time, for drags: `steps` like
+ * ["down", x, y], ["move", x, y], ["key", "Escape"], ["up"], ["wait", ms];
+ * ["hold", "alt"] and ["release", "alt"] for a key held through a drag;
+ * ["letgo", x, y] moves and lets go at once.
+ * Linux (X11) only, so far.
+ */
+export async function gesture(steps) {
+  if (process.platform !== "linux") throw new Error("gestures are Linux-only, so far");
+  for (const [what, a, b] of steps) {
+    if (what === "down") execFileSync("xdotool", ["mousemove", String(a), String(b), "mousedown", "1"]);
+    else if (what === "move") execFileSync("xdotool", ["mousemove", String(a), String(b)]);
+    else if (what === "up") execFileSync("xdotool", ["mouseup", "1"]);
+    else if (what === "key") execFileSync("xdotool", ["key", a]);
+    else if (what === "hold") execFileSync("xdotool", ["keydown", a]);
+    else if (what === "release") execFileSync("xdotool", ["keyup", a]);
+    else if (what === "letgo") execFileSync("xdotool", ["mousemove", String(a), String(b), "mouseup", "1"]);
+    else if (what === "wait") await new Promise((r) => setTimeout(r, a));
+    else throw new Error(`no gesture step ${what}`);
+  }
+}
+
+/**
  * The screen rectangle (pixels) of the element `selector` in the app's page,
  * and the window's scale factor.
  */

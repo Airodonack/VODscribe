@@ -326,16 +326,22 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       leaving = true;
       clips.overBar = false;
       ghost.classList.add("making");
+      let made: Clip | null = null;
+      let dragged = false;
       try {
-        const made = await make(false);
+        made = await make(false);
         const made2 = made && (await clips.ready(made.id, () => down, vod.id));
         const ready = made2 && (await inFormat(made2, vod.id, () => down));
         if (ready && down) {
           const image = await snapshot(await picture, wave, label);
+          dragged = true;
           await dragOut(ready, image);
         }
       } finally {
         finish();
+        // Let go before its file was ready: the clip made only for the drag
+        // goes (dragOut forgets it, after a drag).
+        if (made && !made.shown && !dragged) api.deleteClip(made.id).catch(() => {});
       }
     };
     window.addEventListener("pointermove", onMove, true);

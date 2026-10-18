@@ -1,0 +1,84 @@
+// Drags out of the window with the OS's mouse (lib/os.mjs). A stretch
+// Alt-dragged to the window's edge and let go at once, before its file is
+// made: no file is left behind for it. Then a clip's pill dragged out and
+// the drag called off (Escape) before anything took its file: the file isn't
+// counted as handed to another app, so deleting the clip deletes it. Linux
+// (X11) only, so far.
+
+import { existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+
+import { until } from "../lib/app.mjs";
+import * as os from "../lib/os.mjs";
+
+export default {
+  name: "drag-out",
+  async run(app, ctx) {
+    const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+    if (why) ctx.skip(why);
+    await app.toLibrary();
+    const vod = await app.addAndTranscribe(ctx.fixtures.landed);
+    await app.openPaused(vod.id);
+    const clip = await app.clipOneToThree(vod.id);
+    const pill = `.chip.ready[data-clip="${clip.id}"]`;
+    await until("the pill", () => app.js(`return !!document.querySelector(arguments[0])`, pill), 30_000);
+    const ready = await until(
+      "the clip's file",
+      async () => (await app.invoke("list_clips", { vodId: vod.id })).find((c) => c.id === clip.id)?.file_path,
+      30_000,
+    );
+    // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
+    // edge and let go there at once.
+    const folder = path.dirname(ready);
+    const before = new Set(readdirSync(folder));
+    const bar = await os.rectOf(app, ".scrubber");
+    const edge = await os.windowRect(app);
+    const [bx, by] = [bar.x + Math.round(bar.w * 0.8), bar.y + Math.round(bar.h / 2)];
+    await os.gesture([
+      ["hold", "alt"],
+      ["down", bx, by],
+      ["move", bx - 20, by],
+      ["move", bx - 60, by],
+      ["letgo", edge.x, by],
+      ["release", "alt"],
+    ]);
+    await sleep(5000);
+    const left = readdirSync(folder).filter((f) => !before.has(f));
+    if (left.length) throw new Error(`a drag let go before its file was ready left ${left.join(", ")}`);
+    ctx.log("a drag out let go at once: nothing left behind");
+
+    // Pressed on the pill, pulled to the window's left edge: the system's drag
+    // of its file. Then Escape, before it's dropped anywhere.
+    const at = await os.rectOf(app, `${pill} .length`);
+    const page = await os.windowRect(app);
+    const [x, y] = [at.x + Math.round(at.w / 2), at.y + Math.round(at.h / 2)];
+    const steps = [
+      ["down", x, y],
+      ["wait", 100],
+    ];
+    for (let i = 1; i <= 10; i++) steps.push(["move", Math.round(x + (page.x - x) * (i / 10)), y], ["wait", 50]);
+    // The app says when the system's drag is over ("drag-ended"): counted, to
+    // know there was one.
+    await app.js(
+      `window.__dragsEnded = 0;
+       const internals = window.__TAURI_INTERNALS__;
+       const handler = internals.transformCallback(() => window.__dragsEnded++);
+       await internals.invoke("plugin:event|listen", { event: "drag-ended", target: { kind: "Any" }, handler });`,
+    );
+    await os.gesture(steps);
+    await os.gesture([["wait", 1000], ["key", "Escape"], ["wait", 300], ["up"]]);
+    await until("the system's drag, over", () => app.js("return window.__dragsEnded"), 10_000);
+    ctx.log("dragged out, then called off");
+
+    await app.invoke("delete_clip", { id: clip.id });
+    await until(
+      "the clip's file gone with it",
+      () => {
+        if (!existsSync(ready)) return true;
+        throw new Error(`${ready} is still there`);
+      },
+      10_000,
+    );
+  },
+};

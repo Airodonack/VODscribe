@@ -410,6 +410,10 @@ ALTER TABLE pieces RENAME TO edit_pieces;
 CREATE INDEX edit_pieces_by_edit ON edit_pieces (edit_id, position);
 ALTER TABLE clips ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 
+/// v21: edits record whether their rendered video was dragged out of the app
+/// (`handed_out`), as clips do: a render to a new name then leaves it be.
+const MIGRATE_V21: &str = "ALTER TABLE edits ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
+
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
@@ -688,6 +692,7 @@ impl Db {
             MIGRATE_V18,
             MIGRATE_V19,
             MIGRATE_V20,
+            MIGRATE_V21,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -791,6 +796,12 @@ impl Db {
     /// else's now, so it stays when the clip goes.
     pub fn hand_out_clip(&self, id: i64) -> Result<()> {
         self.conn.execute("UPDATE clips SET handed_out = 1 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Clip `id`'s file is a new one, the app's own (the one handed out stays where it went).
+    pub fn take_back_clip(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clips SET handed_out = 0 WHERE id = ?1", [id])?;
         Ok(())
     }
 

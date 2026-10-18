@@ -121,9 +121,9 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
             Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
-        anyhow::Ok((pieces, ffmpeg, out, version, format))
+        anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path))
     })();
-    let (pieces, ffmpeg, out, version, format) = match prepared {
+    let (pieces, ffmpeg, out, version, format, before) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -154,6 +154,13 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     }
     if result.is_ok() && db.edit(id)?.is_none() {
         let _ = std::fs::remove_file(&out);
+    }
+    // The video made before under another name (renamed, or the other format)
+    // goes, unless another app took it.
+    if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out)
+        && !db.edit_handed_out(id, true)?
+    {
+        let _ = std::fs::remove_file(old);
     }
     emit(app, &db, id);
     Ok(())
@@ -369,7 +376,13 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 #[tauri::command]
 pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
     let path = rendered(&app, id)?;
-    crate::clips::drag_file(window, path, None).await
+    let taken = move || {
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
+        });
+    };
+    crate::clips::drag_file(window, path, None, taken).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

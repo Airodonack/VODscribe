@@ -405,6 +405,22 @@ impl Db {
 
     /// Records edit `id`'s render: its status, file (kept if None) and error,
     /// and the version it's of, when done.
+    /// Edit `id`'s video was dragged out of the app, so another app may use it.
+    pub fn hand_out_edit(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE edits SET handed_out = 1 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Whether edit `id`'s video was dragged out of the app; and it's the app's
+    /// own again (`take_back`: rendered to a new file).
+    pub fn edit_handed_out(&self, id: i64, take_back: bool) -> Result<bool> {
+        let out = self.conn.query_row("SELECT handed_out FROM edits WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        if take_back {
+            self.conn.execute("UPDATE edits SET handed_out = 0 WHERE id = ?1", [id])?;
+        }
+        Ok(out.unwrap_or(false))
+    }
+
     pub fn set_edit_render(
         &self,
         id: i64,
