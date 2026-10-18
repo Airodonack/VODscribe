@@ -1,0 +1,10 @@
+[
+  {
+    "name": "windows-11",
+    "host": "windows-11.local",
+    "os": "windows",
+    "dir": "C:/Users/tester/vodscribe-e2e",
+    "path": ["C:/Users/tester/.local/node", "C:/Users/tester/.local/bin"]
+  },
+  { "name": "macos-12", "host": "macos-12.local", "os": "macos", "dir": "/Users/tester/vodscribe-e2e" }
+]

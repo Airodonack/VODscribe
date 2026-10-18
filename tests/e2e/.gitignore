@@ -1,1 +1,3 @@
 out/
+# The computers runners.mjs runs on (see runners.example.json).
+runners.json
