@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use tiny_http::{Header, Request, Response, Server, StatusCode};
 
 use vodscribe_core::db::Db;
@@ -103,7 +103,7 @@ pub(crate) fn playable_file(db: &Db, id: i64) -> Option<String> {
 /// VOD `id`'s loudness over time (`peaks`), ten levels a second; empty if it
 /// was never read. One that plays from a file here is read now if need be.
 #[tauri::command]
-pub(crate) async fn peaks(state: State<'_, AppState>, id: i64) -> CmdResult<tauri::ipc::Response> {
+pub(crate) async fn peaks(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<tauri::ipc::Response> {
     let dir = state.paths.peaks();
     if let Some(levels) = peaks::load(&dir, id) {
         return Ok(tauri::ipc::Response::new(levels));
@@ -120,7 +120,12 @@ pub(crate) async fn peaks(state: State<'_, AppState>, id: i64) -> CmdResult<taur
             return Ok(levels);
         }
         let levels = peaks::read(&ffmpeg, Path::new(&file), &Default::default())?;
-        peaks::save(&dir, id, &levels)?;
+        // Kept only while the VOD's still there (removing it deletes its peaks).
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        if db.vod(id)?.is_some() {
+            peaks::save(&dir, id, &levels)?;
+        }
         anyhow::Ok(levels)
     })
     .await

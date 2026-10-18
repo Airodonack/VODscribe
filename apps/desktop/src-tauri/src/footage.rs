@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -34,6 +34,8 @@ pub(crate) struct Footage {
     wake: Condvar,
     /// Held while a section downloads, so the queue and a render don't fetch the same one.
     fetching: Mutex<()>,
+    /// The VOD the queue is fetching for, and what stops it (the VOD removed).
+    current: Mutex<Option<(i64, Arc<AtomicBool>)>>,
     /// The section downloading, and how far it's in.
     growing: Mutex<Option<Growing>>,
 }
@@ -55,6 +57,11 @@ struct Fetched {
     vod_id: i64,
     /// Why it couldn't be fetched, if it couldn't.
     error: Option<String>,
+}
+
+/// Deletes VOD `vod_id`'s footage (it's removed).
+pub(crate) fn remove(app: &AppHandle, vod_id: i64) {
+    footage::remove(&dir(app), vod_id);
 }
 
 fn dir(app: &AppHandle) -> PathBuf {
@@ -151,8 +158,14 @@ impl Footage {
     /// Starts fetching what's asked, once the app's state is in place; first, tidies the folder.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         std::thread::Builder::new().name("footage".into()).spawn(move || {
-            footage::tidy(&dir(&app), KEEP_FOR, MAX_BYTES);
             let state = app.state::<AppState>();
+            // Never what an edit uses: its site may not have the VOD any more.
+            let used = state.db.lock().unwrap().piece_ranges().unwrap_or_default();
+            footage::tidy(&dir(&app), KEEP_FOR, MAX_BYTES, |path| {
+                footage::section_of(path).is_some_and(|(vod, from, to)| {
+                    used.iter().any(|&(v, start, end)| v == vod && from < end && to > start)
+                })
+            });
             loop {
                 let (vod_id, start, end) = {
                     let mut waiting = state.footage.waiting.lock().unwrap();
@@ -163,7 +176,10 @@ impl Footage {
                         waiting = state.footage.wake.wait(waiting).unwrap();
                     }
                 };
-                let result = ensure(&app, vod_id, start, end, &AtomicBool::new(false));
+                let stop = Arc::new(AtomicBool::new(false));
+                *state.footage.current.lock().unwrap() = Some((vod_id, stop.clone()));
+                let result = ensure(&app, vod_id, start, end, &stop);
+                *state.footage.current.lock().unwrap() = None;
                 if let Err(e) = &result {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
                 }
@@ -171,6 +187,17 @@ impl Footage {
             }
         })?;
         Ok(())
+    }
+
+    /// Stops fetching VOD `vod_id`'s footage (it's being removed): what's
+    /// waiting, and the download under way.
+    pub(crate) fn stop_vod(&self, vod_id: i64) {
+        self.waiting.lock().unwrap().retain(|&(v, _, _)| v != vod_id);
+        if let Some((v, stop)) = &*self.current.lock().unwrap()
+            && *v == vod_id
+        {
+            stop.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Fetches the footage of each stretch (VOD, start, end), after what's asked already.
@@ -248,6 +275,9 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
             let dir = dir(app);
             std::fs::create_dir_all(&dir)?;
             let out = dir.join(format!("{name}.mkv"));
+            // Into place only while the VOD's still there (removing it deletes its footage).
+            let db = state.db.lock().unwrap();
+            db.vod(vod_id)?.context("That VOD is gone.")?;
             std::fs::rename(&file, &out).or_else(|_| std::fs::copy(&file, &out).map(|_| ()))?;
             // Dated now, not when the site made it, for tidying.
             footage::touch(&out);

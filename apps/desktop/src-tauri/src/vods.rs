@@ -253,6 +253,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     state.history.forget(crate::history::Doc::Vod(id));
     let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
     state.clips.stop_vod(&state.db.lock().unwrap(), id);
+    state.footage.stop_vod(id);
     erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
     // A running stage removes the files once its process has stopped.
     // With the reads held too, so none is under way when the WAL is emptied.
@@ -274,6 +275,7 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     }
     thumbs::remove(&state.paths.thumbs(), id);
     vodscribe_core::peaks::remove(&state.paths.peaks(), id);
+    crate::footage::remove(&app, id);
     let _ = app.emit("vod-removed", id);
     Ok(())
 }

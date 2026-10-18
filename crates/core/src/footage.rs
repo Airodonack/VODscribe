@@ -99,10 +99,14 @@ pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Op
             return Ok(Some(Source { path, offset: clip.start, section: None }));
         }
     }
-    Ok(sections(dir, vod_id)
+    let found = sections(dir, vod_id)
         .into_iter()
-        .find(|(_, from, to)| picture_from(*from) <= start + EPSILON && *to >= end - EPSILON)
-        .map(|(path, from, to)| Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) }))
+        .find(|(_, from, to)| picture_from(*from) <= start + EPSILON && *to >= end - EPSILON);
+    // Used now, for tidying.
+    if let Some((path, _, _)) = &found {
+        touch(path);
+    }
+    Ok(found.map(|(path, from, to)| Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) }))
 }
 
 /// The section to download for `start`..`end` of a VOD `duration` seconds
@@ -117,32 +121,49 @@ pub fn section_stem(vod_id: i64, from: f64, to: f64) -> String {
     format!("{vod_id}-{}-{}", (from * 1000.0).round() as i64, (to * 1000.0).round() as i64)
 }
 
+/// The VOD and stretch (from, to) a file named as a section holds (`section_stem`).
+pub fn section_of(path: &Path) -> Option<(i64, f64, f64)> {
+    let name = path.file_name()?.to_str()?;
+    let mut parts = name.split('.').next()?.splitn(3, '-');
+    let vod_id = parts.next()?.parse().ok()?;
+    let (from, to) = (parts.next()?.parse::<i64>().ok()?, parts.next()?.parse::<i64>().ok()?);
+    Some((vod_id, from as f64 / 1000.0, to as f64 / 1000.0))
+}
+
 /// VOD `vod_id`'s sections in `dir`: each file, and what it holds, from and to.
 fn sections(dir: &Path, vod_id: i64) -> Vec<(PathBuf, f64, f64)> {
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
-    let prefix = format!("{vod_id}-");
     entries
         .flatten()
+        .filter(|e| e.path().is_file() && !e.file_name().to_string_lossy().contains(".part"))
         .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let stem = name.split('.').next()?;
-            let (from, to) = stem.strip_prefix(&prefix)?.split_once('-')?;
-            let (from, to) = (from.parse::<i64>().ok()?, to.parse::<i64>().ok()?);
-            (e.path().is_file() && !name.contains(".part"))
-                .then(|| (e.path(), from as f64 / 1000.0, to as f64 / 1000.0))
+            let (id, from, to) = section_of(&e.path())?;
+            (id == vod_id).then(|| (e.path(), from, to))
         })
         .collect()
 }
 
+/// Deletes VOD `vod_id`'s sections in `dir` (it's removed), downloaded or not.
+pub fn remove(dir: &Path, vod_id: i64) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        if section_of(&entry.path()).is_some_and(|(id, _, _)| id == vod_id) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// Removes files in `dir` not used for `max_age`, then the least recently
-/// used until they take at most `max_bytes`.
-pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64) {
+/// used until they take at most `max_bytes`; never those `kept` says to keep
+/// (footage an edit uses: its site may not have the VOD any more).
+pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64, kept: impl Fn(&Path) -> bool) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     let mut files: Vec<(PathBuf, SystemTime, u64)> = entries
         .flatten()
         .filter_map(|e| {
             let meta = e.metadata().ok()?;
-            meta.is_file().then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+            (meta.is_file() && !kept(&e.path()))
+                .then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
         })
         .collect();
     let now = SystemTime::now();
@@ -244,8 +265,52 @@ mod tests {
             let when = SystemTime::now() - Duration::from_secs(age * 86_400);
             fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
         }
-        tidy(&dir, Duration::from_secs(30 * 86_400), 150);
+        tidy(&dir, Duration::from_secs(30 * 86_400), 150, |_| false);
         let left: Vec<bool> = ["old", "mid", "new"].iter().map(|n| dir.join(format!("{n}.mp4")).exists()).collect();
         assert_eq!(left, [false, false, true], "too old, then over the cap");
+    }
+
+    #[test]
+    fn tidying_keeps_what_edits_use_however_old() {
+        let dir = crate::TempDir::new("footage-tidy-kept");
+        for name in ["used", "unused"] {
+            let p = dir.join(format!("{name}.mkv"));
+            fs::write(&p, [0u8; 100]).unwrap();
+            let when = SystemTime::now() - Duration::from_secs(100 * 86_400);
+            fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
+        }
+        tidy(&dir, Duration::from_secs(30 * 86_400), 50, |p| p.ends_with("used.mkv"));
+        assert!(dir.join("used.mkv").exists(), "an edit uses it");
+        assert!(!dir.join("unused.mkv").exists());
+    }
+
+    #[test]
+    fn finding_a_section_marks_it_used() {
+        let dir = crate::TempDir::new("footage-find-touch");
+        let db = Db::open(&dir.join("library.db")).unwrap();
+        let (vod, _) = db.add_vod(&crate::edits::tests::info("a")).unwrap();
+        let path = dir.join(format!("{}.mkv", section_stem(vod.id, 0.0, 100.0)));
+        fs::write(&path, [0u8; 10]).unwrap();
+        let old = SystemTime::now() - Duration::from_secs(40 * 86_400);
+        fs::File::options().append(true).open(&path).unwrap().set_modified(old).unwrap();
+        assert!(find(&db, &dir, vod.id, 10.0, 20.0).unwrap().is_some());
+        let used = fs::metadata(&path).unwrap().modified().unwrap();
+        assert!(SystemTime::now().duration_since(used).unwrap() < Duration::from_secs(60), "dated now");
+    }
+
+    #[test]
+    fn removing_a_vod_removes_its_sections_only() {
+        let dir = crate::TempDir::new("footage-remove");
+        for name in ["7-0-1000.mkv", "7-0-2000.part.mkv", "70-0-1000.mkv", "8-0-1000.mkv", "notes.txt"] {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+        remove(&dir, 7);
+        let left: Vec<bool> = ["7-0-1000.mkv", "7-0-2000.part.mkv", "70-0-1000.mkv", "8-0-1000.mkv", "notes.txt"]
+            .iter()
+            .map(|n| dir.join(n).exists())
+            .collect();
+        assert_eq!(left, [false, false, true, true, true]);
+        assert_eq!(section_of(Path::new("12-1500-90250.mkv")), Some((12, 1.5, 90.25)));
+        assert_eq!(section_of(Path::new("notes.txt")), None);
     }
 }

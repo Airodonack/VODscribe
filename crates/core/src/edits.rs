@@ -286,6 +286,13 @@ impl Db {
     }
 
     /// The edit piece `id` is in, if it's there.
+    /// Every edit's pieces, as (VOD, start, end): the footage edits use.
+    pub fn piece_ranges(&self) -> Result<Vec<(i64, f64, f64)>> {
+        let mut stmt = self.conn.prepare("SELECT vod_id, start, end FROM edit_pieces")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn piece_edit(&self, id: i64) -> Result<Option<i64>> {
         Ok(self.conn.query_row("SELECT edit_id FROM edit_pieces WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
