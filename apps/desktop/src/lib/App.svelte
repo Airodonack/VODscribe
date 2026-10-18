@@ -132,7 +132,9 @@
 
   /** Undoes (or redoes) the newest change in the view's history, and says what it was. */
   function undoRedo(redo: boolean) {
-    const doc = view;
+    // Playing a search result shows its VOD (marks, clip bar) without
+    // selecting it: what's changed there is undone there too.
+    const doc = view ?? (playing && edits.openId === null ? { kind: "vod" as const, id: playing.vodId } : null);
     if (!doc || DEMO) return;
     (redo ? api.redo(doc) : api.undo(doc)).then(
       (done) =>
