@@ -4,8 +4,11 @@
 //
 // The app's native dialogs can't be clicked from the page, so the test
 // answers them: the file picker returns `app.files`, and a question the
-// button in `app.answer`. Tauri's invoke can't be replaced (it's defined
-// read-only), so the answers go in at the fetch that carries each call.
+// button in `app.answer`. A restart the app asks for (plugin-process's
+// relaunch) is noted, not done: the test restarts it itself (ctx.restart), as
+// one the app started couldn't be driven. Tauri's invoke can't be replaced
+// (it's defined read-only), so the answers go in at the fetch that carries
+// each call.
 
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -74,10 +77,23 @@ export class App {
     );
   }
 
-  key(key) {
+  /** Presses `key` (a KeyboardEvent key), with Shift if `shift`, as the window gets it. */
+  key(key, { shift = false } = {}) {
     return this.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true }))`,
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], shiftKey: arguments[1], bubbles: true }))`,
       key,
+      shift,
+    );
+  }
+
+  /** Pauses the open VOD with the bar's button, if it's playing. */
+  async pause() {
+    if (await this.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`))
+      await this.click('.bar button[aria-label="Pause"]');
+    await until(
+      "the player to pause",
+      () => this.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+      10_000,
     );
   }
 
@@ -97,7 +113,7 @@ export class App {
     );
     await this.js(`
       const real = window.fetch;
-      window.__e2e = { files: [], answer: null, asked: [] };
+      window.__e2e = { files: [], answer: null, asked: [], restarts: 0 };
       const answer = (value) =>
         new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json", "Tauri-Response": "ok" } });
       window.fetch = (url, init) => {
@@ -106,6 +122,10 @@ export class App {
         if (cmd === "plugin:dialog|message") {
           window.__e2e.asked.push(init?.body);
           return Promise.resolve(answer(window.__e2e.answer));
+        }
+        if (cmd === "plugin:process|restart") {
+          window.__e2e.restarts++;
+          return Promise.resolve(answer(null));
         }
         return real(url, init);
       };`);
@@ -119,6 +139,11 @@ export class App {
   /** The button the next question is answered with. */
   answer(button) {
     return this.js(`window.__e2e.answer = arguments[0]`, button);
+  }
+
+  /** How many times the app has asked to restart. */
+  restarts() {
+    return this.js(`return window.__e2e.restarts`);
   }
 
   /** How many questions the app has asked. */
@@ -135,11 +160,27 @@ export class App {
     const library = () => this.js(`return !!document.querySelector('input[placeholder="Search for a phrase…"]')`);
     const setup = () =>
       this.js(`return [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Download")`);
+    // On WebKitGTK 2.54 (Debian 13), a driven start sometimes leaves the page
+    // empty for about two minutes; undriven, it never has (TODO.md). One
+    // reload, said in the log, gets past it without hiding it.
+    const begun = Date.now();
+    let reloaded = false;
+    const stuck = async () => {
+      if (reloaded || Date.now() - begun < 15_000) return false;
+      if (await this.js(`return document.body.innerText.trim() !== ""`)) return false;
+      reloaded = true;
+      this.log("the page is still empty after 15 s: reloading it");
+      await this.js(`setTimeout(() => location.reload(), 0)`);
+      await sleep(1000);
+      await this.ready();
+      return false;
+    };
     const screen = await until(
       "setup or the library",
       async () =>
         ((await library()) && "library") ||
         ((await setup()) && "setup") ||
+        (await stuck()) ||
         // If it never comes, the error says what was showing instead.
         this.js(`return document.body.innerText.trim().slice(0, 200) || "(a blank page)"`).then((shown) => {
           lastShown = shown;
@@ -156,6 +197,42 @@ export class App {
       await until("setup to finish", library, 30 * MINUTE);
     }
     return screen;
+  }
+
+  /** Opens VOD `id` from the library list and waits for its player's controls. */
+  async openVod(id) {
+    // Rows are keyed by VOD id (edits by minus theirs: Library.svelte).
+    await this.click(`.vod[data-key="${id}"]`);
+    await until("the player", () => this.js(`return !!document.querySelector("button.time")`), MINUTE);
+  }
+
+  /** The time the player bar shows, in seconds (whole ones, as it shows them). */
+  shownTime() {
+    return this.js(`
+      const text = document.querySelector("button.time .now > span:not(.widest)")?.textContent ?? "";
+      return text.split(":").reduce((total, part) => total * 60 + Number(part), 0);`);
+  }
+
+  /**
+   * Plays the open VOD with the bar's Play button, whichever player it has
+   * (the app's own draws outside the page, with no <video>), and checks the
+   * time it shows runs on; returns the time it got to.
+   */
+  async plays() {
+    const from = await this.shownTime();
+    await this.click('.bar button[aria-label="Play"]');
+    return until(
+      "the time to run on",
+      async () => {
+        const error = await this.js(
+          `return [...document.querySelectorAll(".error-text")].map((e) => e.textContent).join(" ")`,
+        );
+        if (/couldn't be played|can't be played/.test(error)) throw new Error(error);
+        const now = await this.shownTime();
+        return now >= from + 2 && now;
+      },
+      MINUTE,
+    );
   }
 
   /** Adds `file` through the file picker and waits for it to be transcribed; returns the VOD. */

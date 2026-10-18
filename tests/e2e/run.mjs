@@ -14,6 +14,11 @@
 // the tools and speech model; set E2E_RESET_DATA=1 to allow it once there's
 // a library. On failure: the page's errors and a screenshot in E2E_OUT
 // (default tests/e2e/out). Every scenario runs; the exit code says if any failed.
+//
+// A scenario exports { name, before?(ctx), run(app, ctx) }: `before` sets up
+// the data folder before the app starts; `run` gets an App (lib/app.mjs) and
+// ctx: { fixtures, out, log, quit(), start(), restart() }: quit ends the app,
+// start starts it again and returns the new App, restart does both.
 
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -59,24 +64,45 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
   const { default: scenario } = await import(pathToFileURL(path.join(here, "scenarios", `${name}.mjs`)));
   const begun = Date.now();
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
-  let driver;
+  // The app as it is now: `ctx.restart()` (for what must survive one) replaces it.
+  let current;
+  const launch = async () => {
+    const driver = traced(await startDriver(app), log);
+    current = { driver, app: new App(driver, log) };
+    log("app started");
+    await current.app.ready();
+    return current.app;
+  };
+  const ctx = {
+    fixtures,
+    out,
+    log,
+    quit: async () => {
+      const closing = current;
+      current = null;
+      await closing?.driver.close();
+    },
+    start: launch,
+    restart: async () => {
+      await ctx.quit();
+      return launch();
+    },
+  };
   let error;
   try {
     resetData();
-    driver = traced(await startDriver(app), log);
-    log("app started");
-    const instance = new App(driver, log);
-    await instance.ready();
-    await scenario.run(instance, { fixtures });
+    // What a scenario sets up in the data folder before the app starts.
+    await scenario.before?.(ctx);
+    await scenario.run(await launch(), ctx);
     // Whatever it did, the page shouldn't be showing an error at the end.
-    const errors = await instance.errors();
+    const errors = current ? await current.app.errors() : [];
     if (errors.length) throw new Error(`the page shows: ${errors.join(" | ")}`);
   } catch (e) {
     error = e.message;
     console.error(`${name}: FAILED: ${error}`);
-    if (driver) await diagnose(driver, name);
+    if (current) await diagnose(current.driver, name);
   } finally {
-    await driver?.close();
+    await current?.driver.close();
   }
   results.push({ name, ok: !error, error, seconds: Math.round((Date.now() - begun) / 1000) });
   log(error ? "failed" : "passed");
@@ -114,6 +140,22 @@ async function diagnose(driver, name) {
     .run(`return [...document.querySelectorAll(".error-text")].map((e) => e.textContent.trim()).filter(Boolean)`)
     .catch((e) => [`(couldn't read the page: ${e.message})`]);
   if (errors.length) console.error(`  the page shows: ${errors.join(" | ")}`);
+  // What it showed, as text: where there's no screenshot (macOS over SSH), it's all there is.
+  const shown = await driver
+    .run(
+      `const media = document.querySelector("video, audio");
+       return [
+         "player: " + (media ? JSON.stringify({ src: media.currentSrc, readyState: media.readyState, paused: media.paused,
+           currentTime: media.currentTime, error: media.error && media.error.message }) : "no <video> or <audio>"),
+         "time shown: " + (document.querySelector("button.time")?.textContent.trim() ?? "none"),
+         "",
+         document.body.innerText,
+       ].join("\\n")`,
+    )
+    .catch((e) => `(couldn't read the page: ${e.message})`);
+  mkdirSync(out, { recursive: true });
+  writeFileSync(path.join(out, `${name}.txt`), shown);
+  console.error(`  page: ${path.join(out, `${name}.txt`)}`);
   const png = await driver.screenshot().catch(() => null);
   if (png) {
     mkdirSync(out, { recursive: true });

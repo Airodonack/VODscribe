@@ -12,6 +12,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
+import { Script } from "node:vm";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -107,6 +108,12 @@ export async function bridge(app) {
   return {
     run: async (body, args = [], waitMs = 30_000) => {
       if (exited !== null) throw new Error(`the app exited (${exited})`);
+      // A script that doesn't parse never answers from the page: say so here.
+      try {
+        new Script(`(async function () { ${body} })`);
+      } catch (e) {
+        throw new Error(`the script doesn't parse (${e.message}): ${body}`);
+      }
       const res = await post("/run", { script: body, args, wait_ms: waitMs });
       const text = await res.text();
       if (!res.ok) throw new Error(`the test hook: ${res.status} ${text}`);
