@@ -305,14 +305,7 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
     });
     *state.footage.growing.lock().unwrap() = None;
     // Whatever was downloaded goes, done or not.
-    if let Ok(entries) = std::fs::read_dir(&work) {
-        for entry in entries.flatten() {
-            let file = entry.file_name().to_string_lossy().into_owned();
-            if file.strip_prefix(&prefix).is_some_and(|rest| rest.starts_with('.')) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
+    vodscribe_core::pipeline::remove_work_prefix(&work, &prefix);
     result
 }
 

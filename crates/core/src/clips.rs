@@ -31,6 +31,12 @@ pub fn title(words: &[Word], start: f64) -> String {
     title
 }
 
+/// A title or note as written for a clip, an edit, a piece or a mark:
+/// trimmed, at most 200 characters; None if nothing's left.
+pub fn written_title(text: &str) -> Option<String> {
+    Some(text.trim().chars().take(200).collect::<String>()).filter(|t| !t.is_empty())
+}
+
 /// `seconds` as 1:02:03, for a title.
 fn stamp(seconds: f64) -> String {
     let s = seconds.max(0.0).floor() as u64;
@@ -244,6 +250,13 @@ pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn written_titles_are_trimmed_and_capped() {
+        assert_eq!(written_title("  The landing \n").as_deref(), Some("The landing"));
+        assert_eq!(written_title(" \t "), None);
+        assert_eq!(written_title(&"é".repeat(300)).map(|t| t.chars().count()), Some(200));
+    }
 
     #[test]
     fn titles_from_what_is_said() {

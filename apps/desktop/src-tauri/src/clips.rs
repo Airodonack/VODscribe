@@ -271,7 +271,7 @@ fn download_and_cut(
     std::fs::create_dir_all(&work)?;
     let info = work.join(format!("clip-{id}.info.json"));
     // Named for the range, so a download for an earlier range is never taken for this one.
-    let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0) as i64, (end * 1000.0) as i64));
+    let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0).round() as i64, (end * 1000.0).round() as i64));
     let selector = clips::selector(Settings::load(&paths.settings()).video_height());
     let from = (start - LEAD_IN).max(0.0);
     let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end, matroska: false };
@@ -283,15 +283,7 @@ fn download_and_cut(
         clips::cut(ffmpeg, &section, out, range, vod.audio_only, format, stop, |p| report(0.8 + p * 0.2))
     })();
     // Whatever was downloaded goes, done or not.
-    let prefix = format!("clip-{id}");
-    if let Ok(entries) = std::fs::read_dir(&work) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name.strip_prefix(&prefix).is_some_and(|rest| rest.starts_with(['.', '-'])) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
+    vodscribe_core::pipeline::remove_work_prefix(&work, &format!("clip-{id}"));
     result
 }
 
@@ -379,11 +371,7 @@ pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
 
 #[tauri::command]
 pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdResult<Clip> {
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("A clip needs a name.".into());
-    }
-    let title: String = title.chars().take(200).collect();
+    let title = clips::written_title(&title).ok_or("A clip needs a name.")?;
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let doc = Doc::Vod(db.clip(id).map_err(err)?.ok_or("That clip is gone.")?.vod_id);
@@ -459,9 +447,9 @@ pub(crate) async fn list_marks(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Mar
 /// What a mark can be (`db::Mark`).
 const MARK_KINDS: [&str; 3] = ["cut", "chapter", "highlight"];
 
-/// A mark's title or note: trimmed, at most 200 characters; none if empty.
+/// A mark's title or note (`clips::written_title`).
 fn mark_text(text: Option<String>) -> Option<String> {
-    text.map(|t| t.trim().chars().take(200).collect::<String>()).filter(|t| !t.is_empty())
+    text.as_deref().and_then(clips::written_title)
 }
 
 /// Puts a mark on VOD `vod_id`'s timeline at `time` seconds: a cut (between

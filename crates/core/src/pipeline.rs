@@ -236,6 +236,19 @@ pub fn remove_work_files(work_dir: &Path, vod_id: i64) {
     }
 }
 
+/// Deletes the files in `work_dir` named `prefix` and then a dot or a dash
+/// (a download's pieces: `clip-12.info.json`, `clip-12-1000-2000.mp4.part`),
+/// not another's whose name only starts the same (`clip-123.info.json`).
+pub fn remove_work_prefix(work_dir: &Path, prefix: &str) {
+    let Ok(entries) = fs::read_dir(work_dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.strip_prefix(prefix).is_some_and(|rest| rest.starts_with(['.', '-'])) && entry.path().is_file() {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct WorkerLine {
     #[serde(default)]
@@ -329,6 +342,19 @@ fn run_worker(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_files_go_by_their_prefix_only() {
+        let dir = crate::TempDir::new("prefix");
+        for name in ["clip-12.info.json", "clip-12-1000-2000.mp4.part", "clip-123.info.json", "clip-12x"] {
+            fs::write(dir.join(name), b"").unwrap();
+        }
+        remove_work_prefix(&dir, "clip-12");
+        let mut left: Vec<_> =
+            fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, ["clip-123.info.json", "clip-12x"]);
+    }
 
     /// A video without sound is done at once, with no lines: no worker runs
     /// (the one given doesn't exist). Skipped where ffmpeg isn't installed.

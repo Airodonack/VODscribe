@@ -246,10 +246,9 @@ fn edit_of(app: &AppHandle, id: i64) -> CmdResult<i64> {
     edit.ok_or_else(|| "That piece is gone.".into())
 }
 
-/// A title as edits keep it: trimmed, at most 200 characters.
+/// A title as edits keep it (`clips::written_title`).
 fn title(text: &str) -> CmdResult<String> {
-    let title: String = text.trim().chars().take(200).collect();
-    if title.is_empty() { Err("An edit needs a name.".into()) } else { Ok(title) }
+    clips::written_title(text).ok_or_else(|| "An edit needs a name.".into())
 }
 
 #[tauri::command]
@@ -326,7 +325,7 @@ pub(crate) async fn add_range_to_edit(
     title: Option<String>,
     index: Option<usize>,
 ) -> CmdResult<EditView> {
-    let title = title.map(|t| t.trim().chars().take(200).collect::<String>()).filter(|t| !t.is_empty());
+    let title = title.as_deref().and_then(clips::written_title);
     if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
         return Err("A piece has to end after it starts.".into());
     }
