@@ -75,7 +75,7 @@ jobs:
           cargo install tauri-driver --version 2.1.0 --locked
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
-            sudo apt-get install -y webkit2gtk-driver xvfb xdotool ./build/deb/*.deb
+            sudo apt-get install -y webkit2gtk-driver xvfb xdotool openbox ./build/deb/*.deb
             echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
           else
             # The installer, silently, for this user (its usual mode).
@@ -115,7 +115,8 @@ jobs:
           E2E_RESET_DATA: "1"
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
-            dbus-run-session -- xvfb-run -a node tests/e2e/run.mjs "$APP"
+            # Under a window manager, as on a desktop: full screen is the window manager's to do.
+            dbus-run-session -- xvfb-run -a sh -c 'openbox & sleep 1; exec node tests/e2e/run.mjs "$1"' sh "$APP"
           else
             node tests/e2e/run.mjs "$APP"
           fi

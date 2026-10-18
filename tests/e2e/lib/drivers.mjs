@@ -44,7 +44,8 @@ function freePort() {
 let tauriDriver;
 
 export async function webdriver(app) {
-  const port = 4444;
+  // Another port for runs side by side on one computer: E2E_DRIVER_PORT.
+  const port = Number(process.env.E2E_DRIVER_PORT ?? 4444);
   const base = `http://127.0.0.1:${port}`;
   if (!tauriDriver) {
     const native = process.env.NATIVE_DRIVER ? ["--native-driver", process.env.NATIVE_DRIVER] : [];

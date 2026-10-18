@@ -9,7 +9,14 @@ export default {
   async run(app, { fixtures, log, checkpoint }) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);
-    await app.playFromSearch("landed");
+    // Played from a search hit (undo there is what 8867f3d fixed), on the
+    // first word: one in the file's last second stalls WebKitGTK (TODO.md).
+    await app.playFromSearch("Swift");
+    await until(
+      "it to play",
+      () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
+      60_000,
+    );
     await app.pause();
     const marks = () => app.invoke("list_marks", { vodId: vod.id });
     const to = (s) => until(`the player at ${s} s`, async () => (await app.shownTime()) === s, 10_000);

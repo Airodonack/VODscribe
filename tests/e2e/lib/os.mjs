@@ -232,3 +232,45 @@ export function crop(png, rect) {
     rmSync(file, { force: true });
   }
 }
+
+/** `rect` of the PNG `png` scaled to w x h pixels: their RGB bytes, for comparing regions. */
+export function pixels(png, rect, w = 64, h = 16) {
+  requireInts(rect);
+  const file = temp("pixels.png");
+  try {
+    writeFileSync(file, png);
+    return execFileSync(
+      ffmpeg(),
+      [
+        "-loglevel",
+        "error",
+        "-i",
+        file,
+        "-vf",
+        `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y},scale=${w}:${h}:flags=area`,
+        "-frames:v",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
+      ],
+      { maxBuffer: 1 << 20 },
+    );
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+/** How different two pixels() buffers are: the mean difference of their bytes (0 to 255). */
+export function difference(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / a.length;
+}
+
+/** A PNG's size in pixels, from its header. */
+export function sizeOf(png) {
+  return { w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
+}

@@ -8,7 +8,7 @@ export default {
   async run(app, { fixtures, checkpoint }) {
     await app.toLibrary();
     const done = await app.addAndTranscribe(fixtures.landed);
-    await app.playFromSearch("landed");
+    await app.openPaused(done.id);
     const clip = await app.clipOneToThree(done.id);
     // The chip follows a moment after the clip is recorded as made.
     await until("the chip to show it made", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);

@@ -46,7 +46,7 @@ export default {
     kept.close();
     if (old !== 1) throw new Error(`the kept copy has ${old} VODs`);
 
-    await app.playFromSearch("landed");
+    await app.openPaused(vod.id);
     const clip = await app.clipOneToThree(vod.id);
     app.log(`kept: the VOD, its transcript, the theme and a copy; clipped "${clip.title}"`);
     await until(

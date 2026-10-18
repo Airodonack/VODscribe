@@ -117,6 +117,32 @@ export class App {
 
   /** Waits for the page, then puts in the dialog answers. */
   async ready() {
+    await this.loaded();
+    // On WebKitGTK (2.54 often, 2.50 once in a while on CI), a driven start
+    // can leave the page empty for a minute or two; undriven, it hasn't been
+    // seen (TODO.md). One reload, said in the log, gets past it without
+    // hiding it.
+    const shown = () => this.js(`return document.body.innerText.trim() !== ""`);
+    const begun = Date.now();
+    await until(
+      "the first screen",
+      async () => {
+        if (await shown()) return true;
+        if (Date.now() - begun > 15_000 && !this.reloaded) {
+          this.reloaded = true;
+          this.log("the page is still empty after 15 s: reloading it");
+          await this.js(`setTimeout(() => location.reload(), 0)`);
+          await sleep(1000);
+          await this.loaded();
+        }
+        return false;
+      },
+      3 * MINUTE,
+    );
+  }
+
+  /** Waits for the page to load, then puts in the dialog answers. */
+  async loaded() {
     await until(
       "the page",
       () => this.js(`return !!window.__TAURI_INTERNALS__ && document.readyState === "complete"`),
@@ -171,27 +197,11 @@ export class App {
     const library = () => this.js(`return !!document.querySelector('input[placeholder="Search for a phrase…"]')`);
     const setup = () =>
       this.js(`return [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Download")`);
-    // On WebKitGTK 2.54 (Debian 13), a driven start sometimes leaves the page
-    // empty for about two minutes; undriven, it never has (TODO.md). One
-    // reload, said in the log, gets past it without hiding it.
-    const begun = Date.now();
-    let reloaded = false;
-    const stuck = async () => {
-      if (reloaded || Date.now() - begun < 15_000) return false;
-      if (await this.js(`return document.body.innerText.trim() !== ""`)) return false;
-      reloaded = true;
-      this.log("the page is still empty after 15 s: reloading it");
-      await this.js(`setTimeout(() => location.reload(), 0)`);
-      await sleep(1000);
-      await this.ready();
-      return false;
-    };
     const screen = await until(
       "setup or the library",
       async () =>
         ((await library()) && "library") ||
         ((await setup()) && "setup") ||
-        (await stuck()) ||
         // If it never comes, the error says what was showing instead.
         this.js(`return document.body.innerText.trim().slice(0, 200) || "(a blank page)"`).then((shown) => {
           lastShown = shown;
@@ -255,6 +265,22 @@ export class App {
     await this.key("ArrowLeft");
     await this.key("ArrowLeft");
     await until("the player at the start", async () => (await this.shownTime()) === 0, 10_000);
+  }
+
+  /**
+   * Opens VOD `id` from the library, paused near its start: played (either
+   * player is made on the first play), paused once it plays. Not from a
+   * search hit: WebKitGTK stalls an mp3 started in its last second (TODO.md).
+   */
+  async openPaused(id) {
+    await this.openVod(id);
+    await this.click('.bar button[aria-label="Play"]');
+    await until(
+      "it to play",
+      () => this.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
+      MINUTE,
+    );
+    await this.pause();
   }
 
   /** Searches for `phrase` and plays from the first result. */

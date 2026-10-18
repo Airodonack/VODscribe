@@ -15,7 +15,7 @@ export default {
   async run(app, ctx) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);
-    await app.playFromSearch("landed");
+    await app.openPaused(vod.id);
     const clip = await app.clipOneToThree(vod.id);
 
     // From the clip's pill: Add to an edit › New edit.
