@@ -187,12 +187,12 @@
     return id === null ? [] : (edits.list.find((e) => e.id === id)?.ranges.filter((r) => r.vod_id === vod.id) ?? []);
   });
 
-  // Export: the stretch the playhead is in becomes a clip, a pill in the clip
+  // Clip (E): the stretch the playhead is in becomes a clip, a pill in the clip
   // bar. Hovering the button lights the stretch up on the timeline.
-  let exportButton = $state<HTMLElement>();
-  let exportHover = $state(false);
+  let clipButton = $state<HTMLElement>();
+  let clipHover = $state(false);
   const stretch = $derived(duration ? stretchAt(now, duration) : undefined);
-  const dragKey = os === "mac" ? "Option" : os === "linux" ? "Alt (or Ctrl)" : "Alt";
+  const dragKey = os === "mac" ? "Option" : "Alt";
 
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
@@ -225,12 +225,12 @@
     else cuts.toggle(now, fps, !playing);
   }
 
-  /** Export: the selection, else the stretch the playhead is in (with no cuts, the whole video), as a clip in the clip bar. */
-  async function exportClip() {
+  /** Clip: the selection, else the stretch the playhead is in (with no cuts, the whole video), as a clip in the clip bar. */
+  async function makeClip() {
     const range = cuts.selection ? await cuts.cutSelection() : stretch;
     if (range) await exportStretch(range.start, range.end);
   }
-  const canExport = $derived(!!cuts.selection || !!stretch);
+  const canClip = $derived(!!cuts.selection || !!stretch);
 
   // Full screen is the window's, with the player panel laid over the page:
   // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
@@ -266,13 +266,13 @@
     if (e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    // B cuts and E exports, as in video editors (also with Ctrl, or ⌘ on a Mac).
+    // B cuts, as in video editors, and E makes a clip (also with Ctrl, or ⌘ on a Mac).
     if (key === "b" || key === "e") {
       // Held down, it's one press.
       if (e.repeat) return e.preventDefault();
       collapsed = false;
       if (key === "b") split();
-      else exportClip();
+      else makeClip();
       e.preventDefault();
       return;
     }
@@ -409,7 +409,7 @@
       <kbd>B</kbd> cut here (<kbd>,</kbd><kbd>.</kbd>, <kbd>←</kbd><kbd>→</kbd>, <kbd>J</kbd><kbd>L</kbd> move the
       selected cut, <kbd>Delete</kbd> removes it)
       <span class="sep">·</span>
-      <kbd>E</kbd> export the stretch as a clip <span class="sep">·</span>
+      <kbd>E</kbd> clip the stretch <span class="sep">·</span>
       <kbd>H</kbd> highlight here <span class="sep">·</span>
       <kbd>N</kbd> new chapter here (double-click one to rename it) <span class="sep">·</span>
       <kbd>M</kbd> mute <span class="sep">·</span>
@@ -441,7 +441,7 @@
     {#if !collapsed}
       <Popover
         bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
-        anchor={exportButton}
+        anchor={clipButton}
         label="Before downloading a clip"
         width={340}
       >
@@ -456,7 +456,7 @@
             time={now}
             {shown}
             {fps}
-            highlight={exportHover && canExport ? (cuts.selection ?? stretch) : null}
+            highlight={clipHover && canClip ? (cuts.selection ?? stretch) : null}
             ranges={editRanges}
             current={between ? stretch : null}
             ownPlayer={playsHere(vod)}
@@ -482,26 +482,26 @@
         >
           {#snippet actions()}
             <button
-              class="action clip"
+              class="action split"
               class:picking={!!cuts.selection}
               onclick={split}
               title={cuts.selection
                 ? "Cut both ends of the selection (B)"
-                : "Cut here, between this frame and the one before; the stretches between cuts can be exported as clips (B)"}
+                : "Cut here, between this frame and the one before; each stretch between cuts can become a clip (B)"}
             >
               <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
             </button>
             <button
-              class="action export"
+              class="action clip"
               class:picking={!!cuts.selection}
-              bind:this={exportButton}
-              onclick={exportClip}
-              onmouseenter={() => (exportHover = true)}
-              onmouseleave={() => (exportHover = false)}
-              disabled={!canExport}
-              title="Export the lit-up stretch as a clip, to the clip bar (E): with no cuts, the whole video. Or {dragKey}-drag a stretch of the timeline straight into your video editor."
+              bind:this={clipButton}
+              onclick={makeClip}
+              onmouseenter={() => (clipHover = true)}
+              onmouseleave={() => (clipHover = false)}
+              disabled={!canClip}
+              title="Clip the lit-up stretch, to the clip bar (E): with no cuts, the whole video. Or {dragKey}-drag a stretch of the timeline straight into your video editor."
             >
-              <Icon name="download" size={14} /> Export <kbd>E</kbd>
+              <Icon name="film" size={14} /> Clip <kbd>E</kbd>
             </button>
             {#if cuts.error}
               <span class="context error-text" title={cuts.error}>{cuts.error}</span>
@@ -579,25 +579,25 @@
     padding: 8px 16px 2px;
   }
 
-  .clip :global(svg) {
+  .split :global(svg) {
     color: var(--cut);
   }
 
   /* A selection (made on the timeline or in the transcript) waits to be cut
-     or exported: Split and Export take its color. (:not(:disabled) to win
+     or clipped: Split and Clip take its color. (:not(:disabled) to win
      over the bar's own style for its buttons.) */
-  .clip.picking:not(:disabled),
-  .export.picking:not(:disabled) {
+  .split.picking:not(:disabled),
+  .clip.picking:not(:disabled) {
     color: var(--pick);
     background: color-mix(in srgb, var(--pick) 14%, transparent);
   }
 
-  .clip.picking :global(svg),
-  .export.picking :global(svg) {
+  .split.picking :global(svg),
+  .clip.picking :global(svg) {
     color: var(--pick);
   }
 
-  .export :global(svg) {
+  .clip :global(svg) {
     color: var(--accent);
   }
 

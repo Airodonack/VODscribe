@@ -188,7 +188,7 @@
     color: var(--accent);
   }
 
-  /* The panel's actions (Split, Export…): labelled, with their keys, but
+  /* The panel's actions (Split, Clip…): labelled, with their keys, but
      otherwise like the other controls. */
   .bar :global(.action) {
     flex: none;

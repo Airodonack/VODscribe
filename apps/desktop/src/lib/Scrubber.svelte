@@ -3,8 +3,7 @@
   // few seconds, with its waveform where there is one, its marks (cuts.svelte.ts)
   // and the clips made (an underline). A left click or drag only ever moves the
   // playhead; a mark's flag selects it and drags it (a frame at a time); an
-  // Alt-drag (Option on a Mac, also Ctrl on Linux, where desktops often take
-  // Alt-drag to move windows) makes the stretch under the pointer a clip and
+  // Alt-drag (Option on a Mac) makes the stretch under the pointer a clip and
   // drags it out of the window (dragout.ts). Holding the middle button and
   // dragging pans (sideways) and zooms (up and down) about where it was
   // pressed; a middle click fits the whole VOD. The wheel zooms around the
@@ -20,8 +19,8 @@
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
   // and the joins between them. Its pieces are bands in a lane above it: a
   // click goes to one (the piece at the playhead is the one an edit's
-  // Split and Remove act on, outlined), and dragging one (or Alt-dragging, Ctrl
-  // too on Linux, the waveform under it) moves it, with a marker where it
+  // Split and Remove act on, outlined), and dragging one (or Alt-dragging the
+  // waveform under it) moves it, with a marker where it
   // would go; pulled well above or below the timeline, it's carried out
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
   // moves that end of the piece in its VOD, a frame at a time, to make it
@@ -109,7 +108,7 @@
     shown?: number | null;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
-    /** A stretch to light up: the one the Export button would make a clip of, while it's hovered. */
+    /** A stretch to light up: the one the Clip button would make a clip of, while it's hovered. */
     highlight?: { start: number; end: number } | null;
     /** Stretches lit up another way: what an edit plays of the VOD, while its link is hovered. */
     ranges?: { start: number; end: number }[];
@@ -262,8 +261,8 @@
   // The stretch being taken out of the window, lit up while it's made.
   let taking = $state<{ start: number; end: number } | null>(null);
 
-  /** The modifier that drags a stretch out: Alt (Option), or Ctrl too on Linux. */
-  const dragsOut = (e: PointerEvent) => e.altKey || (os === "linux" && e.ctrlKey);
+  /** The modifier that drags a stretch out: Alt (Option on a Mac). Ctrl stays free for selecting. */
+  const dragsOut = (e: PointerEvent) => e.altKey;
 
   function onDown(e: PointerEvent) {
     if (e.button === 1) {
@@ -292,7 +291,7 @@
         ? pieces?.find((p) => p.id === Number(band.dataset.piece))
         : pieces?.find((p) => timeAt(e.clientX) >= p.start && timeAt(e.clientX) < p.end);
       e.preventDefault();
-      // A band, or the piece anywhere with Alt (Ctrl too on Linux): the same
+      // A band, or the piece anywhere with Alt: the same
       // drag, which moves it in the timeline and carries it out past it.
       if (piece && (band || dragsOut(e))) {
         const index = pieces!.indexOf(piece);
@@ -1144,7 +1143,7 @@
     white-space: nowrap;
   }
 
-  /* The stretch Export would take, or being taken out. */
+  /* The stretch Clip would take, or being taken out. */
   .lit {
     position: absolute;
     top: 0;

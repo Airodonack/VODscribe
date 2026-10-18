@@ -358,7 +358,7 @@ export class App {
     if (Math.abs(at[0] - 1) > 0.05 || Math.abs(at[1] - 3) > 0.05) throw new Error(`cuts at ${at}, not 1 and 3`);
     await this.key("ArrowLeft", { shift: true });
     await to(2);
-    await this.click("button.export");
+    await this.click("button.action.clip");
     const clip = await until(
       "the clip's file",
       async () => {

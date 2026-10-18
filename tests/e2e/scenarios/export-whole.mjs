@@ -11,7 +11,7 @@ export default {
     const vod = await app.addAndTranscribe(fixtures.landed);
     await app.openPaused(vod.id);
     if ((await app.invoke("list_marks", { vodId: vod.id })).length) throw new Error("the new VOD has cuts already");
-    if (await app.js(`return document.querySelector("button.export")?.disabled ?? true`))
+    if (await app.js(`return document.querySelector("button.action.clip")?.disabled ?? true`))
       throw new Error("Export is off with no cuts");
     await app.key("e");
     const clip = await until(

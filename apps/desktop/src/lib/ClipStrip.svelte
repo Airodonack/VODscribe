@@ -90,7 +90,7 @@
 
   function describe(clip: Clip): string {
     if (clip.status === "error")
-      return `Couldn't make this clip: ${clip.error ?? "unknown error"}. Export it again to try again.`;
+      return `Couldn't make this clip: ${clip.error ?? "unknown error"}. Clip the stretch again (E) to retry.`;
     if (clip.status === "cutting") return "Making the clip…";
     if (clip.status === "waiting") return "Waiting to be made";
     return clip.title;

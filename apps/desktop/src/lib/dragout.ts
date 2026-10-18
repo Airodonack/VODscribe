@@ -1,5 +1,5 @@
 // Carrying a stretch of the timeline (or a clip's pill) somewhere: an
-// Alt-drag on the timeline (Option on a Mac, Ctrl too on Linux), a press held
+// Alt-drag on the timeline (Option on a Mac), a press held
 // on the picture, or a pill dragged from the clip bar. Inside the window it's
 // the app's own drag, showing the stretch's frame over its waveform. It lands
 // on the clip bar (kept as a clip), on an edit's row in the library's list
