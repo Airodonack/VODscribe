@@ -34,7 +34,10 @@ export function resetData() {
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
-      if (!KEPT.has(name)) rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 5 });
+      // Retried for a while: on Windows the last app's WebView2 processes
+      // can hold its files for some seconds after it's gone.
+      if (!KEPT.has(name))
+        rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
     }
   }
 }
