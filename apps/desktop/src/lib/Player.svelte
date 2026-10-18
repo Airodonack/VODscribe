@@ -18,7 +18,7 @@
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
-  import { formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
+  import { formatFraction, formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
   import { nav } from "./nav.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
@@ -195,7 +195,7 @@
   const dragKey = os === "mac" ? "Option" : "Alt";
 
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
-  const precise = (t: number) => `${formatTime(t)}.${String(Math.floor((t % 1) * 100)).padStart(2, "0")}`;
+  const precise = (t: number) => formatFraction(t, 2);
 
   // The line beside the controls: a fact or two (the shortcuts list says how,
   // and the line is kept for what's to come). ≈ marks times a site's player

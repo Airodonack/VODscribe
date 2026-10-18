@@ -1,7 +1,15 @@
 // Sizes and names from platform.ts: node --test apps/desktop/src/lib/platform.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_HEIGHT, chaptersText, HEIGHTS, hasSitePlayer, keepsVideo, videoSize } from "./platform.ts";
+import {
+  DEFAULT_HEIGHT,
+  chaptersText,
+  HEIGHTS,
+  hasSitePlayer,
+  keepsVideo,
+  videoSize,
+  formatFraction,
+} from "./platform.ts";
 
 test("a video's size is a range, in MB under a GB and GB above", () => {
   assert.equal(videoSize(1080), "3 to 5 GB");
@@ -31,4 +39,26 @@ test("chapters copy as YouTube reads them", () => {
     { start: 3725, text: "The race" },
   ]);
   assert.equal(text, "0:00 Intro\n1:15 Untitled chapter\n1:02:05 The race");
+});
+
+test("a time to a tenth or hundredth shows a frame's own start, not just under it", () => {
+  // Frame starts (k/fps) land a hair under the hundredth in floating point.
+  assert.equal(formatFraction(36 / 30, 2), "0:01.20");
+  assert.equal(formatFraction(1.2, 2), "0:01.20");
+  assert.equal(formatFraction(3723.25, 2), "1:02:03.25");
+  assert.equal(formatFraction(59.99, 1), "0:59.9");
+  // Just under a whole second: that second, not .100 of the one before.
+  assert.equal(formatFraction(2 - 1e-12, 2), "0:02.00");
+  for (const fps of [24, 25, 30, 50, 60])
+    for (let k = 0; k < 600; k++) {
+      const exact = Math.round((k / fps) * 100);
+      const shown = formatFraction(k / fps, 2)
+        .split(/[:.]/)
+        .map(Number);
+      const hundredths = (shown[0] * 60 + shown[1]) * 100 + shown[2];
+      assert.ok(
+        Math.abs(hundredths - Math.floor((k * 100) / fps + 1e-9)) === 0,
+        `${k}/${fps}: ${formatFraction(k / fps, 2)} (${exact})`,
+      );
+    }
 });

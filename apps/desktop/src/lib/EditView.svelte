@@ -23,7 +23,7 @@
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
   import PlayerBar from "./PlayerBar.svelte";
-  import { formatTime } from "./platform";
+  import { formatFraction, formatTime } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
   import { toast } from "./toasts.svelte";
@@ -412,7 +412,7 @@
     }
     // The last frame is the one just before the end.
     const frameAt = side === "start" ? at : Math.max(0, at - 1 / fps);
-    const label = `New ${side === "start" ? "first" : "last"} frame · ${formatTime(at)}.${Math.floor((at % 1) * 10 + 1e-6)}`;
+    const label = `New ${side === "start" ? "first" : "last"} frame · ${formatFraction(at, 1)}`;
     edgeWanted = { vodId: piece.vod_id, at: frameAt, label };
     if (!edgeFrame) edgeFrame = { url: null, label };
     else edgeFrame.label = label;

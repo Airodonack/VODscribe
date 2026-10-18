@@ -22,6 +22,14 @@ export function formatTime(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
 
+/** `seconds` to `digits` places, cut (not rounded) as a frame's time should
+ *  be, but not just under: frame starts (k/fps) land a hair below. 1:02:03.25. */
+export function formatFraction(seconds: number, digits: number): string {
+  const scale = 10 ** digits;
+  const n = Math.floor(Math.max(0, seconds) * scale + 1e-6);
+  return `${formatTime(Math.floor(n / scale))}.${String(n % scale).padStart(digits, "0")}`;
+}
+
 /** 3725 -> "1h2m5s", the format Twitch uses in URLs and its player. */
 export function twitchTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));

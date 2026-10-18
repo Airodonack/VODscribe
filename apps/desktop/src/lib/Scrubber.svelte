@@ -36,7 +36,7 @@
   import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { chaptersText, formatTime, os } from "./platform";
+  import { chaptersText, formatFraction, formatTime, os } from "./platform";
   import Popover from "./Popover.svelte";
   import Spinner from "./Spinner.svelte";
   import type { Mark } from "./api";
@@ -484,7 +484,7 @@
   }
 
   /** A time in a VOD to a tenth of a second: 1:02.4. */
-  const tenths = (t: number) => `${formatTime(t)}.${Math.floor((t % 1) * 10 + 1e-6)}`;
+  const tenths = (t: number) => formatFraction(t, 1);
 
   const inFrame = (cut: number) => frameAfter(cut, fps, duration);
 
