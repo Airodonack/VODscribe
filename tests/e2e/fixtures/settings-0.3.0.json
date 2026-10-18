@@ -1,0 +1,19 @@
+{
+  "device": "cpu",
+  "theme": "dark",
+  "emote_providers": [
+    {
+      "id": "7tv",
+      "on": false
+    },
+    {
+      "id": "bttv",
+      "on": false
+    },
+    {
+      "id": "ffz",
+      "on": false
+    }
+  ],
+  "video_height": null
+}

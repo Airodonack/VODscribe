@@ -235,6 +235,72 @@ export class App {
     );
   }
 
+  /** Searches for `phrase` and plays from the first result. */
+  async playFromSearch(phrase) {
+    await this.type('input[placeholder="Search for a phrase…"]', phrase);
+    await until("a search result", () => this.js(`return !!document.querySelector("button.row")`), MINUTE);
+    await this.click("button.row");
+    await until("the player", () => this.js(`return !!document.querySelector("button.time")`), MINUTE);
+  }
+
+  /**
+   * In the open VOD (5 s or longer): cuts at 1 and 3 s (B), then Export with
+   * the playhead between them; returns the clip once its file is made.
+   *
+   * Moved as a person would, with the keys (Player.svelte): ← back 5 s,
+   * Shift+→ on a second. The media element's own time isn't the player's:
+   * set behind its back, the player's clock (which places cuts) may not
+   * follow, as on macOS once it has ended. B makes a cut and, once it's
+   * recorded, selects it; the arrows would then move it, so Escape lets it
+   * go, after it's selected (a quicker Escape finds nothing to let go).
+   */
+  async clipOneToThree(vodId) {
+    const to = (seconds) =>
+      until(`the player at ${seconds} s`, async () => (await this.shownTime()) === seconds, 10_000);
+    const cut = async () => {
+      await this.key("b");
+      await until("the cut, selected", () => this.js(`return !!document.querySelector(".cut.selected")`), 10_000);
+      await this.key("Escape");
+      await until("the cut let go", () => this.js(`return !document.querySelector(".cut.selected")`), 10_000);
+    };
+    await this.pause();
+    await this.key("ArrowLeft");
+    await to(0);
+    await this.key("ArrowRight", { shift: true });
+    await to(1);
+    await cut();
+    await this.key("ArrowRight", { shift: true });
+    await this.key("ArrowRight", { shift: true });
+    await to(3);
+    await cut();
+    const marks = await until(
+      "two cuts",
+      async () => {
+        const marks = await this.invoke("list_marks", { vodId });
+        if (marks.length === 2) return marks;
+        throw new Error(`cuts at ${JSON.stringify(marks.map((m) => m.start))}`);
+      },
+      10_000,
+    );
+    const at = marks.map((m) => m.start).sort((a, b) => a - b);
+    if (Math.abs(at[0] - 1) > 0.05 || Math.abs(at[1] - 3) > 0.05) throw new Error(`cuts at ${at}, not 1 and 3`);
+    await this.key("ArrowLeft", { shift: true });
+    await to(2);
+    await this.click("button.export");
+    const clip = await until(
+      "the clip's file",
+      async () => {
+        const [c] = await this.invoke("list_clips", { vodId });
+        if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
+        return c?.status === "ready" && c;
+      },
+      MINUTE,
+    );
+    if (Math.abs(clip.start - 1) > 0.05 || Math.abs(clip.end - 3) > 0.05)
+      throw new Error(`the clip runs ${clip.start} to ${clip.end}, not 1 to 3`);
+    return clip;
+  }
+
   /** Adds `file` through the file picker and waits for it to be transcribed; returns the VOD. */
   async addAndTranscribe(file) {
     await this.pickFiles([file]);

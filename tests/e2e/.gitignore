@@ -1,3 +1,6 @@
 out/
 # The computers runners.mjs runs on (see runners.example.json).
 runners.json
+# SQLite opens these beside a fixture it reads.
+*.sqlite-shm
+*.sqlite-wal
