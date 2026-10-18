@@ -135,6 +135,22 @@ export default {
     if (Math.abs(back.start - 3) > 0.05) throw new Error(`the chapter came back at ${back.start}, not 3`);
     log("a chapter cancelled with Escape: gone, and Ctrl+Z undid the change before it");
 
+    // Escape pressed as the box opens, before its input has the focus: the
+    // new chapter goes all the same.
+    await app.key("n");
+    await until("the chapter box again", () => app.js(`return !!document.querySelector(arguments[0])`, box), 10_000);
+    await app.key("Escape");
+    await until("the box to close", () => app.js(`return !document.querySelector(arguments[0])`, box), 10_000);
+    await until(
+      "only the chapter brought back",
+      async () => {
+        const left = (await marks()).filter((m) => m.kind === "chapter");
+        if (left.length === 1) return true;
+        throw new Error(`chapters: ${JSON.stringify(left.map((m) => [m.start, m.text]))}`);
+      },
+      10_000,
+    );
+
     // A cut (B, selected as it's made) undone: the arrows seek again, rather
     // than moving a cut that isn't there.
     const at = await app.shownTime();

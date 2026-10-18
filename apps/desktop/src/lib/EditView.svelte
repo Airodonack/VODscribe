@@ -43,10 +43,12 @@
   const edit = $derived(edits.open);
   const pieces = $derived(edits.pieces);
 
-  // The name, written in place.
+  // The name, written in place: put back when the saved name changes, not
+  // whenever the edit's news comes (a render's), which would undo typing.
   let title = $state("");
+  const savedTitle = $derived(edit?.title ?? "");
   $effect(() => {
-    title = edit?.title ?? "";
+    title = savedTitle;
   });
   function rename() {
     if (edit && title.trim() && title.trim() !== edit.title) edits.rename(edit.id, title);

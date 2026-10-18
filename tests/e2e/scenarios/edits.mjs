@@ -175,6 +175,21 @@ export default {
     await until("the name back", async () => (await app.invoke("list_edits"))[0]?.title === NAME, 10_000);
     ctx.log(`renamed and rendered again: ${again.file_path}, the one before gone`);
 
+    // A name being typed stays while the edit changes under it (a render's news).
+    await app.js(`document.querySelector(arguments[0]).focus()`, title);
+    await app.type(title, "Half typ");
+    await app.invoke("render_edit_now", { id: made.id });
+    await until(
+      "a render, begun and done",
+      async () => (await app.invoke("list_edits"))[0]?.file_path !== again.file_path,
+      2 * MINUTE,
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    const typed = await app.js(`return document.querySelector(arguments[0]).value`, title);
+    if (typed !== "Half typ") throw new Error(`the name being typed became "${typed}" when the edit changed`);
+    await app.type(title, NAME);
+    await app.js(`document.querySelector(arguments[0]).blur()`, title);
+
     // Still there after a restart.
     app = await ctx.restart();
     await app.toLibrary();

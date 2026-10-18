@@ -575,8 +575,11 @@
   let draft = $state("");
   let keep = true;
   let anchor = $state<HTMLElement>();
+  // Set up when a mark's box opens: not again when the marks reload (an undo,
+  // a save that failed), which would undo what's being written.
   $effect(() => {
-    const m = editing;
+    if (cuts.editing === null) return;
+    const m = untrack(() => editing);
     if (!m) return;
     untrack(() => {
       draft = m.text ?? "";
@@ -620,6 +623,12 @@
 </script>
 
 <svelte:window
+  onkeydowncapture={(e) => {
+    // Escape while a mark's box is open, wherever it's pressed: what's written
+    // isn't kept, and a mark just added goes (closeEditor). Before the box's
+    // own Escape (Popover) closes it.
+    if (e.key === "Escape" && editing) keep = false;
+  }}
   onpointermove={onMove}
   onpointerup={onUp}
   onpointercancel={() => {
@@ -874,7 +883,6 @@
         autocapitalize="off"
         spellcheck="false"
         placeholder={editing.kind === "chapter" ? "Chapter title" : "What happens here (optional)"}
-        onkeydown={(e) => e.key === "Escape" && (keep = false)}
       />
       <p class="muted">
         {editing.kind === "chapter" ? "Chapter" : "Highlight"} at {formatTime(editing.start)} · Enter saves
