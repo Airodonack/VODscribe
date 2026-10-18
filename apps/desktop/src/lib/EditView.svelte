@@ -280,9 +280,16 @@
   const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
-    if (e.altKey || !keysForApp() || !player) return;
+    if (e.altKey || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    // E renders even where edits can't play here: then it's the way to watch one.
+    if (key === "e" && !player) {
+      if (!e.repeat && edit && edit.status !== "cutting" && segments.length) edits.render(edit.id);
+      e.preventDefault();
+      return;
+    }
+    if (!player) return;
     if (key === "b" || key === "e") {
       if (!e.repeat) {
         if (key === "b") split();

@@ -131,23 +131,25 @@
   }
 
   /** Undoes (or redoes) the newest change in the view's history, and says what it was. */
-  function undoRedo(redo: boolean) {
+  function undoRedo(redo: boolean, on?: Doc) {
     // Playing a search result shows its VOD (marks, clip bar) without
     // selecting it: what's changed there is undone there too.
-    const doc = view ?? (playing && edits.openId === null ? { kind: "vod" as const, id: playing.vodId } : null);
+    const doc = on ?? view ?? (playing && edits.openId === null ? { kind: "vod" as const, id: playing.vodId } : null);
     if (!doc || DEMO) return;
     (redo ? api.redo(doc) : api.undo(doc)).then(
       (done) =>
         toast.show(
           done ? `${redo ? "Redone" : "Undone"}: ${done.label}` : redo ? "Nothing to redo" : "Nothing to undo",
-          done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo) } : undefined,
+          // The toast's button: on what was undone, whatever's open by then.
+          done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo, doc) } : undefined,
         ),
       (e) => toast.show(`Couldn't ${redo ? "redo" : "undo"}: ${e}`),
     );
   }
 
   function onWindowKey(e: KeyboardEvent) {
-    if (!keysForApp()) return;
+    // Taken already by what has the focus (Alt+← moving an emote provider).
+    if (!keysForApp() || e.defaultPrevented) return;
     // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
     const target = e.target as HTMLElement | null;
     const typing = !!target?.closest("input, textarea, select, [contenteditable]");

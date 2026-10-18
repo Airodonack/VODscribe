@@ -38,6 +38,26 @@ export default {
     await until("forward to the second", async () => (await open()) === second.id, 10_000);
     ctx.log("back and forward between two VODs");
 
+    // In Settings, Alt+← on an emote provider moves it, and only that: the
+    // view behind doesn't go back too.
+    if (!mac) {
+      await app.click('button[aria-label="Settings"]');
+      const provider = '[aria-label="Chat emote providers, first one wins"] button.provider:last-child';
+      await until(
+        "the emote providers",
+        () => app.js(`return !!document.querySelector(arguments[0])`, provider),
+        30_000,
+      );
+      await app.js(
+        `document.querySelector(arguments[0]).dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", altKey: true, bubbles: true, cancelable: true }))`,
+        provider,
+      );
+      await new Promise((r) => setTimeout(r, 500));
+      if ((await open()) !== second.id) throw new Error("Alt+← on an emote provider went back as well");
+      await app.key("Escape");
+      ctx.log("Alt+← in Settings moves the provider, and the view stays");
+    }
+
     await press("f", mac ? { metaKey: true } : { ctrlKey: true });
     await until(
       "the search box focused",
