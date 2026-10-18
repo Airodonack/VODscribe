@@ -94,7 +94,7 @@ python3 apps/site/scripts/export-demo.py /tmp/demo/library.sqlite
 
 `pnpm --filter site build` prerenders every page into `apps/site/build`, with a content security policy that SvelteKit writes into each page and response headers in `static/_headers`. The download buttons link to `dl.vodscribe.com/releases/latest/` (`src/lib/downloads.ts`), so each release has to be uploaded there under those stable names; the files are served with a `Content-Disposition` that names the versioned file, so what's saved says which version it is.
 
-It deploys from this repo through Cloudflare's Git integration: build command `pnpm install --frozen-lockfile && pnpm --filter site build`, with `apps/site/build` as the output directory on Pages. On Workers, `apps/site/wrangler.jsonc` sets the same directory and serves `404.html` for missing pages.
+It deploys from this repo through Cloudflare's Git integration: build command `pnpm install --frozen-lockfile && pnpm --filter site build`, with `apps/site/build` as the output directory on Pages. On Workers, `apps/site/wrangler.jsonc` sets the same directory and serves `404.html` for missing pages. The production site builds from the `site` branch, which each release moves to its tag: the demo is the app's own code, so built from `main` it would show what hasn't been released. Changes to the site alone between releases go on `site` too (or are merged into it); every other branch gets a preview.
 
 ## Building
 
@@ -106,9 +106,12 @@ VODscribe is source-available under the [Functional Source License, Version 1.1,
 
 ## Releasing
 
+Between releases, `version` in the root `Cargo.toml` is the next one in development, `0.4.1-dev`: development builds don't pass for the last release, and semver orders it after 0.4.0 and before 0.4.1, so the updater neither offers 0.4.0 to them nor holds back 0.4.1. (An MSI's version is numbers only, so builds of a development version give theirs as `0.4.1`.)
+
 1. Write the release's entry in `CHANGELOG.md` as you go (the heading says "(unreleased)" until then; CI checks that the version in `Cargo.toml` has one).
-2. Bump `version` in the root `Cargo.toml`, date the changelog heading, and commit.
-3. Tag it (`git tag v0.2.0`) and push the tag. The entry becomes the release notes in `latest.json`; the tag build fails if it's missing or still marked unreleased.
+2. Set `version` to the release's (drop `-dev`), date the changelog heading, and commit ("Version 0.4.1", with the entry in its message).
+3. `python3 scripts/ready-to-release.py` checks it's ready, then tag it (`git tag v0.4.1`) and push the tag. The entry becomes the release notes in `latest.json`; the tag build fails if it's missing or still marked unreleased.
+4. Once it's out, move `site` to the tag (`git push origin v0.4.1^{commit}:refs/heads/site`), and set `main`'s version to the next in development (`0.4.2-dev`) in a commit of its own, which also opens its changelog entry (`## 0.4.2 (unreleased)`: CI's check takes a development version's entry to be that one). `ready-to-release.py` prints both.
 
 The tag's build signs the update bundles (`TAURI_SIGNING_PRIVATE_KEY`), then `scripts/release.py` names every file (`VODscribe-<version>-windows-x64-setup.exe` and so on, plus the stable names for the website) and writes `latest.json`, and the publish job uploads them to R2: `releases/<version>/` for the updater and winget, `releases/latest/` for the website's buttons, and `releases/latest.json` last. The app checks that manifest at launch and daily, and installs an update only when the user says so, and only if it's signed with the key whose public half is in `tauri.conf.json`. Keep the private key (`~/.tauri/vodscribe-updater.key`) backed up: without it, installed copies can't be updated.
 

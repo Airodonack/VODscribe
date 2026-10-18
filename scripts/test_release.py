@@ -1,5 +1,6 @@
-"""Tests for release.py's changelog and version parsing, and verify-release.py's
-signature checks: python3 -I -m unittest scripts/test_release.py"""
+"""Tests for release.py's changelog and version parsing, verify-release.py's
+signature checks, and ready-to-release.py's next development version:
+python3 -I -m unittest scripts/test_release.py"""
 
 import base64
 import hashlib
@@ -18,6 +19,11 @@ spec = importlib.util.spec_from_file_location("verify", Path(__file__).with_name
 assert spec is not None and spec.loader is not None
 verify = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(verify)
+
+spec = importlib.util.spec_from_file_location("ready", Path(__file__).with_name("ready-to-release.py"))
+assert spec is not None and spec.loader is not None
+ready = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ready)
 
 CHANGELOG = """# Changelog
 
@@ -123,7 +129,8 @@ class CargoVersion(unittest.TestCase):
     def test_the_real_files_agree(self):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text())
-        release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
+        # In development (0.4.1-dev), the entry is the release's (0.4.1).
+        release.changelog_entry((root / "CHANGELOG.md").read_text(), version.split("-")[0])
 
 
 def sign(secret: bytes, message: bytes) -> tuple[bytes, bytes]:
@@ -169,6 +176,12 @@ class SignatureTest(unittest.TestCase):
         forged = sig_file.replace("file:installer", "file:other")
         self.assertIn("trusted comment", verify.minisign_ok(public_file, forged, file_hash) or "")
 
+
+
+class NextDevelopmentVersion(unittest.TestCase):
+    def test_is_the_next_patch_in_development(self):
+        self.assertEqual(ready.next_dev("0.4.0"), "0.4.1-dev")
+        self.assertEqual(ready.next_dev("1.2.9"), "1.2.10-dev")
 
 if __name__ == "__main__":
     unittest.main()

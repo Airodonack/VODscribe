@@ -119,6 +119,12 @@ jobs:
           if [[ -n "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
             args=(--config '{"bundle":{"createUpdaterArtifacts":true}}')
           fi
+          # Between releases main's version is the next one in development
+          # (0.4.1-dev), which an MSI can't have (numbers only): its numbers.
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if [[ "$version" == *-* ]]; then
+            args+=(--config "{\"bundle\":{\"windows\":{\"wix\":{\"version\":\"${version%%-*}\"}}}}")
+          fi
           pnpm --filter desktop tauri build --target ${{ matrix.target }} "${args[@]}"
 
       # The end-to-end tests' way into the page (the `e2e` feature, src/e2e.rs)

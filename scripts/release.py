@@ -22,7 +22,8 @@ actions/download-artifact writes them). Writes into <out dir>:
 Fails if an expected file is missing, so a release never goes out half-built,
 or if CHANGELOG.md has no entry for the version, or one still marked unreleased.
 
-    python3 scripts/release.py --check        the Cargo.toml version has an entry (CI)
+    python3 scripts/release.py --check        the Cargo.toml version has an entry (CI;
+                                              0.4.1-dev's is 0.4.1's)
     python3 scripts/release.py --notes <ver>  print that version's notes
 """
 
@@ -183,8 +184,9 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
-        # For CI: the version being worked on has a changelog entry (unreleased or dated).
-        changelog_entry(CHANGELOG.read_text(), cargo_version((ROOT / "Cargo.toml").read_text()))
+        # For CI: the version being worked on has a changelog entry (unreleased or
+        # dated); in development (0.4.1-dev), the one it will be released as.
+        changelog_entry(CHANGELOG.read_text(), cargo_version((ROOT / "Cargo.toml").read_text()).split("-")[0])
     elif len(sys.argv) == 3 and sys.argv[1] == "--notes":
         print(notes(CHANGELOG.read_text(), sys.argv[2]))
     elif len(sys.argv) == 4:
