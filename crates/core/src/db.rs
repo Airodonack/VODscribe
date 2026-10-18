@@ -656,8 +656,13 @@ impl Db {
     }
 
     fn open_inner(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let mut conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        // Transactions take the write lock when they begin, waiting (as above)
+        // for another connection's to end. Begun deferred, one that reads and
+        // then writes fails "database is locked" at once if another connection
+        // (the worker's) has written since its read.
+        conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
         // secure_delete zeroes freed pages, so a removed transcript doesn't linger in the file.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -1645,6 +1650,29 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
         drop(Db::open(&path).unwrap());
         assert!(!copy.exists());
+    }
+
+    /// Adding files while the worker writes on its own connection: a
+    /// transaction that reads, then writes after another connection's
+    /// commit, waits its turn instead of failing "database is locked".
+    #[test]
+    fn a_transaction_that_reads_then_writes_waits_for_other_writers() {
+        let dir = crate::TempDir::new("read-then-write");
+        let path = dir.join("library.sqlite");
+        let (adder, worker) = (Db::open(&path).unwrap(), Db::open(&path).unwrap());
+        let (vod, _) = worker.add_vod(&info("a")).unwrap();
+        let mut writing = None;
+        adder
+            .atomically(|db| {
+                db.vod(vod.id)?;
+                // The worker finishes a VOD between the read and the write.
+                writing = Some(std::thread::spawn(move || worker.set_status(vod.id, Status::Done, 1.0, None)));
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                db.add_vod(&info("b"))
+            })
+            .unwrap();
+        writing.unwrap().join().unwrap().unwrap();
+        assert_eq!(adder.vod(vod.id).unwrap().unwrap().status, Status::Done);
     }
 
     #[test]
