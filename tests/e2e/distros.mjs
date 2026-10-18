@@ -51,11 +51,13 @@ const PACMAN = (image) => ({
     // What an Arch package of ours would have to depend on beyond WebKitGTK: alsa-lib (the app
     // links ALSA for the player's sound), and GStreamer's plugins, optional for WebKitGTK there,
     // without which its web process aborts at the first sound ("autoaudiosink not found").
-    `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav ` +
+    `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav librsvg ` +
     `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng >/dev/null && ` +
     `mkdir -p /tmp/deb && cd /tmp/deb && bsdtar -xf /pkg/app.deb && tar -xf data.tar.* -C / && cd / && ` +
-    // pacman's hooks can't all run in a container: GTK's settings schemas, compiled by one, by hand.
-    `glib-compile-schemas /usr/share/glib-2.0/schemas`,
+    // pacman's hooks can't all run in a container: GTK's settings schemas, and
+    // the image loaders, by hand. (librsvg, above: GTK's drag icon is an SVG,
+    // and GTK aborts without a loader for it; CachyOS's image has none.)
+    `glib-compile-schemas /usr/share/glib-2.0/schemas && gdk-pixbuf-query-loaders --update-cache`,
 });
 
 /** Name: how to install there. Images as their registries name them. */

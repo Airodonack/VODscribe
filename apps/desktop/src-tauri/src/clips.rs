@@ -647,20 +647,57 @@ fn start_drag(
         }
     });
     handlers.borrow_mut().push(end);
-    let Some(context) = source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1)
-    else {
+    // Its picture, set as it begins: else GTK sets its own icon then, loading
+    // it from the icon theme through gdk-pixbuf, and aborts the app if no
+    // loader can read it (an SVG, where the loaders are sandboxed away).
+    // (One that can't be decoded: none to see, rather than a theme icon.)
+    let picture =
+        drag_picture(&image).or_else(|| gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 1, 1).ok());
+    let begin = source.connect_drag_begin(move |_, context| {
+        if let Some(surface) = &picture {
+            context.drag_set_icon_surface(surface);
+        }
+    });
+    handlers.borrow_mut().push(begin);
+    if source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1).is_none() {
         for handler in handlers.borrow_mut().drain(..) {
             source.disconnect(handler);
         }
         anyhow::bail!("The drag couldn't start.");
-    };
-    let loader = gtk::gdk_pixbuf::PixbufLoader::new();
-    if loader.write(&image).and_then(|_| loader.close()).is_ok()
-        && let Some(picture) = loader.pixbuf()
-    {
-        context.drag_set_icon_pixbuf(&picture, 0, 0);
     }
     Ok(())
+}
+
+/// The PNG `png` as a cairo surface for a drag's picture, decoded here.
+#[cfg(target_os = "linux")]
+fn drag_picture(png: &[u8]) -> Option<gtk::cairo::ImageSurface> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(png));
+    decoder.set_transformations(png::Transformations::normalize_to_color8() | png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().ok()?;
+    let mut pixels = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut pixels).ok()?;
+    let channels = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::GrayscaleAlpha => 2,
+        _ => return None,
+    };
+    let (width, height) = (i32::try_from(info.width).ok()?, i32::try_from(info.height).ok()?);
+    let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height).ok()?;
+    let stride = surface.stride() as usize;
+    {
+        let mut data = surface.data().ok()?;
+        for (y, row) in pixels.chunks(info.line_size).take(info.height as usize).enumerate() {
+            for (x, px) in row.chunks(channels).take(info.width as usize).enumerate() {
+                let (r, g, b, a) =
+                    if channels == 4 { (px[0], px[1], px[2], px[3]) } else { (px[0], px[0], px[0], px[1]) };
+                // Cairo's ARGB32: premultiplied, in the machine's byte order (little-endian here: B, G, R, A).
+                let pre = |c: u8| (u16::from(c) * u16::from(a) / 255) as u8;
+                let at = y * stride + x * 4;
+                data[at..at + 4].copy_from_slice(&[pre(b), pre(g), pre(r), a]);
+            }
+        }
+    }
+    Some(surface)
 }
 
 /// The page's WebKitGTK view, inside the window.
