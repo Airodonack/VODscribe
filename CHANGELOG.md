@@ -14,7 +14,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - YouTube's and Twitch's players keep the playhead in step: at other speeds, after seeks, and while Twitch reloads a long VOD.
 - A copy of your library is kept before each upgrade of its format (for 30 days), and if the library won't open, VODscribe says so and offers a way out.
 - Files you made and no longer use don't pile up in Videos/VODscribe: a clip's earlier file goes when it's resized, and an edit's when it's renamed and rendered again, unless you dragged that file into another app.
-- Fixes: adding several files at once could fail with "database is locked". On Linux without Vulkan, on Wayland, or with NVIDIA's driver, the picture or the window could be black. Installing a new version over an old one on Windows could offer to delete your library. Quitting left downloads and transcription running. Undo didn't work while a search result played. Error messages showed your home folder's full path. A file ffmpeg can't read passed as silent instead of failing. Videos larger than 4096 pixels crashed the player. Captions were hard to read in the light theme. The Linux packages now declare ALSA, which the app needs for sound.
+- Fixes: Twitch's playhead jumped back while playing or after a seek. Removing a VOD, or deleting its downloaded video, didn't stop what was still using it. Adding several files at once could fail with "database is locked". Installing a new version over an old one on Windows could offer to delete your library. Quitting left downloads and transcription running. Error messages showed your home folder's full path. A file ffmpeg can't read passed as silent instead of failing.
 
 ## 0.3.0 — 2026-10-15
 
