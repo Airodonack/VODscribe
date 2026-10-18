@@ -225,12 +225,12 @@
     else cuts.toggle(now, fps, !playing);
   }
 
-  /** Export: the selection, else the stretch the playhead is in, as a clip in the clip bar. */
+  /** Export: the selection, else the stretch the playhead is in (with no cuts, the whole video), as a clip in the clip bar. */
   async function exportClip() {
-    const range = cuts.selection ? await cuts.cutSelection() : cuts.list.length ? stretch : null;
+    const range = cuts.selection ? await cuts.cutSelection() : stretch;
     if (range) await exportStretch(range.start, range.end);
   }
-  const canExport = $derived(!!cuts.selection || cuts.list.length > 0);
+  const canExport = $derived(!!cuts.selection || !!stretch);
 
   // Full screen is the window's, with the player panel laid over the page:
   // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
@@ -499,7 +499,7 @@
               onmouseenter={() => (exportHover = true)}
               onmouseleave={() => (exportHover = false)}
               disabled={!canExport}
-              title="Export the lit-up stretch as a clip, to the clip bar (E). Or {dragKey}-drag a stretch of the timeline straight into your video editor."
+              title="Export the lit-up stretch as a clip, to the clip bar (E): with no cuts, the whole video. Or {dragKey}-drag a stretch of the timeline straight into your video editor."
             >
               <Icon name="download" size={14} /> Export <kbd>E</kbd>
             </button>

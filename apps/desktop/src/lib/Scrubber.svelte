@@ -305,8 +305,8 @@
       return;
     }
     if (dragsOut(e)) {
-      // With no cuts, there's only the whole VOD: not a clip.
-      const range = cuts.list.length ? stretchAt(timeAt(e.clientX), duration) : undefined;
+      // With no cuts, the whole video.
+      const range = stretchAt(timeAt(e.clientX), duration);
       if (range) {
         e.preventDefault();
         takeOut(range, e.clientX, e.clientY);
