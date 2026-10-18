@@ -111,6 +111,8 @@ jobs:
         env:
           # No update check (latest.json): test runs aren't people using the app.
           VODSCRIBE_NO_UPDATE_CHECK: "1"
+          # Each scenario starts on an empty library (tests/e2e/lib/data.mjs).
+          E2E_RESET_DATA: "1"
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             dbus-run-session -- xvfb-run -a node tests/e2e/run.mjs "$APP"

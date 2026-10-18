@@ -121,6 +121,15 @@ jobs:
           fi
           pnpm --filter desktop tauri build --target ${{ matrix.target }} "${args[@]}"
 
+      # The end-to-end tests' way into the page (the `e2e` feature, src/e2e.rs)
+      # runs any script in the app for whoever has its token: never in a release.
+      - name: Check the app has no test hook
+        shell: bash
+        run: |
+          bin=target/${{ matrix.target }}/release/vodscribe
+          [[ -f "$bin" ]] || bin="$bin.exe"
+          if grep -qa VODSCRIBE_E2E_TOKEN "$bin"; then echo "$bin was built with the e2e feature"; exit 1; fi
+
       # No one has a Mac to try the app on, so check what can be checked here:
       # the bundle's signature covers everything in it, it asks for macOS 12,
       # and both programs in it start on this chip.

@@ -8,6 +8,8 @@
 mod app_server;
 mod chats;
 mod clips;
+#[cfg(feature = "e2e")]
+mod e2e;
 mod edits;
 mod footage;
 mod history;
@@ -215,6 +217,8 @@ pub fn run() {
                 _ => builder,
             };
             let main = builder.build()?;
+            #[cfg(feature = "e2e")]
+            e2e::start(app.handle());
             app.manage(screen::Screen::default());
             // Without a screen, the page plays files itself as before.
             if let Err(e) = screen::attach(app.handle(), &main) {

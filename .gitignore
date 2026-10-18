@@ -9,7 +9,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Rust
-/target/
+target/
 
 # Data from the dev CLI
 vodscribe-data/

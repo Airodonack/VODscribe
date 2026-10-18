@@ -13,6 +13,11 @@ publish.workspace = true
 name = "vodscribe_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs).
+# Test builds only: never in a release.
+e2e = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
