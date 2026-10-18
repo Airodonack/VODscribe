@@ -223,6 +223,12 @@ impl Player {
             s.ended = false;
             s.restart(time.min(duration));
         }
+        // Nothing left to play (its last piece taken out): paused.
+        if duration <= 0.0 && s.playing {
+            s.at = 0.0;
+            s.playing = false;
+            s.sound = None;
+        }
         self.inner.wake.notify_all();
     }
 
@@ -279,7 +285,8 @@ impl Player {
 
     pub fn play(&self) {
         let mut s = self.inner.state.lock().unwrap();
-        if s.playing {
+        // Nothing to play (an edit with no pieces): it stays paused.
+        if s.playing || self.inner.duration() <= 0.0 {
             return;
         }
         s.playing = true;
@@ -646,7 +653,16 @@ fn run_sound(inner: &Inner) {
         if inner.quit.load(Ordering::Acquire) {
             return;
         }
-        let Some(mut walk) = Walk::start(inner) else { continue };
+        let Some(mut walk) = Walk::start(inner) else {
+            // Nothing to play where it is: wait for a change (a new timeline,
+            // a seek, a pause), rather than look again at once.
+            let s = inner.state.lock().unwrap();
+            let epoch = s.epoch;
+            let _ = inner.wake.wait_timeout_while(s, Duration::from_millis(250), |s| {
+                s.epoch == epoch && s.playing && !inner.quit.load(Ordering::Acquire)
+            });
+            continue;
+        };
         let (epoch, speed) = (walk.epoch, walk.speed);
         // Seconds of the timeline a sample pair plays.
         let pair = speed / rate as f64;
