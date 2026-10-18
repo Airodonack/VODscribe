@@ -111,9 +111,11 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             # Under a window manager, as on a desktop: full screen is the window manager's to do.
+            # On a screen the window fits on (xvfb-run's own is 640x480), for the OS-level drags.
             # (The inner shell expands $1, the app's path.)
             # shellcheck disable=SC2016
-            dbus-run-session -- xvfb-run -a sh -c 'openbox & sleep 1; exec node tests/e2e/run.mjs "$1"' sh "$APP"
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1400x900x24" \
+              sh -c 'openbox & sleep 1; exec node tests/e2e/run.mjs "$1"' sh "$APP"
           else
             node tests/e2e/run.mjs "$APP" --driver bridge
           fi

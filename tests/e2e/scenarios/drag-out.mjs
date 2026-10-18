@@ -1,9 +1,9 @@
-// Drags out of the window with the OS's mouse (lib/os.mjs). A stretch
-// Alt-dragged to the window's edge and let go at once, before its file is
-// made: no file is left behind for it. Then a clip's pill dragged out and
-// the drag called off (Escape) before anything took its file: the file isn't
-// counted as handed to another app, so deleting the clip deletes it. Linux
-// (X11) only, so far.
+// Drags out of the window with the OS's mouse (lib/os.mjs). A clip's pill
+// dragged out and the drag called off (Escape) before anything took its
+// file: the file isn't counted as handed to another app, so deleting the clip
+// deletes it. Then a stretch Alt-dragged to the window's edge and let go at
+// once, before its file is made: no file is left behind for it (skipped where
+// the window manager takes Alt-drag). Linux (X11) only, so far.
 
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -28,26 +28,6 @@ export default {
       async () => (await app.invoke("list_clips", { vodId: vod.id })).find((c) => c.id === clip.id)?.file_path,
       30_000,
     );
-    // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
-    // edge and let go there at once.
-    const folder = path.dirname(ready);
-    const before = new Set(readdirSync(folder));
-    const bar = await os.rectOf(app, ".scrubber");
-    const edge = await os.windowRect(app);
-    const [bx, by] = [bar.x + Math.round(bar.w * 0.8), bar.y + Math.round(bar.h / 2)];
-    await os.gesture([
-      ["hold", "alt"],
-      ["down", bx, by],
-      ["move", bx - 20, by],
-      ["move", bx - 60, by],
-      ["letgo", edge.x, by],
-      ["release", "alt"],
-    ]);
-    await sleep(5000);
-    const left = readdirSync(folder).filter((f) => !before.has(f));
-    if (left.length) throw new Error(`a drag let go before its file was ready left ${left.join(", ")}`);
-    ctx.log("a drag out let go at once: nothing left behind");
-
     // Pressed on the pill, pulled to the window's left edge: the system's drag
     // of its file. Then Escape, before it's dropped anywhere.
     const at = await os.rectOf(app, `${pill} .length`);
@@ -80,5 +60,34 @@ export default {
       },
       10_000,
     );
+    // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
+    // edge and let go there at once.
+    const folder = path.dirname(ready);
+    const before = new Set(readdirSync(folder));
+    const bar = await os.rectOf(app, ".scrubber");
+    const edge = await os.windowRect(app);
+    const [bx, by] = [bar.x + Math.round(bar.w * 0.8), bar.y + Math.round(bar.h / 2)];
+    // The OS's mouse reaches only what's on the screen.
+    if (edge.x < 0 || edge.y < 0 || bx < 0 || by < 0)
+      ctx.skip(`the window isn't all on the screen (at ${edge.x},${edge.y}): a bigger screen is needed`);
+    await os.gesture([
+      ["hold", "alt"],
+      ["down", bx, by],
+      ["move", bx - 20, by],
+      ["move", bx - 60, by],
+      ["letgo", edge.x, by],
+      ["release", "alt"],
+    ]);
+    await sleep(5000);
+    // A window manager that moves windows on Alt-drag takes it instead (as
+    // some desktops do, and openbox here does even without its bindings).
+    const moved = await os.windowRect(app);
+    if (moved.x !== edge.x || moved.y !== edge.y)
+      ctx.skip(
+        `the window manager took the Alt-drag (it moved the window from ${edge.x},${edge.y} to ${moved.x},${moved.y})`,
+      );
+    const left = readdirSync(folder).filter((f) => !before.has(f));
+    if (left.length) throw new Error(`a drag let go before its file was ready left ${left.join(", ")}`);
+    ctx.log("a drag out let go at once: nothing left behind");
   },
 };
