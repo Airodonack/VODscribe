@@ -5,7 +5,7 @@ import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
   name: "transcribe-search-play",
-  async run(app, { fixtures }) {
+  async run(app, { fixtures, checkpoint }) {
     await app.toLibrary();
     const done = await app.addAndTranscribe(fixtures.landed);
     const text = (await app.invoke("transcript", { vodId: done.id })).map((l) => l.text).join(" ");
@@ -26,6 +26,7 @@ export default {
       MINUTE,
     );
     app.log("searched and played");
+    await checkpoint("search-results-playing");
 
     const levels = await app.js(
       `return window.__TAURI_INTERNALS__.invoke("peaks", { id: arguments[0] }).then((b) => new Uint8Array(b).length)`,
@@ -42,5 +43,6 @@ export default {
     );
     if (caption !== cue.text) throw new Error(`the caption shows "${caption}", not "${cue.text}"`);
     app.log(`waveform and captions: "${caption}"`);
+    await checkpoint("player-caption");
   },
 };

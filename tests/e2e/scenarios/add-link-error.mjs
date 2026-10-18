@@ -15,6 +15,7 @@ export default {
       2 * MINUTE,
     );
     ctx.log(`says: "${error.slice(0, 160)}"`);
+    await ctx.checkpoint("link-error");
     if ((await app.invoke("list_vods")).length !== 0) throw new Error("a VOD was added from a link that isn't one");
     await until("no stand-in row left", () => app.js(`return !document.querySelector(".vod.pending")`), 10_000);
   },

@@ -22,6 +22,7 @@ export default {
       () => app.js(`return document.querySelector("h1")?.textContent.includes("couldn't be opened")`),
       MINUTE,
     );
+    await ctx.checkpoint("recovery-screen");
     await app.clickText("Start a new library");
     await until("the app to ask to restart", async () => (await app.restarts()) === 1, 10_000);
     const dir = dataDirs()[0];

@@ -43,6 +43,7 @@ export default {
     );
     if (all.sections !== 2) throw new Error(`the results are in ${all.sections} groups, not one for each VOD`);
     ctx.log(`all VODs: ${all.summary}`);
+    await ctx.checkpoint("search-grouped");
 
     // The audio file opened, then the search narrowed to it.
     await app.type(SEARCH, "");
@@ -74,6 +75,7 @@ export default {
     await app.type(SEARCH, "zebra crossing");
     const none = await until("the empty result", async () => (await results()).none, MINUTE);
     if (!/No matches/.test(none)) throw new Error(`for no matches the page says "${none}"`);
+    await ctx.checkpoint("search-none");
     await app.clickText("Search all VODs");
     await until(
       "the scope widened",

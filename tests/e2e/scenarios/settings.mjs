@@ -25,6 +25,7 @@ export default {
     await app.toLibrary();
     await openSettings(app);
     const before = await chosen(app, Object.keys(CHOICES));
+    await ctx.checkpoint("settings");
     for (const [group, option] of Object.entries(CHOICES)) {
       if (before[group] === option) throw new Error(`${group} is ${option} already: pick another for the test`);
       await app.js(
@@ -51,6 +52,7 @@ export default {
     await app.toLibrary();
     await openSettings(app);
     const after = await chosen(app, Object.keys(CHOICES));
+    await ctx.checkpoint("settings-dark");
     if (!same(after, CHOICES)) throw new Error(`after a restart, Settings shows ${JSON.stringify(after)}`);
   },
 };

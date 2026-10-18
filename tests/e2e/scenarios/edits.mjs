@@ -59,6 +59,7 @@ export default {
       if (t !== NAME) throw new Error(`the row says "${t}"`);
     });
 
+    await ctx.checkpoint("edit-view");
     const edit = () => app.invoke("get_edit", { id: made.id });
     const first = await edit();
     const pieces = (e) => e.pieces;
@@ -103,6 +104,7 @@ export default {
     // Sound only, made as MP4 (the default): an .m4a.
     if (path.extname(rendered.file_path) !== ".m4a") throw new Error(`rendered as ${rendered.file_path}, not an .m4a`);
     ctx.log(`rendered ${rendered.file_path}`);
+    await ctx.checkpoint("edit-rendered");
 
     // Still there after a restart.
     app = await ctx.restart();

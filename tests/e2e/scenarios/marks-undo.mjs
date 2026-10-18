@@ -6,7 +6,7 @@ import { until } from "../lib/app.mjs";
 
 export default {
   name: "marks-undo",
-  async run(app, { fixtures, log }) {
+  async run(app, { fixtures, log, checkpoint }) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);
     await app.playFromSearch("landed");
@@ -20,6 +20,7 @@ export default {
       const input = `[role=dialog][aria-label="${popover}"] input`;
       await until(`the ${popover} box`, () => app.js(`return !!document.querySelector(arguments[0])`, input), 10_000);
       await app.type(input, text);
+      if (key === "n") await checkpoint("chapter-title-box");
       await app.js(`document.querySelector(arguments[0]).closest("form").requestSubmit()`, input);
       await until(
         `the ${popover} box to close`,
@@ -56,6 +57,7 @@ export default {
       10_000,
     );
     log("a highlight at 1 s and a chapter at 3 s, with their text");
+    await checkpoint("timeline-marks");
 
     // The chapter is the selected mark (just made): Delete removes it.
     await app.key("Delete");

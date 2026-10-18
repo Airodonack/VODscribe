@@ -17,11 +17,13 @@
 //
 // A scenario exports { name, before?(ctx), run(app, ctx), allowErrors? }: `before` sets up
 // the data folder before the app starts; `run` gets an App (lib/app.mjs) and
-// ctx: { fixtures, out, log, quit(), start(), restart(), skip(why) }: quit
-// ends the app, start starts it again and returns the new App, restart does
-// both; skip ends the scenario as skipped (it can't run here), not failed.
+// ctx: { fixtures, out, log, quit(), start(), restart(), skip(why),
+// checkpoint(label) }: quit ends the app, start starts it again and returns
+// the new App, restart does both; skip ends the scenario as skipped (it
+// can't run here), not failed; checkpoint keeps a picture of the window
+// for looking at (out/checkpoints, contact-sheet.mjs).
 
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -29,6 +31,7 @@ import { parseArgs } from "node:util";
 import { App } from "./lib/app.mjs";
 import { resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
+import * as os from "./lib/os.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values: opts, positionals } = parseArgs({
@@ -64,6 +67,9 @@ class Skip extends Error {}
 
 const started = Date.now();
 const results = [];
+// How many checkpoints taken, numbering their files in order.
+let checkpoints = 0;
+rmSync(path.join(out, "checkpoints"), { recursive: true, force: true });
 for (const name of names.filter((n) => !only || only.includes(n))) {
   const { default: scenario } = await import(pathToFileURL(path.join(here, "scenarios", `${name}.mjs`)));
   const begun = Date.now();
@@ -90,6 +96,7 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     skip: (why) => {
       throw new Skip(why);
     },
+    checkpoint: (label) => checkpoint(current, name, label),
     restart: async () => {
       await ctx.quit();
       return launch();
@@ -130,6 +137,37 @@ for (const r of results)
     `  ${r.skipped ? "skip" : r.ok ? "ok  " : "FAIL"} ${r.name} (${r.seconds} s)${r.error ? `: ${r.error}` : r.skipped ? `: ${r.skipped}` : ""}`,
   );
 process.exit(failed.length ? 1 : 0);
+
+/**
+ * A picture of the app's window at a named moment, for looking at
+ * (contact-sheet.mjs): from the screen where the OS layer works, so the
+ * app's own player's picture is in it, else the driver's (the page only).
+ * Never fails a scenario: a checkpoint that can't be taken is noted.
+ */
+async function checkpoint(current, scenario, label) {
+  if (!current) return;
+  const dir = path.join(out, "checkpoints");
+  mkdirSync(dir, { recursive: true });
+  // A moment for what was just done to be drawn.
+  await new Promise((r) => setTimeout(r, 400));
+  let png = null;
+  let from = "screen";
+  try {
+    if (os.unavailable()) throw new Error(os.unavailable());
+    png = os.crop(os.screenshot(), await os.windowRect(current.app));
+  } catch {
+    from = "page";
+    png = await current.driver.screenshot().catch(() => null);
+  }
+  if (!png) return console.error(`  checkpoint ${label}: no picture`);
+  checkpoints += 1;
+  const file = `${String(checkpoints).padStart(2, "0")}-${scenario}-${label}.png`;
+  writeFileSync(path.join(dir, file), png);
+  const index = path.join(dir, "index.json");
+  const list = existsSync(index) ? JSON.parse(readFileSync(index, "utf8")) : [];
+  list.push({ file, scenario, label, from, platform: process.platform });
+  writeFileSync(index, JSON.stringify(list, null, 2));
+}
 
 /** With E2E_TRACE=1, logs each call into the page and how long it took. */
 function traced(driver, log) {

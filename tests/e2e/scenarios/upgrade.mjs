@@ -27,12 +27,13 @@ export default {
     db.prepare("UPDATE vods SET source_path = replace(source_path, '{FIXTURES}', ?)").run(fixtures);
     db.close();
   },
-  async run(app) {
+  async run(app, ctx) {
     await app.toLibrary();
     const vods = await app.invoke("list_vods");
     if (vods.length !== 1 || vods[0].status !== "done")
       throw new Error(`after the upgrade the library has ${JSON.stringify(vods.map((v) => [v.title, v.status]))}`);
     const [vod] = vods;
+    await ctx.checkpoint("upgraded-library");
     const text = (await app.invoke("transcript", { vodId: vod.id })).map((l) => l.text).join(" ");
     if (!/landed/i.test(text)) throw new Error(`the transcript doesn't have "landed": ${text}`);
     const theme = (await app.invoke("get_settings")).theme;

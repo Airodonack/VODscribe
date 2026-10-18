@@ -197,3 +197,38 @@ function requireInts(rect) {
   for (const k of ["x", "y", "w", "h"])
     if (!Number.isInteger(rect[k]) || rect[k] < 0) throw new Error(`a bad rectangle: ${JSON.stringify(rect)}`);
 }
+
+/** The app window's page area on the screen (pixels), as rectOf gives an element's. */
+export async function windowRect(app) {
+  return rectOf(app, "body");
+}
+
+/** A PNG of `rect` (screen pixels) cut from the PNG `png`. */
+export function crop(png, rect) {
+  requireInts(rect);
+  const file = temp("crop-in.png");
+  try {
+    writeFileSync(file, png);
+    return execFileSync(
+      ffmpeg(),
+      [
+        "-loglevel",
+        "error",
+        "-i",
+        file,
+        "-vf",
+        `crop=${rect.w}:${rect.h}:${rect.x}:${rect.y}`,
+        "-frames:v",
+        "1",
+        "-f",
+        "image2pipe",
+        "-c:v",
+        "png",
+        "-",
+      ],
+      { maxBuffer: 1 << 28 },
+    );
+  } finally {
+    rmSync(file, { force: true });
+  }
+}

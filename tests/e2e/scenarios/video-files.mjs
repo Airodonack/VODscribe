@@ -8,7 +8,7 @@ import { videos } from "../lib/fixtures.mjs";
 
 export default {
   name: "video-files",
-  async run(app, { out, log }) {
+  async run(app, { out, log, checkpoint }) {
     const files = videos(path.join(out, "fixtures"));
     await app.toLibrary();
     await app.pickFiles(Object.values(files));
@@ -40,6 +40,7 @@ export default {
       await app.openVod(vod.id);
       const at = await app.plays();
       log(`${kind}: transcribed${speaks ? "" : " (nothing said)"}, played to ${at} s`);
+      if (kind === "video" || kind === "wide") await checkpoint(`playing-${kind}`);
     }
   },
 };
