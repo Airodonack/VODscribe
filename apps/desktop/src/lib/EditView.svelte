@@ -290,8 +290,10 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
-    if ((key === "Delete" || key === "Backspace") && atNow) removeCurrent();
-    else if (key === " " || key === "k") player.togglePlay();
+    if (key === "Delete" || key === "Backspace") {
+      // Held down, it's one press: one piece, not one after another.
+      if (!e.repeat && atNow) removeCurrent();
+    } else if (key === " " || key === "k") player.togglePlay();
     else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
     else if (key === "," || key === ".") player.step?.(key === "," ? -1 : 1);
     else if (key in STEPS) {

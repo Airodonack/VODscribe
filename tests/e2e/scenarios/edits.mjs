@@ -73,6 +73,12 @@ export default {
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
     await app.key("b");
     await until("two pieces", async () => pieces(await edit()).length === 2, 10_000);
+    // Delete held down: its repeats remove nothing (only a press does).
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", repeat: true, bubbles: true }))`,
+    );
+    await new Promise((r) => setTimeout(r, 1000));
+    if (pieces(await edit()).length !== 2) throw new Error("a held-down Delete's repeat removed a piece");
 
     // A line struck out, then the strike undone.
     await until(
