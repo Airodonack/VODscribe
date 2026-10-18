@@ -20,7 +20,7 @@
 //   time stands still.
 //
 // The runner's app data is emptied before each scenario: runners are for
-// testing only.
+// testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -110,6 +110,7 @@ async function windows() {
     ...(extra.length ? [`set PATH=${extra.join(";")};%PATH%`] : []),
     "set E2E_RESET_DATA=1",
     "set VODSCRIBE_NO_UPDATE_CHECK=1",
+    ...(process.env.E2E_NETWORK === "1" ? ["set E2E_NETWORK=1"] : []),
     `set NATIVE_DRIVER=${driver}`,
     `set E2E_OUT=${dir}\\out`,
     `cd /d "${dir}"`,
@@ -163,7 +164,8 @@ function mac() {
       "-o",
       "BatchMode=yes",
       runner.host,
-      `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'; ` +
+      `export PATH="$HOME/.local/node/bin:$PATH" E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT='${runner.dir}/out'` +
+        `${process.env.E2E_NETWORK === "1" ? " E2E_NETWORK=1" : ""}; ` +
         `caffeinate -u -t 1; cd '${runner.dir}' && rm -rf out && node tests/e2e/run.mjs '${target}' ${args}`,
     ],
     { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 },

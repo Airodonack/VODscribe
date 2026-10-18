@@ -8,7 +8,7 @@ export default {
     await app.toLibrary();
     // Well-formed (the box is type="url"), but no site's VOD, nor anywhere at all.
     await app.type('input[aria-label="VOD link"]', "https://example.invalid/not-a-vod");
-    await app.js(`document.querySelector('input[aria-label="VOD link"]').closest("form").requestSubmit()`);
+    await app.submit('input[aria-label="VOD link"]');
     const error = await until(
       "an error",
       () => app.js(`return document.querySelector(".add-error")?.textContent.trim()`),

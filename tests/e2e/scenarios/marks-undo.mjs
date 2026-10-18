@@ -21,14 +21,14 @@ export default {
       await until(`the ${popover} box`, () => app.js(`return !!document.querySelector(arguments[0])`, input), 10_000);
       await app.type(input, text);
       if (key === "n") await checkpoint("chapter-title-box");
-      await app.js(`document.querySelector(arguments[0]).closest("form").requestSubmit()`, input);
+      await app.submit(input);
       await until(
         `the ${popover} box to close`,
         () => app.js(`return !document.querySelector(arguments[0])`, input),
         10_000,
       );
     };
-    await app.key("ArrowLeft");
+    await app.toStart();
     await to(0);
     await app.key("ArrowRight", { shift: true });
     await to(1);

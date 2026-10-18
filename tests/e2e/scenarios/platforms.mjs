@@ -24,7 +24,7 @@ export default {
     for (const [site, url] of SITES) {
       try {
         await app.type('input[aria-label="VOD link"]', url);
-        await app.js(`document.querySelector('input[aria-label="VOD link"]').closest("form").requestSubmit()`);
+        await app.submit('input[aria-label="VOD link"]');
         const vod = await until(
           `the ${site} VOD, transcribed`,
           async () => {

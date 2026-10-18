@@ -77,6 +77,17 @@ export class App {
     );
   }
 
+  /** Submits the form `selector` is in, as Enter would (macOS 12's WebKit has no requestSubmit). */
+  submit(selector) {
+    return this.js(
+      `const form = document.querySelector(arguments[0])?.closest("form");
+       if (!form) throw new Error("no form for " + arguments[0]);
+       if (form.requestSubmit) form.requestSubmit();
+       else form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));`,
+      selector,
+    );
+  }
+
   /** Presses `key` (a KeyboardEvent key), with Shift if `shift`, as the window gets it. */
   key(key, { shift = false } = {}) {
     return this.js(
@@ -235,6 +246,17 @@ export class App {
     );
   }
 
+  /**
+   * Back to the start with the keys: ← twice (5 s each, stopping at 0), so a
+   * test file up to 10 s long is at exactly 0, wherever it was (one ← from
+   * near the end of a 5.4 s file leaves it at 0.4, which shows as 0:00).
+   */
+  async toStart() {
+    await this.key("ArrowLeft");
+    await this.key("ArrowLeft");
+    await until("the player at the start", async () => (await this.shownTime()) === 0, 10_000);
+  }
+
   /** Searches for `phrase` and plays from the first result. */
   async playFromSearch(phrase) {
     await this.type('input[placeholder="Search for a phrase…"]', phrase);
@@ -264,8 +286,7 @@ export class App {
       await until("the cut let go", () => this.js(`return !document.querySelector(".cut.selected")`), 10_000);
     };
     await this.pause();
-    await this.key("ArrowLeft");
-    await to(0);
+    await this.toStart();
     await this.key("ArrowRight", { shift: true });
     await to(1);
     await cut();

@@ -81,7 +81,7 @@ export default {
 
     // Seeks, each landing on its frame: the first of each second.
     await app.pause();
-    await app.key("ArrowLeft");
+    await app.toStart();
     await to(0);
     await expect(0);
     await app.key("ArrowRight", { shift: true });
@@ -93,7 +93,7 @@ export default {
     await expect(3);
 
     // Played with a real click on Play (trusted, hit-tested): it moves on.
-    await app.key("ArrowLeft");
+    await app.toStart();
     await to(0);
     os.activate();
     const play = await os.rectOf(app, '.bar button[aria-label="Play"]');

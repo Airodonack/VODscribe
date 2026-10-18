@@ -66,7 +66,7 @@ export default {
     if (pieces(first).length !== 1) throw new Error(`the new edit has ${pieces(first).length} pieces, not 1`);
 
     // Split at the playhead, a second into the edit (its one piece, 2 s long).
-    await app.key("ArrowLeft");
+    await app.toStart();
     await until("the start", async () => (await app.shownTime()) === 0, 10_000);
     await app.key("ArrowRight", { shift: true });
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
