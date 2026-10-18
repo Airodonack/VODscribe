@@ -1,7 +1,8 @@
 // Edits: a clip added to a new edit from its pill; the edit opened,
 // renamed, its piece split (B), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
-// then the edit deleted, after asking.
+// removing the VOD warns that its pieces leave the edit (Keep: nothing
+// goes); then the edit deleted, after asking.
 
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -115,10 +116,23 @@ export default {
     if (pieces(await app.invoke("get_edit", { id: kept.id })).length !== 2)
       throw new Error("after a restart the edit hasn't its two pieces");
 
+    // Removing the VOD names the edit its pieces would be taken out of.
+    await app.answer("Keep");
+    await app.click('button[aria-label="Remove"]');
+    const removing = await until(
+      "Remove to ask",
+      () => app.js(`return window.__e2e.asked.length ? JSON.stringify(window.__e2e.asked.at(-1)) : null`),
+      10_000,
+    );
+    if (!removing.includes(`taken out of the edit “${NAME}”`))
+      throw new Error(`removing the VOD asked ${removing}, not naming the edit`);
+    if ((await app.invoke("list_vods")).length !== 1) throw new Error(`answering "Keep" removed the VOD`);
+
     // Deleted from its row, after asking.
+    const asked = await app.asked();
     await app.answer("Delete");
     await app.click(`.vod.edit[data-key="-${kept.id}"] button[aria-label="Delete edit"]`);
     await until("the edit gone", async () => (await app.invoke("list_edits")).length === 0, MINUTE);
-    if ((await app.asked()) !== 1) throw new Error("deleting didn't ask first");
+    if ((await app.asked()) !== asked + 1) throw new Error("deleting didn't ask first");
   },
 };
