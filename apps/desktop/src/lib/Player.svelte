@@ -17,6 +17,8 @@
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
+  import { keyOf, stepOf, transportKey, vodShortcuts } from "./playerKeys";
+  import Shortcuts from "./Shortcuts.svelte";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import { formatFraction, formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
   import { nav } from "./nav.svelte";
@@ -192,7 +194,6 @@
   let clipButton = $state<HTMLElement>();
   let clipHover = $state(false);
   const stretch = $derived(duration ? stretchAt(now, duration) : undefined);
-  const dragKey = os === "mac" ? "Option" : "Alt";
 
   /** A time to the hundredth of a second, for marks: 1:02:03.25. */
   const precise = (t: number) => formatFraction(t, 2);
@@ -297,12 +298,11 @@
 
   // Keyboard control for whichever player is open. Keys pressed while the
   // player's own iframe has focus go to that player instead.
-  const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const key = keyOf(e);
     // B cuts, as in video editors, and E makes a clip (also with Ctrl, or ⌘ on a Mac).
     if (key === "b" || key === "e") {
       // Held down, it's one press.
@@ -327,6 +327,12 @@
       e.preventDefault();
       return;
     }
+    // Enter renames the selected chapter or highlight, as a double-click does.
+    if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
+      cuts.editing = cuts.selected;
+      e.preventDefault();
+      return;
+    }
     if (key === "Escape" && cuts.selection) {
       cuts.clearSelection();
       e.preventDefault();
@@ -334,12 +340,13 @@
     }
     const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
     const frameKey = key === "," || key === "." || key === "<" || key === ">";
-    if (moving && (frameKey || key in STEPS)) {
+    if (moving && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
       // A selected cut (or edge) moves: , and . a frame (ten with Shift), the
       // arrows, J and L as far as they'd move the playhead, in whole frames.
       // The playback stops on its frame, which the picture then shows.
-      const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
-      const frames = frameKey ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1) : Math.round(step * fps);
+      const frames = frameKey
+        ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
+        : Math.round(stepOf(key, e.shiftKey)! * fps);
       if (player?.playing()) player.togglePlay();
       const at = cuts.nudgeSelected(frames, fps, duration);
       if (at !== null) seekTo(inFrame(at, fps, duration));
@@ -352,31 +359,22 @@
       e.preventDefault();
       return;
     }
-    if (key === "f" || (key === "Escape" && fullscreen)) {
-      setFullscreen(key === "f" ? !fullscreen : false);
-      e.preventDefault();
-      return;
-    }
     if (!active && (key === " " || key === "k")) {
       activate(at.time);
       e.preventDefault();
       return;
     }
-    if (!player) {
-      return;
-    } else if ((key === "," || key === ".") && player.step) {
-      player.step(key === "," ? -1 : 1);
-    } else if (key in STEPS) {
-      const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
-      player.seek(Math.max(0, player.time() + step), false);
-    } else if (key === " " || key === "k") {
-      // preventDefault below also stops Space from clicking a focused button,
-      // such as the search result that was just clicked.
-      player.togglePlay();
-    } else {
-      return;
-    }
-    e.preventDefault();
+    const p = player;
+    const done = transportKey(key, e.shiftKey, {
+      togglePlay: () => p?.togglePlay(),
+      seekBy: (s) => p?.seek(Math.max(0, p.time() + s), false),
+      step: p?.step && ((n) => p.step!(n)),
+      fullscreen,
+      setFullscreen,
+    });
+    // preventDefault also stops Space from clicking a focused button, such
+    // as the search result that was just clicked.
+    if (done) e.preventDefault();
   }
 </script>
 
@@ -438,24 +436,7 @@
     {/if}
   </div>
   {#if showKeys}
-    <p class="legend muted">
-      <kbd>Space</kbd> or <kbd>K</kbd> play/pause <span class="sep">·</span>
-      <kbd>←</kbd><kbd>→</kbd> 5 s <span class="sep">·</span>
-      <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s <span class="sep">·</span>
-      <kbd>J</kbd><kbd>L</kbd> 10 s <span class="sep">·</span>
-      <kbd>B</kbd> cut here (<kbd>,</kbd><kbd>.</kbd>, <kbd>←</kbd><kbd>→</kbd>, <kbd>J</kbd><kbd>L</kbd> move the
-      selected cut, <kbd>Delete</kbd> removes it)
-      <span class="sep">·</span>
-      <kbd>E</kbd> clip the stretch <span class="sep">·</span>
-      <kbd>M</kbd> highlight here <span class="sep">·</span>
-      <kbd>N</kbd> new chapter here (double-click one to rename it) <span class="sep">·</span>
-      <kbd>C</kbd> captions <span class="sep">·</span>
-      drag Clip, or <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
-      <span class="sep">·</span> <kbd>F</kbd> full screen
-      {#if framed}
-        <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
-      {/if}
-    </p>
+    <Shortcuts shortcuts={vodShortcuts(framed, os === "mac")} />
   {/if}
   {#if canEmbed(vod)}
     <div class="stage" class:collapsed class:audio={audioOnly}>
@@ -594,7 +575,7 @@
   }
 
   .fullscreen .head,
-  .fullscreen .legend {
+  .fullscreen :global(.legend) {
     display: none;
   }
 
@@ -689,16 +670,6 @@
 
   .stamp.failed {
     color: var(--danger);
-  }
-
-  .legend {
-    margin: 0;
-    padding: 0 16px 8px;
-    font-size: 12px;
-  }
-
-  .legend kbd + kbd {
-    margin-left: 2px;
   }
 
   .head .icon {

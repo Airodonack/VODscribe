@@ -2,7 +2,8 @@
 // its popover; the chapter deleted (Delete), brought back with Ctrl+Z, and
 // deleted again with Ctrl+Shift+Z, each told in a toast. Then a chapter made
 // by mistake (N) and cancelled with Escape in its box: gone, and not in undo's
-// history (Ctrl+Z undoes the change before it). Last, a cut undone at once:
+// history (Ctrl+Z undoes the change before it), and what that undid can still
+// be redone. Enter on a selected highlight reopens its note. Last, a cut undone at once:
 // the arrow keys seek again.
 
 import { until } from "../lib/app.mjs";
@@ -50,6 +51,17 @@ export default {
     await mark("m", "Highlight note", "Tranquility Base");
     if (await app.js(`return !!document.querySelector('.bar button[aria-label="Unmute"]')`))
       throw new Error("M muted the player");
+    // Enter on the selected highlight (just made) opens its note again, as a double-click does.
+    await app.key("Enter");
+    const note = `[role=dialog][aria-label="Highlight note"] input`;
+    const written = await until(
+      "the note open again",
+      () => app.js(`return document.querySelector(arguments[0])?.value ?? false`, note),
+      10_000,
+    );
+    if (written !== "Tranquility Base") throw new Error(`the note opened with "${written}"`);
+    await app.submit(note);
+    await until("the note to close", () => app.js(`return !document.querySelector(arguments[0])`, note), 10_000);
     await app.key("Escape");
     await app.key("ArrowRight", { shift: true });
     await app.key("ArrowRight", { shift: true });
@@ -150,6 +162,18 @@ export default {
       },
       10_000,
     );
+    // What Ctrl+Z undid can still be redone: the chapters taken back with
+    // Escape left the redo as it was.
+    const chapters = async () => (await marks()).filter((m) => m.kind === "chapter").length;
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }))`,
+    );
+    await until("the chapter deleted again (redo)", async () => (await chapters()) === 0, 10_000);
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
+    );
+    await until("the chapter back again", async () => (await chapters()) === 1, 10_000);
+    log("redo still there after chapters taken back with Escape");
 
     // A cut (B, selected as it's made) undone: the arrows seek again, rather
     // than moving a cut that isn't there.

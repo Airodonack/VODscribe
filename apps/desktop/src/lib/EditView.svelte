@@ -16,6 +16,8 @@
   import { api, type Doc, type EditPiece, type Line, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
+  import { editShortcuts, keyOf, transportKey } from "./playerKeys";
+  import Shortcuts from "./Shortcuts.svelte";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -262,6 +264,20 @@
     );
   }
 
+  /** Moves the piece at the playhead a place earlier (-1) or later (1), the
+   *  playhead with it, so pressing again moves it on. */
+  async function moveCurrent(by: -1 | 1) {
+    const piece = atNow?.piece;
+    if (!piece) return;
+    const index = pieces.findIndex((p) => p.id === piece.id);
+    if (index + by < 0 || index + by >= pieces.length) return;
+    const into = now - (segments.find((s) => s.piece.id === piece.id)?.at ?? now);
+    if (await edits.move(piece.id, index + by)) {
+      const first = segments.find((s) => s.piece.id === piece.id);
+      if (first) seekTo(first.at + into);
+    }
+  }
+
   /** Split: the piece at the playhead in two, there. */
   function split() {
     const s = atNow;
@@ -278,13 +294,14 @@
       .catch((e) => console.error("full screen", e));
   }
 
-  // The keys the VOD's player has, where they mean the same; B splits, E renders.
-  const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
+  // The keys the VOD's player has, where they mean the same (playerKeys.ts);
+  // B splits, E renders.
+  let showKeys = $state(false);
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (e.altKey || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const key = keyOf(e);
     // E renders even where edits can't play here: then it's the way to watch one.
     if (key === "e" && !player) {
       if (!e.repeat && edit && edit.status !== "cutting" && segments.length) edits.render(edit.id);
@@ -300,17 +317,28 @@
       e.preventDefault();
       return;
     }
+    // Ctrl+← and → (⌘ on a Mac) move the piece at the playhead, as Alt+↑/↓
+    // moves a row in the library (Alt+← and → are back and forward).
+    if ((os === "mac" ? e.metaKey : e.ctrlKey) && !e.shiftKey && (key === "ArrowLeft" || key === "ArrowRight")) {
+      if (!e.repeat) moveCurrent(key === "ArrowLeft" ? -1 : 1);
+      e.preventDefault();
+      return;
+    }
     if (e.ctrlKey || e.metaKey) return;
+    const p = player;
     if (key === "Delete" || key === "Backspace") {
       // Held down, it's one press: one piece, not one after another.
       if (!e.repeat && atNow) removeCurrent();
-    } else if (key === " " || key === "k") player.togglePlay();
-    else if (key === "f" || (key === "Escape" && fullscreen)) setFullscreen(key === "f" ? !fullscreen : false);
-    else if (key === "," || key === ".") player.step?.(key === "," ? -1 : 1);
-    else if (key in STEPS) {
-      const step = e.shiftKey && key.startsWith("Arrow") ? Math.sign(STEPS[key]) : STEPS[key];
-      seekTo(Math.max(0, (bringTime ?? player.time()) + step));
-    } else return;
+    } else if (
+      !transportKey(key, e.shiftKey, {
+        togglePlay: () => p.togglePlay(),
+        seekBy: (step) => seekTo(Math.max(0, (bringTime ?? p.time()) + step)),
+        step: p.step && ((n) => p.step!(n)),
+        fullscreen,
+        setFullscreen,
+      })
+    )
+      return;
     e.preventDefault();
   }
 
@@ -588,10 +616,21 @@
           Render <kbd>E</kbd>
         </button>
       {/if}
+      <button
+        class="icon"
+        class:on={showKeys}
+        onclick={() => (showKeys = !showKeys)}
+        aria-expanded={showKeys}
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
+      >
       <button class="icon" onclick={remove} title="Delete edit" aria-label="Delete edit">
         <Icon name="trash" size={16} />
       </button>
     </div>
+    {#if showKeys}
+      <Shortcuts shortcuts={editShortcuts(!!player?.step, os === "mac")} />
+    {/if}
 
     <div class="stage">
       <!-- A click on the picture plays or pauses, as on a VOD's player. -->
@@ -742,7 +781,8 @@
     border: none;
   }
 
-  .fullscreen .head {
+  .fullscreen .head,
+  .fullscreen :global(.legend) {
     display: none;
   }
 

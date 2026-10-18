@@ -1,6 +1,7 @@
 // A clip: cuts at 1 and 3 s (B), then Clip with the playhead between them
 // (App.clipOneToThree); resized, it's made again as a new file and the one
-// before goes (it was never dragged out); then deleting it.
+// before goes (it was never dragged out); then deleting it, and undoing
+// that and the resize.
 
 import { existsSync } from "node:fs";
 
@@ -45,5 +46,28 @@ export default {
       MINUTE,
     );
     app.log(`clipped "${clip.title}" to ${clip.file_path}, and deleted it`);
+
+    // Undone (history::restore_bar): the clip comes back as it was, 1 to 4 s
+    // with its title, and is made again; undone once more, so is the resize.
+    const undo = () =>
+      app.js(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`);
+    const madeAt = (start, end) =>
+      until(
+        `the clip back at ${start}-${end} s, made`,
+        async () => {
+          const all = await app.invoke("list_clips", { vodId: done.id });
+          const [c] = all;
+          if (all.length === 1 && c.start === start && c.end === end && c.status === "ready" && existsSync(c.file_path))
+            return c;
+          throw new Error(`clips: ${JSON.stringify(all.map((c) => [c.start, c.end, c.status]))}`);
+        },
+        MINUTE,
+      );
+    await undo();
+    const back = await madeAt(1, 4);
+    if (back.title !== clip.title) throw new Error(`it came back as "${back.title}", not "${clip.title}"`);
+    await undo();
+    await madeAt(1, 3);
+    app.log("deleting it and resizing it undone: back as it was, and made again");
   },
 };

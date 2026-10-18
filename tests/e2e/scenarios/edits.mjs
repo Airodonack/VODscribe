@@ -1,5 +1,6 @@
 // Edits: a clip added to a new edit from its pill; the edit opened,
-// renamed, its piece split (B), a line struck out and the strike undone
+// renamed, its piece split (B) and the second half moved first and back
+// (Ctrl+← and →), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
 // removing the VOD warns that its pieces leave the edit (Keep: nothing
 // goes); then the edit deleted, after asking.
@@ -79,6 +80,35 @@ export default {
     );
     await new Promise((r) => setTimeout(r, 1000));
     if (pieces(await edit()).length !== 2) throw new Error("a held-down Delete's repeat removed a piece");
+
+    // Ctrl+← (⌘← on a Mac) moves the piece at the playhead (the second, at
+    // 1 s) a place earlier, the playhead with it; Ctrl+→ moves it back.
+    const order = async () => pieces(await edit()).map((p) => p.id);
+    const before = await order();
+    const move = (key) =>
+      app.js(
+        `const mac = /Mac/.test(navigator.platform);
+         document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], ctrlKey: !mac, metaKey: mac, bubbles: true }))`,
+        key,
+      );
+    await move("ArrowLeft");
+    await until(
+      "the second piece first",
+      async () => {
+        const now = await order();
+        if (now[0] === before[1] && now[1] === before[0]) return true;
+        throw new Error(`pieces ${JSON.stringify(now)}, were ${JSON.stringify(before)}`);
+      },
+      10_000,
+    );
+    await until("the playhead with it, at 0 s", async () => (await app.shownTime()) === 0, 10_000);
+    await move("ArrowRight");
+    await until(
+      "the pieces as they were",
+      async () => JSON.stringify(await order()) === JSON.stringify(before),
+      10_000,
+    );
+    await until("the playhead back at 1 s", async () => (await app.shownTime()) === 1, 10_000);
 
     // A line struck out, then the strike undone.
     await until(

@@ -1,6 +1,6 @@
 <script lang="ts">
   // The clip bar: the open VOD's clips as pills under the player. Clicking one
-  // plays it; double-clicking its name renames it; once its file is made, it
+  // plays it; double-clicking its name (or Enter or F2 on it) renames it; once its file is made, it
   // drags out of the window (into a video editor or a folder), or onto an
   // edit in the library's list (or on "Make new edit" there). "Add to an edit"
   // picks one from a list. Each edit using this VOD is a link here too.
@@ -99,7 +99,7 @@
 
 <svelte:window onpointermove={onPointerMove} onpointerup={() => (press = null)} />
 
-<div class="strip clip-bar" class:over={clips.overBar} aria-label="Clips">
+<div class="strip clip-bar" class:over={clips.overBar} role="group" aria-label="Clips">
   {#each linked as edit (edit.id)}
     <button
       class="chip edit-link"
@@ -146,8 +146,19 @@
           spellcheck="false"
         />
       {:else}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <span class="name" ondblclick={() => startRename(clip)}>{clip.title}</span>
+        <!-- Double-click, or Enter or F2 on it, to rename. -->
+        <span
+          class="name"
+          role="button"
+          tabindex="0"
+          ondblclick={() => startRename(clip)}
+          onkeydown={(e) => {
+            if (e.key !== "Enter" && e.key !== "F2") return;
+            startRename(clip);
+            e.preventDefault();
+            e.stopPropagation();
+          }}>{clip.title}</span
+        >
       {/if}
       {#if clip.status === "cutting"}
         <Spinner size={11} />
