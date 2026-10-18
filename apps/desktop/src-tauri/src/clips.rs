@@ -8,6 +8,7 @@
 //! changes is a new file; the one before goes, unless it was dragged out to
 //! another app (`handed_out`), which may link to it where it is.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -38,12 +39,15 @@ pub(crate) struct Cutter {
     /// Taken by `run`.
     jobs: Mutex<Option<Receiver<i64>>>,
     current: Running,
+    /// VODs being removed: their clips still queued aren't cut (the rows go
+    /// last, after the transcript and chat, which can take a while).
+    removing: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl Cutter {
     pub(crate) fn new() -> Self {
         let (queue, jobs) = mpsc::channel();
-        Self { queue, jobs: Mutex::new(Some(jobs)), current: Arc::default() }
+        Self { queue, jobs: Mutex::new(Some(jobs)), current: Arc::default(), removing: Arc::default() }
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
@@ -51,6 +55,7 @@ impl Cutter {
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let jobs = self.jobs.lock().unwrap().take().context("the clip queue is already running")?;
         let running = self.current.clone();
+        let removing = self.removing.clone();
         let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
@@ -75,7 +80,7 @@ impl Cutter {
             for id in jobs {
                 let stop = Arc::new(AtomicBool::new(false));
                 *running.lock().unwrap() = Some((id, stop.clone()));
-                if let Err(e) = cut(&app, id, &stop) {
+                if let Err(e) = cut(&app, id, &stop, &removing) {
                     eprintln!("clip {id}: {e:#}");
                     fail(&app, id, &e);
                 }
@@ -92,9 +97,11 @@ impl Cutter {
         let _ = self.queue.send(id);
     }
 
-    /// Stops the cut of a clip of VOD `vod_id`, if one's being cut (its VOD is
-    /// being deleted: a download from its site could take a while).
+    /// Stops the cut of a clip of VOD `vod_id`, if one's being cut, and cuts
+    /// none of its others (its VOD is being deleted: a download from its site
+    /// could take a while).
     pub(crate) fn stop_vod(&self, db: &Db, vod_id: i64) {
+        self.removing.lock().unwrap().insert(vod_id);
         if let Some((id, stop)) = &*self.current.lock().unwrap()
             && db.clip(*id).ok().flatten().is_some_and(|c| c.vod_id == vod_id)
         {
@@ -155,12 +162,14 @@ fn fail(app: &AppHandle, id: i64, e: &anyhow::Error) {
     }
 }
 
-/// Makes clip `id`'s file, if it's waiting and its VOD plays from a file here.
-fn cut(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
+/// Makes clip `id`'s file, if it's waiting and its VOD plays from a file here
+/// (and isn't being removed: `removing`).
+fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) -> Result<()> {
     let state = app.state::<AppState>();
     let (clip, vod, source) = {
         let db = state.db.lock().unwrap();
-        let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready) else { return Ok(()) };
+        let removed = |c: &Clip| removing.lock().unwrap().contains(&c.vod_id);
+        let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready && !removed(c)) else { return Ok(()) };
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(()) };
         let source = media::playable_file(&db, vod.id);
         (clip, vod, source)
