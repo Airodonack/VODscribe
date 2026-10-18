@@ -15,7 +15,7 @@
 // a library. On failure: the page's errors and a screenshot in E2E_OUT
 // (default tests/e2e/out). Every scenario runs; the exit code says if any failed.
 //
-// A scenario exports { name, before?(ctx), run(app, ctx) }: `before` sets up
+// A scenario exports { name, before?(ctx), run(app, ctx), allowErrors? }: `before` sets up
 // the data folder before the app starts; `run` gets an App (lib/app.mjs) and
 // ctx: { fixtures, out, log, quit(), start(), restart(), skip(why) }: quit
 // ends the app, start starts it again and returns the new App, restart does
@@ -102,8 +102,9 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     // What a scenario sets up in the data folder before the app starts.
     await scenario.before?.(ctx);
     await scenario.run(await launch(), ctx);
-    // Whatever it did, the page shouldn't be showing an error at the end.
-    const errors = current ? await current.app.errors() : [];
+    // Whatever it did, the page shouldn't be showing an error at the end
+    // (unless showing one is what it checks: allowErrors).
+    const errors = current && !scenario.allowErrors ? await current.app.errors() : [];
     if (errors.length) throw new Error(`the page shows: ${errors.join(" | ")}`);
   } catch (e) {
     if (e instanceof Skip) {
