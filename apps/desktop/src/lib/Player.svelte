@@ -8,8 +8,8 @@
   import { edits } from "./edits.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
-  import { exportStretch, stretchAt } from "./dragout";
-  import { DEFAULT_FPS, inFrame } from "./media";
+  import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
+  import { DEFAULT_FPS, frameStart, inFrame } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import PlayerBar from "./PlayerBar.svelte";
@@ -232,6 +232,33 @@
   }
   const canClip = $derived(!!cuts.selection || !!stretch);
 
+  // Clip dragged rather than clicked: the lit-up stretch carried, as a clip's
+  // pill is (dragout.ts carry), with no key held: onto an edit or the clip
+  // bar, or past the window's edge into another app. Pressed and let go in
+  // place, it's a click.
+  let clipPress: { x: number; y: number } | null = null;
+  let clipDragged = false;
+  function onClipDown(e: PointerEvent) {
+    if (e.button === 0 && canClip) clipPress = { x: e.clientX, y: e.clientY };
+  }
+  function onClipMove(e: PointerEvent) {
+    if (!clipPress || Math.hypot(e.clientX - clipPress.x, e.clientY - clipPress.y) < DRAG_SLOP) return;
+    clipPress = null;
+    const picked = cuts.selection;
+    const range = picked ? { start: frameStart(picked.start, fps), end: frameStart(picked.end, fps) } : stretch;
+    if (!range || range.end <= range.start) return;
+    // The let-go may land on the button again: not a click too.
+    clipDragged = true;
+    setTimeout(() => (clipDragged = false), 500);
+    clipHover = false;
+    const from = clipButton?.getBoundingClientRect() ?? new DOMRect(e.clientX, e.clientY);
+    carry({ vod, start: range.start, end: range.end, ownPlayer: playsHere(vod), from, x: e.clientX, y: e.clientY });
+  }
+  function onClipClick() {
+    if (clipDragged) clipDragged = false;
+    else makeClip();
+  }
+
   // Full screen is the window's, with the player panel laid over the page:
   // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
   let fullscreen = $state(false);
@@ -343,7 +370,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onpointermove={onClipMove} onpointerup={() => (clipPress = null)} />
 
 <section class:fullscreen>
   <div class="head">
@@ -413,7 +440,7 @@
       <kbd>M</kbd> highlight here <span class="sep">·</span>
       <kbd>N</kbd> new chapter here (double-click one to rename it) <span class="sep">·</span>
       <kbd>C</kbd> captions <span class="sep">·</span>
-      <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
+      drag Clip, or <kbd>{dragKey}</kbd>+drag on the timeline: the stretch out as a clip
       <span class="sep">·</span> <kbd>F</kbd> full screen
       {#if framed}
         <span class="sep">·</span> <kbd>,</kbd><kbd>.</kbd> a frame back or on (paused)
@@ -494,11 +521,12 @@
               class="action clip"
               class:picking={!!cuts.selection}
               bind:this={clipButton}
-              onclick={makeClip}
+              onpointerdown={onClipDown}
+              onclick={onClipClick}
               onmouseenter={() => (clipHover = true)}
               onmouseleave={() => (clipHover = false)}
               disabled={!canClip}
-              title="Clip the lit-up stretch, to the clip bar (E): with no cuts, the whole video. Or {dragKey}-drag a stretch of the timeline straight into your video editor."
+              title="Clip the lit-up stretch, to the clip bar (E): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
             >
               <Icon name="film" size={14} /> Clip <kbd>E</kbd>
             </button>

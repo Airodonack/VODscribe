@@ -1,9 +1,10 @@
 // Drags out of the window with the OS's mouse (lib/os.mjs). A clip's pill
 // dragged out and the drag called off (Escape) before anything took its
 // file: the file isn't counted as handed to another app, so deleting the clip
-// deletes it. Then a stretch Alt-dragged to the window's edge and let go at
-// once, before its file is made: no file is left behind for it (skipped where
-// the window manager takes Alt-drag). Linux (X11) only, so far.
+// deletes it. Then Clip pulled to the window's edge (no key held), and a
+// stretch Alt-dragged there, each let go at once, before its file is made:
+// no file is left behind (the Alt-drag skipped where the window manager takes
+// it). Linux (X11) only, so far.
 
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -60,6 +61,26 @@ export default {
       },
       10_000,
     );
+    // Clip pressed and pulled to the window's left edge, no key held, and let
+    // go there at once (its stretch, 1 to 3 s, has no clip now): nothing left behind.
+    {
+      const folder = path.dirname(ready);
+      const before = new Set(readdirSync(folder));
+      const button = await os.rectOf(app, "button.action.clip");
+      const edge = await os.windowRect(app);
+      const [cx, cy] = [button.x + Math.round(button.w / 2), button.y + Math.round(button.h / 2)];
+      await os.gesture([
+        ["down", cx, cy],
+        ["move", cx - 20, cy],
+        ["move", cx - 60, cy],
+        ["letgo", edge.x, cy],
+      ]);
+      await sleep(5000);
+      const left = readdirSync(folder).filter((f) => !before.has(f));
+      if (left.length) throw new Error(`Clip dragged out and let go at once left ${left.join(", ")}`);
+      ctx.log("Clip dragged out and let go at once: nothing left behind");
+    }
+
     // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
     // edge and let go there at once.
     const folder = path.dirname(ready);
