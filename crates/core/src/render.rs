@@ -98,7 +98,7 @@ pub fn render(
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
-) -> Result<()> {
+) -> Result<PathBuf> {
     encode_pieces(ffmpeg, pieces, picture, format, out, cancel, progress)
 }
 
@@ -110,7 +110,7 @@ fn encode_pieces(
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
-) -> Result<()> {
+) -> Result<PathBuf> {
     if pieces.is_empty() {
         bail!("There's nothing to render.");
     }
@@ -139,6 +139,13 @@ fn encode_pieces(
     }
     let picture = picture_of(&inputs, given);
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
+    // Named for what it holds, found only now: sound alone is an .m4a or .wav
+    // (beside, not over, a file of that name already there).
+    let named = out.with_extension(crate::clips::extension(picture.is_none(), format));
+    let out = &match (named != out, named.parent(), named.file_name()) {
+        (true, Some(dir), Some(name)) if named.exists() => crate::clips::unique_path(dir, &name.to_string_lossy()),
+        _ => named,
+    };
 
     let dir = out.parent().context("no folder for the video")?;
     std::fs::create_dir_all(dir)?;
@@ -161,7 +168,8 @@ fn encode_pieces(
     cmd.args(["-map", "[a]"]);
     cmd.args(crate::clips::output_args(format, picture.is_some()));
     cmd.args(["-progress", "pipe:1", "-y"]).arg(&part);
-    tools::encode(cmd, &part, out, length, cancel, progress, "the video")
+    tools::encode(cmd, &part, out, length, cancel, progress, "the video")?;
+    Ok(out.clone())
 }
 
 #[cfg(test)]
@@ -248,5 +256,13 @@ mod tests {
         assert!((seconds("video") - 4.5).abs() < 0.05, "{streams}");
         assert!((seconds("audio") - 4.5).abs() < 0.06, "{streams}");
         assert!(!dir.join("out").join(".edit.mp4.part").exists());
+
+        // Sound alone, asked for as a video file: named for what it holds.
+        let tone = make("tone.m4a", &["-f", "lavfi", "-i", "sine=duration=2"]);
+        let asked = dir.join("out").join("sound.mov");
+        let pieces = [Piece { source: tone, start: 0.0, end: 1.0 }];
+        let made = render(&ffmpeg, &pieces, None, ClipFormat::Mov, &asked, &AtomicBool::new(false), |_| {}).unwrap();
+        assert_eq!(made, dir.join("out").join("sound.wav"));
+        assert!(made.is_file() && !asked.exists());
     }
 }

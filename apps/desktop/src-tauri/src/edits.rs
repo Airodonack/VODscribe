@@ -178,10 +178,12 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         }
     };
     let result = render::render(&ffmpeg, &pieces, None, format, &out, stop, report);
+    // As made: sound alone is named so (an .m4a or .wav), found only then.
+    let out = result.as_ref().map_or(out, |made| made.clone());
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     match &result {
-        Ok(()) => db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?,
+        Ok(_) => db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?,
         // Stopped, or deleted: as it was before, if it's still there.
         Err(e) if vodscribe_core::is_canceled(e) => db.set_edit_render(id, ClipStatus::Waiting, None, None, None)?,
         Err(e) => db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?,
