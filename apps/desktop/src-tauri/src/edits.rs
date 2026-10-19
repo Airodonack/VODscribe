@@ -6,9 +6,7 @@
 //! out to another app.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -20,83 +18,36 @@ use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, render, tools};
 
 use crate::history::{self, Doc};
+use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
-/// The edit being rendered, and its stop.
-type Running = Arc<Mutex<Option<(i64, Arc<AtomicBool>)>>>;
-
-/// The edits asked to render and not begun, each once.
-#[derive(Default)]
-struct Waiting(Mutex<Vec<i64>>);
-
-impl Waiting {
-    /// Adds edit `id`; false if it's waiting already.
-    fn ask(&self, id: i64) -> bool {
-        let mut waiting = self.0.lock().unwrap();
-        if waiting.contains(&id) {
-            return false;
-        }
-        waiting.push(id);
-        true
-    }
-
-    /// Takes edit `id` off (to render now, or stopped); whether it was waiting.
-    fn take(&self, id: i64) -> bool {
-        let mut waiting = self.0.lock().unwrap();
-        let at = waiting.iter().position(|&w| w == id);
-        at.map(|at| waiting.remove(at)).is_some()
-    }
-}
-
-pub(crate) struct Renderer {
-    queue: Sender<i64>,
-    /// Taken by `run`.
-    jobs: Mutex<Option<Receiver<i64>>>,
-    waiting: Arc<Waiting>,
-    current: Running,
-}
+/// Edits rendered one at a time, by id; each waits once, however often it's
+/// asked for meanwhile.
+pub(crate) struct Renderer(Jobs<i64>);
 
 impl Renderer {
     pub(crate) fn new() -> Self {
-        let (queue, jobs) = mpsc::channel();
-        Self { queue, jobs: Mutex::new(Some(jobs)), waiting: Arc::default(), current: Arc::default() }
+        Renderer(Jobs::new())
     }
 
     /// Starts rendering what's asked, once the app's state is in place.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
-        let jobs = self.jobs.lock().unwrap().take().context("the render queue is already running")?;
         app.state::<AppState>().db.lock().unwrap().reset_renders()?;
-        let running = self.current.clone();
-        let waiting = self.waiting.clone();
-        std::thread::Builder::new().name("renders".into()).spawn(move || {
-            for id in jobs {
-                // Stopped while it waited.
-                if !waiting.take(id) {
-                    continue;
-                }
-                let stop = Arc::new(AtomicBool::new(false));
-                *running.lock().unwrap() = Some((id, stop.clone()));
-                if let Err(e) = render_edit(&app, id, &stop) {
-                    eprintln!("edit {id}: {e:#}");
-                }
-                *running.lock().unwrap() = None;
+        self.0.run("renders", move |id, stop| {
+            if let Err(e) = render_edit(&app, id, stop) {
+                eprintln!("edit {id}: {e:#}");
             }
-        })?;
-        Ok(())
+        })
     }
 
     /// Stops rendering edit `id`; true if it was waiting, not begun.
     fn stop(&self, id: i64) -> bool {
-        if self.waiting.take(id) {
+        if !self.0.take_waiting(|&j| j == id).is_empty() {
             return true;
         }
-        if let Some((current, stop)) = &*self.current.lock().unwrap()
-            && *current == id
-        {
-            stop.store(true, Ordering::Relaxed);
-        }
+        self.0.stop_running(|&j| j == id);
         false
     }
 }
@@ -388,7 +339,9 @@ pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView>
 /// now, so it isn't asked for twice. Asked again while it waits, once is enough.
 #[tauri::command]
 pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    if !state.renders.waiting.ask(id) {
+    // Shown as rendering before it's queued: its render could otherwise end
+    // first, and be shown as rendering after.
+    if state.renders.0.is_waiting(|&j| j == id) {
         return Ok(());
     }
     {
@@ -396,7 +349,7 @@ pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, 
         db.set_edit_render(id, ClipStatus::Cutting, None, None, None).map_err(err)?;
         emit(&app, &db, id);
     }
-    let _ = state.renders.queue.send(id);
+    state.renders.0.push_once(id, |&j| j == id);
     Ok(())
 }
 
@@ -460,20 +413,4 @@ pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc:
     .await
     .map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_edit_waits_to_render_once() {
-        let waiting = Waiting::default();
-        assert!(waiting.ask(1));
-        assert!(waiting.ask(2));
-        assert!(!waiting.ask(1), "asked again while it waits: once is enough");
-        assert!(waiting.take(1), "begun");
-        assert!(waiting.ask(1), "changed while rendering: asked again, it renders again after");
-        assert!(waiting.take(2) && !waiting.take(2), "stopped while it waited: not begun after");
-    }
 }

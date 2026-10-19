@@ -10,8 +10,8 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::{self};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use vodscribe_core::settings::{ClipFormat, Settings};
 use vodscribe_core::{clips, fetch, tools};
 
 use crate::history::{self, Doc};
+use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err, media};
 
 /// The longest clip: longer than any highlight, short of a whole VOD.
@@ -31,14 +32,9 @@ const LONGEST: f64 = 3.0 * 3600.0;
 /// How often a cut's progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
-/// The clip being cut, and its stop.
-type Running = Arc<Mutex<Option<(i64, Arc<AtomicBool>)>>>;
-
+/// Clips cut one at a time, by id (`jobs`).
 pub(crate) struct Cutter {
-    queue: Sender<i64>,
-    /// Taken by `run`.
-    jobs: Mutex<Option<Receiver<i64>>>,
-    current: Running,
+    jobs: Jobs<i64>,
     /// VODs being removed: their clips still queued aren't cut (the rows go
     /// last, after the transcript and chat, which can take a while).
     removing: Arc<Mutex<HashSet<i64>>>,
@@ -46,15 +42,12 @@ pub(crate) struct Cutter {
 
 impl Cutter {
     pub(crate) fn new() -> Self {
-        let (queue, jobs) = mpsc::channel();
-        Self { queue, jobs: Mutex::new(Some(jobs)), current: Arc::default(), removing: Arc::default() }
+        Self { jobs: Jobs::new(), removing: Arc::default() }
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
     /// clips left unfinished when the app last stopped.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
-        let jobs = self.jobs.lock().unwrap().take().context("the clip queue is already running")?;
-        let running = self.current.clone();
         let removing = self.removing.clone();
         let unfinished = {
             let state = app.state::<AppState>();
@@ -76,15 +69,10 @@ impl Cutter {
                 }
             }
         }
-        std::thread::Builder::new().name("clips".into()).spawn(move || {
-            for id in jobs {
-                let stop = Arc::new(AtomicBool::new(false));
-                *running.lock().unwrap() = Some((id, stop.clone()));
-                if let Err(e) = cut(&app, id, &stop, &removing) {
-                    eprintln!("clip {id}: {e:#}");
-                    fail(&app, id, &e);
-                }
-                *running.lock().unwrap() = None;
+        self.jobs.run("clips", move |id, stop| {
+            if let Err(e) = cut(&app, id, stop, &removing) {
+                eprintln!("clip {id}: {e:#}");
+                fail(&app, id, &e);
             }
         })?;
         for clip in unfinished {
@@ -94,7 +82,7 @@ impl Cutter {
     }
 
     pub(crate) fn queue(&self, id: i64) {
-        let _ = self.queue.send(id);
+        self.jobs.push(id);
     }
 
     /// Stops the cut of a clip of VOD `vod_id`, if one's being cut, and cuts
@@ -102,20 +90,12 @@ impl Cutter {
     /// could take a while).
     pub(crate) fn stop_vod(&self, db: &Db, vod_id: i64) {
         self.removing.lock().unwrap().insert(vod_id);
-        if let Some((id, stop)) = &*self.current.lock().unwrap()
-            && db.clip(*id).ok().flatten().is_some_and(|c| c.vod_id == vod_id)
-        {
-            stop.store(true, Ordering::Relaxed);
-        }
+        self.jobs.stop_running(|&id| db.clip(id).ok().flatten().is_some_and(|c| c.vod_id == vod_id));
     }
 
     /// Stops clip `id`'s cut, if it's the one being cut.
     pub(crate) fn stop(&self, id: i64) {
-        if let Some((current, stop)) = &*self.current.lock().unwrap()
-            && *current == id
-        {
-            stop.store(true, Ordering::Relaxed);
-        }
+        self.jobs.stop_running(|&j| j == id);
     }
 }
 

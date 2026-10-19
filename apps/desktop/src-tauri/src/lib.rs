@@ -13,6 +13,7 @@ mod e2e;
 mod edits;
 mod footage;
 mod history;
+mod jobs;
 mod loopback;
 mod media;
 mod player;
@@ -146,7 +147,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         clips: clips::Cutter::new(),
         renders: edits::Renderer::new(),
         footage: footage::Footage::default(),
-        videos: videos::Videos::default(),
+        videos: videos::Videos::new(),
         history: history::History::default(),
         player: player::Native::default(),
         adding: Mutex::default(),

@@ -7,9 +7,7 @@
 //!
 //! One download at a time, in a queue of its own, beside transcription's.
 
-use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -19,6 +17,7 @@ use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{fetch, local, pipeline, tools};
 
+use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -26,19 +25,9 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// The heights a download can be capped at (as Settings → Storage offers).
 pub(crate) const HEIGHTS: [u32; 3] = [480, 720, 1080];
 
-#[derive(Default)]
-struct Queue {
-    /// VODs and the height their video is capped at.
-    waiting: VecDeque<(i64, u32)>,
-    /// The VOD whose video is downloading, and its stop.
-    running: Option<(i64, Arc<AtomicBool>)>,
-}
-
-#[derive(Default)]
-pub(crate) struct Videos {
-    queue: Mutex<Queue>,
-    wake: Condvar,
-}
+/// VODs' whole videos downloaded one at a time: each VOD's id, and the
+/// height its video is capped at.
+pub(crate) struct Videos(Jobs<(i64, u32)>);
 
 /// Where a VOD's video download is, for the interface: `progress` is None
 /// while waiting its turn, and `error` is set if it failed.
@@ -50,65 +39,49 @@ struct VideoProgress {
 }
 
 impl Videos {
+    pub(crate) fn new() -> Self {
+        Videos(Jobs::new())
+    }
+
     /// Starts the queue's thread; called once the app's state is in place.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
-        std::thread::Builder::new().name("videos".into()).spawn(move || {
-            loop {
-                let state = app.state::<AppState>();
-                let (id, height, stop) = {
-                    let mut queue = state.videos.queue.lock().unwrap();
-                    let (id, height) = loop {
-                        if let Some(next) = queue.waiting.pop_front() {
-                            break next;
-                        }
-                        queue = state.videos.wake.wait(queue).unwrap();
-                    };
-                    let stop = Arc::new(AtomicBool::new(false));
-                    queue.running = Some((id, stop.clone()));
-                    (id, height, stop)
-                };
-                let result = download(&app, id, height, &stop);
-                state.videos.queue.lock().unwrap().running = None;
-                let error = match result {
-                    Ok(()) => None,
-                    // Stopped: what was downloaded goes, rather than lie unseen in the kept videos.
-                    Err(e) if vodscribe_core::is_canceled(&e) => {
-                        let kept = state.db.lock().unwrap().media_path(id).ok().flatten().is_some();
-                        if !kept {
-                            pipeline::remove_media(&state.paths.work(), id);
-                        }
-                        None
+        self.0.run("videos", move |(id, height), stop| {
+            let state = app.state::<AppState>();
+            let result = download(&app, id, height, stop);
+            let error = match result {
+                Ok(()) => None,
+                // Stopped: what was downloaded goes, rather than lie unseen in the kept videos.
+                Err(e) if vodscribe_core::is_canceled(&e) => {
+                    let kept = state.db.lock().unwrap().media_path(id).ok().flatten().is_some();
+                    if !kept {
+                        pipeline::remove_media(&state.paths.work(), id);
                     }
-                    Err(e) => {
-                        eprintln!("VOD {id}: its video: {e:#}");
-                        Some(format!("{e:#}"))
-                    }
-                };
-                // Done (the VOD now says it has its video), stopped or failed.
-                let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
-                if error.is_none() {
-                    let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
+                    None
                 }
+                Err(e) => {
+                    eprintln!("VOD {id}: its video: {e:#}");
+                    Some(format!("{e:#}"))
+                }
+            };
+            // Done (the VOD now says it has its video), stopped or failed.
+            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
+            if error.is_none() {
+                let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
             }
-        })?;
-        Ok(())
+        })
     }
 
     /// The VODs whose video is downloading or waiting to, the running one first.
     fn listed(&self) -> Vec<i64> {
-        let queue = self.queue.lock().unwrap();
-        queue.running.iter().map(|(id, _)| *id).chain(queue.waiting.iter().map(|(id, _)| *id)).collect()
+        self.0.listed().into_iter().map(|(id, _)| id).collect()
     }
 
     /// Stops every download and empties the queue (deleting what each had).
     pub(crate) fn stop_all(&self, app: &AppHandle) {
-        let mut queue = self.queue.lock().unwrap();
-        for (id, _) in queue.waiting.drain(..) {
+        for (id, _) in self.0.take_waiting(|_| true) {
             let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
         }
-        if let Some((_, stop)) = &queue.running {
-            stop.store(true, Ordering::Relaxed);
-        }
+        self.0.stop_running(|_| true);
     }
 }
 
@@ -192,14 +165,10 @@ pub(crate) async fn keep_video(
     if pipeline::keeps_video(&vod.info.platform) {
         return Err("This VOD's video is kept once it's transcribed.".into());
     }
-    {
-        let mut queue = state.videos.queue.lock().unwrap();
-        if queue.running.as_ref().is_some_and(|(r, _)| *r == id) || queue.waiting.iter().any(|(w, _)| *w == id) {
-            return Ok(());
-        }
-        queue.waiting.push_back((id, height));
+    let queued = |(v, _): &(i64, u32)| *v == id;
+    if !state.videos.0.push_new((id, height), queued) {
+        return Ok(());
     }
-    state.videos.wake.notify_one();
     let _ = app.emit("video-progress", VideoProgress { id, progress: Some(0.0), error: None });
     Ok(())
 }
@@ -208,13 +177,10 @@ pub(crate) async fn keep_video(
 /// takes it out of the queue.
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let mut queue = state.videos.queue.lock().unwrap();
-    queue.waiting.retain(|(w, _)| *w != id);
-    match &queue.running {
-        Some((running, stop)) if *running == id => stop.store(true, Ordering::Relaxed),
-        _ => {
-            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
-        }
+    let queued = |(v, _): &(i64, u32)| *v == id;
+    state.videos.0.take_waiting(queued);
+    if !state.videos.0.stop_running(queued) {
+        let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
     }
     Ok(())
 }
