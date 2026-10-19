@@ -20,6 +20,7 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
         // Over the page's view: the box the page reports is in its coordinates.
         let page =
             find_webview(window.gtk_window()?.upcast_ref()).ok_or_else(|| anyhow::anyhow!("no page in the window"))?;
+        media_session_off(&page);
         let screen = vodscribe_player::present::Screen::attach(&page);
         *app.state::<Screen>().0.lock().unwrap() = Some(screen);
     }
@@ -38,6 +39,58 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
         })?;
     }
     Ok(())
+}
+
+/// Turns off WebKit's media session for the page: WebKitGTK announces a
+/// page's playing media to the desktop as an MPRIS player, and Twitch's
+/// player, seeking, made and dropped dozens in a second, which hung GNOME
+/// Shell (screen and pointer frozen, sound playing on; 2026-10-18). The app
+/// has its own controls, and nothing for the desktop's to do. The switch
+/// came in WebKitGTK 2.42, so it's looked up, and skipped where it's not.
+#[cfg(target_os = "linux")]
+fn media_session_off(page: &gtk::Widget) {
+    use std::ffi::{CStr, c_char, c_void};
+
+    use glib::translate::ToGlibPtr;
+
+    /// `name` from the libraries loaded, as a function of type `T`.
+    unsafe fn symbol<T: Copy>(name: &CStr) -> Option<T> {
+        // SAFETY: dlsym only looks the name up; the caller names the type.
+        let found = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
+        (!found.is_null()).then(|| unsafe { std::mem::transmute_copy(&found) })
+    }
+    type Settings = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+    type Features = unsafe extern "C" fn() -> *mut c_void;
+    type Length = unsafe extern "C" fn(*mut c_void) -> usize;
+    type Get = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
+    type Identifier = unsafe extern "C" fn(*mut c_void) -> *const c_char;
+    type SetEnabled = unsafe extern "C" fn(*mut c_void, *mut c_void, i32);
+    type Unref = unsafe extern "C" fn(*mut c_void);
+    // SAFETY: WebKitGTK's own functions, by their documented signatures,
+    // on the page's WebKitWebView, on the main thread.
+    unsafe {
+        let (Some(settings), Some(features), Some(length), Some(get), Some(identifier), Some(set), Some(unref)) = (
+            symbol::<Settings>(c"webkit_web_view_get_settings"),
+            symbol::<Features>(c"webkit_settings_get_all_features"),
+            symbol::<Length>(c"webkit_feature_list_get_length"),
+            symbol::<Get>(c"webkit_feature_list_get"),
+            symbol::<Identifier>(c"webkit_feature_get_identifier"),
+            symbol::<SetEnabled>(c"webkit_settings_set_feature_enabled"),
+            symbol::<Unref>(c"webkit_feature_list_unref"),
+        ) else {
+            return;
+        };
+        let view: *mut gtk::ffi::GtkWidget = page.to_glib_none().0;
+        let settings = settings(view.cast());
+        let list = features();
+        for i in 0..length(list) {
+            let feature = get(list, i);
+            if CStr::from_ptr(identifier(feature)) == c"MediaSession" {
+                set(settings, feature, 0);
+            }
+        }
+        unref(list);
+    }
 }
 
 /// The page's WebKitGTK view, inside `widget`.

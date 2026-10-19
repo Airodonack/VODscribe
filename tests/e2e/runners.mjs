@@ -66,13 +66,18 @@ const ssh = (command, opts = {}) =>
 const scp = (...args) => execFileSync("scp", ["-q", ...shared, ...args], { stdio: "inherit" });
 const log = (what) => console.log(`[${name}] ${what}`);
 
-/** Copies the harness (tests/e2e, as committed plus what's new) to the runner's folder. */
+/** Copies the harness (tests/e2e and what it imports, as committed plus what's new) to the runner's folder. */
 function sendHarness(mkdir) {
   ssh(mkdir);
-  const files = execFileSync("git", ["ls-files", "-co", "--exclude-standard", "tests/e2e"], {
-    cwd: repo,
-    encoding: "utf8",
-  })
+  // And what of the app the harness imports (media.ts: what an unplayable video says).
+  const files = execFileSync(
+    "git",
+    ["ls-files", "-co", "--exclude-standard", "tests/e2e", "apps/desktop/src/lib/media.ts"],
+    {
+      cwd: repo,
+      encoding: "utf8",
+    },
+  )
     .split("\n")
     .filter((f) => f && !f.startsWith("tests/e2e/out/"));
   const tar = spawnSync("tar", ["-cf", "-", ...files], { cwd: repo, maxBuffer: 1 << 30 });
