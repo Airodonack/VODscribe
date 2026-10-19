@@ -24,15 +24,19 @@ class AppSettings {
     return this.#loading;
   }
 
-  /** Puts every setting back as it starts, after any save under way. */
-  async reset() {
-    await this.#saving;
-    try {
-      this.value = await api.resetSettings();
-      this.error = null;
-    } catch (e) {
-      this.error = String(e);
-    }
+  /** Puts every setting back as it starts, in turn with the saves: one asked
+   *  for meanwhile is made after it, over the settings as they start. */
+  reset(): Promise<void> {
+    this.#saving = this.#saving.then(() =>
+      api.resetSettings().then(
+        (fresh) => {
+          this.value = fresh;
+          this.error = null;
+        },
+        (e) => void (this.error = String(e)),
+      ),
+    );
+    return this.#saving;
   }
 
   /** Changes some settings and saves them all. */
@@ -40,13 +44,15 @@ class AppSettings {
     await this.load();
     if (!this.value) return;
     this.value = { ...this.value, ...change };
-    const snapshot = $state.snapshot(this.value);
-    this.#saving = this.#saving.then(() =>
-      api.setSettings(snapshot).then(
+    // Applied again when its turn comes, over whatever came before it (a reset).
+    this.#saving = this.#saving.then(() => {
+      if (!this.value) return;
+      this.value = { ...this.value, ...change };
+      return api.setSettings($state.snapshot(this.value)).then(
         () => void (this.error = null),
         (e) => void (this.error = String(e)),
-      ),
-    );
+      );
+    });
     await this.#saving;
   }
 }
