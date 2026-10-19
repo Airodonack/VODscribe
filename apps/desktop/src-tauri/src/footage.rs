@@ -254,15 +254,19 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
     let result = std::thread::scope(|s| {
         // What's whole of the file so far, read as it comes in: for the page, and to play.
         s.spawn(|| {
-            let mut last = None;
+            let mut last: Option<(Option<f64>, f64)> = None;
             loop {
-                let usable = part_file(&work, &prefix).and_then(|path| {
-                    let whole = from + mkv::written(&path)?;
-                    let growing = Growing { vod_id, from, to, path, whole };
-                    let usable = growing.usable();
-                    *state.footage.growing.lock().unwrap() = Some(growing);
-                    Some(usable)
-                });
+                // Once yt-dlp has renamed the part file it's whole: what was
+                // usable stays so (the player finds the file by section_file).
+                let usable = part_file(&work, &prefix)
+                    .and_then(|path| {
+                        let whole = from + mkv::written(&path)?;
+                        let growing = Growing { vod_id, from, to, path, whole };
+                        let usable = growing.usable();
+                        *state.footage.growing.lock().unwrap() = Some(growing);
+                        Some(usable)
+                    })
+                    .or(last.and_then(|(usable, _)| usable));
                 let progress = f64::from_bits(guess.load(Ordering::Relaxed));
                 if last != Some((usable, progress)) {
                     last = Some((usable, progress));
