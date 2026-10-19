@@ -5,6 +5,7 @@
 // with ffmpeg.
 
 import { api } from "./api";
+import { labelOf } from "./platform";
 
 /** Something being added, shown as a stand-in row until its VOD arrives. */
 export interface Pending {
@@ -13,13 +14,6 @@ export interface Pending {
   label: string;
   /** Its turn has come (till then it waits behind the others). */
   started?: boolean;
-}
-
-/** What to call `item` (a link or a file path) on its stand-in. */
-function labelOf(item: string): string {
-  item = item.trim();
-  if (/^https?:\/\//i.test(item)) return item.replace(/^https?:\/\/(www\.)?/i, "");
-  return item.split(/[\\/]/).pop() || item;
 }
 
 export class Adder {

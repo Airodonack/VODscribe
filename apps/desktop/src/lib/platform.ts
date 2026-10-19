@@ -51,6 +51,14 @@ export const platformName: Record<string, string> = {
 
 /** What to call where `vod` is from: the platform's name, or for any other
  *  site yt-dlp knows, its web address ("soundcloud.com"). */
+/** What to call something being added (a link or a file path) while it is:
+ *  a link without its scheme, a file by its name. */
+export function labelOf(item: string): string {
+  item = item.trim();
+  if (/^https?:\/\//i.test(item)) return item.replace(/^https?:\/\/(www\.)?/i, "");
+  return item.split(/[\\/]/).pop() || item;
+}
+
 export function siteName(vod: Vod): string {
   const known = platformName[vod.platform];
   if (known) return known;

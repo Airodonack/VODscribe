@@ -9,6 +9,9 @@ import {
   keepsVideo,
   videoSize,
   formatFraction,
+  isTwitchClip,
+  labelOf,
+  siteName,
 } from "./platform.ts";
 
 test("a video's size is a range, in MB under a GB and GB above", () => {
@@ -61,4 +64,26 @@ test("a time to a tenth or hundredth shows a frame's own start, not just under i
         `${k}/${fps}: ${formatFraction(k / fps, 2)} (${exact})`,
       );
     }
+});
+
+test("sites are named, by their host where they aren't known", () => {
+  const vod = (/** @type {string} */ platform, /** @type {string} */ url) => /** @type {any} */ ({ platform, url });
+  assert.equal(siteName(vod("twitch", "https://www.twitch.tv/videos/1")), "Twitch");
+  assert.equal(siteName(vod("rumble", "https://www.rumble.com/v1-x.html")), "rumble.com");
+  assert.equal(siteName(vod("odd", "not a url")), "odd");
+});
+
+test("Twitch clips are told from VODs by their id", () => {
+  const twitch = (/** @type {string} */ platform_id) => /** @type {any} */ ({ platform: "twitch", platform_id });
+  assert.ok(!isTwitchClip(twitch("v2277656159")) && !isTwitchClip(twitch("2277656159")));
+  assert.ok(isTwitchClip(twitch("FunnyClipName-AbCd123")));
+  assert.ok(!isTwitchClip(/** @type {any} */ ({ platform: "kick", platform_id: "abc" })));
+});
+
+test("things being added are called by their link or file name", () => {
+  assert.equal(labelOf(" https://www.twitch.tv/videos/1 "), "twitch.tv/videos/1");
+  assert.equal(labelOf("HTTP://kick.com/x"), "kick.com/x");
+  assert.equal(labelOf("/home/me/Videos/talk.mp4"), "talk.mp4");
+  assert.equal(labelOf("C:\\Users\\me\\talk.mkv"), "talk.mkv");
+  assert.equal(labelOf("talk.mp4"), "talk.mp4");
 });
