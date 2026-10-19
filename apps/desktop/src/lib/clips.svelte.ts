@@ -41,10 +41,13 @@ class Clips {
     this.error = null;
     this.#listen();
     const mine = ++this.#seq;
-    api.listClips(vodId).then(
-      (list) => mine === this.#seq && (this.list = list),
-      (e) => mine === this.#seq && (this.error = String(e)),
-    );
+    // Those whose file was deleted outside the app go first, then the rest are listed.
+    this.#forgetGone(vodId)
+      .then(() => api.listClips(vodId))
+      .then(
+        (list) => mine === this.#seq && (this.list = list),
+        (e) => mine === this.#seq && (this.error = String(e)),
+      );
   }
 
   /** Loads VOD `vodId`'s clips again (undo or redo changed its clip bar), if it's the one shown. */
@@ -57,9 +60,17 @@ class Clips {
     );
   }
 
+  /** Takes off the clip bar VOD `vodId`'s clips whose file was deleted outside the app. */
+  #forgetGone(vodId: number): Promise<void> {
+    return api.forgetGoneClips(vodId).catch((e) => console.error("forget gone clips", e));
+  }
+
   #listen() {
     if (this.#listening) return;
     this.#listening = true;
+    // Back from another app (a file manager, where a clip's file may have been
+    // deleted): the clip bar is checked again.
+    window.addEventListener("focus", () => this.vodId !== null && this.#forgetGone(this.vodId));
     events.clip((clip) => {
       if (clip.status !== "cutting") this.progress.delete(clip.id);
       this.#news.set(clip.id, ++this.#serial);

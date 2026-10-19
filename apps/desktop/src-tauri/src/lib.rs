@@ -269,6 +269,7 @@ pub fn run() {
             clips::rename_clip,
             clips::keep_clip,
             clips::delete_clip,
+            clips::forget_gone_clips,
             clips::show_clip,
             clips::drag_clip,
             clips::save_clip,

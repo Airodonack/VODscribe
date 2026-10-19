@@ -375,6 +375,24 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
+/// Takes off VOD `vod_id`'s clip bar the clips whose file was deleted outside
+/// the app (in a file manager). Only where the file's folder is still there:
+/// a drive that's away (unmounted, unplugged) takes none of them.
+#[tauri::command]
+pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>, vod_id: i64) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    for clip in db.clips(vod_id).map_err(err)? {
+        let Some(path) = clip.file_path.as_deref().filter(|_| clip.shown && clip.status == ClipStatus::Ready) else {
+            continue;
+        };
+        let path = Path::new(path);
+        if !path.exists() && path.parent().is_some_and(Path::is_dir) {
+            remove(&app, &db, clip.id).map_err(err)?;
+        }
+    }
+    Ok(())
+}
+
 /// Deletes clip `id` (stopping its cut), and its file unless that was
 /// dragged out of the app, and tells the page (`clip-removed`).
 pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {

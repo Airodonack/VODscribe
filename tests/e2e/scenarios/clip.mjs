@@ -1,9 +1,10 @@
 // A clip: cuts at 1 and 3 s (B), then Clip with the playhead between them
 // (App.clipOneToThree); resized, it's made again as a new file and the one
 // before goes (it was never dragged out); then deleting it, and undoing
-// that and the resize.
+// that and the resize. Last, its file deleted outside the app (as in a file
+// manager): back in the window, its pill goes.
 
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 
 import { MINUTE, until } from "../lib/app.mjs";
 
@@ -67,7 +68,18 @@ export default {
     const back = await madeAt(1, 4);
     if (back.title !== clip.title) throw new Error(`it came back as "${back.title}", not "${clip.title}"`);
     await undo();
-    await madeAt(1, 3);
+    const made = await madeAt(1, 3);
     app.log("deleting it and resizing it undone: back as it was, and made again");
+
+    await until("its pill", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
+    rmSync(made.file_path);
+    await app.js(`window.dispatchEvent(new Event("focus"))`);
+    await until(
+      "the clip gone with its file",
+      async () => (await app.invoke("list_clips", { vodId: done.id })).length === 0,
+      10_000,
+    );
+    await until("its pill gone", () => app.js(`return !document.querySelector(".chip")`), 10_000);
+    app.log("its file deleted outside the app: the pill went");
   },
 };
