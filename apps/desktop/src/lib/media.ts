@@ -39,13 +39,25 @@ export function columns(levels: Uint8Array, duration: number, columns: number): 
   return out;
 }
 
+/** The number of the frame showing at `time`, at `fps`: its start counts
+ *  as it, though a frame's start (k / fps) comes out a hair below. */
+export function frameIndex(time: number, fps: number): number {
+  return Math.floor(time * fps + 1e-3);
+}
+
+/** The number of the frame edge nearest `time`, at `fps`: where something
+ *  dragged or moved between frames settles. */
+export function edgeIndex(time: number, fps: number): number {
+  return Math.round(time * fps);
+}
+
 /**
  * Where `frames` frames on from `time` lands, at `fps`. A quarter of a frame
  * into it, so the frame shown is that one whichever way the player rounds,
  * and stepping again counts from the same frame.
  */
 export function stepTime(time: number, frames: number, fps: number): number {
-  const frame = Math.floor(time * fps + 1e-3) + frames;
+  const frame = frameIndex(time, fps) + frames;
   return Math.max(0, (frame + 0.25) / fps);
 }
 
@@ -73,12 +85,12 @@ export function tickStep(span: number, width: number): number {
  * share a frame.
  */
 export function frameStart(time: number, fps: number): number {
-  return Math.max(0, Math.floor(time * fps + 1e-3) / fps);
+  return Math.max(0, frameIndex(time, fps) / fps);
 }
 
 /** A mark at `time` moved `frames` frames on (back, if negative), within 0..`duration`. */
 export function nudge(time: number, frames: number, fps: number, duration: number): number {
-  return Math.min(duration, Math.max(0, (Math.round(time * fps) + frames) / fps));
+  return Math.min(duration, Math.max(0, (edgeIndex(time, fps) + frames) / fps));
 }
 
 /** The stretches `cuts` (seconds, any order) split 0..`duration` into. */

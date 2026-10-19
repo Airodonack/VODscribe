@@ -17,6 +17,7 @@
   import type { Snippet } from "svelte";
   import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
+  import { frameIndex } from "./media";
   import { formatTime } from "./platform";
   import { load, save } from "./stored";
 
@@ -64,7 +65,7 @@
     byFrame = !byFrame;
     save(BY_FRAME, byFrame ? "1" : "0");
   }
-  const frame = (seconds: number) => String(Math.floor(seconds * fps + 1e-6));
+  const frame = (seconds: number) => String(frameIndex(seconds, fps));
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {

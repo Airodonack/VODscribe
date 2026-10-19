@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   columns,
   cueAt,
+  edgeIndex,
+  frameIndex,
   isUnplayable,
   unplayable,
   playedSpans,
@@ -155,4 +157,14 @@ test("a file that won't play says why, and is known as such", () => {
   assert.equal(unplayable(null), "This video couldn't be played.");
   assert.ok(isUnplayable(unplayable({ code: 4 })) && isUnplayable(unplayable(undefined)));
   assert.ok(!isUnplayable("The file is missing."));
+});
+
+test("a frame's start counts as that frame; an edge is the nearest", () => {
+  const fps = 30000 / 1001;
+  for (const k of [0, 1, 719, 107892]) {
+    assert.equal(frameIndex(k / fps, fps), k, `frame ${k}'s start`);
+    assert.equal(frameIndex((k + 0.9) / fps, fps), k, `late in frame ${k}`);
+    assert.equal(edgeIndex((k + 0.4) / fps, fps), k);
+    assert.equal(edgeIndex((k + 0.6) / fps, fps), k + 1);
+  }
 });

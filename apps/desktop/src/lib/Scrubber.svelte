@@ -33,7 +33,7 @@
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
-  import { columns, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
+  import { columns, edgeIndex, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { chaptersText, formatFraction, formatTime, os } from "./platform";
@@ -385,7 +385,7 @@
       // As far as the pointer went, in seconds of the view, on a frame.
       const by = ((e.clientX - drag.x) / bar!.getBoundingClientRect().width) * span;
       const { start, end, max } = drag.from;
-      const onFrame = (t: number) => Math.round(t * fps) / fps;
+      const onFrame = (t: number) => edgeIndex(t, fps) / fps;
       if (drag.side === "start") drag.start = Math.min(end - SHORTEST_PIECE, Math.max(0, onFrame(start + by)));
       else drag.end = Math.max(start + SHORTEST_PIECE, Math.min(max ?? Infinity, onFrame(end + by)));
       onpiece?.resizing?.(drag.id, drag.side, drag.side === "start" ? drag.start : drag.end);
