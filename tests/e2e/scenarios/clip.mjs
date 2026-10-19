@@ -2,7 +2,8 @@
 // (App.clipOneToThree); resized, it's made again as a new file and the one
 // before goes (it was never dragged out); then deleting it, and undoing
 // that and the resize. Last, its file deleted outside the app (as in a file
-// manager): back in the window, its pill goes.
+// manager): back in the window, its pill goes; undone, the clip is made
+// again, and the chapter added before that goes only with the next undo.
 
 import { existsSync, rmSync } from "node:fs";
 
@@ -72,6 +73,8 @@ export default {
     app.log("deleting it and resizing it undone: back as it was, and made again");
 
     await until("its pill", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
+    // A chapter added first, to undo once the clip has gone with its file.
+    await app.invoke("add_mark", { vodId: done.id, time: 2, kind: "chapter", text: "Landing" });
     rmSync(made.file_path);
     await app.js(`window.dispatchEvent(new Event("focus"))`);
     await until(
@@ -81,5 +84,18 @@ export default {
     );
     await until("its pill gone", () => app.js(`return !document.querySelector(".chip")`), 10_000);
     app.log("its file deleted outside the app: the pill went");
+
+    // Undo takes back one change at a time: first the file's deletion (the
+    // clip made again, the chapter still there), then the chapter.
+    const chapters = async () =>
+      (await app.invoke("list_marks", { vodId: done.id })).filter((m) => m.kind === "chapter").length;
+    await undo();
+    await madeAt(1, 3);
+    if ((await chapters()) !== 1) throw new Error("undoing the file's deletion took the chapter away too");
+    await undo();
+    await until("the chapter undone", async () => (await chapters()) === 0, 10_000);
+    if ((await app.invoke("list_clips", { vodId: done.id })).length !== 1)
+      throw new Error("undoing the chapter changed the clip bar too");
+    app.log("undone: the file's deletion (the clip made again), then the chapter, one at a time");
   },
 };

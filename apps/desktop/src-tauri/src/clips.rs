@@ -389,8 +389,9 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
 }
 
 /// Takes off VOD `vod_id`'s clip bar the clips whose file was deleted outside
-/// the app (in a file manager). Only where the file's folder is still there:
-/// a drive that's away (unmounted, unplugged) takes none of them.
+/// the app (in a file manager), as one change undo can take back. Only where
+/// the file's folder is still there: a drive that's away (unmounted,
+/// unplugged) takes none of them.
 #[tauri::command]
 pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>, vod_id: i64) -> CmdResult<()> {
     let finished = |clip: &Clip| clip.shown && clip.status == ClipStatus::Ready;
@@ -413,12 +414,21 @@ pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>
     .await
     .map_err(err)?;
     let db = state.db.lock().unwrap();
+    // A change of its own in the VOD's history: undone, the clips come back
+    // (made again), apart from what was done before or after.
+    let doc = Doc::Vod(vod_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    let mut taken = 0;
     for (id, path) in gone {
         // Only if it's as it was when looked at (not made again meanwhile).
         let same = db.clip(id).map_err(err)?.is_some_and(|c| finished(&c) && c.file_path.as_deref() == Some(&*path));
         if same {
             remove(&app, &db, id).map_err(err)?;
+            taken += 1;
         }
+    }
+    if taken > 0 {
+        state.history.record(&db, doc, if taken == 1 { "Clip's file deleted" } else { "Clips' files deleted" }, before);
     }
     Ok(())
 }

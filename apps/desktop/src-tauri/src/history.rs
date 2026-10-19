@@ -164,50 +164,100 @@ impl Stacks {
     }
 }
 
-/// Puts `snapshot` back into `doc`.
-fn restore(app: &AppHandle, db: &Db, doc: Doc, snapshot: &Snapshot) -> Result<()> {
-    match (doc, snapshot) {
-        (Doc::Edit(id), Snapshot::Edit(state)) => db.restore_edit(id, state)?,
-        (Doc::Vod(id), Snapshot::Vod { marks, clips }) => {
-            db.restore_marks(id, marks)?;
-            restore_bar(app, db, id, clips)?;
+/// Puts back in `doc` what one change did to it, taking it from `from` (as
+/// the change left it, or as an undo of it did) to `to`. Only that: what the
+/// change didn't touch stays as it is now, so a clip that went meanwhile
+/// without a change of its own (its file deleted outside the app) stays gone.
+fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+    match (doc, from, to) {
+        (Doc::Edit(id), _, Snapshot::Edit(state)) => db.restore_edit(id, state)?,
+        (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
+            if was != marks {
+                db.restore_marks(id, marks)?;
+            }
+            restore_bar(app, db, id, had, clips)?;
         }
         _ => {}
     }
     Ok(())
 }
 
-/// Makes VOD `vod_id`'s clip bar hold `clips`: those still there (by id, or
-/// else of the same stretch) kept, with their stretch and title as they were;
-/// the rest taken off (their files too, unless dragged out) or made again.
-fn restore_bar(app: &AppHandle, db: &Db, vod_id: i64, clips: &[BarClip]) -> Result<()> {
-    let state = app.state::<AppState>();
-    let mut now: Vec<_> = db.clips(vod_id)?.into_iter().filter(|c| c.shown).collect();
-    let mut missing = Vec::new();
-    for want in clips {
-        let same =
-            |c: &vodscribe_core::db::Clip| (c.start - want.start).abs() < 1e-6 && (c.end - want.end).abs() < 1e-6;
-        let found = now.iter().position(|c| c.id == want.id).or_else(|| now.iter().position(same));
-        let Some(at) = found else {
-            missing.push(want);
+/// One step in putting a clip bar back (`bar_steps`).
+#[derive(Debug, PartialEq)]
+enum BarStep<'a> {
+    /// Clip `id` back to the stretch and title it had.
+    Set(i64, &'a BarClip),
+    /// Clip `id` taken off.
+    Remove(i64),
+    /// A clip made again.
+    Add(&'a BarClip),
+}
+
+/// The clip in `list` that is `clip`: of its id, or else of the same stretch
+/// (a clip made again by an undo has a new id).
+fn find<'a>(list: &'a [BarClip], clip: &BarClip) -> Option<&'a BarClip> {
+    list.iter().find(|c| c.id == clip.id).or_else(|| list.iter().find(|c| c.same_stretch(clip)))
+}
+
+impl BarClip {
+    fn same_stretch(&self, other: &BarClip) -> bool {
+        (self.start - other.start).abs() < 1e-6 && (self.end - other.end).abs() < 1e-6
+    }
+}
+
+/// What takes clip bar `now` from `from` to `to` for one change: each clip
+/// the change made, changed or took away, put back as `to` has it. Clips the
+/// change didn't touch aren't steps, whatever's become of them since.
+fn bar_steps<'a>(from: &[BarClip], to: &'a [BarClip], now: &[BarClip]) -> Vec<BarStep<'a>> {
+    let mut steps = Vec::new();
+    for want in to {
+        if find(from, want).is_some_and(|was| was.same_stretch(want) && was.title == want.title) {
             continue;
-        };
-        let clip = now.remove(at);
-        if !same(&clip) {
-            db.set_clip_range(clip.id, want.start, want.end)?;
-            state.clips.stop(clip.id);
-            state.clips.queue(clip.id);
         }
-        if clip.title != want.title {
-            db.rename_clip(clip.id, &want.title)?;
+        match find(now, want) {
+            Some(clip) if clip.same_stretch(want) && clip.title == want.title => {}
+            Some(clip) => steps.push(BarStep::Set(clip.id, want)),
+            None => steps.push(BarStep::Add(want)),
         }
     }
-    for gone in now {
-        crate::clips::remove(app, db, gone.id)?;
+    for was in from.iter().filter(|was| find(to, was).is_none()) {
+        if let Some(clip) = find(now, was) {
+            steps.push(BarStep::Remove(clip.id));
+        }
     }
-    for want in missing {
-        let clip = db.add_clip(vod_id, want.start, want.end, &want.title, true)?;
-        state.clips.queue(clip.id);
+    steps
+}
+
+/// Puts back what one change did to VOD `vod_id`'s clip bar (`bar_steps`):
+/// a clip moved or renamed back, taken off (its file too, unless dragged
+/// out) or made again.
+fn restore_bar(app: &AppHandle, db: &Db, vod_id: i64, from: &[BarClip], to: &[BarClip]) -> Result<()> {
+    let state = app.state::<AppState>();
+    let now: Vec<BarClip> = db
+        .clips(vod_id)?
+        .into_iter()
+        .filter(|c| c.shown)
+        .map(|c| BarClip { id: c.id, start: c.start, end: c.end, title: c.title })
+        .collect();
+    for step in bar_steps(from, to, &now) {
+        match step {
+            BarStep::Set(id, want) => {
+                let clip = now.iter().find(|c| c.id == id).expect("a clip of now");
+                if !clip.same_stretch(want) {
+                    db.set_clip_range(id, want.start, want.end)?;
+                    state.clips.stop(id);
+                    state.clips.queue(id);
+                }
+                if clip.title != want.title {
+                    db.rename_clip(id, &want.title)?;
+                }
+            }
+            BarStep::Remove(id) => crate::clips::remove(app, db, id)?,
+            BarStep::Add(want) => {
+                let clip = db.add_clip(vod_id, want.start, want.end, &want.title, true)?;
+                state.clips.queue(clip.id);
+            }
+        }
     }
     Ok(())
 }
@@ -219,7 +269,8 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let db = state.db.lock().unwrap();
     let mut s = state.history.0.lock().unwrap();
     let Some(mut entry) = History::take(&mut s, view, undo) else { return Ok(None) };
-    if let Err(e) = restore(app, &db, entry.doc, if undo { &entry.before } else { &entry.after }) {
+    let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
+    if let Err(e) = restore(app, &db, entry.doc, from, to) {
         // Kept, to try again: it's the newest of its stack still.
         let stacks = if undo { &mut s.undo } else { &mut s.redo };
         stacks.entry(entry.doc).or_default().push(entry);
@@ -289,6 +340,31 @@ mod tests {
         assert!(s.take_back(vod, &empty()));
         assert_eq!(History::take(&mut s, vod, false).map(|e| e.label), Some("Cut added"));
         assert!(s.undo.get(&vod).is_none_or(Vec::is_empty));
+    }
+
+    fn bar(clips: &[(i64, f64, f64, &str)]) -> Vec<BarClip> {
+        clips.iter().map(|&(id, start, end, title)| BarClip { id, start, end, title: title.into() }).collect()
+    }
+
+    #[test]
+    fn undo_puts_back_only_what_its_change_did_to_the_clip_bar() {
+        // A chapter added with clip 1 in the bar; clip 1 gone since with its
+        // file: undoing the chapter leaves the bar as it is.
+        let with = bar(&[(1, 1.0, 3.0, "a")]);
+        assert_eq!(bar_steps(&with, &with, &[]), []);
+        // Clip 2 deleted: undone, it's made again; redone, the one made again goes.
+        let both = bar(&[(1, 1.0, 3.0, "a"), (2, 5.0, 6.0, "b")]);
+        assert_eq!(bar_steps(&with, &both, &with), [BarStep::Add(&both[1])]);
+        let again = bar(&[(1, 1.0, 3.0, "a"), (7, 5.0, 6.0, "b")]);
+        assert_eq!(bar_steps(&both, &with, &again), [BarStep::Remove(7)]);
+        // Clip 1 resized and renamed: undone, back as it was; others untouched.
+        let resized = bar(&[(1, 1.0, 4.0, "c"), (2, 5.0, 6.0, "b")]);
+        let now = bar(&[(1, 1.0, 4.0, "c")]);
+        assert_eq!(bar_steps(&resized, &both, &now), [BarStep::Set(1, &both[0])]);
+        // Clip 3 added: undone, it goes, if it's still there.
+        let added = bar(&[(1, 1.0, 3.0, "a"), (3, 8.0, 9.0, "d")]);
+        assert_eq!(bar_steps(&added, &with, &added), [BarStep::Remove(3)]);
+        assert_eq!(bar_steps(&added, &with, &with), []);
     }
 
     #[test]

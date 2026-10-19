@@ -4,6 +4,9 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.4.2 (unreleased)
 
+- Fixes:
+  - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
+
 ## 0.4.1 — 2026-10-19
 
 - Settings → Help has Reset settings: every setting in Settings back as it started, with your library, transcripts, clips, edits and videos kept.
