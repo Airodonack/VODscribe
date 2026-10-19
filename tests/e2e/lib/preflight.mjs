@@ -48,7 +48,8 @@ function soundOutput() {
     const out = run("powershell", [
       "-NoProfile",
       "-Command",
-      "(Get-CimInstance Win32_SoundDevice | Where-Object Status -eq 'OK').Count",
+      // An output endpoint that works (speakers, headphones), not just a sound card.
+      "@(Get-PnpDevice -Class AudioEndpoint -Status OK | Where-Object FriendlyName -notmatch 'Microphone|Line In').Count",
     ]);
     return out === null ? null : Number(out.trim()) > 0;
   }
