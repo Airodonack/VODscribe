@@ -471,12 +471,13 @@ impl Db {
         })
     }
 
-    /// Every piece of every edit and snippet, as (VOD, start, end) in
-    /// seconds: the footage clips use.
+    /// Every piece of every edit (listed clips other than VODs' own), as
+    /// (VOD, start, end) in seconds: the footage edits use, kept however old.
+    /// Not snippets': once made, a snippet's own file is its stretch's footage.
     pub fn piece_ranges(&self) -> Result<Vec<(i64, f64, f64)>> {
         let sql = format!(
             "SELECT {PIECE_COLUMNS} FROM items WHERE kind = 'piece'
-               AND clip_id IN (SELECT id FROM clips WHERE whole_of IS NULL)"
+               AND clip_id IN (SELECT id FROM clips WHERE position IS NOT NULL AND whole_of IS NULL)"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows: Vec<PieceRow> = stmt.query_map([], piece_from_row)?.collect::<rusqlite::Result<_>>()?;
@@ -788,6 +789,7 @@ pub(crate) mod tests {
         assert!(db.split_piece(piece, 15.0).unwrap());
         db.add_clip(vod, 1.0, 2.0, "s", true).unwrap();
         assert_eq!(db.uses(vod).unwrap(), 4);
+        assert_eq!(db.piece_ranges().unwrap(), [(vod, 10.0, 15.0), (vod, 15.0, 20.0)], "edits' footage, not snippets'");
         db.remove_piece(piece).unwrap();
         assert_eq!(db.uses(vod).unwrap(), 3);
         let state = db.edit_state(edit).unwrap().unwrap();

@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.4.2 (unreleased)
 
 - Removing a VOD that an edit uses leaves the edit's pieces of it where they are. It leaves the library, but its transcript and video stay on this computer until no edit uses them, and are erased when VODscribe quits, or else the next time it starts.
+- A clip of a VOD from a site is cut from footage VODscribe keeps for a while: making it a little longer, or putting it in an edit, needs no new download.
 - Fixes:
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
 

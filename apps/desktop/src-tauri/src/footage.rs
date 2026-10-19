@@ -178,7 +178,7 @@ impl Footage {
                 };
                 let stop = Arc::new(AtomicBool::new(false));
                 *state.footage.current.lock().unwrap() = Some((vod_id, stop.clone()));
-                let result = ensure(&app, vod_id, start, end, &stop);
+                let result = ensure(&app, vod_id, start, end, &stop, &|_| {});
                 *state.footage.current.lock().unwrap() = None;
                 if let Err(e) = &result {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
@@ -213,8 +213,16 @@ impl Footage {
 }
 
 /// Makes sure the footage of `start`..`end` of VOD `vod_id` is here,
-/// downloading a section (`footage::section`) of it if not.
-pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &AtomicBool) -> Result<()> {
+/// downloading a section (`footage::section`) of it if not, telling
+/// `progress` how far the download is (0 to 1).
+pub(crate) fn ensure(
+    app: &AppHandle,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    stop: &AtomicBool,
+    progress: &(dyn Fn(f64) + Sync),
+) -> Result<()> {
     let state = app.state::<AppState>();
     // Behind another download (the queue's, for an edit playing), stoppable.
     let _one = loop {
@@ -283,7 +291,10 @@ pub(crate) fn ensure(app: &AppHandle, vod_id: i64, start: f64, end: f64, stop: &
         });
         let result = (|| {
             fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-            let report = |p: f64| guess.store(p.to_bits(), Ordering::Relaxed);
+            let report = |p: f64| {
+                guess.store(p.to_bits(), Ordering::Relaxed);
+                progress(p);
+            };
             let file =
                 fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
             let dir = dir(app);

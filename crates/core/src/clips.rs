@@ -209,7 +209,9 @@ pub fn cut(
     let part = dir.join(format!(".{name}.part"));
     let mut cmd = tools::command(ffmpeg);
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{seek:.6}")]);
-    tools::ffmpeg_allow(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE)).arg("-i").arg(source);
+    tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), source)
+        .arg("-i")
+        .arg(source);
     cmd.args(["-t", &format!("{length:.6}")]);
     if audio_only {
         cmd.args(["-map", "0:a:0", "-vn"]);

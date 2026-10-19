@@ -1,7 +1,10 @@
 //! Clips (`vodscribe_core::clips`): the commands the interface makes and
 //! changes them with, and the queue that cuts their files, one at a time. A
-//! clip of a VOD that plays from a file here is cut from it; of any other, its
-//! range is downloaded (`fetch::Wanted::Section`) and cut from that.
+//! clip is cut from its VOD's footage, as an edit is rendered from it
+//! (`footage::find`): the VOD's file where it plays from one here, or else a
+//! section of it downloaded into the footage folder and kept there while
+//! clips use it, so a clip made a little longer, or put in an edit, needs no
+//! new download.
 //!
 //! Clip files go in the computer's Videos folder, under VODscribe: they're for
 //! taking elsewhere. Each is named for its range, so a clip whose range
@@ -19,12 +22,12 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipStatus, Db, Mark};
-use vodscribe_core::settings::{ClipFormat, Settings};
-use vodscribe_core::{clips, fetch, tools};
+use vodscribe_core::settings::Settings;
+use vodscribe_core::{clips, tools};
 
 use crate::history::{self, Doc};
 use crate::jobs::Jobs;
-use crate::{AppState, CmdResult, err, media};
+use crate::{AppState, CmdResult, err};
 
 /// The longest clip: longer than any highlight, short of a whole VOD.
 const LONGEST: f64 = 3.0 * 3600.0;
@@ -163,7 +166,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         let removed = |c: &Clip| removing.lock().unwrap().contains(&c.vod_id);
         let Some(clip) = db.clip(id)?.filter(|c| c.status != ClipStatus::Ready && !removed(c)) else { return Ok(()) };
         let Some(vod) = db.vod(clip.vod_id)? else { return Ok(()) };
-        let source = media::playable_file(&db, vod.id);
+        let source = crate::footage::find(app, &db, vod.id, clip.start, clip.end);
         (clip, vod, source)
     };
     let range = (clip.start, clip.end);
@@ -192,17 +195,30 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         }
         emit(app, &db, id);
     }
-    let mut last = Instant::now();
-    let mut report = |progress: f64| {
+    let last = Mutex::new(Instant::now());
+    let report = |progress: f64| {
+        let mut last = last.lock().unwrap();
         if last.elapsed() >= PROGRESS_EVERY {
-            last = Instant::now();
+            *last = Instant::now();
             let _ = app.emit("clip-progress", Progress { id, progress });
         }
     };
-    let result = match &source {
-        Some(source) => clips::cut(&ffmpeg, Path::new(source), &out, range, vod.audio_only, format, stop, report),
-        None => download_and_cut(app, &vod, id, range, &ffmpeg, &out, format, stop, &mut report),
-    };
+    let result = (|| {
+        // Its footage downloaded first, if it isn't here: the bulk of the time,
+        // so most of the progress.
+        let (source, cut_from) = match source {
+            Some(source) => (source, 0.0),
+            None => {
+                crate::footage::ensure(app, vod.id, range.0, range.1, stop, &|p| report(p * 0.8))?;
+                let db = state.db.lock().unwrap();
+                let source = crate::footage::find(app, &db, vod.id, range.0, range.1);
+                (source.context("Its footage didn't download.")?, 0.8)
+            }
+        };
+        let within = (range.0 - source.offset, range.1 - source.offset);
+        let report = |p: f64| report(cut_from + p * (1.0 - cut_from));
+        clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, format, stop, report)
+    })();
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     let recorded = match &result {
@@ -235,49 +251,6 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     }
     delete_leftovers();
     Ok(())
-}
-
-/// Seconds downloaded before a clip of a VOD from a site: the section is
-/// copied, not encoded again, so it keeps no picture until its first keyframe
-/// (a short clip could have none); this reaches back past one.
-const LEAD_IN: f64 = 10.0;
-
-/// Makes a clip of a VOD from a site: downloads its range, from a little
-/// before (`LEAD_IN`; the bulk of the time, so most of the progress), then
-/// cuts it from that exactly as from a file. A section's time 0 is where it
-/// was asked to start.
-#[allow(clippy::too_many_arguments)]
-fn download_and_cut(
-    app: &AppHandle,
-    vod: &vodscribe_core::db::Vod,
-    id: i64,
-    (start, end): (f64, f64),
-    ffmpeg: &Path,
-    out: &Path,
-    format: ClipFormat,
-    stop: &AtomicBool,
-    report: &mut impl FnMut(f64),
-) -> Result<()> {
-    let paths = &app.state::<AppState>().paths;
-    let yt_dlp = tools::find_yt_dlp(&paths.bin()).context(fetch::NO_YT_DLP)?;
-    let work = paths.work();
-    std::fs::create_dir_all(&work)?;
-    let info = work.join(format!("clip-{id}.info.json"));
-    // Named for the range, so a download for an earlier range is never taken for this one.
-    let stem = work.join(format!("clip-{id}-{}-{}", (start * 1000.0).round() as i64, (end * 1000.0).round() as i64));
-    let selector = clips::selector(Settings::load(&paths.settings()).video_height());
-    let from = (start - LEAD_IN).max(0.0);
-    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg, start: from, end, matroska: false };
-    let result = (|| {
-        fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-        let section =
-            fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &stem, wanted, stop, |f| report(f * 0.8))?;
-        let range = (start - from, end - from);
-        clips::cut(ffmpeg, &section, out, range, vod.audio_only, format, stop, |p| report(0.8 + p * 0.2))
-    })();
-    // Whatever was downloaded goes, done or not.
-    vodscribe_core::pipeline::remove_work_prefix(&work, &format!("clip-{id}"));
-    result
 }
 
 /// A range that can be a clip of a VOD `duration` seconds long (if known).

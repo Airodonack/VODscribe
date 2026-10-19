@@ -91,7 +91,7 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
             missing(app, &db, &db.edit_pieces(id)?)
         };
         for (vod_id, start, end) in missing {
-            crate::footage::ensure(app, vod_id, start, end, stop)?;
+            crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
         }
         let db = state.db.lock().unwrap();
         let edit = db.edit(id)?.context("That edit is gone.")?;

@@ -83,6 +83,24 @@ export default {
         await ctx.checkpoint(`${site}-playing`);
         await app.pause().catch(() => {});
         ctx.log(`${site}: ${lines.length} lines, chat ${chat}, played ${from} to ${to} s`);
+
+        // A clip, cut from footage downloaded for it; resized a little, cut
+        // again from the same footage, with no new download.
+        const made = async (clip, what) =>
+          until(
+            `${site}'s clip ${what}`,
+            async () => {
+              const c = (await app.invoke("list_clips", { vodId: vod.id })).find((c) => c.id === clip.id);
+              if (c?.status === "error") throw new Error(`its clip failed: ${c.error}`);
+              return c?.status === "ready" && c.start === clip.start && c.end === clip.end && c;
+            },
+            5 * MINUTE,
+          );
+        const clip = await made(await app.invoke("add_clip", { vodId: vod.id, start: 20, end: 25 }), "made");
+        const began = Date.now();
+        await app.invoke("set_clip_range", { id: clip.id, start: 18, end: 26 });
+        await made({ ...clip, start: 18, end: 26 }, "made again");
+        ctx.log(`${site}: a clip made, and made again longer in ${((Date.now() - began) / 1000).toFixed(1)} s`);
         // Each site on its own: the next one's link goes in a cleared box.
         await app.type('input[aria-label="VOD link"]', "");
       } catch (e) {
