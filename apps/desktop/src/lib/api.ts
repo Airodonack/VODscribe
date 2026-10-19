@@ -71,7 +71,7 @@ export interface Settings {
   theme: ThemeChoice;
   /** Where chat's word emotes come from, in priority order (crates/core `settings::EmoteProviders`). */
   emote_providers: EmoteProvider[];
-  /** The tallest video kept from sites without embeds; unset means 720. */
+  /** The tallest video kept from sites without embeds; unset means DEFAULT_HEIGHT (platform.ts). */
   video_height: number | null;
   /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
   clip_format: ClipFormat;

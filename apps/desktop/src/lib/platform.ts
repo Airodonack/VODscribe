@@ -62,6 +62,8 @@ export function siteName(vod: Vod): string {
 }
 
 /** Whether `vod` is from a site whose own player plays it here (YouTube, Twitch, Kick). */
+// Both lists are checked against crates/core (pipeline::SITE_PLAYERS,
+// settings::DEFAULT_VIDEO_HEIGHT) by its tests.
 export const hasSitePlayer = (vod: Vod) => ["youtube", "twitch", "kick"].includes(vod.platform);
 
 /** Whether `vod`'s video is kept to play here: a site with no embed of its

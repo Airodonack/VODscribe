@@ -111,10 +111,14 @@ pub fn download(
     Ok(moved)
 }
 
+/// The sites whose own players the app embeds. The page's hasSitePlayer
+/// (platform.ts) is checked to list the same.
+pub const SITE_PLAYERS: [&str; 3] = ["youtube", "twitch", "kick"];
+
 /// Whether a VOD from `platform` has its video kept to play here: any site but
 /// those with embeds of their own (and files on this computer, played in place).
 pub fn keeps_video(platform: &str) -> bool {
-    !matches!(platform, "youtube" | "twitch" | "kick" | crate::local::PLATFORM)
+    !SITE_PLAYERS.contains(&platform) && platform != crate::local::PLATFORM
 }
 
 /// Where kept videos go (`Paths::media`): beside the work dir, never in it, so
@@ -342,6 +346,26 @@ fn run_worker(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn videos_are_kept_for_sites_without_players_of_their_own() {
+        for platform in SITE_PLAYERS {
+            assert!(!keeps_video(platform), "{platform}");
+        }
+        assert!(!keeps_video(crate::local::PLATFORM), "files are played in place");
+        assert!(keeps_video("rumble") && keeps_video("dailymotion"));
+    }
+
+    /// The page keeps its own copies of these (it can't ask for them before
+    /// drawing): they must say what the app does.
+    #[test]
+    fn the_page_agrees_on_site_players_and_the_default_height() {
+        let page = include_str!("../../../apps/desktop/src/lib/platform.ts");
+        let players = SITE_PLAYERS.map(|p| format!("{p:?}")).join(", ");
+        assert!(page.contains(&format!("[{players}].includes(vod.platform)")), "hasSitePlayer lists {players}");
+        let height = crate::settings::DEFAULT_VIDEO_HEIGHT;
+        assert!(page.contains(&format!("export const DEFAULT_HEIGHT = {height};")), "DEFAULT_HEIGHT is {height}");
+    }
 
     #[test]
     fn work_files_go_by_their_prefix_only() {

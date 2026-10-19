@@ -99,11 +99,15 @@ fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D
     Ok(EmoteProviders::from(Vec::<EmoteProvider>::deserialize(d)?))
 }
 
+/// The tallest video downloaded unless chosen otherwise: 1080p, the most
+/// offered; clips are posted at 1080p. The page's DEFAULT_HEIGHT
+/// (platform.ts) is checked to agree.
+pub const DEFAULT_VIDEO_HEIGHT: u32 = 1080;
+
 impl Settings {
-    /// The tallest video to download: 1080p, the most offered, unless chosen
-    /// otherwise; clips are posted at 1080p.
+    /// The tallest video to download (`DEFAULT_VIDEO_HEIGHT` unless chosen).
     pub fn video_height(&self) -> u32 {
-        self.video_height.unwrap_or(1080)
+        self.video_height.unwrap_or(DEFAULT_VIDEO_HEIGHT)
     }
 
     /// Missing or unreadable settings fall back to defaults.
