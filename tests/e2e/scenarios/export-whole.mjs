@@ -1,4 +1,5 @@
-// Clip with no cuts: E makes the whole video a clip, start to end.
+// Clip with no cuts: C makes the whole video a clip, start to end. On the
+// way, Shift+M mutes and unmutes it.
 
 import { existsSync } from "node:fs";
 
@@ -13,7 +14,12 @@ export default {
     if ((await app.invoke("list_marks", { vodId: vod.id })).length) throw new Error("the new VOD has cuts already");
     if (await app.js(`return document.querySelector("button.action.clip")?.disabled ?? true`))
       throw new Error("Clip is off with no cuts");
-    await app.key("e");
+    const muted = () => app.js(`return !!document.querySelector('.bar button[aria-label="Unmute"]')`);
+    for (const want of [true, false]) {
+      await app.key("M", { shift: true });
+      await until(want ? "muted (Shift+M)" : "unmuted (Shift+M)", async () => (await muted()) === want, 10_000);
+    }
+    await app.key("c");
     const clip = await until(
       "the whole video's clip",
       async () => {

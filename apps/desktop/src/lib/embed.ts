@@ -4,7 +4,7 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
-import { unplayable } from "./media";
+import { elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
@@ -311,15 +311,7 @@ function videoPlayer(
       else video.pause();
     },
     duration: () => (Number.isFinite(video.duration) ? video.duration : 0),
-    volume: {
-      get: () => video.volume,
-      muted: () => video.muted,
-      set(volume) {
-        video.volume = volume;
-        video.muted = volume === 0;
-      },
-      setMuted: (muted) => (video.muted = muted),
-    },
+    volume: elementSound(() => video),
     rate: { get: () => video.playbackRate, set: (rate) => (video.playbackRate = rate) },
     destroy() {
       detach?.();

@@ -12,7 +12,7 @@
   import { DEFAULT_FPS, frameStart, inFrame, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
-  import PlayerBar from "./PlayerBar.svelte";
+  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
@@ -189,7 +189,7 @@
     return id === null ? [] : (edits.list.find((e) => e.id === id)?.ranges.filter((r) => r.vod_id === vod.id) ?? []);
   });
 
-  // Clip (E): the stretch the playhead is in becomes a clip, a pill in the clip
+  // Clip (C): the stretch the playhead is in becomes a clip, a pill in the clip
   // bar. Hovering the button lights the stretch up on the timeline.
   let clipButton = $state<HTMLElement>();
   let clipHover = $state(false);
@@ -303,8 +303,9 @@
     if (e.altKey || !canEmbed(vod) || !keysForApp()) return;
     if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
     const key = keyOf(e);
-    // B cuts, as in video editors, and E makes a clip (also with Ctrl, or ⌘ on a Mac).
-    if (key === "b" || key === "e") {
+    // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), and C
+    // makes a clip (bare: Ctrl+C is copy).
+    if (key === "b" || (key === "c" && !e.shiftKey && !e.ctrlKey && !e.metaKey)) {
       // Held down, it's one press.
       if (e.repeat) return e.preventDefault();
       collapsed = false;
@@ -314,16 +315,18 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
+    // Shift with a letter is the player's own: captions (C) and mute (M).
+    if (e.shiftKey && (key === "c" || key === "m")) {
+      if (key === "c") player?.captions?.toggle();
+      else toggleMute(player);
+      e.preventDefault();
+      return;
+    }
     // M marks a highlight here (a marker, as in video editors), N starts a
     // chapter, each with its title to write.
     if (key === "m" || key === "n") {
       if (!e.repeat) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
       collapsed = false;
-      e.preventDefault();
-      return;
-    }
-    if (key === "c") {
-      player?.captions?.toggle();
       e.preventDefault();
       return;
     }
@@ -520,7 +523,7 @@
               onmouseenter={() => (clipHover = true)}
               onmouseleave={() => (clipHover = false)}
               disabled={!canClip}
-              title="Clip the lit-up stretch, to the clip bar (E): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
+              title="Clip the lit-up stretch, to the clip bar (C): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
             >
               <Icon name="film" size={14} /> Clip <kbd>E</kbd>
             </button>

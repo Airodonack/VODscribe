@@ -116,7 +116,7 @@
       class="control"
       onclick={() => toggleMute(player)}
       aria-label={muted ? "Unmute" : "Mute"}
-      title={muted ? "Unmute" : "Mute"}
+      title={muted ? "Unmute (Shift+M)" : "Mute (Shift+M)"}
     >
       <Icon name={muted ? "volume-off" : "volume"} size={16} />
     </button>
@@ -141,7 +141,7 @@
       onclick={() => player?.captions?.toggle()}
       aria-pressed={captionsOn}
       aria-label="Captions"
-      title={captionsOn ? "Hide captions (C)" : "Show captions (C)"}
+      title={captionsOn ? "Hide captions (Shift+C)" : "Show captions (Shift+C)"}
     >
       <Icon name="captions" size={16} />
     </button>

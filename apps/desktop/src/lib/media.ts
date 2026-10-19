@@ -135,3 +135,33 @@ export function unplayable(error: Pick<MediaError, "code"> | null | undefined): 
 
 /** Whether `message` is one `unplayable` gives (tests/e2e looks for them too). */
 export const isUnplayable = (message: string) => /can't be played here\.|couldn't be played\./.test(message);
+
+/**
+ * A media element's volume control, muting by setting the volume to 0 and
+ * back: WebKit lets an element be unmuted (`muted = false`) only from a
+ * click, so a key (Shift+M) could mute but never unmute it.
+ */
+export function elementSound(element: () => HTMLMediaElement | undefined, saved?: (volume: number) => void) {
+  let muted = false;
+  let level = 1;
+  return {
+    get: () => (muted ? level : (element()?.volume ?? 1)),
+    muted: () => muted,
+    set(volume: number) {
+      const e = element();
+      if (!e) return;
+      e.muted = false;
+      e.volume = volume;
+      [muted, level] = [volume === 0, volume];
+      saved?.(volume);
+    },
+    setMuted(on: boolean) {
+      const e = element();
+      if (!e || on === muted) return;
+      if (on) level = e.volume;
+      e.muted = false;
+      e.volume = on ? 0 : level;
+      muted = on;
+    },
+  };
+}

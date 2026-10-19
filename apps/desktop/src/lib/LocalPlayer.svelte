@@ -11,7 +11,7 @@
   import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
   import { holdToCarry } from "./dragout";
-  import { DEFAULT_FPS, cueAt, stepTime, unplayable } from "./media";
+  import { DEFAULT_FPS, cueAt, elementSound, stepTime, unplayable } from "./media";
   import { load, save } from "./stored";
 
   let {
@@ -134,19 +134,10 @@
     seek(stepTime(video.currentTime, frames, fps ?? DEFAULT_FPS), false);
   }
 
-  export const sound = {
-    get: () => video?.volume ?? 1,
-    muted: () => video?.muted ?? false,
-    set(volume: number) {
-      if (!video) return;
-      video.volume = volume;
-      video.muted = volume === 0;
-      save(VOLUME, String(volume));
-    },
-    setMuted(muted: boolean) {
-      if (video) video.muted = muted;
-    },
-  };
+  export const sound = elementSound(
+    () => video,
+    (volume) => save(VOLUME, String(volume)),
+  );
 
   export const speed = {
     get: () => video?.playbackRate ?? 1,

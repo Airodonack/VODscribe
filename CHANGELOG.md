@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - In an edit, a piece whose video file you deleted outside VODscribe shows striped in the timeline and plays and renders as black and silence, rather than stopping the edit from rendering.
 - A clip added to an edit arrives whole, as one band on the timeline that moves and goes as one. Double-click it to open it, and its pieces show one by one, to move among themselves, trim, split or remove; double-click one again, or press Escape, to close it. An edit added to another arrives the same way.
 - Double-click a clip's name in the clip bar to open it in the editor: trim it, split it or strike lines out there, and its file is made again to match. Enter or F2 on its name still renames it (double-click used to).
+- New keys: C makes a clip (it was E; E now exports, which in an edit renders it), Shift+C turns captions on or off (it was C), and Shift+M mutes. Letters on their own act on the video; with Shift they're the player's own.
 - Fixes:
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
 

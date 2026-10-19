@@ -24,7 +24,7 @@
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
-  import PlayerBar from "./PlayerBar.svelte";
+  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import { formatFraction, formatTime, os } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
@@ -320,7 +320,7 @@
   }
 
   // The keys the VOD's player has, where they mean the same (playerKeys.ts);
-  // B splits, E renders.
+  // B splits, E exports (renders).
   let showKeys = $state(false);
   function onKey(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
@@ -334,6 +334,11 @@
       return;
     }
     if (!player) return;
+    if (e.shiftKey && key === "m" && !e.ctrlKey && !e.metaKey) {
+      toggleMute(player);
+      e.preventDefault();
+      return;
+    }
     if (key === "b" || key === "e") {
       if (!e.repeat) {
         if (key === "b") split();
@@ -685,7 +690,7 @@
           class="make"
           onclick={() => edits.render(edit.id)}
           disabled={!segments.length}
-          title="{again ? 'Render the edit again' : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E)"
+          title="{again ? 'Render the edit again' : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E: export)"
         >
           <Icon name={again ? "redo" : "clapperboard"} size={14} />
           Render <kbd>E</kbd>

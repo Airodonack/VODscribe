@@ -53,9 +53,9 @@ export default {
       return os.pixels(os.screenshot(), band);
     };
     const on = await lower();
-    await app.key("c");
+    await app.key("C", { shift: true });
     const off = await lower();
-    await app.key("c");
+    await app.key("C", { shift: true });
     const back = await lower();
     const changed = os.difference(on, off);
     const same = os.difference(on, back);
