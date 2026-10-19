@@ -4,7 +4,9 @@
 // deletes it. Then Clip pulled to the window's edge (no key held), and a
 // stretch Alt-dragged there, each let go at once, before its file is made:
 // no file is left behind (the Alt-drag skipped where the window manager takes
-// it). Linux (X11) only, so far.
+// it). Clip held out of the window: the system's drag starts within a second.
+// Brought back over the window: let go on "Make new edit", it makes an edit;
+// on the clip bar, it's a clip there, and stays. Linux (X11) only, so far.
 
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";

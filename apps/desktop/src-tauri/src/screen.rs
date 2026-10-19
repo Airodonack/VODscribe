@@ -41,12 +41,16 @@ pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::
     Ok(())
 }
 
-/// Turns off WebKit's media session for the page: WebKitGTK announces a
-/// page's playing media to the desktop as an MPRIS player, and Twitch's
-/// player, seeking, made and dropped dozens in a second, which hung GNOME
-/// Shell (screen and pointer frozen, sound playing on; 2026-10-18). The app
-/// has its own controls, and nothing for the desktop's to do. The switch
-/// came in WebKitGTK 2.42, so it's looked up, and skipped where it's not.
+/// Turns off WebKit's Media Session API for the page. WebKitGTK announces a
+/// page's playing media to the desktop as MPRIS players, and Twitch's player,
+/// seeking, made and dropped dozens in a second, which hung GNOME Shell
+/// (screen and pointer frozen, sound playing on; 2026-10-18); with this off
+/// it wasn't seen again. What's known for sure is less: the page has no
+/// navigator.mediaSession, and WebKit still announces an MPRIS player for
+/// media that plays (there's no switch for that); headless, with or without
+/// this, it was one player, never the dozens. The app has its own controls.
+/// The switch came in WebKitGTK 2.42, so it's looked up, and skipped where
+/// it's not.
 #[cfg(target_os = "linux")]
 fn media_session_off(page: &gtk::Widget) {
     use std::ffi::{CStr, c_char, c_void};

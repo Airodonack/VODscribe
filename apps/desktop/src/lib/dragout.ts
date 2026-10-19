@@ -6,9 +6,12 @@
 // (a copy of the stretch put at the end of that edit; no clip), or on "Make
 // new edit" atop the list (an edit made with it); dropped anywhere else,
 // nothing happens. Taken past the window's edge, it becomes the system's drag
-// of the clip's file, into a video editor or a folder: the file is made then
-// (without a pill, and forgotten once the drag's over: the file is the other
-// app's then), and the drag starts once it's there, if the button is still down.
+// of the clip's file, into a video editor or a folder: a clip without a pill,
+// forgotten once the drag's over (the file is the other app's then). Its file
+// is made as the carry begins where that's quick (the VOD plays from a file
+// here), else at the edge, and the drag starts once it's there, if the button
+// is still down. Brought back over the window, the system's drag lands where
+// a carry would (`backOver`, `backDropped`): on the clip bar it keeps the clip.
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
@@ -285,9 +288,9 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
   caption.textContent = label;
   ghost.append(img, wave, caption);
   document.body.appendChild(ghost);
-  let made: string | null = null;
+  let pictureUrl: string | null = null;
   const picture = pictureOf(vod, start, ownPlayer).then((p) => {
-    if (p?.own) made = p.url;
+    if (p?.own) pictureUrl = p.url;
     if (p) img.src = p.url;
     else img.remove();
     return p
@@ -342,7 +345,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       edits.dropTarget = null;
       document.body.classList.remove("timeline-drag");
       ghost.remove();
-      if (made) URL.revokeObjectURL(made);
+      if (pictureUrl) URL.revokeObjectURL(pictureUrl);
       resolve();
     };
     const onMove = (e: PointerEvent) => {
@@ -404,8 +407,8 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       early = null;
       try {
         made = await (ahead ?? make(false));
-        const made2 = made && (await clips.ready(made.id, () => down, vod.id));
-        const ready = made2 && (await inFormat(made2, vod.id, () => down));
+        const cut = made && (await clips.ready(made.id, () => down, vod.id));
+        const ready = cut && (await inFormat(cut, vod.id, () => down));
         if (ready && down) {
           dragged = true;
           back = { stretch, clip: () => make(true) };
