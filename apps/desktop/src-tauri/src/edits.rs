@@ -95,7 +95,7 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
         }
         let db = state.db.lock().unwrap();
         let edit = db.edit(id)?.context("That edit is gone.")?;
-        let version = db.edit_version(id)?;
+        let version = db.revision(id)?;
         let edit_pieces = db.edit_pieces(id)?;
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;

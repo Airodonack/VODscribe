@@ -617,6 +617,8 @@ pub struct Clip {
     pub error: Option<String>,
     /// In the clip bar: saved there, rather than only dragged out of the window.
     pub shown: bool,
+    /// The revision it's at (`Db::change`).
+    pub revision: i64,
 }
 
 /// A mark on a VOD's timeline: a cut (`kind` "cut", between two frames), a
@@ -642,7 +644,7 @@ pub struct MarkState {
 
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
-    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown";
+    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`).
 pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)
      JOIN renders r ON r.clip_id = c.id";
@@ -658,6 +660,7 @@ pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
         file_path: r.get(6)?,
         error: r.get(7)?,
         shown: r.get(8)?,
+        revision: r.get(9)?,
     })
 }
 
@@ -901,12 +904,14 @@ impl Db {
     /// clip of one piece, hanging off the VOD's own clip.
     pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str, shown: bool) -> Result<Clip> {
         let bar = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
-        let id = self.atomically(|db| {
+        let add = |db: &Db| {
             let id = db.new_clip(title, crate::edits::Place::Bar(bar))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
             db.insert_piece(id, vod_id, (Flicks::from_seconds(start), Flicks::from_seconds(end)), "", &[])?;
             Ok(id)
-        })?;
+        };
+        // One only dragged out isn't in the bar: no change to the VOD's clip.
+        let id = if shown { self.change(bar, None, add)? } else { self.atomically(add)? };
         Ok(self.clip(id)?.expect("just inserted"))
     }
 
@@ -937,20 +942,25 @@ impl Db {
 
     /// Moves clip `id` to `start`..`end` seconds; its file is to be made again.
     pub fn set_clip_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
-        self.atomically(|db| {
+        self.change(id, None, |db| {
             db.conn.execute(
                 "UPDATE items SET start = ?2, end = ?3 WHERE id = (SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL ORDER BY position, id LIMIT 1)",
                 params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0],
             )?;
             db.conn.execute("UPDATE renders SET status = 'waiting', error = NULL WHERE clip_id = ?1", [id])?;
-            db.changed(id)
+            Ok(())
         })
     }
 
     /// Puts clip `id` in the clip bar.
     pub fn show_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET shown = 1 WHERE id = ?1", [id])?;
-        Ok(())
+        let bar: Option<i64> =
+            self.conn.query_row("SELECT bar_of FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
+        let Some(bar) = bar else { return Ok(()) };
+        self.change(bar, None, |db| {
+            db.conn.execute("UPDATE clips SET shown = 1 WHERE id = ?1", [id])?;
+            Ok(())
+        })
     }
 
     /// Notes that clip `id`'s file was dragged out of the app: it's someone
@@ -982,8 +992,10 @@ impl Db {
     }
 
     pub fn rename_clip(&self, id: i64, title: &str) -> Result<()> {
-        self.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
-        Ok(())
+        self.change(id, None, |db| {
+            db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
+            Ok(())
+        })
     }
 
     /// Records where clip `id`'s file is, unless its range has moved since
@@ -1007,9 +1019,22 @@ impl Db {
         Ok(n > 0)
     }
 
+    /// Deletes snippet `id`: a change to the clip whose bar it's in, if it's
+    /// shown there.
     pub fn delete_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
-        Ok(())
+        let delete = |db: &Db| {
+            db.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
+            Ok(())
+        };
+        let bar: Option<i64> = self
+            .conn
+            .query_row("SELECT CASE WHEN shown THEN bar_of END FROM clips WHERE id = ?1", [id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        match bar {
+            Some(bar) => self.change(bar, None, delete),
+            None => self.atomically(delete),
+        }
     }
 
     /// VOD `vod_id`'s marks (its own clip's), in time order.
@@ -1034,27 +1059,42 @@ impl Db {
     pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64, text: Option<&str>) -> Result<Mark> {
         let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
         let at = Flicks::from_seconds(start);
+        let id = self.change(clip, None, |db| db.insert_mark(clip, vod_id, kind, at, text))?;
+        Ok(Mark { id, vod_id, kind: kind.into(), start: at.seconds(), text: text.map(Into::into) })
+    }
+
+    /// Inserts a mark of VOD `vod_id` on clip `clip` at `at`; its id.
+    fn insert_mark(&self, clip: i64, vod_id: i64, kind: &str, at: Flicks, text: Option<&str>) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO marks (clip_id, vod_id, kind, at, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![clip, vod_id, kind, at.0, text, now()],
         )?;
-        Ok(Mark {
-            id: self.conn.last_insert_rowid(),
-            vod_id,
-            kind: kind.into(),
-            start: at.seconds(),
-            text: text.map(Into::into),
-        })
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Runs `f` on mark `id` as a change to the clip it's on; false, and
+    /// nothing done, if it's gone.
+    fn change_mark(&self, id: i64, f: impl FnOnce(&Db) -> Result<()>) -> Result<bool> {
+        let clip = self.conn.query_row("SELECT clip_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let Some(clip) = clip else { return Ok(false) };
+        self.change(clip, None, f)?;
+        Ok(true)
     }
 
     /// Sets mark `id`'s title or note (none, if None); false if it's gone.
     pub fn set_mark_text(&self, id: i64, text: Option<&str>) -> Result<bool> {
-        Ok(self.conn.execute("UPDATE marks SET text = ?2 WHERE id = ?1", params![id, text])? > 0)
+        self.change_mark(id, |db| {
+            db.conn.execute("UPDATE marks SET text = ?2 WHERE id = ?1", params![id, text])?;
+            Ok(())
+        })
     }
 
     /// Moves mark `id` to `start` seconds; false if it's gone.
     pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
-        Ok(self.conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(start).0])? > 0)
+        self.change_mark(id, |db| {
+            db.conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(start).0])?;
+            Ok(())
+        })
     }
 
     /// The VOD mark `id` is on, if it's there.
@@ -1069,18 +1109,21 @@ impl Db {
 
     /// Makes VOD `vod_id`'s marks those of `marks` (made anew, so with new ids).
     pub fn restore_marks(&self, vod_id: i64, marks: &[MarkState]) -> Result<()> {
-        self.atomically(|db| {
-            db.conn
-                .execute("DELETE FROM marks WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)", [vod_id])?;
+        let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
+        self.change(clip, None, |db| {
+            db.conn.execute("DELETE FROM marks WHERE clip_id = ?1", [clip])?;
             for m in marks {
-                db.add_mark(vod_id, &m.kind, m.start, m.text.as_deref())?;
+                db.insert_mark(clip, vod_id, &m.kind, Flicks::from_seconds(m.start), m.text.as_deref())?;
             }
             Ok(())
         })
     }
 
     pub fn delete_mark(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM marks WHERE id = ?1", [id])?;
+        self.change_mark(id, |db| {
+            db.conn.execute("DELETE FROM marks WHERE id = ?1", [id])?;
+            Ok(())
+        })?;
         Ok(())
     }
 

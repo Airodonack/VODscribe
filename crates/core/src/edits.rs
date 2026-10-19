@@ -16,7 +16,7 @@
 //! Rendered with `crate::render`, from the footage of each stretch
 //! (`crate::footage`).
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,8 @@ pub struct Edit {
     pub status: ClipStatus,
     pub file_path: Option<String>,
     pub error: Option<String>,
+    /// The revision it's at (`Db::change`).
+    pub revision: i64,
     /// Whether the rendered file is of the edit as it is now.
     pub current: bool,
     /// How many pieces it has, and how long it plays, in seconds.
@@ -192,6 +194,23 @@ fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
     })
 }
 
+/// A change asked against revision `base` of clip `clip`, which is at
+/// revision `now`: made from what the clip held before someone else's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stale {
+    pub clip: i64,
+    pub base: i64,
+    pub now: i64,
+}
+
+impl std::fmt::Display for Stale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "That clip has changed since (revision {}, not {}).", self.now, self.base)
+    }
+}
+
+impl std::error::Error for Stale {}
+
 /// Where a new clip goes.
 pub(crate) enum Place {
     /// At the top of the library's list (as new VODs go).
@@ -308,6 +327,7 @@ impl Db {
             status: ClipStatus::parse(&status),
             file_path,
             error,
+            revision,
             current: rendered == Some(revision),
             pieces: pieces.len(),
             length: ranges.iter().map(|r| r.end - r.start).sum(),
@@ -323,8 +343,10 @@ impl Db {
     }
 
     pub fn rename_edit(&self, id: i64, title: &str) -> Result<()> {
-        self.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
-        Ok(())
+        self.change(id, None, |db| {
+            db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
+            Ok(())
+        })
     }
 
     /// Deletes clip `id`, with its items, marks and snippets.
@@ -399,12 +421,10 @@ impl Db {
 
     /// Puts clip `id` back as `state` had it: its title, and its pieces in
     /// order (made anew, so with new ids), less any of a VOD since deleted.
-    /// Nothing if the clip's gone.
+    /// An error if the clip's gone.
     pub fn restore_edit(&self, id: i64, state: &EditState) -> Result<()> {
-        self.atomically(|db| {
-            if db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, state.title])? == 0 {
-                return Ok(());
-            }
+        self.change(id, None, |db| {
+            db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, state.title])?;
             db.conn.execute("DELETE FROM items WHERE clip_id = ?1", [id])?;
             for (position, p) in state.pieces.iter().enumerate() {
                 db.conn.execute(
@@ -421,7 +441,7 @@ impl Db {
                     ],
                 )?;
             }
-            db.changed(id)
+            Ok(())
         })
     }
 
@@ -442,10 +462,35 @@ impl Db {
         Ok(self.conn.query_row("SELECT clip_id FROM items WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
-    /// Marks clip `id` changed, so its rendered file is out of date.
-    pub(crate) fn changed(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET revision = revision + 1 WHERE id = ?1", [id])?;
-        Ok(())
+    /// The one writer of clips' documents: runs `f`'s writes to clip `clip`
+    /// as one change, one transaction that moves the clip to its next
+    /// revision. Against revision `base`, if given: refused (`Stale`) if the
+    /// clip is at another by then. A snippet in a clip bar is part of the
+    /// listed clip's document as the bar shows it, so a change to it moves
+    /// that clip's revision too. An error if the clip's gone.
+    pub fn change<T>(&self, clip: i64, base: Option<i64>, f: impl FnOnce(&Db) -> Result<T>) -> Result<T> {
+        self.atomically(|db| {
+            let (now, bar_of): (i64, Option<i64>) = db
+                .conn
+                .query_row("SELECT revision, CASE WHEN shown THEN bar_of END FROM clips WHERE id = ?1", [clip], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .optional()?
+                .context("That clip is gone.")?;
+            if let Some(base) = base.filter(|&b| b != now) {
+                return Err(Stale { clip, base, now }.into());
+            }
+            let out = f(db)?;
+            for id in std::iter::once(clip).chain(bar_of) {
+                db.conn.execute("UPDATE clips SET revision = revision + 1 WHERE id = ?1", [id])?;
+            }
+            Ok(out)
+        })
+    }
+
+    /// Clip `id`'s revision now; None if it's gone.
+    pub fn revision(&self, id: i64) -> Result<Option<i64>> {
+        Ok(self.conn.query_row("SELECT revision FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
     /// Puts `start`..`end` of VOD `vod_id` in clip `edit_id` as a piece titled
@@ -459,11 +504,9 @@ impl Db {
         index: Option<usize>,
     ) -> Result<()> {
         let (start, end) = self.within_vod(vod_id, start, end)?;
-        self.atomically(|db| {
-            db.insert_piece(edit_id, vod_id, (start, end), title, &[])?;
-            let new = db.conn.last_insert_rowid();
-            db.place(edit_id, new, index)?;
-            db.changed(edit_id)
+        self.change(edit_id, None, |db| {
+            let new = db.insert_piece(edit_id, vod_id, (start, end), title, &[])?;
+            db.place(edit_id, new, index)
         })
     }
 
@@ -486,10 +529,7 @@ impl Db {
     /// Moves piece `id` to `index` in its clip.
     pub fn move_piece(&self, id: i64, index: usize) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        self.atomically(|db| {
-            db.place(edit_id, id, Some(index))?;
-            db.changed(edit_id)
-        })
+        self.change(edit_id, None, |db| db.place(edit_id, id, Some(index)))
     }
 
     /// Numbers clip `clip_id`'s top-level items in order, with item `id` at `index` (or last).
@@ -518,16 +558,20 @@ impl Db {
     pub fn set_piece_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
         let Some(piece) = self.piece_row(id)? else { return Ok(()) };
         let (start, end) = self.within_vod(piece.vod_id, start, end)?;
-        self.conn.execute("UPDATE items SET start = ?2, end = ?3 WHERE id = ?1", params![id, start.0, end.0])?;
-        self.changed(piece.clip_id)
+        self.change(piece.clip_id, None, |db| {
+            db.conn.execute("UPDATE items SET start = ?2, end = ?3 WHERE id = ?1", params![id, start.0, end.0])?;
+            Ok(())
+        })
     }
 
     /// Sets the stretches struck out of piece `id`, in seconds.
     pub fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        self.conn
-            .execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, struck_json(&struck_flicks(struck))?])?;
-        self.changed(edit_id)
+        let struck = struck_json(&struck_flicks(struck))?;
+        self.change(edit_id, None, |db| {
+            db.conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, struck])?;
+            Ok(())
+        })
     }
 
     /// Splits piece `id` in two at `at` seconds (its VOD's time), the second
@@ -541,25 +585,21 @@ impl Db {
         }
         let at = Flicks::from_seconds(at);
         let index = self.piece_rows(piece.clip_id)?.iter().position(|p| p.id == id).map(|i| i + 1);
-        self.atomically(|db| {
+        self.change(piece.clip_id, None, |db| {
             db.conn.execute("UPDATE items SET end = ?2 WHERE id = ?1", params![id, at.0])?;
             let end = piece.end.unwrap_or(Flicks::from_seconds(end));
             let new = db.insert_piece(piece.clip_id, piece.vod_id, (at, end), &piece.title, &piece.struck)?;
-            db.place(piece.clip_id, new, index)?;
-            db.changed(piece.clip_id)
+            db.place(piece.clip_id, new, index)
         })?;
         Ok(true)
     }
 
     pub fn remove_piece(&self, id: i64) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        self.conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
-        self.changed(edit_id)
-    }
-
-    /// The clip's revision now, to say which one a render is of.
-    pub fn edit_version(&self, id: i64) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT revision FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+        self.change(edit_id, None, |db| {
+            db.conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
+            Ok(())
+        })
     }
 
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
@@ -659,6 +699,76 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn every_change_to_a_clip_is_a_revision() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let whole = db.vod_clip(vod).unwrap().unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        let rev = |id| db.revision(id).unwrap().unwrap();
+        assert_eq!((rev(whole), rev(edit)), (0, 0));
+
+        // Edits: each writer moves the edit on by one.
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let piece = db.piece_rows(edit).unwrap()[0].id;
+        db.set_piece_range(piece, 10.0, 30.0).unwrap();
+        db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
+        assert!(db.split_piece(piece, 20.0).unwrap());
+        db.move_piece(piece, 1).unwrap();
+        db.rename_edit(edit, "f").unwrap();
+        db.remove_piece(piece).unwrap();
+        let state = db.edit_state(edit).unwrap().unwrap();
+        db.restore_edit(edit, &state).unwrap();
+        assert_eq!(rev(edit), 8);
+        assert_eq!(db.edit(edit).unwrap().unwrap().revision, 8);
+
+        // A VOD's own clip: its marks, and its clip bar.
+        let mark = db.add_mark(vod, "cut", 5.0, None).unwrap().id;
+        assert!(db.move_mark(mark, 6.0).unwrap());
+        assert!(db.set_mark_text(mark, Some("t")).unwrap());
+        db.delete_mark(mark).unwrap();
+        db.restore_marks(vod, &[]).unwrap();
+        assert_eq!(rev(whole), 5);
+        let snippet = db.add_clip(vod, 1.0, 2.0, "s", true).unwrap().id;
+        assert_eq!((rev(whole), rev(snippet)), (6, 0));
+        // A snippet in the bar is part of its clip's document as well as its own.
+        db.set_clip_range(snippet, 1.0, 3.0).unwrap();
+        db.rename_clip(snippet, "t").unwrap();
+        assert_eq!((rev(whole), rev(snippet)), (8, 2));
+        db.delete_clip(snippet).unwrap();
+        assert_eq!(rev(whole), 9);
+        // One only dragged out isn't in the bar until it's kept.
+        let out = db.add_clip(vod, 1.0, 2.0, "o", false).unwrap().id;
+        db.rename_clip(out, "p").unwrap();
+        assert_eq!(rev(whole), 9);
+        db.show_clip(out).unwrap();
+        assert_eq!(rev(whole), 10);
+
+        // What's made of a clip isn't a change to it.
+        db.set_edit_render(edit, ClipStatus::Ready, Some("/v/e.mp4"), None, Some(8)).unwrap();
+        db.hand_out_edit(edit).unwrap();
+        assert_eq!(rev(edit), 8);
+        assert!(db.edit(edit).unwrap().unwrap().current);
+    }
+
+    #[test]
+    fn a_change_against_an_old_revision_is_refused() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        let rename = |title: &'static str| {
+            move |db: &Db| {
+                db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![edit, title])?;
+                Ok(())
+            }
+        };
+        db.change(edit, Some(0), rename("a")).unwrap();
+        let e = db.change(edit, Some(0), rename("b")).unwrap_err();
+        assert_eq!(e.downcast_ref::<Stale>(), Some(&Stale { clip: edit, base: 0, now: 1 }));
+        assert_eq!(db.edit(edit).unwrap().unwrap().title, "a", "nothing written");
+        db.change(edit, Some(1), rename("c")).unwrap();
+        assert!(db.change(edit + 100, None, rename("d")).is_err(), "a clip that isn't there");
+    }
+
+    #[test]
     fn pieces_stay_within_their_vod() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
@@ -719,7 +829,7 @@ pub(crate) mod tests {
         let now = db.edit_pieces(edit.id).unwrap();
         assert_eq!(((now[0].start, now[0].end), (now[1].start, now[1].end)), ((10.0, 16.0), (16.0, 40.0)));
         // Rendered files say whether they're of the edit as it is.
-        let version = db.edit_version(edit.id).unwrap();
+        let version = db.revision(edit.id).unwrap();
         db.set_edit_render(edit.id, ClipStatus::Ready, Some("/v/e.mp4"), None, version).unwrap();
         assert!(db.edit(edit.id).unwrap().unwrap().current);
         db.remove_piece(split[1].id).unwrap();
