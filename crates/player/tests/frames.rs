@@ -66,7 +66,8 @@ fn seeks_and_steps_show_exactly_the_frame_asked_for() {
     };
 
     assert_eq!(showing(), 0, "the first frame on opening");
-    for (time, want) in [(2.0, 60), (1.0 / FPS * 7.5, 7), (3.999, 119), (0.5, 15), (1.0, 30)] {
+    // 4.0 is the very end: the last frame shows there.
+    for (time, want) in [(2.0, 60), (1.0 / FPS * 7.5, 7), (3.999, 119), (4.0, 119), (0.5, 15), (1.0, 30)] {
         player.seek(time);
         assert_eq!(showing(), want, "after a seek to {time:.3} s");
     }
