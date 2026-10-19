@@ -441,8 +441,9 @@ export const api = {
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging clip `id`'s file out of the window; call while the mouse button is down. */
+  /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */
   dragClip: (id: number, image?: Uint8Array) =>
-    invoke<void>("drag_clip", { id, image: image ? Array.from(image) : null }),
+    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: String(id) } }),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
   frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */

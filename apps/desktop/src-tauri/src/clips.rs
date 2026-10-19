@@ -547,9 +547,15 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 pub(crate) async fn drag_clip(
     app: AppHandle,
     window: tauri::WebviewWindow,
-    id: i64,
-    image: Option<Vec<u8>>,
+    request: tauri::ipc::Request<'_>,
 ) -> CmdResult<()> {
+    // The clip in a header, its picture as the request's bytes (a PNG is
+    // tens of KB: a JSON array of its numbers took a moment to send).
+    let id: i64 = request.headers().get("clip").and_then(|v| v.to_str().ok()?.parse().ok()).ok_or("No clip named.")?;
+    let image = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) if !bytes.is_empty() => Some(bytes.clone()),
+        _ => None,
+    };
     let path = ready_file(&app, id)?;
     // The picture the interface drew (the frame over its waveform), if it's a
     // PNG of reasonable size; else the clip's first frame.

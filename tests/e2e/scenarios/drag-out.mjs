@@ -81,6 +81,36 @@ export default {
       ctx.log("Clip dragged out and let go at once: nothing left behind");
     }
 
+    // Clip pulled out and held there: how long the system's drag takes to
+    // start once the pointer is out (the clip's file and picture are made
+    // during the carry, from a file here). Then called off.
+    {
+      const button = await os.rectOf(app, "button.action.clip");
+      const edge = await os.windowRect(app);
+      const [cx, cy] = [button.x + Math.round(button.w / 2), button.y + Math.round(button.h / 2)];
+      await app.js(`performance.clearMarks()`);
+      await os.gesture([
+        ["down", cx, cy],
+        ["move", cx - 20, cy],
+        ["move", cx - 60, cy],
+        ["wait", 1500],
+        ["move", edge.x, cy],
+      ]);
+      const waited = await until(
+        "the system's drag to start",
+        () =>
+          app.js(
+            `const [out] = performance.getEntriesByName("carry-out"), [drag] = performance.getEntriesByName("drag-start");
+             return out && drag ? Math.round(drag.startTime - out.startTime) : false;`,
+          ),
+        30_000,
+      );
+      await os.gesture([["key", "Escape"], ["up"]]);
+      ctx.log(`Clip held out of the window: the system's drag started ${waited} ms after it left`);
+      if (waited > 1000) throw new Error(`the system's drag took ${waited} ms to start once out of the window`);
+      await sleep(1500);
+    }
+
     // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
     // edge and let go there at once.
     const folder = path.dirname(ready);

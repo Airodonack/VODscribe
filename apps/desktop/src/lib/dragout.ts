@@ -62,6 +62,7 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   };
   const limit = setTimeout(over, 60_000);
   stop = await events.dragEnded(over).catch(() => undefined);
+  performance.mark("drag-start");
   await api.dragClip(clip.id, image).catch((e) => {
     console.error("drag", e);
     over();
@@ -223,7 +224,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
   wave.width = PICTURE_WIDTH;
   wave.height = WAVE_HEIGHT;
   const waveform = levels ? Promise.resolve(levels) : api.peaks(vod.id).catch(() => new Uint8Array());
-  waveform.then((l) => l.length && drawWave(wave, l, start, end));
+  const drawn = waveform.then((l) => void (l.length && drawWave(wave, l, start, end)));
   const caption = document.createElement("span");
   caption.textContent = label;
   ghost.append(img, wave, caption);
@@ -240,6 +241,13 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
         )
       : null;
   });
+
+  // What the system's drag needs, made while the carry goes on rather than
+  // once it's out of the window, where nothing can be dropped until both are
+  // there: the picture (as soon as its parts are drawn), and the clip's file
+  // where cutting it is quick (from a file here: copied, not downloaded).
+  const image = Promise.all([picture, drawn]).then(([img]) => snapshot(img, wave, label));
+  let early: Promise<Clip | null> | null = ownPlayer ? make(false) : null;
 
   const place = (px: number, py: number) => {
     ghost.style.left = `${px + 14}px`;
@@ -273,6 +281,11 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       return { edit: null, bar: !!el?.closest(".clip-bar") };
     };
     const finish = () => {
+      // Made ahead for a drag out that didn't come: it goes.
+      early?.then((c) => {
+        if (c && !c.shown) api.deleteClip(c.id).catch(() => {});
+      });
+      early = null;
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("keydown", onKey, true);
@@ -325,18 +338,21 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     // Past the window's edge: the system's drag of the clip's file, made for it.
     const takeOut = async () => {
       leaving = true;
+      // From here to "drag-start" is what's waited at the edge (tests time it).
+      performance.mark("carry-out");
       clips.overBar = false;
       ghost.classList.add("making");
       let made: Clip | null = null;
       let dragged = false;
+      const ahead = early;
+      early = null;
       try {
-        made = await make(false);
+        made = await (ahead ?? make(false));
         const made2 = made && (await clips.ready(made.id, () => down, vod.id));
         const ready = made2 && (await inFormat(made2, vod.id, () => down));
         if (ready && down) {
-          const image = await snapshot(await picture, wave, label);
           dragged = true;
-          await dragOut(ready, image);
+          await dragOut(ready, await image);
         }
       } finally {
         finish();
