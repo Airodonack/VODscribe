@@ -142,10 +142,18 @@ export default {
         `return getComputedStyle(document.querySelector(arguments[0])).backgroundColor.match(/[0-9.]+/g).slice(0, 3).map(Number)`,
         panel,
       );
-      const there = os.colourIn(os.screenshot(), os.middle(over));
-      if (os.distance(there, background) > 40)
-        throw new Error(`where Settings overlaps the picture, the screen shows ${named(there)}, not the panel`);
-      ctx.log("Settings shows over the picture");
+      // Drawn without a GPU (as in containers), the page can take a moment to show there.
+      const waited = Date.now();
+      await until(
+        "the panel on screen where it overlaps the picture",
+        () => {
+          const there = os.colourIn(os.screenshot(), os.middle(over));
+          if (os.distance(there, background) <= 40) return true;
+          throw new Error(`the screen shows ${named(there)} there, not the panel`);
+        },
+        5_000,
+      );
+      ctx.log(`Settings shows over the picture (after ${Date.now() - waited} ms)`);
     }
     await app.key("Escape");
 
