@@ -8,8 +8,8 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::kick;
 use crate::tools::{self, YtDlp};
+use crate::{kick, playable};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct VodInfo {
@@ -214,10 +214,12 @@ pub fn download(
     );
     let mut cmd = yt_dlp.command();
     cmd.arg("--load-info-json").arg(info_path);
+    let audio = format!("{}/{}", playable::with_web("ba"), playable::with_web("w"));
     match wanted {
         // Audio-only when offered (YouTube, Twitch); otherwise the lowest quality muxed stream.
         // HLS downloads aren't remuxed: only the audio is used, and ffmpeg reads the raw stream.
-        Wanted::Audio => cmd.args(["-f", "ba/w", "--fixup", "never"]),
+        // Web streams only, fetched by yt-dlp itself, as for video.
+        Wanted::Audio => cmd.args(["-f", &audio, "--fixup", "never", "--downloader", "m3u8:native"]),
         // Kept to play: video and audio in one MP4, which every webview reads;
         // a single file in a container none read (Flash video, QuickTime) is
         // rewrapped as one.
