@@ -32,11 +32,18 @@
   const unlisten: UnlistenFn[] = [];
   let timer: ReturnType<typeof setInterval> | undefined;
 
+  // Refreshes overlap (every 5 s, and on gpu-done): only the latest asked
+  // applies, so one asked before the add-on finished can't bring its bar back.
+  let asked = 0;
   async function refresh() {
-    gpu = await api.gpuStatus();
+    const n = ++asked;
+    const status = await api.gpuStatus();
+    if (n !== asked) return;
+    gpu = status;
     // Opened partway through a download: start from where it is, not a blank
     // bar until the next progress event (which can be a while between files).
     if (gpu.installing && !step && gpu.progress) step = gpu.progress;
+    if (!gpu.installing) step = null;
     cacheBytes = await api.cacheSize();
     mediaBytes = await api.mediaSize();
   }
