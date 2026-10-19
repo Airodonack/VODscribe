@@ -5,6 +5,12 @@
 //! (a clip dropped on an edit from a VOD's view) as long as that document
 //! hasn't changed since; redo puts back what was undone last, the same way.
 //! Renders, downloads and deleting a VOD or an edit aren't undone.
+//!
+//! A document is a clip (an edit, or a VOD's own clip with its marks and
+//! clip bar), and every change to one is a revision of it (`Db::change`):
+//! each change here records the revision it left, and undo and redo say
+//! which they leave. A snapshot is the whole document, so putting one back
+//! is right whatever revision the clip is at.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -52,6 +58,8 @@ struct Entry {
     label: &'static str,
     before: Snapshot,
     after: Snapshot,
+    /// The clip's revision once it was made, or last undone or redone.
+    revision: i64,
     /// When it was made, or last undone or redone (one count for all documents).
     at: u64,
     /// What could be redone when it was made, which it took away: given back
@@ -76,6 +84,25 @@ pub(crate) struct History(Mutex<Stacks>);
 pub(crate) struct Done {
     doc: Doc,
     label: &'static str,
+    /// The revision it left the document at.
+    revision: i64,
+}
+
+/// News that `doc` was put back as it was (`restored`), at `revision`.
+#[derive(Serialize, Clone)]
+struct Restored {
+    #[serde(flatten)]
+    doc: Doc,
+    revision: i64,
+}
+
+/// The revision of `doc`'s clip now (0 if it's gone).
+pub(crate) fn revision(db: &Db, doc: Doc) -> i64 {
+    let clip = match doc {
+        Doc::Edit(id) => Some(id),
+        Doc::Vod(id) => db.vod_clip(id).ok().flatten(),
+    };
+    clip.and_then(|c| db.revision(c).ok().flatten()).unwrap_or(0)
 }
 
 /// What `doc` holds now; None if it's gone.
@@ -102,9 +129,10 @@ impl History {
         if before == after {
             return;
         }
+        let revision = revision(db, doc);
         let mut s = self.0.lock().unwrap();
         let origin = s.view.filter(|v| *v != doc);
-        s.add(doc, origin, label, before, after);
+        s.add(doc, origin, label, before, after, revision);
     }
 
     /// Forgets `doc`'s newest change if what it holds now is what it was
@@ -139,10 +167,18 @@ impl History {
 }
 
 impl Stacks {
-    fn add(&mut self, doc: Doc, origin: Option<Doc>, label: &'static str, before: Snapshot, after: Snapshot) {
+    fn add(
+        &mut self,
+        doc: Doc,
+        origin: Option<Doc>,
+        label: &'static str,
+        before: Snapshot,
+        after: Snapshot,
+        revision: i64,
+    ) {
         self.count += 1;
         let cleared = self.redo.remove(&doc).unwrap_or_default();
-        let entry = Entry { doc, origin, label, before, after, at: self.count, cleared };
+        let entry = Entry { doc, origin, label, before, after, revision, at: self.count, cleared };
         let stack = self.undo.entry(doc).or_default();
         stack.push(entry);
         if stack.len() > KEEP {
@@ -278,12 +314,13 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     }
     s.count += 1;
     entry.at = s.count;
+    entry.revision = revision(&db, entry.doc);
     // Undone or redone, it's no longer the change that took those away.
     entry.cleared.clear();
-    let done = Done { doc: entry.doc, label: entry.label };
+    let done = Done { doc: entry.doc, label: entry.label, revision: entry.revision };
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
-    let _ = app.emit("restored", done.doc);
+    let _ = app.emit("restored", Restored { doc: done.doc, revision: done.revision });
     Ok(Some(done))
 }
 
@@ -315,7 +352,16 @@ mod tests {
 
     fn push(s: &mut Stacks, doc: Doc, origin: Option<Doc>, label: &'static str) {
         s.count += 1;
-        let entry = Entry { doc, origin, label, before: empty(), after: empty(), at: s.count, cleared: Vec::new() };
+        let entry = Entry {
+            doc,
+            origin,
+            label,
+            before: empty(),
+            after: empty(),
+            revision: 0,
+            at: s.count,
+            cleared: Vec::new(),
+        };
         s.undo.entry(doc).or_default().push(entry);
     }
 
@@ -325,7 +371,7 @@ mod tests {
         let marked =
             Snapshot::Vod { marks: vec![MarkState { kind: "cut".into(), start: 1.0, text: None }], clips: Vec::new() };
         let mut s = Stacks::default();
-        s.add(vod, None, "Cut added", empty(), marked.clone());
+        s.add(vod, None, "Cut added", empty(), marked.clone(), 1);
         // Undone: the cut can be redone.
         let undone = History::take(&mut s, vod, true).unwrap();
         s.redo.entry(vod).or_default().push(undone);
@@ -334,7 +380,7 @@ mod tests {
             marks: vec![MarkState { kind: "chapter".into(), start: 2.0, text: None }],
             clips: Vec::new(),
         };
-        s.add(vod, None, "Chapter added", empty(), chapter);
+        s.add(vod, None, "Chapter added", empty(), chapter, 2);
         assert!(s.redo.get(&vod).is_none_or(Vec::is_empty));
         // ...then Escape takes it back: the cut can be redone again.
         assert!(s.take_back(vod, &empty()));

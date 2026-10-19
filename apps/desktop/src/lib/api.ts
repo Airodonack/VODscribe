@@ -178,6 +178,8 @@ export interface Clip {
   error: string | null;
   /** In the clip bar (saved there), not only dragged out of the window. */
   shown: boolean;
+  /** The revision it's at: every change to it is one. */
+  revision: number;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -188,6 +190,8 @@ export interface Edit {
   status: ClipStatus;
   file_path: string | null;
   error: string | null;
+  /** The revision it's at: every change to it is one. */
+  revision: number;
   /** Whether the rendered video is of the edit as it is now. */
   current: boolean;
   pieces: number;
@@ -323,10 +327,11 @@ export const docOfKey = (key: string): Doc => {
   return { kind: kind === "edit" ? "edit" : "vod", id: Number(id) };
 };
 
-/** What an undo or redo did: to which document, and what it was ("Piece removed"). */
+/** What an undo or redo did: to which document, what it was ("Piece removed"), and the revision it left. */
 export interface Undone {
   doc: Doc;
   label: string;
+  revision: number;
 }
 
 export const api = {
@@ -513,8 +518,9 @@ export const api = {
 export const events = {
   /** The app's own player's time and state, at every change and now and then while playing. */
   playerTime: (cb: (status: PlayerStatus) => void) => listen<PlayerStatus>("player-time", (e) => cb(e.payload)),
-  /** A document put back as it was by undo or redo: what shows it reloads it. */
-  restored: (cb: (doc: Doc) => void) => listen<Doc>("restored", (e) => cb(e.payload)),
+  /** A document put back as it was by undo or redo, at the revision it's at now: what shows it reloads it. */
+  restored: (cb: (doc: Doc & { revision: number }) => void) =>
+    listen<Doc & { revision: number }>("restored", (e) => cb(e.payload)),
   vod: (cb: (vod: Vod) => void) => listen<Vod>("vod", (e) => cb(e.payload)),
   vodProgress: (cb: (id: number, status: Status, progress: number) => void) =>
     listen<[number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
