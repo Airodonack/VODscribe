@@ -25,6 +25,7 @@ pub mod pipeline;
 pub mod playable;
 pub mod render;
 pub mod settings;
+pub mod sources;
 pub mod thumbs;
 pub mod time;
 pub mod tools;

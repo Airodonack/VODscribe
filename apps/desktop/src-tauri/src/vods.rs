@@ -2,13 +2,16 @@
 //! their transcripts.
 
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::edits::LibraryItem;
-use vodscribe_core::{fetch, local, pipeline, thumbs, tools};
+use vodscribe_core::settings::ClipFormat;
+use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
@@ -250,8 +253,28 @@ async fn erase_in_parts(
 /// clips use of it stays, a source only, until nothing does; then it's
 /// erased (`sweep`) as the app quits, or after it next starts, so what's
 /// undone meanwhile still finds it.
+///
+/// With `delete_video`, it's erased now: first each stretch other clips use
+/// is realized (`realize_all`); if one can't be (offline, a full disk), the
+/// error says why after `REALIZE_FAILED` and nothing is removed, for the
+/// page to ask what then. With `anyway` too, it's erased without that: the
+/// pieces other clips have of it are holes.
 #[tauri::command]
-pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+pub(crate) async fn delete_vod(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    delete_video: Option<bool>,
+    anyway: Option<bool>,
+) -> CmdResult<()> {
+    let (delete_video, anyway) = (delete_video.unwrap_or(false), anyway.unwrap_or(false));
+    if delete_video && !anyway {
+        let handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || realize_all(&handle, id))
+            .await
+            .map_err(err)?
+            .map_err(|e| format!("{REALIZE_FAILED}{e:#}"))?;
+    }
     state.chat.stop(id);
     state.history.forget(crate::history::Doc::Vod(id));
     let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
@@ -268,8 +291,101 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     })();
     state.clips.vod_removed(&state.db.lock().unwrap(), id);
     removed.map_err(err)?;
+    if delete_video {
+        // Its chat and transcript a part at a time, then the rest; one whose
+        // work is still stopping goes when the app next quits or starts.
+        erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
+        let db = state.db.lock().unwrap();
+        state.worker.control(id, Stop::Pause, || erase_source(&app, &db, id)).map_err(err)?;
+    }
     let _ = app.emit("vod-removed", id);
     Ok(())
+}
+
+/// What the error of a `delete_vod` whose realizing failed starts with.
+const REALIZE_FAILED: &str = "realize: ";
+
+/// Erases VOD `id`'s files, footage and pictures (its transcript and chat
+/// erased already); then the VOD itself if nothing uses it, or else it's
+/// gone (`Db::set_gone`), its pieces holes.
+fn erase_source(app: &AppHandle, db: &Db, id: i64) -> anyhow::Result<()> {
+    let paths = &app.state::<AppState>().paths;
+    pipeline::remove_work_files(&paths.work(), id);
+    pipeline::remove_media(&paths.work(), id);
+    thumbs::remove(&paths.thumbs(), id);
+    vodscribe_core::peaks::remove(&paths.peaks(), id);
+    crate::footage::remove(app, id);
+    if db.uses(id)? > 0 {
+        db.set_gone(id)?;
+        db.clear_segments(id)?;
+        return Ok(());
+    }
+    db.delete_vod(id)
+}
+
+/// Realizes every stretch of VOD `id` that clips other than its own (and its
+/// clip bar's) use: each made into a source of its own (`realize`).
+fn realize_all(app: &AppHandle, id: i64) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(worker::NO_FFMPEG)?;
+    let stop = AtomicBool::new(false);
+    loop {
+        // Each realized piece leaves the list.
+        let Some(piece) = state.db.lock().unwrap().pieces_using(id)?.first().map(|p| p.id) else { return Ok(()) };
+        realize(app, &ffmpeg, id, piece, &stop)?;
+    }
+}
+
+/// Makes the stretch of VOD `vod_id` that piece `piece` is into a source of
+/// its own, exactly that stretch, cut from its footage (downloaded first if
+/// need be) into the kept videos' folder, and moves the piece to it
+/// (`Db::realize_piece`). Made from the clip at one revision and moved
+/// against it: if the clip changed meanwhile, made again.
+fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &AtomicBool) -> anyhow::Result<()> {
+    let state = app.state::<AppState>();
+    for _ in 0..5 {
+        let (row, base, vod) = {
+            let db = state.db.lock().unwrap();
+            let Some(row) = db.pieces_using(vod_id)?.into_iter().find(|p| p.id == piece) else { return Ok(()) };
+            let base = db.revision(row.clip_id)?.context("That clip is gone.")?;
+            (row, base, db.vod(vod_id)?.context("That VOD is gone.")?)
+        };
+        let (start, end) = (row.start.seconds(), row.end.context("A piece without an end.")?.seconds());
+        crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
+        let source = {
+            let db = state.db.lock().unwrap();
+            crate::footage::find(app, &db, vod_id, start, end).context("Its footage didn't download.")?
+        };
+        let (new, out) = {
+            let db = state.db.lock().unwrap();
+            let new = db.add_realized(vod_id, start, end)?;
+            let name = clips::extension(vod.audio_only, ClipFormat::Mp4);
+            (
+                new,
+                pipeline::media_stem(&pipeline::media_dir(&state.paths.work()), new, &vod.info.title)
+                    .with_extension(name),
+            )
+        };
+        let within = (start - source.offset, end - source.offset);
+        let made = clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipFormat::Mp4, stop, |_| {});
+        let db = state.db.lock().unwrap();
+        let moved = made.and_then(|()| {
+            db.set_media_path(new, Some(&out.to_string_lossy()))?;
+            match db.realize_piece(piece, new, base) {
+                Err(e) if e.downcast_ref::<vodscribe_core::edits::Stale>().is_some() => Ok(false),
+                moved => moved,
+            }
+        });
+        if !matches!(moved, Ok(true)) {
+            // Not used: made again, or not at all.
+            let _ = std::fs::remove_file(&out);
+            db.delete_vod(new)?;
+        }
+        if moved? {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("A clip using it kept changing while it was being kept; try again.")
 }
 
 /// How long quitting spends erasing sources nothing uses; the rest are
@@ -305,15 +421,11 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
             }
         }
         let erase = |db: &Db| -> anyhow::Result<()> {
+            // Used again meanwhile (listed anew): kept.
             if db.uses(id)? > 0 {
                 return Ok(());
             }
-            pipeline::remove_work_files(&state.paths.work(), id);
-            pipeline::remove_media(&state.paths.work(), id);
-            thumbs::remove(&state.paths.thumbs(), id);
-            vodscribe_core::peaks::remove(&state.paths.peaks(), id);
-            crate::footage::remove(app, id);
-            db.delete_vod(id)
+            erase_source(app, db, id)
         };
         let erased = match db {
             Some(db) => state.worker.control(id, Stop::Pause, || erase(db)),

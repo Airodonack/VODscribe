@@ -471,7 +471,10 @@ export const api = {
   listVods: () => invoke<Vod[]>("list_vods"),
   libraryOrder: () => invoke<LibraryItem[]>("library_order"),
   reorderLibrary: (items: LibraryItem[]) => invoke<void>("reorder_library", { items }),
-  deleteVod: (id: number) => invoke<void>("delete_vod", { id }),
+  /** Takes a VOD out of the library; with `deleteVideo`, erases it now, first keeping the stretches edits
+   *  use (failing with "realize: …" if it can't), or not (`anyway`: those pieces become holes). */
+  deleteVod: (id: number, deleteVideo = false, anyway = false) =>
+    invoke<void>("delete_vod", { id, deleteVideo, anyway }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
   retranscribeVod: (id: number) => invoke<void>("retranscribe_vod", { id }),

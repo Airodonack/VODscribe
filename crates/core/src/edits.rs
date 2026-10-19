@@ -188,9 +188,9 @@ pub(crate) fn struck_flicks(struck: &[(f64, f64)]) -> Vec<(Flicks, Flicks)> {
     struck.iter().map(|&(a, b)| (Flicks::from_seconds(a), Flicks::from_seconds(b))).collect()
 }
 
-const PIECE_COLUMNS: &str = "id, clip_id, vod_id, start, end, struck, title, origin";
+pub(crate) const PIECE_COLUMNS: &str = "id, clip_id, vod_id, start, end, struck, title, origin";
 
-fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
+pub(crate) fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
     Ok(PieceRow {
         id: r.get("id")?,
         clip_id: r.get("clip_id")?,

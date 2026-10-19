@@ -68,11 +68,15 @@ fn dir(app: &AppHandle) -> PathBuf {
     app.state::<AppState>().paths.local.join("footage")
 }
 
-/// Whether VOD `vod_id`'s footage is gone for good: it's a file on this
-/// computer that isn't where it was (deleted or moved outside the app). Only
+/// Whether VOD `vod_id`'s footage is gone for good: it was deleted without
+/// keeping what clips use (`Db::set_gone`), or it's a file on this computer
+/// that isn't where it was (deleted or moved outside the app). Only
 /// where its folder is still there: a drive that's away (unmounted,
 /// unplugged) loses nothing.
 pub(crate) fn lost(db: &Db, vod_id: i64) -> bool {
+    if db.is_gone(vod_id).unwrap_or(false) {
+        return true;
+    }
     let source = db.vod(vod_id).ok().flatten().and_then(|v| v.source_path);
     source.is_some_and(|path| {
         let path = std::path::Path::new(&path);

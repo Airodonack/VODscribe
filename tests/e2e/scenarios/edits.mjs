@@ -3,7 +3,8 @@
 // (Ctrl+← and →), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
-// Remove: it leaves the library, the edit keeps its pieces); then the edit
+// Remove and delete the video: it leaves the library, and the stretches
+// the edit uses are kept as videos of their own, which it renders); then the edit
 // deleted, after asking, and with nothing using the VOD it's erased by the
 // next start (added again, it's a new one).
 
@@ -264,12 +265,29 @@ export default {
       throw new Error(`removing the VOD asked ${removing}, not naming the edit`);
     if ((await app.invoke("list_vods")).length !== 1) throw new Error(`answering "Keep" removed the VOD`);
 
-    // Removed: out of the library, but the edit keeps its pieces.
-    await app.answer("Remove");
+    // Removed, its video deleted: out of the library, and the stretches the
+    // edit uses kept as videos of their own ("realized"), which it renders from.
+    await app.answer("Remove and delete the video");
     await app.click('button[aria-label="Remove"]');
     await until("the VOD out of the list", async () => (await app.invoke("list_vods")).length === 0, MINUTE);
-    if (pieces(await app.invoke("get_edit", { id: kept.id })).length !== 2)
-      throw new Error("removing the VOD took pieces out of the edit");
+    const realized = pieces(await app.invoke("get_edit", { id: kept.id }));
+    if (realized.length !== 2) throw new Error("removing the VOD took pieces out of the edit");
+    if (realized.some((p) => p.vod_id === vod.id || p.hole))
+      throw new Error(`the edit's pieces weren't kept: ${JSON.stringify(realized.map((p) => [p.vod_id, p.hole]))}`);
+    const renderedBefore = (await app.invoke("list_edits"))[0].file_path;
+    await app.invoke("render_edit_now", { id: kept.id });
+    await until(
+      "the edit rendered from what was kept",
+      async () => {
+        const [e] = await app.invoke("list_edits");
+        if (e?.status === "error") throw new Error(`the render failed: ${e.error}`);
+        return e?.status === "ready" && e.current && existsSync(e.file_path) && e;
+      },
+      2 * MINUTE,
+    );
+    ctx.log(
+      `the VOD removed with its video: the edit's pieces kept (VODs ${realized.map((p) => p.vod_id)}), rendered again over ${renderedBefore}`,
+    );
 
     // Deleted from its row, after asking.
     const asked = await app.asked();

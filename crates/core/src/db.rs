@@ -535,6 +535,10 @@ ALTER TABLE clips DROP COLUMN error;
 ALTER TABLE clips DROP COLUMN rendered_revision;
 ALTER TABLE clips DROP COLUMN handed_out;";
 
+/// Version 25: a source can be gone (`gone`): its files, transcript and
+/// chat erased while clips still have pieces of it, which are holes.
+const MIGRATE_V25: &str = "ALTER TABLE vods ADD COLUMN gone INTEGER NOT NULL DEFAULT 0;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -859,6 +863,7 @@ impl Db {
             MIGRATE_V22,
             MIGRATE_V23,
             MIGRATE_V24,
+            MIGRATE_V25,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be

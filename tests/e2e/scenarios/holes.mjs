@@ -2,7 +2,8 @@
 // then deleted outside the app (a copy of the fixture, in the run's own
 // folder). The piece says it's a hole, the edit isn't left waiting for
 // footage, and it still renders, the hole as black and silence as long as
-// the piece.
+// the piece. Then the VOD removed with its video: keeping what the edit uses
+// fails (its file is gone), and removed anyway, the piece stays a hole.
 
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
@@ -47,5 +48,20 @@ export default {
     );
     if (!existsSync(done.file_path)) throw new Error(`the render says ${done.file_path}, which isn't there`);
     log(`rendered with its hole: ${done.file_path}`);
+
+    // Removed with its video: what the edit uses can't be kept (the file's
+    // gone), so that fails, saying so; anyway, the VOD goes and the piece
+    // stays a hole.
+    const failed = await app.invoke("delete_vod", { id: vod.id, deleteVideo: true, anyway: false }).then(
+      () => null,
+      (e) => String(e),
+    );
+    if (!failed?.includes("realize: ")) throw new Error(`removing it with its video said ${failed}`);
+    if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id)) throw new Error("the failed removal removed it");
+    await app.invoke("delete_vod", { id: vod.id, deleteVideo: true, anyway: true });
+    if ((await app.invoke("list_vods")).some((v) => v.id === vod.id))
+      throw new Error("removed anyway, it's still listed");
+    if (!(await piece()).hole) throw new Error("the piece of the VOD deleted anyway isn't a hole");
+    log(`removing it with its video: "${failed}"; anyway, the piece a hole`);
   },
 };

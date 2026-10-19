@@ -10,7 +10,7 @@
   // animate:flip has to sit directly inside its keyed list.
   import { api, type Vod } from "./api";
   import { demoOff } from "./demo";
-  import { ask } from "./ask";
+  import { ask, choose } from "./ask";
   import Icon from "./Icon.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, os, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
@@ -166,26 +166,59 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done.
   let removing = $state(false);
+  // Removing a VOD that edits use asks whether its video goes too: then the
+  // stretches they use are kept as videos of their own first ("realized"),
+  // and if that fails (offline, a full disk) it asks again what to do.
+  const REMOVE = "Remove from the library";
+  const DELETE = "Remove and delete the video";
   async function remove() {
-    if (
-      await ask(
-        edits.forVod(vod.id).length
-          ? `Remove “${vod.title}” from the library? Its clips leave VODscribe (their files stay in your Videos folder).${inEdits(
-              " Its pieces in ",
-              " stay, so its transcript and any downloaded audio or video stay on this computer until no edit uses them.",
-            )}`
-          : `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer, and its clips leave VODscribe (their files stay in your Videos folder).`,
+    let deleteVideo = false;
+    if (edits.forVod(vod.id).length) {
+      const answer = await choose(
+        `Remove “${vod.title}”? Its clips leave VODscribe (their files stay in your Videos folder).${inEdits(
+          " Its pieces in ",
+          " stay: removed from the library, its video stays on this computer for them; deleted, only the stretches they use are kept.",
+        )}`,
+        REMOVE,
+        DELETE,
+        "Keep",
+      );
+      if (!answer) return;
+      deleteVideo = answer === DELETE;
+    } else if (
+      !(await ask(
+        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer, and its clips leave VODscribe (their files stay in your Videos folder).`,
         "Remove",
         "Keep",
-      )
+      ))
     ) {
-      onremove();
-      removing = true;
-      onerror(null);
-      api.deleteVod(vod.id).catch((e) => {
-        removing = false;
-        onerror(String(e));
-      });
+      return;
+    }
+    onremove();
+    removing = true;
+    onerror(null);
+    let anyway = false;
+    for (;;) {
+      try {
+        await api.deleteVod(vod.id, deleteVideo, anyway);
+        return;
+      } catch (e) {
+        const text = String(e);
+        if (!text.startsWith("realize: ")) {
+          removing = false;
+          onerror(text);
+          return;
+        }
+        const answer = await choose(
+          `The stretches of it${inEdits(" in ", "")} couldn't be kept: ${text.slice("realize: ".length)} Deleting the video anyway leaves gaps in them.`,
+          "Try again",
+          "Delete anyway",
+          "Keep the video",
+        );
+        if (answer === "Delete anyway") anyway = true;
+        // Kept: removed from the library only.
+        else if (answer !== "Try again") deleteVideo = false;
+      }
     }
   }
 </script>
