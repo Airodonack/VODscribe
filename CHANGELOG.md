@@ -10,7 +10,20 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The keyboard button lists every shortcut, Escape, undo and redo among them, and an edit has its own list.
 - In an edit, pointing at Remove lights up, in red, the piece it would take out.
 - A clip whose file you delete outside VODscribe (in a file manager, say) leaves the clip bar too.
-- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted. A chapter or highlight taken back with Escape left nothing to redo. Removing a VOD while its clips waited to be made could still download them, leaving their files behind. On Windows, a clip deleted while an edit was rendering from it kept its file. Settings and other panels opened over a video playing in VODscribe's own player were hidden behind the picture, as was the timeline's time under the pointer. The playhead could flick back to a moment already passed. Sound could click while playing in VODscribe's own player. Captions blurred at 125% or 150% display scale, and a very long word ran out of them. The GPU add-on's progress bar could stay up after it had installed. On Linux, a sound-only file played from its last second could stay "playing" for good instead of ending. On Linux, seeking in a Twitch VOD could freeze the whole desktop (GNOME) while its sound played on. Dragging a clip out of the window paused at its edge before the drag began, and letting go then dropped nothing. A clip dragged out of the window and back in couldn't be dropped on an edit or the clip bar.
+- Fixes:
+  - Videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted.
+  - A chapter or highlight taken back with Escape left nothing to redo.
+  - Removing a VOD while its clips waited to be made could still download them, leaving their files behind.
+  - On Windows, a clip deleted while an edit was rendering from it kept its file.
+  - Settings and other panels opened over a video playing in VODscribe's own player were hidden behind the picture, as was the timeline's time under the pointer.
+  - The playhead could flick back to a moment already passed.
+  - Sound could click while playing in VODscribe's own player.
+  - Captions blurred at 125% or 150% display scale, and a very long word ran out of them.
+  - The GPU add-on's progress bar could stay up after it had installed.
+  - On Linux, a sound-only file played from its last second could stay "playing" for good instead of ending.
+  - On Linux, seeking in a Twitch VOD could freeze the whole desktop (GNOME) while its sound played on.
+  - Dragging a clip out of the window paused at its edge before the drag began, and letting go then dropped nothing.
+  - A clip dragged out of the window and back in couldn't be dropped on an edit or the clip bar.
 
 ## 0.4.0 — 2026-10-18
 
@@ -24,7 +37,14 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - YouTube's and Twitch's players keep the playhead in step: at other speeds, after seeks, and while Twitch reloads a long VOD.
 - A copy of your library is kept before each upgrade of its format (for 30 days), and if the library won't open, VODscribe says so and offers a way out.
 - Files you made and no longer use don't pile up in Videos/VODscribe: a clip's earlier file goes when it's resized, and an edit's when it's renamed and rendered again, unless you dragged that file into another app.
-- Fixes: Twitch's playhead jumped back while playing or after a seek. Removing a VOD, or deleting its downloaded video, didn't stop what was still using it. Adding several files at once could fail with "database is locked". Installing a new version over an old one on Windows could offer to delete your library. Quitting left downloads and transcription running. Error messages showed your home folder's full path. A file ffmpeg can't read passed as silent instead of failing.
+- Fixes:
+  - Twitch's playhead jumped back while playing or after a seek.
+  - Removing a VOD, or deleting its downloaded video, didn't stop what was still using it.
+  - Adding several files at once could fail with "database is locked".
+  - Installing a new version over an old one on Windows could offer to delete your library.
+  - Quitting left downloads and transcription running.
+  - Error messages showed your home folder's full path.
+  - A file ffmpeg can't read passed as silent instead of failing.
 
 ## 0.3.0 — 2026-10-15
 
@@ -39,7 +59,17 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - 7TV, BetterTTV and FrankerFaceZ emotes load faster, and a provider that can't be reached isn't waited on again for a few minutes.
 - VODscribe won't follow links to this computer or your local network.
 - Needs macOS 12 or later, as it already did in practice; older Macs are told so at install.
-- Fixes: the first second or two of FLV files was left out of the transcript. Chat or a thumbnail still arriving for a removed VOD could land on the next one added. A YouTube chat could fail when its transcription finished first. Stop, Pause and Remove could miss a VOD that had just started transcribing. Switching VODs could briefly show the previous one's transcript, with its chat timeline at the wrong scale. Two quick changes in Settings could be saved out of order. Timeline layers that failed to load could be overwritten. On Linux, a link dropped onto a player opened in the player instead of being added, and the drop overlay could stay on screen. Stopping or removing a download could leave partial files behind. A rare crash on an unusual upload date.
+- Fixes:
+  - The first second or two of FLV files was left out of the transcript.
+  - Chat or a thumbnail still arriving for a removed VOD could land on the next one added.
+  - A YouTube chat could fail when its transcription finished first.
+  - Stop, Pause and Remove could miss a VOD that had just started transcribing.
+  - Switching VODs could briefly show the previous one's transcript, with its chat timeline at the wrong scale.
+  - Two quick changes in Settings could be saved out of order.
+  - Timeline layers that failed to load could be overwritten.
+  - On Linux, a link dropped onto a player opened in the player instead of being added, and the drop overlay could stay on screen.
+  - Stopping or removing a download could leave partial files behind.
+  - A rare crash on an unusual upload date.
 
 ## 0.2.1 — 2026-10-14
 
@@ -63,7 +93,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Long VODs with busy chats open, scroll and jump around quickly.
 - Removing or re-transcribing a VOD shows that it's under way, and the rest of the app keeps working meanwhile.
 - No white flash when the app opens.
-- Fixes: the GPU add-on's progress shows when Settings is reopened mid-download.
+- Fixes:
+  - The GPU add-on's progress shows when Settings is reopened mid-download.
 
 ## 0.1.3 — 2026-10-13
 

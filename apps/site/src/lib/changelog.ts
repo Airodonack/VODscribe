@@ -1,5 +1,6 @@
 // The releases page (routes/releases) reads CHANGELOG.md at build time: each
-// "## <version> — <date>" heading, the "- " changes under it, and any plain
+// "## <version> — <date>" heading, the "- " changes under it (each with any
+// indented "  - " items under it: the fixes, under "Fixes:"), and any plain
 // text before them ("First release."). A version still being worked on
 // ("## 0.3.0 (unreleased)") is left out, since the site is published on every
 // push, before the release is.
@@ -9,7 +10,13 @@ export interface Release {
   /** YYYY-MM-DD. */
   date: string;
   intro: string[];
-  changes: string[];
+  changes: Change[];
+}
+
+export interface Change {
+  text: string;
+  /** Items under it, indented: "Fixes:" has the fixes. */
+  items: string[];
 }
 
 export function releases(markdown: string): Release[] {
@@ -24,10 +31,14 @@ export function releases(markdown: string): Release[] {
     } else if (line.startsWith("## ")) {
       current = null;
     } else if (current && line.startsWith("- ")) {
-      current.changes.push(line.slice(2).trim());
+      current.changes.push({ text: line.slice(2).trim(), items: [] });
+    } else if (current && /^\s+- /.test(line) && current.changes.length) {
+      current.changes[current.changes.length - 1].items.push(line.trim().slice(2).trim());
     } else if (current && /^\s+\S/.test(line) && current.changes.length) {
-      // A change wrapped onto the next line.
-      current.changes[current.changes.length - 1] += " " + line.trim();
+      // A change, or an item under it, wrapped onto the next line.
+      const last = current.changes[current.changes.length - 1];
+      if (last.items.length) last.items[last.items.length - 1] += " " + line.trim();
+      else last.text += " " + line.trim();
     } else if (current && line.trim() && !current.changes.length) {
       current.intro.push(line.trim());
     }

@@ -21,9 +21,25 @@ test("reads versions, dates and changes, and leaves out an unreleased one", () =
     "First release.",
   ].join("\n");
   assert.deepEqual(releases(md), [
-    { version: "0.2.1", date: "2026-10-20", intro: [], changes: ["One.", "Two, wrapped onto a second line."] },
-    { version: "0.2.0", date: "2026-10-13", intro: [], changes: ["Three."] },
+    {
+      version: "0.2.1",
+      date: "2026-10-20",
+      intro: [],
+      changes: [
+        { text: "One.", items: [] },
+        { text: "Two, wrapped onto a second line.", items: [] },
+      ],
+    },
+    { version: "0.2.0", date: "2026-10-13", intro: [], changes: [{ text: "Three.", items: [] }] },
     { version: "0.1.0", date: "2026-10-12", intro: ["First release."], changes: [] },
+  ]);
+});
+
+test("items under a change, each of which can wrap", () => {
+  const md = ["## 0.2.1 — 2026-10-20", "- New.", "- Fixes:", "  - One fix,", "    wrapped.", "  - Another."].join("\n");
+  assert.deepEqual(releases(md)[0].changes, [
+    { text: "New.", items: [] },
+    { text: "Fixes:", items: ["One fix, wrapped.", "Another."] },
   ]);
 });
 

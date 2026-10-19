@@ -8,6 +8,9 @@
   const list = releases(changelog);
 </script>
 
+{#snippet text(s: string)}{#each runs(s) as run, k (k)}{#if run.code}<code>{run.text}</code
+      >{:else}{run.text}{/if}{/each}{/snippet}
+
 <svelte:head>
   <title>Releases · VODscribe</title>
   <link rel="canonical" href="https://vodscribe.com/releases" />
@@ -37,7 +40,15 @@
         <ul>
           {#each release.changes as change, j (j)}
             <li>
-              {#each runs(change) as run, k (k)}{#if run.code}<code>{run.text}</code>{:else}{run.text}{/if}{/each}
+              {@render text(change.text)}
+              {#if change.items.length}
+                <!-- The fixes, under "Fixes:": a step quieter than what's new. -->
+                <ul class="items">
+                  {#each change.items as item, k (k)}
+                    <li>{@render text(item)}</li>
+                  {/each}
+                </ul>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -47,6 +58,16 @@
 </article>
 
 <style>
+  .items {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.95em;
+  }
+
+  .items li {
+    margin: 2px 0;
+  }
+
   .release {
     margin: 0 -16px 8px;
     padding: 4px 16px 8px;
