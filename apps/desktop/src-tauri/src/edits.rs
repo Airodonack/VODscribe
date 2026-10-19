@@ -234,8 +234,9 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Puts a copy of clip `clip_id`'s stretch in edit `edit_id`, at `index`
-/// (or last); it's the edit's own from then on.
+/// Puts a copy of clip `clip_id` in edit `edit_id` as a group, at `index`
+/// (or last): shown as one, its pieces as the clip has them. It's the
+/// edit's own from then on.
 #[tauri::command]
 pub(crate) async fn add_to_edit(
     app: AppHandle,
@@ -245,8 +246,7 @@ pub(crate) async fn add_to_edit(
 ) -> CmdResult<EditView> {
     changing(&app, edit_id, "Piece added", |db| {
         db.edit(edit_id)?.context("That edit is gone.")?;
-        let clip = db.clip(clip_id)?.context("That clip is gone.")?;
-        db.add_piece(edit_id, clip.vod_id, (clip.start, clip.end), &clip.title, index)
+        db.add_group(edit_id, clip_id, index).map(|_| ())
     })
 }
 

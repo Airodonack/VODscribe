@@ -1,6 +1,6 @@
-// Edits: a clip added to a new edit from its pill; the edit opened,
-// renamed, its piece split (B) and the second half moved first and back
-// (Ctrl+← and →), a line struck out and the strike undone
+// Edits: a clip added to a new edit from its pill (a group, one band); the
+// edit opened, renamed, its piece split (B), the group opened (double-click)
+// and the second half moved first and back (Ctrl+← and →), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
 // Remove and delete the video: it leaves the library, and the stretches
@@ -69,6 +69,8 @@ export default {
     const first = await edit();
     const pieces = (e) => e.pieces;
     if (pieces(first).length !== 1) throw new Error(`the new edit has ${pieces(first).length} pieces, not 1`);
+    if (pieces(first)[0].group?.title !== clip.title)
+      throw new Error(`the clip came in as ${JSON.stringify(pieces(first)[0].group)}, not a group named for it`);
 
     // Split at the playhead, a second into the edit (its one piece, 2 s long).
     await app.toStart();
@@ -83,6 +85,17 @@ export default {
     );
     await new Promise((r) => setTimeout(r, 1000));
     if (pieces(await edit()).length !== 2) throw new Error("a held-down Delete's repeat removed a piece");
+
+    // The clip came in as a group, one band; both halves are in it. Opened
+    // (double-click), its pieces show one by one and move among themselves.
+    await app.js(
+      `document.querySelector("section.edit-view .piece.group").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))`,
+    );
+    await until(
+      "the group open",
+      () => app.js(`return document.querySelectorAll("section.edit-view .piece.in-group").length === 2`),
+      10_000,
+    );
 
     // Ctrl+← (⌘← on a Mac) moves the piece at the playhead (the second, at
     // 1 s) a place earlier, the playhead with it; Ctrl+→ moves it back.

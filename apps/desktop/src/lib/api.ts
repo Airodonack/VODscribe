@@ -218,6 +218,8 @@ export interface EditPiece {
   vod_title: string;
   /** Its video is gone for good (deleted outside VODscribe): it plays and renders as black and silence. */
   hole: boolean;
+  /** The group it's in at the edit's top level (a clip dropped into the edit, shown as one), if any. */
+  group: { id: number; title: string } | null;
 }
 
 /** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its

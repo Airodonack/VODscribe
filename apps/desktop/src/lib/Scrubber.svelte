@@ -54,6 +54,10 @@
     lit?: boolean;
     /** Its video is gone for good: it plays as black and silence. */
     hole?: boolean;
+    /** A group (a clip dropped in): double-click opens it. */
+    group?: boolean;
+    /** In the group open: its pieces show one by one. */
+    inGroup?: boolean;
   }
   import { theme } from "./theme.svelte";
   import { nav } from "./nav.svelte";
@@ -100,6 +104,8 @@
       resizing?: (id: number, side: "start" | "end", at: number | null) => void;
       /** Carries it out; `home` is the timeline, where coming back moves it again. */
       carry: (id: number, x: number, y: number, from: DOMRect, home: CarryHome) => void;
+      /** Double-clicked: a group opens (or closes). */
+      open?: (id: number) => void;
     };
     duration: number;
     /** Where the player is asked to be, or runs on to between frames. */
@@ -609,7 +615,10 @@
             class:sizing={!!sizing}
             class:lit={piece.lit}
             class:hole={piece.hole}
+            class:group={piece.group}
+            class:in-group={piece.inGroup}
             data-piece={piece.id}
+            ondblclick={() => onpiece?.open?.(piece.id)}
             style:left={pct(Math.max(from, viewStart))}
             style:width={widthPct(Math.max(from, viewStart), Math.min(to, viewStart + span))}
             style:transform={moving
@@ -619,6 +628,8 @@
                 : null}
             title="{piece.label}{piece.hole
               ? ' · its video was deleted: it plays as black and silence'
+              : ''}{piece.group ? ' · double-click to open it' : ''}{piece.inGroup
+              ? ' · double-click to close its group'
               : ''} · drag to move it (pull it off the timeline to carry it out), drag an edge to resize it"
           >
             {#if piece.range}
@@ -874,6 +885,18 @@
     box-shadow:
       inset 2px 0 0 var(--cut),
       inset 0 0 0 1px var(--accent);
+  }
+
+  /* A group: a clip dropped in, shown as one. */
+  .piece.group {
+    box-shadow:
+      inset 2px 0 0 var(--cut),
+      inset 0 -3px 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  /* The group open: its pieces, one by one. */
+  .piece.in-group {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
 
   /* Its video deleted: plays as black and silence. */

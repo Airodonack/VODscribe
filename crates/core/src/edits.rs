@@ -71,17 +71,46 @@ pub enum LibraryItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditState {
     pub title: String,
-    pub pieces: Vec<PieceState>,
+    /// Its items in the clip's order, each group before what's in it.
+    pub items: Vec<ItemState>,
 }
 
-/// A piece as an `EditState` holds it: what it is, not which row it was.
+/// An item as an `EditState` holds it: what it is and where, not which row
+/// it was.
 #[derive(Debug, Clone, PartialEq)]
-pub struct PieceState {
-    pub vod_id: i64,
-    pub start: Flicks,
+pub struct ItemState {
+    /// The group it's in, by its place in `EditState::items`; None: the
+    /// clip's top level.
+    pub parent: Option<usize>,
+    /// The VOD it's a piece of; None for a group.
+    pub vod_id: Option<i64>,
+    pub start: Option<Flicks>,
     pub end: Option<Flicks>,
     pub title: String,
     pub struck: Vec<(Flicks, Flicks)>,
+    pub origin: Option<Flicks>,
+}
+
+/// An item of a clip as the record holds it (`Db::item_rows`): a piece, or
+/// a group (`vod_id` None) holding the items whose `parent` it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemRow {
+    pub id: i64,
+    pub parent: Option<i64>,
+    pub position: i64,
+    pub vod_id: Option<i64>,
+    pub start: Option<Flicks>,
+    pub end: Option<Flicks>,
+    pub title: String,
+    pub struck: Vec<(Flicks, Flicks)>,
+    pub origin: Option<Flicks>,
+}
+
+/// The group an edit's piece is in at the edit's top level (`EditPiece::group`).
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct GroupOf {
+    pub id: i64,
+    pub title: String,
 }
 
 /// A piece of a clip as the record holds it: `start`..`end` of VOD `vod_id`
@@ -115,6 +144,9 @@ pub struct EditPiece {
     /// say): it plays and renders as black and silence. Said by the app,
     /// which looks for the files (`footage::lost`).
     pub hole: bool,
+    /// The group it's in at the edit's top level, if it's in one: a clip
+    /// dropped into the edit, which shows as one.
+    pub group: Option<GroupOf>,
 }
 
 impl EditPiece {
@@ -417,10 +449,60 @@ impl Db {
         Ok(self.conn.query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0)).optional()?.flatten())
     }
 
-    /// Edit `id`'s pieces, in order, in seconds.
+    /// Clip `clip_id`'s items in its order: each group followed by what's in
+    /// it, depth first.
+    pub fn item_rows(&self, clip_id: i64) -> Result<Vec<ItemRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, parent, position, vod_id, start, end, struck, title, origin FROM items
+             WHERE clip_id = ?1 ORDER BY position, id",
+        )?;
+        let all: Vec<ItemRow> = stmt
+            .query_map([clip_id], |r| {
+                Ok(ItemRow {
+                    id: r.get(0)?,
+                    parent: r.get(1)?,
+                    position: r.get(2)?,
+                    vod_id: r.get(3)?,
+                    start: r.get::<_, Option<i64>>(4)?.map(Flicks),
+                    end: r.get::<_, Option<i64>>(5)?.map(Flicks),
+                    struck: parse_struck(&r.get::<_, String>(6)?),
+                    title: r.get(7)?,
+                    origin: r.get::<_, Option<i64>>(8)?.map(Flicks),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        fn walk(all: &[ItemRow], parent: Option<i64>, out: &mut Vec<ItemRow>) {
+            for item in all.iter().filter(|i| i.parent == parent) {
+                out.push(item.clone());
+                if item.vod_id.is_none() {
+                    walk(all, Some(item.id), out);
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(all.len());
+        walk(&all, None, &mut out);
+        Ok(out)
+    }
+
+    /// Edit `id`'s pieces, in order (those in groups where the groups are),
+    /// in seconds.
     pub fn edit_pieces(&self, id: i64) -> Result<Vec<EditPiece>> {
+        let items = self.item_rows(id)?;
+        // Each item's group at the top level, if it's in one.
+        let mut top: std::collections::HashMap<i64, GroupOf> = std::collections::HashMap::new();
+        for item in &items {
+            let group = match item.parent {
+                None if item.vod_id.is_none() => Some(GroupOf { id: item.id, title: item.title.clone() }),
+                None => None,
+                Some(parent) => top.get(&parent).cloned(),
+            };
+            if let Some(group) = group {
+                top.insert(item.id, group);
+            }
+        }
         let mut out = Vec::new();
-        for row in self.piece_rows(id)? {
+        for item in items.iter().filter(|i| i.vod_id.is_some()) {
+            let Some(row) = self.piece_row(item.id)? else { continue };
             let vod_title =
                 self.conn.query_row("SELECT title FROM vods WHERE id = ?1", [row.vod_id], |r| r.get(0)).optional()?;
             let end = self.piece_end(&row)?;
@@ -434,9 +516,54 @@ impl Db {
                 struck: row.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect(),
                 vod_title: vod_title.unwrap_or_default(),
                 hole: false,
+                group: top.get(&item.id).cloned(),
             });
         }
         Ok(out)
+    }
+
+    /// Puts a copy of clip `from` (a snippet, or another listed clip) in
+    /// clip `into` as a group, at `index` of its top level (or last): its
+    /// items as they are, with ids of their own, titled as `from` is. It's
+    /// the group's own from then on: changing `from` changes nothing here.
+    pub fn add_group(&self, into: i64, from: i64, index: Option<usize>) -> Result<i64> {
+        let title: String = self
+            .conn
+            .query_row("SELECT title FROM clips WHERE id = ?1", [from], |r| r.get(0))
+            .optional()?
+            .context("That clip is gone.")?;
+        let items = self.item_rows(from)?;
+        anyhow::ensure!(into != from, "A clip can't go inside itself.");
+        self.change(into, None, |db| {
+            db.conn.execute(
+                "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
+                params![into, title],
+            )?;
+            let group = db.conn.last_insert_rowid();
+            let mut ids = std::collections::HashMap::new();
+            for item in &items {
+                let parent = item.parent.map_or(Some(group), |p| ids.get(&p).copied());
+                db.conn.execute(
+                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    params![
+                        into,
+                        parent,
+                        item.position,
+                        if item.vod_id.is_some() { "piece" } else { "group" },
+                        item.vod_id,
+                        item.start.map(|f| f.0),
+                        item.end.map(|f| f.0),
+                        struck_json(&item.struck)?,
+                        item.title,
+                        item.origin.map(|f| f.0)
+                    ],
+                )?;
+                ids.insert(item.id, db.conn.last_insert_rowid());
+            }
+            db.place(into, group, index)?;
+            Ok(group)
+        })
     }
 
     /// What clip `id` holds (its title and pieces), to be put back later
@@ -447,35 +574,52 @@ impl Db {
         else {
             return Ok(None);
         };
-        let pieces = self
-            .piece_rows(id)?
-            .into_iter()
-            .map(|p| PieceState { vod_id: p.vod_id, start: p.start, end: p.end, title: p.title, struck: p.struck })
+        let rows = self.item_rows(id)?;
+        let items = rows
+            .iter()
+            .map(|i| ItemState {
+                parent: i.parent.and_then(|p| rows.iter().position(|r| r.id == p)),
+                vod_id: i.vod_id,
+                start: i.start,
+                end: i.end,
+                title: i.title.clone(),
+                struck: i.struck.clone(),
+                origin: i.origin,
+            })
             .collect();
-        Ok(Some(EditState { title, pieces }))
+        Ok(Some(EditState { title, items }))
     }
 
-    /// Puts clip `id` back as `state` had it: its title, and its pieces in
-    /// order (made anew, so with new ids), less any of a VOD since deleted.
+    /// Puts clip `id` back as `state` had it: its title, and its items in
+    /// order (made anew, so with new ids), less pieces of a VOD since deleted.
     /// An error if the clip's gone.
     pub fn restore_edit(&self, id: i64, state: &EditState) -> Result<()> {
         self.change(id, None, |db| {
             db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, state.title])?;
             db.conn.execute("DELETE FROM items WHERE clip_id = ?1", [id])?;
-            for (position, p) in state.pieces.iter().enumerate() {
-                db.conn.execute(
-                    "INSERT INTO items (clip_id, position, kind, vod_id, start, end, title, struck)
-                     SELECT ?1, ?2, 'piece', ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM vods WHERE id = ?3)",
+            let mut ids: Vec<Option<i64>> = Vec::with_capacity(state.items.len());
+            for (i, item) in state.items.iter().enumerate() {
+                let parent = item.parent.and_then(|p| ids.get(p).copied().flatten());
+                let position = state.items[..i].iter().filter(|o| o.parent == item.parent).count() as i64;
+                let kind = if item.vod_id.is_some() { "piece" } else { "group" };
+                let made = db.conn.execute(
+                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, title, struck, origin)
+                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+                     WHERE ?5 IS NULL OR EXISTS (SELECT 1 FROM vods WHERE id = ?5)",
                     params![
                         id,
-                        position as i64,
-                        p.vod_id,
-                        p.start.0,
-                        p.end.map(|e| e.0),
-                        p.title,
-                        struck_json(&p.struck)?
+                        parent,
+                        position,
+                        kind,
+                        item.vod_id,
+                        item.start.map(|f| f.0),
+                        item.end.map(|f| f.0),
+                        item.title,
+                        struck_json(&item.struck)?,
+                        item.origin.map(|f| f.0)
                     ],
                 )?;
+                ids.push((made > 0).then(|| db.conn.last_insert_rowid()));
             }
             Ok(())
         })
@@ -575,11 +719,13 @@ impl Db {
         self.change(edit_id, None, |db| db.place(edit_id, id, Some(index)))
     }
 
-    /// Numbers clip `clip_id`'s top-level items in order, with item `id` at `index` (or last).
+    /// Numbers item `id`'s siblings in clip `clip_id` (the items in the same
+    /// group, or at the top level) in order, with `id` at `index` (or last).
     fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL AND id != ?2 ORDER BY position, id")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM items WHERE clip_id = ?1 AND id != ?2
+               AND parent IS (SELECT parent FROM items WHERE id = ?2) ORDER BY position, id",
+        )?;
         let mut ids: Vec<i64> = stmt.query_map(params![clip_id, id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         ids.insert(index.unwrap_or(ids.len()).min(ids.len()), id);
         for (position, id) in ids.iter().enumerate() {
@@ -627,11 +773,22 @@ impl Db {
             return Ok(false);
         }
         let at = Flicks::from_seconds(at);
-        let index = self.piece_rows(piece.clip_id)?.iter().position(|p| p.id == id).map(|i| i + 1);
+        let parent: Option<i64> = self.conn.query_row("SELECT parent FROM items WHERE id = ?1", [id], |r| r.get(0))?;
+        let index = self
+            .item_rows(piece.clip_id)?
+            .iter()
+            .filter(|i| i.parent == parent)
+            .position(|i| i.id == id)
+            .map(|i| i + 1);
         self.change(piece.clip_id, None, |db| {
             db.conn.execute("UPDATE items SET end = ?2 WHERE id = ?1", params![id, at.0])?;
             let end = piece.end.unwrap_or(Flicks::from_seconds(end));
             let new = db.insert_piece(piece.clip_id, piece.vod_id, (at, end), &piece.title, &piece.struck)?;
+            // Beside it, in its group if it's in one, and from where it came from too.
+            db.conn.execute(
+                "UPDATE items SET parent = ?2, origin = (SELECT origin FROM items WHERE id = ?3) WHERE id = ?1",
+                params![new, parent, id],
+            )?;
             db.place(piece.clip_id, new, index)
         })?;
         Ok(true)
@@ -830,6 +987,67 @@ pub(crate) mod tests {
         assert_eq!((again.id, new, again.listed), (vod, false, true));
         assert_eq!(db.uses(vod).unwrap(), 1);
         assert_eq!(db.next_with_status(crate::db::Status::Queued).unwrap().map(|v| v.id), Some(vod));
+    }
+
+    #[test]
+    fn a_clip_dropped_in_is_a_group_of_its_own() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let snippet = db.add_clip(vod, 1.0, 2.0, "Hello", true).unwrap().id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let group = db.add_group(edit, snippet, Some(0)).unwrap();
+        let pieces = db.edit_pieces(edit).unwrap();
+        let shape = |pieces: &[EditPiece]| {
+            pieces.iter().map(|p| (p.start, p.end, p.group.as_ref().map(|g| g.title.clone()))).collect::<Vec<_>>()
+        };
+        assert_eq!(shape(&pieces), [(1.0, 2.0, Some("Hello".into())), (10.0, 20.0, None)]);
+        assert_eq!(pieces[0].group.as_ref().map(|g| g.id), Some(group));
+        // A copy: the snippet changing changes nothing in the edit.
+        db.set_clip_range(snippet, 1.0, 5.0).unwrap();
+        assert_eq!(db.edit_pieces(edit).unwrap()[0].end, 2.0);
+        assert_eq!(db.uses(vod).unwrap(), 4, "its clip, the snippet, the piece, the group's piece");
+
+        // An edit dropped into another: groups within groups, all in order.
+        let outer = db.add_edit("outer").unwrap().id;
+        db.add_group(outer, edit, None).unwrap();
+        assert_eq!(
+            shape(&db.edit_pieces(outer).unwrap()),
+            [(1.0, 2.0, Some("e".into())), (10.0, 20.0, Some("e".into()))]
+        );
+        assert!(db.add_group(outer, outer, None).is_err(), "not into itself");
+
+        // Split inside a group: both halves in it.
+        let inner = db.edit_pieces(edit).unwrap()[0].id;
+        assert!(db.split_piece(inner, 1.5).unwrap());
+        assert_eq!(
+            shape(&db.edit_pieces(edit).unwrap()),
+            [(1.0, 1.5, Some("Hello".into())), (1.5, 2.0, Some("Hello".into())), (10.0, 20.0, None)]
+        );
+        // Moved as one; undone as one; removed as one.
+        let state = db.edit_state(edit).unwrap().unwrap();
+        db.move_piece(group, 1).unwrap();
+        assert_eq!(shape(&db.edit_pieces(edit).unwrap())[0], (10.0, 20.0, None));
+        db.restore_edit(edit, &state).unwrap();
+        assert_eq!(db.edit_state(edit).unwrap().unwrap(), state, "groups and all put back");
+        let group = db.edit_pieces(edit).unwrap()[0].group.clone().unwrap().id;
+        db.remove_piece(group).unwrap();
+        assert_eq!(shape(&db.edit_pieces(edit).unwrap()), [(10.0, 20.0, None)]);
+    }
+
+    #[test]
+    fn undo_keeps_where_a_realized_piece_came_from() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let piece = db.piece_rows(edit).unwrap()[0].id;
+        let new = db.add_realized(vod, 10.0, 20.0).unwrap();
+        assert!(db.realize_piece(piece, new, db.revision(edit).unwrap().unwrap()).unwrap());
+        let state = db.edit_state(edit).unwrap().unwrap();
+        db.rename_edit(edit, "f").unwrap();
+        db.restore_edit(edit, &state).unwrap();
+        assert_eq!(db.piece_rows(edit).unwrap()[0].origin, Some(Flicks::from_seconds(10.0)));
     }
 
     #[test]

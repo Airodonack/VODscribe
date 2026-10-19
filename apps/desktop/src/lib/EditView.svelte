@@ -232,6 +232,24 @@
     player?.seek(time, false);
   };
 
+  /** The group opened (double-clicked): its pieces show, move and go one by
+   *  one, among themselves. */
+  let openGroup = $state<number | null>(null);
+  // Gone (removed, undone): closed.
+  $effect(() => {
+    if (openGroup !== null && !pieces.some((p) => p.group?.id === openGroup)) openGroup = null;
+  });
+  /** What `piece` moves, shows and goes as: the group it's in (a clip
+   *  dropped into the edit), unless that's open, or itself. */
+  const unitOf = (piece: EditPiece) => (piece.group && piece.group.id !== openGroup ? piece.group.id : piece.id);
+  /** The pieces `piece` moves among: its open group's, or the edit's bands. */
+  const unitsBeside = (piece: EditPiece) =>
+    piece.group && piece.group.id === openGroup
+      ? pieces.filter((p) => p.group?.id === openGroup).map((p) => p.id)
+      : [...new Set(pieces.map(unitOf))];
+  /** What `piece` is called: its own title, or its group's. */
+  const nameOf = (piece: EditPiece) => piece.title || piece.group?.title || "";
+
   // The piece at the playhead.
   const atNow = $derived.by(() => {
     let found: Played | undefined;
@@ -241,7 +259,9 @@
   const context = $derived.by(() => {
     if (!atNow) return "";
     const n = pieces.findIndex((p) => p.id === atNow.piece.id) + 1;
-    return `Piece ${n} of ${pieces.length} · ${atNow.piece.title} · ${atNow.piece.vod_title}`;
+    const group = atNow.piece.group;
+    const where = group ? ` · in “${group.title}”${group.id === openGroup ? " (open: Escape closes it)" : ""}` : "";
+    return `Piece ${n} of ${pieces.length} · ${nameOf(atNow.piece)} · ${atNow.piece.vod_title}${where}`;
   });
 
   /** Remove is hovered: the piece it would take out lights up on the timeline. */
@@ -253,7 +273,7 @@
     const id = edit?.id;
     if (!atNow || id === undefined) return;
     edits
-      .removePiece(atNow.piece.id)
+      .removePiece(unitOf(atNow.piece))
       .then(
         (removed) => removed && toast.show("Piece removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
       );
@@ -272,11 +292,13 @@
   async function moveCurrent(by: -1 | 1) {
     const piece = atNow?.piece;
     if (!piece) return;
-    const index = pieces.findIndex((p) => p.id === piece.id);
-    if (index + by < 0 || index + by >= pieces.length) return;
-    const into = now - (segments.find((s) => s.piece.id === piece.id)?.at ?? now);
-    if (await edits.move(piece.id, index + by)) {
-      const first = segments.find((s) => s.piece.id === piece.id);
+    const unit = unitOf(piece);
+    const units = unitsBeside(piece);
+    const index = units.indexOf(unit);
+    if (index + by < 0 || index + by >= units.length) return;
+    const into = now - (segments.find((s) => unitOf(s.piece) === unit)?.at ?? now);
+    if (await edits.move(unit, index + by)) {
+      const first = segments.find((s) => unitOf(s.piece) === unit);
       if (first) seekTo(first.at + into);
     }
   }
@@ -329,7 +351,9 @@
     }
     if (e.ctrlKey || e.metaKey) return;
     const p = player;
-    if (key === "Delete" || key === "Backspace") {
+    if (key === "Escape" && openGroup !== null) {
+      openGroup = null;
+    } else if (key === "Delete" || key === "Backspace") {
       // Held down, it's one press: one piece, not one after another.
       if (!e.repeat && atNow) removeCurrent();
     } else if (
@@ -362,24 +386,42 @@
   const lane = $derived.by(() => {
     const out: LanePiece[] = [];
     let at = 0;
+    // How much each band waits for of downloads, and how much of that is in.
+    const waiting = new Map<number, { wanted: number; done: number }>();
     for (const piece of pieces) {
       const length = pieceLength(piece);
-      // Still downloading: how much of what it waits for is in.
-      const waits = pending.filter((w) => w.pieceId === piece.id);
-      const wanted = waits.reduce((sum, w) => sum + w.end - w.start, 0);
-      const loading = wanted > 0 ? waits.reduce((sum, w) => sum + w.done, 0) / wanted : undefined;
-      const range = { start: piece.start, end: piece.end, max: vods.get(piece.vod_id)?.duration ?? null };
+      const unit = unitOf(piece);
+      for (const w of pending.filter((w) => w.pieceId === piece.id)) {
+        const sum = waiting.get(unit) ?? { wanted: 0, done: 0 };
+        waiting.set(unit, { wanted: sum.wanted + w.end - w.start, done: sum.done + w.done });
+      }
+      const sum = waiting.get(unit);
+      const loading = sum && sum.wanted > 0 ? sum.done / sum.wanted : undefined;
       const lit = hoveredSource === piece.vod_id;
-      out.push({
-        id: piece.id,
-        start: at,
-        end: at + length,
-        label: piece.title,
-        loading,
-        range,
-        lit,
-        hole: piece.hole,
-      });
+      const last = out[out.length - 1];
+      if (piece.group && last?.id === unit) {
+        // A group is one band: its pieces one after another.
+        Object.assign(last, { end: at + length, loading, lit: last.lit || lit, hole: last.hole && piece.hole });
+      } else {
+        // A group's band isn't resized (open it to change what's in it).
+        const group = !!piece.group && piece.group.id !== openGroup;
+        const inGroup = !!piece.group && piece.group.id === openGroup;
+        const range = group
+          ? undefined
+          : { start: piece.start, end: piece.end, max: vods.get(piece.vod_id)?.duration ?? null };
+        out.push({
+          id: unit,
+          start: at,
+          end: at + length,
+          label: nameOf(piece),
+          loading,
+          range,
+          lit,
+          hole: piece.hole,
+          group,
+          inGroup,
+        });
+      }
       at += length;
     }
     return out;
@@ -493,15 +535,31 @@
   }
 
   const onpiece = {
-    move: (id: number, index: number) => edits.move(id, index),
+    move(id: number, index: number) {
+      // In the open group: among its pieces, from where they start in the lane.
+      const piece = pieces.find((p) => p.id === id);
+      if (piece?.group && piece.group.id === openGroup) {
+        const first = lane.findIndex((b) => b.inGroup);
+        const count = pieces.filter((p) => p.group?.id === openGroup).length;
+        index = Math.max(0, Math.min(count - 1, index - first));
+      }
+      edits.move(id, index);
+    },
+    open(id: number) {
+      const piece = pieces.find((p) => p.id === id);
+      if (piece?.group && piece.group.id === openGroup) openGroup = null;
+      else if (pieces.some((p) => p.group?.id === id)) openGroup = id;
+    },
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
-      const piece = pieces.find((p) => p.id === id);
+      // A piece, or a group of one: a group of more doesn't go out as one clip.
+      const of = pieces.filter((p) => unitOf(p) === id);
+      const piece = of.length === 1 ? of[0] : undefined;
       const vod = piece && vods.get(piece.vod_id);
       if (!piece || !vod) return;
-      const { start, end, title } = piece;
-      carry({ vod, start, end, title, ownPlayer: playsHere(vod), from, x, y, home });
+      const { start, end } = piece;
+      carry({ vod, start, end, title: nameOf(piece), ownPlayer: playsHere(vod), from, x, y, home });
     },
   };
 
@@ -671,8 +729,8 @@
           {waveform}
           pieces={lane}
           {pending}
-          selectedPiece={atNow?.piece.id ?? null}
-          removing={removeHover ? (lane.find((p) => p.id === atNow?.piece.id) ?? null) : null}
+          selectedPiece={atNow ? unitOf(atNow.piece) : null}
+          removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
           {onpiece}
           duration={total}
           time={now}
@@ -761,7 +819,7 @@
     {#each pieces as piece, n (piece.id)}
       <p class="piece-head muted">
         <span class="num">{n + 1}</span>
-        {piece.title} · {piece.vod_title}
+        {nameOf(piece)} · {piece.vod_title}
         {#if piece.hole}<span class="hole-note">· its video was deleted: this piece plays as black and silence</span
           >{/if}
       </p>
