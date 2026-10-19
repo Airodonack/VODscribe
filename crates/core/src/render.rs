@@ -3,8 +3,9 @@
 //! MP4, or MOV for editors). Each piece is trimmed to the frame, brought to
 //! one picture size and frame rate (scaled to fit, with black bars) and one
 //! sound format, then they're joined. A piece without sound gets silence, and
-//! one without a picture a black one; an edit with no pictures at all makes
-//! sound alone (an M4A, or a WAV).
+//! one without a picture a black one; one without a file at all (a hole: its
+//! footage is gone) both. An edit with no pictures at all makes sound alone
+//! (an M4A, or a WAV).
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -16,10 +17,11 @@ use crate::local::{self, Media, Picture};
 use crate::settings::ClipFormat;
 use crate::tools;
 
-/// A stretch of a media file, `start` to `end` seconds into it.
+/// A stretch of a media file, `start` to `end` seconds into it; with no
+/// file, a hole as long, black and silent.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Piece {
-    pub source: PathBuf,
+    pub source: Option<PathBuf>,
     pub start: f64,
     pub end: f64,
 }
@@ -41,13 +43,15 @@ const READ_BEFORE: f64 = 1.0;
 /// puts a frame that starts there before it (as in `clips::cut`).
 const EARLY: f64 = 0.0005;
 
-/// ffmpeg's filtergraph for `pieces`, each `(input, start, end)`, of inputs
-/// holding `inputs`, at `picture` (None: sound alone). Its outputs are [v]
-/// (with a picture) and [a].
-pub fn graph(pieces: &[(usize, f64, f64)], inputs: &[Media], picture: Option<Picture>) -> String {
+/// ffmpeg's filtergraph for `pieces`, each `(input, start, end)` (no input:
+/// a hole), of inputs holding `inputs`, at `picture` (None: sound alone).
+/// Its outputs are [v] (with a picture) and [a].
+pub fn graph(pieces: &[(Option<usize>, f64, f64)], inputs: &[Media], picture: Option<Picture>) -> String {
+    const HOLE: Media = Media { picture: None, audio: false, duration: None };
     let mut g = String::new();
     for (i, &(input, start, end)) in pieces.iter().enumerate() {
-        let media = inputs[input];
+        let media = input.map_or(HOLE, |n| inputs[n]);
+        let input = input.unwrap_or(0);
         let (from, to) = ((start - EARLY).max(0.0), end - EARLY);
         let length = end - start;
         if let Some(p) = picture {
@@ -122,21 +126,25 @@ fn encode_pieces(
     // read from a little before it, so a piece hours into a file starts at once.
     let mut read: Vec<(&Path, Media)> = Vec::new();
     let mut inputs = Vec::new();
-    let mut seeks = Vec::new();
+    let mut files = Vec::new();
     let mut at = Vec::new();
-    for (i, p) in pieces.iter().enumerate() {
-        let media = match read.iter().find(|(s, _)| *s == p.source) {
+    for p in pieces {
+        let Some(source) = &p.source else {
+            at.push((None, 0.0, p.end - p.start));
+            continue;
+        };
+        let media = match read.iter().find(|(s, _)| *s == source) {
             Some((_, m)) => *m,
             None => {
-                let m = local::media(ffmpeg, &p.source).with_context(|| format!("read {}", tools::shown(&p.source)))?;
-                read.push((&p.source, m));
+                let m = local::media(ffmpeg, source).with_context(|| format!("read {}", tools::shown(source)))?;
+                read.push((source, m));
                 m
             }
         };
         let seek = (p.start - READ_BEFORE).max(0.0);
+        at.push((Some(inputs.len()), p.start - seek, p.end - seek));
         inputs.push(media);
-        seeks.push(seek);
-        at.push((i, p.start - seek, p.end - seek));
+        files.push((source, seek));
     }
     let picture = picture_of(&inputs, given);
     let length: f64 = pieces.iter().map(|p| p.end - p.start).sum();
@@ -158,9 +166,9 @@ fn encode_pieces(
     // input only, and a second piece's file would otherwise be read with
     // any format and decoder ffmpeg has.
     let decoders = format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE);
-    for (p, seek) in pieces.iter().zip(&seeks) {
-        tools::ffmpeg_allow_for(&mut cmd, &decoders, &p.source);
-        cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(&p.source);
+    for (source, seek) in files {
+        tools::ffmpeg_allow_for(&mut cmd, &decoders, source);
+        cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(source);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
     if picture.is_some() {
@@ -187,13 +195,18 @@ mod tests {
     fn the_graph_trims_fits_and_joins_each_piece() {
         let p = picture_of(&[VIDEO, SILENT], None);
         assert_eq!(p, Some(Picture { width: 1920, height: 1080, fps: 30.0 }), "the first one's");
-        let g = graph(&[(0, 1.0, 2.5), (1, 0.0, 1.0), (2, 3.0, 4.0)], &[VIDEO, SILENT, SOUND], p);
+        let g = graph(
+            &[(Some(0), 1.0, 2.5), (Some(1), 0.0, 1.0), (Some(2), 3.0, 4.0), (None, 0.0, 2.0)],
+            &[VIDEO, SILENT, SOUND],
+            p,
+        );
         assert!(g.starts_with("[0:v:0]trim=start=0.999500:end=2.499500,setpts=PTS-STARTPTS,scale=1920:1080:"));
         assert!(!g.contains("[1:a:0]"), "no sound to take from the silent one");
         assert!(g.contains("anullsrc=r=48000:cl=stereo,atrim=duration=1.000000"));
         assert!(g.contains("color=c=black:s=1920x1080:r=30:d=1.000000"), "a picture for sound alone");
-        assert!(g.ends_with("[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"));
-        let sound = graph(&[(0, 0.0, 1.0)], &[SOUND], None);
+        assert!(g.contains("color=c=black:s=1920x1080:r=30:d=2.000000,format=yuv420p[v3];anullsrc"), "a hole");
+        assert!(g.ends_with("[v0][a0][v1][a1][v2][a2][v3][a3]concat=n=4:v=1:a=1[v][a]"));
+        let sound = graph(&[(Some(0), 0.0, 1.0)], &[SOUND], None);
         assert_eq!(
             sound,
             "[0:a:0]atrim=start=0.000000:end=0.999500,asetpts=PTS-STARTPTS,aresample=48000,\
@@ -230,13 +243,18 @@ mod tests {
         );
         // A second piece in a format the app doesn't read is refused, as a first would be.
         let nut = make("c.nut", &["-f", "lavfi", "-i", "testsrc2=size=64x64:rate=25:duration=1", "-an"]);
-        let refused = [Piece { source: a.clone(), start: 0.0, end: 1.0 }, Piece { source: nut, start: 0.0, end: 0.5 }];
+        let refused = [
+            Piece { source: Some(a.clone()), start: 0.0, end: 1.0 },
+            Piece { source: Some(nut), start: 0.0, end: 0.5 },
+        ];
         let bad = dir.join("out").join("bad.mp4");
         assert!(render(&ffmpeg, &refused, None, ClipFormat::Mp4, &bad, &AtomicBool::new(false), |_| {}).is_err());
         let pieces = [
-            Piece { source: a.clone(), start: 1.0, end: 2.5 },
-            Piece { source: b, start: 0.0, end: 2.0 },
-            Piece { source: a, start: 4.0, end: 5.0 },
+            Piece { source: Some(a.clone()), start: 1.0, end: 2.5 },
+            Piece { source: Some(b), start: 0.0, end: 2.0 },
+            // A hole: black and silent.
+            Piece { source: None, start: 0.0, end: 0.5 },
+            Piece { source: Some(a), start: 4.0, end: 5.0 },
         ];
         let out = dir.join("out").join("edit.mp4");
         let mut seen = Vec::new();
@@ -254,14 +272,14 @@ mod tests {
         let seconds = |kind: &str| -> f64 {
             streams.lines().find(|l| l.starts_with(kind)).unwrap().rsplit(',').next().unwrap().parse().unwrap()
         };
-        assert!((seconds("video") - 4.5).abs() < 0.05, "{streams}");
-        assert!((seconds("audio") - 4.5).abs() < 0.06, "{streams}");
+        assert!((seconds("video") - 5.0).abs() < 0.05, "{streams}");
+        assert!((seconds("audio") - 5.0).abs() < 0.06, "{streams}");
         assert!(!dir.join("out").join(".edit.mp4.part").exists());
 
         // Sound alone, asked for as a video file: named for what it holds.
         let tone = make("tone.m4a", &["-f", "lavfi", "-i", "sine=duration=2"]);
         let asked = dir.join("out").join("sound.mov");
-        let pieces = [Piece { source: tone, start: 0.0, end: 1.0 }];
+        let pieces = [Piece { source: Some(tone), start: 0.0, end: 1.0 }];
         let made = render(&ffmpeg, &pieces, None, ClipFormat::Mov, &asked, &AtomicBool::new(false), |_| {}).unwrap();
         assert_eq!(made, dir.join("out").join("sound.wav"));
         assert!(made.is_file() && !asked.exists());

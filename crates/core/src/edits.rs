@@ -111,6 +111,10 @@ pub struct EditPiece {
     pub title: String,
     pub struck: Vec<(f64, f64)>,
     pub vod_title: String,
+    /// Its footage is gone for good (its file was deleted outside the app,
+    /// say): it plays and renders as black and silence. Said by the app,
+    /// which looks for the files (`footage::lost`).
+    pub hole: bool,
 }
 
 impl EditPiece {
@@ -144,15 +148,20 @@ pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
 }
 
 /// What to render for `pieces`: each one's spans, from the footage `find`
-/// gives for its stretch of its VOD. Fails if some footage isn't here yet.
+/// gives for its stretch of its VOD, or a hole's black and silence. Fails if
+/// some footage isn't here yet.
 pub fn render_pieces(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>) -> Result<Vec<Piece>> {
     let mut out = Vec::new();
     for p in pieces {
         for (a, b) in p.spans() {
+            if p.hole {
+                out.push(Piece { source: None, start: a, end: b });
+                continue;
+            }
             let Some(source) = find(p.vod_id, a, b) else {
                 bail!("The footage of “{}” isn't here yet.", p.title);
             };
-            out.push(Piece { source: source.path, start: a - source.offset, end: b - source.offset });
+            out.push(Piece { source: Some(source.path), start: a - source.offset, end: b - source.offset });
         }
     }
     if out.is_empty() {
@@ -424,6 +433,7 @@ impl Db {
                 title: row.title,
                 struck: row.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect(),
                 vod_title: vod_title.unwrap_or_default(),
+                hole: false,
             });
         }
         Ok(out)
@@ -967,8 +977,8 @@ pub(crate) mod tests {
         assert_eq!(
             pieces,
             [
-                Piece { source: "/f/x.mp4".into(), start: 5.0, end: 7.0 },
-                Piece { source: "/f/x.mp4".into(), start: 8.0, end: 15.0 },
+                Piece { source: Some("/f/x.mp4".into()), start: 5.0, end: 7.0 },
+                Piece { source: Some("/f/x.mp4".into()), start: 8.0, end: 15.0 },
             ]
         );
     }

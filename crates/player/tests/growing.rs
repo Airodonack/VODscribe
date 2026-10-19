@@ -31,6 +31,7 @@ fn plan(path: &Path) -> Timeline {
         title: String::new(),
         struck: Vec::new(),
         vod_title: String::new(),
+        hole: false,
     };
     let until = mkv::written(path).map_or(0.0, |w| (w - 1.0).max(0.0));
     let source = Source { path: path.to_path_buf(), offset: 0.0, section: None };

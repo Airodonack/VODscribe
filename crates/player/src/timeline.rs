@@ -134,6 +134,7 @@ mod tests {
             title: String::new(),
             struck: struck.to_vec(),
             vod_title: String::new(),
+            hole: false,
         }
     }
 

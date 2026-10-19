@@ -216,6 +216,8 @@ export interface EditPiece {
   title: string;
   struck: [number, number][];
   vod_title: string;
+  /** Its video is gone for good (deleted outside VODscribe): it plays and renders as black and silence. */
+  hole: boolean;
 }
 
 /** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its

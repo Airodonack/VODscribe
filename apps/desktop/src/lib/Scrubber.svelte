@@ -52,6 +52,8 @@
     range?: { start: number; end: number; max: number | null };
     /** Lit up: its VOD's source link is hovered. */
     lit?: boolean;
+    /** Its video is gone for good: it plays as black and silence. */
+    hole?: boolean;
   }
   import { theme } from "./theme.svelte";
   import { nav } from "./nav.svelte";
@@ -606,6 +608,7 @@
             class:lifted={!!moving}
             class:sizing={!!sizing}
             class:lit={piece.lit}
+            class:hole={piece.hole}
             data-piece={piece.id}
             style:left={pct(Math.max(from, viewStart))}
             style:width={widthPct(Math.max(from, viewStart), Math.min(to, viewStart + span))}
@@ -614,7 +617,9 @@
               : aside(piece.id)
                 ? `translateX(${aside(piece.id)}px)`
                 : null}
-            title="{piece.label} · drag to move it (pull it off the timeline to carry it out), drag an edge to resize it"
+            title="{piece.label}{piece.hole
+              ? ' · its video was deleted: it plays as black and silence'
+              : ''} · drag to move it (pull it off the timeline to carry it out), drag an edge to resize it"
           >
             {#if piece.range}
               <span class="grip start" data-grip="start"></span>
@@ -869,6 +874,15 @@
     box-shadow:
       inset 2px 0 0 var(--cut),
       inset 0 0 0 1px var(--accent);
+  }
+
+  /* Its video deleted: plays as black and silence. */
+  .piece.hole {
+    background: repeating-linear-gradient(
+      -45deg,
+      transparent 0 4px,
+      color-mix(in srgb, var(--cut) 30%, transparent) 4px 8px
+    );
   }
 
   .piece.lifted {

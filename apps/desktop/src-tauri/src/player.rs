@@ -116,7 +116,7 @@ pub(crate) async fn player_open_edit(app: AppHandle, id: i64, at: f64, play: boo
 fn edit_timeline(app: &AppHandle, id: i64) -> anyhow::Result<(Timeline, Vec<PlannedStretch>)> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
-    let pieces = db.edit_pieces(id)?;
+    let pieces = crate::edits::pieces(app, &db, id)?;
     let timeline = Timeline::of(&pieces, |vod, a, b| crate::footage::reach(app, &db, vod, a, b));
     let missing = crate::edits::missing(app, &db, &pieces);
     drop(db);

@@ -370,7 +370,16 @@
       const loading = wanted > 0 ? waits.reduce((sum, w) => sum + w.done, 0) / wanted : undefined;
       const range = { start: piece.start, end: piece.end, max: vods.get(piece.vod_id)?.duration ?? null };
       const lit = hoveredSource === piece.vod_id;
-      out.push({ id: piece.id, start: at, end: at + length, label: piece.title, loading, range, lit });
+      out.push({
+        id: piece.id,
+        start: at,
+        end: at + length,
+        label: piece.title,
+        loading,
+        range,
+        lit,
+        hole: piece.hole,
+      });
       at += length;
     }
     return out;
@@ -383,6 +392,8 @@
     const out: { start: number; end: number; done: number; pieceId: number }[] = [];
     for (const seg of planned) {
       if (seg.footage || seg.piece_id === null) continue;
+      // A hole has nothing to wait for.
+      if (pieces.find((p) => p.id === seg.piece_id)?.hole) continue;
       // The stretch it's of, and so where it is in the VOD.
       const s = segments.find((x) => x.piece.id === seg.piece_id && x.at <= seg.at + 1e-6 && seg.at < x.at + x.length);
       const vodFrom = s ? s.vodFrom + (seg.at - s.at) : 0;
@@ -751,6 +762,8 @@
       <p class="piece-head muted">
         <span class="num">{n + 1}</span>
         {piece.title} · {piece.vod_title}
+        {#if piece.hole}<span class="hole-note">· its video was deleted: this piece plays as black and silence</span
+          >{/if}
       </p>
       {#each linesIn(piece) as line (line.start)}
         {@const struck = isStruck(piece, line)}
@@ -997,6 +1010,10 @@
     gap: 8px;
     margin: 14px 0 4px;
     font-size: 12px;
+  }
+
+  .hole-note {
+    color: var(--cut);
   }
 
   .num {

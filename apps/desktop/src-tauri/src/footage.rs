@@ -68,6 +68,18 @@ fn dir(app: &AppHandle) -> PathBuf {
     app.state::<AppState>().paths.local.join("footage")
 }
 
+/// Whether VOD `vod_id`'s footage is gone for good: it's a file on this
+/// computer that isn't where it was (deleted or moved outside the app). Only
+/// where its folder is still there: a drive that's away (unmounted,
+/// unplugged) loses nothing.
+pub(crate) fn lost(db: &Db, vod_id: i64) -> bool {
+    let source = db.vod(vod_id).ok().flatten().and_then(|v| v.source_path);
+    source.is_some_and(|path| {
+        let path = std::path::Path::new(&path);
+        !path.exists() && path.parent().is_some_and(std::path::Path::is_dir)
+    })
+}
+
 /// The footage of `start`..`end` of VOD `vod_id`, if it's here (or in already
 /// of the section downloading).
 pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) -> Option<Source> {

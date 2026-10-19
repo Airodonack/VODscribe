@@ -40,11 +40,25 @@ fn edits_dir(app: &AppHandle) -> PathBuf {
     crate::clips::clips_dir(app).join("Edits")
 }
 
+/// Edit `id`'s pieces, each a hole if its footage is gone for good: its VOD
+/// is a file on this computer that isn't where it was (`footage::lost`), and
+/// no footage kept here covers the piece.
+pub(crate) fn pieces(app: &AppHandle, db: &Db, id: i64) -> Result<Vec<EditPiece>> {
+    let mut pieces = db.edit_pieces(id)?;
+    for p in &mut pieces {
+        p.hole = crate::footage::lost(db, p.vod_id)
+            && p.spans().iter().any(|&(a, b)| crate::footage::find(app, db, p.vod_id, a, b).is_none());
+    }
+    Ok(pieces)
+}
+
 /// The stretches (VOD, start, end) of `pieces` whose footage isn't here: of
-/// each piece some of whose spans have none, all of it.
+/// each piece some of whose spans have none, all of it. Not holes': theirs
+/// can't be had.
 pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i64, f64, f64)> {
     pieces
         .iter()
+        .filter(|p| !p.hole)
         .filter(|p| p.spans().iter().any(|&(a, b)| crate::footage::find(app, db, p.vod_id, a, b).is_none()))
         .map(|p| (p.vod_id, p.start, p.end))
         .collect()
@@ -60,7 +74,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             let db = state.db.lock().unwrap();
             db.set_edit_render(id, ClipStatus::Cutting, None, None, None)?;
             emit(app, &db, id);
-            missing(app, &db, &db.edit_pieces(id)?)
+            missing(app, &db, &pieces(app, &db, id)?)
         };
         for (vod_id, start, end) in missing {
             crate::footage::ensure(app, vod_id, start, end, stop, &|_| {})?;
@@ -68,7 +82,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let db = state.db.lock().unwrap();
         let edit = db.edit(id)?.context("That edit is gone.")?;
         let version = db.revision(id)?;
-        let edit_pieces = db.edit_pieces(id)?;
+        let edit_pieces = pieces(app, &db, id)?;
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
@@ -141,7 +155,7 @@ pub(crate) struct EditView {
 
 fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
     let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
-    let pieces = db.edit_pieces(id).map_err(err)?;
+    let pieces = pieces(app, db, id).map_err(err)?;
     let _ = app.emit("edit", edit.clone());
     Ok(EditView { edit, pieces })
 }
@@ -371,7 +385,7 @@ pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc:
         let state = app.state::<AppState>();
         let (source, thumb) = {
             let db = state.db.lock().unwrap();
-            let pieces = db.edit_pieces(id).ok().unwrap_or_default();
+            let pieces = pieces(&app, &db, id).ok().unwrap_or_default();
             let Some((p, (a, b))) = pieces.iter().find_map(|p| Some((p, *p.spans().first()?))) else {
                 return Vec::new();
             };
