@@ -51,6 +51,8 @@ jobs:
           RUN: ${{ inputs.build_run }}
         run: |
           set -euo pipefail
+          # A run id is a number; anything else could reach another API path.
+          [[ "$RUN" =~ ^[0-9]+$ ]] || { echo "build_run must be a run's number, not '$RUN'"; exit 1; }
           read -r path repo event branch < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN" \
             --jq '[.path, .head_repository.full_name, .event, .head_branch] | @tsv')
           echo "run $RUN: $path from $repo ($event, $branch)"
