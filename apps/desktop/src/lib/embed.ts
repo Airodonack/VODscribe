@@ -130,9 +130,7 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       // State 1 is "playing", 3 is "buffering" (moving soon, not yet).
       const state = data.info?.playerState;
       const moving = typeof state === "number" ? state === 1 : undefined;
-      if (typeof data.info?.currentTime === "number") clock.heardAt(data.info.currentTime, moving);
-      else if (moving !== undefined) clock.heardMoving(moving);
-      if (typeof state === "number") clock.playing = [1, 3].includes(state);
+      heard(clock, data.info?.currentTime, moving, typeof state === "number" ? [1, 3].includes(state) : undefined);
       if (typeof data.info?.volume === "number") sound.volume = data.info.volume / 100;
       if (typeof data.info?.muted === "boolean") sound.muted = data.info.muted;
       if (typeof data.info?.playbackRate === "number") {
@@ -142,19 +140,11 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       return data.event === "onReady" || data.event === "initialDelivery";
     },
     (cleanup) => ({
-      seek(seconds, play) {
-        command("seekTo", [seconds, true]);
-        if (play) command("playVideo");
-        clock.asked(seconds, play);
-      },
-      time: () => clock.now(),
-      shown: () => clock.shown(),
-      playing: () => clock.playing,
-      togglePlay() {
-        command(clock.playing ? "pauseVideo" : "playVideo");
-        clock.set(clock.now());
-        clock.playing = !clock.playing;
-      },
+      ...clocked(clock, {
+        seek: (seconds) => command("seekTo", [seconds, true]),
+        play: () => command("playVideo"),
+        pause: () => command("pauseVideo"),
+      }),
       volume: {
         get: () => sound.volume,
         muted: () => sound.muted,
@@ -184,6 +174,35 @@ function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): Promis
       return () => clearInterval(timer);
     },
   );
+}
+
+/** What a site's player reported, told to its clock: where it is (if it
+ *  said), whether it's moving, and whether it's playing (buffering counts). */
+function heard(clock: Clock, at: unknown, moving: boolean | undefined, playing: boolean | undefined) {
+  if (typeof at === "number") clock.heardAt(at, moving);
+  else if (moving !== undefined) clock.heardMoving(moving);
+  if (playing !== undefined) clock.playing = playing;
+}
+
+/** What a site's player answers from its clock, given how to tell it to
+ *  seek, play and pause (it says where it is only now and then). */
+function clocked(clock: Clock, tell: { seek(seconds: number): void; play(): void; pause(): void }) {
+  return {
+    seek(seconds: number, play: boolean) {
+      tell.seek(seconds);
+      if (play) tell.play();
+      clock.asked(seconds, play);
+    },
+    time: () => clock.now(),
+    shown: () => clock.shown(),
+    playing: () => clock.playing,
+    togglePlay() {
+      if (clock.playing) tell.pause();
+      else tell.play();
+      clock.set(clock.now());
+      clock.playing = !clock.playing;
+    },
+  };
 }
 
 const TWITCH = "https://player.twitch.tv";
@@ -226,27 +245,22 @@ function twitch(
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
         const moving = playback ? playback === "Playing" : undefined;
-        if (typeof data.params?.currentTime === "number") clock.heardAt(data.params.currentTime, moving);
-        else if (moving !== undefined) clock.heardMoving(moving);
-        if (playback) clock.playing = ["Playing", "Buffering"].includes(playback);
+        heard(
+          clock,
+          data.params?.currentTime,
+          moving,
+          playback ? ["Playing", "Buffering"].includes(playback) : undefined,
+        );
         return true;
       }
       return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
     },
     (cleanup) => ({
-      seek(seconds, play) {
-        command(TWITCH_SEEK, seconds);
-        if (play) command(TWITCH_PLAY);
-        clock.asked(seconds, play);
-      },
-      time: () => clock.now(),
-      shown: () => clock.shown(),
-      playing: () => clock.playing,
-      togglePlay() {
-        command(clock.playing ? TWITCH_PAUSE : TWITCH_PLAY);
-        clock.set(clock.now());
-        clock.playing = !clock.playing;
-      },
+      ...clocked(clock, {
+        seek: (seconds) => command(TWITCH_SEEK, seconds),
+        play: () => command(TWITCH_PLAY),
+        pause: () => command(TWITCH_PAUSE),
+      }),
       ownControls: true,
       destroy: cleanup,
     }),
