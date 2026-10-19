@@ -33,6 +33,8 @@ export class EditPlayer implements EditPlayback {
   private editId: number | null = null;
   private openingEdit: Promise<unknown> | null = null;
   private gone = false;
+  /** Plans asked for, so an older one's answer (the player skips it) doesn't set the length. */
+  private plans = 0;
 
   constructor(
     host: HTMLElement,
@@ -62,8 +64,9 @@ export class EditPlayer implements EditPlayback {
     await this.openingEdit;
     // It didn't open (said by `onerror`): nothing to plan, till it's tried again.
     if (this.editId !== id) return [];
+    const mine = ++this.plans;
     const stretches = await api.playerPlan(id);
-    this.driver.length = stretches.reduce((end, s) => Math.max(end, s.at + s.length), 0);
+    if (mine === this.plans) this.driver.length = stretches.reduce((end, s) => Math.max(end, s.at + s.length), 0);
     return stretches;
   }
 
