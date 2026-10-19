@@ -6,6 +6,7 @@
 // hint and the frame a dragged edge is on (EditView.svelte's styles).
 
 import { api } from "./api";
+import { wrapWith } from "./textWrap";
 
 /** A canvas and the box in the player's box (CSS pixels) it's shown in. */
 export interface Drawn {
@@ -49,19 +50,23 @@ function fontOf(size: number) {
   return `${size}px ${getComputedStyle(document.body).fontFamily}`;
 }
 
-/** `text`'s words onto lines no wider than `most`, in `font`. */
+/** `text`'s words onto lines no wider than `most`, in `font` (textWrap.ts). */
 function wrap(text: string, font: string, most: number): { lines: string[]; widths: number[] } {
   const measure = document.createElement("canvas").getContext("2d");
   if (!measure) return { lines: [], widths: [] };
   measure.font = font;
-  const lines: string[] = [];
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    const last = lines.at(-1);
-    if (last !== undefined && measure.measureText(`${last} ${word}`).width <= most)
-      lines[lines.length - 1] = `${last} ${word}`;
-    else lines.push(word);
-  }
-  return { lines, widths: lines.map((l) => measure.measureText(l).width) };
+  const width = (s: string) => measure.measureText(s).width;
+  const lines = wrapWith(text, most, width);
+  return { lines, widths: lines.map(width) };
+}
+
+/** `canvas` (from `canvasOf`) placed at `x`, `y` CSS pixels in the box, on
+ *  whole device pixels as it was drawn: at a fractional scale (125%) a box
+ *  between them would be resampled by the screen, and blur. */
+function placed(canvas: HTMLCanvasElement, x: number, y: number): Drawn {
+  const dpr = window.devicePixelRatio || 1;
+  const snap = (v: number) => Math.round(v * dpr) / dpr;
+  return { rect: { x: snap(x), y: snap(y), width: canvas.width / dpr, height: canvas.height / dpr }, canvas };
 }
 
 /** The caption `text` for a player box `width` by `height`: white on a
@@ -92,7 +97,7 @@ export function caption(text: string, width: number, height: number, fullscreen:
     });
   });
   if (!canvas) return null;
-  return { rect: { x: (width - w) / 2, y: height - bottom - h, width: w, height: h }, canvas };
+  return placed(canvas, (width - w) / 2, height - bottom - h);
 }
 
 /** A note `text` across the bottom of a player box `width` by `height`
@@ -116,7 +121,7 @@ export function hint(text: string, width: number, height: number): Drawn | null 
     lines.forEach((line, i) => ctx.fillText(line, w / 2, padY + (i + 0.5) * lineHeight));
   });
   if (!canvas) return null;
-  return { rect: { x: inset, y: height - inset - h, width: w, height: h }, canvas };
+  return placed(canvas, inset, height - inset - h);
 }
 
 /** The whole player box `width` by `height`: `picture` (if any) fitted on
@@ -141,8 +146,7 @@ export function framed(picture: HTMLImageElement | null, label: string, width: n
     ctx.fillText(label, width / 2, 24, lw - 20);
   });
   if (!canvas) return null;
-  const dpr = window.devicePixelRatio || 1;
-  return { rect: { x: 0, y: 0, width: canvas.width / dpr, height: canvas.height / dpr }, canvas };
+  return placed(canvas, 0, 0);
 }
 
 /** Shows `drawn` over the screen's picture (none: nothing). */
