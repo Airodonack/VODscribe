@@ -996,18 +996,20 @@
 
   /* Windows has none (its w-resize and e-resize are two-way arrows), so
      they're drawn: an arrow from inside the piece pointing at its edge, |<-
-     and ->|, white with a black outline like Windows' own pointer. */
+     and ->|, white with a black outline like Windows' own pointer, and its
+     size: at the top of a 32 px box, about 11 px tall, the hotspot on the
+     bar's middle (Windows' IDC_SIZEWE: 23 x 9 at the top, hotspot 11,4). */
   .lane.windows .grip.start {
     cursor:
-      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='black'%20stroke-width='4'%3E%3Cpath%20d='M4%205V19'/%3E%3Cpath%20d='M20%2012H7'/%3E%3Cpath%20d='M10%209L7%2012L10%2015'/%3E%3C/g%3E%3Cg%20stroke='white'%20stroke-width='2'%3E%3Cpath%20d='M4%205V19'/%3E%3Cpath%20d='M20%2012H7'/%3E%3Cpath%20d='M10%209L7%2012L10%2015'/%3E%3C/g%3E%3C/svg%3E")
-        4 12,
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%3E%3Cg%20stroke='black'%20stroke-width='4'%20stroke-linecap='square'%3E%3Cpath%20d='M3%202V8'/%3E%3Cpath%20d='M10%205H18'/%3E%3C/g%3E%3Cpath%20d='M5.5%205L10.5%200.5V9.5Z'%20fill='white'%20stroke='black'/%3E%3Cg%20stroke='white'%20stroke-width='2'%20stroke-linecap='square'%3E%3Cpath%20d='M3%202V8'/%3E%3Cpath%20d='M10%205H18'/%3E%3C/g%3E%3C/svg%3E")
+        3 5,
       w-resize;
   }
 
   .lane.windows .grip.end {
     cursor:
-      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20fill='none'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20stroke='black'%20stroke-width='4'%3E%3Cpath%20d='M20%205V19'/%3E%3Cpath%20d='M4%2012H17'/%3E%3Cpath%20d='M14%209L17%2012L14%2015'/%3E%3C/g%3E%3Cg%20stroke='white'%20stroke-width='2'%3E%3Cpath%20d='M20%205V19'/%3E%3Cpath%20d='M4%2012H17'/%3E%3Cpath%20d='M14%209L17%2012L14%2015'/%3E%3C/g%3E%3C/svg%3E")
-        20 12,
+      url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='32'%20height='32'%3E%3Cg%20stroke='black'%20stroke-width='4'%20stroke-linecap='square'%3E%3Cpath%20d='M19%202V8'/%3E%3Cpath%20d='M4%205H12'/%3E%3C/g%3E%3Cpath%20d='M16.5%205L11.5%200.5V9.5Z'%20fill='white'%20stroke='black'/%3E%3Cg%20stroke='white'%20stroke-width='2'%20stroke-linecap='square'%3E%3Cpath%20d='M19%202V8'/%3E%3Cpath%20d='M4%205H12'/%3E%3C/g%3E%3C/svg%3E")
+        19 5,
       e-resize;
   }
 
