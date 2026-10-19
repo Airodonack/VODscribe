@@ -162,6 +162,51 @@ export default {
       await sleep(1500);
     }
 
+    // The same, let go on the clip bar: the clip made for the drag is the
+    // clip, and stays once the system's drag is over.
+    {
+      const button = await os.rectOf(app, "button.action.clip");
+      const edge = await os.windowRect(app);
+      const [cx, cy] = [button.x + Math.round(button.w / 2), button.y + Math.round(button.h / 2)];
+      await app.js(`performance.clearMarks()`);
+      await os.gesture([
+        ["down", cx, cy],
+        ["move", cx - 20, cy],
+        ["move", cx - 60, cy],
+        ["wait", 1500],
+        ["move", edge.x, cy],
+      ]);
+      await until(
+        "the system's drag",
+        () => app.js(`return performance.getEntriesByName("drag-start").length > 0`),
+        30_000,
+      );
+      await os.gesture([
+        ["move", edge.x + 40, cy],
+        ["wait", 200],
+        ["move", edge.x + 60, cy],
+      ]);
+      await until(
+        "the clip bar while it's over the window",
+        () => app.js(`return !!document.querySelector(".clip-bar")`),
+        10_000,
+      );
+      const bar = await os.rectOf(app, ".clip-bar");
+      const [tx, ty] = [bar.x + Math.round(bar.w / 2), bar.y + Math.round(bar.h / 2)];
+      await os.gesture([
+        ["move", tx, ty],
+        ["wait", 500],
+        ["letgo", tx + 2, ty],
+      ]);
+      const shownAt = async () =>
+        (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => c.shown && Math.abs(c.start - 1) < 0.05);
+      await until("the clip in the clip bar", async () => (await shownAt()).length === 1, 15_000);
+      await sleep(3000);
+      if ((await shownAt()).length !== 1)
+        throw new Error("the clip dropped back on the clip bar went once the drag was over");
+      ctx.log("a clip dragged out and brought back onto the clip bar is in it, and stays");
+    }
+
     // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
     // edge and let go there at once.
     const folder = path.dirname(ready);

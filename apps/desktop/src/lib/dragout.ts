@@ -56,8 +56,9 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   const over = () => {
     clearTimeout(limit);
     stop?.();
-    // Made only for this: forgotten (the file stays, if it was handed out).
-    if (!clip.shown) api.deleteClip(clip.id).catch(() => {});
+    // Made only for this: forgotten (the file stays, if it was handed out);
+    // unless it was brought back and dropped on the clip bar, which keeps it.
+    if (!clip.shown && !back?.kept) api.deleteClip(clip.id).catch(() => {});
     back = null;
     backLeft();
     setTimeout(() => mine === drags && (out = false), 1000);
@@ -200,7 +201,7 @@ function dropAt(px: number, py: number, stretch: Stretch, clip: () => unknown): 
 
 /** The stretch whose clip is being dragged out as a file, while it is: brought
  *  back over the window, it can still go where a carry inside could. */
-let back: { stretch: Stretch; clip: () => unknown } | null = null;
+let back: { stretch: Stretch; clip: () => unknown; kept?: boolean } | null = null;
 
 /** The system's drag of a clip out came back over the window, at (`x`, `y`)
  *  in its CSS pixels: what's under it lights up. */
@@ -223,7 +224,12 @@ export function backLeft() {
 /** It was dropped on the window, at (`x`, `y`): put where it was dropped. */
 export function backDropped(x: number, y: number) {
   backLeft();
-  if (back) dropAt(x, y, back.stretch, back.clip);
+  const b = back;
+  if (b)
+    dropAt(x, y, b.stretch, () => {
+      b.kept = true;
+      return b.clip();
+    });
 }
 
 export interface Carry {
