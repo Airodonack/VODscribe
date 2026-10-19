@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the app's Info.plist by Tauri. -->
+<plist version="1.0">
+<dict>
+	<!-- What macOS (15 and later) says when it asks about the local network:
+	     it can ask once a site's player in VODscribe (YouTube, Twitch) looks
+	     for devices to play on. VODscribe itself only listens on this computer. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>A site's video player in VODscribe may look for devices to play on, such as a TV. VODscribe works the same if you don't allow it.</string>
+</dict>
+</plist>

@@ -140,7 +140,8 @@ jobs:
 
       # No one has a Mac to try the app on, so check what can be checked here:
       # the bundle's signature covers everything in it, it asks for macOS 12,
-      # and both programs in it start on this chip.
+      # says why it may ask about the local network, and both programs in it
+      # start on this chip.
       - name: Check the macOS app
         if: runner.os == 'macOS'
         shell: bash
@@ -149,6 +150,8 @@ jobs:
           app=$(ls -d target/${{ matrix.target }}/release/bundle/macos/*.app)
           codesign --verify --deep --strict --verbose=2 "$app"
           test "$(plutil -extract LSMinimumSystemVersion raw "$app/Contents/Info.plist")" = 12.0
+          # src-tauri/Info.plist merged in: what the local network prompt says.
+          plutil -extract NSLocalNetworkUsageDescription raw "$app/Contents/Info.plist"
           # Ad-hoc signed: Gatekeeper rejects it (users approve it once); shown for the log.
           spctl --assess --verbose=4 "$app" || true
           # Without arguments the worker exits asking for them: it loaded and ran.
