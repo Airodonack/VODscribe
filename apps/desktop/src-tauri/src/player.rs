@@ -23,6 +23,10 @@ pub(crate) struct Native {
     /// Counted up at every open and close, so an open that takes a while
     /// (the file is probed first) finds out the page has moved on since.
     asked: AtomicU64,
+    /// Counted up at every plan asked for, and the newest one applied: plans
+    /// are made off the main thread, so an older one can be done last.
+    plans: AtomicU64,
+    planned: Mutex<u64>,
 }
 
 struct Open {
@@ -141,11 +145,16 @@ pub(crate) struct PlannedStretch {
 #[tauri::command]
 pub(crate) async fn player_plan(app: AppHandle, id: i64) -> CmdResult<Vec<PlannedStretch>> {
     let handle = app.clone();
+    let plan = app.state::<AppState>().player.plans.fetch_add(1, Ordering::AcqRel) + 1;
     let (timeline, stretches) =
         tauri::async_runtime::spawn_blocking(move || edit_timeline(&handle, id)).await.map_err(err)?.map_err(err)?;
     let state = app.state::<AppState>();
-    if let Some(o) = state.player.open.lock().unwrap().as_ref().filter(|o| o.doc == Doc::Edit(id)) {
-        o.player.set_timeline(timeline);
+    let mut planned = state.player.planned.lock().unwrap();
+    if plan > *planned {
+        *planned = plan;
+        if let Some(o) = state.player.open.lock().unwrap().as_ref().filter(|o| o.doc == Doc::Edit(id)) {
+            o.player.set_timeline(timeline);
+        }
     }
     Ok(stretches)
 }
