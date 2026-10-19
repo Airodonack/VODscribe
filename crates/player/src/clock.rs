@@ -493,12 +493,7 @@ fn run(inner: &Inner) {
         let Some(mut walk) = Walk::start(inner) else {
             // Nothing to play (an edit emptied): no frame shows. Then wait
             // for a timeline, or to quit.
-            *inner.shown.lock().unwrap() = None;
-            if inner.frame.lock().unwrap().take().is_some()
-                && let Some(f) = inner.on_frame.lock().unwrap().as_ref()
-            {
-                f(Event::Frame);
-            }
+            show_nothing(inner);
             let s = inner.state.lock().unwrap();
             let _ = inner.wake.wait_timeout(s, Duration::from_millis(100));
             continue;
@@ -554,40 +549,14 @@ fn run(inner: &Inner) {
                         .ok()
                         .map(|stream| (coming.clone(), stream));
                 }
-                // Its moment: when the time reaches it; at once if paused and
-                // it's the first (the frame at the time); dropped if late.
-                let mut s = inner.state.lock().unwrap();
-                loop {
-                    if s.epoch != epoch || inner.quit.load(Ordering::Acquire) {
-                        continue 'start;
+                match moment(inner, epoch, time, first) {
+                    Moment::Gone => continue 'start,
+                    Moment::Late => {
+                        inner.dropped.fetch_add(1, Ordering::Relaxed);
                     }
-                    if !s.playing {
-                        if first {
-                            break;
-                        }
-                        s = inner.wake.wait(s).unwrap();
-                        continue;
-                    }
-                    let wait = time - s.time(inner.duration());
-                    if wait <= 0.0 {
-                        break;
-                    }
-                    // The sound's clock isn't signalled, so looked at often.
-                    s = inner.wake.wait_timeout(s, Duration::from_secs_f64(wait.min(0.01))).unwrap().0;
+                    Moment::Now => show(inner, frame, time),
                 }
-                let late = s.playing && s.time(inner.duration()) - time > LATE;
-                drop(s);
                 first = false;
-                if late {
-                    inner.dropped.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-                inner.shown_count.fetch_add(1, Ordering::Relaxed);
-                *inner.frame.lock().unwrap() = Some(frame);
-                *inner.shown.lock().unwrap() = Some(time);
-                if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
-                    f(Event::Frame);
-                }
             }
             drop(stream);
             mark_ready(inner, epoch);
@@ -599,24 +568,85 @@ fn run(inner: &Inner) {
                 break;
             }
         }
-        // The timeline ended: the time stays at its end, paused.
-        let mut s = inner.state.lock().unwrap();
-        if s.epoch == epoch {
-            s.at = inner.duration();
-            s.playing = false;
-            s.sound = None;
-            s.ended = true;
-            drop(s);
-            // The sound thread waits while playing: it lets its output go.
-            inner.wake.notify_all();
-            if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
-                f(Event::Ended);
-            }
-            s = inner.state.lock().unwrap();
-            while s.epoch == epoch && !inner.quit.load(Ordering::Acquire) {
-                s = inner.wake.wait(s).unwrap();
-            }
+        end(inner, epoch);
+    }
+}
+
+/// No frame shows (nothing to play).
+fn show_nothing(inner: &Inner) {
+    *inner.shown.lock().unwrap() = None;
+    if inner.frame.lock().unwrap().take().is_some()
+        && let Some(f) = inner.on_frame.lock().unwrap().as_ref()
+    {
+        f(Event::Frame);
+    }
+}
+
+/// When a frame due at `time` shows (`moment`).
+enum Moment {
+    Now,
+    /// Its moment passed while it decoded: dropped.
+    Late,
+    /// A seek, a new timeline or quitting came first.
+    Gone,
+}
+
+/// Waits for the moment of the frame due at `time` in epoch `epoch`: when
+/// the time reaches it; at once if paused and it's the `first` (the frame at
+/// the time).
+fn moment(inner: &Inner, epoch: u64, time: f64, first: bool) -> Moment {
+    let mut s = inner.state.lock().unwrap();
+    loop {
+        if s.epoch != epoch || inner.quit.load(Ordering::Acquire) {
+            return Moment::Gone;
         }
+        if !s.playing {
+            if first {
+                return Moment::Now;
+            }
+            s = inner.wake.wait(s).unwrap();
+            continue;
+        }
+        let wait = time - s.time(inner.duration());
+        if wait <= 0.0 {
+            break;
+        }
+        // The sound's clock isn't signalled, so looked at often.
+        s = inner.wake.wait_timeout(s, Duration::from_secs_f64(wait.min(0.01))).unwrap().0;
+    }
+    if s.time(inner.duration()) - time > LATE { Moment::Late } else { Moment::Now }
+}
+
+/// Shows `frame`, the one at `time`.
+fn show(inner: &Inner, frame: Arc<Frame>, time: f64) {
+    inner.shown_count.fetch_add(1, Ordering::Relaxed);
+    *inner.frame.lock().unwrap() = Some(frame);
+    *inner.shown.lock().unwrap() = Some(time);
+    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+        f(Event::Frame);
+    }
+}
+
+/// The timeline of epoch `epoch` ended: the time stays at its end, paused,
+/// until a seek, a new timeline or quitting.
+fn end(inner: &Inner, epoch: u64) {
+    let mut s = inner.state.lock().unwrap();
+    if s.epoch != epoch {
+        return;
+    }
+    s.at = inner.duration();
+    s.playing = false;
+    s.sound = None;
+    s.ended = true;
+    drop(s);
+    // The sound thread waits while playing: it lets its output go.
+    inner.wake.notify_all();
+    if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
+        f(Event::Ended);
+    }
+    s = inner.state.lock().unwrap();
+    while s.epoch == epoch && !inner.quit.load(Ordering::Acquire) {
+        s = inner.wake.wait(s).unwrap();
     }
 }
 
@@ -703,25 +733,7 @@ fn run_sound(inner: &Inner) {
                     std::thread::sleep(Duration::from_millis(10));
                     continue;
                 }
-                let chunk = match stream.as_mut().and_then(|s| s.recv()) {
-                    Some(samples) => {
-                        // Cut at the stretch's end: the rest is the next one's.
-                        let time = stretch.time(samples.pts);
-                        let pairs = ((end - time) / pair).round().max(0.0) as usize;
-                        let pairs = pairs.min(samples.pcm.len() / 2);
-                        at = time + pairs as f64 * pair;
-                        samples.pcm[..pairs * 2].to_vec()
-                    }
-                    None => {
-                        // The file ran out, or has no sound: silence to the end.
-                        let pairs = (((end - at) / pair).round().max(0.0) as usize).min(1024);
-                        at += pairs as f64 * pair;
-                        if pairs == 0 {
-                            break;
-                        }
-                        vec![0i16; pairs * 2]
-                    }
-                };
+                let Some(chunk) = next_chunk(stream.as_mut(), &stretch, &mut at, pair) else { break };
                 out.push(&chunk);
                 if next.is_none()
                     && end - at <= PREFETCH
@@ -758,6 +770,32 @@ fn run_sound(inner: &Inner) {
         let mut s = inner.state.lock().unwrap();
         while s.epoch == epoch && s.playing && ours(&s, &out) && !inner.quit.load(Ordering::Acquire) {
             s = inner.wake.wait(s).unwrap();
+        }
+    }
+}
+
+/// The next sound of `stretch` from `at` (moved on past it), `pair` seconds
+/// of the timeline a sample pair: from `stream`, cut at the stretch's end
+/// (the rest is the next one's), or silence where the file ran out or has
+/// no sound; None once the stretch is all queued.
+fn next_chunk(
+    stream: Option<&mut Stream<decode::Samples>>,
+    stretch: &Stretch,
+    at: &mut f64,
+    pair: f64,
+) -> Option<Vec<i16>> {
+    let end = stretch.end();
+    match stream.and_then(|s| s.recv()) {
+        Some(samples) => {
+            let time = stretch.time(samples.pts);
+            let pairs = (((end - time) / pair).round().max(0.0) as usize).min(samples.pcm.len() / 2);
+            *at = time + pairs as f64 * pair;
+            Some(samples.pcm[..pairs * 2].to_vec())
+        }
+        None => {
+            let pairs = (((end - *at) / pair).round().max(0.0) as usize).min(1024);
+            *at += pairs as f64 * pair;
+            (pairs > 0).then(|| vec![0i16; pairs * 2])
         }
     }
 }
