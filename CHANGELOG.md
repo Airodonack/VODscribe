@@ -6,7 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 - More is done from the keyboard: Enter renames the selected chapter or highlight, and Enter or F2 a clip's name; in an edit, Ctrl+← and Ctrl+→ (⌘← and ⌘→ on a Mac) move the piece at the playhead earlier or later.
 - The keyboard button lists every shortcut, Escape, undo and redo among them, and an edit has its own list.
-- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted. A chapter or highlight taken back with Escape left nothing to redo. Removing a VOD while its clips waited to be made could still download them, leaving their files behind. On Windows, a clip deleted while an edit was rendering from it kept its file.
+- Fixes: videos at 23.976, 29.97 or 59.94 frames a second showed one frame twice every few minutes, and stepping frame by frame drifted. A chapter or highlight taken back with Escape left nothing to redo. Removing a VOD while its clips waited to be made could still download them, leaving their files behind. On Windows, a clip deleted while an edit was rendering from it kept its file. Settings and other panels opened over a video playing in VODscribe's own player were hidden behind the picture, as was the timeline's time under the pointer.
 
 ## 0.4.0 — 2026-10-18
 

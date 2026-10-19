@@ -3,6 +3,8 @@
   outside the page, on a native surface over the window (crates/player
   present) that covers the box, so nothing of the page shows over it. The
   box tells the surface where it is whenever that changes. Where there's no surface, the box stays black.
+  While a panel or dialog (or anything marked data-over-screen) overlaps the
+  box, the picture is hidden, so what's open shows.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -13,10 +15,15 @@
   onMount(() => {
     let stopped = false;
     let last = "";
+    const overlaps = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
       if (stopped) return;
       const r = box.getBoundingClientRect();
-      const rect = { x: r.x, y: r.y, width: r.width, height: r.height };
+      const covered = [...document.querySelectorAll("[role=dialog], [data-over-screen]")].some((el) =>
+        overlaps(el.getBoundingClientRect(), r),
+      );
+      const rect = covered ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
       const now = JSON.stringify(rect);
       if (now === last) return;
       last = now;

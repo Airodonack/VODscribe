@@ -1335,9 +1335,11 @@
     pointer-events: none;
   }
 
+  /* Inside the timeline's top edge rather than above it: above, it would
+     rise into the picture's box, where the app's own player draws over it. */
   .tip {
     position: absolute;
-    bottom: calc(100% + 4px);
+    top: 2px;
     transform: translateX(-50%);
     padding: 2px 6px;
     border-radius: var(--radius-sm);

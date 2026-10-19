@@ -3,7 +3,7 @@
 // outside the page, so only a screenshot shows it. With a video whose every
 // second is one flat colour (fixtures colours.mp4), the screen says which
 // frame is up: the frame a seek lands on, a picture that changes while it
-// plays, and one that stands while paused.
+// plays, and one that stands while paused. A panel opened over it shows.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -124,5 +124,42 @@ export default {
     if (os.distance(still, stillLater) > 30)
       throw new Error(`paused, the picture changed from ${still} to ${stillLater}`);
     ctx.log(`paused: stays ${named(still)}`);
+
+    // A panel opened over the picture (Settings) shows there: the picture
+    // draws on a surface over the page, which mustn't cover the panel.
+    await app.click('button[aria-label="Settings"]');
+    const panel = '[role=dialog][aria-label="Settings"]';
+    await until("Settings open", () => app.js(`return !!document.querySelector(arguments[0])`, panel), 10_000);
+    await sleep(500);
+    const [p, v] = [await os.rectOf(app, panel), await os.rectOf(app, picture)];
+    const x = Math.max(p.x, v.x);
+    const y = Math.max(p.y, v.y);
+    const over = { x, y, w: Math.min(p.x + p.w, v.x + v.w) - x, h: Math.min(p.y + p.h, v.y + v.h) - y };
+    if (over.w < 20 || over.h < 20) {
+      ctx.log("Settings doesn't overlap the picture in this window");
+    } else {
+      const background = await app.js(
+        `return getComputedStyle(document.querySelector(arguments[0])).backgroundColor.match(/[0-9.]+/g).slice(0, 3).map(Number)`,
+        panel,
+      );
+      const there = os.colourIn(os.screenshot(), os.middle(over));
+      if (os.distance(there, background) > 40)
+        throw new Error(`where Settings overlaps the picture, the screen shows ${named(there)}, not the panel`);
+      ctx.log("Settings shows over the picture");
+    }
+    await app.key("Escape");
+
+    // The timeline's tip, the pointer over it, stays out of the picture's box
+    // (moving the OS's pointer is Linux-only, so far).
+    if (process.platform === "linux") {
+      const timeline = await os.rectOf(app, ".timeline");
+      os.activate();
+      await os.gesture([["move", timeline.x + Math.round(timeline.w / 2), timeline.y + Math.round(timeline.h / 2)]]);
+      await until("the timeline's tip", () => app.js(`return !!document.querySelector(".timeline .tip")`), 10_000);
+      const [tip, box] = [await os.rectOf(app, ".timeline .tip"), await os.rectOf(app, picture)];
+      if (tip.y < box.y + box.h && tip.y + tip.h > box.y)
+        throw new Error(`the timeline's tip (${JSON.stringify(tip)}) is over the picture (${JSON.stringify(box)})`);
+      ctx.log("the timeline's tip is clear of the picture");
+    }
   },
 };
