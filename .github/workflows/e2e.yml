@@ -39,9 +39,6 @@ jobs:
             target: aarch64-apple-darwin
             models: ~/Library/Application Support/app.vodscribe/models
     runs-on: ${{ matrix.os }}
-    # New on macOS: its failures show, but don't hold up a release, until
-    # its runs are known to pass on a hosted Mac.
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
