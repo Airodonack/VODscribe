@@ -5,38 +5,38 @@
 //! library sets the old one aside, never deleting it.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
 
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-/// Why the library didn't open, if it didn't, and where it is.
+/// Why the library didn't open, if it didn't, and where it is: set as the
+/// app starts, and not changed after.
 pub(crate) struct Problem {
-    error: Mutex<Option<String>>,
+    error: Option<String>,
     db: PathBuf,
 }
 
 impl Problem {
     pub(crate) fn none(db: PathBuf) -> Problem {
-        Problem { error: Mutex::new(None), db }
+        Problem { error: None, db }
     }
 
     pub(crate) fn new(error: String, db: PathBuf) -> Problem {
-        Problem { error: Mutex::new(Some(error)), db }
+        Problem { error: Some(error), db }
     }
 }
 
 /// Why the library didn't open when the app started; none if it did.
 #[tauri::command]
 pub(crate) fn library_problem(problem: State<'_, Problem>) -> Option<String> {
-    problem.error.lock().unwrap().clone()
+    problem.error.clone()
 }
 
 /// Moves the library that won't open aside (`db::set_aside`), so a new one
 /// is made when the app starts again; returns the name it was given.
 #[tauri::command]
 pub(crate) fn set_library_aside(problem: State<'_, Problem>) -> crate::CmdResult<String> {
-    if problem.error.lock().unwrap().is_none() {
+    if problem.error.is_none() {
         return Err("The library opened; there's nothing to set aside.".into());
     }
     let aside = vodscribe_core::db::set_aside(&problem.db).map_err(crate::err)?;
