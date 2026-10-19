@@ -1,9 +1,20 @@
-//! Edits: a video made of stretches of VODs, one after another. Each piece is
-//! a stretch of one VOD with a title, less the lines struck out of it, which
-//! are jumped over. A piece is its own: made from a clip or a stretch of the
-//! timeline, it keeps no tie to either, so changing one piece (trimming it,
-//! later growing it) changes no other. Rendered with `crate::render`, from
-//! the footage of each stretch (`crate::footage`).
+//! Clips as the record keeps them (schema v22): a clip is a document, with
+//! a title, a revision and a tree of items, each a piece (a stretch of one
+//! VOD, less the stretches struck out of it, which are jumped over) or a
+//! group (a whole clip placed inside another; later). A piece is its own:
+//! made from a clip or a stretch of the timeline, it keeps no tie to either,
+//! so changing one piece (trimming it, later growing it) changes no other.
+//!
+//! Three kinds of clip share the table. A *listed* clip has a place in the
+//! library's list (`position`): what the interface calls an edit, or a VOD's
+//! own clip (`whole_of`: one piece over the whole VOD, the document the VOD
+//! view works on). A *snippet* has none, and hangs off a listed clip's clip
+//! bar (`bar_of`): what the interface calls a clip. Every time in the record
+//! is in flicks (`crate::time`); this module takes and gives seconds at its
+//! edge for the interface, converting here.
+//!
+//! Rendered with `crate::render`, from the footage of each stretch
+//! (`crate::footage`).
 
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
@@ -12,10 +23,12 @@ use serde::{Deserialize, Serialize};
 use crate::db::{ClipStatus, Db, now};
 use crate::footage::Source;
 use crate::render::Piece;
+use crate::time::Flicks;
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
 const SLIVER: f64 = 0.04;
 
+/// A listed clip other than a VOD's own, for the interface's list of edits.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Edit {
     pub id: i64,
@@ -51,7 +64,7 @@ pub enum LibraryItem {
     Edit(i64),
 }
 
-/// What an edit holds, as `Db::edit_state` takes it and `Db::restore_edit`
+/// What a clip holds, as `Db::edit_state` takes it and `Db::restore_edit`
 /// puts it back: for undo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EditState {
@@ -63,13 +76,29 @@ pub struct EditState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PieceState {
     pub vod_id: i64,
-    pub start: f64,
-    pub end: f64,
+    pub start: Flicks,
+    pub end: Option<Flicks>,
     pub title: String,
-    pub struck: Vec<(f64, f64)>,
+    pub struck: Vec<(Flicks, Flicks)>,
 }
 
-/// A piece of an edit: `start`..`end` of VOD `vod_id`, less the `struck` stretches.
+/// A piece of a clip as the record holds it: `start`..`end` of VOD `vod_id`
+/// (`end` None: to the VOD's end), less the `struck` stretches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PieceRow {
+    pub id: i64,
+    pub clip_id: i64,
+    pub vod_id: i64,
+    pub start: Flicks,
+    pub end: Option<Flicks>,
+    pub title: String,
+    pub struck: Vec<(Flicks, Flicks)>,
+    /// A realized piece: the VOD's time its file starts at.
+    pub origin: Option<Flicks>,
+}
+
+/// A piece of an edit, in seconds for the interface: `start`..`end` of VOD
+/// `vod_id`, less the `struck` stretches.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct EditPiece {
     pub id: i64,
@@ -130,30 +159,58 @@ pub fn render_pieces(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Optio
     Ok(out)
 }
 
-const EDIT_COLUMNS: &str = "id, title, status, file_path, error, version, rendered_version";
+/// Struck stretches as the record keeps them: a JSON list of flick pairs.
+pub(crate) fn struck_json(struck: &[(Flicks, Flicks)]) -> Result<String> {
+    Ok(serde_json::to_string(&struck.iter().map(|(a, b)| (a.0, b.0)).collect::<Vec<_>>())?)
+}
 
-fn piece_row(r: &Row) -> rusqlite::Result<(i64, i64, i64, f64, f64, String, String)> {
-    Ok((
-        r.get("id")?,
-        r.get("edit_id")?,
-        r.get("vod_id")?,
-        r.get("start")?,
-        r.get("end")?,
-        r.get("title")?,
-        r.get("struck")?,
-    ))
+pub(crate) fn parse_struck(json: &str) -> Vec<(Flicks, Flicks)> {
+    serde_json::from_str::<Vec<(i64, i64)>>(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(a, b)| (Flicks(a), Flicks(b)))
+        .collect()
+}
+
+/// `struck` in seconds, to the flick.
+pub(crate) fn struck_flicks(struck: &[(f64, f64)]) -> Vec<(Flicks, Flicks)> {
+    struck.iter().map(|&(a, b)| (Flicks::from_seconds(a), Flicks::from_seconds(b))).collect()
+}
+
+const PIECE_COLUMNS: &str = "id, clip_id, vod_id, start, end, struck, title, origin";
+
+fn piece_from_row(r: &Row) -> rusqlite::Result<PieceRow> {
+    Ok(PieceRow {
+        id: r.get("id")?,
+        clip_id: r.get("clip_id")?,
+        vod_id: r.get("vod_id")?,
+        start: Flicks(r.get("start")?),
+        end: r.get::<_, Option<i64>>("end")?.map(Flicks),
+        struck: parse_struck(&r.get::<_, String>("struck")?),
+        title: r.get("title")?,
+        origin: r.get::<_, Option<i64>>("origin")?.map(Flicks),
+    })
+}
+
+/// Where a new clip goes.
+pub(crate) enum Place {
+    /// At the top of the library's list (as new VODs go).
+    Listed,
+    /// On listed clip `bar_of`'s clip bar, after its others.
+    Bar(i64),
 }
 
 impl Db {
     /// The library's list, VODs and edits, in its order.
     pub fn library_order(&self) -> Result<Vec<LibraryItem>> {
         let mut stmt = self.conn.prepare(
-            "SELECT 'vod', id, position FROM vods UNION ALL SELECT 'edit', id, position FROM edits
-             ORDER BY 3, 1 DESC, 2 DESC",
+            "SELECT whole_of, id FROM clips WHERE position IS NOT NULL ORDER BY position, whole_of IS NULL, id DESC",
         )?;
         let rows = stmt.query_map([], |r| {
-            let id = r.get(1)?;
-            Ok(if r.get::<_, String>(0)? == "vod" { LibraryItem::Vod(id) } else { LibraryItem::Edit(id) })
+            Ok(match r.get::<_, Option<i64>>(0)? {
+                Some(vod_id) => LibraryItem::Vod(vod_id),
+                None => LibraryItem::Edit(r.get(1)?),
+            })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -163,8 +220,8 @@ impl Db {
         self.atomically(|db| {
             for (position, item) in items.iter().enumerate() {
                 let (sql, id) = match item {
-                    LibraryItem::Vod(id) => ("UPDATE vods SET position = ?2 WHERE id = ?1", id),
-                    LibraryItem::Edit(id) => ("UPDATE edits SET position = ?2 WHERE id = ?1", id),
+                    LibraryItem::Vod(id) => ("UPDATE clips SET position = ?2 WHERE whole_of = ?1", id),
+                    LibraryItem::Edit(id) => ("UPDATE clips SET position = ?2 WHERE id = ?1 AND whole_of IS NULL", id),
                 };
                 db.conn.execute(sql, params![id, position as i64])?;
             }
@@ -172,9 +229,45 @@ impl Db {
         })
     }
 
-    /// Every edit, in their order.
+    /// VOD `vod_id`'s own clip (the one over the whole VOD), if the VOD is there.
+    pub fn vod_clip(&self, vod_id: i64) -> Result<Option<i64>> {
+        Ok(self.conn.query_row("SELECT id FROM clips WHERE whole_of = ?1", [vod_id], |r| r.get(0)).optional()?)
+    }
+
+    /// Makes VOD `vod_id`'s own clip, over the whole VOD, at the top of the
+    /// library's list: as the VOD is added.
+    pub(crate) fn add_vod_clip(&self, vod_id: i64, title: &str) -> Result<i64> {
+        let id = self.new_clip(title, Place::Listed)?;
+        self.conn.execute("UPDATE clips SET whole_of = ?2 WHERE id = ?1", params![id, vod_id])?;
+        self.conn.execute(
+            "INSERT INTO items (clip_id, position, kind, vod_id, start, end) VALUES (?1, 0, 'piece', ?2, 0, NULL)",
+            params![id, vod_id],
+        )?;
+        Ok(id)
+    }
+
+    /// A new, empty clip titled `title`, where `place` says; its id.
+    pub(crate) fn new_clip(&self, title: &str, place: Place) -> Result<i64> {
+        match place {
+            Place::Listed => self.conn.execute(
+                "INSERT INTO clips (title, created_at, position)
+                 VALUES (?1, ?2, (SELECT coalesce(min(position), 0) - 1 FROM clips))",
+                params![title, now()],
+            )?,
+            Place::Bar(bar_of) => self.conn.execute(
+                "INSERT INTO clips (title, created_at, bar_of, bar_position)
+                 VALUES (?1, ?2, ?3, (SELECT coalesce(max(bar_position), 0) + 1 FROM clips WHERE bar_of = ?3))",
+                params![title, now(), bar_of],
+            )?,
+        };
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Every edit (listed clips other than VODs' own), in their order.
     pub fn edits(&self) -> Result<Vec<Edit>> {
-        let mut stmt = self.conn.prepare(&format!("SELECT {EDIT_COLUMNS} FROM edits ORDER BY position, id"))?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM clips WHERE position IS NOT NULL AND whole_of IS NULL ORDER BY position, id")?;
         let ids: Vec<i64> = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         ids.into_iter().filter_map(|id| self.edit(id).transpose()).collect()
     }
@@ -182,18 +275,22 @@ impl Db {
     pub fn edit(&self, id: i64) -> Result<Option<Edit>> {
         let row = self
             .conn
-            .query_row(&format!("SELECT {EDIT_COLUMNS} FROM edits WHERE id = ?1"), [id], |r| {
-                Ok((
-                    r.get::<_, String>("title")?,
-                    r.get::<_, String>("status")?,
-                    r.get::<_, Option<String>>("file_path")?,
-                    r.get::<_, Option<String>>("error")?,
-                    r.get::<_, i64>("version")?,
-                    r.get::<_, Option<i64>>("rendered_version")?,
-                ))
-            })
+            .query_row(
+                "SELECT title, status, file_path, error, revision, rendered_revision FROM clips WHERE id = ?1",
+                [id],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, i64>(4)?,
+                        r.get::<_, Option<i64>>(5)?,
+                    ))
+                },
+            )
             .optional()?;
-        let Some((title, status, file_path, error, version, rendered)) = row else { return Ok(None) };
+        let Some((title, status, file_path, error, revision, rendered)) = row else { return Ok(None) };
         let pieces = self.edit_pieces(id)?;
         let ranges: Vec<EditRange> = pieces
             .iter()
@@ -208,7 +305,7 @@ impl Db {
             status: ClipStatus::parse(&status),
             file_path,
             error,
-            current: rendered == Some(version),
+            current: rendered == Some(revision),
             pieces: pieces.len(),
             length: ranges.iter().map(|r| r.end - r.start).sum(),
             vod_ids,
@@ -218,92 +315,137 @@ impl Db {
 
     /// A new, empty edit, at the top of the library's list (as new VODs go).
     pub fn add_edit(&self, title: &str) -> Result<Edit> {
-        self.conn.execute(
-            "INSERT INTO edits (title, position, created_at)
-             VALUES (?1, (SELECT coalesce(min(p), 0) - 1 FROM (SELECT min(position) AS p FROM vods UNION ALL SELECT min(position) FROM edits)), ?2)",
-            params![title, now()],
-        )?;
-        Ok(self.edit(self.conn.last_insert_rowid())?.expect("just inserted"))
+        let id = self.new_clip(title, Place::Listed)?;
+        Ok(self.edit(id)?.expect("just inserted"))
     }
 
     pub fn rename_edit(&self, id: i64, title: &str) -> Result<()> {
-        self.conn.execute("UPDATE edits SET title = ?2 WHERE id = ?1", params![id, title])?;
+        self.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, title])?;
         Ok(())
     }
 
+    /// Deletes clip `id`, with its items, marks and snippets.
     pub fn delete_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM edits WHERE id = ?1", [id])?;
+        self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    /// Edit `id`'s pieces, in order.
+    /// Clip `id`'s pieces at its top level, in order, as the record holds them.
+    pub fn piece_rows(&self, clip_id: i64) -> Result<Vec<PieceRow>> {
+        let sql = format!(
+            "SELECT {PIECE_COLUMNS} FROM items WHERE clip_id = ?1 AND parent IS NULL AND kind = 'piece' ORDER BY position, id"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        Ok(stmt.query_map([clip_id], piece_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn piece_row(&self, id: i64) -> Result<Option<PieceRow>> {
+        let sql = format!("SELECT {PIECE_COLUMNS} FROM items WHERE id = ?1 AND kind = 'piece'");
+        Ok(self.conn.query_row(&sql, [id], piece_from_row).optional()?)
+    }
+
+    /// Where piece `row` ends, in seconds: its end, or its VOD's (0 if that
+    /// isn't known yet).
+    fn piece_end(&self, row: &PieceRow) -> Result<f64> {
+        Ok(match row.end {
+            Some(end) => end.seconds(),
+            None => self.vod_duration(row.vod_id)?.unwrap_or(0.0),
+        })
+    }
+
+    fn vod_duration(&self, vod_id: i64) -> Result<Option<f64>> {
+        Ok(self.conn.query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0)).optional()?.flatten())
+    }
+
+    /// Edit `id`'s pieces, in order, in seconds.
     pub fn edit_pieces(&self, id: i64) -> Result<Vec<EditPiece>> {
-        let mut stmt = self.conn.prepare("SELECT * FROM edit_pieces WHERE edit_id = ?1 ORDER BY position, id")?;
-        let rows: Vec<_> = stmt.query_map([id], piece_row)?.collect::<rusqlite::Result<_>>()?;
         let mut out = Vec::new();
-        for (id, edit_id, vod_id, start, end, title, struck) in rows {
-            let vod_title = self.conn.query_row("SELECT title FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))?;
-            let struck = serde_json::from_str(&struck).unwrap_or_default();
-            out.push(EditPiece { id, edit_id, vod_id, start, end, title, struck, vod_title });
+        for row in self.piece_rows(id)? {
+            let vod_title =
+                self.conn.query_row("SELECT title FROM vods WHERE id = ?1", [row.vod_id], |r| r.get(0)).optional()?;
+            let end = self.piece_end(&row)?;
+            out.push(EditPiece {
+                id: row.id,
+                edit_id: row.clip_id,
+                vod_id: row.vod_id,
+                start: row.start.seconds(),
+                end,
+                title: row.title,
+                struck: row.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect(),
+                vod_title: vod_title.unwrap_or_default(),
+            });
         }
         Ok(out)
     }
 
-    /// What edit `id` holds (its title and pieces), to be put back later
+    /// What clip `id` holds (its title and pieces), to be put back later
     /// with `restore_edit` (for undo); None if it's gone.
     pub fn edit_state(&self, id: i64) -> Result<Option<EditState>> {
         let Some(title) =
-            self.conn.query_row("SELECT title FROM edits WHERE id = ?1", [id], |r| r.get(0)).optional()?
+            self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?
         else {
             return Ok(None);
         };
         let pieces = self
-            .edit_pieces(id)?
+            .piece_rows(id)?
             .into_iter()
             .map(|p| PieceState { vod_id: p.vod_id, start: p.start, end: p.end, title: p.title, struck: p.struck })
             .collect();
         Ok(Some(EditState { title, pieces }))
     }
 
-    /// Puts edit `id` back as `state` had it: its title, and its pieces in
+    /// Puts clip `id` back as `state` had it: its title, and its pieces in
     /// order (made anew, so with new ids), less any of a VOD since deleted.
-    /// Nothing if the edit's gone.
+    /// Nothing if the clip's gone.
     pub fn restore_edit(&self, id: i64, state: &EditState) -> Result<()> {
         self.atomically(|db| {
-            if db.conn.execute("UPDATE edits SET title = ?2 WHERE id = ?1", params![id, state.title])? == 0 {
+            if db.conn.execute("UPDATE clips SET title = ?2 WHERE id = ?1", params![id, state.title])? == 0 {
                 return Ok(());
             }
-            db.conn.execute("DELETE FROM edit_pieces WHERE edit_id = ?1", [id])?;
+            db.conn.execute("DELETE FROM items WHERE clip_id = ?1", [id])?;
             for (position, p) in state.pieces.iter().enumerate() {
                 db.conn.execute(
-                    "INSERT INTO edit_pieces (edit_id, vod_id, position, start, end, title, struck)
-                     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM vods WHERE id = ?2)",
-                    params![id, p.vod_id, position as i64, p.start, p.end, p.title, serde_json::to_string(&p.struck)?],
+                    "INSERT INTO items (clip_id, position, kind, vod_id, start, end, title, struck)
+                     SELECT ?1, ?2, 'piece', ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM vods WHERE id = ?3)",
+                    params![
+                        id,
+                        position as i64,
+                        p.vod_id,
+                        p.start.0,
+                        p.end.map(|e| e.0),
+                        p.title,
+                        struck_json(&p.struck)?
+                    ],
                 )?;
             }
             db.changed(id)
         })
     }
 
-    /// Every edit's pieces, as (VOD, start, end): the footage edits use.
+    /// Every piece of every edit and snippet, as (VOD, start, end) in
+    /// seconds: the footage clips use.
     pub fn piece_ranges(&self) -> Result<Vec<(i64, f64, f64)>> {
-        let mut stmt = self.conn.prepare("SELECT vod_id, start, end FROM edit_pieces")?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        let sql = format!(
+            "SELECT {PIECE_COLUMNS} FROM items WHERE kind = 'piece'
+               AND clip_id IN (SELECT id FROM clips WHERE whole_of IS NULL)"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<PieceRow> = stmt.query_map([], piece_from_row)?.collect::<rusqlite::Result<_>>()?;
+        rows.into_iter().map(|p| Ok((p.vod_id, p.start.seconds(), self.piece_end(&p)?))).collect()
     }
 
-    /// The edit piece `id` is in, if it's there.
+    /// The clip piece `id` is in, if it's there.
     pub fn piece_edit(&self, id: i64) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT edit_id FROM edit_pieces WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+        Ok(self.conn.query_row("SELECT clip_id FROM items WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
-    /// Marks edit `id` changed, so its rendered file is out of date.
-    fn changed(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE edits SET version = version + 1 WHERE id = ?1", [id])?;
+    /// Marks clip `id` changed, so its rendered file is out of date.
+    pub(crate) fn changed(&self, id: i64) -> Result<()> {
+        self.conn.execute("UPDATE clips SET revision = revision + 1 WHERE id = ?1", [id])?;
         Ok(())
     }
 
-    /// Puts `start`..`end` of VOD `vod_id` in edit `edit_id` as a piece titled
+    /// Puts `start`..`end` of VOD `vod_id` in clip `edit_id` as a piece titled
     /// `title`, at `index` (or last). It's a copy: nothing else changes with it.
     pub fn add_piece(
         &self,
@@ -315,17 +457,30 @@ impl Db {
     ) -> Result<()> {
         let (start, end) = self.within_vod(vod_id, start, end)?;
         self.atomically(|db| {
-            db.conn.execute(
-                "INSERT INTO edit_pieces (edit_id, vod_id, position, start, end, title) VALUES (?1, ?2, 0, ?3, ?4, ?5)",
-                params![edit_id, vod_id, start, end, title],
-            )?;
+            db.insert_piece(edit_id, vod_id, (start, end), title, &[])?;
             let new = db.conn.last_insert_rowid();
             db.place(edit_id, new, index)?;
             db.changed(edit_id)
         })
     }
 
-    /// Moves piece `id` to `index` in its edit.
+    /// Inserts a piece of `vod_id` in clip `clip_id`, unplaced (position 0).
+    pub(crate) fn insert_piece(
+        &self,
+        clip_id: i64,
+        vod_id: i64,
+        (start, end): (Flicks, Flicks),
+        title: &str,
+        struck: &[(Flicks, Flicks)],
+    ) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO items (clip_id, position, kind, vod_id, start, end, title, struck) VALUES (?1, 0, 'piece', ?2, ?3, ?4, ?5, ?6)",
+            params![clip_id, vod_id, start.0, end.0, title, struck_json(struck)?],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Moves piece `id` to `index` in its clip.
     pub fn move_piece(&self, id: i64, index: usize) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         self.atomically(|db| {
@@ -334,102 +489,94 @@ impl Db {
         })
     }
 
-    /// Numbers edit `edit_id`'s pieces in order, with piece `id` at `index` (or last).
-    fn place(&self, edit_id: i64, id: i64, index: Option<usize>) -> Result<()> {
-        let mut stmt =
-            self.conn.prepare("SELECT id FROM edit_pieces WHERE edit_id = ?1 AND id != ?2 ORDER BY position, id")?;
-        let mut ids: Vec<i64> = stmt.query_map(params![edit_id, id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+    /// Numbers clip `clip_id`'s top-level items in order, with item `id` at `index` (or last).
+    fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL AND id != ?2 ORDER BY position, id")?;
+        let mut ids: Vec<i64> = stmt.query_map(params![clip_id, id], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         ids.insert(index.unwrap_or(ids.len()).min(ids.len()), id);
         for (position, id) in ids.iter().enumerate() {
-            self.conn.execute("UPDATE edit_pieces SET position = ?2 WHERE id = ?1", params![id, position as i64])?;
+            self.conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", params![id, position as i64])?;
         }
         Ok(())
     }
 
-    /// `start`..`end` of VOD `vod_id`, within it; an error if none of it is.
-    fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(f64, f64)> {
-        let duration: Option<f64> = self
-            .conn
-            .query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
-            .optional()?
-            .flatten();
+    /// `start`..`end` seconds of VOD `vod_id`, within it and on the flick; an
+    /// error if none of it is.
+    fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
+        let duration = self.vod_duration(vod_id)?;
         let (start, end) = (start.max(0.0), duration.map_or(end, |d| end.min(d)));
         anyhow::ensure!(end > start, "That's past the end of the video.");
-        Ok((start, end))
+        Ok((Flicks::from_seconds(start), Flicks::from_seconds(end)))
     }
 
-    /// Sets piece `id` to `start`..`end` of its VOD (within the VOD).
+    /// Sets piece `id` to `start`..`end` seconds of its VOD (within the VOD).
     pub fn set_piece_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
-        let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        let vod_id: i64 = self.conn.query_row("SELECT vod_id FROM edit_pieces WHERE id = ?1", [id], |r| r.get(0))?;
-        let (start, end) = self.within_vod(vod_id, start, end)?;
-        self.conn.execute("UPDATE edit_pieces SET start = ?2, end = ?3 WHERE id = ?1", params![id, start, end])?;
-        self.changed(edit_id)
+        let Some(piece) = self.piece_row(id)? else { return Ok(()) };
+        let (start, end) = self.within_vod(piece.vod_id, start, end)?;
+        self.conn.execute("UPDATE items SET start = ?2, end = ?3 WHERE id = ?1", params![id, start.0, end.0])?;
+        self.changed(piece.clip_id)
     }
 
-    /// Sets the stretches struck out of piece `id`.
+    /// Sets the stretches struck out of piece `id`, in seconds.
     pub fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         self.conn
-            .execute("UPDATE edit_pieces SET struck = ?2 WHERE id = ?1", params![id, serde_json::to_string(struck)?])?;
+            .execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, struck_json(&struck_flicks(struck))?])?;
         self.changed(edit_id)
     }
 
-    /// Splits piece `id` in two at `at` (its VOD's time), the second right
-    /// after the first; both keep what's struck. False if `at` isn't inside it.
+    /// Splits piece `id` in two at `at` seconds (its VOD's time), the second
+    /// right after the first; both keep what's struck. False if `at` isn't
+    /// inside it.
     pub fn split_piece(&self, id: i64, at: f64) -> Result<bool> {
-        let Some((_, edit_id, vod_id, start, end, title, struck)) =
-            self.conn.query_row("SELECT * FROM edit_pieces WHERE id = ?1", [id], piece_row).optional()?
-        else {
-            return Ok(false);
-        };
+        let Some(piece) = self.piece_row(id)? else { return Ok(false) };
+        let (start, end) = (piece.start.seconds(), self.piece_end(&piece)?);
         if !(at > start + SLIVER && at < end - SLIVER) {
             return Ok(false);
         }
-        let index = self.edit_pieces(edit_id)?.iter().position(|p| p.id == id).map(|i| i + 1);
+        let at = Flicks::from_seconds(at);
+        let index = self.piece_rows(piece.clip_id)?.iter().position(|p| p.id == id).map(|i| i + 1);
         self.atomically(|db| {
-            db.conn.execute("UPDATE edit_pieces SET end = ?2 WHERE id = ?1", params![id, at])?;
-            db.conn.execute(
-                "INSERT INTO edit_pieces (edit_id, vod_id, position, start, end, title, struck)
-                 VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6)",
-                params![edit_id, vod_id, at, end, title, struck],
-            )?;
-            let new = db.conn.last_insert_rowid();
-            db.place(edit_id, new, index)?;
-            db.changed(edit_id)
+            db.conn.execute("UPDATE items SET end = ?2 WHERE id = ?1", params![id, at.0])?;
+            let end = piece.end.unwrap_or(Flicks::from_seconds(end));
+            let new = db.insert_piece(piece.clip_id, piece.vod_id, (at, end), &piece.title, &piece.struck)?;
+            db.place(piece.clip_id, new, index)?;
+            db.changed(piece.clip_id)
         })?;
         Ok(true)
     }
 
     pub fn remove_piece(&self, id: i64) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
-        self.conn.execute("DELETE FROM edit_pieces WHERE id = ?1", [id])?;
+        self.conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
         self.changed(edit_id)
     }
 
-    /// The edit's version now, to say which one a render is of.
+    /// The clip's revision now, to say which one a render is of.
     pub fn edit_version(&self, id: i64) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT version FROM edits WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+        Ok(self.conn.query_row("SELECT revision FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
     }
 
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
     pub fn hand_out_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE edits SET handed_out = 1 WHERE id = ?1", [id])?;
+        self.conn.execute("UPDATE clips SET handed_out = 1 WHERE id = ?1", [id])?;
         Ok(())
     }
 
     /// Whether edit `id`'s video was dragged out of the app; and it's the app's
     /// own again (`take_back`: rendered to a new file).
     pub fn edit_handed_out(&self, id: i64, take_back: bool) -> Result<bool> {
-        let out = self.conn.query_row("SELECT handed_out FROM edits WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let out = self.conn.query_row("SELECT handed_out FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?;
         if take_back {
-            self.conn.execute("UPDATE edits SET handed_out = 0 WHERE id = ?1", [id])?;
+            self.conn.execute("UPDATE clips SET handed_out = 0 WHERE id = ?1", [id])?;
         }
         Ok(out.unwrap_or(false))
     }
 
     /// Records edit `id`'s render: its status, file (kept if None) and error,
-    /// and the version it's of, when done.
+    /// and the revision it's of, when done.
     pub fn set_edit_render(
         &self,
         id: i64,
@@ -439,8 +586,8 @@ impl Db {
         version: Option<i64>,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE edits SET status = ?2, file_path = coalesce(?3, file_path), error = ?4,
-               rendered_version = coalesce(?5, rendered_version)
+            "UPDATE clips SET status = ?2, file_path = coalesce(?3, file_path), error = ?4,
+               rendered_revision = coalesce(?5, rendered_revision)
              WHERE id = ?1",
             params![id, status.as_str(), file, error, version],
         )?;
@@ -450,7 +597,8 @@ impl Db {
     /// Edits left rendering (or waiting to) when the app stopped: waiting
     /// again, to be rendered when asked.
     pub fn reset_renders(&self) -> Result<()> {
-        self.conn.execute("UPDATE edits SET status = 'waiting' WHERE status = 'cutting'", [])?;
+        self.conn
+            .execute("UPDATE clips SET status = 'waiting' WHERE status = 'cutting' AND position IS NOT NULL", [])?;
         Ok(())
     }
 }
@@ -459,6 +607,7 @@ impl Db {
 pub(crate) mod tests {
     use super::*;
     use crate::fetch::VodInfo;
+    use crate::time::Rate;
     use std::path::Path;
 
     #[test]
@@ -482,6 +631,24 @@ pub(crate) mod tests {
             thumbnail: None,
             published: None,
         }
+    }
+
+    #[test]
+    fn a_vod_has_its_own_clip_over_all_of_it() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let clip = db.vod_clip(vod).unwrap().unwrap();
+        let pieces = db.piece_rows(clip).unwrap();
+        assert_eq!((pieces.len(), pieces[0].vod_id, pieces[0].start, pieces[0].end), (1, vod, Flicks::ZERO, None));
+        assert_eq!(db.edit_pieces(clip).unwrap()[0].end, 600.0, "to the VOD's end");
+        assert!(db.edits().unwrap().is_empty(), "not an edit");
+        assert_eq!(db.library_order().unwrap(), [LibraryItem::Vod(vod)]);
+        // Its frame rate, once read.
+        assert_eq!(db.rate(vod).unwrap(), None);
+        db.set_rate(vod, Some(Rate::new(30000, 1001))).unwrap();
+        assert_eq!(db.rate(vod).unwrap(), Some(Rate::new(30000, 1001)));
+        db.delete_vod(vod).unwrap();
+        assert_eq!(db.vod_clip(vod).unwrap(), None, "goes with the VOD");
     }
 
     #[test]
@@ -527,6 +694,10 @@ pub(crate) mod tests {
             [(10.0, 12.0), (14.0, 18.0), (30.0, 35.0)]
         );
         assert_eq!(db.edit(edit.id).unwrap().unwrap().length, 6.0 + 5.0);
+        // Kept in flicks: what went in comes out, to the flick.
+        let row = db.piece_row(a_piece).unwrap().unwrap();
+        assert_eq!((row.start, row.end), (Flicks::from_seconds(10.0), Some(Flicks::from_seconds(18.0))));
+        assert_eq!(row.struck, [(Flicks::from_seconds(12.0), Flicks::from_seconds(14.0))]);
         // Split in two where it's asked, the second right after the first.
         let before = db.edit_pieces(edit.id).unwrap();
         assert!(db.split_piece(before[0].id, 16.0).unwrap());

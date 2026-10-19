@@ -162,15 +162,18 @@ pub(crate) async fn frame(state: State<'_, AppState>, id: i64, time: f64) -> Cmd
 }
 
 /// The frame rate of VOD `id`'s video, for stepping a frame at a time. None
-/// for sound alone, or when it can't be read.
+/// for sound alone, or when it can't be read. Kept in the library once read
+/// (`Db::set_rate`): the grid the record snaps the VOD's times to.
 #[tauri::command]
 pub(crate) async fn frame_rate(state: State<'_, AppState>, id: i64) -> CmdResult<Option<f64>> {
     let file = playable_file(&state.db.lock().unwrap(), id);
     let (Some(file), Some(ffmpeg)) = (file, tools::find_ffmpeg(&state.paths.bin())) else { return Ok(None) };
-    tauri::async_runtime::spawn_blocking(move || local::frame_rate(&ffmpeg, Path::new(&file)))
+    let fps = tauri::async_runtime::spawn_blocking(move || local::frame_rate(&ffmpeg, Path::new(&file)))
         .await
         .map_err(err)?
-        .map_err(err)
+        .map_err(err)?;
+    let _ = state.db.lock().unwrap().set_rate(id, fps.and_then(vodscribe_core::time::Rate::from_fps));
+    Ok(fps)
 }
 
 type Find = dyn Fn(Served) -> Option<String> + Send + Sync;

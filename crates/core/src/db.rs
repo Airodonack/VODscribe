@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
+use crate::time::{Flicks, Rate};
 use crate::transcript::{Segment, Word, find_phrase, terms};
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -414,6 +415,102 @@ ALTER TABLE clips ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 /// (`handed_out`), as clips do: a render to a new name then leaves it be.
 const MIGRATE_V21: &str = "ALTER TABLE edits ADD COLUMN handed_out INTEGER NOT NULL DEFAULT 0;";
 
+/// Flicks in a second (`crate::time::PER_SECOND`), for the migration's SQL.
+const FLICKS: &str = "705600000";
+
+/// v22: the clip model (`crate::edits`). `clips` holds every document: a
+/// VOD's own clip over the whole VOD (`whole_of`, with the VOD's place in
+/// the library's list, which `vods.position` held), the edits (listed,
+/// `position`), and the clip bar's clips, now snippets hanging off their
+/// VOD's clip (`bar_of`). `items` holds their pieces (and groups, later),
+/// with times in flicks; the struck stretches, JSON seconds till now, are
+/// put in flicks by `Db::open` in the same transaction. Marks belong to a
+/// clip (the VOD's own, for those made so far) and keep the VOD moment
+/// they're at. Clips keep their ids (their pictures are named by them);
+/// VODs' clips and edits get ids above them. VODs get their frame rate.
+const MIGRATE_V22: &str = "
+ALTER TABLE clips RENAME TO clips_old;
+CREATE TABLE clips (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 0,
+    fps_num INTEGER,
+    fps_den INTEGER,
+    position INTEGER,
+    bar_of INTEGER REFERENCES clips (id) ON DELETE CASCADE,
+    bar_position INTEGER,
+    whole_of INTEGER REFERENCES vods (id) ON DELETE CASCADE,
+    shown INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    file_path TEXT,
+    error TEXT,
+    rendered_revision INTEGER,
+    handed_out INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX clips_bar ON clips (bar_of, bar_position);
+CREATE UNIQUE INDEX clips_whole ON clips (whole_of) WHERE whole_of IS NOT NULL;
+INSERT INTO clips (id, title, created_at, bar_position, shown, status, file_path, error, handed_out)
+    SELECT id, title, created_at, position, shown, status, file_path, error, handed_out FROM clips_old;
+INSERT INTO clips (id, title, created_at, position, whole_of)
+    SELECT (SELECT coalesce(max(id), 0) FROM clips_old) + id, title, added_at, position, id FROM vods;
+UPDATE clips SET bar_of = (SELECT t.id FROM clips t JOIN clips_old o ON t.whole_of = o.vod_id WHERE o.id = clips.id)
+    WHERE id IN (SELECT id FROM clips_old);
+INSERT INTO clips (id, title, created_at, position, revision, status, file_path, error, rendered_revision, handed_out)
+    SELECT (SELECT coalesce(max(id), 0) FROM clips_old) + (SELECT coalesce(max(id), 0) FROM vods) + id,
+           title, created_at, position, version, status, file_path, error, rendered_version, handed_out
+    FROM edits;
+CREATE TABLE items (
+    id INTEGER PRIMARY KEY,
+    clip_id INTEGER NOT NULL REFERENCES clips (id) ON DELETE CASCADE,
+    parent INTEGER REFERENCES items (id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    vod_id INTEGER REFERENCES vods (id) ON DELETE CASCADE,
+    start INTEGER,
+    end INTEGER,
+    struck TEXT NOT NULL DEFAULT '[]',
+    title TEXT NOT NULL DEFAULT '',
+    origin INTEGER,
+    fps_num INTEGER,
+    fps_den INTEGER
+);
+CREATE INDEX items_by_clip ON items (clip_id, parent, position);
+CREATE INDEX items_by_vod ON items (vod_id);
+INSERT INTO items (id, clip_id, position, kind, vod_id, start, end, struck, title)
+    SELECT p.id, (SELECT coalesce(max(id), 0) FROM clips_old) + (SELECT coalesce(max(id), 0) FROM vods) + p.edit_id,
+           p.position, 'piece', p.vod_id, CAST(round(p.start * FLICKS) AS INTEGER), CAST(round(p.end * FLICKS) AS INTEGER),
+           p.struck, p.title
+    FROM edit_pieces p;
+INSERT INTO items (clip_id, position, kind, vod_id, start, end, title)
+    SELECT id, 0, 'piece', vod_id, CAST(round(start * FLICKS) AS INTEGER), CAST(round(end * FLICKS) AS INTEGER), title
+    FROM clips_old;
+INSERT INTO items (clip_id, position, kind, vod_id, start, end)
+    SELECT id, 0, 'piece', whole_of, 0, NULL FROM clips WHERE whole_of IS NOT NULL;
+ALTER TABLE marks RENAME TO marks_old;
+CREATE TABLE marks (
+    id INTEGER PRIMARY KEY,
+    clip_id INTEGER NOT NULL REFERENCES clips (id) ON DELETE CASCADE,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    text TEXT,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX marks_by_clip ON marks (clip_id, at);
+INSERT INTO marks (id, clip_id, vod_id, kind, at, text, source, created_at)
+    SELECT m.id, c.id, m.vod_id, m.kind, CAST(round(m.start * FLICKS) AS INTEGER), m.text, m.source, m.created_at
+    FROM marks_old m JOIN clips c ON c.whole_of = m.vod_id;
+DROP TABLE marks_old;
+DROP TABLE edit_pieces;
+DROP TABLE edits;
+DROP TABLE clips_old;
+ALTER TABLE vods DROP COLUMN position;
+ALTER TABLE vods ADD COLUMN fps_num INTEGER;
+ALTER TABLE vods ADD COLUMN fps_den INTEGER;
+CREATE VIEW vod_order AS SELECT whole_of AS vod_id, position FROM clips WHERE whole_of IS NOT NULL;";
+
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
@@ -522,19 +619,23 @@ pub struct MarkState {
     pub text: Option<String>,
 }
 
-pub(crate) const CLIP_COLUMNS: &str = "id, vod_id, start, end, title, status, file_path, error, shown";
+/// A snippet's columns: the clip's, and its first piece's stretch.
+pub(crate) const CLIP_COLUMNS: &str =
+    "c.id, i.vod_id, i.start, i.end, c.title, c.status, c.file_path, c.error, c.shown";
+/// Joins a clip (`c`) to its first piece (`i`).
+pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     Ok(Clip {
-        id: r.get("id")?,
-        vod_id: r.get("vod_id")?,
-        start: r.get("start")?,
-        end: r.get("end")?,
-        title: r.get("title")?,
-        status: ClipStatus::parse(&r.get::<_, String>("status")?),
-        file_path: r.get("file_path")?,
-        error: r.get("error")?,
-        shown: r.get("shown")?,
+        id: r.get(0)?,
+        vod_id: r.get(1)?,
+        start: Flicks(r.get(2)?).seconds(),
+        end: Flicks(r.get::<_, Option<i64>>(3)?.unwrap_or(0)).seconds(),
+        title: r.get(4)?,
+        status: ClipStatus::parse(&r.get::<_, String>(5)?),
+        file_path: r.get(6)?,
+        error: r.get(7)?,
+        shown: r.get(8)?,
     })
 }
 
@@ -631,6 +732,20 @@ fn date_of(secs: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// v22: the struck stretches, kept as JSON pairs of seconds till then, as
+/// pairs of flicks.
+fn struck_to_flicks(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT id, struck FROM items WHERE struck != '[]'")?;
+    let rows: Vec<(i64, String)> =
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    for (id, struck) in rows {
+        let seconds: Vec<(f64, f64)> = serde_json::from_str(&struck).unwrap_or_default();
+        let flicks = crate::edits::struck_json(&crate::edits::struck_flicks(&seconds))?;
+        conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, flicks])?;
+    }
+    Ok(())
+}
+
 pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -693,6 +808,7 @@ impl Db {
             MIGRATE_V19,
             MIGRATE_V20,
             MIGRATE_V21,
+            MIGRATE_V22,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -700,9 +816,13 @@ impl Db {
             if version > 0 {
                 keep_before_upgrade(&conn, path, version)?;
             }
-            let pending = migrations[version as usize..].join("\n");
+            let pending = migrations[version as usize..].join("\n").replace("FLICKS", FLICKS);
             let latest = migrations.len();
-            conn.execute_batch(&format!("BEGIN; {pending} PRAGMA user_version = {latest}; COMMIT;"))?;
+            conn.execute_batch(&format!("BEGIN; {pending}"))?;
+            if version < 22 {
+                struck_to_flicks(&conn)?;
+            }
+            conn.execute_batch(&format!("PRAGMA user_version = {latest}; COMMIT;"))?;
         } else if version as usize > migrations.len() {
             // A newer VODscribe made this library (the user went back a version).
             // Migrations so far only add, so carry on rather than refuse to start.
@@ -717,17 +837,22 @@ impl Db {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
             return Ok((existing, false));
         }
-        // New VODs go to the top of the library.
-        self.conn.execute(
-            "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at, position)
-             VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                     ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9, (SELECT coalesce(min(p), 0) - 1 FROM (SELECT min(position) AS p FROM vods UNION ALL SELECT min(position) FROM edits)))",
-            params![
-                info.platform, info.platform_id, info.url, info.title, info.channel,
-                info.duration, info.thumbnail, info.published, now()
-            ],
-        )?;
-        Ok((self.vod(self.conn.last_insert_rowid())?.expect("just inserted"), true))
+        // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
+        let id = self.atomically(|db| {
+            db.conn.execute(
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at)
+                 VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
+                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9)",
+                params![
+                    info.platform, info.platform_id, info.url, info.title, info.channel,
+                    info.duration, info.thumbnail, info.published, now()
+                ],
+            )?;
+            let id = db.conn.last_insert_rowid();
+            db.add_vod_clip(id, &info.title)?;
+            Ok(id)
+        })?;
+        Ok((self.vod(id)?.expect("just inserted"), true))
     }
 
     fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
@@ -741,49 +866,62 @@ impl Db {
     }
 
     pub fn vods(&self) -> Result<Vec<Vod>> {
-        let sql = format!("SELECT {VOD_COLUMNS} FROM vods ORDER BY position, id DESC");
+        let sql = format!(
+            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id ORDER BY o.position, id DESC"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Adds a clip of VOD `vod_id` from `start` to `end`, after its others.
-    /// Adds a clip of VOD `vod_id` from `start` to `end`, after its others;
-    /// `shown` if it goes in the clip bar.
+    /// Adds a clip of VOD `vod_id` from `start` to `end` seconds, after its
+    /// others on the clip bar; `shown` if it goes in the bar. A snippet: a
+    /// clip of one piece, hanging off the VOD's own clip.
     pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str, shown: bool) -> Result<Clip> {
-        self.conn.execute(
-            "INSERT INTO clips (vod_id, start, end, title, position, created_at, shown)
-             VALUES (?1, ?2, ?3, ?4, (SELECT coalesce(max(position), 0) + 1 FROM clips WHERE vod_id = ?1), ?5, ?6)",
-            params![vod_id, start, end, title, now(), shown],
-        )?;
-        Ok(self.clip(self.conn.last_insert_rowid())?.expect("just inserted"))
+        let bar = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
+        let id = self.atomically(|db| {
+            let id = db.new_clip(title, crate::edits::Place::Bar(bar))?;
+            db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
+            db.insert_piece(id, vod_id, (Flicks::from_seconds(start), Flicks::from_seconds(end)), "", &[])?;
+            Ok(id)
+        })?;
+        Ok(self.clip(id)?.expect("just inserted"))
     }
 
     pub fn clip(&self, id: i64) -> Result<Option<Clip>> {
-        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE id = ?1");
+        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN} WHERE c.id = ?1");
         Ok(self.conn.query_row(&sql, [id], clip_from_row).optional()?)
     }
 
-    /// VOD `vod_id`'s clips, in their order.
+    /// VOD `vod_id`'s clips (the snippets on its clip bar), in their order.
     pub fn clips(&self, vod_id: i64) -> Result<Vec<Clip>> {
-        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE vod_id = ?1 ORDER BY position, id");
+        let sql = format!(
+            "SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN}
+             WHERE c.bar_of = (SELECT id FROM clips WHERE whole_of = ?1) ORDER BY c.bar_position, c.id"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([vod_id], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
     /// Clips whose file is still to be made (or was being made when the app stopped).
     pub fn unfinished_clips(&self) -> Result<Vec<Clip>> {
-        let sql = format!("SELECT {CLIP_COLUMNS} FROM clips WHERE status IN ('waiting', 'cutting') ORDER BY id");
+        let sql = format!(
+            "SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN}
+             WHERE c.bar_of IS NOT NULL AND c.status IN ('waiting', 'cutting') ORDER BY c.id"
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Moves clip `id` to a new range; its file is to be made again.
+    /// Moves clip `id` to `start`..`end` seconds; its file is to be made again.
     pub fn set_clip_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
-        self.conn.execute(
-            "UPDATE clips SET start = ?2, end = ?3, status = 'waiting', error = NULL WHERE id = ?1",
-            params![id, start, end],
-        )?;
-        Ok(())
+        self.atomically(|db| {
+            db.conn.execute(
+                "UPDATE items SET start = ?2, end = ?3 WHERE id = (SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL ORDER BY position, id LIMIT 1)",
+                params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0],
+            )?;
+            db.conn.execute("UPDATE clips SET status = 'waiting', error = NULL WHERE id = ?1", [id])?;
+            db.changed(id)
+        })
     }
 
     /// Puts clip `id` in the clip bar.
@@ -814,7 +952,7 @@ impl Db {
     /// Forgets the clips not in the clip bar (made only to be dragged out),
     /// leaving their files; gives their ids.
     pub fn forget_hidden_clips(&self) -> Result<Vec<i64>> {
-        let mut stmt = self.conn.prepare("DELETE FROM clips WHERE shown = 0 RETURNING id")?;
+        let mut stmt = self.conn.prepare("DELETE FROM clips WHERE bar_of IS NOT NULL AND shown = 0 RETURNING id")?;
         let ids = stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
         Ok(ids)
     }
@@ -825,7 +963,7 @@ impl Db {
     }
 
     /// Records where clip `id`'s file is, unless its range has moved since
-    /// `start`..`end` was cut (it's being made again). True if recorded.
+    /// `start`..`end` seconds was cut (it's being made again). True if recorded.
     pub fn set_clip_file(
         &self,
         id: i64,
@@ -837,8 +975,10 @@ impl Db {
     ) -> Result<bool> {
         let n = self.conn.execute(
             "UPDATE clips SET status = ?4, file_path = coalesce(?5, file_path), error = ?6
-             WHERE id = ?1 AND start = ?2 AND end = ?3",
-            params![id, start, end, status.as_str(), file, error],
+             WHERE id = ?1 AND EXISTS (
+                 SELECT 1 FROM items WHERE clip_id = ?1 AND parent IS NULL AND start = ?2 AND end = ?3
+                 ORDER BY position, id LIMIT 1)",
+            params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), file, error],
         )?;
         Ok(n > 0)
     }
@@ -848,23 +988,39 @@ impl Db {
         Ok(())
     }
 
-    /// VOD `vod_id`'s marks, in time order.
+    /// VOD `vod_id`'s marks (its own clip's), in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, vod_id, kind, start, text FROM marks WHERE vod_id = ?1 ORDER BY start, id")?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, vod_id, kind, at, text FROM marks WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
+             ORDER BY at, id",
+        )?;
         let rows = stmt.query_map([vod_id], |r| {
-            Ok(Mark { id: r.get(0)?, vod_id: r.get(1)?, kind: r.get(2)?, start: r.get(3)?, text: r.get(4)? })
+            Ok(Mark {
+                id: r.get(0)?,
+                vod_id: r.get(1)?,
+                kind: r.get(2)?,
+                start: Flicks(r.get(3)?).seconds(),
+                text: r.get(4)?,
+            })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// Puts a mark on VOD `vod_id`'s own clip at `start` seconds of the VOD.
     pub fn add_mark(&self, vod_id: i64, kind: &str, start: f64, text: Option<&str>) -> Result<Mark> {
+        let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
+        let at = Flicks::from_seconds(start);
         self.conn.execute(
-            "INSERT INTO marks (vod_id, kind, start, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![vod_id, kind, start, text, now()],
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![clip, vod_id, kind, at.0, text, now()],
         )?;
-        Ok(Mark { id: self.conn.last_insert_rowid(), vod_id, kind: kind.into(), start, text: text.map(Into::into) })
+        Ok(Mark {
+            id: self.conn.last_insert_rowid(),
+            vod_id,
+            kind: kind.into(),
+            start: at.seconds(),
+            text: text.map(Into::into),
+        })
     }
 
     /// Sets mark `id`'s title or note (none, if None); false if it's gone.
@@ -872,9 +1028,9 @@ impl Db {
         Ok(self.conn.execute("UPDATE marks SET text = ?2 WHERE id = ?1", params![id, text])? > 0)
     }
 
-    /// Moves mark `id` to `start`; false if it's gone.
+    /// Moves mark `id` to `start` seconds; false if it's gone.
     pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
-        Ok(self.conn.execute("UPDATE marks SET start = ?2 WHERE id = ?1", params![id, start])? > 0)
+        Ok(self.conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(start).0])? > 0)
     }
 
     /// The VOD mark `id` is on, if it's there.
@@ -890,7 +1046,8 @@ impl Db {
     /// Makes VOD `vod_id`'s marks those of `marks` (made anew, so with new ids).
     pub fn restore_marks(&self, vod_id: i64, marks: &[MarkState]) -> Result<()> {
         self.atomically(|db| {
-            db.conn.execute("DELETE FROM marks WHERE vod_id = ?1", [vod_id])?;
+            db.conn
+                .execute("DELETE FROM marks WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)", [vod_id])?;
             for m in marks {
                 db.add_mark(vod_id, &m.kind, m.start, m.text.as_deref())?;
             }
@@ -904,7 +1061,11 @@ impl Db {
     }
 
     /// Runs `f`'s writes as one transaction: all of them happen, or none do.
+    /// Inside another, it's part of that one.
     pub fn atomically<T>(&self, f: impl FnOnce(&Db) -> Result<T>) -> Result<T> {
+        if !self.conn.is_autocommit() {
+            return f(self);
+        }
         let tx = self.conn.unchecked_transaction()?;
         let out = f(self)?;
         tx.commit()?;
@@ -915,7 +1076,7 @@ impl Db {
     pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare("UPDATE vods SET position = ?2 WHERE id = ?1")?;
+            let mut stmt = tx.prepare("UPDATE clips SET position = ?2 WHERE whole_of = ?1")?;
             for (i, id) in ids.iter().enumerate() {
                 stmt.execute(params![id, i as i64])?;
             }
@@ -927,14 +1088,17 @@ impl Db {
     /// The lowest VOD in the library with `status`, which is the next one for that stage.
     /// New VODs go on top, so by default the queue runs oldest first.
     pub fn next_with_status(&self, status: Status) -> Result<Option<Vod>> {
-        let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE status = ?1 ORDER BY position DESC, id LIMIT 1");
+        let sql = format!(
+            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id WHERE status = ?1 ORDER BY o.position DESC, id LIMIT 1"
+        );
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
     }
 
     /// Like `next_with_status`, but only VODs that are files on this computer.
     pub fn next_local_with_status(&self, status: Status) -> Result<Option<Vod>> {
         let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods WHERE status = ?1 AND source_path IS NOT NULL ORDER BY position DESC, id LIMIT 1"
+            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id
+             WHERE status = ?1 AND source_path IS NOT NULL ORDER BY o.position DESC, id LIMIT 1"
         );
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
     }
@@ -961,6 +1125,26 @@ impl Db {
         self.conn.execute_batch(
             "UPDATE vods SET audio_path = NULL;
              UPDATE vods SET status = 'queued', progress = 0 WHERE status = 'ready';",
+        )?;
+        Ok(())
+    }
+
+    /// VOD `id`'s frame rate, once its video has been read (`set_rate`).
+    pub fn rate(&self, id: i64) -> Result<Option<Rate>> {
+        let row = self
+            .conn
+            .query_row("SELECT fps_num, fps_den FROM vods WHERE id = ?1", [id], |r| {
+                Ok((r.get::<_, Option<u32>>(0)?, r.get::<_, Option<u32>>(1)?))
+            })
+            .optional()?;
+        Ok(row.and_then(|(num, den)| Some(Rate::new(num?, den?))).filter(|r| r.num > 0 && r.den > 0))
+    }
+
+    /// Records VOD `id`'s frame rate, as read from its video (None: sound alone).
+    pub fn set_rate(&self, id: i64, rate: Option<Rate>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET fps_num = ?2, fps_den = ?3 WHERE id = ?1",
+            params![id, rate.map(|r| r.num), rate.map(|r| r.den)],
         )?;
         Ok(())
     }
@@ -1276,7 +1460,7 @@ impl Db {
     pub fn chat_pending(&self) -> Result<Vec<i64>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id FROM vods WHERE chat IS NULL OR chat = 'failed' ORDER BY position, id DESC")?;
+            .prepare("SELECT id FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id WHERE chat IS NULL OR chat = 'failed' ORDER BY o.position, id DESC")?;
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -1419,9 +1603,9 @@ impl Db {
             let mut stmt = self.conn.prepare(
                 "SELECT s.id, s.vod_id, s.start, s.words, v.position FROM segments_fts f
                  JOIN segments s ON s.id = f.rowid
-                 JOIN vods v ON v.id = s.vod_id
+                 JOIN vod_order v ON v.vod_id = s.vod_id
                  WHERE segments_fts MATCH ?1 AND f.rowid BETWEEN ?4 AND ?5 AND (?2 IS NULL OR s.vod_id = ?2)
-                 ORDER BY v.position, v.id DESC, s.start
+                 ORDER BY v.position, v.vod_id DESC, s.start
                  LIMIT ?3",
             )?;
             let (lo, hi) = self.id_range("segments", filter.vod_id)?;
@@ -1442,9 +1626,9 @@ impl Db {
             let mut stmt = self.conn.prepare(
                 "SELECT c.id, c.vod_id, c.time, c.text, c.author, c.color, v.position FROM chat_fts f
                  JOIN chat c ON c.id = f.rowid
-                 JOIN vods v ON v.id = c.vod_id
+                 JOIN vod_order v ON v.vod_id = c.vod_id
                  WHERE chat_fts MATCH ?1 AND f.rowid BETWEEN ?4 AND ?5 AND (?2 IS NULL OR c.vod_id = ?2)
-                 ORDER BY v.position, v.id DESC, c.time
+                 ORDER BY v.position, v.vod_id DESC, c.time
                  LIMIT ?3",
             )?;
             let (lo, hi) = self.id_range("chat", filter.vod_id)?;
@@ -1729,7 +1913,7 @@ mod tests {
         }
         let mut db = Db::open(&path).unwrap();
         let vod = db.vods().unwrap().remove(0);
-        db.conn.execute("UPDATE vods SET position = 5", []).unwrap();
+        db.conn.execute("UPDATE clips SET position = 5", []).unwrap();
         let later = db.add_vod(&info("later")).unwrap().0;
         assert_eq!(db.vods().unwrap()[0].id, later.id, "added on top of migrated VODs");
         db.delete_vod(later.id).unwrap();
@@ -1806,14 +1990,116 @@ mod tests {
             .unwrap();
         }
         let db = Db::open(&path).unwrap();
-        let pieces = db.edit_pieces(1).unwrap();
+        let edit = db.edits().unwrap()[0].id;
+        let pieces = db.edit_pieces(edit).unwrap();
         assert_eq!(pieces.len(), 1);
         let p = &pieces[0];
         assert_eq!((p.vod_id, p.start, p.end, p.title.as_str()), (1, 10.0, 18.0, "Lunch"), "within the clip it was of");
         assert_eq!(p.struck, [(12.0, 13.0)]);
         // The clip's gone; the piece stays.
         db.delete_clip(1).unwrap();
-        assert_eq!(db.edit_pieces(1).unwrap().len(), 1);
+        assert_eq!(db.edit_pieces(edit).unwrap().len(), 1);
+    }
+
+    /// v22: VODs, clips and edits become clips of one table, in their order,
+    /// with their pieces and marks in flicks.
+    #[test]
+    fn vods_clips_and_edits_become_clips() {
+        let dir = crate::TempDir::new("migrate-v22");
+        let path = dir.join("library.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+                MIGRATE_V12,
+                MIGRATE_V13,
+                MIGRATE_V14,
+                MIGRATE_V15,
+                MIGRATE_V16,
+                MIGRATE_V17,
+                MIGRATE_V18,
+                MIGRATE_V19,
+                MIGRATE_V20,
+                MIGRATE_V21,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 21;", before.join("\n"))).unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, added_at, position) VALUES
+                     (1, 'kick', 'a', 'u', 'First', 600.0, 'done', 0, 2), (2, 'kick', 'b', 'u', 'Second', 300.0, 'done', 0, 0);
+                 INSERT INTO clips (id, vod_id, start, end, title, position, created_at, status, file_path, shown, handed_out) VALUES
+                     (1, 1, 10.0, 20.5, 'Lunch', 2, 0, 'ready', '/v/lunch.mp4', 1, 1),
+                     (2, 1, 30.0, 40.0, 'Dinner', 1, 0, 'waiting', NULL, 1, 0),
+                     (3, 2, 1.0, 2.0, 'Dragged', 1, 0, 'ready', '/v/d.mp4', 0, 0);
+                 INSERT INTO marks (id, vod_id, kind, start, text, created_at) VALUES
+                     (7, 1, 'chapter', 65.25, 'The raid', 0), (8, 2, 'highlight', 3.0, NULL, 0);
+                 INSERT INTO edits (id, title, position, created_at, version, status, file_path, rendered_version) VALUES
+                     (1, 'Best of', 1, 0, 4, 'ready', '/v/best.mp4', 4);
+                 INSERT INTO edit_pieces (id, edit_id, vod_id, position, start, end, title, struck) VALUES
+                     (5, 1, 1, 1, 100.0, 130.0, 'b', '[]'), (4, 1, 2, 0, 5.0, 18.0, 'a', '[[12.0,13.5]]');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        use crate::edits::LibraryItem::{Edit, Vod};
+        let edit = db.edits().unwrap().remove(0);
+        assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit.id), Vod(1)], "the order kept");
+        assert_eq!(
+            (edit.title.as_str(), edit.current, edit.file_path.as_deref()),
+            ("Best of", true, Some("/v/best.mp4"))
+        );
+        let pieces = db.edit_pieces(edit.id).unwrap();
+        assert_eq!(
+            pieces.iter().map(|p| (p.id, p.vod_id, p.start, p.end)).collect::<Vec<_>>(),
+            [(4, 2, 5.0, 18.0), (5, 1, 100.0, 130.0)]
+        );
+        assert_eq!(pieces[0].struck, [(12.0, 13.5)], "in flicks now, the same in seconds");
+        assert_eq!(
+            db.piece_row(4).unwrap().unwrap().struck,
+            [(Flicks::from_seconds(12.0), Flicks::from_seconds(13.5))]
+        );
+        // The clip bar's clips keep their ids, order and files; the one only dragged out is hidden still.
+        let bar: Vec<_> = db.clips(1).unwrap().into_iter().map(|c| (c.id, c.start, c.end, c.title, c.shown)).collect();
+        assert_eq!(bar, [(2, 30.0, 40.0, "Dinner".into(), true), (1, 10.0, 20.5, "Lunch".into(), true)]);
+        assert!(db.clip_handed_out(1).unwrap() && !db.clip_handed_out(2).unwrap());
+        assert_eq!(db.clip(1).unwrap().unwrap().file_path.as_deref(), Some("/v/lunch.mp4"));
+        assert_eq!(db.clips(2).unwrap().iter().map(|c| (c.id, c.shown)).collect::<Vec<_>>(), [(3, false)]);
+        // Each VOD has its clip, over all of it.
+        let own = db.vod_clip(1).unwrap().unwrap();
+        assert_eq!(db.edit_pieces(own).unwrap().iter().map(|p| (p.start, p.end)).collect::<Vec<_>>(), [(0.0, 600.0)]);
+        assert!(own != edit.id && db.vod_clip(2).unwrap().unwrap() != edit.id);
+        // Marks are the VODs' clips' own, where they were.
+        let marks: Vec<_> = db.marks(1).unwrap().into_iter().map(|m| (m.id, m.kind, m.start, m.text)).collect();
+        assert_eq!(marks, [(7, "chapter".into(), 65.25, Some("The raid".into()))]);
+        assert_eq!(db.marks(2).unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [8]);
+        assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [2, 1], "VODs list in the order too");
+        // Nothing of the old tables is left, nor the order on VODs.
+        let tables: Vec<String> = {
+            let mut stmt =
+                db.conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap();
+            stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        };
+        assert!(
+            !tables.iter().any(|t| t == "edits" || t == "edit_pieces" || t == "clips_old" || t == "marks_old"),
+            "{tables:?}"
+        );
+        assert!(db.conn.execute("SELECT position FROM vods", []).is_err());
+        // Deleting a VOD takes its clip, the bar and its marks.
+        db.delete_vod(1).unwrap();
+        assert!(
+            db.vod_clip(1).unwrap().is_none() && db.clips(1).unwrap().is_empty() && db.marks(1).unwrap().is_empty()
+        );
+        assert_eq!(db.clip(2).unwrap(), None);
+        assert_eq!(db.edit_pieces(edit.id).unwrap().len(), 1, "the edit keeps its piece of the other VOD");
     }
 
     #[test]
