@@ -71,7 +71,27 @@
     cancelAnimationFrame(frame);
     if (!video || destroyed) return;
     time = video.currentTime;
-    if (!video.paused) frame = requestAnimationFrame(follow);
+    if (!video.paused) {
+      endIfStuck(video);
+      frame = requestAnimationFrame(follow);
+    }
+  }
+
+  // WebKitGTK can stall a file started in its last second (seen with an mp3
+  // on 2.50): "playing" for good, its time stuck, never ending. Stuck that
+  // near the end for a while, it's taken as the end it was about to reach.
+  let stuck = { at: -1, since: 0 };
+  function endIfStuck(v: HTMLVideoElement) {
+    const left = v.duration - v.currentTime;
+    if (!(left < 1.5)) {
+      stuck.at = -1;
+      return;
+    }
+    if (v.currentTime !== stuck.at) stuck = { at: v.currentTime, since: performance.now() };
+    else if (performance.now() - stuck.since > 1500) {
+      v.pause();
+      v.currentTime = v.duration;
+    }
   }
 
   onDestroy(() => {

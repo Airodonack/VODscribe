@@ -1,6 +1,7 @@
 // Adding a file, transcribing it, searching, and playing from the result in
 // the app's own player: a waveform read from the file, the transcript as captions.
 
+import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
@@ -17,16 +18,28 @@ export default {
     await app.click("button.row");
     await until(
       "the player",
-      () =>
-        app.js(`
+      async () => {
+        const { error, playing } = await app.js(`
           const video = document.querySelector("video, audio");
-          const error = [...document.querySelectorAll(".error-text")].map((e) => e.textContent).join(" ");
-          if (/couldn't be played|can't be played/.test(error)) throw new Error(error);
-          return !!video && video.readyState >= 1 && video.currentTime > 0;`),
+          return {
+            error: [...document.querySelectorAll(".error-text")].map((e) => e.textContent).join(" "),
+            playing: !!video && video.readyState >= 1 && video.currentTime > 0,
+          };`);
+        if (isUnplayable(error)) throw new Error(error);
+        return playing;
+      },
       MINUTE,
     );
     app.log("searched and played");
     await checkpoint("search-results-playing");
+    // "landed" is in the file's last second, where WebKitGTK (2.50) can stall
+    // a file for good: it plays to the end all the same (LocalPlayer.svelte).
+    await until(
+      "it to play to the end",
+      () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+      15_000,
+    );
+    app.log("played to the end");
 
     const levels = await app.js(
       `return window.__TAURI_INTERNALS__.invoke("peaks", { id: arguments[0] }).then((b) => new Uint8Array(b).length)`,
