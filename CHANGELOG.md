@@ -2,7 +2,7 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.4.1 (unreleased)
+## 0.4.1 — 2026-10-19
 
 - Settings → Help has Reset settings: every setting in Settings back as it started, with your library, transcripts, clips, edits and videos kept.
 - On macOS, if it asks to find devices on your local network, it now says why: a site's video player looking for a TV to play on. VODscribe works the same if you don't allow it.
