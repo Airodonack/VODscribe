@@ -1,6 +1,6 @@
 // Keys for getting around: Ctrl+F (⌘F on a Mac) goes to the search box from
 // anywhere, and back and forward (Alt+← and Alt+→, or ⌘[ and ⌘]) step
-// between the VODs opened.
+// between the VODs opened, a removed one left out.
 
 import path from "node:path";
 
@@ -65,5 +65,23 @@ export default {
       10_000,
     );
     ctx.log(`${mac ? "⌘F" : "Ctrl+F"} focuses the search box`);
+
+    // A VOD removed leaves back and forward (nav.svelte.ts forget): back goes
+    // to the first, and forward to where it was left (nothing open), never
+    // to the VOD removed.
+    await app.invoke("delete_vod", { id: second.id });
+    await until(
+      "the second VOD gone",
+      async () => !(await app.invoke("list_vods")).some((v) => v.id === second.id),
+      30_000,
+    );
+    await (mac ? press("[", { metaKey: true }) : press("ArrowLeft", { altKey: true }));
+    await until("back to the first VOD", async () => (await open()) === first.id, 10_000);
+    await (mac ? press("]", { metaKey: true }) : press("ArrowRight", { altKey: true }));
+    await until("forward to nothing open, as it was", async () => (await open()) === 0, 10_000);
+    for (let i = 0; i < 3; i++) await (mac ? press("]", { metaKey: true }) : press("ArrowRight", { altKey: true }));
+    await new Promise((r) => setTimeout(r, 500));
+    if ((await open()) === second.id) throw new Error("forward went to the VOD removed");
+    ctx.log("a removed VOD is out of back and forward");
   },
 };
