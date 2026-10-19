@@ -31,7 +31,7 @@ use wayland_client::protocol::{
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
 use x11_dl::xlib;
 
-use crate::compose::Compositor;
+use crate::compose::SurfacePainter;
 use crate::decode::Frame;
 use crate::{Overlay, Rect};
 
@@ -173,7 +173,7 @@ struct Place {
 /// The native surface and the drawing on it. The drawing goes first: its
 /// wgpu surface is made on the native one.
 struct Drawn {
-    painter: Painter,
+    painter: SurfacePainter,
     native: Native,
 }
 
@@ -190,12 +190,12 @@ impl Drawn {
             other => bail!("no surface for {other}"),
         };
         let size = ((place.width * place.scale).max(1) as u32, (place.height * place.scale).max(1) as u32);
-        let painter = Painter::new(&native, size)?;
+        let painter = painter(&native, size)?;
         Ok(Drawn { painter, native })
     }
 
     fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) -> Result<()> {
-        self.painter.paint(size, frame, overlay)?;
+        self.painter.paint(size, frame, overlay);
         if let Native::Wayland(w) = &mut self.native {
             // Our queue only gets the surface's own news (outputs it enters).
             let _ = w.queue.dispatch_pending(&mut Ignore);
@@ -221,91 +221,58 @@ impl raw_window_handle::HasDisplayHandle for Display {
 }
 
 /// The compositor drawing into a wgpu surface on the native one.
-struct Painter {
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    compositor: Compositor,
-}
-
-impl Painter {
-    fn new(native: &Native, size: (u32, u32)) -> Result<Painter> {
-        let (display, window) = native.handles()?;
-        // Vulkan where there's an adapter for it (a GPU's driver, or Mesa's
-        // lavapipe), else OpenGL.
-        let mut last = None;
-        for backends in [wgpu::Backends::VULKAN, wgpu::Backends::GL] {
-            // The instance on the surface's own display: OpenGL's (EGL's)
-            // display is chosen when the instance is made, and without it
-            // no GL adapter suits an X11 window ("gl not compatible with
-            // provided surface"), so with no Vulkan the picture stayed black.
-            let mut desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(Display(display)));
-            desc.backends = backends;
-            let instance = wgpu::Instance::new(desc);
-            let target =
-                wgpu::SurfaceTargetUnsafe::RawHandle { raw_display_handle: Some(display), raw_window_handle: window };
-            // SAFETY: the native surface outlives this one (`Drawn` drops the painter first).
-            let surface = match unsafe { instance.create_surface_unsafe(target) } {
-                Ok(surface) => surface,
-                Err(e) => {
-                    last = Some(anyhow::Error::from(e));
-                    continue;
-                }
-            };
-            let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            }));
-            let adapter = match adapter {
-                Ok(adapter) => adapter,
-                Err(e) => {
-                    last = Some(e.into());
-                    continue;
-                }
-            };
-            let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-            let caps = surface.get_capabilities(&adapter);
-            let mut config = surface.get_default_config(&adapter, size.0, size.1).context("no surface format")?;
-            config.format = config.format.remove_srgb_suffix();
-            // Each frame shown as it comes, never waiting for the screen: a
-            // hidden subsurface's would otherwise wait for good under Wayland.
-            config.present_mode = [wgpu::PresentMode::Immediate, wgpu::PresentMode::Mailbox]
-                .into_iter()
-                .find(|m| caps.present_modes.contains(m))
-                .unwrap_or(wgpu::PresentMode::Fifo);
-            config.alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
-                wgpu::CompositeAlphaMode::Opaque
-            } else {
-                caps.alpha_modes[0]
-            };
-            surface.configure(&device, &config);
-            let compositor = Compositor::with_device(device, queue, config.format, adapter.get_info());
-            return Ok(Painter { surface, config, compositor });
-        }
-        Err(last.unwrap_or_else(|| anyhow::anyhow!("no GPU adapter"))).context("the screen's GPU")
-    }
-
-    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) -> Result<()> {
-        let (width, height) = (size.0.max(1), size.1.max(1));
-        if (self.config.width, self.config.height) != (width, height) {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(self.compositor.device(), &self.config);
-        }
-        let output = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(self.compositor.device(), &self.config);
-                return Ok(());
+fn painter(native: &Native, size: (u32, u32)) -> Result<SurfacePainter> {
+    let (display, window) = native.handles()?;
+    // Vulkan where there's an adapter for it (a GPU's driver, or Mesa's
+    // lavapipe), else OpenGL.
+    let mut last = None;
+    for backends in [wgpu::Backends::VULKAN, wgpu::Backends::GL] {
+        // The instance on the surface's own display: OpenGL's (EGL's)
+        // display is chosen when the instance is made, and without it
+        // no GL adapter suits an X11 window ("gl not compatible with
+        // provided surface"), so with no Vulkan the picture stayed black.
+        let mut desc = wgpu::InstanceDescriptor::new_with_display_handle(Box::new(Display(display)));
+        desc.backends = backends;
+        let instance = wgpu::Instance::new(desc);
+        let target =
+            wgpu::SurfaceTargetUnsafe::RawHandle { raw_display_handle: Some(display), raw_window_handle: window };
+        // SAFETY: the native surface outlives this one (`Drawn` drops the painter first).
+        let surface = match unsafe { instance.create_surface_unsafe(target) } {
+            Ok(surface) => surface,
+            Err(e) => {
+                last = Some(anyhow::Error::from(e));
+                continue;
             }
-            // Hidden, or the screen is busy: the next frame draws.
-            _ => return Ok(()),
         };
-        let view = output.texture.create_view(&Default::default());
-        let drawn = self.compositor.draw(&view, (width, height), frame, overlay);
-        self.compositor.submit(drawn);
-        self.compositor.present(output);
-        Ok(())
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: Some(&surface),
+            ..Default::default()
+        }));
+        let adapter = match adapter {
+            Ok(adapter) => adapter,
+            Err(e) => {
+                last = Some(e.into());
+                continue;
+            }
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+        let caps = surface.get_capabilities(&adapter);
+        let mut config = surface.get_default_config(&adapter, size.0, size.1).context("no surface format")?;
+        config.format = config.format.remove_srgb_suffix();
+        // Each frame shown as it comes, never waiting for the screen: a
+        // hidden subsurface's would otherwise wait for good under Wayland.
+        config.present_mode = [wgpu::PresentMode::Immediate, wgpu::PresentMode::Mailbox]
+            .into_iter()
+            .find(|m| caps.present_modes.contains(m))
+            .unwrap_or(wgpu::PresentMode::Fifo);
+        config.alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+            wgpu::CompositeAlphaMode::Opaque
+        } else {
+            caps.alpha_modes[0]
+        };
+        return Ok(SurfacePainter::new(surface, config, (device, queue), adapter.get_info()));
     }
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no GPU adapter"))).context("the screen's GPU")
 }
 
 enum Native {

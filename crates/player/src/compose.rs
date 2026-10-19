@@ -394,6 +394,54 @@ impl Compositor {
     }
 }
 
+/// The compositor drawing into a window's wgpu surface (Linux's and
+/// Windows' screens; each makes the surface and sets it up its own way).
+pub struct SurfacePainter {
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    compositor: Compositor,
+}
+
+impl SurfacePainter {
+    /// Draws on `surface` with `device`, configured as `config` says.
+    pub fn new(
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+        (device, queue): (wgpu::Device, wgpu::Queue),
+        info: wgpu::AdapterInfo,
+    ) -> SurfacePainter {
+        surface.configure(&device, &config);
+        let compositor = Compositor::with_device(device, queue, config.format, info);
+        SurfacePainter { surface, config, compositor }
+    }
+
+    /// Draws `frame` fitted in the window of `size` pixels, on black, and
+    /// `overlay` over it (its box in CSS pixels, `scale` device pixels
+    /// each). A surface out of date (the window's display or size changed
+    /// under it) is set up again, and the next frame draws.
+    pub fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) {
+        let (width, height) = (size.0.max(1), size.1.max(1));
+        if (self.config.width, self.config.height) != (width, height) {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(self.compositor.device(), &self.config);
+        }
+        let output = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface.configure(self.compositor.device(), &self.config);
+                return;
+            }
+            // Hidden, or the screen is busy: the next frame draws.
+            _ => return,
+        };
+        let view = output.texture.create_view(&Default::default());
+        let drawn = self.compositor.draw(&view, (width, height), frame, overlay);
+        self.compositor.submit(drawn);
+        self.compositor.present(output);
+    }
+}
+
 /// Where `frame` goes in a box of `size` pixels: fitted and centred, as
 /// x, y, width, height in whole pixels.
 pub fn fit(frame: &Frame, size: (f64, f64)) -> (f64, f64, f64, f64) {

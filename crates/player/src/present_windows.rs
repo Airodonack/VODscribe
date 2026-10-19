@@ -21,13 +21,13 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, HTTRANSPARENT, HWND_TOP, LWA_ALPHA,
-    RegisterClassW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
-    WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_VISIBLE,
+    RegisterClassW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY,
+    WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
-use crate::compose::Compositor;
+use crate::compose::SurfacePainter;
 use crate::decode::Frame;
 use crate::{Overlay, Rect};
 
@@ -192,15 +192,28 @@ impl Screen {
         let mut inner = self.inner.lock().unwrap();
         // SAFETY: the app's window, there while the screen is.
         let scale = unsafe { GetDpiForWindow(HWND(inner.parent as *mut _)) } as f64 / 96.0;
-        let (x, y, w, h) = match rect {
-            Some(r) => (
-                (r.x * scale).round() as i32,
-                (r.y * scale).round() as i32,
-                (r.width * scale).round().max(1.0) as i32,
-                (r.height * scale).round().max(1.0) as i32,
-            ),
-            None => (-1, -1, 1, 1),
+        let Some(r) = rect else {
+            // Nowhere: hidden, till a box comes.
+            // SAFETY: hiding a window the screen made; fine from any thread.
+            let _ = unsafe {
+                SetWindowPos(
+                    HWND(inner.hwnd as *mut _),
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_HIDEWINDOW,
+                )
+            };
+            return;
         };
+        let (x, y, w, h) = (
+            (r.x * scale).round() as i32,
+            (r.y * scale).round() as i32,
+            (r.width * scale).round().max(1.0) as i32,
+            (r.height * scale).round().max(1.0) as i32,
+        );
         // SAFETY: moving a window the screen made; fine from any thread.
         let _ = unsafe {
             SetWindowPos(HWND(inner.hwnd as *mut _), Some(HWND_TOP), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW)
@@ -248,7 +261,7 @@ impl Inner {
 
 /// How the window is drawn.
 enum Draw {
-    Gpu(Box<Painter>),
+    Gpu(Box<SurfacePainter>),
     Gdi(Gdi),
 }
 
@@ -266,7 +279,7 @@ impl Draw {
         if !hardware && choice != "gpu" {
             return Ok(Draw::Gdi(Gdi::default()));
         }
-        Ok(Draw::Gpu(Box::new(Painter::new(instance, hwnd, (1, 1)).context("the screen's Direct3D")?)))
+        Ok(Draw::Gpu(Box::new(painter(instance, hwnd, (1, 1)).context("the screen's Direct3D")?)))
     }
 }
 
@@ -404,50 +417,22 @@ impl Gdi {
 
 /// Drawing with Direct3D: the compositor (compose.rs) drawing into the
 /// window's surface.
-struct Painter {
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    compositor: Compositor,
-}
-
-impl Painter {
-    fn new(instance: wgpu::Instance, hwnd: isize, size: (u32, u32)) -> Result<Painter> {
-        use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
-        let window = Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd).context("no window")?);
-        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: Some(RawDisplayHandle::Windows(WindowsDisplayHandle::new())),
-            raw_window_handle: RawWindowHandle::Win32(window),
-        };
-        // SAFETY: the window outlives the surface (both are the screen's).
-        let surface = unsafe { instance.create_surface_unsafe(target) }?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+fn painter(instance: wgpu::Instance, hwnd: isize, size: (u32, u32)) -> Result<SurfacePainter> {
+    use raw_window_handle::{RawDisplayHandle, RawWindowHandle, Win32WindowHandle, WindowsDisplayHandle};
+    let window = Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd).context("no window")?);
+    let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+        raw_display_handle: Some(RawDisplayHandle::Windows(WindowsDisplayHandle::new())),
+        raw_window_handle: RawWindowHandle::Win32(window),
+    };
+    // SAFETY: the window outlives the surface (both are the screen's).
+    let surface = unsafe { instance.create_surface_unsafe(target) }?;
+    let adapter =
+        pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
         }))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-        let mut config = surface.get_default_config(&adapter, size.0.max(1), size.1.max(1)).context("no surface")?;
-        config.format = config.format.remove_srgb_suffix();
-        surface.configure(&device, &config);
-        let compositor = Compositor::with_device(device, queue, config.format, adapter.get_info());
-        Ok(Painter { surface, config, compositor })
-    }
-
-    /// Draws `frame` fitted in the window of `size` pixels, on black, and
-    /// `overlay` over it (its box in CSS pixels, `scale` device pixels each).
-    fn paint(&mut self, size: (u32, u32), frame: Option<&Frame>, overlay: Option<(&Overlay, f64)>) {
-        let (width, height) = (size.0.max(1), size.1.max(1));
-        if (self.config.width, self.config.height) != (width, height) {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(self.compositor.device(), &self.config);
-        }
-        let output = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            _ => return,
-        };
-        let view = output.texture.create_view(&Default::default());
-        let drawn = self.compositor.draw(&view, (width, height), frame, overlay);
-        self.compositor.submit(drawn);
-        self.compositor.present(output);
-    }
+    let device = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+    let mut config = surface.get_default_config(&adapter, size.0.max(1), size.1.max(1)).context("no surface")?;
+    config.format = config.format.remove_srgb_suffix();
+    Ok(SurfacePainter::new(surface, config, device, adapter.get_info()))
 }
