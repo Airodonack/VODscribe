@@ -966,6 +966,13 @@ impl Db {
     }
 
     /// VOD `id`'s kept video (see `Vod::media`).
+    /// The file VOD `id` plays from here, if any: its file on this computer,
+    /// or else the video kept for it.
+    pub fn playable_path(&self, id: i64) -> Result<Option<String>> {
+        let sql = "SELECT coalesce(source_path, media_path) FROM vods WHERE id = ?1";
+        Ok(self.conn.query_row(sql, [id], |r| r.get(0)).optional()?.flatten())
+    }
+
     pub fn media_path(&self, id: i64) -> Result<Option<String>> {
         Ok(self.conn.query_row("SELECT media_path FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
     }

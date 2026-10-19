@@ -105,7 +105,7 @@ pub(crate) fn footage_url(state: &AppState, name: &str) -> PathBuf {
 /// The file VOD `id` plays from here: a file on this computer, or a video kept
 /// from a site without an embed.
 pub(crate) fn playable_file(db: &Db, id: i64) -> Option<String> {
-    db.vod(id).ok().flatten().and_then(|v| v.source_path).or_else(|| db.media_path(id).ok().flatten())
+    db.playable_path(id).ok().flatten()
 }
 
 /// VOD `id`'s loudness over time (`peaks`), ten levels a second; empty if it
