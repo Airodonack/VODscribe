@@ -350,3 +350,49 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     window.addEventListener("keydown", onKey, true);
   });
 }
+
+/**
+ * A press held still on a player's picture carries the stretch between cuts
+ * that the playhead is in, flying from the timeline to the pointer; a press
+ * let go first is a click, which plays or pauses (`toggle`). The picture's
+ * pointer handlers, for a player of `vod()` whose time is `time()` in a VOD
+ * `length()` long, its picture `box()`; `stop()` when the player goes.
+ */
+export function holdToCarry(
+  vod: () => Vod,
+  time: () => number,
+  length: () => number,
+  box: () => HTMLElement | undefined,
+  toggle: () => void,
+) {
+  let hold: ReturnType<typeof setTimeout> | undefined;
+  let held = false;
+  let pointer = { x: 0, y: 0 };
+  const stop = () => clearTimeout(hold);
+  return {
+    down(e: PointerEvent) {
+      if (e.button !== 0) return;
+      const range = stretchAt(time(), length());
+      held = false;
+      pointer = { x: e.clientX, y: e.clientY };
+      if (!range || !cuts.list.length) return;
+      hold = setTimeout(() => {
+        held = true;
+        const from = rectOf(range.start, range.end) ?? box()?.getBoundingClientRect();
+        if (from)
+          carry({ vod: vod(), start: range.start, end: range.end, ownPlayer: true, from, x: pointer.x, y: pointer.y });
+      }, HOLD_MS);
+    },
+    move(e: PointerEvent) {
+      if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= DRAG_SLOP) stop();
+      pointer = { x: e.clientX, y: e.clientY };
+    },
+    up: stop,
+    click() {
+      // A press that picked a clip up isn't a click.
+      if (held) held = false;
+      else toggle();
+    },
+    stop,
+  };
+}

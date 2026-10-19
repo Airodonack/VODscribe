@@ -10,7 +10,7 @@
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
-  import { DRAG_SLOP, HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
+  import { holdToCarry } from "./dragout";
   import { DEFAULT_FPS, cueAt, stepTime, unplayable } from "./media";
   import { load, save } from "./stored";
 
@@ -97,7 +97,7 @@
   onDestroy(() => {
     destroyed = true;
     cancelAnimationFrame(frame);
-    clearTimeout(hold);
+    press.stop();
     // Stop the download too: a <video> removed while loading keeps fetching.
     video?.removeAttribute("src");
     video?.load();
@@ -164,53 +164,33 @@
     },
   };
 
-  // A press held still on the picture carries the stretch between cuts that
-  // the playhead is in (dragout.ts), flying from the timeline to the pointer.
-  let hold: ReturnType<typeof setTimeout> | undefined;
-  let held = false;
-  let pointer = { x: 0, y: 0 };
+  // A press held still on the picture carries the stretch the playhead is
+  // in out (dragout.ts); a click plays or pauses.
   let picture = $state<HTMLDivElement>();
-  function onPictureDown(e: PointerEvent) {
-    if (e.button !== 0 || !video) return;
+  const press = holdToCarry(
+    () => vod,
+    () => video?.currentTime ?? 0,
     // The VOD's length, as the timeline's: the file's may differ by a little.
-    const range = stretchAt(video.currentTime, vod.duration || mediaDuration());
-    held = false;
-    pointer = { x: e.clientX, y: e.clientY };
-    if (!range || !cuts.list.length) return;
-    hold = setTimeout(() => {
-      held = true;
-      const from = rectOf(range.start, range.end) ?? picture!.getBoundingClientRect();
-      carry({ vod, start: range.start, end: range.end, ownPlayer: true, from, x: pointer.x, y: pointer.y });
-    }, HOLD_MS);
-  }
-  function onPictureMove(e: PointerEvent) {
-    if (Math.hypot(e.clientX - pointer.x, e.clientY - pointer.y) >= DRAG_SLOP) clearTimeout(hold);
-    pointer = { x: e.clientX, y: e.clientY };
-  }
-  function onPictureUp() {
-    clearTimeout(hold);
-  }
-  function onPictureClick() {
-    // A press that picked a clip up isn't a click.
-    if (held) held = false;
-    else togglePlay();
-  }
+    () => vod.duration || mediaDuration(),
+    () => picture,
+    () => togglePlay(),
+  );
 
   function onError() {
     onerror?.(unplayable(video?.error));
   }
 </script>
 
-<div class="player" class:pictureless>
+<div class="player own-player" class:pictureless>
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div
     class="picture"
     bind:this={picture}
-    onclick={onPictureClick}
-    onpointerdown={onPictureDown}
-    onpointermove={onPictureMove}
-    onpointerup={onPictureUp}
-    onpointercancel={onPictureUp}
+    onclick={press.click}
+    onpointerdown={press.down}
+    onpointermove={press.move}
+    onpointerup={press.up}
+    onpointercancel={press.up}
   >
     <video
       bind:this={video}
@@ -233,36 +213,6 @@
 </div>
 
 <style>
-  .player {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 100%;
-  }
-
-  /* As large as a site's player. */
-  .picture {
-    position: relative;
-    display: flex;
-    width: 100%;
-    aspect-ratio: 16 / 9;
-    /* The website's demo, a window within a page, sets a smaller share of its own height. */
-    /* Capped by a width, not max-height: macOS 12's WebKit (17.6) turned
-       max-height and aspect-ratio together into a max-width, and the box
-       shrank to the left. */
-    max-width: calc(var(--player-max-height, 44vh) * 16 / 9);
-    margin: 0 auto;
-    background: #000;
-  }
-
-  /* Full screen (the player panel's): as tall as there's room for. */
-  :global(.fullscreen) .picture {
-    flex: 1;
-    min-height: 0;
-    aspect-ratio: auto;
-    max-width: none;
-  }
-
   .pictureless .picture {
     display: none;
   }
