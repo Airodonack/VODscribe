@@ -1,5 +1,5 @@
 // Settings are kept: a theme, a video quality and a clip format chosen in
-// Settings are still chosen after a restart.
+// Settings are still chosen after a restart; Reset settings puts them back.
 
 import { MINUTE, until } from "../lib/app.mjs";
 
@@ -64,5 +64,22 @@ export default {
     const after = await chosen(app, Object.keys(CHOICES));
     await ctx.checkpoint("settings-dark");
     if (!same(after, CHOICES)) throw new Error(`after a restart, Settings shows ${JSON.stringify(after)}`);
+
+    // Reset settings… (Help), answered Reset: every choice as it was at the start.
+    await app.answer("Reset");
+    await app.clickText("Reset settings…");
+    await until(
+      "the choices back as they started",
+      async () => {
+        const now = await chosen(app, Object.keys(CHOICES));
+        if (same(now, before)) return true;
+        throw new Error(`Settings shows ${JSON.stringify(now)}, not ${JSON.stringify(before)}`);
+      },
+      10_000,
+    );
+    const saved = await app.invoke("get_settings");
+    if (saved.theme !== "system" || saved.video_height !== null || saved.clip_format !== "mp4")
+      throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);
+    ctx.log("Reset settings put them back");
   },
 };

@@ -73,6 +73,16 @@
     }
   }
 
+  // Every setting back as it starts; the library and everything in it stay.
+  async function resetSettings() {
+    const ok = await ask(
+      "Put every setting back as it was when VODscribe was new? Your library, transcripts, clips, edits and videos stay.",
+      "Reset",
+      "Keep",
+    );
+    if (ok) await appSettings.reset();
+  }
+
   async function clearCache() {
     const amount = cacheBytes ? ` ${formatBytes(cacheBytes)}` : "";
     const ok = await ask(
@@ -387,6 +397,7 @@
     <button class="link" onclick={() => openUrl(ISSUES)}
       >Report a problem or suggest something <Icon name="external" size={12} /></button
     >
+    <button class="link" onclick={resetSettings}>Reset settings…</button>
   </section>
 </div>
 

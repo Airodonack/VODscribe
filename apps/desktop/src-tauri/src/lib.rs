@@ -343,6 +343,7 @@ pub fn run() {
             vods::twitch_clip_video,
             setup::get_settings,
             setup::set_settings,
+            setup::reset_settings,
             setup::gpu_status,
             setup::install_gpu_pack,
             setup::cancel_gpu_install,

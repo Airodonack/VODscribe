@@ -258,6 +258,19 @@ pub(crate) async fn get_settings(state: State<'_, AppState>) -> CmdResult<Settin
     Ok(Settings::load(&state.paths.settings()))
 }
 
+/// Puts every setting back as it starts (the settings file goes), keeping
+/// everything else; returns them as they are now.
+#[tauri::command]
+pub(crate) async fn reset_settings(state: State<'_, AppState>) -> CmdResult<Settings> {
+    let path = state.paths.settings();
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(err(e)),
+    }
+    Ok(Settings::load(&path))
+}
+
 /// Takes effect from the next VOD; one already transcribing keeps its device.
 #[tauri::command]
 pub(crate) async fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {

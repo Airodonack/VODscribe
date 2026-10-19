@@ -105,6 +105,7 @@ permissions = [
   "allow-twitch-clip-video",
   "allow-get-settings",
   "allow-set-settings",
+  "allow-reset-settings",
   "allow-gpu-status",
   "allow-install-gpu-pack",
   "allow-cancel-gpu-install",

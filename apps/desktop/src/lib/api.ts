@@ -492,6 +492,7 @@ export const api = {
   kickStream: (url: string) => invoke<{ name: string; height: number; url: string }[]>("kick_stream", { url }),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<void>("set_settings", { settings }),
+  resetSettings: () => invoke<Settings>("reset_settings"),
   gpuStatus: () => invoke<GpuStatus>("gpu_status"),
   installGpuPack: () => invoke<void>("install_gpu_pack"),
   /** Stops the GPU add-on's download (its pack starts over next time); `gpuDone` then fires with null. */

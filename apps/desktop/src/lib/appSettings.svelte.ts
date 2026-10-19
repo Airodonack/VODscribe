@@ -24,6 +24,17 @@ class AppSettings {
     return this.#loading;
   }
 
+  /** Puts every setting back as it starts, after any save under way. */
+  async reset() {
+    await this.#saving;
+    try {
+      this.value = await api.resetSettings();
+      this.error = null;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
   /** Changes some settings and saves them all. */
   async update(change: Partial<Settings>) {
     await this.load();

@@ -4,6 +4,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.4.1 (unreleased)
 
+- Settings → Help has Reset settings: every setting back as it started, with your library, transcripts, clips, edits and videos kept.
 - On macOS, if it asks to find devices on your local network, it now says why: a site's video player looking for a TV to play on. VODscribe works the same if you don't allow it.
 - More is done from the keyboard: Enter renames the selected chapter or highlight, and Enter or F2 a clip's name; in an edit, Ctrl+← and Ctrl+→ (⌘← and ⌘→ on a Mac) move the piece at the playhead earlier or later.
 - The keyboard button lists every shortcut, Escape, undo and redo among them, and an edit has its own list.
