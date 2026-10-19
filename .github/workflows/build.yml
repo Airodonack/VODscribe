@@ -170,24 +170,36 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # On Windows the app again, with the end-to-end tests' hook (the `e2e`
-      # feature), for e2e.yml to drive: a release doesn't let WebDriver in
-      # (lib.rs webview_args). Made after the release is checked and kept,
-      # under a name the release never takes files from.
+      # On Windows and Apple silicon the app again, with the end-to-end tests'
+      # hook (the `e2e` feature), for e2e.yml to drive: a release doesn't let
+      # WebDriver in (lib.rs webview_args), and macOS has no WebDriver. Made
+      # after the release is checked and kept, under a name the release never
+      # takes files from.
       - name: Build the app for the end-to-end tests
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' || matrix.target == 'aarch64-apple-darwin'
         shell: bash
-        run: pnpm --filter desktop tauri build --target ${{ matrix.target }} --features e2e --no-bundle
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            pnpm --filter desktop tauri build --target ${{ matrix.target }} --features e2e --no-bundle
+            mkdir -p e2e-app && cp target/${{ matrix.target }}/release/vodscribe.exe e2e-app/
+          else
+            pnpm --filter desktop tauri build --target ${{ matrix.target }} --features e2e --bundles app
+            # Packed, as an artifact keeps no file modes (the app's program must stay executable).
+            mkdir -p e2e-app
+            tar -czf e2e-app/app.tar.gz -C target/${{ matrix.target }}/release/bundle/macos VODscribe.app
+          fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' || matrix.target == 'aarch64-apple-darwin'
         with:
           name: e2e-app-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/vodscribe.exe
+          path: e2e-app/*
           if-no-files-found: error
           retention-days: 14
 
-  # Installs each Linux and Windows build and drives it end to end (e2e.yml).
+  # Installs each Linux and Windows build, and the Apple silicon one, and
+  # drives it end to end (e2e.yml).
   e2e:
     needs: build
     # What e2e.yml asks for: it can't have more than its caller grants.

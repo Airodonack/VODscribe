@@ -3,7 +3,10 @@ name: End-to-end tests
 # Installs the Linux and Windows builds and drives them (tests/e2e/run.mjs):
 # on Linux the installed app over WebDriver; on Windows the installed app
 # with the build made for the tests (build.yml) put over its vodscribe.exe,
-# through the app's own test hook.
+# through the app's own test hook; on macOS (Apple silicon) that build's .app,
+# the same way. A hosted Mac grants no Screen Recording or Accessibility, so
+# the OS-level scenarios skip there, and it may have no sound output (the
+# preflight says).
 # build.yml calls it after each build. By hand, it tests an earlier "Build
 # installers" run's installers (the run id is in its URL), so a change to the
 # test can be tried without building again.
@@ -32,7 +35,13 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             models: ~\AppData\Local\app.vodscribe\models
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            models: ~/Library/Application Support/app.vodscribe/models
     runs-on: ${{ matrix.os }}
+    # New on macOS: its failures show, but don't hold up a release, until
+    # its runs are known to pass on a hosted Mac.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -67,10 +76,10 @@ jobs:
           run-id: ${{ inputs.build_run || github.run_id }}
           github-token: ${{ github.token }}
 
-      # Windows: the app with the tests' hook, to drive in place of the
-      # installed one (a release doesn't let WebDriver in).
+      # Windows and macOS: the app with the tests' hook, to drive in place of
+      # the installed one (a release doesn't let WebDriver in; macOS has none).
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: runner.os == 'Windows'
+        if: runner.os != 'Linux'
         with:
           name: e2e-app-${{ matrix.target }}
           path: e2e-app
@@ -92,6 +101,11 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y webkit2gtk-driver xvfb xdotool openbox ./build/deb/*.deb
             echo "APP=/usr/bin/vodscribe" >> "$GITHUB_ENV"
+          elif [[ "$RUNNER_OS" == macOS ]]; then
+            # The app with the tests' hook, as built (a runner has no Mac's
+            # quarantine to clear: nothing here was downloaded by a browser).
+            tar -xzf e2e-app/app.tar.gz -C "$RUNNER_TEMP"
+            echo "APP=$RUNNER_TEMP/VODscribe.app" >> "$GITHUB_ENV"
           else
             # The installer, silently, for this user (its usual mode).
             setup=(./build/nsis/*-setup.exe)
