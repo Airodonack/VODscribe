@@ -365,6 +365,9 @@
       return;
     }
     const p = player;
+    // No player yet (loading, or failed): only full screen is for us; Space
+    // and the arrows keep their usual meaning (a focused button, scrolling).
+    if (!p && key !== "f" && !(key === "Escape" && fullscreen)) return;
     const done = transportKey(key, e.shiftKey, {
       togglePlay: () => p?.togglePlay(),
       seekBy: (s) => p?.seek(Math.max(0, p.time() + s), false),
