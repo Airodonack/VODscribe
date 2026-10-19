@@ -26,6 +26,7 @@ pub mod playable;
 pub mod render;
 pub mod settings;
 pub mod thumbs;
+pub mod time;
 pub mod tools;
 pub mod transcript;
 pub mod twitch;
