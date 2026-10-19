@@ -18,9 +18,14 @@ pub(crate) async fn thumbnail(state: State<'_, AppState>, name: String) -> CmdRe
     Ok(tauri::ipc::Response::new(bytes))
 }
 
+/// How long a site's image that can't be fetched (offline, a server error) is
+/// tried again, at each launch, before it's given up on.
+const RETRY_FOR_SECONDS: i64 = 7 * 24 * 3600;
+
 /// Saves a local copy of VOD `id`'s thumbnail: a frame of a local file, or the
 /// platform's image. A VOD with no usable image gets an empty `thumb` so it
-/// isn't tried again; network failures are retried next launch.
+/// isn't tried again; network failures are retried next launch, for a week
+/// after it was added (`RETRY_FOR_SECONDS`).
 pub(crate) fn cache_thumbnail(app: &AppHandle, id: i64) {
     let state = app.state::<AppState>();
     let Ok(Some(vod)) = state.db.lock().unwrap().vod(id) else { return };
@@ -33,6 +38,7 @@ pub(crate) fn cache_thumbnail(app: &AppHandle, id: i64) {
             None => String::new(),
             Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
                 Ok(thumb) => thumb.unwrap_or_default(),
+                Err(_) if now() - vod.added_at > RETRY_FOR_SECONDS => String::new(),
                 Err(_) => return,
             },
         }
@@ -41,6 +47,10 @@ pub(crate) fn cache_thumbnail(app: &AppHandle, id: i64) {
     if db.set_thumb(id, &thumb).is_ok() {
         let _ = emit_vod(app, &db, id);
     }
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Fills in local thumbnails for VODs that don't have one yet, such as those
