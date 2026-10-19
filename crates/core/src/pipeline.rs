@@ -345,7 +345,12 @@ fn run_worker(
 
 #[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+    use std::time::Instant;
+
     use super::*;
+    use crate::fetch::VodInfo;
 
     #[test]
     fn videos_are_kept_for_sites_without_players_of_their_own() {
@@ -423,15 +428,18 @@ mod tests {
         let media = media_dir(&work);
         fs::create_dir_all(&media).unwrap();
         for name in
-            ["3.mp4", "A title [4].mp4.part-Frag7.part", "29.mp4.part-Frag65.part", "Gone [30].m4a", "notes.txt"]
+            ["3.mp4", "A title [4].mp4.part-Frag7.part", "29.mp4.part-Frag65.part", "Gone [30].m4a", "notes.txt", "77"]
         {
             fs::write(media.join(name), b"x").unwrap();
         }
+        // Folders stay, even named as a VOD's file would be.
+        fs::create_dir_all(media.join("31.mp4")).unwrap();
+        fs::create_dir_all(media.join("Folder [32]")).unwrap();
         tidy_media(&work, &[3, 4]);
         let mut left: Vec<String> =
             fs::read_dir(&media).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        assert_eq!(left, ["3.mp4", "A title [4].mp4.part-Frag7.part", "notes.txt"]);
+        assert_eq!(left, ["3.mp4", "31.mp4", "77", "A title [4].mp4.part-Frag7.part", "Folder [32]", "notes.txt"]);
         // And a VOD's own go, named either way, but not another's with its digits.
         fs::write(media.join("Version 3.1 [3].f137.mp4"), b"x").unwrap();
         fs::write(media.join("Other [34].mp4"), b"x").unwrap();
@@ -439,7 +447,10 @@ mod tests {
         let mut left: Vec<String> =
             fs::read_dir(&media).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
         left.sort();
-        assert_eq!(left, ["A title [4].mp4.part-Frag7.part", "Other [34].mp4", "notes.txt"]);
+        assert_eq!(
+            left,
+            ["31.mp4", "77", "A title [4].mp4.part-Frag7.part", "Folder [32]", "Other [34].mp4", "notes.txt"]
+        );
     }
 
     #[test]
@@ -458,10 +469,6 @@ mod tests {
         assert_eq!(owner("notes.txt"), None);
         assert_eq!(owner("A [b] [x].mp4"), None);
     }
-    use crate::fetch::VodInfo;
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::Arc;
-    use std::time::Instant;
 
     /// Every path that cleans up after a VOD leaves a local file alone.
     #[test]
@@ -503,6 +510,37 @@ mod tests {
 
         fs::remove_file(&source).unwrap();
         assert!(download(&mut db, &vod, &tools, &paths.work(), None, &AtomicBool::new(false), |_, _| {}).is_err());
+    }
+
+    /// A VOD whose video is kept is transcribed from that file, with nothing
+    /// downloaded (the tools here don't exist), until the file is gone.
+    #[test]
+    fn a_kept_video_is_used_rather_than_downloaded_again() {
+        let root = crate::TempDir::new("kept");
+        let paths = crate::Paths::new(root.join("data"));
+        paths.ensure().unwrap();
+        let mut db = Db::open(&paths.db()).unwrap();
+        let info = VodInfo {
+            platform: "rumble".into(),
+            platform_id: "v1".into(),
+            url: "https://rumble.com/v1-x.html".into(),
+            title: "x".into(),
+            channel: None,
+            duration: Some(1.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0;
+        let kept = media_dir(&paths.work()).join("x [1].mp4");
+        fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        fs::write(&kept, b"video").unwrap();
+        db.set_media_path(vod.id, Some(&kept.to_string_lossy())).unwrap();
+        let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
+        let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
+        let no = AtomicBool::new(false);
+        assert_eq!(download(&mut db, &vod, &tools, &paths.work(), None, &no, |_, _| {}).unwrap(), kept);
+        fs::remove_file(&kept).unwrap();
+        assert!(download(&mut db, &vod, &tools, &paths.work(), None, &no, |_, _| {}).is_err(), "downloads again");
     }
 
     #[test]

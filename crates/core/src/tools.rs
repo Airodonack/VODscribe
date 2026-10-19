@@ -273,6 +273,7 @@ pub fn kill_tree(child: &mut std::process::Child) {
         let _ = child.wait();
         // The group is gone once none of it is left to signal.
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // SAFETY: as above; signal 0 only asks whether any of it is left.
         while unsafe { libc::killpg(group, 0) } == 0 && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }

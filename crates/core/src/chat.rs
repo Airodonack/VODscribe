@@ -1487,6 +1487,12 @@ mod tests {
             .collect();
         assert_eq!(saved(&store), saved(&MemoryChat { messages: in_clip, positions: None }));
         assert!(store.messages.iter().all(|m| (0.0..30.0).contains(&m.time)));
+
+        // A VOD whose length Twitch didn't say: one slice, read to its end.
+        let mut store = MemoryChat::default();
+        let unknown = Span { start: 0.0, duration: None, end: None };
+        twitch_into(&mut store, unknown, 1, page, &no, &mut |_| {}).unwrap();
+        assert_eq!(saved(&store), expected, "every message");
     }
 
     #[test]

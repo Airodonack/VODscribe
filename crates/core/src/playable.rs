@@ -134,9 +134,8 @@ impl Playable {
     /// site doesn't name (Rumble's say "unknown"; almost always H.264), MP4s
     /// first and never Ogg; else the smallest taller pair that plays here (a
     /// small channel's Twitch VOD has only its source, often 1080p); else
-    /// audio alone that plays here (podcasts,
-    /// music); else whatever the site has, which is still transcribed even if
-    /// it can't be played.
+    /// audio alone that plays here (podcasts, music); else whatever the site
+    /// has, which is still transcribed even if it can't be played.
     pub fn selector(&self, height: u32) -> String {
         let mut choices = Vec::new();
         for (v, a) in &self.video {
