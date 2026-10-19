@@ -253,6 +253,32 @@ impl Db {
         Ok(self.conn.query_row("SELECT id FROM clips WHERE whole_of = ?1", [vod_id], |r| r.get(0)).optional()?)
     }
 
+    /// How many pieces of clips use VOD `vod_id` (a source), its own clip's
+    /// included; 0 if it's unused, or gone.
+    pub fn uses(&self, vod_id: i64) -> Result<i64> {
+        Ok(self
+            .conn
+            .query_row("SELECT pieces FROM vods WHERE id = ?1", [vod_id], |r| r.get(0))
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    /// The sources nothing uses: no entry lists them and no clip holds any
+    /// of them. They go when the app next starts (not before, so what's
+    /// undone meanwhile still has them).
+    pub fn unused_sources(&self) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM vods WHERE pieces <= 0 ORDER BY id")?;
+        Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Takes VOD `vod_id` out of the library's list: its own clip goes, with
+    /// its marks and the snippets on its bar. The VOD stays a source while
+    /// other clips use it; true if nothing does now.
+    pub fn remove_entry(&self, vod_id: i64) -> Result<bool> {
+        self.conn.execute("DELETE FROM clips WHERE whole_of = ?1", [vod_id])?;
+        Ok(self.uses(vod_id)? <= 0)
+    }
+
     /// Makes VOD `vod_id`'s own clip, over the whole VOD, at the top of the
     /// library's list: as the VOD is added.
     pub(crate) fn add_vod_clip(&self, vod_id: i64, title: &str) -> Result<i64> {
@@ -748,6 +774,34 @@ pub(crate) mod tests {
         db.hand_out_edit(edit).unwrap();
         assert_eq!(rev(edit), 8);
         assert!(db.edit(edit).unwrap().unwrap().current);
+    }
+
+    #[test]
+    fn sources_count_the_pieces_that_use_them() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let other = db.add_vod(&info("y")).unwrap().0.id;
+        assert_eq!(db.uses(vod).unwrap(), 1, "its own clip");
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let piece = db.piece_rows(edit).unwrap()[0].id;
+        assert!(db.split_piece(piece, 15.0).unwrap());
+        db.add_clip(vod, 1.0, 2.0, "s", true).unwrap();
+        assert_eq!(db.uses(vod).unwrap(), 4);
+        db.remove_piece(piece).unwrap();
+        assert_eq!(db.uses(vod).unwrap(), 3);
+        let state = db.edit_state(edit).unwrap().unwrap();
+        db.restore_edit(edit, &state).unwrap();
+        assert_eq!(db.uses(vod).unwrap(), 3, "put back as it was");
+
+        // Out of the list: its own clip and snippet go; the edit still uses it.
+        assert!(!db.remove_entry(vod).unwrap());
+        assert_eq!(db.uses(vod).unwrap(), 1);
+        assert!(db.unused_sources().unwrap().is_empty());
+        db.delete_edit(edit).unwrap();
+        assert_eq!(db.unused_sources().unwrap(), [vod]);
+        assert!(db.remove_entry(other).unwrap(), "used by nothing else");
+        assert_eq!(db.unused_sources().unwrap(), [vod, other]);
     }
 
     #[test]

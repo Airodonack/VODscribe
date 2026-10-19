@@ -532,6 +532,24 @@ ALTER TABLE clips DROP COLUMN error;
 ALTER TABLE clips DROP COLUMN rendered_revision;
 ALTER TABLE clips DROP COLUMN handed_out;";
 
+/// Version 24: each VOD (a source) counts the pieces of clips that use it,
+/// its own clip's included, kept by triggers in the transaction of every
+/// change to `items` (cascades too). A source at zero is unused: no entry
+/// lists it and no clip holds any of it.
+const MIGRATE_V24: &str = "
+ALTER TABLE vods ADD COLUMN pieces INTEGER NOT NULL DEFAULT 0;
+UPDATE vods SET pieces = (SELECT count(*) FROM items WHERE items.vod_id = vods.id);
+CREATE TRIGGER items_counted AFTER INSERT ON items WHEN NEW.vod_id IS NOT NULL BEGIN
+    UPDATE vods SET pieces = pieces + 1 WHERE id = NEW.vod_id;
+END;
+CREATE TRIGGER items_uncounted AFTER DELETE ON items WHEN OLD.vod_id IS NOT NULL BEGIN
+    UPDATE vods SET pieces = pieces - 1 WHERE id = OLD.vod_id;
+END;
+CREATE TRIGGER items_recounted AFTER UPDATE OF vod_id ON items WHEN OLD.vod_id IS NOT NEW.vod_id BEGIN
+    UPDATE vods SET pieces = pieces - 1 WHERE id = OLD.vod_id;
+    UPDATE vods SET pieces = pieces + 1 WHERE id = NEW.vod_id;
+END;";
+
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
@@ -835,6 +853,7 @@ impl Db {
             MIGRATE_V21,
             MIGRATE_V22,
             MIGRATE_V23,
+            MIGRATE_V24,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -2149,6 +2168,8 @@ mod tests {
         assert_eq!(marks, [(7, "chapter".into(), 65.25, Some("The raid".into()))]);
         assert_eq!(db.marks(2).unwrap().iter().map(|m| m.id).collect::<Vec<_>>(), [8]);
         assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [2, 1], "VODs list in the order too");
+        // Each VOD counts what uses it: its clip, its snippets (shown or not) and the edit's piece.
+        assert_eq!((db.uses(1).unwrap(), db.uses(2).unwrap()), (4, 3));
         // Nothing of the old tables is left, nor the order on VODs.
         let tables: Vec<String> = {
             let mut stmt =
