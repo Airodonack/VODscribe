@@ -244,6 +244,9 @@
     return `Piece ${n} of ${pieces.length} · ${atNow.piece.title} · ${atNow.piece.vod_title}`;
   });
 
+  /** Remove is hovered: the piece it would take out lights up on the timeline. */
+  let removeHover = $state(false);
+
   /** Remove: the piece at the playhead out of the edit (the one on screen,
    *  as for Split: there's no other selection to keep track of). */
   function removeCurrent() {
@@ -658,6 +661,7 @@
           pieces={lane}
           {pending}
           selectedPiece={atNow?.piece.id ?? null}
+          removing={removeHover ? (lane.find((p) => p.id === atNow?.piece.id) ?? null) : null}
           {onpiece}
           duration={total}
           time={now}
@@ -695,6 +699,8 @@
           <button
             class="action remove"
             onclick={removeCurrent}
+            onmouseenter={() => (removeHover = true)}
+            onmouseleave={() => (removeHover = false)}
             disabled={!atNow}
             title="Take the piece at the playhead out of the edit; its VOD and clips aren't touched (Delete)"
           >

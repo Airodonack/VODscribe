@@ -110,6 +110,27 @@ export default {
     );
     await until("the playhead back at 1 s", async () => (await app.shownTime()) === 1, 10_000);
 
+    // Remove hovered: the piece it would take out (the one at the playhead)
+    // lights up on the timeline, and goes dark as the pointer leaves.
+    const removeLit = () =>
+      app.js(
+        `const lit = document.querySelector("section.edit-view .lit.removing")?.style;
+         const piece = document.querySelector("section.edit-view .piece.selected")?.style;
+         return lit ? [lit.left, lit.width, piece?.left, piece?.width] : null;`,
+      );
+    await app.js(`document.querySelector("button.action.remove").dispatchEvent(new MouseEvent("mouseenter"))`);
+    await until(
+      "the piece at the playhead lit up as going",
+      async () => {
+        const lit = await removeLit();
+        if (lit && lit[0] === lit[2] && lit[1] === lit[3]) return true;
+        throw new Error(`lit, then the piece: ${JSON.stringify(lit)}`);
+      },
+      10_000,
+    );
+    await app.js(`document.querySelector("button.action.remove").dispatchEvent(new MouseEvent("mouseleave"))`);
+    await until("it dark again", async () => (await removeLit()) === null, 10_000);
+
     // A line struck out, then the strike undone.
     await until(
       "a line to strike",
