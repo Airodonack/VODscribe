@@ -48,10 +48,10 @@ pub(crate) fn start(app: &AppHandle) {
         let waiting = waiting.clone();
         app.listen_any("e2e-answer", move |event| {
             let payload = event.payload().to_owned();
-            if let Ok(Answer { id }) = serde_json::from_str(&payload) {
-                if let Some(to) = waiting.lock().unwrap().remove(&id) {
-                    let _ = to.send(payload);
-                }
+            if let Ok(Answer { id }) = serde_json::from_str(&payload)
+                && let Some(to) = waiting.lock().unwrap().remove(&id)
+            {
+                let _ = to.send(payload);
             }
         });
     }

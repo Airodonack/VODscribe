@@ -37,6 +37,10 @@ pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
 
 fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<R>) {
     for request in server.incoming_requests() {
+        // The tests' builds say what was asked and when (a start that stalls
+        // with the page empty: was its script asked for, and answered?).
+        #[cfg(feature = "e2e")]
+        let (asked, url) = (std::time::Instant::now(), request.url().to_string());
         let allowed = loopback::check(&request, host).is_ok();
         let path = request.url().split(['?', '#']).next().unwrap_or("/").to_string();
         let response = match allowed.then(|| assets.get(path)).flatten() {
@@ -44,7 +48,13 @@ fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<
                 let mut response = Response::from_data(asset.bytes)
                     .with_header(header("Content-Type", &asset.mime_type))
                     .with_header(header("Cache-Control", "no-cache"))
-                    .with_header(header("X-Content-Type-Options", "nosniff"));
+                    .with_header(header("X-Content-Type-Options", "nosniff"))
+                    // A connection a request: with them kept, WebKitGTK (2.54)
+                    // sometimes never asked for the page's own script when the
+                    // tests started the app, and the page stayed empty for two
+                    // minutes (about 4 starts in 10; 1 in 37 without). Free on
+                    // loopback.
+                    .with_header(header("Connection", "close"));
                 if let Some(csp) = asset.csp_header {
                     response.add_header(header("Content-Security-Policy", &csp));
                 }
@@ -53,7 +63,17 @@ fn serve<R: Runtime>(server: &Server, host: &str, assets: &tauri::AssetResolver<
             None => Response::from_string("").with_status_code(if allowed { 404 } else { 403 }),
         };
         let _ = request.respond(response);
+        #[cfg(feature = "e2e")]
+        eprintln!("app-server {}: {url} in {} ms", chrono_ms(), asked.elapsed().as_millis());
     }
+}
+
+/// The time of day to the millisecond (UTC), to line the log up with the tests'.
+#[cfg(feature = "e2e")]
+fn chrono_ms() -> String {
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+    let s = ms / 1000 % 86_400;
+    format!("{:02}:{:02}:{:02}.{:03}", s / 3600, s / 60 % 60, s % 60, ms % 1000)
 }
 
 fn header(name: &'static str, value: &str) -> Header {
