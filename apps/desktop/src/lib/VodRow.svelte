@@ -249,13 +249,13 @@
 
 <div class="actions" class:removing inert={removing || clearing}>
   {#if vod.status === "error"}
-    <button class="act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
+    <button class="row-act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
     </button>
   {:else if vod.status === "paused"}
     <!-- Resuming an outdated transcript starts over, like transcribing again. -->
     <button
-      class="act"
+      class="row-act"
       class:warn={vod.outdated}
       onclick={() => act(api.resumeVod(vod.id))}
       title={vod.outdated ? "Resume (starts over with the newer version)" : "Resume"}
@@ -263,19 +263,19 @@
     >
       <Icon name="play" size={15} />
     </button>
-    <button class="act" onclick={cancel} title="Cancel" aria-label="Cancel">
+    <button class="row-act" onclick={cancel} title="Cancel" aria-label="Cancel">
       <Icon name="x" size={15} />
     </button>
   {:else if vod.status !== "done"}
-    <button class="act" onclick={() => act(api.pauseVod(vod.id))} title="Pause" aria-label="Pause">
+    <button class="row-act" onclick={() => act(api.pauseVod(vod.id))} title="Pause" aria-label="Pause">
       <Icon name="pause" size={15} />
     </button>
-    <button class="act" onclick={cancel} title="Cancel" aria-label="Cancel">
+    <button class="row-act" onclick={cancel} title="Cancel" aria-label="Cancel">
       <Icon name="x" size={15} />
     </button>
   {:else}
     <button
-      class="act"
+      class="row-act"
       class:warn={vod.outdated}
       onclick={retranscribe}
       title={vod.outdated ? "Transcribe again with the newer version" : "Transcribe again"}
@@ -287,7 +287,7 @@
   {/if}
   {#if canKeep && !vod.media}
     <button
-      class="act keep"
+      class="row-act keep"
       class:failed={keepError}
       bind:this={keepButton}
       onclick={keep}
@@ -311,7 +311,7 @@
   {/if}
   {#if keptVideo}
     <button
-      class="act"
+      class="row-act"
       onclick={deleteVideo}
       title="Delete the video kept on this computer (the transcript stays)"
       aria-label="Delete video"
@@ -320,7 +320,7 @@
     </button>
   {/if}
   <button
-    class="act"
+    class="row-act"
     onclick={remove}
     title="Remove"
     aria-label="Remove"
@@ -495,13 +495,13 @@
   }
 
   /* The video's download: where Delete video is once it's here. */
-  .act.keep {
+  .row-act.keep {
     display: inline-flex;
     align-items: center;
     justify-content: center;
   }
 
-  .act.failed {
+  .row-act.failed {
     color: var(--warn);
   }
 
@@ -542,28 +542,7 @@
     color: var(--text);
   }
 
-  .act {
-    width: 26px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--muted);
-    border-radius: var(--radius-sm);
-    opacity: 0.75;
-  }
-
-  :global(.vod:hover) .act,
-  :global(.vod.selected) .act {
-    opacity: 1;
-  }
-
-  .act:hover:not(:disabled) {
-    background: var(--surface-3);
-    color: var(--text);
-  }
-
-  .act.warn {
+  .row-act.warn {
     color: var(--warn);
   }
 </style>

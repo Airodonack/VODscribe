@@ -95,13 +95,13 @@
 <div class="actions">
   {#if edit.status === "ready" && edit.file_path}
     <button
-      class="act"
+      class="row-act"
       onclick={() => api.showEdit(edit.id).catch((e) => (edits.error = String(e)))}
       title="Show the rendered video in its folder"
       aria-label="Show in folder"><Icon name="folder" size={15} /></button
     >
   {/if}
-  <button class="act" onclick={remove} title="Delete edit" aria-label="Delete edit">
+  <button class="row-act" onclick={remove} title="Delete edit" aria-label="Delete edit">
     <Icon name="trash" size={15} />
   </button>
 </div>
@@ -220,26 +220,5 @@
     justify-content: flex-end;
     margin-top: 4px;
     margin-right: -6px;
-  }
-
-  .act {
-    width: 26px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    background: none;
-    color: var(--muted);
-    border-radius: var(--radius-sm);
-    opacity: 0.75;
-  }
-
-  :global(.vod:hover) .act,
-  :global(.vod.selected) .act {
-    opacity: 1;
-  }
-
-  .act:hover:not(:disabled) {
-    color: var(--text);
-    background: var(--surface-2);
   }
 </style>

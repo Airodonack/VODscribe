@@ -11,6 +11,8 @@ export interface Pending {
   key: number;
   /** A file's name, or a link's address. */
   label: string;
+  /** Its turn has come (till then it waits behind the others). */
+  started?: boolean;
 }
 
 /** What to call `item` (a link or a file path) on its stand-in. */
@@ -60,6 +62,10 @@ export class Adder {
     return p;
   }
 
+  #start(p: Pending) {
+    this.pending = this.pending.map((q) => (q.key === p.key ? { ...q, started: true } : q));
+  }
+
   #done(p: Pending) {
     this.pending = this.pending.filter((q) => q.key !== p.key);
     this.#canceled.delete(p.key);
@@ -82,6 +88,7 @@ export class Adder {
       this.#done(p);
       return false;
     }
+    this.#start(p);
     const ok = await api.addVod(url, p.key).then(
       () => true,
       (e) => {
@@ -126,6 +133,7 @@ export class Adder {
       for (const [i, file] of files.entries()) {
         const p = fileStandIns[i];
         if (!this.#canceled.has(p.key)) {
+          this.#start(p);
           await api.addFiles([file]).then(
             (r) => failed.push(...r.errors),
             (e) => failed.push(String(e)),
