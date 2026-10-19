@@ -87,7 +87,8 @@
     error = null;
     step = null;
     current = null;
-    await api.runSetup();
+    // Refused while its tools are being updated or repaired: said, to try again.
+    await api.runSetup().catch((e) => (error = String(e)));
     onchange();
   }
 </script>

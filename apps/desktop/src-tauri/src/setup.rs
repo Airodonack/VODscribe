@@ -92,7 +92,8 @@ struct ItemProgress<'a> {
 #[tauri::command]
 pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    state.setup.spawn(app, "setup-progress", "setup-done", move |app, cancel, report| {
+    let busy = "VODscribe is updating or repairing its tools. Try again in a moment.";
+    state.setup.spawn(app, "setup-progress", "setup-done", busy, move |app, cancel, report| {
         let progress = |item: &str, progress: Progress| report.send(ItemProgress { item, progress });
         let bin = paths.bin();
         if tools::find_yt_dlp(&bin).is_none() {
@@ -115,8 +116,7 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
             eprintln!("Deno wasn't installed: {e:#}");
         }
         Ok(())
-    });
-    Ok(())
+    })
 }
 
 /// A long download's flags: `running` while it's under way (one at a time) and
@@ -125,6 +125,9 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
 /// pack starts over, since its parts are only kept together.
 pub(crate) struct Install {
     running: Arc<AtomicBool>,
+    /// `running` is held by something other than an install (`Claim`): a
+    /// yt-dlp update, the add-on being removed. No done event follows.
+    claimed: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
     /// The latest progress event's payload while running (see `Reporter`).
     last: Arc<Mutex<Option<serde_json::Value>>>,
@@ -172,6 +175,7 @@ impl Install {
     pub(crate) fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
+            claimed: Arc::new(AtomicBool::new(false)),
             cancel: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
         }
@@ -197,18 +201,21 @@ impl Install {
     /// Runs `install` on its own thread, unless one is already running, with a
     /// `Reporter` for its `progress_event`s. Then clears `running` and emits
     /// `done_event` with an error message, or null when it finished or was canceled.
+    /// With one running already its done event comes as for this one; held
+    /// by something else (`busy`), none would, so that's an error.
     pub(crate) fn spawn(
         &self,
         app: AppHandle,
         progress_event: &'static str,
         done_event: &'static str,
+        busy: &'static str,
         install: impl FnOnce(&AppHandle, &AtomicBool, &Reporter) -> anyhow::Result<()> + Send + 'static,
-    ) {
+    ) -> CmdResult<()> {
         // Cleared before `running` is set, so a cancel that lands as this
         // starts is kept rather than wiped.
         self.cancel.store(false, Ordering::Relaxed);
         if self.running.swap(true, Ordering::Relaxed) {
-            return;
+            return if self.claimed.load(Ordering::Relaxed) { Err(busy.into()) } else { Ok(()) };
         }
         *self.last.lock().unwrap() = None;
         let (running, cancel, last) = (self.running.clone(), self.cancel.clone(), self.last.clone());
@@ -220,6 +227,7 @@ impl Install {
             let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
             let _ = app.emit(done_event, error);
         });
+        Ok(())
     }
 }
 
@@ -227,7 +235,7 @@ impl Install {
 /// Updates yt-dlp, reporting its steps as `yt-dlp-progress` events (`Progress`).
 pub(crate) async fn update_yt_dlp(app: AppHandle, state: State<'_, AppState>) -> CmdResult<String> {
     // Setup installs yt-dlp too; the two mustn't write the same file at once.
-    let Some(_setup) = Claim::take(&state.setup.running) else {
+    let Some(_setup) = Claim::take(&state.setup) else {
         return Err("Setup is still downloading. Try again when it's done.".into());
     };
     update_yt_dlp_now(app, state).await
@@ -299,7 +307,8 @@ pub(crate) async fn gpu_status(state: State<'_, AppState>) -> CmdResult<GpuStatu
 #[tauri::command]
 pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     let paths = state.paths.clone();
-    state.gpu.spawn(app, "gpu-progress", "gpu-done", move |_, cancel, report| {
+    let busy = "The GPU add-on is being removed or repaired. Try again in a moment.";
+    state.gpu.spawn(app, "gpu-progress", "gpu-done", busy, move |_, cancel, report| {
         let progress = |p: Progress| report.send(p);
         // One count of bytes and of files across the pack and the model, so the
         // bar only moves forward and the files read "(1 of 10)" to "(10 of 10)".
@@ -328,8 +337,7 @@ pub(crate) async fn install_gpu_pack(app: AppHandle, state: State<'_, AppState>)
             ..Progress::step("Every file matches its SHA‑256")
         });
         Ok(())
-    });
-    Ok(())
+    })
 }
 
 /// Stops setup's downloads; what already finished stays installed.
@@ -348,9 +356,10 @@ pub(crate) async fn cancel_gpu_install(state: State<'_, AppState>) -> CmdResult<
 
 #[tauri::command]
 pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()> {
-    if state.gpu.running() {
+    // Held till it's gone, so an install can't start on it meanwhile.
+    let Some(_removing) = Claim::take(&state.gpu) else {
         return Err("The GPU add-on is still downloading.".into());
-    }
+    };
     // A transcription may have the pack's libraries loaded, including one the
     // transcribe stage has picked but not yet marked as transcribing. Nothing
     // new starts until the pack is gone.
@@ -397,7 +406,7 @@ pub(crate) async fn cache_size(state: State<'_, AppState>) -> CmdResult<u64> {
 pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> CmdResult<()> {
     // Claimed for the whole clear, so setup, a yt-dlp update or the GPU add-on
     // can't start downloading into folders that are being deleted.
-    let claims = (Claim::take(&state.setup.running), Claim::take(&state.gpu.running));
+    let claims = (Claim::take(&state.setup), Claim::take(&state.gpu));
     let (Some(_setup), Some(_gpu)) = claims else {
         return Err("Wait for the current download to finish first.".into());
     };
@@ -417,18 +426,42 @@ pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> C
     Ok(())
 }
 
-/// A busy flag (an `Install`'s `running`) held until dropped.
-struct Claim(Arc<AtomicBool>);
+/// An `Install`'s busy flag, held by something other than an install until
+/// dropped.
+struct Claim(Arc<AtomicBool>, Arc<AtomicBool>);
 
 impl Claim {
-    /// Sets `flag`, or returns None if something else already holds it.
-    fn take(flag: &Arc<AtomicBool>) -> Option<Self> {
-        (!flag.swap(true, Ordering::Relaxed)).then(|| Claim(flag.clone()))
+    /// Holds `install`'s flag, or returns None if something already does.
+    fn take(install: &Install) -> Option<Self> {
+        if install.running.swap(true, Ordering::Relaxed) {
+            return None;
+        }
+        install.claimed.store(true, Ordering::Relaxed);
+        Some(Claim(install.running.clone(), install.claimed.clone()))
     }
 }
 
 impl Drop for Claim {
     fn drop(&mut self) {
+        self.1.store(false, Ordering::Relaxed);
         self.0.store(false, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_claim_holds_the_flag_and_says_it_isnt_an_install() {
+        let install = Install::new();
+        let claim = Claim::take(&install).expect("free");
+        assert!(install.running() && install.claimed.load(Ordering::Relaxed));
+        assert!(Claim::take(&install).is_none(), "one holder at a time");
+        drop(claim);
+        assert!(!install.running() && !install.claimed.load(Ordering::Relaxed));
+        // Held by an install (as spawn sets it), it isn't claimed.
+        install.running.store(true, Ordering::Relaxed);
+        assert!(Claim::take(&install).is_none() && !install.claimed.load(Ordering::Relaxed));
     }
 }
