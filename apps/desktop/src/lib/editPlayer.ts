@@ -53,7 +53,13 @@ export class EditPlayer implements EditPlayback {
     events.playerTime((s) => !this.gone && this.tell(s)).then((u) => (this.gone ? u() : (this.unlisten = u)));
   }
 
+  private told = 0;
   private tell(status: PlayerStatus) {
+    // A reply that arrives after a newer event is stale.
+    if (status.seq !== undefined) {
+      if (status.seq <= this.told) return;
+      this.told = status.seq;
+    }
     this.clock.set(status.time);
     this.clock.playing = status.running;
     this.clock.speed = status.speed;

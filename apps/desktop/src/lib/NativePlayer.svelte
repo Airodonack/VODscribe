@@ -39,7 +39,13 @@
     const t = told.time + (told.running ? ((performance.now() - toldAt) / 1000) * told.speed : 0);
     return length ? Math.min(t, length) : t;
   };
+  let seq = 0;
   function tell(status: PlayerStatus) {
+    // A reply that arrives after a newer event is stale.
+    if (status.seq !== undefined) {
+      if (status.seq <= seq) return;
+      seq = status.seq;
+    }
     told = status;
     toldAt = performance.now();
     time = status.time;

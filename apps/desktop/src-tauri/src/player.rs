@@ -38,6 +38,9 @@ struct Open {
 /// timeline's playhead follows. Told at every frame and every change.
 #[derive(Serialize, Clone, Copy)]
 pub(crate) struct Status {
+    /// Counts up with each status made: a command's reply and the
+    /// `player-time` events travel apart, so the page keeps the newest.
+    seq: u64,
     time: f64,
     playing: bool,
     running: bool,
@@ -58,7 +61,9 @@ fn opened(player: &Player) -> Opened {
 }
 
 fn status(player: &Player) -> Status {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     Status {
+        seq: SEQ.fetch_add(1, Ordering::Relaxed) + 1,
         time: player.time(),
         playing: player.playing(),
         running: player.running(),

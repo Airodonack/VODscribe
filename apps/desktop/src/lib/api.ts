@@ -40,6 +40,8 @@ export type Device = "cpu" | "gpu";
  *  fast it plays, and where the frame on screen is (null: none shows),
  *  which the playhead follows (player.rs). */
 export interface PlayerStatus {
+  /** Counts up with each status the app makes (none on the page's own guesses): older ones are stale. */
+  seq?: number;
   time: number;
   playing: boolean;
   running: boolean;
