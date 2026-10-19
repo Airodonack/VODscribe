@@ -110,6 +110,7 @@ fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
             Some(path) if Path::new(path).file_stem() == Path::new(&name).file_stem() => PathBuf::from(path),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
+        crate::clips::writing(&out);
         anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path))
     })();
     let (pieces, ffmpeg, out, version, format, before) = match prepared {

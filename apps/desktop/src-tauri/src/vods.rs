@@ -253,26 +253,32 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
     state.history.forget(crate::history::Doc::Vod(id));
     let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
     state.clips.stop_vod(&state.db.lock().unwrap(), id);
-    state.footage.stop_vod(id);
-    erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
-    // A running stage removes the files once its process has stopped.
-    // With the reads held too, so none is under way when the WAL is emptied.
-    let delete_row = || {
-        let db = state.db.lock().unwrap();
-        let _reads = state.reads.lock().unwrap();
-        db.delete_vod(id)
-    };
-    let running = state
-        .worker
-        .control(id, Stop::Delete, || {
-            pipeline::remove_work_files(&state.paths.work(), id);
-            pipeline::remove_media(&state.paths.work(), id);
-            delete_row()
-        })
-        .map_err(err)?;
-    if running {
-        delete_row().map_err(err)?;
+    let removed = async {
+        state.footage.stop_vod(id);
+        erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
+        // A running stage removes the files once its process has stopped.
+        // With the reads held too, so none is under way when the WAL is emptied.
+        let delete_row = || {
+            let db = state.db.lock().unwrap();
+            let _reads = state.reads.lock().unwrap();
+            db.delete_vod(id)
+        };
+        let running = state
+            .worker
+            .control(id, Stop::Delete, || {
+                pipeline::remove_work_files(&state.paths.work(), id);
+                pipeline::remove_media(&state.paths.work(), id);
+                delete_row()
+            })
+            .map_err(err)?;
+        if running {
+            delete_row().map_err(err)?;
+        }
+        Ok::<_, String>(())
     }
+    .await;
+    state.clips.vod_removed(&state.db.lock().unwrap(), id);
+    removed?;
     thumbs::remove(&state.paths.thumbs(), id);
     vodscribe_core::peaks::remove(&state.paths.peaks(), id);
     crate::footage::remove(&app, id);

@@ -93,6 +93,18 @@ impl Cutter {
         self.jobs.stop_running(|&id| db.clip(id).ok().flatten().is_some_and(|c| c.vod_id == vod_id));
     }
 
+    /// VOD `vod_id`'s removal is over: gone, or still there if it failed. Its
+    /// clips are no longer held back, and any left to make (it stayed) are
+    /// queued again rather than waiting for the next start.
+    pub(crate) fn vod_removed(&self, db: &Db, vod_id: i64) {
+        self.removing.lock().unwrap().remove(&vod_id);
+        for clip in db.clips(vod_id).into_iter().flatten() {
+            if matches!(clip.status, ClipStatus::Waiting | ClipStatus::Cutting) {
+                self.jobs.push_new(clip.id, |&j| j == clip.id);
+            }
+        }
+    }
+
     /// Stops clip `id`'s cut, if it's the one being cut.
     pub(crate) fn stop(&self, id: i64) {
         self.jobs.stop_running(|&j| j == id);
@@ -172,6 +184,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         Some(path) if Path::new(path).file_name().is_some_and(|n| *n == *name) => PathBuf::from(path),
         _ => clips::unique_path(&dir, &name),
     };
+    writing(&out);
     {
         let db = state.db.lock().unwrap();
         if !db.set_clip_file(id, range.0, range.1, ClipStatus::Cutting, None, None)? {
@@ -420,6 +433,12 @@ pub(crate) fn delete_file(path: impl AsRef<Path>) {
     if std::fs::remove_file(path).is_err() && path.exists() {
         LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()).push(path.to_path_buf());
     }
+}
+
+/// `path` is about to be written: if an earlier file there was left to delete
+/// later (and has gone since), the new one isn't.
+pub(crate) fn writing(path: &Path) {
+    LEFTOVERS.lock().unwrap_or_else(|e| e.into_inner()).retain(|p| p != path);
 }
 
 /// Deletes what couldn't be deleted before, if it can be now.
