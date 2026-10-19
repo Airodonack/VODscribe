@@ -85,7 +85,7 @@ def peaks(cli: str, yt_dlp: str, scratch: str) -> None:
     env = {**os.environ, "VODSCRIBE_DATA": str(work / "cli-data")}
     for v in json.loads((OUT / "vods.json").read_text()):
         stem = work / f"demo-{v['id']}"
-        subprocess.run([yt_dlp, "-q", "-f", "ba/b", "-o", f"{stem}.%(ext)s", v["url"]], check=True)
+        subprocess.run([yt_dlp, "-q", "-f", "ba/b", "-o", f"{stem}.%(ext)s", "--", v["url"]], check=True)
         (audio,) = work.glob(f"demo-{v['id']}.*")
         subprocess.run([cli, "peaks", audio, OUT / f"{v['id']}.peaks"], check=True, env=env)
         audio.unlink()
