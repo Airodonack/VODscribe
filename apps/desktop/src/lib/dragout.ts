@@ -364,8 +364,20 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     const onUp = (e: PointerEvent) => {
       down = false;
       if (leaving) return;
+      // A drop on the clip bar keeps the clip made ahead (the same stretch):
+      // it's waited for, then shown. Anywhere else it goes, as in finish.
+      const ahead = early;
+      early = null;
+      let kept = false;
       finish();
-      dropAt(e.clientX, e.clientY, stretch, () => make(true));
+      dropAt(e.clientX, e.clientY, stretch, () => {
+        kept = true;
+        return (ahead ?? Promise.resolve(null)).then(() => make(true));
+      });
+      if (!kept)
+        ahead?.then((c) => {
+          if (c && !c.shown) api.deleteClip(c.id).catch(() => {});
+        });
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {
