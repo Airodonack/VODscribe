@@ -607,6 +607,8 @@ fn run(inner: &Inner) {
             s.sound = None;
             s.ended = true;
             drop(s);
+            // The sound thread waits while playing: it lets its output go.
+            inner.wake.notify_all();
             if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {
                 f(Event::Ended);
             }

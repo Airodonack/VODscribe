@@ -89,8 +89,15 @@ fn build<T: SizedSample + FromSample<f32>>(
             *config,
             move |out: &mut [T], _| {
                 // Silence unless playing, or when the queue runs dry
-                // (decoding behind): then the time stands too.
-                let mut queue = if on.load(Ordering::Acquire) { taken.try_lock().ok() } else { None };
+                // (decoding behind): then the time stands too. The queue's
+                // other users hold it only to copy a chunk in or read its
+                // length, so waiting for it is microseconds; taking silence
+                // instead (try_lock) dropped a whole chunk, a click.
+                let mut queue = if on.load(Ordering::Acquire) {
+                    Some(taken.lock().unwrap_or_else(|e| e.into_inner()))
+                } else {
+                    None
+                };
                 let gain = f32::from_bits(gain.load(Ordering::Acquire));
                 let mut got = 0;
                 for frame in out.chunks_mut(channels) {
