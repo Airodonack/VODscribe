@@ -2,8 +2,10 @@
 // renamed, its piece split (B) and the second half moved first and back
 // (Ctrl+← and →), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
-// removing the VOD warns that its pieces leave the edit (Keep: nothing
-// goes); then the edit deleted, after asking.
+// removing the VOD says its pieces stay in the edit (Keep: nothing goes;
+// Remove: it leaves the library, the edit keeps its pieces); then the edit
+// deleted, after asking, and with nothing using the VOD it's erased by the
+// next start (added again, it's a new one).
 
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -258,9 +260,16 @@ export default {
       () => app.js(`return window.__e2e.asked.length ? JSON.stringify(window.__e2e.asked.at(-1)) : null`),
       10_000,
     );
-    if (!removing.includes(`taken out of the edit “${NAME}”`))
+    if (!removing.includes(`Its pieces in the edit “${NAME}” stay`))
       throw new Error(`removing the VOD asked ${removing}, not naming the edit`);
     if ((await app.invoke("list_vods")).length !== 1) throw new Error(`answering "Keep" removed the VOD`);
+
+    // Removed: out of the library, but the edit keeps its pieces.
+    await app.answer("Remove");
+    await app.click('button[aria-label="Remove"]');
+    await until("the VOD out of the list", async () => (await app.invoke("list_vods")).length === 0, MINUTE);
+    if (pieces(await app.invoke("get_edit", { id: kept.id })).length !== 2)
+      throw new Error("removing the VOD took pieces out of the edit");
 
     // Deleted from its row, after asking.
     const asked = await app.asked();
@@ -268,5 +277,11 @@ export default {
     await app.click(`.vod.edit[data-key="-${kept.id}"] button[aria-label="Delete edit"]`);
     await until("the edit gone", async () => (await app.invoke("list_edits")).length === 0, MINUTE);
     if ((await app.asked()) !== asked + 1) throw new Error("deleting didn't ask first");
+
+    // Nothing uses the VOD now: erased by the time the app is back.
+    app = await ctx.restart();
+    await app.toLibrary();
+    const { vods: readded } = await app.invoke("add_files", { paths: [ctx.fixtures.landed] });
+    if (readded[0]?.id === vod.id) throw new Error("the VOD nothing used was still there after a restart");
   },
 };

@@ -802,6 +802,16 @@ pub(crate) mod tests {
         assert_eq!(db.unused_sources().unwrap(), [vod]);
         assert!(db.remove_entry(other).unwrap(), "used by nothing else");
         assert_eq!(db.unused_sources().unwrap(), [vod, other]);
+        // Out of the list, it's a source only: not listed, its work held.
+        assert_eq!(db.listed_vods().unwrap().len(), 0);
+        assert_eq!(db.vods().unwrap().len(), 2);
+        assert!(!db.vod(vod).unwrap().unwrap().listed);
+        assert!(db.next_with_status(crate::db::Status::Queued).unwrap().is_none());
+        // Added again, it's listed again, the same VOD.
+        let (again, new) = db.add_vod(&info("x")).unwrap();
+        assert_eq!((again.id, new, again.listed), (vod, false, true));
+        assert_eq!(db.uses(vod).unwrap(), 1);
+        assert_eq!(db.next_with_status(crate::db::Status::Queued).unwrap().map(|v| v.id), Some(vod));
     }
 
     #[test]

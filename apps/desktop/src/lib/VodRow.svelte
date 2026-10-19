@@ -169,10 +169,12 @@
   async function remove() {
     if (
       await ask(
-        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer.${inEdits(
-          " Its clips leave VODscribe too (their files stay in your Videos folder), and are taken out of ",
-          ".",
-        )}`,
+        edits.forVod(vod.id).length
+          ? `Remove “${vod.title}” from the library? Its clips leave VODscribe (their files stay in your Videos folder).${inEdits(
+              " Its pieces in ",
+              " stay, so its transcript and any downloaded audio or video stay on this computer until no edit uses them.",
+            )}`
+          : `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer, and its clips leave VODscribe (their files stay in your Videos folder).`,
         "Remove",
         "Keep",
       )

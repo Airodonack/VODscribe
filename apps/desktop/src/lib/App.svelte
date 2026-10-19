@@ -203,9 +203,12 @@
     setup = await api.setupStatus();
   }
 
+  // News of a VOD taken out of the list (kept for edits) doesn't put it back.
   function upsert(vod: Vod) {
     const i = vods.findIndex((v) => v.id === vod.id);
-    if (i >= 0) vods[i] = vod;
+    if (!vod.listed) {
+      if (i >= 0) vods.splice(i, 1);
+    } else if (i >= 0) vods[i] = vod;
     else vods.unshift(vod);
   }
 

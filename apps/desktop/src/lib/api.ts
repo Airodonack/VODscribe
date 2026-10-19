@@ -31,6 +31,8 @@ export interface Vod {
   outdated: boolean;
   /** Where its chat replay is: not fetched yet (or fetching), fetched, none on the site, or failed. */
   chat: "pending" | "done" | "none" | "failed";
+  /** In the library's list; one taken out stays, unlisted, while edits use it. */
+  listed: boolean;
 }
 
 export type Device = "cpu" | "gpu";

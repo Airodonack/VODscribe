@@ -2,7 +2,7 @@
 //! their transcripts.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -204,7 +204,7 @@ pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i6
 
 #[tauri::command]
 pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
-    crate::with_reads(app, |db| db.vods()).await
+    crate::with_reads(app, |db| db.listed_vods()).await
 }
 
 /// The library's list, VODs and edits, in its order.
@@ -244,46 +244,88 @@ async fn erase_in_parts(
     .map_err(err)
 }
 
+/// Takes VOD `id` out of the library's list: its own clip goes, with its
+/// marks and its clip bar (the clips' files too, unless dragged out of the
+/// app), and its download or transcription stops where it is. What other
+/// clips use of it stays, a source only, until nothing does; then it's
+/// erased (`sweep`) as the app quits, or after it next starts, so what's
+/// undone meanwhile still finds it.
 #[tauri::command]
 pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    // Its chat and transcript first, a part at a time on a blocking thread, so
-    // the rest of the app isn't kept waiting on the library while they're
-    // erased. (No more chat is fetched for it.)
     state.chat.stop(id);
     state.history.forget(crate::history::Doc::Vod(id));
     let _ = crate::videos::stop_video(app.clone(), state.clone(), id).await;
+    state.footage.stop_vod(id);
     state.clips.stop_vod(&state.db.lock().unwrap(), id);
-    let removed = async {
-        state.footage.stop_vod(id);
-        erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
-        // A running stage removes the files once its process has stopped.
-        // With the reads held too, so none is under way when the WAL is emptied.
-        let delete_row = || {
-            let db = state.db.lock().unwrap();
-            let _reads = state.reads.lock().unwrap();
-            db.delete_vod(id)
-        };
-        let running = state
-            .worker
-            .control(id, Stop::Delete, || {
-                pipeline::remove_work_files(&state.paths.work(), id);
-                pipeline::remove_media(&state.paths.work(), id);
-                delete_row()
-            })
-            .map_err(err)?;
-        if running {
-            delete_row().map_err(err)?;
+    let removed = (|| {
+        let db = state.db.lock().unwrap();
+        for clip in db.clips(id)? {
+            crate::clips::remove(&app, &db, clip.id)?;
         }
-        Ok::<_, String>(())
-    }
-    .await;
+        db.remove_entry(id)?;
+        state.worker.control(id, Stop::Pause, || Ok(()))?;
+        anyhow::Ok(())
+    })();
     state.clips.vod_removed(&state.db.lock().unwrap(), id);
-    removed?;
-    thumbs::remove(&state.paths.thumbs(), id);
-    vodscribe_core::peaks::remove(&state.paths.peaks(), id);
-    crate::footage::remove(&app, id);
+    removed.map_err(err)?;
     let _ = app.emit("vod-removed", id);
     Ok(())
+}
+
+/// How long quitting spends erasing sources nothing uses; the rest are
+/// erased after the next start.
+pub(crate) const SWEEP_AT_QUIT: Duration = Duration::from_secs(3);
+
+/// Erases the sources nothing uses (`Db::unused_sources`): their transcript,
+/// chat, files, footage and pictures. As the app quits (`db` held, within
+/// `SWEEP_AT_QUIT`), or after it starts (`db` None: the library's lock taken
+/// a part at a time, as removing a VOD used to). One whose work is still
+/// stopping waits for the next time.
+pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
+    let state = app.state::<AppState>();
+    let began = Instant::now();
+    let unused = match db {
+        Some(db) => db.unused_sources(),
+        None => state.db.lock().unwrap().unused_sources(),
+    };
+    for id in unused.unwrap_or_default() {
+        if db.is_some() && began.elapsed() > SWEEP_AT_QUIT {
+            break;
+        }
+        if db.is_none() {
+            // Its chat and transcript a part at a time, so the app isn't kept waiting.
+            loop {
+                let db = state.db.lock().unwrap();
+                // Listed again meanwhile (added anew): kept.
+                if db.uses(id).unwrap_or(1) > 0 || !db.delete_some_of(id, ERASE_PART).is_ok_and(|n| n > 0) {
+                    break;
+                }
+                drop(db);
+                std::thread::yield_now();
+            }
+        }
+        let erase = |db: &Db| -> anyhow::Result<()> {
+            if db.uses(id)? > 0 {
+                return Ok(());
+            }
+            pipeline::remove_work_files(&state.paths.work(), id);
+            pipeline::remove_media(&state.paths.work(), id);
+            thumbs::remove(&state.paths.thumbs(), id);
+            vodscribe_core::peaks::remove(&state.paths.peaks(), id);
+            crate::footage::remove(app, id);
+            db.delete_vod(id)
+        };
+        let erased = match db {
+            Some(db) => state.worker.control(id, Stop::Pause, || erase(db)),
+            None => {
+                let db = state.db.lock().unwrap();
+                state.worker.control(id, Stop::Pause, || erase(&db))
+            }
+        };
+        if let Err(e) = erased {
+            eprintln!("erasing unused VOD {id}: {e:#}");
+        }
+    }
 }
 
 /// Deletes the video kept for VOD `id`, keeping its transcript; it then

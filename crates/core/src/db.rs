@@ -78,6 +78,9 @@ pub struct Vod {
     /// unfinished ones start over when they resume.
     pub outdated: bool,
     pub chat: ChatStatus,
+    /// In the library's list. One taken out stays a source, unlisted, while
+    /// other clips use it; its work waits until it's listed again.
+    pub listed: bool,
 }
 
 /// Where a VOD's chat replay is.
@@ -553,7 +556,8 @@ END;";
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
-     note, model, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments";
+     note, model, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
+     EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed";
 
 fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
     Ok(Vod {
@@ -588,6 +592,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
         },
         chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
+        listed: r.get("listed")?,
     })
 }
 
@@ -880,6 +885,11 @@ impl Db {
     /// Inserts a VOD, or returns the existing row if it was already added.
     pub fn add_vod(&self, info: &VodInfo) -> Result<(Vod, bool)> {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
+            // Taken out of the list but kept for other clips: listed again.
+            if !existing.listed {
+                self.atomically(|db| db.add_vod_clip(existing.id, &existing.info.title))?;
+                return Ok((self.vod(existing.id)?.expect("just found"), false));
+            }
             return Ok((existing, false));
         }
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
@@ -910,9 +920,21 @@ impl Db {
         Ok(self.conn.query_row(&sql, [id], vod_from_row).optional()?)
     }
 
+    /// Every VOD, as a source: those in the library's list, in its order,
+    /// then those only other clips use.
     pub fn vods(&self) -> Result<Vec<Vod>> {
         let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id ORDER BY o.position, id DESC"
+            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id
+             ORDER BY o.position IS NULL, o.position, id DESC"
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The VODs in the library's list, in its order.
+    pub fn listed_vods(&self) -> Result<Vec<Vod>> {
+        let sql = format!(
+            "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id ORDER BY o.position, id DESC"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], vod_from_row)?.collect::<rusqlite::Result<_>>()?)
@@ -1175,7 +1197,7 @@ impl Db {
     /// New VODs go on top, so by default the queue runs oldest first.
     pub fn next_with_status(&self, status: Status) -> Result<Option<Vod>> {
         let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id WHERE status = ?1 ORDER BY o.position DESC, id LIMIT 1"
+            "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id WHERE status = ?1 ORDER BY o.position DESC, id LIMIT 1"
         );
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
     }
@@ -1183,7 +1205,7 @@ impl Db {
     /// Like `next_with_status`, but only VODs that are files on this computer.
     pub fn next_local_with_status(&self, status: Status) -> Result<Option<Vod>> {
         let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id
+            "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id
              WHERE status = ?1 AND source_path IS NOT NULL ORDER BY o.position DESC, id LIMIT 1"
         );
         Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
@@ -1546,7 +1568,7 @@ impl Db {
     pub fn chat_pending(&self) -> Result<Vec<i64>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id FROM vods LEFT JOIN vod_order o ON o.vod_id = vods.id WHERE chat IS NULL OR chat = 'failed' ORDER BY o.position, id DESC")?;
+            .prepare("SELECT id FROM vods JOIN vod_order o ON o.vod_id = vods.id WHERE chat IS NULL OR chat = 'failed' ORDER BY o.position, id DESC")?;
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
     }
 

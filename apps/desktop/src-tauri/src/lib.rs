@@ -158,6 +158,9 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     app.state::<AppState>().footage.run(app.handle().clone())?;
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+    // What quitting didn't get to of the VODs nothing uses any more.
+    let handle = app.handle().clone();
+    std::thread::spawn(move || vods::sweep(&handle, None));
     let handle = app.handle().clone();
     std::thread::spawn(move || chats::run(handle, chat_rx));
     Ok(())
@@ -364,13 +367,15 @@ pub fn run() {
         });
 }
 
-/// As the app quits: what it started (downloads, transcription, encodes)
-/// stops with it rather than running on without it. The library's writes
+/// As the app quits: the VODs nothing uses any more are erased (for a few
+/// seconds at most: `vods::sweep`), and what it started (downloads,
+/// transcription, encodes) stops with it rather than running on without it. The library's writes
 /// stop first, so the jobs whose processes stop don't record that as a
 /// failure: they carry on at the next start as after any quit.
 fn quit(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
+        vods::sweep(app, Some(&db));
         let _ = db.stop_writes();
         // Held till the process ends.
         std::mem::forget(db);

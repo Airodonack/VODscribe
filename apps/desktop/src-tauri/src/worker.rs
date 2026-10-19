@@ -26,8 +26,6 @@ pub enum Stop {
     Pause,
     /// Discard partial work; the VOD stays in the library as canceled.
     Cancel,
-    /// The VOD was removed; clean up its files.
-    Delete,
 }
 
 struct Job {
@@ -150,7 +148,7 @@ impl Worker {
 impl Job {
     /// Stops the job for `reason`, unless it's already stopping for a more
     /// final one: clearing the cache pauses every job, which mustn't turn a
-    /// delete or cancel on its way into a pause.
+    /// cancel on its way into a pause.
     fn stop(&self, reason: Stop) {
         let mut current = self.reason.lock().unwrap();
         *current = (*current).max(Some(reason));
@@ -260,10 +258,6 @@ fn finish(
     progress: f64,
 ) -> Result<()> {
     match (result, stop) {
-        (_, Some(Stop::Delete)) => {
-            pipeline::remove_work_files(work, vod_id);
-            pipeline::remove_media(work, vod_id);
-        }
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
         (_, Some(Stop::Pause)) => db.set_status(vod_id, Status::Paused, progress, None)?,
@@ -528,15 +522,6 @@ mod tests {
     }
 
     #[test]
-    fn a_delete_only_cleans_up_files() {
-        let (db, work, id) = setup(Status::Downloading);
-        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Delete), 0.4).unwrap();
-        assert!(!work.join(format!("{id}.m4a")).exists());
-        // The command that deleted it removes the row; finish leaves it be.
-        assert_eq!(status(&db, id).0, Status::Downloading);
-    }
-
-    #[test]
     fn a_transcript_that_finished_before_the_stop_is_kept() {
         let (db, work, id) = setup(Status::Done);
         for stop in [Stop::Pause, Stop::Cancel] {
@@ -567,11 +552,10 @@ mod tests {
         let job = Job { vod_id: 1, flag: Arc::new(AtomicBool::new(false)), reason: Arc::new(Mutex::new(None)) };
         job.stop(Stop::Pause);
         assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Pause));
-        job.stop(Stop::Delete);
-        // Clearing the cache pauses every job, after the delete.
-        job.stop(Stop::Pause);
         job.stop(Stop::Cancel);
-        assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Delete));
+        // Clearing the cache pauses every job, after the cancel.
+        job.stop(Stop::Pause);
+        assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Cancel));
         assert!(job.flag.load(Ordering::Relaxed));
     }
 }
