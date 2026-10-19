@@ -284,13 +284,19 @@ pub(crate) async fn delete_vod(app: AppHandle, state: State<'_, AppState>, id: i
 /// plays on its site instead.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let db = state.db.lock().unwrap();
-    let vod = db.vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
-    if busy(vod.status) {
-        return Err("Its video is still in use: wait until it's transcribed.".into());
+    {
+        let db = state.db.lock().unwrap();
+        let vod = db.vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
+        if busy(vod.status) {
+            return Err("Its video is still in use: wait until it's transcribed.".into());
+        }
+        forget_video(&db, &state.paths.work(), id).map_err(err)?;
+        emit_vod(&app, &db, id)?;
     }
-    forget_video(&db, &state.paths.work(), id).map_err(err)?;
-    emit_vod(&app, &db, id)
+    // Forgotten first, so nothing starts on it; deleted with the library let
+    // go (a big video can take a moment).
+    pipeline::remove_media(&state.paths.work(), id);
+    Ok(())
 }
 
 /// Whether a VOD is being transcribed, or waiting to be: its kept video may be in use.
@@ -298,11 +304,13 @@ pub(crate) fn busy(status: Status) -> bool {
     matches!(status, Status::Downloading | Status::Transcribing | Status::Ready | Status::Queued)
 }
 
-/// Deletes VOD `id`'s kept video and forgets it (and its audio, if that was the video).
+/// Forgets VOD `id`'s kept video (and its audio, if that was kept with it);
+/// the caller deletes the files (`pipeline::remove_media`), once it has let
+/// the library go.
 pub(crate) fn forget_video(db: &Db, work: &std::path::Path, id: i64) -> anyhow::Result<()> {
-    pipeline::remove_media(work, id);
     db.set_media_path(id, None)?;
-    if db.audio_path(id)?.is_some_and(|p| !std::path::Path::new(&p).is_file()) {
+    let media = pipeline::media_dir(work);
+    if db.audio_path(id)?.is_some_and(|p| std::path::Path::new(&p).parent() == Some(media.as_path())) {
         db.set_audio_path(id, None)?;
     }
     Ok(())

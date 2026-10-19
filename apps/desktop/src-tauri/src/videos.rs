@@ -232,19 +232,25 @@ pub(crate) async fn video_downloads(state: State<'_, AppState>) -> CmdResult<Vec
 pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
     state.videos.stop_all(&app);
     let work = state.paths.work();
-    let db = state.db.lock().unwrap();
     let mut kept = 0;
-    for vod in db.vods().map_err(err)? {
-        if crate::vods::busy(vod.status) {
-            kept += vod.media as usize;
-            continue;
+    let mut gone = Vec::new();
+    {
+        let db = state.db.lock().unwrap();
+        for vod in db.vods().map_err(err)? {
+            if crate::vods::busy(vod.status) {
+                kept += vod.media as usize;
+                continue;
+            }
+            if vod.media {
+                crate::vods::forget_video(&db, &work, vod.id).map_err(err)?;
+                crate::emit_vod(&app, &db, vod.id)?;
+            }
+            gone.push(vod.id);
         }
-        if vod.media {
-            crate::vods::forget_video(&db, &work, vod.id).map_err(err)?;
-            crate::emit_vod(&app, &db, vod.id)?;
-        } else {
-            pipeline::remove_media(&work, vod.id);
-        }
+    }
+    // Deleted with the library let go: many big files can take a while.
+    for id in gone {
+        pipeline::remove_media(&work, id);
     }
     Ok(kept)
 }
