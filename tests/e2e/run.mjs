@@ -31,10 +31,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
-import { App } from "./lib/app.mjs";
+import { isUnplayable } from "../../apps/desktop/src/lib/media.ts";
+import { App, watchWith } from "./lib/app.mjs";
 import { resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import * as os from "./lib/os.mjs";
+import { preflight } from "./lib/preflight.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values: opts, positionals } = parseArgs({
@@ -67,6 +69,9 @@ if (only) {
 
 /** Thrown by ctx.skip: the scenario can't run here (said in the results, not a failure). */
 class Skip extends Error {}
+
+// The computer first: a gap it has is named once, not found as timeouts.
+for (const warning of preflight()) console.log(`preflight: ${warning}`);
 
 const started = Date.now();
 const results = [];
@@ -105,6 +110,18 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
       return launch();
     },
   };
+  // A wait gives up at once when the page says a video can't be played.
+  watchWith(
+    scenario.allowErrors
+      ? null
+      : async () => {
+          if (!current) return null;
+          const shown = await current.driver.run(
+            `return [...document.querySelectorAll(".error-text")].map((e) => e.textContent.trim()).join(" | ")`,
+          );
+          return isUnplayable(shown) ? `"${shown}"` : null;
+        },
+  );
   let error;
   let skipped;
   try {
@@ -204,9 +221,12 @@ async function diagnose(driver, name) {
     .run(
       `const media = document.querySelector("video, audio");
        return [
-         "player: " + (media ? JSON.stringify({ src: media.currentSrc, readyState: media.readyState, paused: media.paused,
-           currentTime: media.currentTime, error: media.error && media.error.message }) : "no <video> or <audio>"),
+         "player: " + (media ? JSON.stringify({ src: media.currentSrc, readyState: media.readyState,
+           networkState: media.networkState, paused: media.paused, currentTime: media.currentTime,
+           error: media.error && (media.error.code + " " + media.error.message) }) : "no <video> or <audio>"),
          "time shown: " + (document.querySelector("button.time")?.textContent.trim() ?? "none"),
+         "page: " + document.visibilityState + (document.hasFocus() ? ", focused" : ", not focused"),
+         "console errors: " + JSON.stringify(window.__e2e?.console ?? []),
          "",
          document.body.innerText,
        ].join("\\n")`,

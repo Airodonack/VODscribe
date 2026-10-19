@@ -18,8 +18,11 @@ export const MINUTE = 60_000;
 
 /** Polls `check` until it returns something truthy, or fails after `timeout` saying `what`. */
 export async function until(what, check, timeout) {
-  const end = Date.now() + timeout;
+  const start = Date.now();
+  const end = start + timeout;
   let last;
+  let told = start;
+  let looked = start;
   while (Date.now() < end) {
     try {
       last = await check();
@@ -27,9 +30,29 @@ export async function until(what, check, timeout) {
     } catch (e) {
       last = e.message;
     }
+    // Every few seconds: whether the page already says it can't (then waiting
+    // on is pointless), and every ten, that it's still waiting and on what.
+    if (watch && Date.now() - looked >= 3000) {
+      looked = Date.now();
+      const reason = await watch().catch(() => null);
+      if (reason) throw new Error(`gave up waiting for ${what}: the page says ${reason}`);
+    }
+    if (Date.now() - told >= 10_000) {
+      told = Date.now();
+      console.log(
+        `  … still waiting for ${what} (${Math.round((told - start) / 1000)} s; last: ${JSON.stringify(last)})`,
+      );
+    }
     await sleep(500);
   }
   throw new Error(`timed out waiting for ${what} (last: ${JSON.stringify(last)})`);
+}
+
+/** What `until` looks at as it waits (set per scenario by run.mjs): a reason
+ *  the page gives that it can't go on, or null. */
+let watch = null;
+export function watchWith(check) {
+  watch = check;
 }
 
 export class App {
@@ -157,7 +180,17 @@ export class App {
         if (await shown()) return true;
         if (Date.now() - begun > 15_000 && !this.reloaded) {
           this.reloaded = true;
-          this.log("the page is still empty after 15 s: reloading it");
+          // What it's waiting on: the first call to the app (+page.svelte
+          // marks it), and what it has fetched.
+          const waiting = await this.js(
+            `const at = (name) => performance.getEntriesByName(name)[0]?.startTime.toFixed(0) ?? "never";
+             const fetched = performance.getEntriesByType("resource").map((r) =>
+               r.name.slice(0, 60) + " " + r.startTime.toFixed(0) + "+" + r.duration.toFixed(0) + "ms");
+             return "library asked at " + at("library-asked") + " ms, answered " + at("library-answered") +
+               "; " + document.readyState + "; fetched: " + JSON.stringify(fetched.slice(-8)) +
+               "; console: " + JSON.stringify(window.__e2e?.console ?? []);`,
+          ).catch((e) => `(couldn't ask: ${e.message})`);
+          this.log(`the page is still empty after 15 s (${waiting}): reloading it`);
           await this.js(`setTimeout(() => location.reload(), 0)`);
           await sleep(1000);
           await this.loaded();
@@ -177,7 +210,16 @@ export class App {
     );
     await this.js(`
       const real = window.fetch;
-      window.__e2e = { files: [], answer: null, asked: [], restarts: 0 };
+      window.__e2e = { files: [], answer: null, asked: [], restarts: 0, console: [] };
+      // The page's errors, for a failure's diagnosis (run.mjs).
+      const error = console.error.bind(console);
+      console.error = (...args) => {
+        window.__e2e.console.push(args.map(String).join(" ").slice(0, 300));
+        if (window.__e2e.console.length > 20) window.__e2e.console.shift();
+        error(...args);
+      };
+      window.addEventListener("error", (e) => window.__e2e.console.push("uncaught: " + e.message));
+      window.addEventListener("unhandledrejection", (e) => window.__e2e.console.push("unhandled: " + e.reason));
       const answer = (value) =>
         new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json", "Tauri-Response": "ok" } });
       window.fetch = (url, init) => {

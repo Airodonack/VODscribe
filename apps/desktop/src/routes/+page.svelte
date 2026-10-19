@@ -5,8 +5,13 @@
   import { api } from "#lib/api.ts";
 
   // Whether the library opened; if it didn't, the recovery screen instead of
-  // the app, which needs it. Asked once, before anything else.
-  const problem = api.libraryProblem().catch(() => null);
+  // the app, which needs it. Asked once, before anything else: nothing shows
+  // until it's answered (marked, for the tests to time).
+  performance.mark("library-asked");
+  const problem = api
+    .libraryProblem()
+    .catch(() => null)
+    .finally(() => performance.mark("library-answered"));
 </script>
 
 <svelte:head>
