@@ -193,6 +193,19 @@ pub struct Audio {
 /// Samples in one chunk.
 const CHUNK: usize = 1024;
 
+/// ffmpeg's filter playing sound `speed` times as fast: atempo takes 0.5 to
+/// 100, so slower is two or more halvings and the rest.
+fn tempo(speed: f64) -> String {
+    let mut parts = Vec::new();
+    let mut left = speed;
+    while left < 0.5 {
+        parts.push("atempo=0.5".to_string());
+        left /= 0.5;
+    }
+    parts.push(format!("atempo={left}"));
+    parts.join(",")
+}
+
 impl Audio {
     pub fn new(ffmpeg: &Path, path: &Path) -> Audio {
         Audio { ffmpeg: ffmpeg.into(), path: path.into() }
@@ -203,7 +216,7 @@ impl Audio {
     /// atempo): each second of it is `speed` seconds of the file.
     pub fn from(&self, from: f64, rate: u32, speed: f64) -> Result<Stream<Samples>> {
         let rate_ = rate.to_string();
-        let tempo = format!("atempo={speed}");
+        let tempo = tempo(speed);
         let mut output = vec!["-f", "s16le", "-ac", "2", "-ar", &rate_];
         if speed != 1.0 {
             output.extend(["-af", &tempo]);
@@ -237,6 +250,14 @@ impl Audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slow_speeds_chain_atempo_within_its_range() {
+        assert_eq!(tempo(2.0), "atempo=2");
+        assert_eq!(tempo(0.5), "atempo=0.5");
+        assert_eq!(tempo(0.25), "atempo=0.5,atempo=0.5");
+        assert_eq!(tempo(0.3), "atempo=0.5,atempo=0.6");
+    }
 
     #[test]
     fn frames_too_large_are_scaled_down_keeping_their_shape() {
