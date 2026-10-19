@@ -242,21 +242,31 @@
       api.reorderLibrary(all).catch(async (e) => {
         console.error("reorder failed", e);
         // If reloading fails too, the chain must still go on for the next reorder.
-        vods = await api.listVods().catch(() => vods);
-        await loadOrder();
+        await reload().catch(() => {});
       }),
     );
     runSearch();
   }
 
-  // Events that arrive before the first list has loaded are held and applied
-  // after it, so the list (possibly read before them) doesn't overwrite them.
+  // Events that arrive while the list loads (at the start, or again after a
+  // reorder failed) are held and applied after it, so the list (possibly read
+  // before them) doesn't overwrite them.
   let loaded = false;
   const early: (() => void)[] = [];
   const afterLoad =
     <A extends unknown[]>(f: (...args: A) => void) =>
     (...args: A) =>
       loaded ? f(...args) : early.push(() => f(...args));
+  async function reload() {
+    loaded = false;
+    try {
+      vods = await api.listVods();
+      await loadOrder();
+    } finally {
+      loaded = true;
+      early.splice(0).forEach((apply) => apply());
+    }
+  }
 
   // The theme chosen in Settings, and again whenever it changes.
   $effect(() => {
@@ -315,14 +325,11 @@
     );
     try {
       await refreshSetup();
-      vods = await api.listVods();
-      await loadOrder();
+      await reload();
     } finally {
       // The busy cursor (app.css `html.starting`) goes once the library is in.
       document.documentElement.classList.remove("starting");
     }
-    loaded = true;
-    early.splice(0).forEach((apply) => apply());
   });
   onDestroy(() => unlisten.forEach((u) => u()));
 
