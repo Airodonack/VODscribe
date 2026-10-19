@@ -37,15 +37,15 @@
   let asked = 0;
   async function refresh() {
     const n = ++asked;
-    const status = await api.gpuStatus();
+    const [status, cache, media] = await Promise.all([api.gpuStatus(), api.cacheSize(), api.mediaSize()]);
     if (n !== asked) return;
     gpu = status;
     // Opened partway through a download: start from where it is, not a blank
     // bar until the next progress event (which can be a while between files).
     if (gpu.installing && !step && gpu.progress) step = gpu.progress;
     if (!gpu.installing) step = null;
-    cacheBytes = await api.cacheSize();
-    mediaBytes = await api.mediaSize();
+    cacheBytes = cache;
+    mediaBytes = media;
   }
 
   let deletingVideos = $state(false);
@@ -246,7 +246,7 @@
   <section>
     <span class="eyebrow">Appearance</span>
     <p class="label">Theme</p>
-    <div class="themes" role="radiogroup" aria-label="Theme">
+    <div class="segmented" role="radiogroup" aria-label="Theme">
       {#each THEMES as t (t.id)}
         <button
           role="radio"
@@ -272,7 +272,7 @@
         ? `. They use ${formatBytes(mediaBytes)}`
         : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
     </p>
-    <div class="themes" role="radiogroup" aria-label="Video quality">
+    <div class="segmented" role="radiogroup" aria-label="Video quality">
       {#each HEIGHTS as h (h)}
         <button
           role="radio"
@@ -296,7 +296,7 @@
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
     <p class="label">Clips and edits are made as</p>
-    <div class="themes" role="radiogroup" aria-label="Clip format">
+    <div class="segmented" role="radiogroup" aria-label="Clip format">
       {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
         <button
           role="radio"
@@ -489,8 +489,8 @@
     font-size: 13px;
   }
 
-  /* One control, three parts: the chosen one filled. */
-  .themes {
+  /* A row of choices, the chosen one filled (theme, video quality, clip format). */
+  .segmented {
     display: inline-flex;
     margin-bottom: 12px;
     border: 1px solid var(--border);
@@ -498,7 +498,7 @@
     overflow: hidden;
   }
 
-  .themes button {
+  .segmented button {
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -510,11 +510,11 @@
     color: var(--muted);
   }
 
-  .themes button + button {
+  .segmented button + button {
     border-left: 1px solid var(--border);
   }
 
-  .themes button.on {
+  .segmented button.on {
     color: var(--text);
     background: var(--accent-soft);
   }
