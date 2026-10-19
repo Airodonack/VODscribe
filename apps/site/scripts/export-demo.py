@@ -8,9 +8,16 @@ Transcribe the VODs with the dev CLI into a fresh library first:
 Writes vods.json (the library, in library order), <id>.json for each
 transcript and thumbs/<id>.jpg. A transcript is a list of segments, each
 [text, start, [start of each word]], where the words are the text split on spaces.
+
+Then the waveforms, <id>.peaks, from each VOD's audio (downloaded with
+yt-dlp into a scratch folder, then deleted), read by the dev CLI as the app
+reads them:
+
+    python3 apps/site/scripts/export-demo.py --peaks <vodscribe-cli> <yt-dlp> <scratch dir>
 """
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -71,5 +78,21 @@ def main(db_path: str) -> None:
     (OUT / "vods.json").write_text(json.dumps(vods, indent=2, ensure_ascii=False) + "\n")
 
 
+def peaks(cli: str, yt_dlp: str, scratch: str) -> None:
+    work = Path(scratch).resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    # The CLI's own data folder (it finds ffmpeg there or on the PATH) goes in the scratch folder too.
+    env = {**os.environ, "VODSCRIBE_DATA": str(work / "cli-data")}
+    for v in json.loads((OUT / "vods.json").read_text()):
+        stem = work / f"demo-{v['id']}"
+        subprocess.run([yt_dlp, "-q", "-f", "ba/b", "-o", f"{stem}.%(ext)s", v["url"]], check=True)
+        (audio,) = work.glob(f"demo-{v['id']}.*")
+        subprocess.run([cli, "peaks", audio, OUT / f"{v['id']}.peaks"], check=True, env=env)
+        audio.unlink()
+
+
 if __name__ == "__main__":
-    main(sys.argv[1])
+    if sys.argv[1] == "--peaks":
+        peaks(*sys.argv[2:5])
+    else:
+        main(sys.argv[1])

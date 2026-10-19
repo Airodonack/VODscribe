@@ -5,7 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
-use vodscribe_core::{Paths, chat, db::Db, fetch, model, pipeline, tools};
+use vodscribe_core::{Paths, chat, db::Db, fetch, model, peaks, pipeline, tools};
 
 fn main() -> Result<()> {
     let paths = Paths::new(std::env::var("VODSCRIBE_DATA").unwrap_or_else(|_| "vodscribe-data".into()));
@@ -111,13 +111,20 @@ fn main() -> Result<()> {
                 println!("#{} {:>8.1}s  {text}", h.vod_id, h.time);
             }
         }
+        ["peaks", input, out] => {
+            // A file's waveform as the app draws it (the site's demo ships these).
+            let ffmpeg = tools::find_ffmpeg(&paths.bin()).context("ffmpeg not found")?;
+            let levels = peaks::read(&ffmpeg, input.as_ref(), &cancel)?;
+            std::fs::write(out, &levels)?;
+            println!("{} levels ({:.0} s)", levels.len(), levels.len() as f64 / peaks::RATE as f64);
+        }
         ["transcript", id] => {
             for s in Db::open(&paths.db())?.segments(id.parse()?)? {
                 println!("{:>8.1}  {}", s.start, s.text);
             }
         }
         _ => bail!(
-            "usage: vodscribe-cli setup | add <url> | probe <url> | chat <url> | list | search <phrase> | transcript <id>"
+            "usage: vodscribe-cli setup | add <url> | probe <url> | chat <url> | list | search <phrase> | transcript <id> | peaks <file> <out>"
         ),
     }
     Ok(())

@@ -87,8 +87,14 @@ const commands: Record<string, (args: Args) => unknown> = {
   cancel_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
   // Edits are made in the app only.
   list_edits: () => [],
-  // No waveforms: their audio isn't here.
-  peaks: () => new ArrayBuffer(0),
+  // Waveforms made from each VOD's audio (scripts/export-demo.py --peaks);
+  // none where there's no file.
+  peaks: async ({ id }) => {
+    const res = await fetch(`/demo/${id}.peaks`);
+    // (A missing file can come back as the site's page.)
+    const html = res.headers.get("content-type")?.startsWith("text/html");
+    return res.ok && !html ? res.arrayBuffer() : new ArrayBuffer(0);
+  },
 };
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
