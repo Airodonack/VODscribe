@@ -1,6 +1,7 @@
 //! Edits (`vodscribe_core::edits`): the commands the Edit view makes and
-//! changes them with, and the queue that renders them, one at a time, into
-//! the Videos folder beside the clips (VODscribe/Edits). Rendering again
+//! changes them with, and their rendering, a job of the clips' queue
+//! (`clips::Cutter`, one encode at a time), into the Videos folder beside
+//! the clips (VODscribe/Edits). Rendering again
 //! replaces the same file, so a video editor linked to it gets the new one;
 //! renamed, it's a new file, and the one before goes unless it was dragged
 //! out to another app.
@@ -18,39 +19,9 @@ use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, render, tools};
 
 use crate::history::{self, Doc};
-use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
-
-/// Edits rendered one at a time, by id; each waits once, however often it's
-/// asked for meanwhile.
-pub(crate) struct Renderer(Jobs<i64>);
-
-impl Renderer {
-    pub(crate) fn new() -> Self {
-        Renderer(Jobs::new())
-    }
-
-    /// Starts rendering what's asked, once the app's state is in place.
-    pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
-        app.state::<AppState>().db.lock().unwrap().reset_renders()?;
-        self.0.run("renders", move |id, stop| {
-            if let Err(e) = render_edit(&app, id, stop) {
-                eprintln!("edit {id}: {e:#}");
-            }
-        })
-    }
-
-    /// Stops rendering edit `id`; true if it was waiting, not begun.
-    fn stop(&self, id: i64) -> bool {
-        if !self.0.take_waiting(|&j| j == id).is_empty() {
-            return true;
-        }
-        self.0.stop_running(|&j| j == id);
-        false
-    }
-}
 
 #[derive(Serialize, Clone)]
 struct Progress {
@@ -79,8 +50,9 @@ pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i6
         .collect()
 }
 
-/// Renders edit `id` into its file, fetching any footage it needs first.
-fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
+/// Renders edit `id` into its file, fetching any footage it needs first
+/// (a job of the clips' queue: `clips::Cutter`).
+pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG);
     let prepared = (|| {
@@ -233,7 +205,7 @@ pub(crate) async fn rename_edit(app: AppHandle, id: i64, title: String) -> CmdRe
 /// Deletes edit `id`, and its video if it was rendered.
 #[tauri::command]
 pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    state.renders.stop(id);
+    state.clips.cancel(id);
     let file = {
         let db = state.db.lock().unwrap();
         let file = db.edit(id).map_err(err)?.and_then(|e| e.file_path);
@@ -342,7 +314,7 @@ pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView>
 pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // Shown as rendering before it's queued: its render could otherwise end
     // first, and be shown as rendering after.
-    if state.renders.0.is_waiting(|&j| j == id) {
+    if state.clips.is_waiting(id) {
         return Ok(());
     }
     {
@@ -350,14 +322,14 @@ pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, 
         db.set_edit_render(id, ClipStatus::Cutting, None, None, None).map_err(err)?;
         emit(&app, &db, id);
     }
-    state.renders.0.push_once(id, |&j| j == id);
+    state.clips.queue_once(id);
     Ok(())
 }
 
 #[tauri::command]
 pub(crate) async fn stop_render(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // Not begun: as it was before it was asked for.
-    if state.renders.stop(id) {
+    if state.clips.cancel(id) {
         let db = state.db.lock().unwrap();
         db.set_edit_render(id, ClipStatus::Waiting, None, None, None).map_err(err)?;
         emit(&app, &db, id);

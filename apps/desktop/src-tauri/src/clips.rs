@@ -35,7 +35,8 @@ const LONGEST: f64 = 3.0 * 3600.0;
 /// How often a cut's progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
-/// Clips cut one at a time, by id (`jobs`).
+/// Clips made one at a time, by id (`jobs`): snippets cut, edits rendered
+/// (`edits::render_edit`), one encode at a time between them.
 pub(crate) struct Cutter {
     jobs: Jobs<i64>,
     /// VODs being removed: their clips still queued aren't cut (the rows go
@@ -57,6 +58,8 @@ impl Cutter {
             let db = state.db.lock().unwrap();
             // Clips made only to be dragged out: their files are someone else's now.
             db.forget_hidden_clips()?;
+            // Edits left rendering when the app stopped wait to be asked again.
+            db.reset_renders()?;
             db.unfinished_clips()?
         };
         {
@@ -73,6 +76,18 @@ impl Cutter {
             }
         }
         self.jobs.run("clips", move |id, stop| {
+            let snippet = app.state::<AppState>().db.lock().unwrap().is_snippet(id);
+            match snippet {
+                Ok(Some(false)) => {
+                    if let Err(e) = crate::edits::render_edit(&app, id, stop) {
+                        eprintln!("edit {id}: {e:#}");
+                    }
+                    return;
+                }
+                Ok(Some(true)) => {}
+                // Gone meanwhile.
+                _ => return,
+            }
             if let Err(e) = cut(&app, id, stop, &removing) {
                 eprintln!("clip {id}: {e:#}");
                 fail(&app, id, &e);
@@ -88,12 +103,37 @@ impl Cutter {
         self.jobs.push(id);
     }
 
+    /// Queues clip `id` unless it's waiting already; once is enough.
+    pub(crate) fn queue_once(&self, id: i64) {
+        self.jobs.push_once(id, |&j| j == id);
+    }
+
+    /// Whether clip `id` is waiting its turn.
+    pub(crate) fn is_waiting(&self, id: i64) -> bool {
+        self.jobs.is_waiting(|&j| j == id)
+    }
+
+    /// Takes clip `id` out of the queue, or stops it if it's being made;
+    /// true if it was waiting, not begun.
+    pub(crate) fn cancel(&self, id: i64) -> bool {
+        if !self.jobs.take_waiting(|&j| j == id).is_empty() {
+            return true;
+        }
+        self.jobs.stop_running(|&j| j == id);
+        false
+    }
+
     /// Stops the cut of a clip of VOD `vod_id`, if one's being cut, and cuts
     /// none of its others (its VOD is being deleted: a download from its site
     /// could take a while).
     pub(crate) fn stop_vod(&self, db: &Db, vod_id: i64) {
         self.removing.lock().unwrap().insert(vod_id);
-        self.jobs.stop_running(|&id| db.clip(id).ok().flatten().is_some_and(|c| c.vod_id == vod_id));
+        // Snippets of it only: edits keep their pieces of it.
+        let of_vod = |id: i64| {
+            db.is_snippet(id).ok().flatten() == Some(true)
+                && db.clip(id).ok().flatten().is_some_and(|c| c.vod_id == vod_id)
+        };
+        self.jobs.stop_running(|&id| of_vod(id));
     }
 
     /// VOD `vod_id`'s removal is over: gone, or still there if it failed. Its

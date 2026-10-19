@@ -48,7 +48,6 @@ struct AppState {
     chat: chats::ChatQueue,
     clips: clips::Cutter,
     /// Edits being rendered (`edits`).
-    renders: edits::Renderer,
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
     /// Whole videos downloaded on request (`videos`).
@@ -145,7 +144,6 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         media,
         chat,
         clips: clips::Cutter::new(),
-        renders: edits::Renderer::new(),
         footage: footage::Footage::default(),
         videos: videos::Videos::new(),
         history: history::History::default(),
@@ -154,7 +152,6 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     });
     app.state::<AppState>().clips.run(app.handle().clone())?;
     app.state::<AppState>().videos.run(app.handle().clone())?;
-    app.state::<AppState>().renders.run(app.handle().clone())?;
     app.state::<AppState>().footage.run(app.handle().clone())?;
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));

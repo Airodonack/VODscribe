@@ -515,6 +515,12 @@ impl Db {
         })
     }
 
+    /// Whether clip `id` is a snippet (on a clip bar) rather than a listed
+    /// clip; None if it's gone.
+    pub fn is_snippet(&self, id: i64) -> Result<Option<bool>> {
+        Ok(self.conn.query_row("SELECT bar_of IS NOT NULL FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
+    }
+
     /// Clip `id`'s revision now; None if it's gone.
     pub fn revision(&self, id: i64) -> Result<Option<i64>> {
         Ok(self.conn.query_row("SELECT revision FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?)
