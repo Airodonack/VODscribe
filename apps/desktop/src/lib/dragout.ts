@@ -16,7 +16,7 @@ import { formatHint } from "./resolveHint.svelte";
 import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { edits } from "./edits.svelte";
+import { edits, type Stretch } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretchIn } from "./media";
 import { formatTime } from "./platform";
 
@@ -58,6 +58,8 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
     stop?.();
     // Made only for this: forgotten (the file stays, if it was handed out).
     if (!clip.shown) api.deleteClip(clip.id).catch(() => {});
+    back = null;
+    backLeft();
     setTimeout(() => mine === drags && (out = false), 1000);
   };
   const limit = setTimeout(over, 60_000);
@@ -177,6 +179,53 @@ async function snapshot(
   return blob ? new Uint8Array(await blob.arrayBuffer()) : undefined;
 }
 
+/** What's under (`px`, `py`) to drop a stretch on: an edit, "Make new edit", or the clip bar. */
+function targetAt(px: number, py: number): { edit: number | "new" | null; bar: boolean } {
+  const el = document.elementFromPoint(px, py);
+  const edit = el?.closest<HTMLElement>("[data-edit-drop]");
+  if (edit) return { edit: Number(edit.dataset.editDrop), bar: false };
+  if (el?.closest("[data-new-edit]")) return { edit: "new", bar: false };
+  return { edit: null, bar: !!el?.closest(".clip-bar") };
+}
+
+/** Puts `stretch` where it was dropped (`targetAt`): in an edit, a new edit, or
+ *  the clip bar (`clip` makes it a clip there); false if nothing was there. */
+function dropAt(px: number, py: number, stretch: Stretch, clip: () => unknown): boolean {
+  const { edit, bar } = targetAt(px, py);
+  if (edit === "new") edits.createWith(stretch);
+  else if (edit !== null) edits.addRange(edit, stretch);
+  else if (bar) clip();
+  return edit !== null || bar;
+}
+
+/** The stretch whose clip is being dragged out as a file, while it is: brought
+ *  back over the window, it can still go where a carry inside could. */
+let back: { stretch: Stretch; clip: () => unknown } | null = null;
+
+/** The system's drag of a clip out came back over the window, at (`x`, `y`)
+ *  in its CSS pixels: what's under it lights up. */
+export function backOver(x: number, y: number) {
+  if (!back) return;
+  // The drop targets show as for a carry (EditRow, the new-edit row).
+  clips.carrying = { start: back.stretch.start, end: back.stretch.end };
+  const target = targetAt(x, y);
+  clips.overBar = target.bar;
+  edits.dropTarget = target.edit;
+}
+
+/** It left the window again, or ended. */
+export function backLeft() {
+  clips.carrying = null;
+  clips.overBar = false;
+  edits.dropTarget = null;
+}
+
+/** It was dropped on the window, at (`x`, `y`): put where it was dropped. */
+export function backDropped(x: number, y: number) {
+  backLeft();
+  if (back) dropAt(x, y, back.stretch, back.clip);
+}
+
 export interface Carry {
   vod: Vod;
   start: number;
@@ -215,6 +264,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     });
   };
   const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
+  const stretch: Stretch = { vodId: vod.id, start, end, title };
   const ghost = document.createElement("div");
   ghost.className = "carry-ghost";
   const img = document.createElement("img");
@@ -272,14 +322,6 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
   return new Promise((resolve) => {
     let down = true;
     let leaving = false;
-    // What's under the pointer to drop on: an edit, "Make new edit", or the clip bar.
-    const targetAt = (px: number, py: number): { edit: number | "new" | null; bar: boolean } => {
-      const el = document.elementFromPoint(px, py);
-      const edit = el?.closest<HTMLElement>("[data-edit-drop]");
-      if (edit) return { edit: Number(edit.dataset.editDrop), bar: false };
-      if (el?.closest("[data-new-edit]")) return { edit: "new", bar: false };
-      return { edit: null, bar: !!el?.closest(".clip-bar") };
-    };
     const finish = () => {
       // Made ahead for a drag out that didn't come: it goes.
       early?.then((c) => {
@@ -322,12 +364,8 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     const onUp = (e: PointerEvent) => {
       down = false;
       if (leaving) return;
-      const { edit, bar } = targetAt(e.clientX, e.clientY);
       finish();
-      const stretch = { vodId: vod.id, start, end, title };
-      if (edit === "new") edits.createWith(stretch);
-      else if (edit !== null) edits.addRange(edit, stretch);
-      else if (bar) make(true);
+      dropAt(e.clientX, e.clientY, stretch, () => make(true));
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {
@@ -352,6 +390,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
         const ready = made2 && (await inFormat(made2, vod.id, () => down));
         if (ready && down) {
           dragged = true;
+          back = { stretch, clip: () => make(true) };
           await dragOut(ready, await image);
         }
       } finally {

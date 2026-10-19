@@ -11,7 +11,7 @@
 </script>
 
 <script lang="ts">
-  import { draggingOut, isOutgoing } from "./dragout";
+  import { backDropped, backLeft, backOver, draggingOut, isOutgoing } from "./dragout";
   import { getVersion } from "@tauri-apps/api/app";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open } from "@tauri-apps/plugin-dialog";
@@ -142,6 +142,16 @@
     let unmounted = false;
     getCurrentWebview()
       .onDragDropEvent(({ payload }) => {
+        // A clip of ours being dragged out, back over the window: it can go
+        // where a carry inside could (dragout.ts). Positions come in device pixels.
+        if (draggingOut()) {
+          const at = "position" in payload ? payload.position : null;
+          const [x, y] = at ? [at.x / devicePixelRatio, at.y / devicePixelRatio] : [0, 0];
+          if (payload.type === "leave") backLeft();
+          else if (payload.type === "drop") backDropped(x, y);
+          else backOver(x, y);
+          return;
+        }
         if (payload.type === "enter") {
           // macOS reports every drag, even ones with nothing the app can use.
           // A clip being dragged out of the app isn't one to add.

@@ -111,6 +111,57 @@ export default {
       await sleep(1500);
     }
 
+    // Clip pulled out, then brought back over the window, the system's drag
+    // on all the while: the drop targets show as for a carry, and let go on
+    // "Make new edit", the stretch is in a new edit.
+    {
+      const button = await os.rectOf(app, "button.action.clip");
+      const edge = await os.windowRect(app);
+      const [cx, cy] = [button.x + Math.round(button.w / 2), button.y + Math.round(button.h / 2)];
+      await app.js(`performance.clearMarks()`);
+      await os.gesture([
+        ["down", cx, cy],
+        ["move", cx - 20, cy],
+        ["move", cx - 60, cy],
+        ["wait", 1500],
+        ["move", edge.x, cy],
+      ]);
+      await until(
+        "the system's drag",
+        () => app.js(`return performance.getEntriesByName("drag-start").length > 0`),
+        30_000,
+      );
+      await os.gesture([
+        ["move", edge.x + 40, cy],
+        ["wait", 200],
+        ["move", edge.x + 60, cy],
+      ]);
+      await until(
+        '"Make new edit" while it\'s over the window',
+        () => app.js(`return !!document.querySelector("[data-new-edit]")`),
+        10_000,
+      );
+      const target = await os.rectOf(app, "[data-new-edit]");
+      const [tx, ty] = [target.x + Math.round(target.w / 2), target.y + Math.round(target.h / 2)];
+      await os.gesture([
+        ["move", tx, ty],
+        ["wait", 500],
+        ["letgo", tx + 2, ty],
+      ]);
+      const [made] = await until(
+        "an edit made with it",
+        async () => {
+          const all = await app.invoke("list_edits");
+          return all.length === 1 && all;
+        },
+        15_000,
+      );
+      const pieces = (await app.invoke("get_edit", { id: made.id })).pieces.length;
+      if (pieces !== 1) throw new Error(`the new edit has ${pieces} pieces, not 1`);
+      ctx.log('a clip dragged out and brought back onto "Make new edit" makes an edit of it');
+      await sleep(1500);
+    }
+
     // The stretch after the cut at 3 s (no clip yet), Alt-dragged to the left
     // edge and let go there at once.
     const folder = path.dirname(ready);
