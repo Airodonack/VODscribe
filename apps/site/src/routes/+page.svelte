@@ -4,7 +4,7 @@
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
-  import { SUPPORT } from "#lib/links.js";
+  import { ISSUES, SOURCE, SUPPORT, UNSIGNED } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
@@ -44,17 +44,17 @@
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: "VODscribe isn't code-signed yet: signing needs a registered company, and I'm setting one up now. On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, choose Done (not Move to Trash), then go to System Settings › Privacy & Security, choose Open Anyway, choose Open Anyway again when macOS asks, and enter your password (on macOS 14 or earlier, Control-click it in Applications and choose Open).",
+      a: `VODscribe ${UNSIGNED} On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, choose Done (not Move to Trash), then go to System Settings › Privacy & Security, choose Open Anyway, choose Open Anyway again when macOS asks, and enter your password (on macOS 14 or earlier, Control-click it in Applications and choose Open).`,
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
       a: "On the issue tracker, which the person who makes VODscribe reads.",
-      link: { text: "Open the issue tracker", href: "https://github.com/Airodonack/VODscribe/issues" },
+      link: { text: "Open the issue tracker", href: ISSUES },
     },
     {
       q: "Can I see the code?",
       a: "Yes. VODscribe is source-available under the Functional Source License: read it, build it, change it for yourself; just don't sell a competing product from it. Each version becomes Apache 2.0 two years after release.",
-      link: { text: "See the code on GitHub", href: "https://github.com/Airodonack/VODscribe" },
+      link: { text: "See the code on GitHub", href: SOURCE },
     },
   ];
 </script>

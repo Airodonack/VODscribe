@@ -9,5 +9,7 @@ export const LICENSES = `${SITE}/licenses`;
 export const AUTHOR = "Airodonack";
 /** Where "Made by" links: donations that cover hosting and code signing. */
 export const SUPPORT = "https://ko-fi.com/airodonack";
+/** The code, on GitHub. */
+export const SOURCE = "https://github.com/Airodonack/VODscribe";
 /** Bug reports and ideas; a public tracker, no account needed to read it. */
-export const ISSUES = "https://github.com/Airodonack/VODscribe/issues";
+export const ISSUES = `${SOURCE}/issues`;

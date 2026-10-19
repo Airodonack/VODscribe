@@ -4,6 +4,7 @@
   // the buttons to press highlighted, and where to check the app first.
   import Icon from "desktop/lib/Icon.svelte";
   import type { Os } from "./downloads";
+  import { SOURCE, UNSIGNED } from "./links";
 
   let { os = $bindable() }: { os: Os | null } = $props();
 
@@ -17,8 +18,7 @@
     } else if (!os && dialog.open) dialog.close();
   });
 
-  const SOURCE = "https://github.com/Airodonack/VODscribe";
-  const BUILDS = "https://github.com/Airodonack/VODscribe/actions/workflows/build.yml";
+  const BUILDS = `${SOURCE}/actions/workflows/build.yml`;
 </script>
 
 <dialog
@@ -42,8 +42,8 @@
 
     {#if os === "windows"}
       <p>
-        Windows will show a blue “Windows protected your PC” warning. That's because VODscribe isn't code-signed yet:
-        signing needs a registered company, and I'm setting one up now. Once that's done, the warning goes away.
+        Windows will show a blue “Windows protected your PC” warning. That's because VODscribe {UNSIGNED} Once that's done,
+        the warning goes away.
       </p>
       <p><strong>To open it:</strong> click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
       <div class="sketches" aria-hidden="true">
@@ -69,8 +69,7 @@
     {:else if os === "mac"}
       <p>
         macOS will say it “could not verify VODscribe is free of malware” and won't open it. That's because VODscribe
-        isn't code-signed yet: signing needs a registered company, and I'm setting one up now. Once that's done, the
-        warning goes away.
+        {UNSIGNED} Once that's done, the warning goes away.
       </p>
       <p>
         <strong>To open it:</strong> open the download and drag VODscribe into <strong>Applications</strong>, then open

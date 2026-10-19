@@ -2,7 +2,7 @@
   import "desktop/app.css";
   import "../site.css";
   import Logo from "desktop/lib/Logo.svelte";
-  import { AUTHOR, SUPPORT } from "#lib/links.js";
+  import { AUTHOR, SOURCE, SUPPORT } from "#lib/links.js";
 
   let { children } = $props();
 </script>
@@ -26,7 +26,7 @@
   <a href="/releases">Releases</a>
   <a href="/privacy">Privacy</a>
   <a href="/licenses">Licenses</a>
-  <a href="https://github.com/Airodonack/VODscribe" target="_blank" rel="noopener">Source</a>
+  <a href={SOURCE} target="_blank" rel="noopener">Source</a>
 </footer>
 
 <style>
