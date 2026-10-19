@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type LibraryItem, type SearchHit, type SetupStatus, type UnlistenFn, type Vod } from "./api";
+  import {
+    api,
+    docKey,
+    docOfKey,
+    events,
+    type LibraryItem,
+    type SearchHit,
+    type SetupStatus,
+    type UnlistenFn,
+    type Vod,
+  } from "./api";
   import Library, { type LibraryRow } from "./Library.svelte";
   import Player from "./Player.svelte";
   import Results from "./Results.svelte";
@@ -203,12 +213,14 @@
   // key ("vod:3", "edit:2"). One added since it was read goes on top as it
   // appears, as the library puts it.
   let order = $state<string[]>([]);
-  const keyOf = (item: LibraryItem) => `${item.kind}:${item.id}`;
   async function loadOrder() {
-    order = (await api.libraryOrder().catch(() => [])).map(keyOf);
+    order = (await api.libraryOrder().catch(() => [])).map(docKey);
   }
   $effect(() => {
-    const keys = [...vods.map((v) => `vod:${v.id}`), ...edits.list.map((e) => `edit:${e.id}`)];
+    const keys = [
+      ...vods.map((v) => docKey({ kind: "vod", id: v.id })),
+      ...edits.list.map((e) => docKey({ kind: "edit", id: e.id })),
+    ];
     untrack(() => {
       const known = new Set(order);
       const added = keys.filter((key) => !known.has(key));
@@ -217,8 +229,8 @@
   });
   const rows = $derived.by(() => {
     const byKey = new Map<string, LibraryRow>([
-      ...vods.map((vod) => [`vod:${vod.id}`, { kind: "vod", vod }] as const),
-      ...edits.list.map((edit) => [`edit:${edit.id}`, { kind: "edit", edit }] as const),
+      ...vods.map((vod) => [docKey({ kind: "vod", id: vod.id }), { kind: "vod", vod }] as const),
+      ...edits.list.map((edit) => [docKey({ kind: "edit", id: edit.id }), { kind: "edit", edit }] as const),
     ]);
     return order.map((key) => byKey.get(key)).filter((row) => row !== undefined);
   });
@@ -226,18 +238,15 @@
   let reordering: Promise<void> = Promise.resolve();
   // Rows missing from `items` (added since the reorder began) stay on top.
   function reorder(items: LibraryItem[]) {
-    const listed = new Set(items.map(keyOf));
-    order = [
-      ...rows.map((r) => (r.kind === "vod" ? `vod:${r.vod.id}` : `edit:${r.edit.id}`)).filter((k) => !listed.has(k)),
-      ...items.map(keyOf),
-    ];
+    const listed = new Set(items.map(docKey));
+    const rowDoc = (r: LibraryRow) =>
+      docKey(r.kind === "vod" ? { kind: "vod", id: r.vod.id } : { kind: "edit", id: r.edit.id });
+    order = [...rows.map(rowDoc).filter((k) => !listed.has(k)), ...items.map(docKey)];
     const position = new Map(order.map((key, i) => [key, i]));
-    vods = [...vods].sort((a, b) => (position.get(`vod:${a.id}`) ?? -1) - (position.get(`vod:${b.id}`) ?? -1));
+    const at = (id: number) => position.get(docKey({ kind: "vod", id })) ?? -1;
+    vods = [...vods].sort((a, b) => at(a.id) - at(b.id));
     // One save at a time, in order: holding Alt+↓ sends many.
-    const all = order.map((key) => {
-      const [kind, id] = key.split(":");
-      return { kind, id: Number(id) } as LibraryItem;
-    });
+    const all: LibraryItem[] = order.map(docOfKey);
     reordering = reordering.then(() =>
       api.reorderLibrary(all).catch(async (e) => {
         console.error("reorder failed", e);

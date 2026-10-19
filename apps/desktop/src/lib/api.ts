@@ -314,6 +314,15 @@ export interface ChatLine {
 /** A document with an undo history (crates' history.rs): an edit, or a VOD's marks and clip bar. */
 export type Doc = { kind: "edit" | "vod"; id: number };
 
+/** A VOD or edit (a `Doc`, a `LibraryItem`) as one string, "vod:3" or
+ *  "edit:2", for maps and lists keyed by it; `docOfKey` reads it back. (The
+ *  library's rows key by number for reordering: Library.svelte `rowKey`.) */
+export const docKey = (doc: { kind: "edit" | "vod"; id: number }) => `${doc.kind}:${doc.id}`;
+export const docOfKey = (key: string): Doc => {
+  const [kind, id] = key.split(":");
+  return { kind: kind === "edit" ? "edit" : "vod", id: Number(id) };
+};
+
 /** What an undo or redo did: to which document, and what it was ("Piece removed"). */
 export interface Undone {
   doc: Doc;

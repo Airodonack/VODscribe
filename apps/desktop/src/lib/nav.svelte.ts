@@ -6,7 +6,7 @@
 // (`bringBack`). What they noted last also has a VOD or an edit opened any
 // other way start where its playhead was left this session (`lastSeen`).
 
-import type { Doc } from "./api";
+import { docKey, type Doc } from "./api";
 
 /** How a view was left, to bring back. */
 export interface Left {
@@ -24,7 +24,7 @@ export interface Step {
 /** The most steps kept each way. */
 const KEEP = 100;
 
-const key = (doc: Doc | null) => (doc ? `${doc.kind}:${doc.id}` : "none");
+const key = (doc: Doc | null) => (doc ? docKey(doc) : "none");
 const same = (a: Doc | null, b: Doc | null) => key(a) === key(b);
 
 class Nav {
