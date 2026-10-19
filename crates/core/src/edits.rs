@@ -48,6 +48,9 @@ pub struct Edit {
     pub vod_ids: Vec<i64>,
     /// What it plays of each VOD, in order: its pieces less what's struck.
     pub ranges: Vec<EditRange>,
+    /// A snippet (a clip on a clip bar, opened in the editor): the VOD whose
+    /// bar it's on. None for a listed clip.
+    pub snippet_of: Option<i64>,
 }
 
 /// A stretch of a VOD an edit plays (`Edit::ranges`).
@@ -364,7 +367,8 @@ impl Db {
         let row = self
             .conn
             .query_row(
-                "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision
+                "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision,
+                        (SELECT whole_of FROM clips o WHERE o.id = c.bar_of)
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -375,11 +379,12 @@ impl Db {
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, i64>(4)?,
                         r.get::<_, Option<i64>>(5)?,
+                        r.get::<_, Option<i64>>(6)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_path, error, revision, rendered)) = row else { return Ok(None) };
+        let Some((title, status, file_path, error, revision, rendered, snippet_of)) = row else { return Ok(None) };
         let pieces = self.edit_pieces(id)?;
         let ranges: Vec<EditRange> = pieces
             .iter()
@@ -400,6 +405,7 @@ impl Db {
             length: ranges.iter().map(|r| r.end - r.start).sum(),
             vod_ids,
             ranges,
+            snippet_of,
         }))
     }
 

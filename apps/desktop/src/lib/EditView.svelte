@@ -329,7 +329,7 @@
     const key = keyOf(e);
     // E renders even where edits can't play here: then it's the way to watch one.
     if (key === "e" && !player) {
-      if (!e.repeat && edit && edit.status !== "cutting" && segments.length) edits.render(edit.id);
+      if (!e.repeat && edit && !snippet && edit.status !== "cutting" && segments.length) edits.render(edit.id);
       e.preventDefault();
       return;
     }
@@ -337,7 +337,7 @@
     if (key === "b" || key === "e") {
       if (!e.repeat) {
         if (key === "b") split();
-        else if (edit && edit.status !== "cutting" && segments.length) edits.render(edit.id);
+        else if (edit && !snippet && edit.status !== "cutting" && segments.length) edits.render(edit.id);
       }
       e.preventDefault();
       return;
@@ -640,6 +640,9 @@
   });
 
   const progress = $derived(edit ? edits.progress.get(edit.id) : undefined);
+  /** A clip of a clip bar, opened here: it's made again by itself as it
+   *  changes, and is deleted from its clip bar. */
+  const snippet = $derived(edit?.snippet_of != null);
 </script>
 
 <svelte:window onkeydown={onKey} onpointermove={onOutMove} onpointerup={() => (outPress = null)} />
@@ -653,7 +656,7 @@
         bind:value={title}
         onblur={rename}
         onkeydown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        aria-label="Edit name"
+        aria-label={snippet ? "Clip name" : "Edit name"}
         autocorrect="off"
         autocapitalize="off"
         spellcheck="false"
@@ -676,7 +679,7 @@
           <Spinner size={12} /> Rendering{progress ? ` ${Math.round(progress * 100)}%` : "…"}
         </span>
         <button onclick={() => edits.stop(edit.id)}>Stop</button>
-      {:else}
+      {:else if !snippet}
         {@const again = edit.status === "ready"}
         <button
           class="make"
@@ -696,9 +699,11 @@
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
       >
-      <button class="icon" onclick={remove} title="Delete edit" aria-label="Delete edit">
-        <Icon name="trash" size={16} />
-      </button>
+      {#if !snippet}
+        <button class="icon" onclick={remove} title="Delete edit" aria-label="Delete edit">
+          <Icon name="trash" size={16} />
+        </button>
+      {/if}
     </div>
     {#if showKeys}
       <Shortcuts shortcuts={editShortcuts(!!player?.step, os === "mac")} />

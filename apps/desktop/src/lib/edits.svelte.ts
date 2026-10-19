@@ -30,11 +30,15 @@ class Edits {
   lit = $state<{ editId: number; vodId: number } | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
+  /** A clip of a clip bar open in the editor (not in the library's list). */
+  #snippet = $state.raw<Edit | null>(null);
   #started = false;
   #seq = 0;
 
   get open(): Edit | undefined {
-    return this.list.find((e) => e.id === this.openId);
+    return (
+      this.list.find((e) => e.id === this.openId) ?? (this.#snippet?.id === this.openId ? this.#snippet : undefined)
+    );
   }
 
   start() {
@@ -82,6 +86,11 @@ class Edits {
   }
 
   #put(edit: Edit) {
+    // A clip of a clip bar is the editor's while it's open, never a row.
+    if (edit.snippet_of !== null) {
+      if (edit.id === this.openId) this.#snippet = edit;
+      return;
+    }
     const at = this.list.findIndex((e) => e.id === edit.id);
     this.list = at < 0 ? [...this.list, edit] : this.list.map((e, i) => (i === at ? edit : e));
   }

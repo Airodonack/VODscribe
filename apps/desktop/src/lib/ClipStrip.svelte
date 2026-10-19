@@ -146,12 +146,13 @@
           spellcheck="false"
         />
       {:else}
-        <!-- Double-click, or Enter or F2 on it, to rename. -->
+        <!-- Double-click opens it in the editor; Enter or F2 on it renames it. -->
         <span
           class="name"
           role="button"
           tabindex="0"
-          ondblclick={() => startRename(clip)}
+          title="Double-click to open it in the editor · Enter or F2 renames it"
+          ondblclick={() => edits.openEdit(clip.id)}
           onkeydown={(e) => {
             if (e.key !== "Enter" && e.key !== "F2") return;
             startRename(clip);

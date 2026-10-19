@@ -320,6 +320,9 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let done = Done { doc: entry.doc, label: entry.label, revision: entry.revision };
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
+    if let Doc::Edit(id) = done.doc {
+        crate::edits::remake_snippet(app, &db, id);
+    }
     let _ = app.emit("restored", Restored { doc: done.doc, revision: done.revision });
     Ok(Some(done))
 }

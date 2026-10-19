@@ -29,9 +29,29 @@ struct Progress {
     progress: f64,
 }
 
+/// News of edit `id`; of a snippet open in the editor, for its clip bar too.
 fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(edit)) = db.edit(id) {
+        let snippet = edit.snippet_of.is_some();
         let _ = app.emit("edit", edit);
+        if snippet && let Ok(Some(clip)) = db.clip(id) {
+            let _ = app.emit("clip", clip);
+        }
+    }
+}
+
+/// Snippet `id` changed in the editor (or by undo there): its file is made
+/// again, as a clip moved in its clip bar is. Nothing for a listed clip,
+/// which renders when asked.
+pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
+    if db.is_snippet(id).ok().flatten() != Some(true) {
+        return;
+    }
+    let state = app.state::<AppState>();
+    state.clips.stop(id);
+    if db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok() {
+        emit(app, db, id);
+        state.clips.queue(id);
     }
 }
 
@@ -94,6 +114,8 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let out = match &edit.file_path {
             // (render() gives it the extension for what it holds: the same, written over.)
             Some(path) if Path::new(path).file_stem() == Path::new(&name).file_stem() => PathBuf::from(path),
+            // A snippet's goes with the clips; a listed clip's in Edits.
+            _ if edit.snippet_of.is_some() => clips::unique_path(&crate::clips::clips_dir(app), &name),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
         crate::clips::writing(&out);
@@ -174,6 +196,7 @@ fn changing(
     let before = history::snapshot(&db, doc).ok().flatten();
     change(&db).map_err(err)?;
     state.history.record(&db, doc, label, before);
+    remake_snippet(app, &db, edit_id);
     view(app, &db, edit_id)
 }
 

@@ -76,7 +76,19 @@ impl Cutter {
             }
         }
         self.jobs.run("clips", move |id, stop| {
-            let snippet = app.state::<AppState>().db.lock().unwrap().is_snippet(id);
+            // A snippet of one piece as it came is cut; one changed in the
+            // editor (more pieces, lines struck, groups) is rendered as an edit is.
+            let snippet = {
+                let state = app.state::<AppState>();
+                let db = state.db.lock().unwrap();
+                db.is_snippet(id).map(|s| {
+                    s.map(|s| {
+                        s && db
+                            .edit_pieces(id)
+                            .is_ok_and(|p| p.len() == 1 && p[0].struck.is_empty() && p[0].group.is_none())
+                    })
+                })
+            };
             match snippet {
                 Ok(Some(false)) => {
                     if let Err(e) = crate::edits::render_edit(&app, id, stop) {

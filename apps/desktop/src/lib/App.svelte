@@ -131,7 +131,8 @@
     const doc = step?.doc;
     if (!doc) return "the library";
     if (doc.kind === "vod") return `“${vodsById.get(doc.id)?.title ?? "the VOD"}”`;
-    return `“${edits.list.find((e) => e.id === doc.id)?.title ?? "the edit"}”`;
+    const edit = edits.list.find((e) => e.id === doc.id) ?? (edits.open?.id === doc.id ? edits.open : undefined);
+    return `“${edit?.title ?? "the edit"}”`;
   }
   // The mouse's back and forward buttons.
   function onMouseNav(e: MouseEvent) {
