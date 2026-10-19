@@ -12,6 +12,8 @@
 
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
+
 export const MINUTE = 60_000;
 
 /** Polls `check` until it returns something truthy, or fails after `timeout` saying `what`. */
@@ -273,7 +275,7 @@ export class App {
         const error = await this.js(
           `return [...document.querySelectorAll(".error-text")].map((e) => e.textContent).join(" ")`,
         );
-        if (/couldn't be played|can't be played/.test(error)) throw new Error(error);
+        if (isUnplayable(error)) throw new Error(error);
         const now = await this.shownTime();
         return now >= from + 2 && now;
       },

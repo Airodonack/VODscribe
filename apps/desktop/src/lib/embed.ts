@@ -4,6 +4,7 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
+import { unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
@@ -267,8 +268,7 @@ function videoPlayer(
   video.addEventListener("click", () => (video.paused ? video.play().catch(() => {}) : video.pause()));
   video.style.cssText = "display: block; width: 100%; height: 100%; background: #000";
   video.addEventListener("error", () => {
-    const unsupported = video.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
-    onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
+    onerror?.(unplayable(video.error));
   });
   // A later successful play (after a retry or seek) clears an earlier error.
   video.addEventListener("playing", () => onerror?.(null));

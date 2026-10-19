@@ -114,3 +114,12 @@ export function playedSpans(start: number, end: number, struck: [number, number]
   if (at < end) out.push([at, end]);
   return out.filter(([a, b]) => b - a >= 0.04);
 }
+
+/** What the web view's player says when a file won't play: that its format
+ *  can't be (MEDIA_ERR_SRC_NOT_SUPPORTED), or that it couldn't be. */
+export function unplayable(error: Pick<MediaError, "code"> | null | undefined): string {
+  return error?.code === 4 ? "This video's format can't be played here." : "This video couldn't be played.";
+}
+
+/** Whether `message` is one `unplayable` gives (tests/e2e looks for them too). */
+export const isUnplayable = (message: string) => /can't be played here\.|couldn't be played\./.test(message);

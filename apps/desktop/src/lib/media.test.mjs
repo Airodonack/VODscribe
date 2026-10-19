@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   columns,
   cueAt,
+  isUnplayable,
+  unplayable,
   playedSpans,
   frameStart,
   inFrame,
@@ -146,4 +148,11 @@ test("the stretch the playhead is in, the last one at the very end", () => {
   assert.deepEqual(stretchIn([2], 5, 5), { start: 2, end: 5 });
   assert.deepEqual(stretchIn([], 5, 5.3), { start: 0, end: 5 });
   assert.equal(stretchIn([], 0, 0), undefined);
+});
+
+test("a file that won't play says why, and is known as such", () => {
+  assert.equal(unplayable({ code: 4 }), "This video's format can't be played here.");
+  assert.equal(unplayable(null), "This video couldn't be played.");
+  assert.ok(isUnplayable(unplayable({ code: 4 })) && isUnplayable(unplayable(undefined)));
+  assert.ok(!isUnplayable("The file is missing."));
 });

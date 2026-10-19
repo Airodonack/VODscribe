@@ -9,7 +9,7 @@
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
-  import { DEFAULT_FPS, frameStart, inFrame } from "./media";
+  import { DEFAULT_FPS, frameStart, inFrame, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import PlayerBar from "./PlayerBar.svelte";
@@ -540,7 +540,7 @@
           <button class="link" onclick={() => api.openFile(vod.id).catch((e) => (error = String(e)))}
             >Open it in your video player</button
           >
-        {:else if vod.media && /can't be played|couldn't be played/.test(error)}
+        {:else if vod.media && isUnplayable(error)}
           {playbackHint()} Meanwhile, use “Open on {site}”.
         {/if}
       </p>

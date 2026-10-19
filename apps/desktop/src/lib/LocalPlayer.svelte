@@ -11,7 +11,7 @@
   import { api, type Cue, type Vod } from "./api";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, HOLD_MS, carry, rectOf, stretchAt } from "./dragout";
-  import { DEFAULT_FPS, cueAt, stepTime } from "./media";
+  import { DEFAULT_FPS, cueAt, stepTime, unplayable } from "./media";
   import { load, save } from "./stored";
 
   let {
@@ -177,8 +177,7 @@
   }
 
   function onError() {
-    const unsupported = video?.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED;
-    onerror?.(unsupported ? "This video's format can't be played here." : "This video couldn't be played.");
+    onerror?.(unplayable(video?.error));
   }
 </script>
 
