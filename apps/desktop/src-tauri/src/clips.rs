@@ -393,14 +393,31 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
 /// a drive that's away (unmounted, unplugged) takes none of them.
 #[tauri::command]
 pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>, vod_id: i64) -> CmdResult<()> {
+    let finished = |clip: &Clip| clip.shown && clip.status == ClipStatus::Ready;
+    let files: Vec<(i64, String)> = {
+        let db = state.db.lock().unwrap();
+        let clips = db.clips(vod_id).map_err(err)?;
+        clips.into_iter().filter(finished).filter_map(|c| Some((c.id, c.file_path?))).collect()
+    };
+    // Looked at without the library held: a sleeping disk or a network folder
+    // can take a while to answer.
+    let gone = tauri::async_runtime::spawn_blocking(move || {
+        files
+            .into_iter()
+            .filter(|(_, path)| {
+                let path = Path::new(path);
+                !path.exists() && path.parent().is_some_and(Path::is_dir)
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(err)?;
     let db = state.db.lock().unwrap();
-    for clip in db.clips(vod_id).map_err(err)? {
-        let Some(path) = clip.file_path.as_deref().filter(|_| clip.shown && clip.status == ClipStatus::Ready) else {
-            continue;
-        };
-        let path = Path::new(path);
-        if !path.exists() && path.parent().is_some_and(Path::is_dir) {
-            remove(&app, &db, clip.id).map_err(err)?;
+    for (id, path) in gone {
+        // Only if it's as it was when looked at (not made again meanwhile).
+        let same = db.clip(id).map_err(err)?.is_some_and(|c| finished(&c) && c.file_path.as_deref() == Some(&*path));
+        if same {
+            remove(&app, &db, id).map_err(err)?;
         }
     }
     Ok(())
