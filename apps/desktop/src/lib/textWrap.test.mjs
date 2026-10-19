@@ -16,3 +16,10 @@ test("a word wider than a line is broken, not run over", () => {
   assert.deepEqual(lines, ["ok", "AAAAAAAAAA", "AAAAAAAAAA", "AAAAA then"]);
   for (const line of lines) assert.ok(width(line) <= 100, line);
 });
+
+test("a broken word keeps each emoji whole", () => {
+  // An emoji twice as wide as a letter; half of one (a lone surrogate) as one letter.
+  const wide = (/** @type {string} */ s) => Array.from(s).reduce((w, c) => w + (c.length === 2 ? 20 : 10), 0);
+  const lines = wrapWith("😀😀😀", 30, wide);
+  assert.deepEqual(lines, ["😀", "😀", "😀"]);
+});

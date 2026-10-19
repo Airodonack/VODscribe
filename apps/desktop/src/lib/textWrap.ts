@@ -11,15 +11,16 @@ export function wrapWith(text: string, most: number, width: (s: string) => numbe
       lines[lines.length - 1] = `${last} ${word}`;
       continue;
     }
-    let rest = word;
-    while (width(rest) > most && rest.length > 1) {
+    // By characters, not UTF-16 units, so an emoji isn't cut in two.
+    let rest = Array.from(word);
+    while (width(rest.join("")) > most && rest.length > 1) {
       // The longest start of it that fits (at least a character).
       let n = 1;
-      while (n < rest.length && width(rest.slice(0, n + 1)) <= most) n++;
-      lines.push(rest.slice(0, n));
+      while (n < rest.length && width(rest.slice(0, n + 1).join("")) <= most) n++;
+      lines.push(rest.slice(0, n).join(""));
       rest = rest.slice(n);
     }
-    lines.push(rest);
+    lines.push(rest.join(""));
   }
   return lines;
 }
