@@ -260,7 +260,9 @@ impl Db {
                 params![title, now(), bar_of],
             )?,
         };
-        Ok(self.conn.last_insert_rowid())
+        let id = self.conn.last_insert_rowid();
+        self.conn.execute("INSERT INTO renders (clip_id) VALUES (?1)", [id])?;
+        Ok(id)
     }
 
     /// Every edit (listed clips other than VODs' own), in their order.
@@ -276,7 +278,8 @@ impl Db {
         let row = self
             .conn
             .query_row(
-                "SELECT title, status, file_path, error, revision, rendered_revision FROM clips WHERE id = ?1",
+                "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision
+                 FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
                     Ok((
@@ -561,16 +564,17 @@ impl Db {
 
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
     pub fn hand_out_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET handed_out = 1 WHERE id = ?1", [id])?;
+        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
         Ok(())
     }
 
     /// Whether edit `id`'s video was dragged out of the app; and it's the app's
     /// own again (`take_back`: rendered to a new file).
     pub fn edit_handed_out(&self, id: i64, take_back: bool) -> Result<bool> {
-        let out = self.conn.query_row("SELECT handed_out FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let out =
+            self.conn.query_row("SELECT handed_out FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
         if take_back {
-            self.conn.execute("UPDATE clips SET handed_out = 0 WHERE id = ?1", [id])?;
+            self.conn.execute("UPDATE renders SET handed_out = 0 WHERE clip_id = ?1", [id])?;
         }
         Ok(out.unwrap_or(false))
     }
@@ -586,9 +590,9 @@ impl Db {
         version: Option<i64>,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE clips SET status = ?2, file_path = coalesce(?3, file_path), error = ?4,
-               rendered_revision = coalesce(?5, rendered_revision)
-             WHERE id = ?1",
+            "UPDATE renders SET status = ?2, file_path = coalesce(?3, file_path), error = ?4,
+               revision = coalesce(?5, revision)
+             WHERE clip_id = ?1",
             params![id, status.as_str(), file, error, version],
         )?;
         Ok(())
@@ -597,8 +601,11 @@ impl Db {
     /// Edits left rendering (or waiting to) when the app stopped: waiting
     /// again, to be rendered when asked.
     pub fn reset_renders(&self) -> Result<()> {
-        self.conn
-            .execute("UPDATE clips SET status = 'waiting' WHERE status = 'cutting' AND position IS NOT NULL", [])?;
+        self.conn.execute(
+            "UPDATE renders SET status = 'waiting'
+             WHERE status = 'cutting' AND clip_id IN (SELECT id FROM clips WHERE position IS NOT NULL)",
+            [],
+        )?;
         Ok(())
     }
 }

@@ -511,6 +511,27 @@ ALTER TABLE vods ADD COLUMN fps_num INTEGER;
 ALTER TABLE vods ADD COLUMN fps_den INTEGER;
 CREATE VIEW vod_order AS SELECT whole_of AS vod_id, position FROM clips WHERE whole_of IS NOT NULL;";
 
+/// Version 23: what's been rendered of a clip (its status, file, error, the
+/// revision it's of, and whether its file was dragged out) is kept apart
+/// from the clip: it's what was made from the document, not part of it, and
+/// writing it changes no revision.
+const MIGRATE_V23: &str = "
+CREATE TABLE renders (
+    clip_id INTEGER PRIMARY KEY REFERENCES clips (id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'waiting',
+    file_path TEXT,
+    error TEXT,
+    revision INTEGER,
+    handed_out INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO renders (clip_id, status, file_path, error, revision, handed_out)
+    SELECT id, status, file_path, error, rendered_revision, handed_out FROM clips;
+ALTER TABLE clips DROP COLUMN status;
+ALTER TABLE clips DROP COLUMN file_path;
+ALTER TABLE clips DROP COLUMN error;
+ALTER TABLE clips DROP COLUMN rendered_revision;
+ALTER TABLE clips DROP COLUMN handed_out;";
+
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
@@ -621,9 +642,10 @@ pub struct MarkState {
 
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
-    "c.id, i.vod_id, i.start, i.end, c.title, c.status, c.file_path, c.error, c.shown";
-/// Joins a clip (`c`) to its first piece (`i`).
-pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)";
+    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown";
+/// Joins a clip (`c`) to its first piece (`i`) and its render (`r`).
+pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)
+     JOIN renders r ON r.clip_id = c.id";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
     Ok(Clip {
@@ -809,6 +831,7 @@ impl Db {
             MIGRATE_V20,
             MIGRATE_V21,
             MIGRATE_V22,
+            MIGRATE_V23,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -906,7 +929,7 @@ impl Db {
     pub fn unfinished_clips(&self) -> Result<Vec<Clip>> {
         let sql = format!(
             "SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN}
-             WHERE c.bar_of IS NOT NULL AND c.status IN ('waiting', 'cutting') ORDER BY c.id"
+             WHERE c.bar_of IS NOT NULL AND r.status IN ('waiting', 'cutting') ORDER BY c.id"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
@@ -919,7 +942,7 @@ impl Db {
                 "UPDATE items SET start = ?2, end = ?3 WHERE id = (SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL ORDER BY position, id LIMIT 1)",
                 params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0],
             )?;
-            db.conn.execute("UPDATE clips SET status = 'waiting', error = NULL WHERE id = ?1", [id])?;
+            db.conn.execute("UPDATE renders SET status = 'waiting', error = NULL WHERE clip_id = ?1", [id])?;
             db.changed(id)
         })
     }
@@ -933,19 +956,20 @@ impl Db {
     /// Notes that clip `id`'s file was dragged out of the app: it's someone
     /// else's now, so it stays when the clip goes.
     pub fn hand_out_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET handed_out = 1 WHERE id = ?1", [id])?;
+        self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
         Ok(())
     }
 
     /// Clip `id`'s file is a new one, the app's own (the one handed out stays where it went).
     pub fn take_back_clip(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE clips SET handed_out = 0 WHERE id = ?1", [id])?;
+        self.conn.execute("UPDATE renders SET handed_out = 0 WHERE clip_id = ?1", [id])?;
         Ok(())
     }
 
     /// Whether clip `id`'s file was dragged out of the app (`hand_out_clip`).
     pub fn clip_handed_out(&self, id: i64) -> Result<bool> {
-        let out = self.conn.query_row("SELECT handed_out FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let out =
+            self.conn.query_row("SELECT handed_out FROM renders WHERE clip_id = ?1", [id], |r| r.get(0)).optional()?;
         Ok(out.unwrap_or(false))
     }
 
@@ -974,8 +998,8 @@ impl Db {
         error: Option<&str>,
     ) -> Result<bool> {
         let n = self.conn.execute(
-            "UPDATE clips SET status = ?4, file_path = coalesce(?5, file_path), error = ?6
-             WHERE id = ?1 AND EXISTS (
+            "UPDATE renders SET status = ?4, file_path = coalesce(?5, file_path), error = ?6
+             WHERE clip_id = ?1 AND EXISTS (
                  SELECT 1 FROM items WHERE clip_id = ?1 AND parent IS NULL AND start = ?2 AND end = ?3
                  ORDER BY position, id LIMIT 1)",
             params![id, Flicks::from_seconds(start).0, Flicks::from_seconds(end).0, status.as_str(), file, error],
