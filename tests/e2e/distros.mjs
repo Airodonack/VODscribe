@@ -51,13 +51,15 @@ const PACMAN = (image) => ({
     // What an Arch package of ours would have to depend on beyond WebKitGTK: alsa-lib (the app
     // links ALSA for the player's sound), and GStreamer's plugins, optional for WebKitGTK there,
     // without which its web process aborts at the first sound ("autoaudiosink not found").
-    `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav librsvg ` +
+    `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav glycin bubblewrap ` +
     `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng >/dev/null && ` +
     `mkdir -p /tmp/deb && cd /tmp/deb && bsdtar -xf /pkg/app.deb && tar -xf data.tar.* -C / && cd / && ` +
-    // pacman's hooks can't all run in a container: GTK's settings schemas, and
-    // the image loaders, by hand. (librsvg, above: GTK's drag icon is an SVG,
-    // and GTK aborts without a loader for it; CachyOS's image has none.)
-    `glib-compile-schemas /usr/share/glib-2.0/schemas && gdk-pixbuf-query-loaders --update-cache`,
+    // pacman's hooks can't all run in a container: GTK's settings schemas by hand.
+    `glib-compile-schemas /usr/share/glib-2.0/schemas`,
+  // Images decode through glycin's loaders, each in a bubblewrap sandbox, as
+  // on a desktop; bubblewrap makes namespaces, which rootless podman allows
+  // only a privileged container (still with no more than the user's rights).
+  podman: ["--privileged"],
 });
 
 /** Name: how to install there. Images as their registries name them. */
@@ -130,6 +132,7 @@ for (const name of names) {
       ...podman.slice(1),
       "run",
       "--rm",
+      ...(distro.podman ?? []),
       "-v",
       `${repo}:/repo:ro`,
       "-v",
