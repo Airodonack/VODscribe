@@ -75,6 +75,8 @@ struct Fetched {
 /// Deletes VOD `vod_id`'s footage (it's removed).
 pub(crate) fn remove(app: &AppHandle, vod_id: i64) {
     footage::remove(&dir(app), vod_id);
+    // And what the site said of it, kept for its sections.
+    let _ = std::fs::remove_file(app.state::<AppState>().paths.work().join(format!("footage-{vod_id}.info.json")));
 }
 
 fn dir(app: &AppHandle) -> PathBuf {

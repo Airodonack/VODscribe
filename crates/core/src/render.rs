@@ -113,14 +113,21 @@ pub fn render(
 /// `chapters` (start, title) of a video `length` seconds long, as an ffmpeg
 /// metadata file: each to the next one's start, the last to the end.
 pub fn chapters_file(chapters: &[(f64, String)], length: f64) -> String {
-    // =, ;, #, \ and line ends are escaped with a backslash in a value.
+    // =, ;, # and \ are escaped with a backslash in a value; a title's
+    // control characters (line ends among them, which would end its line
+    // there) are spaces.
     let escaped = |text: &str| {
         let mut out = String::new();
         for c in text.chars() {
-            if matches!(c, '=' | ';' | '#' | '\\' | '\n') {
+            if matches!(c, '=' | ';' | '#' | '\\') {
                 out.push('\\');
             }
-            out.push(c);
+            out.push(if c.is_control() { ' ' } else { c });
+        }
+        // ffmpeg reads a backslash at a line's end as escaping the line end
+        // (an escaped one too), and the next chapter would be lost: a space after.
+        if out.ends_with('\\') {
+            out.push(' ');
         }
         out
     };
@@ -254,6 +261,16 @@ mod tests {
     const SILENT: Media =
         Media { picture: Some(Picture { width: 1280, height: 720, fps: 60.0 }), audio: false, duration: None };
     const SOUND: Media = Media { picture: None, audio: true, duration: None };
+
+    #[test]
+    fn chapter_titles_stay_on_their_line() {
+        let file = chapters_file(&[(0.0, "a\rb\n[CHAPTER]".into()), (1.0, "ends in \\".into())], 2.0);
+        assert_eq!(
+            file,
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=a b [CHAPTER]\n\
+             [CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=ends in \\\\ \n"
+        );
+    }
 
     #[test]
     fn the_graph_trims_fits_and_joins_each_piece() {

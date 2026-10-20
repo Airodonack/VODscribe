@@ -752,9 +752,12 @@ impl Db {
     }
 
     /// Deletes clip `id`, with its items, marks and snippets.
-    pub fn delete_edit(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM clips WHERE id = ?1", [id])?;
-        Ok(())
+    /// Deletes edit `id`, if it's one (a clip of the library's list, not a
+    /// VOD's own nor one on a clip bar); false if it isn't.
+    pub fn delete_edit(&self, id: i64) -> Result<bool> {
+        let deleted =
+            self.conn.execute("DELETE FROM clips WHERE id = ?1 AND position IS NOT NULL AND whole_of IS NULL", [id])?;
+        Ok(deleted > 0)
     }
 
     /// Clip `id`'s pieces at its top level, in order, as the record holds them.
@@ -1552,6 +1555,8 @@ pub(crate) mod tests {
         assert_eq!((pieces.len(), pieces[0].vod_id, pieces[0].start, pieces[0].end), (1, vod, Flicks::ZERO, None));
         assert_eq!(db.edit_pieces(clip).unwrap()[0].end, 600.0, "to the VOD's end");
         assert!(db.edits().unwrap().is_empty(), "not an edit");
+        assert!(!db.delete_edit(clip).unwrap(), "nor deleted as one");
+        assert_eq!(db.vod_clip(vod).unwrap(), Some(clip));
         assert_eq!(db.library_order().unwrap(), [LibraryItem::Vod(vod)]);
         // Its frame rate, once read.
         assert_eq!(db.rate(vod).unwrap(), None);

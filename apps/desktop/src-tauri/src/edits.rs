@@ -291,14 +291,19 @@ pub(crate) async fn rename_edit(app: AppHandle, id: i64, title: String) -> CmdRe
 /// Deletes edit `id`, and its video if it was rendered.
 #[tauri::command]
 pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    state.clips.cancel(id);
     let file = {
         let db = state.db.lock().unwrap();
         let file = db.edit(id).map_err(err)?.and_then(|e| e.file_path);
-        db.delete_edit(id).map_err(err)?;
+        // Its file stays if another app took it (dragged out).
+        let handed_out = db.edit_handed_out(id, false).map_err(err)?;
+        if !db.delete_edit(id).map_err(err)? {
+            return Err("That isn't an edit.".into());
+        }
         state.history.forget(Doc::Edit(id));
-        file
+        file.filter(|_| !handed_out)
     };
+    // Its render stops (one that ends now finds it gone, and deletes its file).
+    state.clips.cancel(id);
     if let Some(file) = file {
         crate::clips::delete_file(file);
     }
