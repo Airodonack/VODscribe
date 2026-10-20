@@ -156,6 +156,12 @@ export default {
       if (map.count !== 2 || map.histogram[1] !== 1 || map.histogram[3] !== 1)
         throw new Error(`the edit's chat overview: ${JSON.stringify(map)}`);
       await ctx.checkpoint("edit-chat");
+      // Its Chat button, in the transcript's header as on a VOD, hides and shows it.
+      const messages = () => app.js(`return document.querySelectorAll(".transcript .chat .message").length`);
+      await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
+      await until("the edit's chat hidden", async () => (await messages()) === 0, 10_000);
+      await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
+      await until("the edit's chat back", async () => (await messages()) === 2, 10_000);
       ctx.log("the edit's chat: the VOD's two messages in its stretch, beside its transcript");
     }
     // Delete held down: its repeats remove nothing (only a press does).

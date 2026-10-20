@@ -677,21 +677,21 @@
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
 
 <div class="layout">
-  {#if vod}<TranscriptHead
-      {vod}
-      lineCount={lines.length}
-      {chatCount}
-      {chatProgress}
-      bind:chatError
-      {hasChat}
-      {showChat}
-      {noChat}
-      ontoggle={toggleChat}
-      emotes={marks.emotes}
-      counts={marks.counts}
-      eventCounts={marks.eventCounts}
-      bind:height={headHeight}
-    />{/if}
+  <TranscriptHead
+    {vod}
+    lineCount={lines.length}
+    {chatCount}
+    {chatProgress}
+    bind:chatError
+    {hasChat}
+    {showChat}
+    {noChat}
+    ontoggle={toggleChat}
+    emotes={marks.emotes}
+    counts={marks.counts}
+    eventCounts={marks.eventCounts}
+    bind:height={headHeight}
+  />
   <div class="cols">
     <div
       class="transcript"

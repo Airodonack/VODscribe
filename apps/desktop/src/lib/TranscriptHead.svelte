@@ -7,7 +7,8 @@
 
   // The transcript view's header (Transcript.svelte), across the transcript and
   // the minimap: how far transcription is, the chat's status and its Chat
-  // button, and the Timeline button.
+  // button, and the Timeline button. An edit's (no `vod`) has its line count
+  // and its Chat button.
   let {
     vod,
     lineCount,
@@ -23,7 +24,7 @@
     eventCounts,
     height = $bindable(),
   }: {
-    vod: Vod;
+    vod: Vod | null;
     lineCount: number;
     /** Messages in the chat (so far, while it's fetched). */
     chatCount: number;
@@ -45,9 +46,9 @@
 </script>
 
 <div class="head" bind:offsetHeight={height}>
-  <p class="status muted" title={vod.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
+  <p class="status muted" title={vod?.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
     <span class="eyebrow">Transcript</span>
-    {#if vod.status === "transcribing"}
+    {#if vod?.status === "transcribing"}
       <span class="sep">·</span><Spinner label="Transcribing" />
       Transcribing {Math.round(vod.progress * 100)}%
     {:else if lineCount > 0}
@@ -58,17 +59,17 @@
     <div class="chat-head">
       <span
         class="muted chat-status"
-        title={vod.chat === "pending"
+        title={vod?.chat === "pending"
           ? `Fetching chat: ${chatCount.toLocaleString()} message${chatCount === 1 ? "" : "s"} so far`
           : undefined}
       >
-        {#if vod.chat === "pending"}
+        {#if vod?.chat === "pending"}
           <!-- Beside the Chat button, so the spinner and a percentage say enough. -->
           <Spinner label="Fetching chat" />
           {chatProgress !== null ? `${Math.round(chatProgress * 100)}%` : ""}
-        {:else if vod.chat === "none"}
+        {:else if vod?.chat === "none"}
           No chat replay
-        {:else if vod.chat === "failed"}
+        {:else if vod?.chat === "failed"}
           <span class="error-text">Couldn't fetch chat</span>
           <button class="link accent" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
             >Try again</button
@@ -89,7 +90,7 @@
       >
         <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
       </button>
-      <Timeline {vod} {emotes} {counts} {eventCounts} />
+      {#if vod}<Timeline {vod} {emotes} {counts} {eventCounts} />{/if}
     </div>
   {/if}
 </div>
