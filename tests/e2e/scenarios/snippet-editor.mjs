@@ -45,6 +45,12 @@ export default {
       async () => (await app.invoke("edit_marks", { id: clip.id })).some((m) => m.kind === "cut"),
       10_000,
     );
+    // The page has it too, or Delete takes out the whole piece.
+    await until(
+      "the cut drawn",
+      () => app.js(`return !!document.querySelector("section.edit-view .scrubber .cut")`),
+      10_000,
+    );
     await app.key("Escape");
     await app.key("Delete");
     await until("a second long", async () => Math.abs((await length()) - 1) < 0.05, 10_000);
