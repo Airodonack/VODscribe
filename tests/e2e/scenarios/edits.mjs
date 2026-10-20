@@ -1,5 +1,5 @@
 // Edits: a clip added to a new edit from its pill (a group, one band); the
-// edit opened, renamed, its piece split (B), the group opened (double-click)
+// edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
 // and the second half moved first and back (Ctrl+← and →), a line struck out and the strike undone
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
@@ -99,7 +99,51 @@ export default {
     await until("the start", async () => (await app.shownTime()) === 0, 10_000);
     await app.key("ArrowRight", { shift: true });
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
+    // B puts a cut there, as on a VOD: a mark, the piece still one. Delete
+    // takes out the stretch from it to the piece's end, the cut then a real
+    // split (gone as a mark); Ctrl+Z brings both back, and B takes it away.
+    const editCuts = async () => (await app.invoke("edit_marks", { id: made.id })).filter((m) => m.kind === "cut");
+    const struckNow = async () => (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
     await app.key("b");
+    const [cut] = await until(
+      "a cut at 1 s",
+      async () => {
+        const list = await editCuts();
+        return list.length === 1 && Math.abs(list[0].start - 1) < 0.05 && list;
+      },
+      10_000,
+    );
+    if (pieces(await edit()).length !== 1) throw new Error("B split the piece, not put a cut");
+    await until(
+      "the cut drawn",
+      () => app.js(`return !!document.querySelector(\`section.edit-view .scrubber .cut[data-mark="${cut.id}"]\`)`),
+      10_000,
+    );
+    await app.key("Escape");
+    await app.key("Delete");
+    await until(
+      "the stretch after the cut taken out",
+      async () => (await struckNow()) === 1 && (await editCuts()).length === 0,
+      10_000,
+    );
+    if (pieces(await edit()).length !== 1) throw new Error("Delete after a cut removed the piece");
+    await app.js(
+      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
+    );
+    await until(
+      "the stretch and its cut back",
+      async () => (await struckNow()) === 0 && (await editCuts()).length === 1,
+      10_000,
+    );
+    await app.toStart();
+    await app.key("ArrowRight", { shift: true });
+    await until("1 s in again", async () => (await app.shownTime()) === 1, 10_000);
+    await app.key("b");
+    await until("the cut taken away", async () => (await editCuts()).length === 0, 10_000);
+    ctx.log("a cut on the edit: put, made a real split by a delete, undone, taken away");
+    // Two pieces, for what follows: the piece split where the cut was.
+    const one = pieces(await edit())[0];
+    await app.invoke("split_piece", { id: one.id, at: one.start + 1 });
     await until("two pieces", async () => pieces(await edit()).length === 2, 10_000);
     // Captions, on the edit's timeline: the VOD's where its pieces play. The
     // CC button shows, and Shift+C turns them off and on.

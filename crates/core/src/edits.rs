@@ -28,6 +28,9 @@ use crate::transcript::Cue;
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
 const SLIVER: f64 = 0.04;
+/// How near a stretch's end a split mark is to be at it: within half a
+/// frame (at 25 fps), as marks sit on frames and lines end where they end.
+const AT_END: f64 = 0.02;
 
 /// A listed clip other than a VOD's own, for the interface's list of edits.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -705,10 +708,12 @@ impl Db {
             .context("That clip is gone.")?;
         let items = self.item_rows(from)?;
         anyhow::ensure!(into != from, "A clip can't go inside itself.");
-        // Its marks that show in it come too, on the same moments.
+        // Its chapters and highlights that show in it come too, on the same
+        // moments (split marks are where its own stretches were, not its).
         let marks = self.clip_marks(from)?;
         let shown: Vec<MarkAt> = place_marks(&self.edit_pieces(from)?, &marks)
             .iter()
+            .filter(|m| m.kind != "cut")
             .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
             .collect();
         self.change(into, None, |db| {
@@ -764,7 +769,7 @@ impl Db {
 
     /// Makes `from`..`to` of edit `edit`'s timeline a clip on its clip bar
     /// (only dragged out, unless `shown`): the pieces that play there, and
-    /// the edit's marks in it, copied.
+    /// the edit's chapters and highlights in it, copied.
     pub fn add_edit_clip(&self, edit: i64, from: f64, to: f64, title: &str, shown: bool) -> Result<crate::db::Clip> {
         let pieces = self.edit_pieces(edit)?;
         let parts = stretch_pieces(&pieces, from, to);
@@ -774,7 +779,7 @@ impl Db {
         let marks = self.clip_marks(edit)?;
         let inside: Vec<&MarkAt> = place_marks(&pieces, &marks)
             .iter()
-            .filter(|m| m.start >= from && m.start < to)
+            .filter(|m| m.kind != "cut" && m.start >= from && m.start < to)
             .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at))
             .collect();
         let add = |db: &Db| {
@@ -1100,6 +1105,27 @@ impl Db {
         let struck = struck_json(&struck_flicks(struck))?;
         self.change(edit_id, None, |db| {
             db.conn.execute("UPDATE items SET struck = ?2 WHERE id = ?1", params![id, struck])?;
+            Ok(())
+        })
+    }
+
+    /// Takes `from`..`to` of edit `edit`'s timeline out, struck from each
+    /// piece it reaches, as one change. Its split marks at either end, and
+    /// any in it, go too: where what's left meets is now a real split.
+    pub fn remove_edit_stretch(&self, edit: i64, from: f64, to: f64) -> Result<()> {
+        let pieces = self.edit_pieces(edit)?;
+        let spent: Vec<i64> = place_marks(&pieces, &self.clip_marks(edit)?)
+            .into_iter()
+            .filter(|m| m.kind == "cut" && m.start >= from - AT_END && m.start <= to + AT_END)
+            .map(|m| m.id)
+            .collect();
+        self.change(edit, None, |db| {
+            for (piece, struck) in struck_by_removing(&pieces, from, to) {
+                db.set_piece_struck(piece, &struck)?;
+            }
+            for id in &spent {
+                db.conn.execute("DELETE FROM marks WHERE id = ?1", [id])?;
+            }
             Ok(())
         })
     }
@@ -1481,6 +1507,31 @@ pub(crate) mod tests {
         db.restore_edit(edit, &state).unwrap();
         let back: Vec<f64> = db.clip_marks(edit).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
         assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 50.0]);
+    }
+
+    #[test]
+    fn removing_a_stretch_between_split_marks_makes_them_a_real_split() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let mark = |kind: &str, at: f64| db.add_clip_mark(edit, vod, kind, at, None).unwrap();
+        let (left, right, after) = (mark("cut", 13.0), mark("cut", 16.0), mark("cut", 18.0));
+        let star = mark("highlight", 14.0);
+        let placed = || place_marks(&db.edit_pieces(edit).unwrap(), &db.clip_marks(edit).unwrap());
+        assert_eq!(placed().iter().map(|m| m.start).collect::<Vec<_>>(), [3.0, 4.0, 6.0, 8.0]);
+
+        // 3-6 s out (from mark to mark, its ends a hair off the frames).
+        db.remove_edit_stretch(edit, 3.01, 5.99).unwrap();
+        let ids: Vec<i64> = db.clip_marks(edit).unwrap().iter().map(|(id, _)| *id).collect();
+        assert!(!ids.contains(&left) && !ids.contains(&right), "the marks at its ends are a real split now");
+        assert!(ids.contains(&star), "a highlight in it stays, hidden while its moment is struck");
+        let now = placed();
+        assert_eq!(now.len(), 1);
+        assert!(now[0].id == after && (now[0].start - 5.02).abs() < 1e-6, "18 s, 2.98 s sooner");
+        let struck = &db.edit_pieces(edit).unwrap()[0].struck;
+        assert_eq!(struck.len(), 1);
+        assert!((struck[0].0 - 13.01).abs() < 1e-6 && (struck[0].1 - 15.99).abs() < 1e-6);
     }
 
     #[test]

@@ -81,13 +81,20 @@ export const vodShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
 /** An edit's player. */
 export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   ...playing(framed),
-  { keys: ["B"], does: "split the piece here" },
+  { keys: ["B"], does: "cut here (or at both ends of the selection)" },
   { keys: ["M"], does: "highlight here" },
   { keys: ["N"], does: "new chapter here" },
   { keys: ["Enter"], does: "rename the selected chapter or highlight" },
-  { keys: ["Delete"], does: "remove the selected lines, chapter or highlight; else the piece here" },
+  {
+    keys: [",", ".", "or", "←", "→", "or", "J", "L"],
+    does: "move the selected cut or mark (Shift with , . ten frames)",
+  },
+  {
+    keys: ["Delete"],
+    does: "remove the selected lines or mark; else the stretch between cuts here (a real split then), or the piece",
+  },
   { keys: [mac ? "⌘" : "Ctrl", "+", "←", "→"], does: "move the piece here earlier or later" },
-  { keys: ["C"], does: "clip the selection, or the piece here" },
+  { keys: ["C"], does: "clip the selection, or the stretch here" },
   { keys: ["E"], does: "export: render the edit" },
   { keys: ["Shift", "+", "C"], does: "captions" },
   { keys: ["Shift", "+", "M"], does: "mute" },

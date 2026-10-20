@@ -257,19 +257,14 @@ pub(crate) async fn edit_lines(app: AppHandle, id: i64) -> CmdResult<Vec<crate::
 }
 
 /// Takes `from`..`to` (seconds of its timeline) out of edit `id`: struck
-/// from each piece it reaches, as one change.
+/// from each piece it reaches, its split marks there made a real split, as
+/// one change.
 #[tauri::command]
 pub(crate) async fn remove_stretch(app: AppHandle, id: i64, from: f64, to: f64) -> CmdResult<EditView> {
     if !(from.is_finite() && to.is_finite() && to > from) {
         return Err("That's not a stretch of the edit.".into());
     }
-    changing(&app, id, "Stretch removed", |db| {
-        let pieces = db.edit_pieces(id)?;
-        for (piece, struck) in vodscribe_core::edits::struck_by_removing(&pieces, from, to) {
-            db.set_piece_struck(piece, &struck)?;
-        }
-        Ok(())
-    })
+    changing(&app, id, "Stretch removed", |db| db.remove_edit_stretch(id, from, to))
 }
 
 #[tauri::command]

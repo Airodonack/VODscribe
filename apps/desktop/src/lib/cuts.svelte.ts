@@ -1,4 +1,4 @@
-// The open VOD's marks, or the open edit's (its chapters and highlights,
+// The open VOD's marks, or the open edit's (its cuts, chapters and highlights,
 // on its timeline: crates/core edits.rs `place_marks`). Cuts between frames split it into stretches, each of
 // which can become a clip: Split (B) puts one where the playhead is (or takes
 // away the one there). Chapters (N) name the part of the VOD from their start
@@ -98,14 +98,15 @@ class Cuts {
 
   /** Puts a mark on the frame showing at `time` (selected, if `select`), or takes away the one there. */
   async toggle(time: number, fps: number, select = true) {
-    const vodId = this.vodId;
-    if (vodId === null) return;
+    const doc = this.doc;
+    if (doc === null) return;
     const there = this.at(time, fps);
     if (there) return this.remove(there.id);
+    const start = frameStart(time, fps);
     try {
-      const mark = await api.addMark(vodId, frameStart(time, fps));
-      // Another VOD open by now: the mark is that one's, not to select here.
-      if (this.vodId !== vodId) return;
+      const mark = await (doc.kind === "vod" ? api.addMark(doc.id, start) : api.addEditMark(doc.id, start));
+      // Another VOD or edit open by now: the mark is that one's, not to select here.
+      if (this.doc !== doc) return;
       this.all = this.#sorted([...this.all, mark]);
       if (select) this.selected = mark.id;
       this.error = null;

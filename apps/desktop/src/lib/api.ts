@@ -392,8 +392,8 @@ export const api = {
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
-  /** A chapter or highlight in edit `editId` at `time` seconds of its timeline. */
-  addEditMark: (editId: number, time: number, kind: "chapter" | "highlight", text: string | null = null) =>
+  /** A mark (a cut, chapter or highlight) in edit `editId` at `time` seconds of its timeline. */
+  addEditMark: (editId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     invoke<Mark>("add_edit_mark", { editId, time, kind, text }),
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     invoke<Mark>("add_mark", { vodId, time, kind, text }),

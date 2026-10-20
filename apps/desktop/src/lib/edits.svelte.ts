@@ -175,6 +175,14 @@ class Edits {
     return this.#change(api.removeStretch(this.openId, pick.start, pick.end));
   }
 
+  /** Takes `from`..`to` of the open edit out (between split marks, which
+   *  become a real split), as one change. */
+  async removeStretch(from: number, to: number): Promise<boolean> {
+    if (this.openId === null) return false;
+    this.selection = null;
+    return this.#change(api.removeStretch(this.openId, from, to));
+  }
+
   async create(): Promise<Edit | null> {
     try {
       const edit = await api.createEdit();

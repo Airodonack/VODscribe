@@ -569,8 +569,8 @@ pub(crate) async fn edit_marks(app: AppHandle, id: i64) -> CmdResult<Vec<Mark>> 
         .await
 }
 
-/// Puts a chapter or highlight in edit `edit_id` at `time` seconds of its
-/// timeline: on the moment of the VOD playing there.
+/// Puts a mark (a cut, chapter or highlight) in edit `edit_id` at `time`
+/// seconds of its timeline: on the moment of the VOD playing there.
 #[tauri::command]
 pub(crate) async fn add_edit_mark(
     state: State<'_, AppState>,
@@ -579,8 +579,8 @@ pub(crate) async fn add_edit_mark(
     kind: String,
     text: Option<String>,
 ) -> CmdResult<Mark> {
-    if !matches!(kind.as_str(), "chapter" | "highlight") {
-        return Err("An edit's marks are chapters and highlights.".into());
+    if !MARK_KINDS.contains(&kind.as_str()) {
+        return Err("That isn't a kind of mark.".into());
     }
     let db = state.db.lock().unwrap();
     let pieces = db.edit_pieces(edit_id).map_err(err)?;
@@ -589,7 +589,12 @@ pub(crate) async fn add_edit_mark(
     let before = history::snapshot(&db, doc).ok().flatten();
     let text = mark_text(text);
     let id = db.add_clip_mark(edit_id, vod_id, &kind, at, text.as_deref()).map_err(err)?;
-    state.history.record(&db, doc, if kind == "chapter" { "Chapter added" } else { "Highlight added" }, before);
+    let label = match kind.as_str() {
+        "chapter" => "Chapter added",
+        "highlight" => "Highlight added",
+        _ => "Cut added",
+    };
+    state.history.record(&db, doc, label, before);
     Ok(Mark { id, vod_id, kind, start: time, text })
 }
 

@@ -68,6 +68,7 @@
     memo,
     waveform,
     pieces,
+    joins: splits,
     pending = [],
     selectedPiece = null,
     onpiece,
@@ -93,6 +94,8 @@
     waveform?: Uint8Array;
     /** An edit's pieces, in its time, with what their bands say. */
     pieces?: LanePiece[];
+    /** An edit's real splits, where what plays jumps (else where its pieces meet). */
+    joins?: number[];
     /** Stretches of an edit whose footage isn't downloaded yet, and how much of each (from its start) is. */
     pending?: { start: number; end: number; done: number }[];
     /** The piece acted on (an edit's: the one at the playhead), outlined. */
@@ -567,7 +570,7 @@
 
   const hoverTime = $derived(hover === null || !width ? null : viewStart + (hover / width) * span);
   // Where an edit's pieces meet, and where one being moved would go.
-  const joins = $derived((pieces ?? []).slice(1).map((p) => p.start));
+  const joins = $derived(splits ?? (pieces ?? []).slice(1).map((p) => p.start));
   const insertAt = $derived.by(() => {
     if (drag?.kind !== "piece" || !drag.moved) return null;
     const id = drag.id;
@@ -712,7 +715,7 @@
     {#each ticks as t (t)}
       <span class="tick" style:left={pct(t)}>{formatTime(t)}</span>
     {/each}
-    {#if marking && current && current.end > viewStart && current.start < viewStart + span}
+    {#if named && current && current.end > viewStart && current.start < viewStart + span}
       <div
         class="between"
         style:left={pct(Math.max(current.start, viewStart))}
@@ -797,7 +800,7 @@
         <span class="join" style:left={pct(join)}></span>
       {/if}
     {/each}
-    {#each marking ? cuts.list : [] as mark (mark.id)}
+    {#each named ? cuts.list : [] as mark (mark.id)}
       {@const at = drag?.kind === "mark" && drag.id === mark.id ? drag.at : mark.start}
       {#if at >= viewStart && at <= viewStart + span}
         <span

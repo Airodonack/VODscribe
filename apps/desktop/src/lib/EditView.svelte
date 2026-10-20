@@ -3,8 +3,9 @@
   // player's place and laid out like it: the picture (editPlayer.ts, the app's
   // own player playing its pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
-  // where Split cuts the piece at the playhead in two and Remove takes it
-  // out (Delete, too), the playhead's piece being the one acted on; Render, at the top beside the
+  // where Split puts a split mark at the playhead (as on a VOD) and Remove
+  // takes out the stretch there between split marks, which become a real
+  // split, or else the piece (Delete, too); Render, at the top beside the
   // rendered video, makes it. Its pieces
   // are bands in the timeline's lane (Scrubber.svelte): clicked to go to,
   // dragged to move (pulled off the timeline, carried out), their edges dragged to resize. Under it, the edit's
@@ -15,7 +16,7 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { editShortcuts, playerKey, transportKey } from "./playerKeys";
+  import { editShortcuts, playerKey, stepOf, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -24,7 +25,7 @@
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { PEAKS_RATE, cueAt, playedSpans } from "./media";
+  import { PEAKS_RATE, cueAt, inFrame, playedSpans, stretchIn } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
@@ -77,6 +78,9 @@
     return out;
   });
   const total = $derived(segments.reduce((sum, s) => sum + s.length, 0));
+  // The real splits: wherever what plays jumps, between pieces or over a
+  // stretch struck out.
+  const joins = $derived(segments.slice(1).map((s) => s.at));
 
   // The waveform: each segment's stretch of its VOD's, end to end.
   const peaksOf = new Map<number, Promise<Uint8Array>>();
@@ -280,11 +284,26 @@
       );
   }
 
-  /** The selection, or else the piece at the playhead, a clip on the edit's clip bar. */
+  /** The selection, or else the stretch at the playhead (between split
+   *  marks, or the piece), a clip on the edit's clip bar. */
   function clipNow() {
-    const unit = atNow ? lane.find((p) => p.id === unitOf(atNow.piece)) : undefined;
-    const range = edits.selection ?? unit;
+    const range = edits.selection ?? stretchNow;
     if (range) void clips.makeOfEdit(range.start, range.end);
+  }
+
+  /** Delete with nothing selected: the stretch at the playhead between split
+   *  marks (which become a real split), or else the piece. */
+  function removeHere() {
+    const id = edit?.id;
+    const s = stretchNow;
+    if (id === undefined || !s) return;
+    if (s.whole) return removeCurrent();
+    edits
+      .removeStretch(s.start, s.end)
+      .then(
+        (removed) =>
+          removed && toast.show("Stretch removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
+      );
   }
 
   /** The lines selected in the transcript, out of the edit (struck from the
@@ -352,11 +371,14 @@
     }
   }
 
-  /** Split: the piece at the playhead in two, there. */
-  function split() {
-    const s = atNow;
-    if (!s) return;
-    edits.split(s.piece.id, s.vodFrom + (now - s.at));
+  /** Split: a split mark at both ends of the selection, else one here (or
+   *  the one here taken away), as on a VOD. A delete at one makes it real. */
+  async function split() {
+    const picked = edits.selection;
+    if (!picked) return void cuts.toggle(now, fps, !reading.playing);
+    edits.selection = null;
+    for (const t of [picked.start, picked.end])
+      if (t > 0 && t < total && !cuts.at(t, fps)) await cuts.toggle(t, fps, false);
   }
 
   // Full screen (the panel's, PlayerPanel.svelte).
@@ -418,6 +440,19 @@
       e.preventDefault();
       return;
     }
+    // A selected mark moves: , and . a frame (ten with Shift), the arrows,
+    // J and L as far as they'd move the playhead (as on a VOD).
+    const frameKey = key === "," || key === "." || key === "<" || key === ">";
+    if (cuts.selected !== null && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
+      const frames = frameKey
+        ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
+        : Math.round(stepOf(key, e.shiftKey)! * fps);
+      if (p.playing()) p.togglePlay();
+      const at = cuts.nudgeSelected(frames, fps, total);
+      if (at !== null) seekTo(inFrame(at, fps, total));
+      e.preventDefault();
+      return;
+    }
     if ((key === "Delete" || key === "Backspace" || key === "Escape") && cuts.selected !== null) {
       if (key === "Escape") cuts.selected = null;
       else if (!e.repeat) cuts.remove(cuts.selected);
@@ -434,7 +469,7 @@
       if (e.repeat) {
         // Nothing more.
       } else if (edits.selection) removeSelection();
-      else if (atNow) removeCurrent();
+      else removeHere();
     } else if (
       !transportKey(key, e.shiftKey, {
         togglePlay: () => p.togglePlay(),
@@ -504,6 +539,17 @@
       at += length;
     }
     return out;
+  });
+
+  // The band at the playhead, and the stretch of it between its split marks
+  // (as a VOD's between its cuts) that the playhead is in: all of it if it has none.
+  const unitNow = $derived(atNow ? lane.find((p) => p.id === unitOf(atNow.piece)) : undefined);
+  const stretchNow = $derived.by(() => {
+    const unit = unitNow;
+    if (!unit) return undefined;
+    const inside = cuts.list.map((m) => m.start - unit.start).filter((t) => t > 0 && t < unit.end - unit.start);
+    const s = stretchIn(inside, unit.end - unit.start, now - unit.start);
+    return s && { start: unit.start + s.start, end: unit.start + s.end, whole: inside.length === 0 };
   });
 
   // Where the edit waits for footage still to download (a VOD from a site):
@@ -770,7 +816,9 @@
       selectedPiece={atNow ? unitOf(atNow.piece) : null}
       picked={edits.selection}
       marks
-      removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
+      removing={removeHover ? (stretchNow ?? null) : null}
+      {joins}
+      current={stretchNow && !stretchNow.whole ? stretchNow : null}
       {onpiece}
       duration={total}
       time={now}
@@ -797,16 +845,21 @@
     onfullscreen={setFullscreen}
   >
     {#snippet actions()}
-      <button class="action split" onclick={split} disabled={!atNow} title="Split the piece at the playhead in two (B)">
+      <button
+        class="action split"
+        onclick={split}
+        disabled={!atNow}
+        title="Put a split here, or take away the one here; a delete beside it makes it real (B)"
+      >
         <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
       </button>
       <button
         class="action remove"
-        onclick={removeCurrent}
+        onclick={removeHere}
         onmouseenter={() => (removeHover = true)}
         onmouseleave={() => (removeHover = false)}
         disabled={!atNow}
-        title="Take the piece at the playhead out of the edit; its VOD and clips aren't touched (Delete)"
+        title="Take the stretch at the playhead (between splits, or else its piece) out of the edit; its VOD and clips aren't touched (Delete)"
       >
         <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
       </button>
