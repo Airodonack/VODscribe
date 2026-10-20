@@ -385,8 +385,20 @@ pub fn command(program: &Path) -> Command {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    // The ffmpeg downloaded for macOS reads https with OpenSSL, which doesn't
+    // know the system's certificates: every site's stream failed to verify
+    // ("certificate verify failed"). macOS keeps them in a file too, which
+    // OpenSSL is pointed at (and yt-dlp, whose ffmpeg inherits it).
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("SSL_CERT_FILE").is_none() && Path::new(MAC_CERTIFICATES).is_file() {
+        cmd.env("SSL_CERT_FILE", MAC_CERTIFICATES);
+    }
     cmd
 }
+
+/// Where macOS keeps the certificates it trusts, as a file.
+#[cfg(target_os = "macos")]
+const MAC_CERTIFICATES: &str = "/etc/ssl/cert.pem";
 
 /// Runs ffmpeg's `cmd`, which writes to `part` and was given `-progress
 /// pipe:1`, reporting how far it is through `length` seconds of output from 0
