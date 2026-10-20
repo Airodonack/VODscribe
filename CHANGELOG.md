@@ -2,7 +2,7 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.5.0 (unreleased)
+## 0.5.0 — 2026-10-20
 
 - VODs from YouTube, Twitch and Kick play in VODscribe's own player, as video files do: frame by frame with , and ., at exact times, with the same controls. Their video comes a few minutes at a time as they play, and stays for a while: a clip of what you've watched, or of a stretch near it, needs no new download, nor does making it a little longer or putting it in an edit. Where VODscribe can't get the video (YouTube asking to confirm you're not a bot, or a VOD only signed-in viewers can see), the site's own player plays it, as before. A VOD the site no longer has still plays what was kept of it, and says so where nothing was. VODs that are only sound still play in the site's player.
 - VODs and edits open in one player: the same picture, timeline, controls, keys, transcript and clip bar, each doing what it can (an edit's pieces move and resize; a VOD stays whole). Edits gain what VODs had, below.
