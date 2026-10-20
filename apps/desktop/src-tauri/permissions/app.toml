@@ -70,6 +70,7 @@ permissions = [
   "allow-player-open-edit",
   "allow-player-plan",
   "allow-player-close",
+  "allow-player-still",
   "allow-player-play",
   "allow-player-pause",
   "allow-player-seek",

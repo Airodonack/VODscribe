@@ -302,6 +302,9 @@
     if (e.button !== 0) return;
     const onMark = named && !!(e.target as HTMLElement).closest("[data-mark], [data-chapter]");
     if (!marking && !onMark) {
+      // Anywhere but a mark lets go of the one selected (as on a VOD's), so
+      // Delete and Remove act on the piece or stretch, not on it.
+      if (named) cuts.selected = null;
       // A band's edge: resizing that piece.
       const grip = (e.target as HTMLElement).closest<HTMLElement>("[data-grip]");
       const gripped =

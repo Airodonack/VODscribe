@@ -333,12 +333,14 @@
       </button>
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
-    <p class="label">Video kept as it plays</p>
+    <p class="label">Keep streamed videos</p>
     <p class="muted hint">
-      VODs from Kick, Twitch and YouTube play from stretches of their video downloaded as they play, kept to play again
-      and to make clips and edits of{footageBytes ? `. They use ${formatBytes(footageBytes)}` : ""}, at most:
+      VODs from Kick, Twitch and YouTube stream a few minutes at a time as they play. What's streamed is kept, to play
+      again and to clip or edit without downloading it again{footageBytes
+        ? `. It uses ${formatBytes(footageBytes)}`
+        : ""}. Up to:
     </p>
-    <div class="segmented" role="radiogroup" aria-label="Most video kept as it plays">
+    <div class="segmented" role="radiogroup" aria-label="Most streamed video kept">
       {#each FOOTAGE_CAPS as gb (gb)}
         <button
           role="radio"
@@ -354,7 +356,7 @@
       The least recently played go first. What your edits use is always kept: the site may not have it any more.
     </p>
     <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
-      {clearingFootage ? "Deleting…" : "Delete the video kept as it played"}
+      {clearingFootage ? "Deleting…" : "Delete streamed videos"}
     </button>
     <p class="label">Clips and edits are made as</p>
     <div class="segmented" role="radiogroup" aria-label="Clip format">
@@ -375,15 +377,6 @@
         : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
       Clips already made are made again when next dragged out.
     </p>
-    <p class="label">Repair VODscribe</p>
-    <p class="muted hint">
-      Something not working? This deletes the speech model, tools and unfinished downloads{cacheBytes !== null
-        ? ` (${formatBytes(cacheBytes)} in all)`
-        : ""}, then sets VODscribe up again. Your library, transcripts, chats and kept videos stay.
-    </p>
-    <button class="danger-outline" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
-      {clearing ? "Repairing…" : "Repair…"}
-    </button>
   </section>
 
   <section>
@@ -449,6 +442,14 @@
       >Report a problem or suggest something <Icon name="external" size={12} /></button
     >
     <button class="link" onclick={resetSettings}>Reset settings…</button>
+    <button class="link" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+      {clearing ? "Repairing VODscribe…" : "Repair VODscribe…"}
+    </button>
+    <p class="muted hint">
+      Repair deletes the speech model, tools and unfinished downloads{cacheBytes !== null
+        ? ` (${formatBytes(cacheBytes)} in all)`
+        : ""}, then sets VODscribe up again. Your library, transcripts, chats and videos stay.
+    </p>
   </section>
 </div>
 

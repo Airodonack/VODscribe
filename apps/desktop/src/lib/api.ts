@@ -500,6 +500,9 @@ export const api = {
     invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: String(id) } }),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
   frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
+  /** The app's own player's frame showing now, as width, height (4 bytes each,
+   *  little-endian) and RGB; empty if none shows. */
+  playerStill: () => invoke<ArrayBuffer>("player_still"),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */

@@ -154,6 +154,21 @@ export default {
         5_000,
       );
       ctx.log(`Settings shows over the picture (after ${Date.now() - waited} ms)`);
+      // The rest of the picture keeps its frame (the page draws it while the
+      // surface is hidden), not black.
+      const free = { x: v.x, y: v.y, w: p.x - v.x, h: v.h };
+      if (free.w >= 40) {
+        await until(
+          "the frame kept beside the panel",
+          () => {
+            const there = os.colourIn(os.screenshot(), os.middle(free));
+            if (os.distance(there, still) <= NEAR) return true;
+            throw new Error(`beside the panel the picture shows ${named(there)}, not ${named(still)}`);
+          },
+          5_000,
+        );
+        ctx.log(`beside the panel, the picture keeps its frame (${named(still)})`);
+      }
     }
     await app.key("Escape");
 

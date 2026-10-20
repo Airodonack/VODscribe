@@ -316,6 +316,23 @@ pub(crate) fn feed(app: AppHandle) {
     }
 }
 
+/// The frame showing now, for the page to show while something covers
+/// the screen (which then hides): its width and height (each 4 bytes,
+/// little-endian), then its pixels as RGB. Empty if none shows.
+#[tauri::command]
+pub(crate) fn player_still(app: AppHandle) -> tauri::ipc::Response {
+    let state = app.state::<AppState>();
+    let frame = state.player.open.lock().unwrap().as_ref().and_then(|o| o.player.frame());
+    let bytes = frame.map_or_else(Vec::new, |f| {
+        let mut out = Vec::with_capacity(8 + f.rgb.len());
+        out.extend_from_slice(&f.width.to_le_bytes());
+        out.extend_from_slice(&f.height.to_le_bytes());
+        out.extend_from_slice(&f.rgb);
+        out
+    });
+    tauri::ipc::Response::new(bytes)
+}
+
 /// What an open that the page moved on from is told.
 pub(crate) const CLOSED: &str = "The player was closed while opening.";
 

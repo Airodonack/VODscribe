@@ -121,7 +121,20 @@ export default {
       () => app.js(`return !!document.querySelector(\`section.edit-view .scrubber .cut[data-mark="${cut.id}"]\`)`),
       10_000,
     );
-    await app.key("Escape");
+    // A click on the timeline lets go of the cut (it was selected as made):
+    // Delete then takes out the stretch, not the cut. 1.5 s in, after the cut.
+    await app.js(
+      `const box = document.querySelector("section.edit-view .scrubber canvas").getBoundingClientRect();
+       const at = { clientX: box.left + box.width * 0.75, clientY: box.top + box.height * 0.75, button: 0, bubbles: true, pointerId: 1 };
+       const el = document.elementFromPoint(at.clientX, at.clientY);
+       el.dispatchEvent(new PointerEvent("pointerdown", at));
+       el.dispatchEvent(new PointerEvent("pointerup", at));`,
+    );
+    await until(
+      "the cut let go of",
+      () => app.js(`return !document.querySelector("section.edit-view .scrubber .cut.selected")`),
+      10_000,
+    );
     await app.key("Delete");
     await until(
       "the stretch after the cut taken out",

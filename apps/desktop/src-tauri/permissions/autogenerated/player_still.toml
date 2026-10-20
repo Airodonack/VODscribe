@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-player-still"
+description = "Enables the player_still command without any pre-configured scope."
+commands.allow = ["player_still"]
+
+[[permission]]
+identifier = "deny-player-still"
+description = "Denies the player_still command without any pre-configured scope."
+commands.deny = ["player_still"]

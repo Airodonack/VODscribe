@@ -21,6 +21,8 @@ export default {
   async run(app, ctx) {
     await app.toLibrary();
     const failures = [];
+    // Where each VOD's playhead was left, to find it there when opened again.
+    const left = [];
     for (const [site, url] of SITES) {
       try {
         await app.type('input[aria-label="VOD link"]', url);
@@ -84,6 +86,7 @@ export default {
         );
         await ctx.checkpoint(`${site}-playing`);
         await app.pause().catch(() => {});
+        left.push({ site, id: vod.id, time: await app.shownTime() });
         const own = await app.js(`return !!document.querySelector(".own-player")`);
         ctx.log(
           `${site}: ${lines.length} lines, chat ${chat}, played ${from} to ${to} s in ${own ? "the app's own player" : "the site's"}` +
@@ -136,6 +139,17 @@ export default {
         ctx.log(`${site}: FAILED: ${e.message}`);
         await app.type('input[aria-label="VOD link"]', "").catch(() => {});
       }
+    }
+    // Each opened again from the library, after the others: where it was left.
+    for (const { site, id, time } of left) {
+      await app.openVod(id);
+      const now = await until(
+        `${site}'s playhead`,
+        async () => (await app.shownTime()) > 0 && app.shownTime(),
+        30_000,
+      ).catch(() => 0);
+      if (Math.abs(now - time) > 1) failures.push(`${site}: opened again at ${now} s, left at ${time} s`);
+      else ctx.log(`${site}: opened again where it was left, at ${now} s`);
     }
     if (failures.length) throw new Error(failures.join("; "));
   },

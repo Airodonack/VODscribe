@@ -309,6 +309,7 @@ pub fn run() {
             player::player_open_edit,
             player::player_plan,
             player::player_close,
+            player::player_still,
             player::player_play,
             player::player_pause,
             player::player_seek,
