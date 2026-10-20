@@ -525,7 +525,7 @@
               disabled={!canClip}
               title="Clip the lit-up stretch, to the clip bar (C): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
             >
-              <Icon name="film" size={14} /> Clip <kbd>E</kbd>
+              <Icon name="film" size={14} /> Clip <kbd>C</kbd>
             </button>
             {#if cuts.error}
               <span class="context error-text" title={cuts.error}>{cuts.error}</span>

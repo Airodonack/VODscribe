@@ -14,6 +14,8 @@ export default {
     if ((await app.invoke("list_marks", { vodId: vod.id })).length) throw new Error("the new VOD has cuts already");
     if (await app.js(`return document.querySelector("button.action.clip")?.disabled ?? true`))
       throw new Error("Clip is off with no cuts");
+    const keycap = await app.js(`return document.querySelector("button.action.clip kbd")?.textContent.trim()`);
+    if (keycap !== "C") throw new Error(`the Clip button says its key is ${keycap}`);
     const muted = () => app.js(`return !!document.querySelector('.bar button[aria-label="Unmute"]')`);
     for (const want of [true, false]) {
       await app.key("M", { shift: true });
