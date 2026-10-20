@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-edit-mark"
+description = "Enables the add_edit_mark command without any pre-configured scope."
+commands.allow = ["add_edit_mark"]
+
+[[permission]]
+identifier = "deny-add-edit-mark"
+description = "Denies the add_edit_mark command without any pre-configured scope."
+commands.deny = ["add_edit_mark"]

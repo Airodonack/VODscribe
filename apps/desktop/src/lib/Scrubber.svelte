@@ -78,6 +78,7 @@
     highlight = null,
     removing = null,
     picked = null,
+    marks = false,
     ranges = [],
     current = null,
     ownPlayer = false,
@@ -123,6 +124,8 @@
     removing?: { start: number; end: number } | null;
     /** An edit's lines selected in its transcript: the stretch Delete takes out. */
     picked?: { start: number; end: number } | null;
+    /** An edit's chapters and highlights show (cuts.svelte.ts has the edit open). */
+    marks?: boolean;
     /** Stretches lit up another way: what an edit plays of the VOD, while its link is hovered. */
     ranges?: { start: number; end: number }[];
     /** Whether the VOD plays in the app's own player (its frames can be read). */
@@ -145,6 +148,8 @@
   const levels = $derived(waveform ?? fetched);
   // A VOD's marks and clips, and what's done with them; an edit has none.
   const marking = $derived(!!vod);
+  // Chapters and highlights: a VOD's, or an edit's.
+  const named = $derived(marking || marks);
 
   onMount(() => {
     if (!vod) return;
@@ -292,7 +297,8 @@
       return;
     }
     if (e.button !== 0) return;
-    if (!marking) {
+    const onMark = named && !!(e.target as HTMLElement).closest("[data-mark], [data-chapter]");
+    if (!marking && !onMark) {
       // A band's edge: resizing that piece.
       const grip = (e.target as HTMLElement).closest<HTMLElement>("[data-grip]");
       const gripped =
@@ -323,7 +329,7 @@
       onseek(timeAt(e.clientX));
       return;
     }
-    if (dragsOut(e)) {
+    if (marking && dragsOut(e)) {
       // With no cuts, the whole video.
       const range = stretchAt(timeAt(e.clientX), duration);
       if (range) {
@@ -335,7 +341,7 @@
     const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
     const mark = flag && cuts.all.find((m) => m.id === Number(flag.dataset.mark));
     const chapter = (e.target as HTMLElement).closest<HTMLElement>("[data-chapter]");
-    const named = chapter && cuts.all.find((m) => m.id === Number(chapter.dataset.chapter));
+    const band = chapter && cuts.all.find((m) => m.id === Number(chapter.dataset.chapter));
     const edge = (e.target as HTMLElement).closest<HTMLElement>("[data-edge]")?.dataset.edge as
       "start" | "end" | undefined;
     if (edge && cuts.selection) {
@@ -344,11 +350,11 @@
       onpause();
       cuts.selectedEdge = edge;
       cuts.selected = null;
-    } else if (named && !mark) {
+    } else if (band && !mark) {
       // A chapter's band: to its start, selected.
-      cuts.selected = named.id;
+      cuts.selected = band.id;
       cuts.clearSelection();
-      onseek(inFrame(named.start));
+      onseek(inFrame(band.start));
     } else if (mark) {
       drag = { kind: "mark", id: mark.id, at: mark.start, x: e.clientX, moved: false, away: false };
       onpause();
@@ -372,7 +378,8 @@
     if (bar) {
       const box = bar.getBoundingClientRect();
       const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
-      const inLane = !!lane && e.clientY >= lane.getBoundingClientRect().top && e.clientY < box.top;
+      const top = (markLane ?? lane)?.getBoundingClientRect().top;
+      const inLane = top !== undefined && e.clientY >= top && e.clientY < box.top;
       const across = e.clientX >= box.left && e.clientX <= box.right;
       hover = inside || (inLane && across) || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
       // Resizing a piece: its own label says the times.
@@ -582,6 +589,7 @@
 
   let root = $state<HTMLDivElement>();
   let lane = $state<HTMLDivElement>();
+  let markLane = $state<HTMLDivElement>();
 </script>
 
 <svelte:window
@@ -658,8 +666,8 @@
       {/if}
     </div>
   {/if}
-  {#if marking && chapterSpans.length}
-    <div class="chapters" bind:this={lane} onpointerdown={onDown}>
+  {#if named && chapterSpans.length}
+    <div class="chapters" bind:this={markLane} onpointerdown={onDown}>
       {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
         {#if end > viewStart && start < viewStart + span}
           <div
@@ -805,7 +813,7 @@
         </span>
       {/if}
     {/each}
-    {#each marking ? cuts.highlights : [] as h (h.id)}
+    {#each named ? cuts.highlights : [] as h (h.id)}
       {@const at = placed(h)}
       {#if at >= viewStart && at <= viewStart + span}
         <span

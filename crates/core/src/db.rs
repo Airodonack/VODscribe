@@ -660,6 +660,13 @@ pub struct Mark {
     pub text: Option<String>,
 }
 
+/// Where a mark is: on a VOD's own timeline, or in an edit (its clip).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MarkDoc {
+    Vod(i64),
+    Edit(i64),
+}
+
 /// A mark as `Db::mark_states` takes it and `Db::restore_marks` puts it back:
 /// what it is, not which row it was.
 #[derive(Debug, Clone, PartialEq)]
@@ -1110,7 +1117,14 @@ impl Db {
     }
 
     /// Inserts a mark of VOD `vod_id` on clip `clip` at `at`; its id.
-    fn insert_mark(&self, clip: i64, vod_id: i64, kind: &str, at: Flicks, text: Option<&str>) -> Result<i64> {
+    pub(crate) fn insert_mark(
+        &self,
+        clip: i64,
+        vod_id: i64,
+        kind: &str,
+        at: Flicks,
+        text: Option<&str>,
+    ) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO marks (clip_id, vod_id, kind, at, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![clip, vod_id, kind, at.0, text, now()],
@@ -1141,6 +1155,23 @@ impl Db {
             db.conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(start).0])?;
             Ok(())
         })
+    }
+
+    /// The document mark `id` is in, if it's there: its VOD's (the VOD's own
+    /// clip) or an edit's.
+    pub fn mark_doc(&self, id: i64) -> Result<Option<MarkDoc>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT m.clip_id, c.whole_of FROM marks m JOIN clips c ON c.id = m.clip_id WHERE m.id = ?1",
+                [id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?)),
+            )
+            .optional()?
+            .map(|(clip, vod)| match vod {
+                Some(vod) => MarkDoc::Vod(vod),
+                None => MarkDoc::Edit(clip),
+            }))
     }
 
     /// The VOD mark `id` is on, if it's there.

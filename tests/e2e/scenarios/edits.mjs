@@ -233,6 +233,63 @@ export default {
     );
     ctx.log(`split in two; a line of ${lines} taken out (${whole} s → ${shorter} s) and brought back`);
 
+    // A chapter in the edit (N) at 1 s, its title written: on the edit's
+    // timeline, in its chapters lane and over its transcript; Ctrl+Z takes
+    // it back, as the edit's own change.
+    const editMarks = () => app.invoke("edit_marks", { id: made.id });
+    await app.toStart();
+    await until("the start", async () => (await app.shownTime()) === 0, 10_000);
+    await app.key("ArrowRight", { shift: true });
+    await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
+    await app.key("n");
+    const titleBox = '[role=dialog][aria-label="Chapter title"] input';
+    await until(
+      "the chapter's title box",
+      () => app.js(`return !!document.querySelector(arguments[0])`, titleBox),
+      10_000,
+    );
+    await app.type(titleBox, "Touchdown");
+    await app.submit(titleBox);
+    const chapter = await until(
+      "the edit's chapter",
+      async () => {
+        const [m, ...more] = await editMarks();
+        if (m?.kind === "chapter" && m.text === "Touchdown" && Math.abs(m.start - 1) < 0.05 && !more.length) return m;
+        throw new Error(`marks: ${JSON.stringify([m, ...more])}`);
+      },
+      10_000,
+    );
+    await until(
+      "the chapter in the lane and over the transcript",
+      () =>
+        app.js(
+          `return !!document.querySelector('section.edit-view .chapters [data-chapter="${chapter.id}"]') &&
+             [...document.querySelectorAll(".transcript .chapter-head")].some((h) => h.textContent.includes("Touchdown"))`,
+        ),
+      10_000,
+    );
+    await ctx.checkpoint("edit-chapter");
+    // Its title, then the chapter: two steps back.
+    for (const step of ["its title undone", "the chapter undone"]) {
+      await app.js(
+        `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
+      );
+      await until(
+        step,
+        async () => {
+          const [m] = await editMarks();
+          return step === "its title undone" ? m && !m.text : !m;
+        },
+        10_000,
+      );
+    }
+    await until(
+      "the lane without it",
+      () => app.js(`return !document.querySelector("section.edit-view .chapters [data-chapter]")`),
+      10_000,
+    );
+    ctx.log(`a chapter in the edit at ${chapter.start} s, then undone`);
+
     // Rendered: E.
     await app.key("e");
     const rendered = await until(

@@ -73,7 +73,10 @@ export const vodShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
 export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   ...playing(framed),
   { keys: ["B"], does: "split the piece here" },
-  { keys: ["Delete"], does: "remove the piece here" },
+  { keys: ["M"], does: "highlight here" },
+  { keys: ["N"], does: "new chapter here" },
+  { keys: ["Enter"], does: "rename the selected chapter or highlight" },
+  { keys: ["Delete"], does: "remove the selected lines, chapter or highlight; else the piece here" },
   { keys: [mac ? "⌘" : "Ctrl", "+", "←", "→"], does: "move the piece here earlier or later" },
   { keys: ["E"], does: "export: render the edit" },
   { keys: ["Shift", "+", "C"], does: "captions" },

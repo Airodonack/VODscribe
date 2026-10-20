@@ -302,9 +302,11 @@
     // A document put back by undo or redo: what shows it loads it again.
     unlisten.push(
       await events.restored((doc) => {
-        if (doc.kind === "edit") edits.reload(doc.id);
-        else {
-          cuts.reload(doc.id);
+        if (doc.kind === "edit") {
+          edits.reload(doc.id);
+          cuts.reload(doc);
+        } else {
+          cuts.reload(doc);
           clips.reload(doc.id);
         }
       }),

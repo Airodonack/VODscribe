@@ -1,4 +1,5 @@
-// The open VOD's marks. Cuts between frames split it into stretches, each of
+// The open VOD's marks, or the open edit's (its chapters and highlights,
+// on its timeline: crates/core edits.rs `place_marks`). Cuts between frames split it into stretches, each of
 // which can become a clip: Split (B) puts one where the playhead is (or takes
 // away the one there). Chapters (N) name the part of the VOD from their start
 // to the next one's, and highlights (M) note a moment. A selected mark moves
@@ -7,11 +8,14 @@
 // Saved per VOD (crates/core db.rs `marks`); changes show at once and are
 // saved after.
 
-import { api, type Mark, type MarkKind } from "./api";
+import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, nudge } from "./media";
 
 class Cuts {
-  vodId = $state<number | null>(null);
+  /** Whose marks these are: a VOD's or an edit's. */
+  doc = $state.raw<Doc | null>(null);
+  /** The VOD whose marks these are, if they're a VOD's. */
+  vodId = $derived(this.doc?.kind === "vod" ? this.doc.id : null);
   /** Every mark, in time order. */
   all = $state.raw<Mark[]>([]);
   /** The cuts. */
@@ -33,8 +37,13 @@ class Cuts {
   #seq = 0;
 
   open(vodId: number) {
-    if (this.vodId === vodId) return;
-    this.vodId = vodId;
+    this.openDoc({ kind: "vod", id: vodId });
+  }
+
+  /** Shows `doc`'s marks (a VOD's or an edit's). */
+  openDoc(doc: Doc) {
+    if (this.doc && docKey(this.doc) === docKey(doc)) return;
+    this.doc = doc;
     this.all = [];
     this.selected = null;
     this.editing = null;
@@ -44,16 +53,17 @@ class Cuts {
     this.#reload();
   }
 
-  /** Loads VOD `vodId`'s marks again (undo or redo changed them), if it's the one open. */
-  reload(vodId: number) {
-    if (vodId === this.vodId) this.#reload();
+  /** Loads `doc`'s marks again (undo or redo changed them, or an edit's
+   *  pieces moved), if it's the one open. */
+  reload(doc: Doc) {
+    if (this.doc && docKey(this.doc) === docKey(doc)) this.#reload();
   }
 
   #reload() {
-    const vodId = this.vodId;
-    if (vodId === null) return;
+    const doc = this.doc;
+    if (doc === null) return;
     const mine = ++this.#seq;
-    api.listMarks(vodId).then(
+    (doc.kind === "vod" ? api.listMarks(doc.id) : api.editMarks(doc.id)).then(
       (list) => {
         if (mine !== this.#seq) return;
         this.all = list;
@@ -106,14 +116,15 @@ class Cuts {
 
   /** Puts a chapter or highlight on the frame showing at `time`, selected, and opens its title to write. */
   async add(kind: Exclude<MarkKind, "cut">, time: number, fps: number) {
-    const vodId = this.vodId;
-    if (vodId === null) return;
+    const doc = this.doc;
+    if (doc === null) return;
     const start = frameStart(time, fps);
     // One of its kind on that frame already: that one's title instead.
     const there = this.all.find((m) => m.kind === kind && Math.abs(m.start - start) < 0.5 / fps);
     try {
-      const mark = there ?? (await api.addMark(vodId, start, kind));
-      if (this.vodId !== vodId) return;
+      const mark =
+        there ?? (await (doc.kind === "vod" ? api.addMark(doc.id, start, kind) : api.addEditMark(doc.id, start, kind)));
+      if (this.doc !== doc) return;
       if (!there) this.all = this.#sorted([...this.all, mark]);
       this.clearSelection();
       this.selected = mark.id;

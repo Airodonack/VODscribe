@@ -21,6 +21,7 @@
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
+  import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { DEFAULT_FPS, PEAKS_RATE, cueAt, playedSpans } from "./media";
@@ -298,6 +299,19 @@
       );
   }
 
+  // The edit's chapters and highlights (cuts.svelte.ts), on its timeline:
+  // placed again whenever it changes, since its pieces place them.
+  $effect(() => {
+    const id = edit?.id;
+    void edit?.revision;
+    if (id === undefined) return;
+    untrack(() => {
+      const doc = { kind: "edit" as const, id };
+      if (cuts.doc?.kind === "edit" && cuts.doc.id === id) cuts.reload(doc);
+      else cuts.openDoc(doc);
+    });
+  });
+
   // A line clicked in the transcript: the edit plays from there.
   $effect(() => {
     const wanted = edits.wanted;
@@ -391,6 +405,24 @@
     }
     if (e.ctrlKey || e.metaKey) return;
     const p = player;
+    // M marks a highlight here, N starts a chapter, each with its title to
+    // write; Enter renames the selected one (as on a VOD).
+    if ((key === "m" || key === "n") && !e.shiftKey) {
+      if (!e.repeat && edit && segments.length) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
+      e.preventDefault();
+      return;
+    }
+    if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected)) {
+      cuts.editing = cuts.selected;
+      e.preventDefault();
+      return;
+    }
+    if ((key === "Delete" || key === "Backspace" || key === "Escape") && cuts.selected !== null) {
+      if (key === "Escape") cuts.selected = null;
+      else if (!e.repeat) cuts.remove(cuts.selected);
+      e.preventDefault();
+      return;
+    }
     if (key === "Escape" && edits.selection) {
       edits.selection = null;
     } else if (key === "Escape" && openGroup !== null) {
@@ -735,6 +767,7 @@
           {pending}
           selectedPiece={atNow ? unitOf(atNow.piece) : null}
           picked={edits.selection}
+          marks
           removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
           {onpiece}
           duration={total}

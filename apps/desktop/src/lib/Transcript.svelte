@@ -110,7 +110,8 @@
   // starts nearest its start.
   const heads = $derived.by(() => {
     const out = new Map<Line, Mark[]>();
-    if (!vod || cuts.vodId !== vod.id || !lines.length) return out;
+    const mine = vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit;
+    if (!mine || !lines.length) return out;
     for (const chapter of cuts.chapters) {
       const line = lines[nearestLine(lines, chapter.start)];
       out.set(line, [...(out.get(line) ?? []), chapter]);

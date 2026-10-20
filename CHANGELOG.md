@@ -12,6 +12,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - New keys: C makes a clip (it was E; E now exports, which in an edit renders it), Shift+C turns captions on or off (it was C), and Shift+M mutes. Letters on their own act on the video; with Shift they're the player's own.
 - Edits have captions: what's said in each piece, over the picture as it plays, with the CC button and Shift+C as for a VOD. An edit's player also keeps the volume you set, as a VOD's does.
 - An edit's transcript shows under its player as a VOD's does, with only what the edit plays, and works the same: click a line to play from it, drag across lines or Shift+click to select them. In an edit, Delete then takes the selected lines out (Ctrl+Z brings them back); a click no longer strikes a line. Shift+click selects in a VOD's transcript too.
+- Edits have chapters and highlights of their own: N and M in an edit, as in a VOD, shown on its timeline and over its transcript. Each stays on its moment of the video, so it moves with its piece; a chapter whose start is cut away starts where its piece plays again.
 - Fixes:
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
 

@@ -77,6 +77,18 @@ pub struct EditState {
     pub title: String,
     /// Its items in the clip's order, each group before what's in it.
     pub items: Vec<ItemState>,
+    /// Its own marks (chapters, highlights), each on a VOD's moment.
+    pub marks: Vec<MarkAt>,
+}
+
+/// A mark of a clip, as the record holds it: on a moment of a VOD, wherever
+/// that plays in the clip (`place_marks`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MarkAt {
+    pub vod_id: i64,
+    pub kind: String,
+    pub at: Flicks,
+    pub text: Option<String>,
 }
 
 /// An item as an `EditState` holds it: what it is and where, not which row
@@ -217,6 +229,67 @@ pub fn on_timeline<T: Clone>(
 pub fn clip_cues(pieces: &[EditPiece], mut cues_of: impl FnMut(i64) -> Result<Vec<Cue>>) -> Result<Vec<Cue>> {
     let placed = on_timeline(pieces, |vod| Ok(cues_of(vod)?.into_iter().map(|c| (c.start, c.end, c.text)).collect()))?;
     Ok(placed.into_iter().map(|(start, end, text)| Cue { start, end, text }).collect())
+}
+
+/// Where a clip of `pieces` shows its `marks` on its timeline, in time
+/// order. A highlight shows where its moment plays; a chapter, where its
+/// moment plays or, if that's trimmed away, where its piece plays again
+/// after it (a chapter keeps its start in what's left). A moment played
+/// more than once shows where it's first played.
+pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::db::Mark> {
+    let mut out: Vec<crate::db::Mark> = Vec::new();
+    let mut at = 0.0;
+    for p in pieces {
+        let spans = p.spans();
+        for (id, m) in marks.iter().filter(|(_, m)| m.vod_id == p.vod_id) {
+            if out.iter().any(|o| o.id == *id) {
+                continue;
+            }
+            let moment = m.at.seconds();
+            let mut t = at;
+            let mut placed = None;
+            for &(a, b) in &spans {
+                if moment >= a && moment < b {
+                    placed = Some(t + moment - a);
+                } else if m.kind == "chapter" && moment < a && moment >= p.start {
+                    placed = Some(t);
+                }
+                if placed.is_some() {
+                    break;
+                }
+                t += b - a;
+            }
+            if let Some(start) = placed {
+                out.push(crate::db::Mark {
+                    id: *id,
+                    vod_id: m.vod_id,
+                    kind: m.kind.clone(),
+                    start,
+                    text: m.text.clone(),
+                });
+            }
+        }
+        at += spans.iter().map(|(a, b)| b - a).sum::<f64>();
+    }
+    out.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.id.cmp(&b.id)));
+    out
+}
+
+/// The VOD, and its moment (seconds), playing at `time` of a clip of
+/// `pieces`' timeline; at its very end, the last moment played.
+pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
+    let mut at = 0.0;
+    let mut last = None;
+    for p in pieces {
+        for (a, b) in p.spans() {
+            if time >= at && time < at + b - a {
+                return Some((p.vod_id, a + time - at));
+            }
+            at += b - a;
+            last = Some((p.vod_id, b));
+        }
+    }
+    last.filter(|_| (time - at).abs() < 1e-6)
 }
 
 /// What taking `from`..`to` of a clip of `pieces`' timeline out strikes:
@@ -632,6 +705,36 @@ impl Db {
 
     /// What clip `id` holds (its title and pieces), to be put back later
     /// with `restore_edit` (for undo); None if it's gone.
+    /// Clip `id`'s own marks, with their ids, in the order they were made at.
+    pub fn clip_marks(&self, id: i64) -> Result<Vec<(i64, MarkAt)>> {
+        let mut stmt =
+            self.conn.prepare("SELECT id, vod_id, kind, at, text FROM marks WHERE clip_id = ?1 ORDER BY at, id")?;
+        let rows = stmt.query_map([id], |r| {
+            Ok((r.get(0)?, MarkAt { vod_id: r.get(1)?, kind: r.get(2)?, at: Flicks(r.get(3)?), text: r.get(4)? }))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Puts a mark on clip `clip`, on VOD `vod_id`'s moment `at` (seconds of
+    /// it), as a change to the clip; its id.
+    pub fn add_clip_mark(&self, clip: i64, vod_id: i64, kind: &str, at: f64, text: Option<&str>) -> Result<i64> {
+        self.change(clip, None, |db| db.insert_mark(clip, vod_id, kind, Flicks::from_seconds(at), text))
+    }
+
+    /// Moves mark `id` to VOD `vod_id`'s moment `at` (seconds of it); false if it's gone.
+    pub fn move_mark_to(&self, id: i64, vod_id: i64, at: f64) -> Result<bool> {
+        let clip = self.conn.query_row("SELECT clip_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let Some(clip) = clip else { return Ok(false) };
+        self.change(clip, None, |db| {
+            db.conn.execute(
+                "UPDATE marks SET vod_id = ?2, at = ?3 WHERE id = ?1",
+                params![id, vod_id, Flicks::from_seconds(at).0],
+            )?;
+            Ok(())
+        })?;
+        Ok(true)
+    }
+
     pub fn edit_state(&self, id: i64) -> Result<Option<EditState>> {
         let Some(title) =
             self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?
@@ -651,7 +754,8 @@ impl Db {
                 origin: i.origin,
             })
             .collect();
-        Ok(Some(EditState { title, items }))
+        let marks = self.clip_marks(id)?.into_iter().map(|(_, m)| m).collect();
+        Ok(Some(EditState { title, items, marks }))
     }
 
     /// Puts clip `id` back as `state` had it: its title, and its items in
@@ -684,6 +788,12 @@ impl Db {
                     ],
                 )?;
                 ids.push((made > 0).then(|| db.conn.last_insert_rowid()));
+            }
+            db.conn.execute("DELETE FROM marks WHERE clip_id = ?1", [id])?;
+            for m in &state.marks {
+                if db.vod(m.vod_id)?.is_some() {
+                    db.insert_mark(id, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+                }
             }
             Ok(())
         })
@@ -1166,6 +1276,44 @@ pub(crate) mod tests {
         db.rename_edit(edit, "f").unwrap();
         db.restore_edit(edit, &state).unwrap();
         assert_eq!(db.piece_rows(edit).unwrap()[0].origin, Some(Flicks::from_seconds(10.0)));
+    }
+
+    #[test]
+    fn an_edits_marks_show_where_their_moments_play() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        // 10-20 s with 12-14 struck (plays 0-2, 2-8), then 30-35 s (8-13).
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
+        let first = db.piece_rows(edit).unwrap()[0].id;
+        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+        let pieces = db.edit_pieces(edit).unwrap();
+        let mark = |kind: &str, at: f64| db.add_clip_mark(edit, vod, kind, at, None).unwrap();
+        let shown = mark("highlight", 15.0);
+        let hidden = mark("highlight", 13.0);
+        let kept = mark("chapter", 13.0);
+        let later = mark("chapter", 31.0);
+        let outside = mark("chapter", 50.0);
+        let placed = place_marks(&pieces, &db.clip_marks(edit).unwrap());
+        let at = |id| placed.iter().find(|m| m.id == id).map(|m| m.start);
+        assert_eq!(at(shown), Some(3.0));
+        assert_eq!(at(hidden), None, "a highlight whose moment is struck hides");
+        assert_eq!(at(kept), Some(2.0), "a chapter whose start is struck starts where its piece plays again");
+        assert_eq!(at(later), Some(9.0));
+        assert_eq!(at(outside), None, "a moment the edit doesn't play");
+        assert_eq!(source_at(&pieces, 3.0), Some((vod, 15.0)));
+        assert_eq!(source_at(&pieces, 9.0), Some((vod, 31.0)));
+        assert_eq!(source_at(&pieces, 13.0), Some((vod, 35.0)), "the very end");
+        assert_eq!(source_at(&pieces, 14.0), None);
+
+        // Undo puts them back as they were: the edit's state holds them.
+        let state = db.edit_state(edit).unwrap().unwrap();
+        assert!(db.move_mark_to(shown, vod, 16.0).unwrap());
+        db.delete_mark(later).unwrap();
+        db.restore_edit(edit, &state).unwrap();
+        let back: Vec<f64> = db.clip_marks(edit).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
+        assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 50.0]);
     }
 
     #[test]

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Clip, ClipStatus, Db, Mark};
+use vodscribe_core::db::{Clip, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
 
@@ -513,6 +513,46 @@ pub(crate) async fn list_marks(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Mar
     crate::with_reads(app, move |db| db.marks(vod_id)).await
 }
 
+/// Edit `id`'s own marks on its timeline, in time order: each where its
+/// moment plays (`vodscribe_core::edits::place_marks`).
+#[tauri::command]
+pub(crate) async fn edit_marks(app: AppHandle, id: i64) -> CmdResult<Vec<Mark>> {
+    crate::with_reads(app, move |db| Ok(vodscribe_core::edits::place_marks(&db.edit_pieces(id)?, &db.clip_marks(id)?)))
+        .await
+}
+
+/// Puts a chapter or highlight in edit `edit_id` at `time` seconds of its
+/// timeline: on the moment of the VOD playing there.
+#[tauri::command]
+pub(crate) async fn add_edit_mark(
+    state: State<'_, AppState>,
+    edit_id: i64,
+    time: f64,
+    kind: String,
+    text: Option<String>,
+) -> CmdResult<Mark> {
+    if !matches!(kind.as_str(), "chapter" | "highlight") {
+        return Err("An edit's marks are chapters and highlights.".into());
+    }
+    let db = state.db.lock().unwrap();
+    let pieces = db.edit_pieces(edit_id).map_err(err)?;
+    let (vod_id, at) = vodscribe_core::edits::source_at(&pieces, time).ok_or("A mark has to be within the edit.")?;
+    let doc = Doc::Edit(edit_id);
+    let before = history::snapshot(&db, doc).ok().flatten();
+    let text = mark_text(text);
+    let id = db.add_clip_mark(edit_id, vod_id, &kind, at, text.as_deref()).map_err(err)?;
+    state.history.record(&db, doc, if kind == "chapter" { "Chapter added" } else { "Highlight added" }, before);
+    Ok(Mark { id, vod_id, kind, start: time, text })
+}
+
+/// The history a mark's changes go in: its VOD's, or its edit's.
+fn mark_history(db: &Db, id: i64) -> CmdResult<Option<Doc>> {
+    Ok(db.mark_doc(id).map_err(err)?.map(|d| match d {
+        MarkDoc::Vod(vod) => Doc::Vod(vod),
+        MarkDoc::Edit(edit) => Doc::Edit(edit),
+    }))
+}
+
 /// What a mark can be (`db::Mark`).
 const MARK_KINDS: [&str; 3] = ["cut", "chapter", "highlight"];
 
@@ -555,21 +595,21 @@ pub(crate) async fn add_mark(
 /// Sets mark `id`'s title (a chapter's) or note (a highlight's).
 #[tauri::command]
 pub(crate) async fn set_mark_text(state: State<'_, AppState>, id: i64, text: Option<String>) -> CmdResult<()> {
-    marking(&state, id, "Text changed", |db| db.set_mark_text(id, mark_text(text).as_deref()))
+    marking(&state, id, "Text changed", |db, _| db.set_mark_text(id, mark_text(text).as_deref()))
 }
 
-/// Runs `change` on mark `id` (false if it's gone), recording it in its VOD's history as `label`.
+/// Runs `change` on mark `id` (false if it's gone), recording it in its
+/// VOD's or edit's history as `label`.
 fn marking(
     state: &AppState,
     id: i64,
     label: &'static str,
-    change: impl FnOnce(&Db) -> anyhow::Result<bool>,
+    change: impl FnOnce(&Db, Doc) -> anyhow::Result<bool>,
 ) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    let Some(vod_id) = db.mark_vod(id).map_err(err)? else { return Err("That mark is gone.".into()) };
-    let doc = Doc::Vod(vod_id);
+    let Some(doc) = mark_history(&db, id)? else { return Err("That mark is gone.".into()) };
     let before = history::snapshot(&db, doc).ok().flatten();
-    if !change(&db).map_err(err)? {
+    if !change(&db, doc).map_err(err)? {
         return Err("That mark is gone.".into());
     }
     state.history.record(&db, doc, label, before);
@@ -581,15 +621,22 @@ pub(crate) async fn move_mark(state: State<'_, AppState>, id: i64, time: f64) ->
     if !(time.is_finite() && time >= 0.0) {
         return Err("A mark has to be within the video.".into());
     }
-    marking(&state, id, "Mark moved", |db| db.move_mark(id, time))
+    // In an edit, `time` is of its timeline: the mark goes to the moment playing there.
+    marking(&state, id, "Mark moved", |db, doc| match doc {
+        Doc::Vod(_) => db.move_mark(id, time),
+        Doc::Edit(edit) => match vodscribe_core::edits::source_at(&db.edit_pieces(edit)?, time) {
+            Some((vod, at)) => db.move_mark_to(id, vod, at),
+            None => anyhow::bail!("A mark has to be within the edit."),
+        },
+    })
 }
 
 #[tauri::command]
 pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    if state.db.lock().unwrap().mark_vod(id).map_err(err)?.is_none() {
+    if state.db.lock().unwrap().mark_doc(id).map_err(err)?.is_none() {
         return Ok(());
     }
-    marking(&state, id, "Mark removed", |db| db.delete_mark(id).map(|()| true))
+    marking(&state, id, "Mark removed", |db, _| db.delete_mark(id).map(|()| true))
 }
 
 /// Takes away mark `id`, just added and cancelled (Escape in its title box),
@@ -598,8 +645,7 @@ pub(crate) async fn delete_mark(state: State<'_, AppState>, id: i64) -> CmdResul
 #[tauri::command]
 pub(crate) async fn cancel_mark(state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    let Some(vod_id) = db.mark_vod(id).map_err(err)? else { return Ok(()) };
-    let doc = Doc::Vod(vod_id);
+    let Some(doc) = mark_history(&db, id)? else { return Ok(()) };
     let before = history::snapshot(&db, doc).ok().flatten();
     db.delete_mark(id).map_err(err)?;
     if !state.history.unrecord(&db, doc) {
