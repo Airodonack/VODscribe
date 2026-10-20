@@ -705,6 +705,12 @@ impl Db {
             .context("That clip is gone.")?;
         let items = self.item_rows(from)?;
         anyhow::ensure!(into != from, "A clip can't go inside itself.");
+        // Its marks that show in it come too, on the same moments.
+        let marks = self.clip_marks(from)?;
+        let shown: Vec<MarkAt> = place_marks(&self.edit_pieces(from)?, &marks)
+            .iter()
+            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
+            .collect();
         self.change(into, None, |db| {
             db.conn.execute(
                 "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
@@ -732,13 +738,14 @@ impl Db {
                 )?;
                 ids.insert(item.id, db.conn.last_insert_rowid());
             }
+            for m in &shown {
+                db.insert_mark(into, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+            }
             db.place(into, group, index)?;
             Ok(group)
         })
     }
 
-    /// What clip `id` holds (its title and pieces), to be put back later
-    /// with `restore_edit` (for undo); None if it's gone.
     /// Clip `id`'s own marks, with their ids, in the order they were made at.
     pub fn clip_marks(&self, id: i64) -> Result<Vec<(i64, MarkAt)>> {
         let mut stmt =
@@ -811,6 +818,8 @@ impl Db {
         Ok(true)
     }
 
+    /// What clip `id` holds (its title, pieces and marks), to be put back
+    /// later with `restore_edit` (for undo); None if it's gone.
     pub fn edit_state(&self, id: i64) -> Result<Option<EditState>> {
         let Some(title) =
             self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0)).optional()?
@@ -943,8 +952,22 @@ impl Db {
         let (start, end) = self.within_vod(vod_id, start, end)?;
         self.change(edit_id, None, |db| {
             let new = db.insert_piece(edit_id, vod_id, (start, end), title, &[])?;
+            db.copy_vod_marks(edit_id, vod_id, start, end)?;
             db.place(edit_id, new, index)
         })
+    }
+
+    /// Copies VOD `vod_id`'s chapters and highlights from `start` to `end`
+    /// into clip `into`: a stretch of it made a clip, or put in one, brings
+    /// them with it.
+    pub(crate) fn copy_vod_marks(&self, into: i64, vod_id: i64, start: Flicks, end: Flicks) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, source, created_at)
+             SELECT ?1, vod_id, kind, at, text, source, ?5 FROM marks
+             WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?2) AND kind != 'cut' AND at >= ?3 AND at < ?4",
+            params![into, vod_id, start.0, end.0, now()],
+        )?;
+        Ok(())
     }
 
     /// Inserts a piece of `vod_id` in clip `clip_id`, unplaced (position 0).
@@ -1432,6 +1455,34 @@ pub(crate) mod tests {
         let state = db.edit_state(clip.id).unwrap().unwrap();
         let again = db.add_bar_clip(edit, &state).unwrap();
         assert_eq!(db.edit_state(again).unwrap().unwrap(), state);
+    }
+
+    #[test]
+    fn clips_stretches_and_groups_bring_their_marks() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        db.add_mark(vod, "chapter", 12.0, Some("in")).unwrap();
+        db.add_mark(vod, "highlight", 15.0, None).unwrap();
+        db.add_mark(vod, "cut", 13.0, None).unwrap();
+        db.add_mark(vod, "chapter", 25.0, Some("out")).unwrap();
+        let kinds = |clip| -> Vec<(String, f64)> {
+            db.clip_marks(clip).unwrap().into_iter().map(|(_, m)| (m.kind, m.at.seconds())).collect()
+        };
+        let want = vec![("chapter".to_string(), 12.0), ("highlight".to_string(), 15.0)];
+        // A clip of 10-20 s: its chapter and highlight, not the cut or what's outside.
+        let clip = db.add_clip(vod, 10.0, 20.0, "c", true).unwrap().id;
+        assert_eq!(kinds(clip), want);
+        // A stretch put in an edit.
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "s", None).unwrap();
+        assert_eq!(kinds(edit), want);
+        // A clip put in another as a group: its marks that show in it.
+        let other = db.add_edit("f").unwrap().id;
+        db.add_group(other, clip, None).unwrap();
+        assert_eq!(kinds(other), want);
+        let pieces = db.edit_pieces(other).unwrap();
+        let placed: Vec<f64> = place_marks(&pieces, &db.clip_marks(other).unwrap()).iter().map(|m| m.start).collect();
+        assert_eq!(placed, [2.0, 5.0]);
     }
 
     #[test]

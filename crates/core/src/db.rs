@@ -982,7 +982,9 @@ impl Db {
         let add = |db: &Db| {
             let id = db.new_clip(title, crate::edits::Place::Bar(bar))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
-            db.insert_piece(id, vod_id, (Flicks::from_seconds(start), Flicks::from_seconds(end)), "", &[])?;
+            let range = (Flicks::from_seconds(start), Flicks::from_seconds(end));
+            db.insert_piece(id, vod_id, range, "", &[])?;
+            db.copy_vod_marks(id, vod_id, range.0, range.1)?;
             Ok(id)
         };
         // One only dragged out isn't in the bar: no change to the VOD's clip.
