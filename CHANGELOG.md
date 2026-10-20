@@ -16,6 +16,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - An edit has a clip bar of its own: C makes a clip of the lines selected, or of the piece at the playhead, with the edit's chapters and highlights in it. Its clips drag out into a video editor or a folder, go into other edits, and open in the editor with a double-click, as a VOD's do.
 - A clip, a stretch put in an edit, and a clip added to an edit bring the chapters and highlights in them along, on the same moments.
 - An edit's transcript has chat beside it: each piece's VOD's chat where that piece plays, and the minimap shows how busy it is over the edit. Its header has the line count and the Chat button to hide or show it, as a VOD's does.
+- A VOD that's only sound goes full screen too (F, or the button): black, with its captions large in the middle.
 - Fixes:
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
 

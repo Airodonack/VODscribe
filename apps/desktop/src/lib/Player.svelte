@@ -499,7 +499,7 @@
           {captionsAvailable}
           {captionsOn}
           {fullscreen}
-          canFullscreen={!audioOnly}
+          canFullscreen
           ontoggleplay={togglePlay}
           onfullscreen={setFullscreen}
         >
@@ -731,6 +731,16 @@
 
   .frame.audio .host {
     height: auto;
+  }
+
+  /* Audio alone, full screen: black, its captions large in the middle (LocalPlayer.svelte). */
+  .fullscreen .stage.audio {
+    background: #000;
+    padding: 0;
+  }
+
+  .fullscreen .frame.audio .host {
+    height: 100%;
   }
 
   .poster.bar {

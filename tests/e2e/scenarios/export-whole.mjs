@@ -1,5 +1,6 @@
 // Clip with no cuts: C makes the whole video a clip, start to end. On the
-// way, Shift+M mutes and unmutes it.
+// way, Shift+M mutes and unmutes it, and F shows it full screen, black
+// with its caption large.
 
 import { existsSync } from "node:fs";
 
@@ -7,7 +8,8 @@ import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
   name: "export-whole",
-  async run(app, { fixtures, log }) {
+  async run(app, ctx) {
+    const { fixtures, log } = ctx;
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);
     await app.openPaused(vod.id);
@@ -21,6 +23,22 @@ export default {
       await app.key("M", { shift: true });
       await until(want ? "muted (Shift+M)" : "unmuted (Shift+M)", async () => (await muted()) === want, 10_000);
     }
+    // Sound alone, F: full screen anyway, black with its caption (a second
+    // in, in the speech) large in the middle.
+    await app.toStart();
+    await app.key("ArrowRight", { shift: true });
+    await app.key("f");
+    const big = await until(
+      "the caption large, full screen",
+      () =>
+        app.js(`const c = document.querySelector("section.fullscreen .caption.under");
+                return c && parseFloat(getComputedStyle(c).fontSize) >= 24 && c.textContent.trim()`),
+      10_000,
+    );
+    await ctx.checkpoint("sound-only-fullscreen");
+    await app.key("Escape");
+    await until("full screen left", () => app.js(`return !document.querySelector("section.fullscreen")`), 10_000);
+    log(`full screen with sound alone: "${big}"`);
     await app.key("c");
     const clip = await until(
       "the whole video's clip",

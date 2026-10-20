@@ -248,4 +248,21 @@
   :global(.stage.audio) .caption.under {
     color: var(--text);
   }
+
+  /* Full screen, with no picture: the caption large in the middle of the black. */
+  :global(.fullscreen) .pictureless {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  :global(.fullscreen .stage.audio) .caption.under {
+    max-width: 80%;
+    padding: 0;
+    font-size: 32px;
+    line-height: 1.35;
+    text-align: center;
+    color: #fff;
+  }
 </style>
