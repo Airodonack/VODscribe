@@ -9,13 +9,12 @@
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Vod } from "./api";
-  import { cuts } from "./cuts.svelte";
   import { holdToCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
   import { NativeDriver } from "./nativeDriver";
   import Screen from "./Screen.svelte";
-  import { load, save } from "./stored";
+  import { prefs } from "./playerPrefs.svelte";
 
   let {
     vod,
@@ -29,19 +28,15 @@
     onerror?: (message: string | null) => void;
   } = $props();
 
-  const VOLUME = "vodscribe.volume";
-  const CAPTIONS = "vodscribe.captions";
-
   // What the player says, and what's asked of it (nativeDriver.ts).
   const driver = new NativeDriver(untrack(() => start));
   const now = () => driver.time();
 
   let time = $state(untrack(() => start));
-  let captionsOn = $state(load(CAPTIONS) !== "false");
   let cues = $state.raw<Cue[]>([]);
   let destroyed = false;
 
-  const cue = $derived(captionsOn ? cueAt(cues, time) : null);
+  const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
 
   // The caption, over the picture: drawn again when it, the box's size or
   // full screen changes.
@@ -63,8 +58,8 @@
   });
 
   onMount(() => {
-    const saved = Number(load(VOLUME));
-    if (load(VOLUME) !== null && saved >= 0 && saved <= 1) driver.volume.set(saved);
+    const saved = prefs.volume();
+    if (saved !== null) driver.volume.set(saved);
     api.playerOpen(vod.id, start, autoplay).then(
       (opened) => {
         if (destroyed) return;
@@ -113,7 +108,7 @@
     muted: () => driver.volume.muted(),
     set(v: number) {
       driver.volume.set(v);
-      save(VOLUME, String(v));
+      prefs.setVolume(v);
     },
     setMuted: (m: boolean) => driver.volume.setMuted(m),
   };
@@ -122,11 +117,8 @@
 
   export const captions = {
     available: () => cues.length > 0,
-    on: () => captionsOn,
-    toggle() {
-      captionsOn = !captionsOn;
-      save(CAPTIONS, String(captionsOn));
-    },
+    on: () => prefs.captions,
+    toggle: () => prefs.toggleCaptions(),
   };
 
   // A press held still on the picture carries the stretch the playhead is

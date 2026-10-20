@@ -6,6 +6,7 @@
 import { mount, unmount } from "svelte";
 import { api, type PlayerStretch } from "./api";
 import { NativeDriver } from "./nativeDriver";
+import { prefs } from "./playerPrefs.svelte";
 import Screen from "./Screen.svelte";
 
 /** What the edit view drives. */
@@ -22,6 +23,8 @@ export interface EditPlayback {
   step?(frames: number): void;
   fps(): number | null;
   volume: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
+  /** Captions on or off (shared by every player, playerPrefs.svelte.ts); which show is the view's. */
+  captions?: { available(): boolean; on(): boolean; toggle(): void };
   /** None where the player has no speed (the bar then hides its control). */
   rate?: { get(): number; set(rate: number): void };
   destroy(): void;
@@ -41,6 +44,8 @@ export class EditPlayer implements EditPlayback {
     private onerror: (message: string | null) => void,
   ) {
     this.screen = mount(Screen, { target: host });
+    const saved = prefs.volume();
+    if (saved !== null) this.driver.volume.set(saved);
   }
 
   async plan(id: number, from: number): Promise<PlayerStretch[]> {
@@ -78,7 +83,16 @@ export class EditPlayer implements EditPlayback {
   step = (frames: number) => this.driver.step(frames);
   fps = () => this.driver.fps;
   rate = this.driver.speed;
-  volume = this.driver.volume;
+  volume = {
+    get: () => this.driver.volume.get(),
+    muted: () => this.driver.volume.muted(),
+    set: (volume: number) => {
+      this.driver.volume.set(volume);
+      prefs.setVolume(volume);
+    },
+    setMuted: (muted: boolean) => this.driver.volume.setMuted(muted),
+  };
+  captions = { available: () => true, on: () => prefs.captions, toggle: () => prefs.toggleCaptions() };
 
   destroy() {
     this.gone = true;

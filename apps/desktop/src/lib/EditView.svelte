@@ -13,7 +13,7 @@
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, type Doc, type EditPiece, type Line, type PlayerStretch, type Vod } from "./api";
+  import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { editShortcuts, keyOf, transportKey } from "./playerKeys";
@@ -23,9 +23,10 @@
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { DEFAULT_FPS, PEAKS_RATE, playedSpans } from "./media";
+  import { DEFAULT_FPS, PEAKS_RATE, cueAt, playedSpans } from "./media";
+  import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
-  import { formatFraction, formatTime, os } from "./platform";
+  import { formatFraction, os } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
   import { toast } from "./toasts.svelte";
@@ -106,6 +107,21 @@
     });
   });
 
+  // Captions, on the edit's timeline, from its pieces' transcripts: asked
+  // for again at each change to the edit.
+  let cues = $state.raw<Cue[]>([]);
+  $effect(() => {
+    const id = edit?.id;
+    void edit?.revision;
+    if (id === undefined) return;
+    let stale = false;
+    api.editCaptions(id).then(
+      (c) => !stale && (cues = c),
+      (e) => console.error("captions", e),
+    );
+    return () => (stale = true);
+  });
+
   // The player, and what the controls show, read from it every frame.
   let host = $state<HTMLDivElement>();
   let player = $state<EditPlayback | null>(null);
@@ -118,6 +134,7 @@
   let muted = $state(false);
   let rate = $state(1);
   let fps = $state(DEFAULT_FPS);
+  const cue = $derived(prefs.captions ? cueAt(cues, now) : null);
   // The app's own player (editPlayer.ts), drawing on the window's screen;
   // where the screen couldn't be put in the window, the edit can't play here.
   onMount(() => {
@@ -179,12 +196,10 @@
     );
   });
   // Another edit opened in this view: the one playing pauses, and the new one
-  // starts where its playhead was left this session (nav.svelte.ts), paused;
-  // going back to it, its scroll as it was too.
+  // starts where its playhead was left this session (nav.svelte.ts), paused.
   let bringTime: number | null = null;
   /** The edit the player's playhead is of: none while it still shows the one before. */
   let playsEdit: number | null = null;
-  let lines = $state<HTMLDivElement>();
   // Only the edit's id: the edit itself is replaced each time it's loaded again.
   const editId = $derived(edit?.id);
   $effect(() => {
@@ -196,15 +211,6 @@
     const left = untrack(() => nav.bringBack(doc));
     // (An edit not seen yet starts at its start, not where the last one was.)
     bringTime = left?.time ?? untrack(() => nav.lastSeen(doc))?.time ?? 0;
-    const top = left?.scroll;
-    if (top) {
-      const until = performance.now() + 2000;
-      const step = () => {
-        if (lines) lines.scrollTop = top;
-        if (performance.now() < until && (!lines || Math.abs(lines.scrollTop - top) > 1)) requestAnimationFrame(step);
-      };
-      requestAnimationFrame(step);
-    }
   });
   let poll = requestAnimationFrame(function read() {
     poll = requestAnimationFrame(read);
@@ -261,7 +267,8 @@
     const n = pieces.findIndex((p) => p.id === atNow.piece.id) + 1;
     const group = atNow.piece.group;
     const where = group ? ` · in “${group.title}”${group.id === openGroup ? " (open: Escape closes it)" : ""}` : "";
-    return `Piece ${n} of ${pieces.length} · ${nameOf(atNow.piece)} · ${atNow.piece.vod_title}${where}`;
+    const hole = atNow.piece.hole ? " · its video was deleted: it plays as black and silence" : "";
+    return `Piece ${n} of ${pieces.length} · ${nameOf(atNow.piece)} · ${atNow.piece.vod_title}${where}${hole}`;
   });
 
   /** Remove is hovered: the piece it would take out lights up on the timeline. */
@@ -278,6 +285,32 @@
         (removed) => removed && toast.show("Piece removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
       );
   }
+
+  /** The lines selected in the transcript, out of the edit (struck from the
+   *  pieces they're in); the transcript then has them no more. */
+  function removeSelection() {
+    const id = edit?.id;
+    if (id === undefined) return;
+    edits
+      .removeSelection()
+      .then(
+        (removed) => removed && toast.show("Lines removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
+      );
+  }
+
+  // A line clicked in the transcript: the edit plays from there.
+  $effect(() => {
+    const wanted = edits.wanted;
+    if (!wanted) return;
+    untrack(() => {
+      edits.wanted = null;
+      if (bringTime !== null || !player) seekTo(wanted.time);
+      else {
+        now = wanted.time;
+        player.seek(wanted.time, true);
+      }
+    });
+  });
 
   /** Undoes the newest change in `doc`'s history (from the toast's Undo). */
   function undoIn(doc: Doc) {
@@ -334,8 +367,10 @@
       return;
     }
     if (!player) return;
-    if (e.shiftKey && key === "m" && !e.ctrlKey && !e.metaKey) {
-      toggleMute(player);
+    // Shift with a letter is the player's own: captions (C) and mute (M).
+    if (e.shiftKey && (key === "c" || key === "m") && !e.ctrlKey && !e.metaKey) {
+      if (key === "c") prefs.toggleCaptions();
+      else toggleMute(player);
       e.preventDefault();
       return;
     }
@@ -356,11 +391,17 @@
     }
     if (e.ctrlKey || e.metaKey) return;
     const p = player;
-    if (key === "Escape" && openGroup !== null) {
+    if (key === "Escape" && edits.selection) {
+      edits.selection = null;
+    } else if (key === "Escape" && openGroup !== null) {
       openGroup = null;
     } else if (key === "Delete" || key === "Backspace") {
-      // Held down, it's one press: one piece, not one after another.
-      if (!e.repeat && atNow) removeCurrent();
+      // Held down, it's one press: one piece, not one after another. Lines
+      // selected in the transcript go, or else the piece at the playhead.
+      if (e.repeat) {
+        // Nothing more.
+      } else if (edits.selection) removeSelection();
+      else if (atNow) removeCurrent();
     } else if (
       !transportKey(key, e.shiftKey, {
         togglePlay: () => p.togglePlay(),
@@ -499,6 +540,7 @@
     if (edgeFrame) overlay.show(overlay.framed(edgePicture, edgeLabel, width, height));
     else if (!segments.length) overlay.show(overlay.hint(EMPTY, width, height));
     else if (playError) overlay.show(overlay.hint(playError, width, height));
+    else if (cue) overlay.show(overlay.caption(cue.text, width, height, fullscreen));
     else overlay.show(null);
   });
   onDestroy(() => overlay.show(null));
@@ -570,56 +612,6 @@
 
   const pieceLength = (p: EditPiece) => playedSpans(p.start, p.end, p.struck).reduce((sum, [a, b]) => sum + b - a, 0);
 
-  // The transcript: each piece's lines, within it.
-  const linesOf = new Map<number, Promise<Line[]>>();
-  let transcripts = $state.raw<Map<number, Line[]>>(new Map());
-  $effect(() => {
-    for (const vodId of new Set(pieces.map((p) => p.vod_id))) {
-      if (linesOf.has(vodId)) continue;
-      const got = api.transcript(vodId);
-      linesOf.set(vodId, got);
-      got.then(
-        (lines) => (transcripts = new Map(transcripts).set(vodId, lines)),
-        (e) => (edits.error = String(e)),
-      );
-    }
-  });
-  type PieceLine = { start: number; end: number; text: string };
-  function linesIn(piece: EditPiece): PieceLine[] {
-    const all = transcripts.get(piece.vod_id) ?? [];
-    const { start: from, end: to } = piece;
-    const out: PieceLine[] = [];
-    all.forEach((l, i) => {
-      const end = l.end ?? all[i + 1]?.start ?? l.start + 5;
-      if (end > from && l.start < to)
-        out.push({ start: Math.max(l.start, from), end: Math.min(end, to), text: l.text });
-    });
-    return out;
-  }
-  /** Whether `line` is struck out of `piece`: mostly covered by what's struck. */
-  function isStruck(piece: EditPiece, line: PieceLine): boolean {
-    const covered = piece.struck.reduce(
-      (sum, [s, e]) => sum + Math.max(0, Math.min(line.end, e) - Math.max(line.start, s)),
-      0,
-    );
-    return covered >= (line.end - line.start) / 2;
-  }
-  function toggleLine(piece: EditPiece, line: PieceLine) {
-    const struck = isStruck(piece, line)
-      ? piece.struck.filter(([s, e]) => !(Math.min(line.end, e) - Math.max(line.start, s) > 0))
-      : [...piece.struck, [line.start, line.end] as [number, number]];
-    edits.strike(piece.id, struck);
-  }
-  /** Where `line` of `piece` plays in the edit, if it isn't struck. */
-  function editTimeOf(piece: EditPiece, line: PieceLine): number | null {
-    for (const s of segments) {
-      if (s.piece.id !== piece.id) continue;
-      const end = s.vodFrom + s.length;
-      if (line.start < end && line.end > s.vodFrom) return s.at + Math.max(0, line.start - s.vodFrom);
-    }
-    return null;
-  }
-
   // The rendered video, carried out of the window into an editor or a folder.
   let outPress: { x: number; y: number } | null = null;
   function onOutMove(e: PointerEvent) {
@@ -690,7 +682,9 @@
           class="make"
           onclick={() => edits.render(edit.id)}
           disabled={!segments.length}
-          title="{again ? 'Render the edit again' : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E: export)"
+          title="{again
+            ? 'Render the edit again'
+            : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E: export)"
         >
           <Icon name={again ? "redo" : "clapperboard"} size={14} />
           Render <kbd>E</kbd>
@@ -740,6 +734,7 @@
           pieces={lane}
           {pending}
           selectedPiece={atNow ? unitOf(atNow.piece) : null}
+          picked={edits.selection}
           removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
           {onpiece}
           duration={total}
@@ -759,8 +754,8 @@
         {muted}
         {rate}
         {fps}
-        captionsAvailable={false}
-        captionsOn={false}
+        captionsAvailable={cues.length > 0}
+        captionsOn={prefs.captions}
         {fullscreen}
         canFullscreen
         ontoggleplay={() => player?.togglePlay()}
@@ -820,37 +815,6 @@
       </div>
     {/if}
   </section>
-
-  <div
-    class="lines"
-    bind:this={lines}
-    onscroll={() => edit && nav.note({ kind: "edit", id: edit.id }, { scroll: lines?.scrollTop ?? 0 })}
-  >
-    {#each pieces as piece, n (piece.id)}
-      <p class="piece-head muted">
-        <span class="num">{n + 1}</span>
-        {nameOf(piece)} · {piece.vod_title}
-        {#if piece.hole}<span class="hole-note">· its video was deleted: this piece plays as black and silence</span
-          >{/if}
-      </p>
-      {#each linesIn(piece) as line (line.start)}
-        {@const struck = isStruck(piece, line)}
-        {@const at = editTimeOf(piece, line)}
-        <div class="line" class:struck>
-          <button class="time-link" disabled={at === null} onclick={() => at !== null && player?.seek(at, true)}>
-            {at === null ? "–" : formatTime(at)}
-          </button>
-          <button
-            class="text"
-            onclick={() => toggleLine(piece, line)}
-            title={struck ? "Bring it back" : "Strike it out: the edit jumps over it"}>{line.text}</button
-          >
-        </div>
-      {:else}
-        <p class="muted small">No speech in this piece.</p>
-      {/each}
-    {/each}
-  </div>
 {/if}
 
 <style>
@@ -1063,80 +1027,5 @@
      as removing something, not as an error. */
   .remove :global(svg) {
     color: color-mix(in srgb, var(--danger) 85%, var(--muted));
-  }
-
-  .lines {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 4px 24px 24px;
-  }
-
-  .piece-head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 14px 0 4px;
-    font-size: 12px;
-  }
-
-  .hole-note {
-    color: var(--cut);
-  }
-
-  .num {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    border-radius: 9px;
-    background: var(--surface-2);
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .line {
-    display: flex;
-    gap: 12px;
-    align-items: baseline;
-  }
-
-  .time-link {
-    display: block;
-    flex: none;
-    min-width: 56px;
-    padding: 3px 0;
-    border: none;
-    background: none;
-    color: var(--accent);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    text-align: right;
-  }
-
-  .text {
-    display: block;
-    flex: 1;
-    white-space: normal;
-    padding: 3px 8px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    text-align: left;
-    line-height: 1.5;
-  }
-
-  .text:hover {
-    background: var(--surface-2);
-  }
-
-  .struck .text {
-    text-decoration: line-through;
-    color: var(--muted);
-  }
-
-  .small {
-    font-size: 12px;
   }
 </style>

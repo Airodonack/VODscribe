@@ -11,26 +11,46 @@
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
   import { cuts } from "./cuts.svelte";
+  import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
 
-  let { vod, onplay }: { vod: Vod; onplay: (vodId: number, time: number) => void } = $props();
+  // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
+  // where they play, on its timeline, without chat (yet). A click on a line
+  // plays from it; dragging across lines selects them: a VOD's to cut
+  // around (Split), an edit's to take out (Delete).
+  let {
+    vod = null,
+    edit = null,
+    onplay,
+  }: { vod?: Vod | null; edit?: number | null; onplay: (time: number) => void } = $props();
 
   let lines = $state.raw<Line[]>([]);
   let error = $state<string | null>(null);
 
   // Reload when the VOD changes, and periodically while it is still transcribing
   // (segments are indexed as they are produced).
-  let vodId = $derived(vod.id);
-  let step = $derived(vod.status === "transcribing" ? Math.floor(vod.progress * 20) : vod.status);
+  let vodId = $derived(vod?.id ?? -1);
+  let step = $derived(vod?.status === "transcribing" ? Math.floor(vod.progress * 20) : vod?.status);
+  // An edit's lines are asked for again at each change to it.
+  let revision = $derived(edit !== null && edits.open?.id === edit ? edits.open.revision : null);
+  let duration = $derived(edit !== null ? edits.length : (vod?.duration ?? 0));
   // Only the latest request's answer counts, so a slow older reload can't win.
   // While transcribing, lines are only added at the end: just those are asked for.
   let seq = 0;
   $effect(() => {
     const id = vodId;
     void step;
+    void revision;
     const mine = ++seq;
+    if (edit !== null) {
+      api.editLines(edit).then(
+        (l) => mine === seq && ((lines = l), (error = null)),
+        (e) => mine === seq && (error = String(e)),
+      );
+      return;
+    }
     const have = untrack(() => lines);
-    const after = vod.status === "transcribing" && have.length ? have[have.length - 1].start : undefined;
+    const after = vod?.status === "transcribing" && have.length ? have[have.length - 1].start : undefined;
     api.transcript(id, after).then(
       (l) => {
         if (mine !== seq) return;
@@ -52,10 +72,10 @@
   let chatError = $state<string | null>(null);
   let chatProgress = $state<number | null>(null);
   let chatOpen = $state(load(CHAT_OPEN) !== "false");
-  let hasChat = $derived(vod.platform !== "local");
+  let hasChat = $derived(!!vod && vod.platform !== "local");
   // A VOD without a chat replay (a video that wasn't a livestream, say): its
   // toggle is grayed out and the column stays shut.
-  let chatStatus = $derived(vod.chat);
+  let chatStatus = $derived(vod?.chat ?? "none");
   let noChat = $derived(chatStatus === "none");
   let showChat = $derived(hasChat && chatOpen && !noChat);
   let canHaveChat = $derived(hasChat && (chatStatus === "done" || chatStatus === "pending"));
@@ -84,13 +104,13 @@
   }
 
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
-  let rows = $derived(buildRows(lines, vod.duration ?? 0, showChat));
+  let rows = $derived(buildRows(lines, duration, showChat));
 
   // Each chapter's title (cuts.svelte.ts) as a heading over the line that
   // starts nearest its start.
   const heads = $derived.by(() => {
     const out = new Map<Line, Mark[]>();
-    if (cuts.vodId !== vod.id || !lines.length) return out;
+    if (!vod || cuts.vodId !== vod.id || !lines.length) return out;
     for (const chapter of cuts.chapters) {
       const line = lines[nearestLine(lines, chapter.start)];
       out.set(line, [...(out.get(line) ?? []), chapter]);
@@ -307,7 +327,7 @@
   // The chat as a whole: how many messages, how busy each stretch was, and the events.
   const BINS = 1000;
   let overview = $state.raw<ChatOverview | null>(null);
-  let mapDuration = $derived(Math.max(vod.duration ?? 0, lines.at(-1)?.start ?? 0));
+  let mapDuration = $derived(Math.max(duration, lines.at(-1)?.start ?? 0));
   /** The counts, and with `events` the subs, gifts and tips too, which
    *  otherwise keep what was had: while a fetch is saving, they're a megabyte
    *  and more for a busy chat, so they're read now and then, not each time. */
@@ -368,7 +388,7 @@
     return () => void unlisten.then((u) => u());
   });
 
-  const play = (time: number) => onplay(vod.id, time);
+  const play = (time: number) => onplay(time);
 
   // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
   // Split then cuts either side); a click without a drag still plays the line.
@@ -437,32 +457,47 @@
     // holds both ends, when they're on different lines, so it may never come.
     swallowClick = true;
     setTimeout(() => (swallowClick = false));
-    const first = lines.indexOf(rows[from].line!);
-    const last = lines.indexOf(rows[to].line!);
-    if (first < 0 || last < 0) return;
-    const { start, end } = linesSpan(lines, first, last, vod.duration);
-    // The lines selected (Split then cuts either side of them), and the
-    // playhead to their start, showing the VOD in the player if it wasn't.
-    cuts.open(vod.id);
-    cuts.selection = { start, end };
-    cuts.selected = null;
+    select(lines.indexOf(rows[from].line!), lines.indexOf(rows[to].line!));
+  }
+
+  /** Selects lines `a` to `b` (either way round) and plays from the first. */
+  function select(a: number, b: number) {
+    if (a < 0 || b < 0) return;
+    const { start, end } = linesSpan(lines, Math.min(a, b), Math.max(a, b), duration);
+    // The lines selected (Split then cuts either side of them, or in an edit
+    // Delete takes them out), and the playhead to their start, showing the
+    // VOD in the player if it wasn't.
+    if (vod) {
+      cuts.open(vod.id);
+      cuts.selection = { start, end };
+      cuts.selected = null;
+    } else edits.selection = { start, end };
     play(start);
   }
 
-  function onRowClick(time: number) {
+  function onRowClick(e: MouseEvent, line: Line) {
     if (swallowClick) {
       swallowClick = false;
       return;
     }
+    // Shift+click selects the line, or the lines from the selection's first to it.
+    if (e.shiftKey) {
+      const pick = !vod ? edits.selection : cuts.vodId === vod.id ? cuts.selection : null;
+      const at = lines.indexOf(line);
+      select(pick ? nearestLine(lines, pick.start) : at, at);
+      return;
+    }
+    const time = line.start;
     // A click elsewhere than the selection's edges lets go of it.
-    if (cuts.vodId === vod.id) cuts.clearSelection();
+    if (!vod) edits.selection = null;
+    else if (cuts.vodId === vod.id) cuts.clearSelection();
     play(time);
   }
 
   /** Whether row `index` is in the lines being dragged across, or selected. */
   function picked(index: number, row: Row): boolean {
     if (drag) return index >= Math.min(drag.from, drag.to) && index <= Math.max(drag.from, drag.to);
-    const pick = cuts.vodId === vod.id ? cuts.selection : null;
+    const pick = !vod ? edits.selection : cuts.vodId === vod.id ? cuts.selection : null;
     return !!pick && !!row.line && row.line.start >= pick.start - 0.01 && row.line.start < pick.end - 0.01;
   }
 
@@ -629,21 +664,21 @@
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
 
 <div class="layout">
-  <TranscriptHead
-    {vod}
-    lineCount={lines.length}
-    {chatCount}
-    {chatProgress}
-    bind:chatError
-    {hasChat}
-    {showChat}
-    {noChat}
-    ontoggle={toggleChat}
-    emotes={marks.emotes}
-    counts={marks.counts}
-    eventCounts={marks.eventCounts}
-    bind:height={headHeight}
-  />
+  {#if vod}<TranscriptHead
+      {vod}
+      lineCount={lines.length}
+      {chatCount}
+      {chatProgress}
+      bind:chatError
+      {hasChat}
+      {showChat}
+      {noChat}
+      ontoggle={toggleChat}
+      emotes={marks.emotes}
+      counts={marks.counts}
+      eventCounts={marks.eventCounts}
+      bind:height={headHeight}
+    />{/if}
   <div class="cols">
     <div
       class="transcript"
@@ -657,9 +692,11 @@
         <p class="error-text">{error}</p>
       {:else if lines.length === 0}
         <p class="muted">
-          {vod.status === "done"
-            ? "No speech was found in this VOD."
-            : "The transcript appears here as it is produced."}
+          {!vod
+            ? "Nothing is said in this edit."
+            : vod.status === "done"
+              ? "No speech was found in this VOD."
+              : "The transcript appears here as it is produced."}
         </p>
       {/if}
       <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>
@@ -681,11 +718,7 @@
                 <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
               </button>
             {/each}
-            <button
-              class="row"
-              onpointerdown={(e) => onRowDown(e, range[0] + k)}
-              onclick={() => onRowClick(line.start)}
-            >
+            <button class="row" onpointerdown={(e) => onRowDown(e, range[0] + k)} onclick={(e) => onRowClick(e, line)}>
               <span class="time">{formatTime(line.start)}</span>
               <span>{line.text}</span>
             </button>
@@ -697,7 +730,7 @@
               {#each win?.messages ?? [] as message (message.id)}
                 <ChatMessage
                   {message}
-                  platform={vod.platform}
+                  platform={vod!.platform}
                   highlight={marks.highlightOf(message.id)}
                   words={marks.words}
                   onplay={play}
@@ -724,7 +757,7 @@
           label={mapLabel}
           overlays={marks.overlays}
           events={marks.eventMarks}
-          eventColor={eventColor(vod.platform)}
+          eventColor={eventColor(vod?.platform ?? "local")}
           onseek={seek}
         />
       </div>

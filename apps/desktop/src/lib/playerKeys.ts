@@ -76,6 +76,7 @@ export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   { keys: ["Delete"], does: "remove the piece here" },
   { keys: [mac ? "⌘" : "Ctrl", "+", "←", "→"], does: "move the piece here earlier or later" },
   { keys: ["E"], does: "export: render the edit" },
+  { keys: ["Shift", "+", "C"], does: "captions" },
   { keys: ["Shift", "+", "M"], does: "mute" },
   { keys: ["F"], does: "full screen" },
   undo(mac),

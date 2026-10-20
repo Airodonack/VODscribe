@@ -77,6 +77,7 @@
     fps,
     highlight = null,
     removing = null,
+    picked = null,
     ranges = [],
     current = null,
     ownPlayer = false,
@@ -120,6 +121,8 @@
     highlight?: { start: number; end: number } | null;
     /** A stretch to light up as going: the piece Remove would take out, while it's hovered. */
     removing?: { start: number; end: number } | null;
+    /** An edit's lines selected in its transcript: the stretch Delete takes out. */
+    picked?: { start: number; end: number } | null;
     /** Stretches lit up another way: what an edit plays of the VOD, while its link is hovered. */
     ranges?: { start: number; end: number }[];
     /** Whether the VOD plays in the app's own player (its frames can be read). */
@@ -728,6 +731,14 @@
           >
         {/if}
       {/each}
+    {/if}
+    {#if !marking && picked && picked.end > viewStart && picked.start < viewStart + span}
+      <div
+        class="selection"
+        style:left={pct(Math.max(picked.start, viewStart))}
+        style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
+        title="Selected: Delete takes it out"
+      ></div>
     {/if}
     {#each pending as w, i (i)}
       {@const from = Math.max(w.start + w.done, viewStart)}

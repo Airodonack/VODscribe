@@ -370,6 +370,12 @@ export const api = {
   peaks: (id: number) => invoke<ArrayBuffer>("peaks", { id }).then((b) => new Uint8Array(b)),
   frameRate: (id: number) => invoke<number | null>("frame_rate", { id }),
   captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
+  /** Edit (any clip) `id`'s captions, on its timeline. */
+  editCaptions: (id: number) => invoke<Cue[]>("edit_captions", { id }),
+  /** Edit (any clip) `id`'s transcript, on its timeline: only what plays. */
+  editLines: (id: number) => invoke<Line[]>("edit_lines", { id }),
+  /** Takes `from`..`to` (seconds of its timeline) out of edit `id`, as one change. */
+  removeStretch: (id: number, from: number, to: number) => invoke<EditView>("remove_stretch", { id, from, to }),
   listClips: (vodId: number) => invoke<Clip[]>("list_clips", { vodId }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>

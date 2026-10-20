@@ -6,6 +6,7 @@
 // (ClipStrip.svelte). A piece is a copy: changing it changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
+import { playedSpans } from "./media";
 import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching } from "./api";
 
@@ -30,6 +31,10 @@ class Edits {
   lit = $state<{ editId: number; vodId: number } | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
+  /** A stretch of the open edit's timeline chosen in its transcript: what Delete takes out. */
+  selection = $state<{ start: number; end: number } | null>(null);
+  /** Where the open edit's player was asked to go (a transcript line clicked), once each. */
+  wanted = $state.raw<{ time: number } | null>(null);
   /** A clip of a clip bar open in the editor (not in the library's list). */
   #snippet = $state.raw<Edit | null>(null);
   #started = false;
@@ -143,8 +148,31 @@ class Edits {
     this.lit = null;
     this.openId = id;
     this.pieces = [];
+    this.selection = null;
+    this.wanted = null;
     this.error = null;
     if (id !== null) this.#load(id);
+  }
+
+  /** How long the open edit plays: its pieces' played stretches end to end. */
+  get length(): number {
+    return this.pieces.reduce(
+      (sum, p) => sum + playedSpans(p.start, p.end, p.struck).reduce((t, [a, b]) => t + b - a, 0),
+      0,
+    );
+  }
+
+  /** Plays the open edit from `time` (seconds of its timeline). */
+  playAt(time: number) {
+    this.wanted = { time };
+  }
+
+  /** Takes the selected stretch out of the open edit, as one change (undo brings it back). */
+  async removeSelection(): Promise<boolean> {
+    const pick = this.selection;
+    if (this.openId === null || !pick) return false;
+    this.selection = null;
+    return this.#change(api.removeStretch(this.openId, pick.start, pick.end));
   }
 
   async create(): Promise<Edit | null> {

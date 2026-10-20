@@ -577,9 +577,9 @@ pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) 
 
 #[derive(Serialize)]
 pub(crate) struct Line {
-    start: f64,
-    end: f64,
-    text: String,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
+    pub(crate) text: String,
 }
 
 #[tauri::command]

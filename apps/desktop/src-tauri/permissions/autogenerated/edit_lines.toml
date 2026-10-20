@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-edit-lines"
+description = "Enables the edit_lines command without any pre-configured scope."
+commands.allow = ["edit_lines"]
+
+[[permission]]
+identifier = "deny-edit-lines"
+description = "Denies the edit_lines command without any pre-configured scope."
+commands.deny = ["edit_lines"]

@@ -9,10 +9,9 @@
   import { landingSeeks } from "./mediaSeek";
   import { onDestroy, onMount } from "svelte";
   import { api, type Cue, type Vod } from "./api";
-  import { cuts } from "./cuts.svelte";
   import { holdToCarry } from "./dragout";
   import { DEFAULT_FPS, cueAt, elementSound, stepTime, unplayable } from "./media";
-  import { load, save } from "./stored";
+  import { prefs } from "./playerPrefs.svelte";
 
   let {
     vod,
@@ -31,26 +30,22 @@
     onerror?: (message: string | null) => void;
   } = $props();
 
-  const VOLUME = "vodscribe.volume";
-  const CAPTIONS = "vodscribe.captions";
-
   let video = $state<HTMLVideoElement>();
   let time = $state(0);
   // A file whose type didn't say it's sound alone finds out once loaded.
   let noPicture = $state(false);
   const pictureless = $derived(audio || noPicture);
-  let captionsOn = $state(load(CAPTIONS) !== "false");
   let cues = $state.raw<Cue[]>([]);
   // Until the file's own is known.
   let fps: number | null = null;
   let destroyed = false;
 
-  const cue = $derived(captionsOn ? cueAt(cues, time) : null);
+  const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
 
   onMount(() => {
     const v = video!;
-    const saved = Number(load(VOLUME));
-    if (load(VOLUME) !== null && saved >= 0 && saved <= 1) v.volume = saved;
+    const saved = prefs.volume();
+    if (saved !== null) v.volume = saved;
     v.src = src;
     // Through seek: before its metadata is in, a video may drop where it's put.
     seek(start, false);
@@ -136,7 +131,7 @@
 
   export const sound = elementSound(
     () => video,
-    (volume) => save(VOLUME, String(volume)),
+    (volume) => prefs.setVolume(volume),
   );
 
   export const speed = {
@@ -148,11 +143,8 @@
 
   export const captions = {
     available: () => cues.length > 0,
-    on: () => captionsOn,
-    toggle() {
-      captionsOn = !captionsOn;
-      save(CAPTIONS, String(captionsOn));
-    },
+    on: () => prefs.captions,
+    toggle: () => prefs.toggleCaptions(),
   };
 
   // A press held still on the picture carries the stretch the playhead is

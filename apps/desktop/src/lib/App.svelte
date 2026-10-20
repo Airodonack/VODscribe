@@ -105,6 +105,7 @@
     const doc = step.doc;
     if (doc?.kind === "edit") {
       edits.openEdit(doc.id);
+      if (step.left.scroll) bringScroll(step.left.scroll);
       return;
     }
     edits.openEdit(null);
@@ -382,6 +383,10 @@
     updates.busy = vods.some((v) => v.status === "downloading" || v.status === "transcribing");
   });
 
+  // An edit open shows in the player's place, its transcript in the body's,
+  // unless a search's results are up.
+  const editOpen = $derived(edits.openId !== null && !results && !searchError);
+
   function play(vodId: number, time: number) {
     edits.openEdit(null);
     keepPressedInPlace();
@@ -542,68 +547,70 @@
         </div>
       </div>
 
-      {#if edits.openId !== null && !results && !searchError}
+      {#if editOpen}
         <EditView vods={vodsById} onopenvod={openVodAt} />
-      {:else}
-        {#if playing && playingVod}
-          {#key playing.vodId}
-            <Player vod={playingVod} at={playing.at} />
-          {/key}
-        {/if}
-
-        <div class="body" bind:this={body} onscroll={() => nav.note(view, { scroll: body?.scrollTop ?? 0 })}>
-          {#if searchError}
-            <p class="error-text pad">{searchError}</p>
-          {:else if results}
-            <Results
-              hits={results.hits}
-              truncated={results.truncated}
-              vods={vodsById}
-              query={query.trim()}
-              scope={scopeAll ? undefined : selected}
-              columns={sources.audio && sources.chat}
-              onplay={play}
-              onclearscope={() => (scopeAll = true)}
-            />
-          {:else if selected}
-            <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
-               heights, a seek in progress) shows under the next while it loads. -->
-            {#key selected.id}
-              <Transcript vod={selected} onplay={play} />
-            {/key}
-          {:else}
-            <div class="home">
-              <div class="empty">
-                <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
-                {#if vods.length === 0}
-                  <h2>Your library is empty</h2>
-                  <p class="muted">
-                    Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file
-                    here. VODscribe turns what's said into text on your computer, and then you can search every word.
-                  </p>
-                {:else}
-                  <h2>Search every VOD</h2>
-                  <p class="muted">
-                    Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
-                    one on the left to read its transcript.
-                  </p>
-                  <p class="keys muted">
-                    <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause,
-                    <kbd>←</kbd><kbd>→</kbd>
-                    5 s,
-                    <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
-                  </p>
-                {/if}
-              </div>
-              <button class="credit" onclick={() => openUrl(SUPPORT)}>
-                Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-                  >Help cover hosting on Ko-fi</span
-                >
-              </button>
-            </div>
-          {/if}
-        </div>
+      {:else if playing && playingVod}
+        {#key playing.vodId}
+          <Player vod={playingVod} at={playing.at} />
+        {/key}
       {/if}
+
+      <div class="body" bind:this={body} onscroll={() => nav.note(view, { scroll: body?.scrollTop ?? 0 })}>
+        {#if searchError}
+          <p class="error-text pad">{searchError}</p>
+        {:else if results}
+          <Results
+            hits={results.hits}
+            truncated={results.truncated}
+            vods={vodsById}
+            query={query.trim()}
+            scope={scopeAll ? undefined : selected}
+            columns={sources.audio && sources.chat}
+            onplay={play}
+            onclearscope={() => (scopeAll = true)}
+          />
+        {:else if editOpen}
+          {#key edits.openId}
+            <Transcript edit={edits.openId} onplay={(time) => edits.playAt(time)} />
+          {/key}
+        {:else if selected}
+          <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
+               heights, a seek in progress) shows under the next while it loads. -->
+          {#key selected.id}
+            <Transcript vod={selected} onplay={(time) => play(selected.id, time)} />
+          {/key}
+        {:else}
+          <div class="home">
+            <div class="empty">
+              <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
+              {#if vods.length === 0}
+                <h2>Your library is empty</h2>
+                <p class="muted">
+                  Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file here.
+                  VODscribe turns what's said into text on your computer, and then you can search every word.
+                </p>
+              {:else}
+                <h2>Search every VOD</h2>
+                <p class="muted">
+                  Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
+                  one on the left to read its transcript.
+                </p>
+                <p class="keys muted">
+                  <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause,
+                  <kbd>←</kbd><kbd>→</kbd>
+                  5 s,
+                  <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
+                </p>
+              {/if}
+            </div>
+            <button class="credit" onclick={() => openUrl(SUPPORT)}>
+              Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
+                >Help cover hosting on Ko-fi</span
+              >
+            </button>
+          </div>
+        {/if}
+      </div>
     </svelte:element>
   </div>
   <Toast />

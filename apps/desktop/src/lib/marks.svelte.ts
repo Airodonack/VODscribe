@@ -14,7 +14,8 @@ import { settings } from "./appSettings.svelte";
  *  what it reads (an overview refreshed while chat downloads mustn't refetch
  *  the emotes, or restart the layers' searches). */
 export interface MarksOf {
-  vod: Vod;
+  /** None for an edit's transcript, which has no chat yet. */
+  vod: Vod | null;
   /** Whether the VOD has (or is getting) a chat to search. */
   canHaveChat: boolean;
   /** Messages in the chat so far. */
@@ -48,13 +49,13 @@ export class Marks {
 
     $effect(() => {
       const { vod, canHaveChat } = this.#of;
-      const id = vod.id;
-      void vod.chat;
+      const id = vod?.id;
+      void vod?.chat;
       this.#chatEmotes = new Map();
-      if (!canHaveChat) return;
-      api.chatEmotes(id).then(
+      if (!vod || !canHaveChat) return;
+      api.chatEmotes(vod.id).then(
         (list) =>
-          this.#of.vod.id === id && (this.#chatEmotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
+          this.#of.vod?.id === id && (this.#chatEmotes = new Map(list.map(([n, url]) => [n.toLowerCase(), url]))),
         () => {},
       );
     });
@@ -69,7 +70,7 @@ export class Marks {
     let wordsOf: number | null = null;
     $effect(() => {
       const { vod, canHaveChat } = this.#of;
-      const id = vod.id;
+      const id = vod?.id ?? null;
       // Another VOD's (another channel's) emotes go at once; the same VOD's
       // stay until the new list is in, rather than flickering to words.
       if (wordsOf !== id) {
@@ -78,11 +79,11 @@ export class Marks {
       }
       const on = (settings.value?.emote_providers ?? []).filter((p) => p.on).map((p) => p.id);
       const mine = ++wordsSeq;
-      if (!canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick") || on.length === 0) {
+      if (!vod || !canHaveChat || (vod.platform !== "twitch" && vod.platform !== "kick") || on.length === 0) {
         this.words = new Map();
         return;
       }
-      api.chatWordEmotes(id, on).then(
+      api.chatWordEmotes(vod.id, on).then(
         (list) => mine === wordsSeq && (this.words = new Map(list.map((e) => [e.name, e]))),
         (e) => mine === wordsSeq && console.warn("word emotes:", e),
       );
@@ -92,11 +93,11 @@ export class Marks {
     let matchedAt = 0;
     $effect(() => {
       const { vod, chatCount } = this.#of;
-      const id = vod.id;
+      const id = vod?.id;
       const wanted = this.#shownLayers.map((l) => ({ id: l.id, color: l.color, terms: l.terms.map((t) => t.text) }));
-      const arriving = vod.chat === "pending";
+      const arriving = vod?.chat === "pending";
       const mine = ++seq;
-      if (wanted.length === 0 || chatCount === 0) {
+      if (id === undefined || wanted.length === 0 || chatCount === 0) {
         this.layerMatches = [];
         return;
       }
@@ -138,9 +139,9 @@ export class Marks {
   /** Whether the VOD has a chat to mark at all. */
   #active = $derived.by(() => {
     const { vod } = this.#of;
-    return vod.platform !== "local" && vod.chat !== "none";
+    return !!vod && vod.platform !== "local" && vod.chat !== "none";
   });
-  #shownLayers = $derived.by(() => (this.#active ? layers.shownFor(this.#of.vod) : []));
+  #shownLayers = $derived.by(() => (this.#active ? layers.shownFor(this.#of.vod!) : []));
 
   /** The chat's events (the overview has them all, few as they are). */
   #events = $derived.by(() => this.#of.overview?.events ?? []);
@@ -154,7 +155,7 @@ export class Marks {
 
   #eventMatches = $derived.by((): Match[] => {
     if (!this.#active) return [];
-    const color = eventColor(this.#of.vod.platform);
+    const color = eventColor(this.#of.vod!.platform);
     return EVENTS.filter((e) => layers.events.includes(e.kind)).map((e) => ({
       id: e.kind,
       color,
@@ -170,7 +171,7 @@ export class Marks {
   eventMarks = $derived.by(() => {
     if (this.#eventMatches.length === 0) return [];
     const on = new Set(layers.events);
-    const platform = this.#of.vod.platform;
+    const platform = this.#of.vod!.platform;
     return this.#events
       .filter((m) => m.kind !== "message" && on.has(m.kind))
       .map((m) => ({ time: m.time, value: eventUsd(m, platform) }));

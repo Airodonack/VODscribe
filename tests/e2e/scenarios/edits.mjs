@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import * as os from "../lib/os.mjs";
 
 const NAME = "Landing edit";
 
@@ -79,6 +80,45 @@ export default {
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
     await app.key("b");
     await until("two pieces", async () => pieces(await edit()).length === 2, 10_000);
+    // Captions, on the edit's timeline: the VOD's where its pieces play. The
+    // CC button shows, and Shift+C turns them off and on.
+    const cues = await app.invoke("edit_captions", { id: made.id });
+    if (!cues.length || cues.some((c) => c.start < 0 || c.end > 2.05 || c.end <= c.start))
+      throw new Error(`the edit's captions: ${JSON.stringify(cues)}`);
+    const cc = 'section.edit-view .bar button[aria-label="Captions"]';
+    const ccOn = () => app.js(`return document.querySelector(arguments[0])?.getAttribute("aria-pressed")`, cc);
+    const was = await until("the CC button", ccOn, 10_000);
+    // Where the screen can be read, the picture's lower part changes with them.
+    const screen =
+      !os.unavailable() &&
+      (() => {
+        try {
+          return !!os.screenshot();
+        } catch {
+          return false;
+        }
+      })();
+    const lower = async () => {
+      if (!screen) return null;
+      const r = await os.rectOf(app, "section.edit-view .frame");
+      await new Promise((r) => setTimeout(r, 500));
+      return os.pixels(os.screenshot(), { x: r.x, y: Math.round(r.y + r.h * 0.7), w: r.w, h: Math.round(r.h * 0.3) });
+    };
+    const seen = [await lower()];
+    for (const want of [was !== "true", was === "true"]) {
+      await app.key("C", { shift: true });
+      await until(`captions ${want ? "on" : "off"} (Shift+C)`, async () => (await ccOn()) === String(want), 10_000);
+      seen.push(await lower());
+    }
+    if (screen) {
+      const changed = os.difference(seen[0], seen[1]);
+      const same = os.difference(seen[0], seen[2]);
+      ctx.log(
+        `the edit's picture, lower part: ${changed.toFixed(1)} apart with captions toggled, ${same.toFixed(1)} back`,
+      );
+      if (changed < 3 || same > changed / 3) throw new Error("the edit's captions don't show over its picture");
+    }
+    ctx.log(`captions: ${cues.length}, the first "${cues[0].text}"`);
     // Delete held down: its repeats remove nothing (only a press does).
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", repeat: true, bubbles: true }))`,
@@ -147,22 +187,41 @@ export default {
     await app.js(`document.querySelector("button.action.remove").dispatchEvent(new MouseEvent("mouseleave"))`);
     await until("it dark again", async () => (await removeLit()) === null, 10_000);
 
-    // A line struck out, then the strike undone.
-    await until(
-      "a line to strike",
-      () => app.js(`return !!document.querySelector(".lines .line button.text")`),
-      10_000,
-    );
-    // The timeline shows all of the edit, before the strike and after it's undone.
+    // The edit's transcript, under its player as a VOD's is: only what
+    // plays. A click on a line plays from it and changes nothing; Shift+click
+    // selects it, and Delete takes it out of the edit (struck from its
+    // piece), gone from the transcript; Ctrl+Z brings it back.
+    const rows = "section.edit-view ~ .body .transcript .line button.row";
+    const lineCount = () => app.js(`return document.querySelectorAll(arguments[0]).length`, rows);
+    const lines = await until("the edit's transcript", lineCount, 10_000);
+    const struckCount = async () => (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
+    await app.click(rows);
+    await new Promise((r) => setTimeout(r, 1000));
+    if (await struckCount()) throw new Error("a click on a line struck it");
+    // The timeline shows all of the edit, before the removal and after it's undone.
     const spanNow = () =>
       app.js(`return Number(document.querySelector("section.edit-view .scrubber")?.dataset.span ?? 0)`);
     const whole = await spanNow();
-    await app.click(".lines .line button.text");
-    await until("the line struck", () => app.js(`return !!document.querySelector(".lines .line.struck")`), 10_000);
+    await app.js(
+      `document.querySelector(arguments[0]).dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }))`,
+      rows,
+    );
+    await until(
+      "the line selected",
+      () => app.js(`return !!document.querySelector(".transcript .line.picked")`),
+      10_000,
+    );
+    await app.key("Delete");
+    await until("the line taken out", async () => (await struckCount()) > 0 && (await lineCount()) < lines, 10_000);
+    const shorter = await until(
+      "the timeline shorter",
+      async () => (await spanNow()) < whole - 0.01 && spanNow(),
+      10_000,
+    );
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
     );
-    await until("the strike undone", () => app.js(`return !document.querySelector(".lines .line.struck")`), 10_000);
+    await until("the line back", async () => (await struckCount()) === 0 && (await lineCount()) === lines, 10_000);
     await until(
       "the timeline showing all of the edit again",
       async () => {
@@ -172,38 +231,7 @@ export default {
       },
       10_000,
     );
-    const toast = await app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
-    ctx.log(`split in two; struck a line, then "${toast}"`);
-
-    // Two lines of a piece struck in quick succession, before the first is
-    // saved: both are struck. Then both brought back.
-    const quick = await app.js(
-      `const groups = [];
-       for (const el of document.querySelector(".lines").children) {
-         if (el.matches(".piece-head")) groups.push([]);
-         else if (el.matches(".line")) groups.at(-1)?.push(el.querySelector("button.text"));
-       }
-       const piece = groups.find((g) => g.length >= 2);
-       if (!piece) return 0;
-       const [a, b] = piece;
-       a.click();
-       b.click();
-       return 2;`,
-    );
-    if (quick) {
-      await until(
-        "both lines struck",
-        async () => {
-          const struck = (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
-          if (struck >= 2) return true;
-          throw new Error(`${struck} struck`);
-        },
-        10_000,
-      );
-      await app.js(`for (const b of document.querySelectorAll(".lines .line.struck button.text")) b.click();`);
-      await until("the strikes taken back", async () => (await edit()).pieces.every((p) => !p.struck.length), 10_000);
-      ctx.log("two lines struck at once: both struck");
-    } else ctx.log("no piece with two lines: the quick strikes weren't tried");
+    ctx.log(`split in two; a line of ${lines} taken out (${whole} s → ${shorter} s) and brought back`);
 
     // Rendered: E.
     await app.key("e");

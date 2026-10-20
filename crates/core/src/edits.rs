@@ -24,6 +24,7 @@ use crate::db::{ClipStatus, Db, now};
 use crate::footage::Source;
 use crate::render::Piece;
 use crate::time::Flicks;
+use crate::transcript::Cue;
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
 const SLIVER: f64 = 0.04;
@@ -179,6 +180,63 @@ pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
         out.push((at, end));
     }
     out.retain(|(a, b)| b - a >= SLIVER);
+    out
+}
+
+/// What each piece's VOD has (`of`: things over stretches of a VOD's time,
+/// `(start, end, thing)`) where it plays in a clip of `pieces`, on the
+/// clip's timeline: each piece's played stretches end to end, each thing
+/// cut to the stretch it shows in, slivers left out.
+pub fn on_timeline<T: Clone>(
+    pieces: &[EditPiece],
+    mut of: impl FnMut(i64) -> Result<Vec<(f64, f64, T)>>,
+) -> Result<Vec<(f64, f64, T)>> {
+    let mut known = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    let mut at = 0.0;
+    for p in pieces {
+        let things = match known.entry(p.vod_id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(of(p.vod_id)?),
+        };
+        for (a, b) in p.spans() {
+            for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
+                let (start, end) = (start.max(a), end.min(b));
+                if end - start >= SLIVER {
+                    out.push((at + start - a, at + end - a, thing.clone()));
+                }
+            }
+            at += b - a;
+        }
+    }
+    Ok(out)
+}
+
+/// Captions for a clip of `pieces`, on its timeline (`cues_of`: a VOD's
+/// captions, in its time).
+pub fn clip_cues(pieces: &[EditPiece], mut cues_of: impl FnMut(i64) -> Result<Vec<Cue>>) -> Result<Vec<Cue>> {
+    let placed = on_timeline(pieces, |vod| Ok(cues_of(vod)?.into_iter().map(|c| (c.start, c.end, c.text)).collect()))?;
+    Ok(placed.into_iter().map(|(start, end, text)| Cue { start, end, text }).collect())
+}
+
+/// What taking `from`..`to` of a clip of `pieces`' timeline out strikes:
+/// for each piece it reaches, all it has struck then (in its VOD's time).
+pub fn struck_by_removing(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Vec<(f64, f64)>)> {
+    let mut out = Vec::new();
+    let mut at = 0.0;
+    for p in pieces {
+        let mut more = Vec::new();
+        for (a, b) in p.spans() {
+            let (start, end) = (from.max(at), to.min(at + b - a));
+            if end > start {
+                more.push((a + start - at, a + end - at));
+            }
+            at += b - a;
+        }
+        if !more.is_empty() {
+            out.push((p.id, [p.struck.clone(), more].concat()));
+        }
+    }
     out
 }
 
@@ -871,6 +929,60 @@ pub(crate) mod tests {
         assert_eq!(spans(0.0, 10.0, &[(2.0, 5.0), (4.0, 6.0)]), [(0.0, 2.0), (6.0, 10.0)], "overlapping");
         assert_eq!(spans(0.0, 10.0, &[(0.0, 10.0)]), [], "all of it");
         assert_eq!(spans(0.0, 10.0, &[(2.0, 5.0), (5.02, 8.0)]), [(0.0, 2.0), (8.0, 10.0)], "no slivers");
+    }
+
+    #[test]
+    fn captions_follow_the_pieces_onto_the_clips_timeline() {
+        let piece = |id, vod_id, start, end, struck: &[(f64, f64)]| EditPiece {
+            id,
+            edit_id: 1,
+            vod_id,
+            start,
+            end,
+            title: String::new(),
+            struck: struck.to_vec(),
+            vod_title: String::new(),
+            hole: false,
+            group: None,
+        };
+        let cue = |start, end, text: &str| Cue { start, end, text: text.into() };
+        let cues = |vod| -> Result<Vec<Cue>> {
+            Ok(match vod {
+                1 => vec![cue(0.0, 2.0, "one"), cue(2.0, 4.0, "two"), cue(4.0, 6.0, "three"), cue(10.0, 12.0, "ten")],
+                _ => vec![cue(100.0, 103.0, "elsewhere")],
+            })
+        };
+        // VOD 1 from 1 to 6 s with 2-4 struck, then VOD 2 from 101 s, then VOD 1 again at 10.
+        let pieces =
+            [piece(1, 1, 1.0, 6.0, &[(2.0, 4.0)]), piece(2, 2, 101.0, 105.0, &[]), piece(3, 1, 10.0, 11.0, &[])];
+        let got = clip_cues(&pieces, cues).unwrap();
+        assert_eq!(
+            got,
+            [cue(0.0, 1.0, "one"), cue(1.0, 3.0, "three"), cue(3.0, 5.0, "elsewhere"), cue(7.0, 8.0, "ten"),]
+        );
+    }
+
+    #[test]
+    fn removing_a_stretch_strikes_it_from_each_piece_it_reaches() {
+        let piece = |id, start, end, struck: &[(f64, f64)]| EditPiece {
+            id,
+            edit_id: 1,
+            vod_id: 1,
+            start,
+            end,
+            title: String::new(),
+            struck: struck.to_vec(),
+            vod_title: String::new(),
+            hole: false,
+            group: None,
+        };
+        // Pieces 10-20 (15-16 struck: plays 0-5 and 5-9 of the timeline) and 100-110 (9-19).
+        let pieces = [piece(1, 10.0, 20.0, &[(15.0, 16.0)]), piece(2, 100.0, 110.0, &[])];
+        assert_eq!(
+            struck_by_removing(&pieces, 4.0, 11.0),
+            [(1, vec![(15.0, 16.0), (14.0, 15.0), (16.0, 20.0)]), (2, vec![(100.0, 102.0)])]
+        );
+        assert_eq!(struck_by_removing(&pieces, 19.0, 30.0), [], "past the end");
     }
 
     pub(crate) fn info(id: &str) -> VodInfo {

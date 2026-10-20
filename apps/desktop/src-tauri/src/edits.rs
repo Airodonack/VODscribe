@@ -233,6 +233,45 @@ pub(crate) async fn get_edit(app: AppHandle, id: i64) -> CmdResult<EditView> {
     view(&app, &db, id)
 }
 
+/// Edit (any clip) `id`'s captions, on its timeline: its pieces' VODs'
+/// captions where they play (`vodscribe_core::edits::clip_cues`).
+#[tauri::command]
+pub(crate) async fn edit_captions(app: AppHandle, id: i64) -> CmdResult<Vec<vodscribe_core::transcript::Cue>> {
+    crate::with_reads(app, move |db| {
+        let pieces = db.edit_pieces(id)?;
+        vodscribe_core::edits::clip_cues(&pieces, |vod| Ok(vodscribe_core::transcript::cues(&db.segments(vod)?)))
+    })
+    .await
+}
+
+/// Edit (any clip) `id`'s transcript, on its timeline: its pieces' VODs'
+/// lines where they play, cut to what plays.
+#[tauri::command]
+pub(crate) async fn edit_lines(app: AppHandle, id: i64) -> CmdResult<Vec<crate::vods::Line>> {
+    crate::with_reads(app, move |db| {
+        let pieces = db.edit_pieces(id)?;
+        let placed = vodscribe_core::edits::on_timeline(&pieces, |vod| db.lines(vod, None))?;
+        Ok(placed.into_iter().map(|(start, end, text)| crate::vods::Line { start, end, text }).collect())
+    })
+    .await
+}
+
+/// Takes `from`..`to` (seconds of its timeline) out of edit `id`: struck
+/// from each piece it reaches, as one change.
+#[tauri::command]
+pub(crate) async fn remove_stretch(app: AppHandle, id: i64, from: f64, to: f64) -> CmdResult<EditView> {
+    if !(from.is_finite() && to.is_finite() && to > from) {
+        return Err("That's not a stretch of the edit.".into());
+    }
+    changing(&app, id, "Stretch removed", |db| {
+        let pieces = db.edit_pieces(id)?;
+        for (piece, struck) in vodscribe_core::edits::struck_by_removing(&pieces, from, to) {
+            db.set_piece_struck(piece, &struck)?;
+        }
+        Ok(())
+    })
+}
+
 #[tauri::command]
 pub(crate) async fn rename_edit(app: AppHandle, id: i64, title: String) -> CmdResult<EditView> {
     let title = self::title(&title)?;
