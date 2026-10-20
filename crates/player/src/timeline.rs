@@ -4,7 +4,7 @@
 //! of its pieces' spans (crates/core `edits`), from the footage found for
 //! them, as a render is planned.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use vodscribe_core::edits::EditPiece;
 use vodscribe_core::footage::Source;
@@ -19,6 +19,17 @@ pub struct Stretch {
     pub piece_id: Option<i64>,
     pub source: Option<Source>,
     pub from: f64,
+    /// Where its sound comes from, if not the source's file: a file of its
+    /// own (a site's player gives sound and picture apart: embed.rs).
+    pub sound: Option<Sound>,
+}
+
+/// A stretch's sound from a file of its own: `path`, whose 0 is `offset`
+/// seconds of the VOD (as a `Source`'s is).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sound {
+    pub path: PathBuf,
+    pub offset: f64,
 }
 
 impl Stretch {
@@ -41,6 +52,14 @@ impl Stretch {
         self.from + (time - self.at)
     }
 
+    /// Seconds into its sound's file at timeline time `time` (its source's own, if it has none).
+    pub fn sound_time(&self, time: f64) -> f64 {
+        match (&self.sound, &self.source) {
+            (Some(sound), Some(source)) => self.file_time(time) + source.offset - sound.offset,
+            _ => self.file_time(time),
+        }
+    }
+
     /// Timeline time of `file_time` seconds into the source.
     pub fn time(&self, file_time: f64) -> f64 {
         self.at + (file_time - self.from)
@@ -60,7 +79,14 @@ impl Timeline {
     pub fn file(path: &Path, duration: f64) -> Timeline {
         let source = Source { path: path.to_path_buf(), offset: 0.0, section: None };
         Timeline {
-            stretches: vec![Stretch { at: 0.0, length: duration, piece_id: None, source: Some(source), from: 0.0 }],
+            stretches: vec![Stretch {
+                at: 0.0,
+                length: duration,
+                piece_id: None,
+                source: Some(source),
+                from: 0.0,
+                sound: None,
+            }],
         }
     }
 
@@ -73,7 +99,14 @@ impl Timeline {
         let mut at = 0.0;
         let wait = |stretches: &mut Vec<Stretch>, at: &mut f64, piece: i64, length: f64| {
             if length >= SLIVER {
-                stretches.push(Stretch { at: *at, length, piece_id: Some(piece), source: None, from: 0.0 });
+                stretches.push(Stretch {
+                    at: *at,
+                    length,
+                    piece_id: Some(piece),
+                    source: None,
+                    from: 0.0,
+                    sound: None,
+                });
                 *at += length;
             }
         };
@@ -93,6 +126,7 @@ impl Timeline {
                         piece_id: Some(p.id),
                         source: Some(source),
                         from: start,
+                        sound: None,
                     });
                     at += to - from;
                     done = to;
@@ -132,8 +166,6 @@ impl Timeline {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     fn piece(id: i64, vod_id: i64, start: f64, end: f64, struck: &[(f64, f64)]) -> EditPiece {
@@ -149,6 +181,25 @@ mod tests {
             hole: false,
             group: None,
         }
+    }
+
+    #[test]
+    fn a_sound_of_its_own_is_read_at_the_same_moment_of_the_vod() {
+        // The picture's file starts at VOD 10 s, the sound's at VOD 9.5 s.
+        let stretch = Stretch {
+            at: 0.0,
+            length: 5.0,
+            piece_id: None,
+            source: Some(Source { path: PathBuf::from("v.mp4"), offset: 10.0, section: None }),
+            from: 2.0,
+            sound: Some(Sound { path: PathBuf::from("a.webm"), offset: 9.5 }),
+        };
+        // Timeline 1 s: picture file 3 s (VOD 13 s), sound file 3.5 s (VOD 13 s too).
+        assert_eq!(stretch.file_time(1.0), 3.0);
+        assert_eq!(stretch.sound_time(1.0), 3.5);
+        // Without one, the sound is the picture's file's own.
+        let alone = Stretch { sound: None, ..stretch };
+        assert_eq!(alone.sound_time(1.0), 3.0);
     }
 
     #[test]

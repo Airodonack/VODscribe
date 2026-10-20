@@ -19,7 +19,14 @@ fn until(what: &str, secs: u64, done: impl Fn() -> bool) {
 
 /// Ten seconds with no footage.
 fn nothing_here() -> Timeline {
-    Timeline::from_stretches(vec![Stretch { at: 0.0, length: 10.0, piece_id: None, source: None, from: 0.0 }])
+    Timeline::from_stretches(vec![Stretch {
+        at: 0.0,
+        length: 10.0,
+        piece_id: None,
+        source: None,
+        from: 0.0,
+        sound: None,
+    }])
 }
 
 #[test]
@@ -59,8 +66,8 @@ fn running_into_footage_not_here_it_stops_there_and_waits() {
     // A second of footage, then nine waiting for theirs.
     let source = vodscribe_core::footage::Source { path: file, offset: 0.0, section: None };
     let timeline = Timeline::from_stretches(vec![
-        Stretch { at: 0.0, length: 1.0, piece_id: None, source: Some(source), from: 0.0 },
-        Stretch { at: 1.0, length: 9.0, piece_id: None, source: None, from: 0.0 },
+        Stretch { at: 0.0, length: 1.0, piece_id: None, source: Some(source), from: 0.0, sound: None },
+        Stretch { at: 1.0, length: 9.0, piece_id: None, source: None, from: 0.0, sound: None },
     ]);
     let player = Player::open(Path::new("ffmpeg"), timeline).unwrap();
     player.set_waits_for_footage(true);

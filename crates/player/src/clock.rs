@@ -699,6 +699,11 @@ fn end(inner: &Inner, epoch: u64) {
 /// Sound queued before it's let out, so it doesn't run dry at once.
 const START: f64 = 0.1;
 
+/// Where `stretch`'s sound comes from: its own file, or its source's.
+fn sound_of(stretch: &Stretch) -> Option<&Path> {
+    stretch.sound.as_ref().map(|s| s.path.as_path()).or(stretch.source.as_ref().map(|s| s.path.as_path()))
+}
+
 /// The sound's thread: decodes from the time and keeps the output fed while
 /// playing, stretch by stretch (silence where one has no sound); once it's
 /// playing out, the time follows it.
@@ -749,15 +754,13 @@ fn run_sound(inner: &Inner) {
         let mut first = true;
         loop {
             let stretch = walk.stretch().clone();
-            let audio = stretch
-                .source
-                .as_ref()
-                .filter(|s| inner.info(&s.path).is_some_and(|i| i.audio))
-                .map(|s| Audio::new(&inner.ffmpeg, &s.path));
+            let audio = sound_of(&stretch)
+                .filter(|path| inner.info(path).is_some_and(|i| i.audio))
+                .map(|path| Audio::new(&inner.ffmpeg, path));
             // Where there's no sound, silence for as long as the stretch.
             let mut stream = match (audio, walk.readied(next.take())) {
                 (Some(_), Some(stream)) if !first => Some(stream),
-                (Some(audio), _) => audio.from(stretch.file_time(walk.from), rate, speed).ok(),
+                (Some(audio), _) => audio.from(stretch.sound_time(walk.from), rate, speed).ok(),
                 (None, _) => None,
             };
             let mut at = walk.from;
@@ -784,11 +787,11 @@ fn run_sound(inner: &Inner) {
                 if next.is_none()
                     && end - at <= PREFETCH
                     && let Some(coming) = walk.next()
-                    && let Some(source) = coming.source.as_ref()
-                    && inner.info(&source.path).is_some_and(|i| i.audio)
+                    && let Some(path) = sound_of(coming)
+                    && inner.info(path).is_some_and(|i| i.audio)
                 {
-                    next = Audio::new(&inner.ffmpeg, &source.path)
-                        .from(coming.from, rate, speed)
+                    next = Audio::new(&inner.ffmpeg, path)
+                        .from(coming.sound_time(coming.at), rate, speed)
                         .ok()
                         .map(|stream| (coming.clone(), stream));
                 }

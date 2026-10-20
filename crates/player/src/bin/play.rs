@@ -190,7 +190,7 @@ fn parse_edl(text: &str) -> anyhow::Result<vodscribe_player::timeline::Timeline>
         let (start, end) = range.split_once('-').ok_or_else(|| anyhow::anyhow!("{part}: not file:start-end"))?;
         let (start, end): (f64, f64) = (start.parse()?, end.parse()?);
         let source = Some(Source { path: file.into(), offset: 0.0, section: None });
-        stretches.push(Stretch { at, length: end - start, piece_id: None, source, from: start });
+        stretches.push(Stretch { at, length: end - start, piece_id: None, source, from: start, sound: None });
         at += end - start;
     }
     Ok(Timeline::from_stretches(stretches))

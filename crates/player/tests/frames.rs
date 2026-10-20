@@ -101,7 +101,14 @@ fn a_replanned_next_stretch_plays_its_own_footage() {
         Err(e) => panic!("{e:#}"),
     };
     let source = Source { path: file.clone(), offset: 0.0, section: None };
-    let piece = |at: f64, from: f64| Stretch { at, length: 1.0, piece_id: None, source: Some(source.clone()), from };
+    let piece = |at: f64, from: f64| Stretch {
+        at,
+        length: 1.0,
+        piece_id: None,
+        source: Some(source.clone()),
+        from,
+        sound: None,
+    };
     let player =
         Player::open(Path::new("ffmpeg"), Timeline::from_stretches(vec![piece(0.0, 0.0), piece(1.0, 2.0)])).unwrap();
     let (tx, rx) = mpsc::channel();
