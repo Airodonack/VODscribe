@@ -13,6 +13,15 @@ export function stepOf(key: string, shift: boolean): number | undefined {
 /** `e.key`, lower-cased if it's a letter or sign, so Shift or Caps Lock don't change it. */
 export const keyOf = (e: KeyboardEvent) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
 
+/** `e`'s key for a player (as `keyOf` gives it), or null if it isn't for
+ *  one: with Alt (the app's, back and forward), or typed into a field or a
+ *  dialog. */
+export function playerKey(e: KeyboardEvent): string | null {
+  const target = e.target as HTMLElement | null;
+  if (e.altKey || target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]")) return null;
+  return keyOf(e);
+}
+
 /** What the shared keys act on. */
 export type Transport = {
   togglePlay(): void;

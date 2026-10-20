@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
@@ -9,16 +8,17 @@
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
-  import { DEFAULT_FPS, frameStart, inFrame, isUnplayable } from "./media";
+  import { frameStart, inFrame, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
+  import PlayerPanel from "./PlayerPanel.svelte";
+  import { PlayerReading } from "./playerReading.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
-  import { keyOf, stepOf, transportKey, vodShortcuts } from "./playerKeys";
-  import Shortcuts from "./Shortcuts.svelte";
+  import { playerKey, stepOf, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import { formatFraction, formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
   import { nav } from "./nav.svelte";
@@ -29,7 +29,6 @@
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
   let collapsed = $state(false);
-  let showKeys = $state(false);
 
   // Clicking the timestamp copies a link to that moment on the VOD's site.
   let copied = $state<"ok" | "failed" | null>(null);
@@ -131,44 +130,33 @@
     activate(time, play);
   });
 
-  // What the controls show, read from the player every frame (it may be in
-  // an iframe that only reports by message, so there's nothing to bind to).
-  let now = $state(untrack(() => at.time));
-  // Where the frame on screen is, where the player knows (the app's own).
-  let shown = $state<number | null>(null);
-  let playing = $state(false);
-  let volume = $state(1);
-  let muted = $state(false);
-  let rate = $state(1);
+  // What the controls show, read from the player every frame (playerReading.svelte.ts).
+  const reading = new PlayerReading(untrack(() => at.time));
   let captionsAvailable = $state(false);
   let captionsOn = $state(false);
   let playerDuration = $state(0);
-  // Exact for the app's own player; others don't say, so marks there are as near as 30 fps gets.
-  let fps = $state(DEFAULT_FPS);
   let poll = 0;
   function read() {
     poll = requestAnimationFrame(read);
     const p = player;
     if (!p) return;
-    now = p.time();
-    shown = p.shown?.() ?? null;
-    nav.note({ kind: "vod", id: vod.id }, { time: now });
-    playing = p.playing();
+    reading.read(p);
+    nav.note({ kind: "vod", id: vod.id }, { time: reading.now });
     playerDuration = p.duration?.() ?? 0;
-    fps = p.fps?.() ?? DEFAULT_FPS;
-    cuts.fps = fps;
-    if (p.volume) [volume, muted] = [p.volume.get(), p.volume.muted()];
-    if (p.rate) rate = p.rate.get();
+    cuts.fps = reading.fps;
     captionsAvailable = p.captions?.available() ?? false;
     captionsOn = p.captions?.on() ?? false;
   }
+  const now = $derived(reading.now);
+  const playing = $derived(reading.playing);
+  const fps = $derived(reading.fps);
   poll = requestAnimationFrame(read);
   // The VOD's length as the site said, or as the player found when the site didn't say.
   const duration = $derived(vod.duration || playerDuration);
 
   /** Moves the playhead, starting the player there (paused) if it isn't yet. */
   function seekTo(time: number) {
-    now = time;
+    reading.now = time;
     if (player) player.seek(time, false);
     else if (active) pending = { time, play: false };
     else activate(time, false);
@@ -270,22 +258,17 @@
     else makeClip();
   }
 
-  // Full screen is the window's, with the player panel laid over the page:
-  // WebKitGTK ends the app on the page's own full screen (requestFullscreen).
+  // Full screen (the panel's, PlayerPanel.svelte): the player shown.
   let fullscreen = $state(false);
   function setFullscreen(on: boolean) {
     fullscreen = on;
     if (on) collapsed = false;
-    getCurrentWindow()
-      .setFullscreen(on)
-      .catch((e) => console.error("full screen", e));
   }
 
   onDestroy(() => {
     destroyed = true;
     cancelAnimationFrame(poll);
     clearTimeout(copiedTimer);
-    if (fullscreen) setFullscreen(false);
     player?.destroy();
     // The note asks about this VOD's clip.
     clips.answer(false);
@@ -299,10 +282,8 @@
   // Keyboard control for whichever player is open. Keys pressed while the
   // player's own iframe has focus go to that player instead.
   function onKey(e: KeyboardEvent) {
-    const target = e.target as HTMLElement | null;
-    if (e.altKey || !canEmbed(vod) || !keysForApp()) return;
-    if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-    const key = keyOf(e);
+    const key = playerKey(e);
+    if (key === null || !canEmbed(vod) || !keysForApp()) return;
     // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), and C
     // makes a clip (bare: Ctrl+C is copy).
     if (key === "b" || (key === "c" && !e.shiftKey && !e.ctrlKey && !e.metaKey)) {
@@ -386,8 +367,8 @@
 
 <svelte:window onkeydown={onKey} onpointermove={onClipMove} onpointerup={() => (clipPress = null)} />
 
-<section class:fullscreen>
-  <div class="head">
+<PlayerPanel bind:fullscreen shortcuts={vodShortcuts(framed, os === "mac")} controls={vodControls} {stage} {below}>
+  {#snippet head()}
     <div class="info">
       <strong title={vod.title}>{vod.title}</strong>
       <span class="meta muted">
@@ -411,14 +392,8 @@
         </button>
       {/if}
     </div>
-    <button
-      class="icon"
-      class:on={showKeys}
-      onclick={() => (showKeys = !showKeys)}
-      aria-expanded={showKeys}
-      aria-label="Keyboard shortcuts"
-      title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
-    >
+  {/snippet}
+  {#snippet headEnd()}
     {#if isLocal}
       <button class="link open" onclick={() => api.showFile(vod.id).catch((e) => (error = String(e)))}>
         Show in folder
@@ -440,10 +415,10 @@
         <Icon name={collapsed ? "chevron-down" : "chevron-up"} size={16} />
       </button>
     {/if}
-  </div>
-  {#if showKeys}
-    <Shortcuts shortcuts={vodShortcuts(framed, os === "mac")} />
-  {/if}
+  {/snippet}
+</PlayerPanel>
+
+{#snippet stage()}
   {#if canEmbed(vod)}
     <div class="stage" class:collapsed class:audio={audioOnly}>
       <div class="frame" class:audio={audioOnly} class:own={active && playsHere(vod)}>
@@ -470,74 +445,82 @@
       >
         <PermissionNote action="Download clip" onanswer={(download, hide) => clips.answer(download, hide)} />
       </Popover>
-      <div class="controls">
-        {#if duration}
-          <Scrubber
-            {vod}
-            memo={{ kind: "vod", id: vod.id }}
-            {duration}
-            time={now}
-            {shown}
-            {fps}
-            highlight={clipHover && canClip ? (cuts.selection ?? stretch) : null}
-            ranges={editRanges}
-            current={between ? stretch : null}
-            ownPlayer={playsHere(vod)}
-            onpause={() => player?.playing() && player.togglePlay()}
-            onseek={seekTo}
-          />
-        {/if}
-        <PlayerBar
-          {player}
-          {playing}
-          {now}
-          {duration}
-          {volume}
-          {muted}
-          {rate}
-          {fps}
-          {captionsAvailable}
-          {captionsOn}
-          {fullscreen}
-          canFullscreen
-          ontoggleplay={togglePlay}
-          onfullscreen={setFullscreen}
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet vodControls()}
+  {#if canEmbed(vod) && !collapsed}
+    {#if duration}
+      <Scrubber
+        {vod}
+        memo={{ kind: "vod", id: vod.id }}
+        {duration}
+        time={now}
+        shown={reading.shown}
+        {fps}
+        highlight={clipHover && canClip ? (cuts.selection ?? stretch) : null}
+        ranges={editRanges}
+        current={between ? stretch : null}
+        ownPlayer={playsHere(vod)}
+        onpause={() => player?.playing() && player.togglePlay()}
+        onseek={seekTo}
+      />
+    {/if}
+    <PlayerBar
+      {player}
+      {playing}
+      {now}
+      {duration}
+      volume={reading.volume}
+      muted={reading.muted}
+      rate={reading.rate}
+      {fps}
+      {captionsAvailable}
+      {captionsOn}
+      {fullscreen}
+      canFullscreen
+      ontoggleplay={togglePlay}
+      onfullscreen={setFullscreen}
+    >
+      {#snippet actions()}
+        <button
+          class="action split"
+          class:picking={!!cuts.selection}
+          onclick={split}
+          title={cuts.selection
+            ? "Cut both ends of the selection (B)"
+            : "Cut here, between this frame and the one before; each stretch between cuts can become a clip (B)"}
         >
-          {#snippet actions()}
-            <button
-              class="action split"
-              class:picking={!!cuts.selection}
-              onclick={split}
-              title={cuts.selection
-                ? "Cut both ends of the selection (B)"
-                : "Cut here, between this frame and the one before; each stretch between cuts can become a clip (B)"}
-            >
-              <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
-            </button>
-            <button
-              class="action clip"
-              class:picking={!!cuts.selection}
-              bind:this={clipButton}
-              onpointerdown={onClipDown}
-              onclick={onClipClick}
-              onmouseenter={() => (clipHover = true)}
-              onmouseleave={() => (clipHover = false)}
-              disabled={!canClip}
-              title="Clip the lit-up stretch, to the clip bar (C): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
-            >
-              <Icon name="film" size={14} /> Clip <kbd>C</kbd>
-            </button>
-            {#if cuts.error}
-              <span class="context error-text" title={cuts.error}>{cuts.error}</span>
-            {:else}
-              <span class="context muted" title={context}>{context}</span>
-            {/if}
-          {/snippet}
-        </PlayerBar>
-      </div>
-      {#if clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length}
-        <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
-      {/if}
+          <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
+        </button>
+        <button
+          class="action clip"
+          class:picking={!!cuts.selection}
+          bind:this={clipButton}
+          onpointerdown={onClipDown}
+          onclick={onClipClick}
+          onmouseenter={() => (clipHover = true)}
+          onmouseleave={() => (clipHover = false)}
+          disabled={!canClip}
+          title="Clip the lit-up stretch, to the clip bar (C): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
+        >
+          <Icon name="film" size={14} /> Clip <kbd>C</kbd>
+        </button>
+        {#if cuts.error}
+          <span class="context error-text" title={cuts.error}>{cuts.error}</span>
+        {:else}
+          <span class="context muted" title={context}>{context}</span>
+        {/if}
+      {/snippet}
+    </PlayerBar>
+  {/if}
+{/snippet}
+
+{#snippet below()}
+  {#if canEmbed(vod)}
+    {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length)}
+      <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
     {/if}
     {#if error}
       <p class="error-text note">
@@ -562,45 +545,19 @@
       {/if}
     </p>
   {/if}
-</section>
+{/snippet}
 
 <style>
-  section {
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  /* Full screen: the panel over the whole window, the picture as large as fits. */
-  section.fullscreen {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    border: none;
-  }
-
-  .fullscreen .head,
-  .fullscreen :global(.legend) {
-    display: none;
-  }
-
-  .fullscreen .stage {
-    flex: 1;
-    min-height: 0;
+  /* Full screen: the picture as large as fits (PlayerPanel.svelte). */
+  :global(.fullscreen) .stage {
     display: flex;
   }
 
-  .fullscreen .frame {
+  :global(.fullscreen) .frame {
     flex: 1;
     width: 100%;
     max-height: none;
     aspect-ratio: auto;
-  }
-
-  /* The timeline over the controls: the same for every player. */
-  .controls {
-    padding: 8px 16px 2px;
   }
 
   .split :global(svg) {
@@ -623,13 +580,6 @@
 
   .clip :global(svg) {
     color: var(--accent);
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 6px 10px 6px 16px;
   }
 
   .info {
@@ -676,11 +626,6 @@
 
   .stamp.failed {
     color: var(--danger);
-  }
-
-  .head .icon {
-    width: 28px;
-    height: 28px;
   }
 
   .open {
@@ -734,12 +679,12 @@
   }
 
   /* Audio alone, full screen: black, its captions large in the middle (LocalPlayer.svelte). */
-  .fullscreen .stage.audio {
+  :global(.fullscreen) .stage.audio {
     background: #000;
     padding: 0;
   }
 
-  .fullscreen .frame.audio .host {
+  :global(.fullscreen) .frame.audio .host {
     height: 100%;
   }
 

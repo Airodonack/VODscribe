@@ -11,13 +11,11 @@
   // transcript, piece by piece: a click on a line strikes it out (the edit
   // jumps over it) or brings it back.
 
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { editShortcuts, keyOf, transportKey } from "./playerKeys";
-  import Shortcuts from "./Shortcuts.svelte";
+  import { editShortcuts, playerKey, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -26,9 +24,11 @@
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { DEFAULT_FPS, PEAKS_RATE, cueAt, playedSpans } from "./media";
+  import { PEAKS_RATE, cueAt, playedSpans } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
+  import PlayerPanel from "./PlayerPanel.svelte";
+  import { PlayerReading } from "./playerReading.svelte";
   import { formatFraction, os } from "./platform";
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
@@ -129,14 +129,10 @@
   let host = $state<HTMLDivElement>();
   let player = $state<EditPlayback | null>(null);
   let playError = $state<string | null>(null);
-  let now = $state(0);
-  // Where the frame on screen is, where the player knows (the app's own).
-  let shown = $state<number | null>(null);
-  let playing = $state(false);
-  let volume = $state(1);
-  let muted = $state(false);
-  let rate = $state(1);
-  let fps = $state(DEFAULT_FPS);
+  // What the controls show (playerReading.svelte.ts).
+  const reading = new PlayerReading();
+  const now = $derived(reading.now);
+  const fps = $derived(reading.fps);
   const cue = $derived(prefs.captions ? cueAt(cues, now) : null);
   // The app's own player (editPlayer.ts), drawing on the window's screen;
   // where the screen couldn't be put in the window, the edit can't play here.
@@ -190,7 +186,7 @@
         // Where its playhead was left (or its start), once there's a plan to seek in.
         if (bringTime !== null && plan.length) {
           p.seek(bringTime, false);
-          now = bringTime;
+          reading.now = bringTime;
           bringTime = null;
           playsEdit = id;
         }
@@ -219,18 +215,13 @@
     poll = requestAnimationFrame(read);
     const p = player;
     if (!p) return;
-    now = p.time();
-    shown = p.shown?.() ?? null;
+    reading.read(p);
     // Only once it's this edit's playhead (after the seek to where it was left).
-    if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: now });
-    playing = p.playing();
-    fps = p.fps() ?? DEFAULT_FPS;
-    [volume, muted] = [p.volume.get(), p.volume.muted()];
-    rate = p.rate?.get() ?? 1;
+    if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: reading.now });
   });
 
   const seekTo = (time: number) => {
-    now = time;
+    reading.now = time;
     // Still waiting to seek to where it was left (no plan yet to seek in):
     // this is where it goes instead, and it's what's remembered meanwhile.
     if (bringTime !== null && edit) {
@@ -331,7 +322,7 @@
       edits.wanted = null;
       if (bringTime !== null || !player) seekTo(wanted.time);
       else {
-        now = wanted.time;
+        reading.now = wanted.time;
         player.seek(wanted.time, true);
       }
     });
@@ -368,23 +359,15 @@
     edits.split(s.piece.id, s.vodFrom + (now - s.at));
   }
 
-  // Full screen is the window's, as for the VOD's player.
+  // Full screen (the panel's, PlayerPanel.svelte).
   let fullscreen = $state(false);
-  function setFullscreen(on: boolean) {
-    fullscreen = on;
-    getCurrentWindow()
-      .setFullscreen(on)
-      .catch((e) => console.error("full screen", e));
-  }
+  const setFullscreen = (on: boolean) => (fullscreen = on);
 
   // The keys the VOD's player has, where they mean the same (playerKeys.ts);
   // B splits, E exports (renders).
-  let showKeys = $state(false);
   function onKey(e: KeyboardEvent) {
-    const target = e.target as HTMLElement | null;
-    if (e.altKey || !keysForApp()) return;
-    if (target?.closest("input, textarea, select, [contenteditable], [role=dialog]")) return;
-    const key = keyOf(e);
+    const key = playerKey(e);
+    if (key === null || !keysForApp()) return;
     // E renders even where edits can't play here: then it's the way to watch one.
     if (key === "e" && !player) {
       if (!e.repeat && edit && !snippet && edit.status !== "cutting" && segments.length) edits.render(edit.id);
@@ -682,7 +665,6 @@
 
   onDestroy(() => {
     cancelAnimationFrame(poll);
-    if (fullscreen) setFullscreen(false);
     player?.destroy();
   });
 
@@ -695,8 +677,15 @@
 <svelte:window onkeydown={onKey} onpointermove={onOutMove} onpointerup={() => (outPress = null)} />
 
 {#if edit}
-  <section class="edit-view" class:fullscreen>
-    <div class="head">
+  <PlayerPanel
+    bind:fullscreen
+    label="edit-view"
+    shortcuts={editShortcuts(!!player?.step, os === "mac")}
+    stage={editStage}
+    controls={editControls}
+    below={editBelow}
+  >
+    {#snippet head()}
       <span class="kind"><Icon name="film" size={14} /></span>
       <input
         class="title"
@@ -740,174 +729,134 @@
           Render <kbd>E</kbd>
         </button>
       {/if}
-      <button
-        class="icon"
-        class:on={showKeys}
-        onclick={() => (showKeys = !showKeys)}
-        aria-expanded={showKeys}
-        aria-label="Keyboard shortcuts"
-        title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
-      >
+    {/snippet}
+    {#snippet headEnd()}
       {#if !snippet}
         <button class="icon" onclick={remove} title="Delete edit" aria-label="Delete edit">
           <Icon name="trash" size={16} />
         </button>
       {/if}
-    </div>
-    {#if showKeys}
-      <Shortcuts shortcuts={editShortcuts(!!player?.step, os === "mac")} />
-    {/if}
-
-    <div class="stage">
-      <!-- A click on the picture plays or pauses, as on a VOD's player. -->
-      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-      <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
-      {#if !segments.length}
-        <p class="hint">{EMPTY}</p>
-      {:else if playError}
-        <p class="hint">{playError}</p>
-      {/if}
-      <!-- Over the player and its notes while an edge is dragged. -->
-      {#if edgeFrame}
-        <div class="edge-frame">
-          {#if edgeFrame.url}<img src={edgeFrame.url} alt="" />{/if}
-          <span>{edgeLabel}</span>
-        </div>
-      {/if}
-    </div>
-
-    <div class="controls">
-      {#if total}
-        <Scrubber
-          memo={edit ? { kind: "edit", id: edit.id } : undefined}
-          {waveform}
-          pieces={lane}
-          {pending}
-          selectedPiece={atNow ? unitOf(atNow.piece) : null}
-          picked={edits.selection}
-          marks
-          removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
-          {onpiece}
-          duration={total}
-          time={now}
-          {shown}
-          {fps}
-          onseek={seekTo}
-          onpause={() => player?.playing() && player.togglePlay()}
-        />
-      {/if}
-      <PlayerBar
-        {player}
-        {playing}
-        {now}
-        duration={total}
-        {volume}
-        {muted}
-        {rate}
-        {fps}
-        captionsAvailable={cues.length > 0}
-        captionsOn={prefs.captions}
-        {fullscreen}
-        canFullscreen
-        ontoggleplay={() => player?.togglePlay()}
-        onfullscreen={setFullscreen}
-      >
-        {#snippet actions()}
-          <button
-            class="action split"
-            onclick={split}
-            disabled={!atNow}
-            title="Split the piece at the playhead in two (B)"
-          >
-            <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
-          </button>
-          <button
-            class="action remove"
-            onclick={removeCurrent}
-            onmouseenter={() => (removeHover = true)}
-            onmouseleave={() => (removeHover = false)}
-            disabled={!atNow}
-            title="Take the piece at the playhead out of the edit; its VOD and clips aren't touched (Delete)"
-          >
-            <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
-          </button>
-          {#if edits.error}
-            <span class="context error-text" title={edits.error}>{edits.error}</span>
-          {:else if edit?.status === "error" && edit.error}
-            <span class="context error-text" title={edit.error}>Couldn't render: {edit.error}</span>
-          {:else}
-            <span class="context muted" title={context}>{context}</span>
-          {/if}
-        {/snippet}
-      </PlayerBar>
-    </div>
-    {#if sources.length}
-      <div class="sources" aria-label="Where its pieces come from">
-        {#each sources as source (source.vodId)}
-          <button
-            class="source"
-            onclick={() => {
-              hoveredSource = null;
-              if (edit) edits.lit = { editId: edit.id, vodId: source.vodId };
-              onopenvod(source.vodId, source.first);
-            }}
-            onmouseenter={() => (hoveredSource = source.vodId)}
-            onmouseleave={() => hoveredSource === source.vodId && (hoveredSource = null)}
-            title="{source.count === 1
-              ? 'A piece comes'
-              : `${source.count} pieces come`} from “{source.title}”, lit up in the timeline · open it there"
-          >
-            <Icon name="play" size={12} />
-            <span class="name">{source.title}</span>
-            <span class="count muted">· {source.count} {source.count === 1 ? "piece" : "pieces"}</span>
-            <Icon name="external" size={11} />
-          </button>
-        {/each}
-      </div>
-    {/if}
-    {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error)}
-      <ClipStrip />
-    {/if}
-  </section>
+    {/snippet}
+  </PlayerPanel>
 {/if}
 
+{#snippet editStage()}
+  <div class="stage">
+    <!-- A click on the picture plays or pauses, as on a VOD's player. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
+    {#if !segments.length}
+      <p class="hint">{EMPTY}</p>
+    {:else if playError}
+      <p class="hint">{playError}</p>
+    {/if}
+    <!-- Over the player and its notes while an edge is dragged. -->
+    {#if edgeFrame}
+      <div class="edge-frame">
+        {#if edgeFrame.url}<img src={edgeFrame.url} alt="" />{/if}
+        <span>{edgeLabel}</span>
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet editControls()}
+  {#if total}
+    <Scrubber
+      memo={edit ? { kind: "edit", id: edit.id } : undefined}
+      {waveform}
+      pieces={lane}
+      {pending}
+      selectedPiece={atNow ? unitOf(atNow.piece) : null}
+      picked={edits.selection}
+      marks
+      removing={removeHover && atNow ? (lane.find((p) => p.id === unitOf(atNow.piece)) ?? null) : null}
+      {onpiece}
+      duration={total}
+      time={now}
+      shown={reading.shown}
+      {fps}
+      onseek={seekTo}
+      onpause={() => player?.playing() && player.togglePlay()}
+    />
+  {/if}
+  <PlayerBar
+    {player}
+    playing={reading.playing}
+    {now}
+    duration={total}
+    volume={reading.volume}
+    muted={reading.muted}
+    rate={reading.rate}
+    {fps}
+    captionsAvailable={cues.length > 0}
+    captionsOn={prefs.captions}
+    {fullscreen}
+    canFullscreen
+    ontoggleplay={() => player?.togglePlay()}
+    onfullscreen={setFullscreen}
+  >
+    {#snippet actions()}
+      <button class="action split" onclick={split} disabled={!atNow} title="Split the piece at the playhead in two (B)">
+        <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
+      </button>
+      <button
+        class="action remove"
+        onclick={removeCurrent}
+        onmouseenter={() => (removeHover = true)}
+        onmouseleave={() => (removeHover = false)}
+        disabled={!atNow}
+        title="Take the piece at the playhead out of the edit; its VOD and clips aren't touched (Delete)"
+      >
+        <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
+      </button>
+      {#if edits.error}
+        <span class="context error-text" title={edits.error}>{edits.error}</span>
+      {:else if edit?.status === "error" && edit.error}
+        <span class="context error-text" title={edit.error}>Couldn't render: {edit.error}</span>
+      {:else}
+        <span class="context muted" title={context}>{context}</span>
+      {/if}
+    {/snippet}
+  </PlayerBar>
+{/snippet}
+
+{#snippet editBelow()}
+  {#if sources.length}
+    <div class="sources" aria-label="Where its pieces come from">
+      {#each sources as source (source.vodId)}
+        <button
+          class="source"
+          onclick={() => {
+            hoveredSource = null;
+            if (edit) edits.lit = { editId: edit.id, vodId: source.vodId };
+            onopenvod(source.vodId, source.first);
+          }}
+          onmouseenter={() => (hoveredSource = source.vodId)}
+          onmouseleave={() => hoveredSource === source.vodId && (hoveredSource = null)}
+          title="{source.count === 1
+            ? 'A piece comes'
+            : `${source.count} pieces come`} from “{source.title}”, lit up in the timeline · open it there"
+        >
+          <Icon name="play" size={12} />
+          <span class="name">{source.title}</span>
+          <span class="count muted">· {source.count} {source.count === 1 ? "piece" : "pieces"}</span>
+          <Icon name="external" size={11} />
+        </button>
+      {/each}
+    </div>
+  {/if}
+  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error)}
+    <ClipStrip />
+  {/if}
+{/snippet}
+
 <style>
-  section {
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  section.fullscreen {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: flex;
-    flex-direction: column;
-    border: none;
-  }
-
-  .fullscreen .head,
-  .fullscreen :global(.legend) {
-    display: none;
-  }
-
-  .fullscreen .stage {
-    flex: 1;
-    min-height: 0;
-  }
-
-  .fullscreen .frame {
+  /* Full screen: the picture as large as fits (PlayerPanel.svelte). */
+  :global(.fullscreen) .frame {
     height: 100%;
     max-width: none;
     aspect-ratio: auto;
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 10px 6px 16px;
-    min-height: 40px;
   }
 
   .kind {
@@ -1007,11 +956,6 @@
     color: #fff;
     font-size: 13px;
     text-align: center;
-  }
-
-  /* The timeline over the controls, as for every player. */
-  .controls {
-    padding: 8px 16px 2px;
   }
 
   .split :global(svg) {
