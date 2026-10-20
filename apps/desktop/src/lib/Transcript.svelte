@@ -366,6 +366,13 @@
     );
   }
   let chatCount = $derived(overview?.count ?? 0);
+  // An edit's length is known once its pieces load, after it opens: its
+  // minimap's counts are asked for again on that timeline.
+  $effect(() => {
+    if (edit === null) return;
+    void mapDuration;
+    untrack(() => refreshOverview());
+  });
 
   // While a fetch saves batches: at most this often, the counts and the rows in
   // view are fetched again; other rows when they come into view.

@@ -2630,6 +2630,8 @@ mod tests {
         let (count, histogram) = db.edit_chat_histogram(edit, 13.0, 13).unwrap();
         assert_eq!(count, 3);
         assert_eq!((histogram[1], histogram[3], histogram[9]), (1, 1, 1));
+        // Before the page knows the edit's length, it still learns there's chat.
+        assert_eq!(db.edit_chat_histogram(edit, 0.0, 13).unwrap(), (3, vec![0; 13]));
     }
 
     fn message(time: f64, author: &str, text: &str) -> ChatMessage {

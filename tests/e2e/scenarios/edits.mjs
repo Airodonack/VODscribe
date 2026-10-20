@@ -163,6 +163,16 @@ export default {
       await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
       await until("the edit's chat back", async () => (await messages()) === 2, 10_000);
       ctx.log("the edit's chat: the VOD's two messages in its stretch, beside its transcript");
+      // Opened afresh, unchanged since: its chat shows at once (it's asked
+      // for again once the edit's length is known).
+      await app.click(`.vod[data-key="${vod.id}"] button.main`);
+      await until(
+        "the VOD open",
+        async () => !(await app.js(`return !!document.querySelector(arguments[0])`, title)),
+        MINUTE,
+      );
+      await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+      await until("the edit's chat on opening it", async () => (await messages()) === 2, 10_000);
     }
     // Delete held down: its repeats remove nothing (only a press does).
     await app.js(

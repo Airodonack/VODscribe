@@ -852,16 +852,18 @@ impl Db {
     pub fn edit_chat_histogram(&self, edit: i64, duration: f64, bins: usize) -> Result<(u32, Vec<u32>)> {
         let mut out = vec![0u32; bins];
         let mut count = 0;
-        if duration <= 0.0 || bins == 0 {
-            return Ok((count, out));
-        }
+        // Counted even before the length is known (an edit just opened):
+        // the count says whether it has chat at all.
+        let binned = duration > 0.0 && bins > 0;
         let mut stmt = self.conn.prepare("SELECT time FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3")?;
         let mut at = 0.0;
         for p in self.edit_pieces(edit)? {
             for (a, b) in p.spans() {
                 for time in stmt.query_map(params![p.vod_id, a, b], |r| r.get::<_, f64>(0))? {
                     let t = at + time? - a;
-                    out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
+                    if binned {
+                        out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
+                    }
                     count += 1;
                 }
                 at += b - a;
