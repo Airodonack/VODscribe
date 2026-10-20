@@ -11,6 +11,7 @@ mod clips;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod edits;
+mod embed;
 mod footage;
 mod history;
 mod jobs;
@@ -56,6 +57,8 @@ struct AppState {
     history: history::History,
     /// The app's own player, playing a VOD's file (player.rs).
     player: player::Native,
+    /// What a site's player appends, played by `player` (embed.rs).
+    embed: embed::Embed,
     /// Links being looked up to add, by the interface's ticket, so one can be canceled.
     adding: Mutex<std::collections::HashMap<u64, std::sync::Arc<std::sync::atomic::AtomicBool>>>,
 }
@@ -148,6 +151,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         videos: videos::Videos::new(),
         history: history::History::default(),
         player: player::Native::default(),
+        embed: embed::Embed::default(),
         adding: Mutex::default(),
     });
     app.state::<AppState>().clips.run(app.handle().clone())?;
@@ -325,6 +329,9 @@ pub fn run() {
             player::player_open_edit,
             player::player_plan,
             player::player_close,
+            embed::embed_open,
+            embed::embed_append,
+            embed::embed_close,
             player::player_still,
             player::player_frame,
             screen::screen_under,

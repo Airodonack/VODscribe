@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-embed-open"
+description = "Enables the embed_open command without any pre-configured scope."
+commands.allow = ["embed_open"]
+
+[[permission]]
+identifier = "deny-embed-open"
+description = "Denies the embed_open command without any pre-configured scope."
+commands.deny = ["embed_open"]

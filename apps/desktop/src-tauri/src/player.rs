@@ -251,6 +251,32 @@ async fn open_with(
     Ok(opened)
 }
 
+/// Opens VOD `vod_id` on `timeline` (what its site's player has appended:
+/// embed.rs), waiting where there's nothing yet, at `at`, paused.
+pub(crate) async fn open_embed(app: AppHandle, vod_id: i64, timeline: Timeline, at: f64) -> CmdResult<Opened> {
+    let make = move |app: &AppHandle| {
+        let state = app.state::<AppState>();
+        let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
+        let player = Player::open(&ffmpeg, timeline)?;
+        player.set_waits_for_footage(true);
+        Ok((player, None))
+    };
+    // A new one each time: what's kept starts over.
+    player_close(app.clone());
+    open_with(app, Doc::Vod(vod_id), at, false, make).await
+}
+
+/// VOD `vod_id`'s player, opened by `open_embed`, plays `timeline` from here on.
+pub(crate) fn set_embed_timeline(app: &AppHandle, vod_id: i64, timeline: Timeline) {
+    let state = app.state::<AppState>();
+    let open = state.player.open.lock().unwrap();
+    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id) && o.fetched.is_none())
+        && o.player.timeline() != timeline
+    {
+        o.player.set_timeline(timeline);
+    }
+}
+
 /// How far ahead of where a VOD from a site plays its footage is fetched.
 const AHEAD: f64 = 90.0;
 /// How long a stretch the player asks for at a time (a section holds a

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-embed-append"
+description = "Enables the embed_append command without any pre-configured scope."
+commands.allow = ["embed_append"]
+
+[[permission]]
+identifier = "deny-embed-append"
+description = "Denies the embed_append command without any pre-configured scope."
+commands.deny = ["embed_append"]
