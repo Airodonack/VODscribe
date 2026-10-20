@@ -353,6 +353,15 @@ export interface Undone {
   revision: number;
 }
 
+/** A footage download done (footage.rs `Fetched`). */
+export interface Fetched {
+  vod_id: number;
+  /** Asked by the player, ahead of where a VOD from a site plays; else for an edit. */
+  player: boolean;
+  /** Why it couldn't be fetched, if it couldn't. */
+  error: string | null;
+}
+
 export const api = {
   /** Why the library didn't open when the app started (recovery.rs); null if it did. */
   libraryProblem: () => invoke<string | null>("library_problem"),
@@ -466,7 +475,6 @@ export const api = {
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
-  splitPiece: (id: number, at: number) => invoke<EditView>("split_piece", { id, at }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
@@ -603,9 +611,8 @@ export const events = {
   dragEnded: (cb: () => void) => listen("drag-ended", () => cb()),
   /** How far a section downloading for edits is. */
   footageProgress: (cb: (fetching: Fetching) => void) => listen<Fetching>("footage-progress", (e) => cb(e.payload)),
-  /** Footage of VOD `vod_id` downloaded for edits (or, with `error`, not). */
-  footage: (cb: (fetched: { vod_id: number; error: string | null }) => void) =>
-    listen<{ vod_id: number; error: string | null }>("footage", (e) => cb(e.payload)),
+  /** Footage of VOD `vod_id` downloaded for edits, or for the player (`player`), or with `error`, not. */
+  footage: (cb: (fetched: Fetched) => void) => listen<Fetched>("footage", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };

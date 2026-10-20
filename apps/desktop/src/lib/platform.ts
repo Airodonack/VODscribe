@@ -78,6 +78,10 @@ export const hasSitePlayer = (vod: Vod) => ["youtube", "twitch", "kick"].include
  *  own (crates/core pipeline.rs `keeps_video`). */
 export const keepsVideo = (vod: Vod) => !hasSitePlayer(vod) && vod.platform !== "local";
 
+/** Whether `vod` is a file here (on this computer, or its video kept):
+ *  its frames are read, and its clips cut, from that, not downloaded. */
+export const playsFromFile = (vod: Vod) => !!vod.media || vod.platform === "local";
+
 /** What to try when a video won't play here, for this computer's system. */
 export function playbackHint(): string {
   const ua = navigator.userAgent;

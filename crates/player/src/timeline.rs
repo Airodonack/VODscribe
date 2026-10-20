@@ -64,7 +64,7 @@ impl Timeline {
         }
     }
 
-    /// An edit's `pieces`, each span of each from the footage `cover` gives
+    /// A clip's `pieces` (an edit's, or a VOD's own), each span of each from the footage `cover` gives
     /// for it: the stretches of it (from, to: the VOD's time) that are here,
     /// in order, each with its file (`footage::cover`). What isn't here plays
     /// nothing, for now: it waits.

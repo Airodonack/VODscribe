@@ -1,5 +1,9 @@
 // The keys a VOD's player and an edit's share (play, seek, step a frame,
-// full screen), and the shortcuts each lists in its legend (Shortcuts.svelte).
+// full screen; the selected mark's), and the shortcuts each lists in its
+// legend (Shortcuts.svelte).
+
+import { cuts } from "./cuts.svelte";
+import { inFrame } from "./media";
 
 /** Seconds the arrows and J/L move the playhead (Shift with an arrow: 1 s). */
 export const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
@@ -101,3 +105,44 @@ export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   { keys: ["F"], does: "full screen" },
   undo(mac),
 ];
+
+/**
+ * The selected mark's keys (cuts.svelte.ts), the same in a VOD's player and
+ * an edit's: Enter renames a chapter or highlight, as a double-click does;
+ * , and . move it a frame (ten with Shift), the arrows, J and L as far as
+ * they'd move the playhead, in whole frames, the playback stopping on its
+ * frame, which the picture then shows; Delete takes it away (a press, not
+ * its repeats); Escape lets go of it, or of the selection. True if `key` was
+ * one of them, done.
+ */
+export function markKey(
+  key: string,
+  e: KeyboardEvent,
+  at: { fps: number; length: number; pause: () => void; seekTo: (time: number) => void },
+): boolean {
+  if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
+    cuts.editing = cuts.selected;
+    return true;
+  }
+  if (key === "Escape" && cuts.selection) {
+    cuts.clearSelection();
+    return true;
+  }
+  const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
+  const frameKey = key === "," || key === "." || key === "<" || key === ">";
+  if (moving && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
+    const frames = frameKey
+      ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
+      : Math.round(stepOf(key, e.shiftKey)! * at.fps);
+    at.pause();
+    const time = cuts.nudgeSelected(frames, at.fps, at.length);
+    if (time !== null) at.seekTo(inFrame(time, at.fps, at.length));
+    return true;
+  }
+  if (cuts.selected !== null && (key === "Delete" || key === "Backspace" || key === "Escape")) {
+    if (key === "Escape") cuts.selected = null;
+    else if (!e.repeat) cuts.remove(cuts.selected);
+    return true;
+  }
+  return false;
+}

@@ -164,7 +164,7 @@
 
   // A VOD whose length was unknown (or wrong) until the player said, or an
   // edit's that changed: keep the view inside it, and all of it if it showed
-  // all of it before (an edit grown, its line struck brought back).
+  // all of it before (an edit grown, a stretch taken out brought back).
   let shownLength = 0;
   $effect(() => {
     void duration;

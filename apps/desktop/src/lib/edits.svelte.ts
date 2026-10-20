@@ -175,7 +175,7 @@ class Edits {
     return this.#change(api.removeStretch(this.openId, pick.start, pick.end));
   }
 
-  /** Takes `from`..`to` of the open edit out (between split marks, which
+  /** Takes `from`..`to` of the open edit out (between cuts, which
    *  become a real split), as one change. */
   async removeStretch(from: number, to: number): Promise<boolean> {
     if (this.openId === null) return false;
@@ -212,7 +212,6 @@ class Edits {
   move = (pieceId: number, index: number) => this.#change(api.movePiece(pieceId, index));
   trim = (pieceId: number, start: number, end: number) => this.#change(api.trimPiece(pieceId, start, end));
   removePiece = (pieceId: number) => this.#change(api.removePiece(pieceId));
-  split = (pieceId: number, at: number) => this.#change(api.splitPiece(pieceId, at));
 
   async render(id: number) {
     this.error = null;

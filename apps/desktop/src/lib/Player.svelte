@@ -8,7 +8,7 @@
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
-  import { frameStart, inFrame, isUnplayable } from "./media";
+  import { frameStart, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
@@ -18,9 +18,18 @@
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
-  import { playerKey, stepOf, transportKey, vodShortcuts } from "./playerKeys";
-  import { canEmbed, createPlayer, playsFromFile, playsHere, type EmbeddedPlayer } from "./embed";
-  import { formatFraction, formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
+  import { markKey, playerKey, transportKey, vodShortcuts } from "./playerKeys";
+  import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
+  import {
+    formatFraction,
+    formatTime,
+    keepsVideo,
+    os,
+    playbackHint,
+    playsFromFile,
+    siteName,
+    watchUrl,
+  } from "./platform";
   import { nav } from "./nav.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a fresh object per
@@ -112,14 +121,18 @@
   }
 
   // A VOD whose video has just been downloaded switches to the app's own
-  // player, where it was and as it was (playing or not).
+  // player, where it was and as it was (playing or not); so does a VOD from
+  // a site once that's known to play here, and back to the site's if its
+  // footage can't be had (ownPlayer.svelte.ts).
   let here = untrack(() => playsHere(vod));
   $effect(() => {
     const now = playsHere(vod);
+    // Still loading: looked at again once it's in (this reads `player`).
+    if (active && !player) return;
     if (now === here) return;
     here = now;
     // Its clips are cut from the file now (or downloaded again, once it's deleted).
-    clips.open(vod.id, !now);
+    clips.open(vod.id, !playsFromFile(vod));
     if (!active || !player) return;
     const time = player.time();
     const play = player.playing();
@@ -311,35 +324,9 @@
       e.preventDefault();
       return;
     }
-    // Enter renames the selected chapter or highlight, as a double-click does.
-    if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
-      cuts.editing = cuts.selected;
-      e.preventDefault();
-      return;
-    }
-    if (key === "Escape" && cuts.selection) {
-      cuts.clearSelection();
-      e.preventDefault();
-      return;
-    }
-    const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
-    const frameKey = key === "," || key === "." || key === "<" || key === ">";
-    if (moving && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
-      // A selected cut (or edge) moves: , and . a frame (ten with Shift), the
-      // arrows, J and L as far as they'd move the playhead, in whole frames.
-      // The playback stops on its frame, which the picture then shows.
-      const frames = frameKey
-        ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
-        : Math.round(stepOf(key, e.shiftKey)! * fps);
-      if (player?.playing()) player.togglePlay();
-      const at = cuts.nudgeSelected(frames, fps, duration);
-      if (at !== null) seekTo(inFrame(at, fps, duration));
-      e.preventDefault();
-      return;
-    }
-    if (cuts.selected !== null && (key === "Delete" || key === "Backspace" || key === "Escape")) {
-      if (key === "Escape") cuts.selected = null;
-      else cuts.remove(cuts.selected);
+    // The selected mark (or the selection's edge): renamed, moved, taken away.
+    const pause = () => player?.playing() && player.togglePlay();
+    if (markKey(key, e, { fps, length: duration, pause, seekTo })) {
       e.preventDefault();
       return;
     }

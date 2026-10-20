@@ -7,6 +7,16 @@ use std::time::Duration;
 use vodscribe_player::clock::Player;
 use vodscribe_player::timeline::{Stretch, Timeline};
 
+/// Waits until `done` holds, or panics after `secs` seconds (under load the
+/// player's threads may take a while).
+fn until(what: &str, secs: u64, done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 /// Ten seconds with no footage.
 fn nothing_here() -> Timeline {
     Timeline::from_stretches(vec![Stretch { at: 0.0, length: 10.0, piece_id: None, source: None, from: 0.0 }])
@@ -17,9 +27,9 @@ fn the_time_waits_for_footage_where_asked_to() {
     let player = Player::open(Path::new("ffmpeg"), nothing_here()).unwrap();
     player.set_waits_for_footage(true);
     player.play();
-    std::thread::sleep(Duration::from_millis(600));
+    until("it to say it's waiting", 10, || player.waiting_for_footage());
+    std::thread::sleep(Duration::from_millis(300));
     assert_eq!(player.time(), 0.0, "it stands");
-    assert!(player.waiting_for_footage());
     player.pause();
     assert!(!player.waiting_for_footage(), "paused, it isn't waiting");
 }
@@ -28,8 +38,7 @@ fn the_time_waits_for_footage_where_asked_to() {
 fn otherwise_the_time_passes_where_there_is_no_footage() {
     let player = Player::open(Path::new("ffmpeg"), nothing_here()).unwrap();
     player.play();
-    std::thread::sleep(Duration::from_millis(600));
-    assert!(player.time() > 0.3, "it runs on: {}", player.time());
+    until("the time to run on", 10, || player.time() > 0.3);
     assert!(!player.waiting_for_footage());
 }
 
@@ -56,9 +65,9 @@ fn running_into_footage_not_here_it_stops_there_and_waits() {
     let player = Player::open(Path::new("ffmpeg"), timeline).unwrap();
     player.set_waits_for_footage(true);
     player.play();
-    std::thread::sleep(Duration::from_millis(2500));
+    until("it to wait where the footage ends", 20, || player.waiting_for_footage());
+    std::thread::sleep(Duration::from_millis(300));
     let time = player.time();
     assert!((time - 1.0).abs() < 0.05, "it stops where the footage does: {time}");
-    assert!(player.waiting_for_footage());
     let _ = std::fs::remove_dir_all(dir);
 }

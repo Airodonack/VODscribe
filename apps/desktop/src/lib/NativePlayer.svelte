@@ -15,6 +15,7 @@
   import { holdToCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
+  import { playsFromFile } from "./platform";
   import { NativeDriver } from "./nativeDriver";
   import { ownPlayer } from "./ownPlayer.svelte";
   import Screen from "./Screen.svelte";
@@ -46,7 +47,7 @@
   // what's kept plays.
   let waiting = $state(false);
   let unavailable = $state(false);
-  const sitePlayer = untrack(() => !vod.media && vod.platform !== "local");
+  const sitePlayer = untrack(() => !playsFromFile(vod));
 
   // The caption, over the picture (or that it's waiting for the video):
   // drawn again when it, the box's size or full screen changes.
@@ -88,7 +89,8 @@
     if (sitePlayer)
       events
         .footage((fetched) => {
-          if (destroyed || fetched.vod_id !== vod.id) return;
+          // Only the player's own asks: an edit's of the same VOD aren't its.
+          if (destroyed || fetched.vod_id !== vod.id || !fetched.player) return;
           unavailable = !!fetched.error;
           if (!fetched.error) return;
           // None of it to play: the site's player instead. Some played: what's

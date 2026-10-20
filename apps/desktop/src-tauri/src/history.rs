@@ -270,7 +270,7 @@ fn restore_edit_bar(
             Some(i) => {
                 db.restore_edit(now[i].0, &want.1)?;
                 state.clips.stop(now[i].0);
-                state.clips.queue(now[i].0);
+                state.clips.queue_once(now[i].0);
             }
             None => state.clips.queue(db.add_bar_clip(id, &want.1)?),
         }
@@ -347,7 +347,7 @@ fn restore_bar(app: &AppHandle, db: &Db, vod_id: i64, from: &[BarClip], to: &[Ba
                 if !clip.same_stretch(want) {
                     db.set_clip_range(id, want.start, want.end)?;
                     state.clips.stop(id);
-                    state.clips.queue(id);
+                    state.clips.queue_once(id);
                 }
                 if clip.title != want.title {
                     db.rename_clip(id, &want.title)?;

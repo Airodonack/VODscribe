@@ -1,12 +1,13 @@
-// The open VOD's marks, or the open edit's (its cuts, chapters and highlights,
-// on its timeline: crates/core edits.rs `place_marks`). Cuts between frames split it into stretches, each of
-// which can become a clip: Split (B) puts one where the playhead is (or takes
-// away the one there). Chapters (N) name the part of the VOD from their start
-// to the next one's, and highlights (M) note a moment. A selected mark moves
-// by frames with , and . or by seconds with the arrows, J and L
-// (Player.svelte), or by dragging it on the timeline (Scrubber.svelte).
-// Saved per VOD (crates/core db.rs `marks`); changes show at once and are
-// saved after.
+// The open VOD's marks, or the open edit's (its cuts, chapters and
+// highlights, on its timeline: crates/core edits.rs `place_marks`). Cuts
+// between frames split it into stretches, each of which can become a clip
+// (in an edit, a delete between them makes them a real split): Split (B)
+// puts one where the playhead is (or takes away the one there). Chapters (N)
+// name the part from their start to the next one's, and highlights (M) note
+// a moment. A selected mark moves by frames with , and . or by seconds with
+// the arrows, J and L (playerKeys.ts `markKey`), or by dragging it on the
+// timeline (Scrubber.svelte). Saved per VOD or clip (crates/core db.rs
+// `marks`); changes show at once and are saved after.
 
 import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, nudge } from "./media";
@@ -31,7 +32,7 @@ class Cuts {
   selection = $state<{ start: number; end: number } | null>(null);
   /** The selection's edge selected, to drag or move a frame at a time. */
   selectedEdge = $state<"start" | "end" | null>(null);
-  /** The open VOD's frame rate, as its player says (Player.svelte), for marks placed elsewhere. */
+  /** The open VOD's or edit's frame rate, as its player says, for marks placed elsewhere. */
   fps = DEFAULT_FPS;
   error = $state<string | null>(null);
   #seq = 0;
@@ -96,6 +97,18 @@ class Cuts {
     return this.list.find((m) => Math.abs(m.start - start) < 0.5 / fps);
   }
 
+  /** Adds a mark of `kind` to `doc` (a VOD's or an edit's) at `start`. */
+  #addTo = (doc: Doc, start: number, kind: MarkKind) =>
+    doc.kind === "vod" ? api.addMark(doc.id, start, kind) : api.addEditMark(doc.id, start, kind);
+
+  /** Whether `doc`'s marks are the ones shown (it may have been left and opened again since). */
+  #showing = (doc: Doc) => this.doc !== null && docKey(this.doc) === docKey(doc);
+
+  /** Lists `mark`, unless it's listed already (a reload since may have it). */
+  #put(mark: Mark) {
+    if (!this.all.some((m) => m.id === mark.id)) this.all = this.#sorted([...this.all, mark]);
+  }
+
   /** Puts a mark on the frame showing at `time` (selected, if `select`), or takes away the one there. */
   async toggle(time: number, fps: number, select = true) {
     const doc = this.doc;
@@ -104,10 +117,10 @@ class Cuts {
     if (there) return this.remove(there.id);
     const start = frameStart(time, fps);
     try {
-      const mark = await (doc.kind === "vod" ? api.addMark(doc.id, start) : api.addEditMark(doc.id, start));
+      const mark = await this.#addTo(doc, start, "cut");
       // Another VOD or edit open by now: the mark is that one's, not to select here.
-      if (this.doc !== doc) return;
-      this.all = this.#sorted([...this.all, mark]);
+      if (!this.#showing(doc)) return;
+      this.#put(mark);
       if (select) this.selected = mark.id;
       this.error = null;
     } catch (e) {
@@ -123,10 +136,9 @@ class Cuts {
     // One of its kind on that frame already: that one's title instead.
     const there = this.all.find((m) => m.kind === kind && Math.abs(m.start - start) < 0.5 / fps);
     try {
-      const mark =
-        there ?? (await (doc.kind === "vod" ? api.addMark(doc.id, start, kind) : api.addEditMark(doc.id, start, kind)));
-      if (this.doc !== doc) return;
-      if (!there) this.all = this.#sorted([...this.all, mark]);
+      const mark = there ?? (await this.#addTo(doc, start, kind));
+      if (!this.#showing(doc)) return;
+      if (!there) this.#put(mark);
       this.clearSelection();
       this.selected = mark.id;
       this.editing = mark.id;
@@ -157,14 +169,14 @@ class Cuts {
    *  returns that stretch, from cut to cut. */
   async cutSelection(): Promise<{ start: number; end: number } | null> {
     const picked = this.selection;
-    const vodId = this.vodId;
+    const doc = this.doc;
     if (!picked) return null;
     this.clearSelection();
     await this.ensure(picked.start);
-    // Another VOD opened meanwhile: its own marks aren't cut, nor is a clip made.
-    if (this.vodId !== vodId) return null;
+    // Another VOD or edit opened meanwhile: its own marks aren't cut, nor is a clip made.
+    if (!doc || !this.#showing(doc)) return null;
     await this.ensure(picked.end);
-    if (this.vodId !== vodId) return null;
+    if (!doc || !this.#showing(doc)) return null;
     return { start: frameStart(picked.start, this.fps), end: frameStart(picked.end, this.fps) };
   }
 

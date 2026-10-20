@@ -1,6 +1,6 @@
 //! Footage: where the picture and sound of a stretch of a VOD come from, for
-//! edits as they play (the app's own player) and as they're rendered
-//! (`edits::render_pieces`).
+//! a VOD from a site and edits as they play (the app's own player), edits as
+//! they're rendered (`edits::render_pieces`), and clips cut from sites.
 //! First the VOD's own file, where it plays from one here (a file on this
 //! computer, or its video downloaded); then any clip's file covering the
 //! stretch; then a section downloaded for edits into the footage folder
@@ -227,7 +227,9 @@ pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64, kept: impl Fn(&Path) 
         .flatten()
         .filter_map(|e| {
             let meta = e.metadata().ok()?;
-            (meta.is_file() && !kept(&e.path()))
+            // Not a part file: one being moved into place.
+            let part = e.file_name().to_string_lossy().contains(".part");
+            (meta.is_file() && !part && !kept(&e.path()))
                 .then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
         })
         .collect();

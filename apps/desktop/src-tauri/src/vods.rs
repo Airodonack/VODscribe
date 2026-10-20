@@ -395,7 +395,7 @@ pub(crate) const SWEEP_AT_QUIT: Duration = Duration::from_secs(3);
 /// Erases the sources nothing uses (`Db::unused_sources`): their transcript,
 /// chat, files, footage and pictures. As the app quits (`db` held, within
 /// `SWEEP_AT_QUIT`), or after it starts (`db` None: the library's lock taken
-/// a part at a time, as removing a VOD used to). One whose work is still
+/// a part at a time). One whose work is still
 /// stopping waits for the next time.
 pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
     let state = app.state::<AppState>();

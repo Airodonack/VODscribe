@@ -3,8 +3,8 @@
   // player's place and laid out like it: the picture (editPlayer.ts, the app's
   // own player playing its pieces one after another), the timeline in the edit's own time with its
   // pieces' waveforms and the joins between them, and the same controls,
-  // where Split puts a split mark at the playhead (as on a VOD) and Remove
-  // takes out the stretch there between split marks, which become a real
+  // where Split puts a cut at the playhead (as on a VOD) and Remove
+  // takes out the stretch there between cuts, which become a real
   // split, or else the piece (Delete, too); Render, at the top beside the
   // rendered video, makes it. Its pieces
   // are bands in the timeline's lane (Scrubber.svelte): clicked to go to,
@@ -16,16 +16,16 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { editShortcuts, playerKey, stepOf, transportKey } from "./playerKeys";
+  import { editShortcuts, markKey, playerKey, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
-  import { playsFromFile } from "./embed";
+  import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { PEAKS_RATE, cueAt, inFrame, playedSpans, stretchIn } from "./media";
+  import { PEAKS_RATE, cueAt, playedSpans, stretchIn } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
@@ -272,8 +272,7 @@
   /** Remove is hovered: the piece it would take out lights up on the timeline. */
   let removeHover = $state(false);
 
-  /** Remove: the piece at the playhead out of the edit (the one on screen,
-   *  as for Split: there's no other selection to keep track of). */
+  /** Remove: the piece at the playhead out of the edit (the one on screen). */
   function removeCurrent() {
     const id = edit?.id;
     if (!atNow || id === undefined) return;
@@ -371,7 +370,7 @@
     }
   }
 
-  /** Split: a split mark at both ends of the selection, else one here (or
+  /** Split: a cut at both ends of the selection, else one here (or
    *  the one here taken away), as on a VOD. A delete at one makes it real. */
   async function split() {
     const picked = edits.selection;
@@ -435,27 +434,8 @@
       e.preventDefault();
       return;
     }
-    if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected)) {
-      cuts.editing = cuts.selected;
-      e.preventDefault();
-      return;
-    }
-    // A selected mark moves: , and . a frame (ten with Shift), the arrows,
-    // J and L as far as they'd move the playhead (as on a VOD).
-    const frameKey = key === "," || key === "." || key === "<" || key === ">";
-    if (cuts.selected !== null && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
-      const frames = frameKey
-        ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
-        : Math.round(stepOf(key, e.shiftKey)! * fps);
-      if (p.playing()) p.togglePlay();
-      const at = cuts.nudgeSelected(frames, fps, total);
-      if (at !== null) seekTo(inFrame(at, fps, total));
-      e.preventDefault();
-      return;
-    }
-    if ((key === "Delete" || key === "Backspace" || key === "Escape") && cuts.selected !== null) {
-      if (key === "Escape") cuts.selected = null;
-      else if (!e.repeat) cuts.remove(cuts.selected);
+    // The selected mark: renamed, moved, taken away (as on a VOD).
+    if (markKey(key, e, { fps, length: total, pause: () => p.playing() && p.togglePlay(), seekTo })) {
       e.preventDefault();
       return;
     }
@@ -541,7 +521,7 @@
     return out;
   });
 
-  // The band at the playhead, and the stretch of it between its split marks
+  // The band at the playhead, and the stretch of it between its cuts
   // (as a VOD's between its cuts) that the playhead is in: all of it if it has none.
   const unitNow = $derived(atNow ? lane.find((p) => p.id === unitOf(atNow.piece)) : undefined);
   const stretchNow = $derived.by(() => {

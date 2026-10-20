@@ -12,7 +12,7 @@ import { mount, unmount } from "svelte";
 import { api, type Vod } from "./api";
 import LocalPlayer from "./LocalPlayer.svelte";
 import NativePlayer from "./NativePlayer.svelte";
-import { isTwitchClip, twitchId, twitchTime } from "./platform";
+import { hasSitePlayer, isTwitchClip, twitchId, twitchTime } from "./platform";
 
 export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
@@ -452,9 +452,12 @@ function playerFor(vod: Vod): CreatePlayer | undefined {
 /** Whether VOD `vod` from a site plays in the app's own player. */
 function ownsSite(vod: Vod): boolean {
   return (
-    ["youtube", "twitch", "kick"].includes(vod.platform) &&
+    hasSitePlayer(vod) &&
     !isTwitchClip(vod) &&
     !vod.audio_only &&
+    // Its length known: the player lays out its timeline by it (a stream
+    // still going on may not say yet).
+    (vod.duration ?? 0) > 0 &&
     ownPlayer.here === true &&
     !ownPlayer.fellBack.has(vod.id)
   );
@@ -476,7 +479,3 @@ export const canEmbed = (vod: Vod) => playerFor(vod) !== undefined;
 /** Whether `vod` plays in the app's own player: a file here, or a VOD
  *  from a site from its footage. */
 export const playsHere = (vod: Vod) => playerFor(vod) === local;
-
-/** Whether `vod` is a file here (on this computer, or its video kept):
- *  its frames are read, and its clips cut, from that, not downloaded. */
-export const playsFromFile = (vod: Vod) => !!vod.media || vod.platform === "local";

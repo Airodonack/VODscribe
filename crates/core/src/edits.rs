@@ -28,7 +28,7 @@ use crate::transcript::{Cue, Segment, Word};
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
 const SLIVER: f64 = 0.04;
-/// How near a stretch's end a split mark is to be at it: within half a
+/// How near a stretch's end a cut is to be at it: within half a
 /// frame (at 25 fps), as marks sit on frames and lines end where they end.
 const AT_END: f64 = 0.02;
 
@@ -217,6 +217,8 @@ pub struct Shown {
     pub from: f64,
     pub to: f64,
     pub shift: f64,
+    /// `to` is where the stretch that plays ends (a join, or the clip's end).
+    pub at_end: bool,
 }
 
 /// As `on_timeline`, with `cut` saying what of each thing shows in the
@@ -240,7 +242,8 @@ pub fn on_timeline_cut<T, U>(
                 if end - start < SLIVER {
                     continue;
                 }
-                if let Some(shown) = cut(thing, Shown { from: start, to: end, shift: at - a }) {
+                let shown = Shown { from: start, to: end, shift: at - a, at_end: end >= b - 1e-9 };
+                if let Some(shown) = cut(thing, shown) {
                     out.push((at + start - a, at + end - a, shown));
                 }
             }
@@ -300,10 +303,10 @@ pub fn clip_cues(pieces: &[EditPiece], mut segments_of: impl FnMut(i64) -> Resul
             let (from, to) = (shown.from + shown.shift, shown.to + shown.shift);
             let line = segment_shown(segment, shown)?;
             let cues = crate::transcript::cues(std::slice::from_ref(&line));
-            // Whether it runs to where the stretch ends (a join, or the end).
-            let cues = cues
-                .into_iter()
-                .map(|c| (Cue { start: c.start.max(from), end: c.end.min(to), text: c.text }, c.end >= to));
+            // Whether it runs to where the stretch that plays ends (a join, or the end).
+            let cues = cues.into_iter().map(|c| {
+                (Cue { start: c.start.max(from), end: c.end.min(to), text: c.text }, shown.at_end && c.end >= to)
+            });
             Some(cues.collect::<Vec<_>>())
         },
     )?;
@@ -368,7 +371,8 @@ pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::
 }
 
 /// The VOD, and its moment (seconds), playing at `time` of a clip of
-/// `pieces`' timeline; at its very end, the last moment played.
+/// `pieces`' timeline; at its very end, a millisecond before (the end
+/// itself plays nothing, and a mark there wouldn't show).
 pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
     let mut at = 0.0;
     let mut last = None;
@@ -378,7 +382,7 @@ pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
                 return Some((p.vod_id, a + time - at));
             }
             at += b - a;
-            last = Some((p.vod_id, b));
+            last = Some((p.vod_id, (b - 0.001).max(a)));
         }
     }
     last.filter(|_| (time - at).abs() < 1e-6)
@@ -472,21 +476,50 @@ pub fn cutting_out(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Cuttin
     out
 }
 
-/// What to render for `pieces`: each one's spans, from the footage `find`
-/// gives for its stretch of its VOD, or a hole's black and silence. Fails if
-/// some footage isn't here yet.
-pub fn render_pieces(pieces: &[EditPiece], find: impl Fn(i64, f64, f64) -> Option<Source>) -> Result<Vec<Piece>> {
+/// Whether `cover` (`footage::cover` of `start`..`end`) has all of it, with no gap.
+pub fn covers(cover: &[(f64, f64, Source)], start: f64, end: f64) -> bool {
+    let mut at = start;
+    for (from, to, _) in cover {
+        if *from > at + 1e-6 {
+            return false;
+        }
+        at = at.max(*to);
+    }
+    at >= end - 1e-6
+}
+
+/// What to render for `pieces`: each one's spans, from the footage `cover`
+/// gives for its stretch of its VOD (`footage::cover`: file by file), and
+/// where none is, a hole's black and silence. Fails if some footage of a
+/// piece that isn't a hole isn't here yet.
+pub fn render_pieces(
+    pieces: &[EditPiece],
+    cover: impl Fn(i64, f64, f64) -> Vec<(f64, f64, Source)>,
+) -> Result<Vec<Piece>> {
     let mut out = Vec::new();
     for p in pieces {
-        for (a, b) in p.spans() {
-            if p.hole {
-                out.push(Piece { source: None, start: a, end: b });
-                continue;
+        let gap = |out: &mut Vec<Piece>, from: f64, to: f64| {
+            if to - from < 1e-6 {
+                return Ok(());
             }
-            let Some(source) = find(p.vod_id, a, b) else {
+            if !p.hole {
                 bail!("The footage of “{}” isn't here yet.", p.title);
-            };
-            out.push(Piece { source: Some(source.path), start: a - source.offset, end: b - source.offset });
+            }
+            out.push(Piece { source: None, start: 0.0, end: to - from });
+            Ok(())
+        };
+        for (a, b) in p.spans() {
+            let mut done = a;
+            for (from, to, source) in cover(p.vod_id, a, b) {
+                let (from, to) = (from.max(done), to.min(b));
+                if to - from < 1e-6 {
+                    continue;
+                }
+                gap(&mut out, done, from)?;
+                out.push(Piece { source: Some(source.path), start: from - source.offset, end: to - source.offset });
+                done = to;
+            }
+            gap(&mut out, done, b)?;
         }
     }
     if out.is_empty() {
@@ -873,7 +906,7 @@ impl Db {
         let items = self.item_rows(from)?;
         anyhow::ensure!(into != from, "A clip can't go inside itself.");
         // Its chapters and highlights that show in it come too, on the same
-        // moments (split marks are where its own stretches were, not its).
+        // moments (cuts are where its own stretches were, not its).
         let marks = self.clip_marks(from)?;
         let shown: Vec<MarkAt> = place_marks(&self.edit_pieces(from)?, &marks)
             .iter()
@@ -1001,6 +1034,10 @@ impl Db {
                             e.insert(self.vod(p.vod_id)?.map(|v| v.info.platform));
                         }
                         for mut m in w.messages {
+                            // A moment played twice in the window: its messages once, where first played.
+                            if messages.iter().any(|seen: &crate::db::ChatLine| seen.id == m.id) {
+                                continue;
+                            }
                             m.time = s + m.time - src;
                             m.platform = platforms[&p.vod_id].clone();
                             messages.push(m);
@@ -1290,7 +1327,10 @@ impl Db {
         })
     }
 
-    /// Sets the stretches struck out of piece `id`, in seconds.
+    /// Sets the stretches struck out of piece `id`, in seconds. Nothing
+    /// strikes stretches now (a slice taken out splits pieces), but pieces
+    /// from before may have some: the tests make such pieces with it.
+    #[cfg(test)]
     pub fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         let struck = struck_json(&struck_flicks(struck))?;
@@ -1744,7 +1784,11 @@ pub(crate) mod tests {
         assert_eq!(at(outside), None, "a moment the edit doesn't play");
         assert_eq!(source_at(&pieces, 3.0), Some((vod, 15.0)));
         assert_eq!(source_at(&pieces, 9.0), Some((vod, 31.0)));
-        assert_eq!(source_at(&pieces, 13.0), Some((vod, 35.0)), "the very end");
+        assert_eq!(source_at(&pieces, 13.0), Some((vod, 34.999)), "the very end: just before it");
+        // A mark there shows, at the end.
+        let end = db.add_clip_mark(edit, vod, "highlight", 34.999, None).unwrap();
+        let placed = place_marks(&pieces, &db.clip_marks(edit).unwrap());
+        assert!(placed.iter().any(|m| m.id == end && (m.start - 12.999).abs() < 1e-9));
         assert_eq!(source_at(&pieces, 14.0), None);
 
         // Undo puts them back as they were: the edit's state holds them.
@@ -1753,7 +1797,7 @@ pub(crate) mod tests {
         db.delete_mark(later).unwrap();
         db.restore_edit(edit, &state).unwrap();
         let back: Vec<f64> = db.clip_marks(edit).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
-        assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 50.0]);
+        assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 34.999, 50.0]);
     }
 
     #[test]
@@ -2037,13 +2081,14 @@ pub(crate) mod tests {
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let edit = db.add_edit("e").unwrap();
         db.add_piece(edit.id, vod, (10.0, 20.0), "a", None).unwrap();
-        let none = |_: i64, _: f64, _: f64| None;
+        let none = |_: i64, _: f64, _: f64| vec![];
         let err = render_pieces(&db.edit_pieces(edit.id).unwrap(), none).unwrap_err();
         assert!(err.to_string().contains("isn't here yet"), "{err}");
         let piece = db.edit_pieces(edit.id).unwrap()[0].id;
         db.set_piece_struck(piece, &[(12.0, 13.0)]).unwrap();
         // Footage of 5 s to 30 s of the VOD: its time 0 is the VOD's 5 s.
-        let found = |_: i64, _: f64, _: f64| Some(Source { path: "/f/x.mp4".into(), offset: 5.0, section: None });
+        let file = |path: &str, offset: f64| Source { path: path.into(), offset, section: None };
+        let found = |_: i64, a: f64, b: f64| vec![(a, b, file("/f/x.mp4", 5.0))];
         let pieces = render_pieces(&db.edit_pieces(edit.id).unwrap(), found).unwrap();
         assert_eq!(
             pieces,
@@ -2052,5 +2097,26 @@ pub(crate) mod tests {
                 Piece { source: Some("/f/x.mp4".into()), start: 8.0, end: 15.0 },
             ]
         );
+        // Two sections, and nothing from 17 s: a hole's piece plays what's
+        // kept, black and silence for the rest; any other waits for it.
+        let partly = |_: i64, a: f64, b: f64| {
+            vec![
+                (a, 15.0_f64.min(b), file("/f/s1.mkv", 0.0)),
+                (15.0_f64.max(a), 17.0_f64.min(b), file("/f/s2.mkv", 14.0)),
+            ]
+        };
+        assert!(render_pieces(&db.edit_pieces(edit.id).unwrap(), partly).is_err());
+        let mut gone = db.edit_pieces(edit.id).unwrap();
+        gone[0].hole = true;
+        assert_eq!(
+            render_pieces(&gone, partly).unwrap(),
+            [
+                Piece { source: Some("/f/s1.mkv".into()), start: 10.0, end: 12.0 },
+                Piece { source: Some("/f/s1.mkv".into()), start: 13.0, end: 15.0 },
+                Piece { source: Some("/f/s2.mkv".into()), start: 1.0, end: 3.0 },
+                Piece { source: None, start: 0.0, end: 3.0 },
+            ]
+        );
+        assert!(covers(&partly(1, 10.0, 17.0), 10.0, 17.0) && !covers(&partly(1, 10.0, 20.0), 10.0, 20.0));
     }
 }

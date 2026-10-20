@@ -68,6 +68,8 @@ struct Fetching {
 #[derive(Serialize, Clone)]
 struct Fetched {
     vod_id: i64,
+    /// Asked by the player (ahead of where a VOD plays), not for an edit.
+    player: bool,
     /// Why it couldn't be fetched, if it couldn't.
     error: Option<String>,
 }
@@ -172,7 +174,7 @@ fn served(state: &AppState, source: Source) -> Source {
 
 /// The file footage section `name` is in now (`footage::section_stem`): the
 /// part file while it downloads, then yt-dlp's finished file beside it, then
-/// the one kept in the footage folder.
+/// that moved beside its place in the footage folder, then the one kept there.
 pub(crate) fn section_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
     let state = app.state::<AppState>();
     let growing = state
@@ -195,6 +197,8 @@ pub(crate) fn section_file(app: &AppHandle, name: &str) -> Option<PathBuf> {
     growing
         .filter(|p| p.is_file())
         .or_else(finished)
+        // Moved beside its place, not yet into it.
+        .or_else(|| Some(dir(app).join(format!("{name}.part.mkv"))).filter(|p| p.is_file()))
         .or_else(|| Some(dir(app).join(format!("{name}.mkv"))).filter(|p| p.is_file()))
 }
 
@@ -231,17 +235,20 @@ impl Footage {
             let state = app.state::<AppState>();
             tidy(&app, None);
             loop {
+                let stop = Arc::new(AtomicBool::new(false));
                 let (vod_id, start, end, player) = {
                     let mut waiting = state.footage.waiting.lock().unwrap();
-                    loop {
+                    let next = loop {
                         if let Some(next) = waiting.pop_front() {
                             break next;
                         }
                         waiting = state.footage.wake.wait(waiting).unwrap();
-                    }
+                    };
+                    // What it's fetching, known before the queue is let go, so
+                    // an ask in between (the player gone elsewhere) can stop it.
+                    *state.footage.current.lock().unwrap() = Some((next, stop.clone()));
+                    next
                 };
-                let stop = Arc::new(AtomicBool::new(false));
-                *state.footage.current.lock().unwrap() = Some(((vod_id, start, end, player), stop.clone()));
                 let result = ensure(&app, vod_id, start, end, &stop, &|_| {});
                 *state.footage.current.lock().unwrap() = None;
                 // Within the cap still, after each (a VOD playing fetches one every two minutes).
@@ -250,9 +257,11 @@ impl Footage {
                 let error = result.err().filter(|e| !vodscribe_core::is_canceled(e));
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
-                    state.footage.failed.lock().unwrap().insert(vod_id, Instant::now());
+                    if player {
+                        state.footage.failed.lock().unwrap().insert(vod_id, Instant::now());
+                    }
                 }
-                let _ = app.emit("footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
+                let _ = app.emit("footage", Fetched { vod_id, player, error: error.map(|e| format!("{e:#}")) });
             }
         })?;
         Ok(())
@@ -417,7 +426,7 @@ pub(crate) fn ensure(
             let part = dir.join(format!("{name}.part.mkv"));
             std::fs::rename(&file, &part).or_else(|_| std::fs::copy(&file, &part).map(|_| ()))?;
             let db = state.db.lock().unwrap();
-            if db.vod(vod_id)?.is_none() {
+            if db.vod(vod_id)?.is_none() || db.is_gone(vod_id)? {
                 let _ = std::fs::remove_file(&part);
                 anyhow::bail!("That VOD is gone.");
             }
@@ -430,8 +439,8 @@ pub(crate) fn ensure(
         result
     });
     *state.footage.growing.lock().unwrap() = None;
-    // Failed, the next asks the site afresh.
-    if result.is_err() {
+    // Failed (not stopped), the next asks the site afresh.
+    if result.as_ref().is_err_and(|e| !vodscribe_core::is_canceled(e)) {
         let _ = std::fs::remove_file(&info);
     }
     // Whatever was downloaded goes, done or not.

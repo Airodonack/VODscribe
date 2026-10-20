@@ -60,7 +60,8 @@ pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
     state.clips.stop(id);
     if db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok() {
         emit(app, db, id);
-        state.clips.queue(id);
+        // Once: changes made one after another remake it once, not once each.
+        state.clips.queue_once(id);
     }
 }
 
@@ -70,33 +71,47 @@ fn edits_dir(app: &AppHandle) -> PathBuf {
 }
 
 /// Edit `id`'s pieces, each a hole if its footage is gone for good: its VOD
-/// is a file on this computer that isn't where it was (`footage::lost`), and
-/// no footage kept here covers the piece.
+/// is gone (deleted without keeping what clips use, or a file on this
+/// computer that isn't where it was: `footage::lost`), and what's kept here
+/// doesn't hold all of the piece (what it holds still plays and renders).
 pub(crate) fn pieces(app: &AppHandle, db: &Db, id: i64) -> Result<Vec<EditPiece>> {
     let mut pieces = db.edit_pieces(id)?;
     for p in &mut pieces {
-        p.hole = crate::footage::lost(db, p.vod_id)
-            && p.spans().iter().any(|&(a, b)| crate::footage::find(app, db, p.vod_id, a, b).is_none());
+        p.hole = crate::footage::lost(db, p.vod_id) && !all_here(app, db, p);
     }
     Ok(pieces)
+}
+
+/// Whether all of piece `p`'s footage is here (from however many files).
+fn all_here(app: &AppHandle, db: &Db, p: &EditPiece) -> bool {
+    p.spans().iter().all(|&(a, b)| edits::covers(&crate::footage::cover(app, db, p.vod_id, a, b), a, b))
 }
 
 /// The stretches (VOD, start, end) of `pieces` whose footage isn't here: of
 /// each piece some of whose spans have none, all of it. Not holes': theirs
 /// can't be had.
 pub(crate) fn missing(app: &AppHandle, db: &Db, pieces: &[EditPiece]) -> Vec<(i64, f64, f64)> {
-    pieces
-        .iter()
-        .filter(|p| !p.hole)
-        .filter(|p| p.spans().iter().any(|&(a, b)| crate::footage::find(app, db, p.vod_id, a, b).is_none()))
-        .map(|p| (p.vod_id, p.start, p.end))
-        .collect()
+    pieces.iter().filter(|p| !p.hole && !all_here(app, db, p)).map(|p| (p.vod_id, p.start, p.end)).collect()
 }
 
 /// Renders edit `id` into its file, fetching any footage it needs first
 /// (a job of the clips' queue: `clips::Cutter`).
 pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
+    // A snippet whose file is of it as it is already (made for a change
+    // undone since, say) isn't made again.
+    {
+        let db = state.db.lock().unwrap();
+        if db.is_snippet(id)? == Some(true)
+            && let Some(edit) = db.edit(id)?
+            && edit.current
+            && edit.file_path.as_deref().is_some_and(|p| Path::new(p).is_file())
+        {
+            db.set_edit_render(id, ClipStatus::Ready, None, None, None)?;
+            emit(app, &db, id);
+            return Ok(());
+        }
+    }
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG);
     let prepared = (|| {
         let missing = {
@@ -115,7 +130,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         // What it's made of, to know later whether a change touched it.
         let made_of = db.made_of(id, &edit.title, &edit_pieces)?;
         let chapters = db.file_chapters(id, &edit_pieces)?;
-        let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b))?;
+        let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::cover(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
         let format = Settings::load(&state.paths.settings()).clip_format;
@@ -371,7 +386,9 @@ pub(crate) async fn trim_piece(app: AppHandle, id: i64, start: f64, end: f64) ->
     changing(&app, edit, "Piece resized", |db| db.set_piece_range(id, start, end))
 }
 
-/// Splits piece `id` in two at `at` seconds of its VOD.
+/// Splits piece `id` in two at `at` seconds of its VOD. No control does
+/// this now (a delete between cuts splits pieces); the e2e tests make
+/// pieces with it.
 #[tauri::command]
 pub(crate) async fn split_piece(app: AppHandle, id: i64, at: f64) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;
@@ -456,7 +473,8 @@ pub(crate) async fn edit_thumb(app: AppHandle, id: i64) -> CmdResult<tauri::ipc:
             let Some((p, (a, b))) = pieces.iter().find_map(|p| Some((p, *p.spans().first()?))) else {
                 return Vec::new();
             };
-            let source = crate::footage::find(&app, &db, p.vod_id, a, b).map(|s| (s.path, a - s.offset));
+            // Only its start needs to be here (a section may hold no more).
+            let source = crate::footage::find(&app, &db, p.vod_id, a, b.min(a + 1.0)).map(|s| (s.path, a - s.offset));
             (source, db.vod(p.vod_id).ok().flatten().and_then(|v| v.thumb).filter(|t| !t.is_empty()))
         };
         let frame = source

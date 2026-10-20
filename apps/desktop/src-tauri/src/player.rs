@@ -256,6 +256,8 @@ const AHEAD: f64 = 90.0;
 /// How long a stretch the player asks for at a time (a section holds a
 /// margin more either side: `footage::section`).
 const ASK: f64 = 120.0;
+/// A gap in the footage ahead shorter than this isn't asked for (one section ends where the next begins).
+const NEAR: f64 = 0.5;
 /// How often `feed` looks.
 const FEED_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -283,12 +285,12 @@ pub(crate) fn feed(app: AppHandle) {
                 let until = (time + AHEAD).min(duration);
                 let mut at = time;
                 for (from, to, _) in crate::footage::cover(&app, &db, vod, time, until) {
-                    if from > at + 0.5 {
+                    if from > at + NEAR {
                         break;
                     }
                     at = at.max(to);
                 }
-                (at < until - 0.5).then_some(at)
+                (at < until - NEAR).then_some(at)
             };
             if let Some(at) = gap
                 && !state.footage.coming(vod, at)
