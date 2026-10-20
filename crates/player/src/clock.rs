@@ -380,6 +380,13 @@ impl Player {
     /// (`set_timeline` with it there plays on), rather than passing it.
     pub fn set_waits_for_footage(&self, waits: bool) {
         self.inner.waits_for_footage.store(waits, Ordering::Release);
+        // Started over where it is, as a seek does: the threads may have
+        // looked at what's under the playhead already (they start as it
+        // opens), and marked it ready to run past footage that isn't here.
+        let mut s = self.inner.state.lock().unwrap();
+        let time = s.time(self.inner.duration());
+        s.restart(time);
+        drop(s);
         self.inner.wake.notify_all();
     }
 
