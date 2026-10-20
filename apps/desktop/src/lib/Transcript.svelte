@@ -8,6 +8,7 @@
   import { layers } from "./layers.svelte";
   import { eventColor } from "./events";
   import { Marks } from "./marks.svelte";
+  import { playedSpans } from "./media";
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
   import { cuts } from "./cuts.svelte";
@@ -15,14 +16,47 @@
   import { load, save } from "./stored";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
-  // where they play, on its timeline, without chat (yet). A click on a line
+  // where they play, on its timeline, with their VODs' chat. A click on a line
   // plays from it; dragging across lines selects them: a VOD's to cut
   // around (Split), an edit's to take out (Delete).
   let {
     vod = null,
     edit = null,
+    vods = new Map(),
     onplay,
-  }: { vod?: Vod | null; edit?: number | null; onplay: (time: number) => void } = $props();
+  }: {
+    vod?: Vod | null;
+    edit?: number | null;
+    /** The library's VODs, for an edit's: whose chat it has. */
+    vods?: Map<number, Vod>;
+    onplay: (time: number) => void;
+  } = $props();
+
+  // An edit's VODs, the one with most time in it first (the Timeline panel's).
+  let editVods = $derived.by(() => {
+    if (edit === null) return [];
+    const time = new Map<number, number>();
+    for (const p of edits.pieces) {
+      const played = playedSpans(p.start, p.end, p.struck).reduce((t, [a, b]) => t + b - a, 0);
+      time.set(p.vod_id, (time.get(p.vod_id) ?? 0) + played);
+    }
+    return [...time.entries()].sort((a, b) => b[1] - a[1]).flatMap(([id]) => (vods.get(id) ? [vods.get(id)!] : []));
+  });
+  let chatVods = $derived(vod ? [vod] : editVods);
+
+  /** Where VOD `vodId`'s moment `time` shows here: on a VOD, itself; on an
+   *  edit, where it first plays, if it does. */
+  function toTimeline(vodId: number, time: number): number | null {
+    if (edit === null) return time;
+    let at = 0;
+    for (const p of edits.pieces) {
+      for (const [a, b] of playedSpans(p.start, p.end, p.struck)) {
+        if (p.vod_id === vodId && time >= a && time < b) return at + time - a;
+        at += b - a;
+      }
+    }
+    return null;
+  }
 
   let lines = $state.raw<Line[]>([]);
   let error = $state<string | null>(null);
@@ -358,7 +392,7 @@
     }
     const latest = () => id === vodId && mine === (withEvents ? eventsSeq : countsSeq);
     (edit !== null
-      ? api.editChatOverview(edit, mapDuration, BINS)
+      ? api.editChatOverview(edit, mapDuration, BINS, withEvents)
       : api.chatOverview(id, mapDuration, BINS, withEvents)
     ).then(
       (o) => latest() && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
@@ -544,9 +578,10 @@
   // The Timeline layers' matches and the chat events, on the minimap and in chat (marks.svelte.ts).
   $effect(() => void layers.load());
   const marks = new Marks({
-    get vod() {
-      return vod;
+    get vods() {
+      return chatVods;
     },
+    toTimeline,
     get canHaveChat() {
       return canHaveChat;
     },
@@ -686,6 +721,7 @@
 <div class="layout">
   <TranscriptHead
     {vod}
+    timelineVod={chatVods[0] ?? null}
     lineCount={lines.length}
     {chatCount}
     {chatProgress}

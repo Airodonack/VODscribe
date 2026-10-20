@@ -2632,6 +2632,12 @@ mod tests {
         assert_eq!((histogram[1], histogram[3], histogram[9]), (1, 1, 1));
         // Before the page knows the edit's length, it still learns there's chat.
         assert_eq!(db.edit_chat_histogram(edit, 0.0, 13).unwrap(), (3, vec![0; 13]));
+        // Its events, where they play: a sub at 16 s (4 s in) and one at 13 s (struck).
+        let sub = |time| ChatMessage { kind: Kind::Sub, amount: Some(1.0), ..message(time, "b", "subbed") };
+        db.add_chat(vod, &[sub(16.0), sub(13.0)], &[]).unwrap();
+        let events = db.edit_chat_events(edit).unwrap();
+        assert_eq!(events.iter().map(|e| e.time).collect::<Vec<_>>(), [4.0]);
+        assert_eq!(events[0].platform.as_deref(), Some("youtube"));
     }
 
     fn message(time: f64, author: &str, text: &str) -> ChatMessage {

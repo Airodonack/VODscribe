@@ -884,6 +884,33 @@ impl Db {
         Ok(out)
     }
 
+    /// Edit `edit`'s chat events (subs, gifts, tips) where they play, on its
+    /// timeline, in order: each piece's VOD's, from the stretches it plays.
+    pub fn edit_chat_events(&self, edit: i64) -> Result<Vec<crate::db::ChatLine>> {
+        let pieces = self.edit_pieces(edit)?;
+        let mut known: std::collections::HashMap<i64, (Vec<crate::db::ChatLine>, Option<String>)> =
+            std::collections::HashMap::new();
+        let mut out = Vec::new();
+        let mut at = 0.0;
+        for p in &pieces {
+            if let std::collections::hash_map::Entry::Vacant(e) = known.entry(p.vod_id) {
+                e.insert((self.chat_events(p.vod_id)?, self.vod(p.vod_id)?.map(|v| v.info.platform)));
+            }
+            let (events, platform) = &known[&p.vod_id];
+            for (a, b) in p.spans() {
+                for event in events.iter().filter(|e| e.time >= a && e.time < b) {
+                    let mut event = event.clone();
+                    event.time = at + event.time - a;
+                    event.platform = platform.clone();
+                    out.push(event);
+                }
+                at += b - a;
+            }
+        }
+        out.sort_by(|a, b| a.time.total_cmp(&b.time));
+        Ok(out)
+    }
+
     /// How many chat messages play in each of `bins` equal stretches of
     /// edit `edit`'s timeline (`duration` seconds), and in all: each piece's
     /// VOD's chat where it plays.

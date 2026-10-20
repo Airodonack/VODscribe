@@ -574,7 +574,7 @@
           />
         {:else if editOpen}
           {#key edits.openId}
-            <Transcript edit={edits.openId} onplay={(time) => edits.playAt(time)} />
+            <Transcript edit={edits.openId} vods={vodsById} onplay={(time) => edits.playAt(time)} />
           {/key}
         {:else if selected}
           <!-- Made afresh for each VOD, so nothing of the last one (its lines, row

@@ -142,13 +142,20 @@ pub(crate) async fn chat_windows(
 }
 
 /// Edit `id`'s chat as a whole, on its timeline: how many messages play in
-/// it and how busy each of `bins` stretches of its `duration` is. No events
-/// yet.
+/// it, how busy each of `bins` stretches of its `duration` is, and with
+/// `events` its subs, gifts and tips.
 #[tauri::command]
-pub(crate) async fn edit_chat_overview(app: AppHandle, id: i64, duration: f64, bins: usize) -> CmdResult<ChatOverview> {
+pub(crate) async fn edit_chat_overview(
+    app: AppHandle,
+    id: i64,
+    duration: f64,
+    bins: usize,
+    events: Option<bool>,
+) -> CmdResult<ChatOverview> {
     crate::with_reads(app, move |db| {
         let (count, histogram) = db.edit_chat_histogram(id, duration, bins.min(10_000))?;
-        Ok(ChatOverview { count, histogram, events: Some(Vec::new()) })
+        let events = if events.unwrap_or(true) { Some(db.edit_chat_events(id)?) } else { None };
+        Ok(ChatOverview { count, histogram, events })
     })
     .await
 }

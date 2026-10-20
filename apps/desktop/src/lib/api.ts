@@ -517,13 +517,13 @@ export const api = {
    *  events; `events: false` leaves those out (`events` is then null). */
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>
     invoke<ChatOverview & { events: ChatLine[] | null }>("chat_overview", { vodId, duration, bins, events }),
-  /** For each [from, to) in seconds, its first `cap` messages and how many it has. */
-  /** Edit `id`'s chat as a whole, on its timeline. */
-  editChatOverview: (id: number, duration: number, bins: number) =>
-    invoke<ChatOverview>("edit_chat_overview", { id, duration, bins }),
+  /** Edit `id`'s chat as a whole, on its timeline, as `chatOverview` gives a VOD's. */
+  editChatOverview: (id: number, duration: number, bins: number, events = true) =>
+    invoke<ChatOverview & { events: ChatLine[] | null }>("edit_chat_overview", { id, duration, bins, events }),
   /** For each stretch of edit `id`'s timeline, its first `cap` messages and how many. */
   editChatWindows: (id: number, ranges: [number, number][], cap: number) =>
     invoke<ChatWindow[]>("edit_chat_windows", { id, ranges, cap }),
+  /** For each [from, to) in seconds, its first `cap` messages and how many it has. */
   chatWindows: (vodId: number, ranges: [number, number][], cap: number) =>
     invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
   /** The emotes in a VOD's chat, as [name, image URL]. */

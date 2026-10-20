@@ -218,6 +218,19 @@ export default {
       );
       await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
       await until("the edit's chat on opening it", async () => (await messages()) === 2, 10_000);
+      // A sub in its VOD's chat at 2 s: one of the edit's events, at 1 s of it.
+      const sqlite = await import("node:sqlite");
+      const events = new sqlite.DatabaseSync(library);
+      events
+        .prepare(
+          "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount) VALUES (?, 2, 'fan', NULL, 'subbed', '[]', 'sub', 1)",
+        )
+        .run(vod.id);
+      events.close();
+      const withEvents = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4, events: true });
+      if (withEvents.events?.length !== 1 || Math.abs(withEvents.events[0].time - 1) > 0.01)
+        throw new Error(`the edit's chat events: ${JSON.stringify(withEvents.events)}`);
+      ctx.log("the edit's chat events: its VOD's sub, where it plays");
     }
     // Delete held down: its repeats remove nothing (only a press does).
     await app.js(

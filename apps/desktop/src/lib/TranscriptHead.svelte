@@ -7,10 +7,11 @@
 
   // The transcript view's header (Transcript.svelte), across the transcript and
   // the minimap: how far transcription is, the chat's status and its Chat
-  // button, and the Timeline button. An edit's (no `vod`) has its line count
-  // and its Chat button.
+  // button, and the Timeline button. An edit's (no `vod`) has its line count,
+  // its Chat button, and the Timeline button of the VOD with most time in it.
   let {
     vod,
+    timelineVod,
     lineCount,
     chatCount,
     chatProgress,
@@ -25,6 +26,8 @@
     height = $bindable(),
   }: {
     vod: Vod | null;
+    /** Whose Timeline panel it shows: the VOD, or an edit's with most time in it. */
+    timelineVod: Vod | null;
     lineCount: number;
     /** Messages in the chat (so far, while it's fetched). */
     chatCount: number;
@@ -90,7 +93,7 @@
       >
         <Icon name="message" size={14} /> Chat <Icon name={showChat ? "chevron-up" : "chevron-down"} size={14} />
       </button>
-      {#if vod}<Timeline {vod} {emotes} {counts} {eventCounts} />{/if}
+      {#if timelineVod}<Timeline vod={timelineVod} {emotes} {counts} {eventCounts} />{/if}
     </div>
   {/if}
 </div>
