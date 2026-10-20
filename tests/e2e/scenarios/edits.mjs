@@ -147,6 +147,23 @@ export default {
     const one = pieces(await edit())[0];
     await app.invoke("split_piece", { id: one.id, at: one.start + 1 });
     await until("two pieces", async () => pieces(await edit()).length === 2, 10_000);
+    // Made behind the page's back: opened again, it shows them.
+    await app.click(`.vod[data-key="${vod.id}"] button.main`);
+    await until(
+      "the VOD open",
+      async () => !(await app.js(`return !!document.querySelector(arguments[0])`, title)),
+      MINUTE,
+    );
+    await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+    await until("the edit open again", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
+    await until(
+      "both pieces in the editor",
+      () => app.js(`return document.querySelector("section.edit-view .context")?.textContent.includes("of 2")`),
+      10_000,
+    );
+    await app.toStart();
+    await app.key("ArrowRight", { shift: true });
+    await until("back at 1 s", async () => (await app.shownTime()) === 1, 10_000);
     // Captions, on the edit's timeline: the VOD's where its pieces play. The
     // CC button shows, and Shift+C turns them off and on.
     const cues = await app.invoke("edit_captions", { id: made.id });
