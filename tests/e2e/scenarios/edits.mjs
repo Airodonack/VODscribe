@@ -290,6 +290,46 @@ export default {
     );
     ctx.log(`a chapter in the edit at ${chapter.start} s, then undone`);
 
+    // C: the piece at the playhead (the second, 1 s long) a clip on the
+    // edit's own clip bar, its file made. Ctrl+Z takes it off, Ctrl+Shift+Z
+    // brings it back (made again).
+    const barClips = () => app.invoke("edit_clips", { id: made.id });
+    await app.key("c");
+    const barClip = await until(
+      "the edit's clip, made",
+      async () => {
+        const [c, ...more] = await barClips();
+        if (c?.status === "error") throw new Error(`it failed: ${c.error}`);
+        if (more.length) throw new Error(`${more.length + 1} clips`);
+        return c?.status === "ready" && existsSync(c.file_path ?? "") && c;
+      },
+      MINUTE,
+    );
+    if (Math.abs(barClip.length - 1) > 0.05) throw new Error(`the clip is ${barClip.length} s long, not 1`);
+    await until(
+      "its pill on the edit's clip bar",
+      () => app.js(`return !!document.querySelector('section.edit-view .clip-bar .chip[data-clip="${barClip.id}"]')`),
+      10_000,
+    );
+    await ctx.checkpoint("edit-clip-bar");
+    const undoKey = (shift) =>
+      app.js(
+        `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: arguments[0], bubbles: true }))`,
+        shift,
+      );
+    await undoKey(false);
+    await until("the clip taken off", async () => (await barClips()).length === 0, 10_000);
+    await undoKey(true);
+    const back = await until(
+      "the clip back, made again",
+      async () => {
+        const [c] = await barClips();
+        return c?.status === "ready" && existsSync(c.file_path ?? "") && c;
+      },
+      MINUTE,
+    );
+    ctx.log(`C in the edit: a ${barClip.length} s clip on its bar (${back.file_path}), undone and redone`);
+
     // Rendered: E.
     await app.key("e");
     const rendered = await until(

@@ -285,6 +285,8 @@ pub fn run() {
             edits::edit_lines,
             clips::edit_marks,
             clips::add_edit_mark,
+            clips::edit_clips,
+            clips::add_edit_clip,
             edits::remove_stretch,
             edits::rename_edit,
             edits::delete_edit,

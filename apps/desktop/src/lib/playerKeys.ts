@@ -78,6 +78,7 @@ export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   { keys: ["Enter"], does: "rename the selected chapter or highlight" },
   { keys: ["Delete"], does: "remove the selected lines, chapter or highlight; else the piece here" },
   { keys: [mac ? "⌘" : "Ctrl", "+", "←", "→"], does: "move the piece here earlier or later" },
+  { keys: ["C"], does: "clip the selection, or the piece here" },
   { keys: ["E"], does: "export: render the edit" },
   { keys: ["Shift", "+", "C"], does: "captions" },
   { keys: ["Shift", "+", "M"], does: "mute" },

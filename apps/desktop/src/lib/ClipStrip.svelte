@@ -5,18 +5,23 @@
   // edit in the library's list (or on "Make new edit" there). "Add to an edit"
   // picks one from a list. Each edit using this VOD is a link here too.
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
-  // link, what the edit plays of the VOD.
+  // link, what the edit plays of the VOD. An edit's clip bar (no `vod`)
+  // has its clips of stretches of the edit: they drag out as files.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { DRAG_SLOP, carry } from "./dragout";
+  import { DRAG_SLOP, carry, dragFileOut } from "./dragout";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
   import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
 
-  let { vod, ownPlayer, onplay }: { vod: Vod; ownPlayer: boolean; onplay: (time: number) => void } = $props();
+  let {
+    vod,
+    ownPlayer = false,
+    onplay,
+  }: { vod?: Vod; ownPlayer?: boolean; onplay?: (time: number) => void } = $props();
 
   let renaming = $state<number | null>(null);
   let draft = $state("");
@@ -53,10 +58,11 @@
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 500);
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
+    if (!vod) return void dragFileOut(clip);
     carry({ vod, start: clip.start, end: clip.end, title: clip.title, ownPlayer, from, x: e.clientX, y: e.clientY });
   }
   function play(time: number) {
-    if (!swallowClick) onplay(time);
+    if (!swallowClick) onplay?.(time);
     swallowClick = false;
   }
 
@@ -84,7 +90,7 @@
 
   // Each edit with pieces of this VOD: a link to it. An edit's pieces are
   // copies, so the pills are the bar's own, and deleting one changes no edit.
-  const linked = $derived(edits.forVod(vod.id));
+  const linked = $derived(vod ? edits.forVod(vod.id) : []);
 
   const span = (start: number, end: number) => `${formatTime(start)}–${formatTime(end)}`;
 
@@ -119,15 +125,16 @@
     <div
       class="chip {clip.status}"
       data-clip={clip.id}
-      title="{span(clip.start, clip.end)} · {describe(clip)}{clip.status === 'ready'
+      title="{vod ? span(clip.start, clip.end) : formatTime(clip.length ?? 0)} · {describe(clip)}{clip.status ===
+      'ready'
         ? ' · drag it into a video editor or a folder'
         : ''}"
       onpointerdown={(e) => onChipDown(e, clip)}
-      onmouseenter={() => (clips.hovered = { start: clip.start, end: clip.end })}
+      onmouseenter={() => vod && (clips.hovered = { start: clip.start, end: clip.end })}
       onmouseleave={() => (clips.hovered = null)}
     >
       <button class="play" onclick={() => play(clip.start)} aria-label="Play {clip.title}">
-        <span class="length">{formatTime(clip.end - clip.start)}</span>
+        <span class="length">{formatTime(clip.length ?? clip.end - clip.start)}</span>
       </button>
       {#if renaming === clip.id}
         <input

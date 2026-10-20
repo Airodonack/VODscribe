@@ -47,6 +47,8 @@ permissions = [
   "allow-edit-lines",
   "allow-edit-marks",
   "allow-add-edit-mark",
+  "allow-edit-clips",
+  "allow-add-edit-clip",
   "allow-remove-stretch",
   "allow-rename-edit",
   "allow-delete-edit",

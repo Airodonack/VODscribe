@@ -45,6 +45,9 @@ export function isOutgoing(paths: string[]): boolean {
   return outgoing !== null && paths.length > 0 && paths.every((p) => p === outgoing);
 }
 
+/** Drags clip `clip`'s file out of the window, if it's made (a pill on an edit's clip bar). */
+export const dragFileOut = (clip: Clip) => dragOut(clip);
+
 /** Starts the system drag of `clip`, if its file is made, showing `image` (a PNG) if given. */
 async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   if (clip.status !== "ready" || !clip.file_path) return;

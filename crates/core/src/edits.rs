@@ -292,6 +292,40 @@ pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
     last.filter(|_| (time - at).abs() < 1e-6)
 }
 
+/// A piece of a stretch of a clip (`stretch_pieces`): `start`..`end` of VOD
+/// `vod_id`, less `struck`, titled `title`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StretchPiece {
+    pub vod_id: i64,
+    pub start: f64,
+    pub end: f64,
+    pub struck: Vec<(f64, f64)>,
+    pub title: String,
+}
+
+/// What `from`..`to` of a clip of `pieces`' timeline plays, as pieces of
+/// their own: each piece it reaches, trimmed to it, with what's jumped over
+/// in between struck.
+pub fn stretch_pieces(pieces: &[EditPiece], from: f64, to: f64) -> Vec<StretchPiece> {
+    let mut out = Vec::new();
+    let mut at = 0.0;
+    for p in pieces {
+        let mut reached: Vec<(f64, f64)> = Vec::new();
+        for (a, b) in p.spans() {
+            let (s, e) = (from.max(at), to.min(at + b - a));
+            if e - s >= SLIVER {
+                reached.push((a + s - at, a + e - at));
+            }
+            at += b - a;
+        }
+        if let (Some(first), Some(last)) = (reached.first(), reached.last()) {
+            let struck = reached.windows(2).map(|w| (w[0].1, w[1].0)).collect();
+            out.push(StretchPiece { vod_id: p.vod_id, start: first.0, end: last.1, struck, title: p.title.clone() });
+        }
+    }
+    out
+}
+
 /// What taking `from`..`to` of a clip of `pieces`' timeline out strikes:
 /// for each piece it reaches, all it has struck then (in its VOD's time).
 pub fn struck_by_removing(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Vec<(f64, f64)>)> {
@@ -719,6 +753,48 @@ impl Db {
     /// it), as a change to the clip; its id.
     pub fn add_clip_mark(&self, clip: i64, vod_id: i64, kind: &str, at: f64, text: Option<&str>) -> Result<i64> {
         self.change(clip, None, |db| db.insert_mark(clip, vod_id, kind, Flicks::from_seconds(at), text))
+    }
+
+    /// Makes `from`..`to` of edit `edit`'s timeline a clip on its clip bar
+    /// (only dragged out, unless `shown`): the pieces that play there, and
+    /// the edit's marks in it, copied.
+    pub fn add_edit_clip(&self, edit: i64, from: f64, to: f64, title: &str, shown: bool) -> Result<crate::db::Clip> {
+        let pieces = self.edit_pieces(edit)?;
+        let parts = stretch_pieces(&pieces, from, to);
+        if parts.is_empty() {
+            bail!("Nothing of the edit plays there.");
+        }
+        let marks = self.clip_marks(edit)?;
+        let inside: Vec<&MarkAt> = place_marks(&pieces, &marks)
+            .iter()
+            .filter(|m| m.start >= from && m.start < to)
+            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at))
+            .collect();
+        let add = |db: &Db| {
+            let id = db.new_clip(title, Place::Bar(edit))?;
+            db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
+            for (i, p) in parts.iter().enumerate() {
+                let range = (Flicks::from_seconds(p.start), Flicks::from_seconds(p.end));
+                let piece = db.insert_piece(id, p.vod_id, range, &p.title, &struck_flicks(&p.struck))?;
+                db.conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", params![piece, i as i64])?;
+            }
+            for m in &inside {
+                db.insert_mark(id, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+            }
+            Ok(id)
+        };
+        let id = if shown { self.change(edit, None, add)? } else { self.atomically(add)? };
+        Ok(self.clip(id)?.expect("just inserted"))
+    }
+
+    /// A clip on listed clip `bar`'s clip bar, made anew as `state` has it
+    /// (undo bringing back one an edit's change took away); its id.
+    pub fn add_bar_clip(&self, bar: i64, state: &EditState) -> Result<i64> {
+        self.change(bar, None, |db| {
+            let id = db.new_clip(&state.title, Place::Bar(bar))?;
+            db.restore_edit(id, state)?;
+            Ok(id)
+        })
     }
 
     /// Moves mark `id` to VOD `vod_id`'s moment `at` (seconds of it); false if it's gone.
@@ -1314,6 +1390,48 @@ pub(crate) mod tests {
         db.restore_edit(edit, &state).unwrap();
         let back: Vec<f64> = db.clip_marks(edit).unwrap().iter().map(|(_, m)| m.at.seconds()).collect();
         assert_eq!(back, [13.0, 13.0, 15.0, 31.0, 50.0]);
+    }
+
+    #[test]
+    fn a_stretch_of_an_edit_makes_a_clip_of_what_plays_there() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let other = db.add_vod(&info("y")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        // 10-20 s of x with 12-14 struck (plays 0-2, 2-8), then 30-35 s of y (8-13).
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, other, (30.0, 35.0), "b", None).unwrap();
+        let first = db.piece_rows(edit).unwrap()[0].id;
+        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+        db.add_clip_mark(edit, other, "chapter", 31.0, Some("inside")).unwrap();
+        db.add_clip_mark(edit, other, "chapter", 34.0, Some("outside")).unwrap();
+        let pieces = db.edit_pieces(edit).unwrap();
+        assert_eq!(
+            stretch_pieces(&pieces, 1.0, 10.0),
+            [
+                StretchPiece { vod_id: vod, start: 11.0, end: 20.0, struck: vec![(12.0, 14.0)], title: "a".into() },
+                StretchPiece { vod_id: other, start: 30.0, end: 32.0, struck: vec![], title: "b".into() },
+            ]
+        );
+
+        let before = db.revision(edit).unwrap().unwrap();
+        let clip = db.add_edit_clip(edit, 1.0, 10.0, "c", true).unwrap();
+        assert!(db.revision(edit).unwrap().unwrap() > before, "a change to the edit: its clip bar");
+        assert_eq!(
+            (clip.bar, clip.vod_id, clip.start, clip.end),
+            (Some(crate::db::ClipBar::Edit { id: edit }), vod, 11.0, 20.0)
+        );
+        assert_eq!(db.bar_clips(edit).unwrap().iter().map(|c| c.id).collect::<Vec<_>>(), [clip.id]);
+        assert_eq!(db.edit_pieces(clip.id).unwrap().len(), 2);
+        assert_eq!(db.clip(clip.id).unwrap().unwrap().length, 9.0, "7 s of x, 2 of y");
+        let marks: Vec<_> = db.clip_marks(clip.id).unwrap().into_iter().map(|(_, m)| m.text).collect();
+        assert_eq!(marks, [Some("inside".to_string())], "the edit's marks in the stretch come with it");
+        assert!(db.add_edit_clip(edit, 20.0, 30.0, "d", true).is_err(), "past the end: nothing plays");
+
+        // Made again as a state holds it (undo bringing it back).
+        let state = db.edit_state(clip.id).unwrap().unwrap();
+        let again = db.add_bar_clip(edit, &state).unwrap();
+        assert_eq!(db.edit_state(again).unwrap().unwrap(), state);
     }
 
     #[test]

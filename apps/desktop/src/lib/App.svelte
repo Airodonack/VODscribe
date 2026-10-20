@@ -305,9 +305,10 @@
         if (doc.kind === "edit") {
           edits.reload(doc.id);
           cuts.reload(doc);
+          clips.reload(doc);
         } else {
           cuts.reload(doc);
-          clips.reload(doc.id);
+          clips.reload(doc);
         }
       }),
     );

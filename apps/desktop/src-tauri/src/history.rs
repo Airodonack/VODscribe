@@ -46,8 +46,15 @@ pub(crate) struct BarClip {
 /// What a document holds at one moment.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Snapshot {
-    Edit(EditState),
-    Vod { marks: Vec<MarkState>, clips: Vec<BarClip> },
+    /// An edit, and the clips on its clip bar, each as it is.
+    Edit {
+        state: EditState,
+        bar: Vec<(i64, EditState)>,
+    },
+    Vod {
+        marks: Vec<MarkState>,
+        clips: Vec<BarClip>,
+    },
 }
 
 struct Entry {
@@ -108,7 +115,10 @@ pub(crate) fn revision(db: &Db, doc: Doc) -> i64 {
 /// What `doc` holds now; None if it's gone.
 pub(crate) fn snapshot(db: &Db, doc: Doc) -> Result<Option<Snapshot>> {
     Ok(match doc {
-        Doc::Edit(id) => db.edit_state(id)?.map(Snapshot::Edit),
+        Doc::Edit(id) => match db.edit_state(id)? {
+            Some(state) => Some(Snapshot::Edit { state, bar: edit_bar(db, id)? }),
+            None => None,
+        },
         Doc::Vod(id) => {
             let clips = db
                 .clips(id)?
@@ -206,7 +216,12 @@ impl Stacks {
 /// without a change of its own (its file deleted outside the app) stays gone.
 fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
     match (doc, from, to) {
-        (Doc::Edit(id), _, Snapshot::Edit(state)) => db.restore_edit(id, state)?,
+        (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
+            if was != state {
+                db.restore_edit(id, state)?;
+            }
+            restore_edit_bar(app, db, id, had, bar)?;
+        }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
                 db.restore_marks(id, marks)?;
@@ -214,6 +229,56 @@ fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -
             restore_bar(app, db, id, had, clips)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// The clips on edit `id`'s clip bar (those in it, not only dragged out),
+/// each as it is.
+fn edit_bar(db: &Db, id: i64) -> Result<Vec<(i64, EditState)>> {
+    let mut out = Vec::new();
+    for clip in db.bar_clips(id)?.into_iter().filter(|c| c.shown) {
+        if let Some(state) = db.edit_state(clip.id)? {
+            out.push((clip.id, state));
+        }
+    }
+    Ok(out)
+}
+
+/// Puts back what one change did to edit `id`'s clip bar: each clip it
+/// made, changed or took away, as `to` has it (by its id, or else by what
+/// it holds: a clip made again has a new id). Clips the change didn't touch
+/// stay as they are now.
+fn restore_edit_bar(
+    app: &AppHandle,
+    db: &Db,
+    id: i64,
+    from: &[(i64, EditState)],
+    to: &[(i64, EditState)],
+) -> Result<()> {
+    let state = app.state::<AppState>();
+    let now = edit_bar(db, id)?;
+    let find = |list: &[(i64, EditState)], (id, s): &(i64, EditState)| {
+        list.iter().position(|(i, _)| i == id).or_else(|| list.iter().position(|(_, t)| t == s))
+    };
+    for want in to {
+        if find(from, want).is_some_and(|i| from[i].1 == want.1) {
+            continue;
+        }
+        match find(&now, want) {
+            Some(i) if now[i].1 == want.1 => {}
+            Some(i) => {
+                db.restore_edit(now[i].0, &want.1)?;
+                state.clips.stop(now[i].0);
+                state.clips.queue(now[i].0);
+            }
+            None => state.clips.queue(db.add_bar_clip(id, &want.1)?),
+        }
+    }
+    for was in from.iter().filter(|was| find(to, was).is_none()) {
+        if let Some(i) = find(&now, was) {
+            crate::clips::remove(app, db, now[i].0)?;
+        }
     }
     Ok(())
 }

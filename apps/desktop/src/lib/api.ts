@@ -182,6 +182,11 @@ export interface Clip {
   shown: boolean;
   /** The revision it's at: every change to it is one. */
   revision: number;
+  /** The clip bar it's on: a VOD's, or an edit's. */
+  bar?: Doc | null;
+  /** How long it plays (on an edit's clip bar it may hold several pieces;
+   *  `start`..`end` are its first one's). */
+  length?: number;
 }
 
 /** A video made of pieces of VODs (crates/core `edits::Edit`). */
@@ -377,6 +382,11 @@ export const api = {
   /** Takes `from`..`to` (seconds of its timeline) out of edit `id`, as one change. */
   removeStretch: (id: number, from: number, to: number) => invoke<EditView>("remove_stretch", { id, from, to }),
   listClips: (vodId: number) => invoke<Clip[]>("list_clips", { vodId }),
+  /** The clips on edit `id`'s clip bar. */
+  editClips: (id: number) => invoke<Clip[]>("edit_clips", { id }),
+  /** Makes `from`..`to` seconds of edit `editId`'s timeline a clip. */
+  addEditClip: (editId: number, from: number, to: number, shown = true) =>
+    invoke<Clip>("add_edit_clip", { editId, from, to, shown }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),

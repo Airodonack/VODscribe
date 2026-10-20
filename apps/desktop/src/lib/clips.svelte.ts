@@ -1,14 +1,18 @@
 // The open VOD's clips (crates/core clips.rs): stretches between marks
 // (cuts.svelte.ts) made with the Clip button, an Alt-drag on the
 // timeline or a press held on the picture, shown as pills in the clip bar
-// under the player (ClipStrip.svelte).
+// under the player (ClipStrip.svelte). Or the open edit's: stretches of it
+// made clips with C (crates/core edits.rs `add_edit_clip`).
 
 import { SvelteMap } from "svelte/reactivity";
-import { api, events, type Clip } from "./api";
+import { api, docKey, events, type Clip, type Doc } from "./api";
 import { hideNote, noteHidden } from "./permission";
 
 class Clips {
-  vodId = $state<number | null>(null);
+  /** Whose clip bar this is: a VOD's or an edit's. */
+  doc = $state.raw<Doc | null>(null);
+  /** The VOD whose clips these are, if they're a VOD's. */
+  vodId = $derived(this.doc?.kind === "vod" ? this.doc.id : null);
   list = $state.raw<Clip[]>([]);
   /** How far each clip being cut is, 0..1. */
   progress = new SvelteMap<number, number>();
@@ -33,28 +37,40 @@ class Clips {
    *  if they're downloaded from the site it's on rather than cut from a file here. */
   open(vodId: number, fromSite: boolean) {
     this.#fromSite = fromSite;
-    if (this.vodId === vodId) return;
+    this.#open({ kind: "vod", id: vodId });
+  }
+
+  /** Shows edit `id`'s clip bar. */
+  openEdit(id: number) {
+    this.#fromSite = false;
+    this.#open({ kind: "edit", id });
+  }
+
+  #open(doc: Doc) {
+    if (this.doc && docKey(this.doc) === docKey(doc)) return;
     this.answer(false);
     this.hovered = null;
-    this.vodId = vodId;
+    this.doc = doc;
     this.list = [];
     this.error = null;
     this.#listen();
     const mine = ++this.#seq;
     // Those whose file was deleted outside the app go first, then the rest are listed.
-    this.#forgetGone(vodId)
-      .then(() => api.listClips(vodId))
+    (doc.kind === "vod" ? this.#forgetGone(doc.id) : Promise.resolve())
+      .then(() => this.#listOf(doc))
       .then(
         (list) => mine === this.#seq && (this.list = list),
         (e) => mine === this.#seq && (this.error = String(e)),
       );
   }
 
-  /** Loads VOD `vodId`'s clips again (undo or redo changed its clip bar), if it's the one shown. */
-  reload(vodId: number) {
-    if (vodId !== this.vodId) return;
+  #listOf = (doc: Doc) => (doc.kind === "vod" ? api.listClips(doc.id) : api.editClips(doc.id));
+
+  /** Loads `doc`'s clips again (undo or redo changed its clip bar), if it's the one shown. */
+  reload(doc: Doc) {
+    if (!this.doc || docKey(doc) !== docKey(this.doc)) return;
     const mine = ++this.#seq;
-    api.listClips(vodId).then(
+    this.#listOf(doc).then(
       (list) => mine === this.#seq && (this.list = list),
       (e) => mine === this.#seq && (this.error = String(e)),
     );
@@ -92,9 +108,10 @@ class Clips {
     if ((this.#news.get(clip.id) ?? 0) <= since) this.#put(clip);
   }
 
-  /** Adds or updates `clip`, if it's of the VOD shown. */
+  /** Adds or updates `clip`, if it's on the clip bar shown. */
   #put(clip: Clip) {
-    if (clip.vod_id !== this.vodId) return;
+    const bar = clip.bar ?? { kind: "vod", id: clip.vod_id };
+    if (!this.doc || docKey(bar) !== docKey(this.doc)) return;
     const at = this.list.findIndex((c) => c.id === clip.id);
     this.list = at < 0 ? [...this.list, clip] : this.list.map((c, i) => (i === at ? clip : c));
   }
@@ -147,6 +164,21 @@ class Clips {
     try {
       const since = this.#serial;
       const clip = await api.addClip(vodId, start, end, shown);
+      this.#answer(clip, since);
+      this.error = null;
+      return clip;
+    } catch (e) {
+      this.error = String(e);
+      return null;
+    }
+  }
+
+  /** Makes `from`..`to` of the open edit's timeline a clip on its clip bar. */
+  async makeOfEdit(from: number, to: number): Promise<Clip | null> {
+    if (this.doc?.kind !== "edit") return null;
+    try {
+      const since = this.#serial;
+      const clip = await api.addEditClip(this.doc.id, from, to);
       this.#answer(clip, since);
       this.error = null;
       return clip;

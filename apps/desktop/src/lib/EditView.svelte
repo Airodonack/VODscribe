@@ -21,6 +21,8 @@
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsHere } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
+  import { clips } from "./clips.svelte";
+  import ClipStrip from "./ClipStrip.svelte";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
@@ -287,6 +289,13 @@
       );
   }
 
+  /** The selection, or else the piece at the playhead, a clip on the edit's clip bar. */
+  function clipNow() {
+    const unit = atNow ? lane.find((p) => p.id === unitOf(atNow.piece)) : undefined;
+    const range = edits.selection ?? unit;
+    if (range) void clips.makeOfEdit(range.start, range.end);
+  }
+
   /** The lines selected in the transcript, out of the edit (struck from the
    *  pieces they're in); the transcript then has them no more. */
   function removeSelection() {
@@ -309,6 +318,8 @@
       const doc = { kind: "edit" as const, id };
       if (cuts.doc?.kind === "edit" && cuts.doc.id === id) cuts.reload(doc);
       else cuts.openDoc(doc);
+      // Its clip bar: a clip of the bar open in the editor has none.
+      if (!snippet) clips.openEdit(id);
     });
   });
 
@@ -407,6 +418,13 @@
     const p = player;
     // M marks a highlight here, N starts a chapter, each with its title to
     // write; Enter renames the selected one (as on a VOD).
+    // C makes a clip of the selection, or of the piece at the playhead, on
+    // the edit's clip bar (bare: Ctrl+C is copy).
+    if (key === "c" && !e.shiftKey) {
+      if (!e.repeat && !snippet) clipNow();
+      e.preventDefault();
+      return;
+    }
     if ((key === "m" || key === "n") && !e.shiftKey) {
       if (!e.repeat && edit && segments.length) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
       e.preventDefault();
@@ -846,6 +864,9 @@
           </button>
         {/each}
       </div>
+    {/if}
+    {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error)}
+      <ClipStrip />
     {/if}
   </section>
 {/if}

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Clip, ClipStatus, Db, Mark, MarkDoc};
+use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
 
@@ -319,6 +319,54 @@ fn check_range(start: f64, end: f64, duration: Option<f64>) -> CmdResult<()> {
     Ok(())
 }
 
+/// The history a change to `clip` goes in: that of the VOD or edit whose
+/// clip bar it's on.
+fn bar_doc(clip: &Clip) -> Doc {
+    match clip.bar {
+        Some(ClipBar::Edit { id }) => Doc::Edit(id),
+        Some(ClipBar::Vod { id }) => Doc::Vod(id),
+        None => Doc::Vod(clip.vod_id),
+    }
+}
+
+/// The clips on edit `id`'s clip bar, in their order.
+#[tauri::command]
+pub(crate) async fn edit_clips(app: AppHandle, id: i64) -> CmdResult<Vec<Clip>> {
+    crate::with_reads(app, move |db| db.bar_clips(id)).await
+}
+
+/// Makes `from`..`to` seconds of edit `edit_id`'s timeline a clip, titled
+/// with what's said at its start; on the edit's clip bar unless `shown` is
+/// false (one only dragged out of the window).
+#[tauri::command]
+pub(crate) async fn add_edit_clip(
+    app: AppHandle,
+    edit_id: i64,
+    from: f64,
+    to: f64,
+    shown: Option<bool>,
+) -> CmdResult<Clip> {
+    if !(from.is_finite() && to.is_finite() && to > from && from >= 0.0) {
+        return Err("That's not a stretch of the edit.".into());
+    }
+    let state = app.state::<AppState>();
+    let clip = {
+        let db = state.db.lock().unwrap();
+        let pieces = db.edit_pieces(edit_id).map_err(err)?;
+        let first = vodscribe_core::edits::stretch_pieces(&pieces, from, to);
+        let first = first.first().ok_or("Nothing of the edit plays there.")?;
+        let words = db.words_between(first.vod_id, first.start, first.end).map_err(err)?;
+        let doc = Doc::Edit(edit_id);
+        let before = history::snapshot(&db, doc).ok().flatten();
+        let title = clips::title(&words, first.start);
+        let clip = db.add_edit_clip(edit_id, from, to, &title, shown.unwrap_or(true)).map_err(err)?;
+        state.history.record(&db, doc, "Clip added", before);
+        clip
+    };
+    state.clips.queue(clip.id);
+    Ok(clip)
+}
+
 #[tauri::command]
 pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Clip>> {
     crate::with_reads(app, move |db| db.clips(vod_id)).await
@@ -362,7 +410,7 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
         let duration = db.vod(clip.vod_id).map_err(err)?.and_then(|v| v.info.duration);
         let end = duration.map_or(end, |d| end.min(d));
         check_range(start, end, duration)?;
-        let doc = Doc::Vod(clip.vod_id);
+        let doc = bar_doc(&clip);
         let before = history::snapshot(&db, doc).ok().flatten();
         db.set_clip_range(id, start, end).map_err(err)?;
         state.history.record(&db, doc, "Clip resized", before);
@@ -378,7 +426,7 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
 pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
-    let doc = Doc::Vod(db.clip(id).map_err(err)?.ok_or("That clip is gone.")?.vod_id);
+    let doc = bar_doc(&db.clip(id).map_err(err)?.ok_or("That clip is gone.")?);
     let before = history::snapshot(&db, doc).ok().flatten();
     db.show_clip(id).map_err(err)?;
     state.history.record(&db, doc, "Clip added", before);
@@ -392,7 +440,7 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     let title = clips::written_title(&title).ok_or("A clip needs a name.")?;
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
-    let doc = Doc::Vod(db.clip(id).map_err(err)?.ok_or("That clip is gone.")?.vod_id);
+    let doc = bar_doc(&db.clip(id).map_err(err)?.ok_or("That clip is gone.")?);
     let before = history::snapshot(&db, doc).ok().flatten();
     db.rename_clip(id, &title).map_err(err)?;
     state.history.record(&db, doc, "Clip renamed", before);
@@ -406,7 +454,7 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
 pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
     let Some(clip) = db.clip(id).map_err(err)? else { return Ok(()) };
-    let doc = Doc::Vod(clip.vod_id);
+    let doc = bar_doc(&clip);
     let before = history::snapshot(&db, doc).ok().flatten();
     remove(&app, &db, id).map_err(err)?;
     state.history.record(&db, doc, if clip.shown { "Clip deleted" } else { "Clip dropped" }, before);

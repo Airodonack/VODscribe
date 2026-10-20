@@ -646,6 +646,19 @@ pub struct Clip {
     pub shown: bool,
     /// The revision it's at (`Db::change`).
     pub revision: i64,
+    /// The clip bar it's on: a VOD's, or an edit's.
+    pub bar: Option<ClipBar>,
+    /// How long it plays: on an edit's clip bar, where it may hold several
+    /// pieces (`start`..`end` are its first one's); else `end - start`.
+    pub length: f64,
+}
+
+/// Whose clip bar a clip is on.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum ClipBar {
+    Vod { id: i64 },
+    Edit { id: i64 },
 }
 
 /// A mark on a VOD's timeline: a cut (`kind` "cut", between two frames), a
@@ -678,13 +691,14 @@ pub struct MarkState {
 
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
-    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision";
+    "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision,
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`).
 pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)
      JOIN renders r ON r.clip_id = c.id";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
-    Ok(Clip {
+    let mut clip = Clip {
         id: r.get(0)?,
         vod_id: r.get(1)?,
         start: Flicks(r.get(2)?).seconds(),
@@ -695,7 +709,15 @@ pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
-    })
+        bar: match (r.get::<_, Option<i64>>(10)?, r.get::<_, Option<i64>>(11)?) {
+            (_, Some(vod)) => Some(ClipBar::Vod { id: vod }),
+            (Some(edit), None) => Some(ClipBar::Edit { id: edit }),
+            _ => None,
+        },
+        length: 0.0,
+    };
+    clip.length = clip.end - clip.start;
+    Ok(clip)
 }
 
 /// How many copies of the library from before upgrades are kept.
@@ -970,7 +992,19 @@ impl Db {
 
     pub fn clip(&self, id: i64) -> Result<Option<Clip>> {
         let sql = format!("SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN} WHERE c.id = ?1");
-        Ok(self.conn.query_row(&sql, [id], clip_from_row).optional()?)
+        self.conn.query_row(&sql, [id], clip_from_row).optional()?.map(|c| self.measured(c)).transpose()
+    }
+
+    /// `clip` with its length: its pieces' played stretches, for one on an
+    /// edit's clip bar.
+    fn measured(&self, mut clip: Clip) -> Result<Clip> {
+        clip.length = match clip.bar {
+            Some(ClipBar::Edit { .. }) => {
+                self.edit_pieces(clip.id)?.iter().flat_map(|p| p.spans()).map(|(a, b)| b - a).sum()
+            }
+            _ => clip.end - clip.start,
+        };
+        Ok(clip)
     }
 
     /// VOD `vod_id`'s clips (the snippets on its clip bar), in their order.
@@ -981,6 +1015,15 @@ impl Db {
         );
         let mut stmt = self.conn.prepare(&sql)?;
         Ok(stmt.query_map([vod_id], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// The clips on listed clip `id`'s clip bar (an edit's), in their order.
+    pub fn bar_clips(&self, id: i64) -> Result<Vec<Clip>> {
+        let sql =
+            format!("SELECT {CLIP_COLUMNS} FROM clips c {CLIP_JOIN} WHERE c.bar_of = ?1 ORDER BY c.bar_position, c.id");
+        let mut stmt = self.conn.prepare(&sql)?;
+        let clips: Vec<Clip> = stmt.query_map([id], clip_from_row)?.collect::<rusqlite::Result<_>>()?;
+        clips.into_iter().map(|c| self.measured(c)).collect()
     }
 
     /// Clips whose file is still to be made (or was being made when the app stopped).
