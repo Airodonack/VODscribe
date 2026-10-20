@@ -16,13 +16,14 @@
   // The frame drawn by the page while the surface is hidden.
   let stillShown = $state(false);
 
-  /** Draws the frame showing now into the box, as the surface hides. */
-  async function showStill() {
+  /** Draws the frame showing now into the box, for when the surface hides;
+   *  false if there's none. */
+  async function showStill(): Promise<boolean> {
     const bytes = new DataView(await api.playerStill().catch(() => new ArrayBuffer(0)));
-    if (bytes.byteLength < 8) return;
+    if (bytes.byteLength < 8) return false;
     const width = bytes.getUint32(0, true);
     const height = bytes.getUint32(4, true);
-    if (bytes.byteLength < 8 + width * height * 3) return;
+    if (bytes.byteLength < 8 + width * height * 3) return false;
     const rgb = new Uint8Array(bytes.buffer, 8, width * height * 3);
     const rgba = new Uint8ClampedArray(width * height * 4);
     for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) {
@@ -35,11 +36,15 @@
     still.height = height;
     still.getContext("2d")?.putImageData(new ImageData(rgba, width, height), 0, 0);
     stillShown = true;
+    return true;
   }
 
   onMount(() => {
     let stopped = false;
     let last = "";
+    // Counted up at each change, so a still that comes after the panel's
+    // gone again doesn't hide the surface.
+    let seq = 0;
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
@@ -51,10 +56,18 @@
       const rect = covered ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
       const now = JSON.stringify(rect);
       if (now === last) return;
-      // Covered now: the frame, kept in the page, before the surface hides.
-      if (covered && last !== "null") void showStill();
-      if (!covered) stillShown = false;
+      const mine = ++seq;
+      const wasShown = last !== "" && last !== "null";
       last = now;
+      if (covered && wasShown) {
+        // Covered now: the frame drawn in the page first, then the surface
+        // hidden, so the box doesn't show black between the two.
+        void showStill().then(() => {
+          if (mine === seq && !stopped) api.setScreen(null).catch(() => {});
+        });
+        return;
+      }
+      if (!covered) stillShown = false;
       api.setScreen(rect).catch(() => {});
     };
     const sizes = new ResizeObserver(report);
