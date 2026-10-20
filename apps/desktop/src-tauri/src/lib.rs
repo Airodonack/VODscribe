@@ -219,6 +219,9 @@ pub fn run() {
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
             let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?
+                // In a site's player's frame, what it plays goes to the app's player
+                // (embed.ts, embed.rs); it does nothing in other frames.
+                .initialization_script_for_all_frames(include_str!("embed_shim.js"))
                 // No background behind the page: it paints its own, and where it's
                 // clear the player's picture under it shows (a site's player over
                 // it). On macOS it's given as the WKWebView is made: wry turns its

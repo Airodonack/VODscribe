@@ -1,23 +1,18 @@
 <script lang="ts">
-  // The app's own player for files played here, and VODs from sites from
-  // their footage, fetched as they play (player.rs, crates/player): the
-  // picture is drawn on the screen under this box (Screen.svelte), not by
-  // the page, which keeps the controls. Waiting for footage, it says so
-  // over the picture; if a site's VOD's footage can't be had at all, it
-  // goes to the site's player (ownPlayer.svelte.ts). Its controls, timeline and full
+  // The app's own player for files played here (player.rs, crates/player):
+  // the picture is drawn on the screen under this box (Screen.svelte), not
+  // by the page, which keeps the controls. Its controls, timeline and full
   // screen are the player panel's (Player.svelte), as for every player;
   // mounted by embed.ts, which hands these functions over. Captions from
   // the transcript are drawn over the picture by the screen
   // (screenOverlay.ts): nothing of the page can draw over it.
 
   import { onDestroy, onMount, untrack } from "svelte";
-  import { api, events, type Cue, type UnlistenFn, type Vod } from "./api";
+  import { api, type Cue, type Vod } from "./api";
   import { holdToCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
-  import { playsFromFile } from "./platform";
   import { NativeDriver } from "./nativeDriver";
-  import { ownPlayer } from "./ownPlayer.svelte";
   import Screen from "./Screen.svelte";
   import { prefs } from "./playerPrefs.svelte";
 
@@ -42,20 +37,13 @@
   let destroyed = false;
 
   const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
-  // Waiting for footage still to come (a VOD from a site); `unavailable`
-  // once the site wouldn't give it (it's gone from there, say): then only
-  // what's kept plays.
-  let waiting = $state(false);
-  let unavailable = $state(false);
-  const sitePlayer = untrack(() => !playsFromFile(vod));
 
-  // The caption, over the picture (or that it's waiting for the video):
-  // drawn again when it, the box's size or full screen changes.
+  // The caption, over the picture: drawn again when it, the box's size or
+  // full screen changes.
   let boxSize = $state({ width: 0, height: 0, fullscreen: false });
   $effect(() => {
     const { width, height, fullscreen } = boxSize;
-    const wait = unavailable ? "This part isn't kept here, and the site didn't give it" : "Loading the video…";
-    const text = width && height ? (waiting ? wait : cue?.text) : null;
+    const text = width && height ? cue?.text : null;
     overlay.show(text ? overlay.caption(text, width, height, fullscreen) : null);
   });
   $effect(() => {
@@ -86,34 +74,18 @@
       (e) => console.error("captions", e),
     );
     follow();
-    if (sitePlayer)
-      events
-        .footage((fetched) => {
-          // Only the player's own asks: an edit's of the same VOD aren't its.
-          if (destroyed || fetched.vod_id !== vod.id || !fetched.player) return;
-          unavailable = !!fetched.error;
-          if (!fetched.error) return;
-          // None of it to play: the site's player instead. Some played: what's
-          // kept still plays, and it says why the rest doesn't.
-          if (!driver.showed()) ownPlayer.fellBack.add(vod.id);
-          else onerror?.(fetched.error);
-        })
-        .then((u) => (destroyed ? u() : (unlistenFootage = u)));
   });
-  let unlistenFootage: UnlistenFn | null = null;
 
   // The position, for the captions: smoothly while playing.
   let frame = 0;
   function follow() {
     if (destroyed) return;
     time = now();
-    waiting = driver.waiting();
     frame = requestAnimationFrame(follow);
   }
 
   onDestroy(() => {
     destroyed = true;
-    unlistenFootage?.();
     cancelAnimationFrame(frame);
     press.stop();
     api.setScreenOverlay(null).catch(() => {});

@@ -70,11 +70,12 @@ function placed(canvas: HTMLCanvasElement, x: number, y: number): Drawn {
 }
 
 /** The caption `text` for a player box `width` by `height`: white on a
- *  dark box per line, centred near the bottom, larger in full screen. */
-export function caption(text: string, width: number, height: number, fullscreen: boolean): Drawn | null {
+ *  dark box per line, centred near the bottom, larger in full screen;
+ *  above `clear` pixels at the bottom (a site's controls over the picture). */
+export function caption(text: string, width: number, height: number, fullscreen: boolean, clear = 0): Drawn | null {
   const vh = window.innerHeight / 100;
   const size = fullscreen ? 3.4 * vh : Math.min(Math.max(13, 2.4 * vh), 22);
-  const bottom = fullscreen ? 4 * vh : 10;
+  const bottom = Math.max(fullscreen ? 4 * vh : 10, clear ? clear + 6 : 0);
   const pad = 8;
   const lineHeight = size * 1.35;
   const font = fontOf(size);

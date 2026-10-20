@@ -131,9 +131,7 @@
   }
 
   // A VOD whose video has just been downloaded switches to the app's own
-  // player, where it was and as it was (playing or not); so does a VOD from
-  // a site once that's known to play here, and back to the site's if its
-  // footage can't be had (ownPlayer.svelte.ts).
+  // player, where it was and as it was (playing or not).
   let here = untrack(() => playsHere(vod));
   $effect(() => {
     const now = playsHere(vod);
