@@ -45,7 +45,13 @@ pub(crate) struct Footage {
     current: Mutex<Option<(Ask, Arc<AtomicBool>)>>,
     /// The section downloading, and how far it's in.
     growing: Mutex<Option<Growing>>,
+    /// When a download of each VOD last failed: the player doesn't ask again
+    /// for a while (the site may not have it any more).
+    failed: Mutex<std::collections::HashMap<i64, Instant>>,
 }
+
+/// How long after a VOD's download failed the player asks for its footage again.
+const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// How far a section's download is: to `usable` (the VOD's time) its footage
 /// can be used already; before that's known, `progress` (0..1) is a guess
@@ -242,6 +248,7 @@ impl Footage {
                 let error = result.err().filter(|e| !vodscribe_core::is_canceled(e));
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
+                    state.footage.failed.lock().unwrap().insert(vod_id, Instant::now());
                 }
                 let _ = app.emit("footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
@@ -274,7 +281,11 @@ impl Footage {
     /// Fetches the footage of `start`..`end` of VOD `vod_id` for the player,
     /// before anything else, in place of what it asked for before (from
     /// where it was playing then).
+    /// Not if a download of the VOD failed lately (`RETRY_AFTER`).
     pub(crate) fn ask_first(&self, vod_id: i64, start: f64, end: f64) {
+        if self.failed.lock().unwrap().get(&vod_id).is_some_and(|at| at.elapsed() < RETRY_AFTER) {
+            return;
+        }
         let mut waiting = self.waiting.lock().unwrap();
         waiting.retain(|&(v, a, b, player)| !player && (v, a, b) != (vod_id, start, end));
         waiting.push_front((vod_id, start, end, true));
@@ -480,5 +491,9 @@ mod tests {
         footage.ask_first(1, 1500.0, 1620.0);
         let waiting: Vec<Ask> = footage.waiting.lock().unwrap().iter().copied().collect();
         assert_eq!(waiting, [(1, 1500.0, 1620.0, true), (3, 0.0, 10.0, false)]);
+        // A VOD whose download just failed isn't asked for again yet.
+        footage.failed.lock().unwrap().insert(4, Instant::now());
+        footage.ask_first(4, 0.0, 120.0);
+        assert!(!footage.waiting.lock().unwrap().iter().any(|a| a.0 == 4));
     }
 }

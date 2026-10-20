@@ -41,8 +41,11 @@
   let destroyed = false;
 
   const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
-  // Waiting for footage still to come (a VOD from a site).
+  // Waiting for footage still to come (a VOD from a site); `unavailable`
+  // once the site wouldn't give it (it's gone from there, say): then only
+  // what's kept plays.
   let waiting = $state(false);
+  let unavailable = $state(false);
   const sitePlayer = untrack(() => !vod.media && vod.platform !== "local");
 
   // The caption, over the picture (or that it's waiting for the video):
@@ -50,7 +53,8 @@
   let boxSize = $state({ width: 0, height: 0, fullscreen: false });
   $effect(() => {
     const { width, height, fullscreen } = boxSize;
-    const text = width && height ? (waiting ? "Loading the video…" : cue?.text) : null;
+    const wait = unavailable ? "This part isn't kept here, and the site didn't give it" : "Loading the video…";
+    const text = width && height ? (waiting ? wait : cue?.text) : null;
     overlay.show(text ? overlay.caption(text, width, height, fullscreen) : null);
   });
   $effect(() => {
@@ -84,7 +88,9 @@
     if (sitePlayer)
       events
         .footage((fetched) => {
-          if (destroyed || fetched.vod_id !== vod.id || !fetched.error) return;
+          if (destroyed || fetched.vod_id !== vod.id) return;
+          unavailable = !!fetched.error;
+          if (!fetched.error) return;
           // None of it to play: the site's player instead. Some played: what's
           // kept still plays, and it says why the rest doesn't.
           if (!driver.showed()) ownPlayer.fellBack.add(vod.id);
