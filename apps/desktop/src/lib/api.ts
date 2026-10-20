@@ -454,8 +454,10 @@ export const api = {
           headers: { overlay: JSON.stringify({ rect: overlay.rect, size: overlay.size }) },
         })
       : invoke<void>("set_screen_overlay", new Uint8Array(0)),
-  setScreen: (rect: { x: number; y: number; width: number; height: number } | null) =>
-    invoke<void>("set_screen", { rect }),
+  setScreen: (rect: { x: number; y: number; width: number; height: number } | null, under = false) =>
+    invoke<void>("set_screen", { rect, under }),
+  /** Whether the picture can go under the page here (not under X11). */
+  screenUnder: () => invoke<boolean>("screen_under"),
   listEdits: () => invoke<Edit[]>("list_edits"),
   createEdit: () => invoke<Edit>("create_edit"),
   getEdit: (id: number) => invoke<EditView>("get_edit", { id }),
@@ -503,6 +505,9 @@ export const api = {
   /** The app's own player's frame showing now, as width, height (4 bytes each,
    *  little-endian) and RGB; empty if none shows. */
   playerStill: () => invoke<ArrayBuffer>("player_still"),
+  /** The frame showing, for the page to draw (player_frame); empty if it's `since`. */
+  playerFrame: (since: number | null, width: number, height: number) =>
+    invoke<ArrayBuffer>("player_frame", { since, width, height }),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */

@@ -1,17 +1,19 @@
-//! The surface on macOS: a view in the page's WKWebView, covering the page,
+//! The surface on macOS: a view in the page's WKWebView, covering the page
+//! (or, under the page, beside the WKWebView and behind it: `set_under`),
 //! that hosts a layer of its own, and in that layer the picture's layer,
 //! moved to the page's player box. The picture is each frame as an image,
 //! which Core Animation fits in the box (black around it) and draws. That
 //! needs no Metal of ours, so it also works where Metal doesn't (a VM). The
 //! view hit-tests as nothing, so clicks and the pointer reach the page.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, bail};
 use dispatch2::MainThreadBound;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::NSView;
 use objc2_core_foundation::{CFData, CFRetained, CGFloat, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{
@@ -46,27 +48,55 @@ define_class!(
 );
 
 impl Cover {
-    /// Covers the page: the WKWebView less its safe area. The view reaches
-    /// under a see-through title bar, and the page starts below it, except
-    /// in full screen. WKWebView doesn't resize the views in it, so this is
-    /// done each time the page says where its box is (`set`), which it does
-    /// whenever its layout changes.
-    fn fill(&self) {
-        // SAFETY: the view's own superview, which holds it.
-        let Some(page) = (unsafe { self.superview() }) else { return };
-        let (bounds, inset) = (page.bounds(), page.safeAreaInsets());
-        // WKWebView is flipped: its top is at its bounds' origin.
+    /// Lies where the page is: the WKWebView less its safe area. The view
+    /// reaches under a see-through title bar, and the page starts below it,
+    /// except in full screen. Over the page it's in the WKWebView, which
+    /// doesn't resize the views in it; under, it's beside it in their shared
+    /// superview. So this is done each time the page says where its box is
+    /// (`set`), which it does whenever its layout changes.
+    fn fill(&self, page: &NSView, under: bool) {
+        let inset = page.safeAreaInsets();
+        let (x, y, size) = if under {
+            let frame = page.frame();
+            // SAFETY: the views' shared superview, which holds them.
+            let flipped = unsafe { page.superview() }.is_some_and(|s| s.isFlipped());
+            (frame.origin.x, frame.origin.y + if flipped { inset.top } else { inset.bottom }, frame.size)
+        } else {
+            // WKWebView is flipped: its top is at its bounds' origin.
+            let bounds = page.bounds();
+            (bounds.origin.x, bounds.origin.y + inset.top, bounds.size)
+        };
         self.setFrame(CGRect::new(
-            CGPoint::new(bounds.origin.x + inset.left, bounds.origin.y + inset.top),
-            CGSize::new(bounds.size.width - inset.left - inset.right, bounds.size.height - inset.top - inset.bottom),
+            CGPoint::new(x + inset.left, y),
+            CGSize::new(size.width - inset.left - inset.right, size.height - inset.top - inset.bottom),
         ));
+    }
+
+    /// Puts the view over the page (in the WKWebView) or under it (behind
+    /// the WKWebView, in their superview: the page draws no background, so
+    /// it shows where the page is clear).
+    fn stack(&self, page: &NSView, under: bool) {
+        self.removeFromSuperview();
+        // SAFETY: the WKWebView's superview (the window's content view).
+        match unsafe { page.superview() } {
+            // SAFETY: NSView's addSubview:positioned:relativeTo:, NSWindowBelow
+            // (-1), relative to a subview of the same view.
+            Some(parent) if under => {
+                let () = unsafe { msg_send![&*parent, addSubview: self, positioned: -1isize, relativeTo: page] };
+            }
+            _ => page.addSubview(self),
+        }
+        self.fill(page, under);
     }
 }
 
 /// The surface in the app's window, to tell what to show.
 #[derive(Clone)]
 pub struct Screen {
-    cover: Arc<MainThreadBound<Retained<Cover>>>,
+    /// The view, and the page's WKWebView it's over or under.
+    cover: Arc<MainThreadBound<(Retained<Cover>, Retained<NSView>)>>,
+    /// Under the page, not over it (`set_under`).
+    under: Arc<AtomicBool>,
     inner: Arc<Mutex<Inner>>,
 }
 
@@ -116,8 +146,8 @@ impl Screen {
         // Flipped, so boxes measure from the top as the page's do; after
         // AppKit takes the layer, which sets it unflipped.
         root.setGeometryFlipped(true);
-        webview.addSubview(&cover);
-        cover.fill();
+        cover.stack(webview, false);
+        let webview: Retained<NSView> = webview.retain();
         let inner = Inner {
             picture: Layer(picture),
             over: Layer(over),
@@ -125,13 +155,23 @@ impl Screen {
             bgrx: Vec::new(),
             painted: Default::default(),
         };
-        let cover = Arc::new(MainThreadBound::new(cover, mtm));
-        Ok(Screen { cover, inner: Arc::new(Mutex::new(inner)) })
+        let cover = Arc::new(MainThreadBound::new((cover, webview), mtm));
+        Ok(Screen { cover, under: Arc::default(), inner: Arc::new(Mutex::new(inner)) })
+    }
+
+    /// Puts the picture under the page (true) or over it (false, as it
+    /// starts), from any thread. Under, it shows only where the page is
+    /// clear: what's in the page over the box (a site's player) stays on top.
+    pub fn set_under(&self, under: bool) {
+        if self.under.swap(under, Ordering::AcqRel) != under {
+            self.cover.get_on_main(|(cover, webview)| cover.stack(webview, under));
+        }
     }
 
     /// Shows the picture in `rect` (none: nowhere), from any thread.
     pub fn set(&self, rect: Option<Rect>) {
-        self.cover.get_on_main(|cover| cover.fill());
+        let under = self.under.load(Ordering::Acquire);
+        self.cover.get_on_main(|(cover, webview)| cover.fill(webview, under));
         let inner = self.inner.lock().unwrap();
         changed(|| match rect {
             Some(r) => {

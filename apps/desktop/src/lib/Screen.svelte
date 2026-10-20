@@ -6,13 +6,27 @@
   While a panel or dialog (or anything marked data-over-screen) overlaps the
   box, the surface is hidden, so what's open shows; the frame showing then
   stays in the box, drawn by the page, rather than black.
+  Under a site's player (`under`, embed.ts) the picture goes under the page
+  instead, so their player in the page stays on top: the box is clear, and
+  every background behind it is painted around it, not through it. A panel
+  over it then simply draws over the picture. Where the surface can't go
+  under the page (X11), the page draws the picture itself, in the box.
 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./api";
+  import * as overlay from "./screenOverlay";
+
+  let { under = false }: { under?: boolean } = $props();
 
   let box: HTMLDivElement;
   let still: HTMLCanvasElement;
+  // What's over the picture (captions), where the page draws it.
+  let over: HTMLDivElement;
+  // Over the page (files), under it (a site's player over it), or drawn by
+  // the page (under one, where the surface can't go under: X11). An
+  // embed's isn't known till the app says.
+  let mode = $state<"over" | "under" | "page" | null>(null);
   // The frame drawn by the page while the surface is hidden.
   let stillShown = $state(false);
 
@@ -39,6 +53,67 @@
     return true;
   }
 
+  // Under the page, every opaque background above the box is painted
+  // around it, not through it: four bands of its own colour about the box
+  // (no layout changes, no elements added). Put back as it was after.
+  const holed = new Map<HTMLElement, string>();
+  let holedAt: { x: number; y: number; width: number; height: number } | null = null;
+  function holes(rect: { x: number; y: number; width: number; height: number } | null) {
+    for (const [el, before] of holed) el.style.background = before;
+    holed.clear();
+    holedAt = rect;
+    if (!rect) return;
+    for (let el = box.parentElement; el; el = el.parentElement) {
+      const cs = getComputedStyle(el);
+      if (cs.backgroundColor === "rgba(0, 0, 0, 0)" || cs.backgroundColor === "transparent") continue;
+      const e = el.getBoundingClientRect();
+      const px = (n: number) => `${Math.max(0, n)}px`;
+      const [x, y, w, h] = [rect.x - e.left, rect.y - e.top, rect.width, rect.height];
+      const c = `linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`;
+      const band = (pos: string, size: string) => `${c} ${pos} / ${size} no-repeat border-box`;
+      holed.set(el, el.style.background);
+      el.style.background = [
+        band(`0 0`, `100% ${px(y)}`),
+        band(`0 ${px(y + h)}`, `100% calc(100% - ${px(y + h)})`),
+        band(`0 ${px(y)}`, `${px(x)} ${px(h)}`),
+        band(`${px(x + w)} ${px(y)}`, `calc(100% - ${px(x + w)}) ${px(h)}`),
+      ].join(", ");
+    }
+  }
+
+  /** Draws each new frame into the canvas, at most the box's device
+   *  pixels, until `stopped()`. */
+  function drawFrames(stopped: () => boolean) {
+    let since: number | null = null;
+    let image: ImageData | null = null;
+    const tick = async () => {
+      if (stopped()) return;
+      const r = box.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const bytes = await api
+        .playerFrame(since, Math.round(r.width * dpr), Math.round(r.height * dpr))
+        .catch(() => new ArrayBuffer(0));
+      if (bytes.byteLength >= 16) {
+        const view = new DataView(bytes);
+        const width = view.getUint32(0, true);
+        const height = view.getUint32(4, true);
+        since = Number(view.getBigUint64(8, true));
+        if (bytes.byteLength >= 16 + width * height * 4) {
+          if (image?.width !== width || image.height !== height) {
+            image = new ImageData(width, height);
+            still.width = width;
+            still.height = height;
+          }
+          image.data.set(new Uint8ClampedArray(bytes, 16, width * height * 4));
+          still.getContext("2d")?.putImageData(image, 0, 0);
+          stillShown = true;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }
+
   onMount(() => {
     let stopped = false;
     let last = "";
@@ -48,12 +123,23 @@
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
-      if (stopped) return;
+      if (stopped || !mode) return;
       const r = box.getBoundingClientRect();
+      const here = { x: r.x, y: r.y, width: r.width, height: r.height };
+      if (mode !== "over") {
+        // Under the page, nothing needs hiding; drawn by the page, no surface.
+        const rect = mode === "under" ? here : null;
+        const now = JSON.stringify(rect);
+        if (now === last) return;
+        last = now;
+        holes(rect);
+        api.setScreen(rect, true).catch(() => {});
+        return;
+      }
       const covered = [...document.querySelectorAll("[role=dialog], [data-over-screen]")].some((el) =>
         overlaps(el.getBoundingClientRect(), r),
       );
-      const rect = covered ? null : { x: r.x, y: r.y, width: r.width, height: r.height };
+      const rect = covered ? null : here;
       const now = JSON.stringify(rect);
       if (now === last) return;
       const mine = ++seq;
@@ -70,6 +156,33 @@
       if (!covered) stillShown = false;
       api.setScreen(rect).catch(() => {});
     };
+    if (!under) mode = "over";
+    else
+      void api
+        .screenUnder()
+        .catch(() => false)
+        .then((can) => {
+          if (stopped) return;
+          mode = can ? "under" : "page";
+          if (mode === "page") {
+            drawFrames(() => stopped);
+            overlay.drawInPage((drawn) => {
+              over.replaceChildren();
+              if (!drawn) return;
+              const { canvas, rect } = drawn;
+              canvas.style.cssText = `position: absolute; left: ${rect.x}px; top: ${rect.y}px; width: ${rect.width}px; height: ${rect.height}px`;
+              over.append(canvas);
+            });
+          }
+          report();
+        });
+    // The theme changed: the bands again, in its colours (holes puts the
+    // backgrounds back before reading them).
+    const rehole = () => holedAt && holes(holedAt);
+    const themes = new MutationObserver(rehole);
+    themes.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class"] });
+    const scheme = matchMedia("(prefers-color-scheme: dark)");
+    scheme.addEventListener("change", rehole);
     const sizes = new ResizeObserver(report);
     sizes.observe(box);
     sizes.observe(document.documentElement);
@@ -80,6 +193,10 @@
     });
     return () => {
       stopped = true;
+      if (mode === "page") overlay.drawInPage(null);
+      themes.disconnect();
+      scheme.removeEventListener("change", rehole);
+      holes(null);
       cancelAnimationFrame(frame);
       sizes.disconnect();
       api.setScreen(null).catch(() => {});
@@ -87,8 +204,9 @@
   });
 </script>
 
-<div class="screen" bind:this={box}>
-  <canvas class="still" class:shown={stillShown} bind:this={still}></canvas>
+<div class="screen" class:clear={under} bind:this={box}>
+  <canvas class="still" class:shown={stillShown} class:live={mode === "page"} bind:this={still}></canvas>
+  <div class="over" bind:this={over}></div>
 </div>
 
 <style>
@@ -111,5 +229,20 @@
 
   .still.shown {
     visibility: visible;
+  }
+
+  /* Under a site's player: the picture shows through. */
+  .screen.clear {
+    background: transparent;
+  }
+
+  /* Drawn by the page: black about the picture, as the surface's. */
+  .still.live {
+    background: #000;
+  }
+
+  .over {
+    position: absolute;
+    inset: 0;
   }
 </style>

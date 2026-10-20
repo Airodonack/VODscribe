@@ -71,6 +71,8 @@ permissions = [
   "allow-player-plan",
   "allow-player-close",
   "allow-player-still",
+  "allow-player-frame",
+  "allow-screen-under",
   "allow-player-play",
   "allow-player-pause",
   "allow-player-seek",

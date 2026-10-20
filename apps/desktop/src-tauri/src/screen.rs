@@ -119,13 +119,24 @@ pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_playe
 }
 
 /// Where the page's player box is, in CSS pixels from the page's top-left
-/// corner (none when no player is open).
+/// corner (none when no player is open), and whether the picture goes under
+/// the page there (a site's player in the page over it: `screen_under`
+/// says where it can) or over it (as for a file).
 #[tauri::command]
-pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>) {
+pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>, under: Option<bool>) {
     let rect = rect.filter(Rect::sane);
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
+        screen.set_under(under.unwrap_or(false));
         screen.set(rect);
     }
+}
+
+/// Whether the picture can go under the page here: everywhere but X11 (a
+/// child window is always over its parent's drawing, where the page is),
+/// where the page draws the picture itself instead (player_frame).
+#[tauri::command]
+pub(crate) fn screen_under() -> bool {
+    vodscribe_player::present::can_go_under()
 }
 
 /// What the page draws over the picture (captions): the body is RGBA pixels

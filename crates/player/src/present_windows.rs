@@ -5,6 +5,9 @@
 //! 720p frame in a VM, a GDI blit a few. VODSCRIBE_DRAW=gpu or gdi picks.
 //! The window is layered and transparent to the pointer (`layer`), so it's
 //! composed over WebView2 and clicks and the pointer go through to the page.
+//! Under the page (`set_under`: a site's player in the page stays on top) it's
+//! a plain child at the bottom instead: its drawing goes to the app window's
+//! own surface, which shows where WebView2's background is clear.
 
 use std::sync::atomic::{AtomicIsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -20,10 +23,11 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWLP_USERDATA, GetWindowLongPtrW, HTTRANSPARENT, HWND_TOP, LWA_ALPHA,
-    RegisterClassW, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY,
-    WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, GWL_EXSTYLE, GWL_STYLE, GWLP_USERDATA, GetWindowLongPtrW, HTTRANSPARENT,
+    HWND_BOTTOM, HWND_TOP, LWA_ALPHA, RegisterClassW, SWP_FRAMECHANGED, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+    WINDOW_EX_STYLE, WM_ERASEBKGND, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_EX_LAYERED, WS_EX_TRANSPARENT, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, w};
 
@@ -41,6 +45,8 @@ struct Inner {
     /// The child window (an HWND, kept as a number: it's used from any thread).
     hwnd: isize,
     parent: isize,
+    /// Under the page, not over it.
+    under: bool,
     frame: Option<Arc<Frame>>,
     overlay: Option<Arc<Overlay>>,
     painter: Draw,
@@ -111,6 +117,16 @@ fn layer(hwnd: HWND) {
     }
 }
 
+/// Makes `hwnd` a plain child again (`layer` undone), under the page: drawn
+/// into its parent's surface, the pointer going to WebView2 over it.
+fn unlayer(hwnd: HWND) {
+    // SAFETY: the screen's own window.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & !((WS_EX_LAYERED.0 | WS_EX_TRANSPARENT.0) as isize));
+    }
+}
+
 /// The screen whose window `hwnd` is, if it's still there.
 ///
 /// # Safety
@@ -174,6 +190,7 @@ impl Screen {
         let inner = Inner {
             hwnd: hwnd.0 as isize,
             parent,
+            under: false,
             frame: None,
             overlay: None,
             painter,
@@ -184,6 +201,43 @@ impl Screen {
         // SAFETY: the window's own data, taken back at WM_NCDESTROY.
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, Weak::into_raw(Arc::downgrade(&inner)) as isize) };
         Ok(Screen { inner })
+    }
+
+    /// Puts the picture under the page (true) or over it (false, as it
+    /// starts), from any thread. Under, it's a plain child at the bottom of
+    /// the app window's children, drawn into the window's own surface, which
+    /// shows where WebView2's background is clear; over, a layered child at
+    /// the top, composed over WebView2.
+    pub fn set_under(&self, under: bool) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.under == under {
+            return;
+        }
+        inner.under = under;
+        let hwnd = HWND(inner.hwnd as *mut _);
+        // SAFETY: the screen's own window: its styles, then its place among
+        // its siblings, with the frame told of the change.
+        unsafe {
+            let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+            if under {
+                unlayer(hwnd);
+                SetWindowLongPtrW(hwnd, GWL_STYLE, style & !(WS_CLIPSIBLINGS.0 as isize));
+            } else {
+                layer(hwnd);
+                SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_CLIPSIBLINGS.0 as isize);
+            }
+            let order = if under { HWND_BOTTOM } else { HWND_TOP };
+            let _ = SetWindowPos(
+                hwnd,
+                Some(order),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED,
+            );
+        }
+        inner.paint();
     }
 
     /// Shows the picture in `rect` (none: nowhere), from any thread: the
@@ -214,9 +268,10 @@ impl Screen {
             (r.width * scale).round().max(1.0) as i32,
             (r.height * scale).round().max(1.0) as i32,
         );
+        let order = if inner.under { HWND_BOTTOM } else { HWND_TOP };
         // SAFETY: moving a window the screen made; fine from any thread.
         let _ = unsafe {
-            SetWindowPos(HWND(inner.hwnd as *mut _), Some(HWND_TOP), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            SetWindowPos(HWND(inner.hwnd as *mut _), Some(order), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW)
         };
         inner.size = (w as u32, h as u32);
         inner.paint();

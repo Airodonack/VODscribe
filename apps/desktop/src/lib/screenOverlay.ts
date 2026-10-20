@@ -149,8 +149,22 @@ export function framed(picture: HTMLImageElement | null, label: string, width: n
   return placed(canvas, 0, 0);
 }
 
+// Where the page draws the picture itself (Screen.svelte, under X11), what's
+// over it is drawn there too, not sent to the screen.
+let inPage: ((drawn: Drawn | null) => void) | null = null;
+let last: Drawn | null = null;
+
+/** Has `sink` draw what's over the picture from now on (null: the screen
+ *  again), starting with what shows now. */
+export function drawInPage(sink: ((drawn: Drawn | null) => void) | null) {
+  inPage = sink;
+  sink?.(last);
+}
+
 /** Shows `drawn` over the screen's picture (none: nothing). */
 export function show(drawn: Drawn | null) {
+  last = drawn;
+  if (inPage) return inPage(drawn);
   if (!drawn) {
     api.setScreenOverlay(null).catch(() => {});
     return;

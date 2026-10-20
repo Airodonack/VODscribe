@@ -333,6 +333,52 @@ pub(crate) fn player_still(app: AppHandle) -> tauri::ipc::Response {
     tauri::ipc::Response::new(bytes)
 }
 
+/// The frame showing now, for the page to draw itself where the picture
+/// can't go under the page (X11; screen_under): empty if it's frame `since`
+/// (or none shows), else its width and height (4 bytes each, little-endian)
+/// and number (8 bytes), then RGBA pixels, scaled down to fit in `width` by
+/// `height` (never up). Async, so the scaling is off the main thread.
+#[tauri::command]
+pub(crate) async fn player_frame(app: AppHandle, since: Option<u64>, width: u32, height: u32) -> tauri::ipc::Response {
+    let state = app.state::<AppState>();
+    let frame = state.player.open.lock().unwrap().as_ref().and_then(|o| o.player.frame());
+    let Some(f) = frame.filter(|f| Some(f.id) != since && f.width > 0 && f.height > 0) else {
+        return tauri::ipc::Response::new(Vec::new());
+    };
+    let k = (width.max(1) as f64 / f.width as f64).min(height.max(1) as f64 / f.height as f64).min(1.0);
+    let (w, h) = (((f.width as f64 * k).round() as u32).max(1), ((f.height as f64 * k).round() as u32).max(1));
+    let mut out = Vec::with_capacity(16 + (w * h * 4) as usize);
+    out.extend_from_slice(&w.to_le_bytes());
+    out.extend_from_slice(&h.to_le_bytes());
+    out.extend_from_slice(&f.id.to_le_bytes());
+    scale_rgba(&f.rgb, f.width, f.height, w, h, &mut out);
+    tauri::ipc::Response::new(out)
+}
+
+/// `rgb` (`fw` by `fh`) scaled to `w` by `h` as RGBA onto `out`: each pixel
+/// the bilinear mix at its centre (at half size, the mean of four).
+fn scale_rgba(rgb: &[u8], fw: u32, fh: u32, w: u32, h: u32, out: &mut Vec<u8>) {
+    let (sx, sy) = (fw as f32 / w as f32, fh as f32 / h as f32);
+    let (fw, fh) = (fw as usize, fh as usize);
+    for y in 0..h {
+        let v = ((y as f32 + 0.5) * sy - 0.5).max(0.0);
+        let (y0, ty) = (v as usize, v.fract());
+        let y1 = (y0 + 1).min(fh - 1);
+        for x in 0..w {
+            let u = ((x as f32 + 0.5) * sx - 0.5).max(0.0);
+            let (x0, tx) = (u as usize, u.fract());
+            let x1 = (x0 + 1).min(fw - 1);
+            let at = |xx: usize, yy: usize, c: usize| rgb[(yy * fw + xx) * 3 + c] as f32;
+            for c in 0..3 {
+                let top = at(x0, y0, c) * (1.0 - tx) + at(x1, y0, c) * tx;
+                let bottom = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
+                out.push((top * (1.0 - ty) + bottom * ty + 0.5) as u8);
+            }
+            out.push(255);
+        }
+    }
+}
+
 /// What an open that the page moved on from is told.
 pub(crate) const CLOSED: &str = "The player was closed while opening.";
 

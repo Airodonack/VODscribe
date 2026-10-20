@@ -214,7 +214,20 @@ pub fn run() {
             // Hidden until App.svelte has mounted and shows it, so it never opens
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
-            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?;
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?
+                // No background behind the page: it paints its own, and where it's
+                // clear the player's picture under it shows (a site's player over
+                // it). On macOS it's given as the WKWebView is made: wry turns its
+                // drawsBackground off only then.
+                .background_color(tauri::window::Color(0, 0, 0, 0));
+            // Under Wayland the picture lies under the window's own surface, which
+            // is see-through there. (Under X11 it never goes under the page, and on
+            // macOS and Windows it's under the page inside the window.)
+            #[cfg(target_os = "linux")]
+            let see_through = vodscribe_player::present::can_go_under();
+            #[cfg(not(target_os = "linux"))]
+            let see_through = false;
+            let builder = builder.transparent(see_through);
             #[cfg(all(windows, feature = "e2e"))]
             let builder = match std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
                 Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
@@ -228,12 +241,15 @@ pub fn run() {
             if let Err(e) = screen::attach(app.handle(), &main) {
                 eprintln!("The player's screen couldn't be put in the window: {e:#}");
             }
-            // Behind the page, the theme's background (--bg in app.css), not white.
-            let bg = match main.theme() {
-                Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
-                _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
-            };
-            let _ = main.set_background_color(Some(bg));
+            // Behind the page, the window's background is the theme's (--bg in
+            // app.css), not white; but clear where the window is see-through.
+            if !see_through {
+                let bg = match main.theme() {
+                    Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
+                    _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
+                };
+                let _ = main.as_ref().window().set_background_color(Some(bg));
+            }
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 if !main.is_visible().unwrap_or(true) {
@@ -310,6 +326,8 @@ pub fn run() {
             player::player_plan,
             player::player_close,
             player::player_still,
+            player::player_frame,
+            screen::screen_under,
             player::player_play,
             player::player_pause,
             player::player_seek,

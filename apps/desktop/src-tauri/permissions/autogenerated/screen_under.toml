@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-screen-under"
+description = "Enables the screen_under command without any pre-configured scope."
+commands.allow = ["screen_under"]
+
+[[permission]]
+identifier = "deny-screen-under"
+description = "Denies the screen_under command without any pre-configured scope."
+commands.deny = ["screen_under"]

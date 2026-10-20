@@ -1,5 +1,6 @@
 //! The surface on Linux: a native surface of its own over the window,
-//! covering the player's box, drawn by the compositor (compose.rs) through
+//! covering the player's box (or, under Wayland, under the window's surface:
+//! `set_under`), drawn by the compositor (compose.rs) through
 //! wgpu: Vulkan, or OpenGL where there's no Vulkan adapter. Under Wayland
 //! it's a subsurface of the window's surface; under X11, a child window of
 //! the window's. Either way GTK and the page know nothing of it: drawing a
@@ -44,6 +45,8 @@ pub struct Screen {
 
 struct Inner {
     rect: Option<Rect>,
+    /// Under the window's surface, not over it (Wayland only).
+    under: bool,
     frame: Option<Arc<Frame>>,
     overlay: Option<Arc<Overlay>>,
     /// The surface and its drawing, while there's a box (and the window is shown).
@@ -59,8 +62,15 @@ impl Screen {
     /// the anchor's coordinates (for the app, the page's view). Call on the
     /// main thread. Nothing shows until a box is set.
     pub fn attach(anchor: &gtk::Widget) -> Screen {
-        let inner =
-            Inner { rect: None, frame: None, overlay: None, drawn: None, size: (1, 1), painted: Default::default() };
+        let inner = Inner {
+            rect: None,
+            under: false,
+            frame: None,
+            overlay: None,
+            drawn: None,
+            size: (1, 1),
+            painted: Default::default(),
+        };
         let screen = Screen { inner: Arc::new(Mutex::new(inner)), anchor: glib::SendWeakRef::from(anchor.downgrade()) };
         // A box set before the window was on screen is placed once it is.
         let again = screen.clone();
@@ -86,6 +96,22 @@ impl Screen {
         });
     }
 
+    /// Puts the picture under the window's surface (true) or over it (false,
+    /// as it starts), from any thread. Under, it shows only where the window
+    /// and page are clear: what's in the page over the box (a site's player)
+    /// stays on top. Only under Wayland (`can_go_under`); X11 stays over.
+    pub fn set_under(&self, under: bool) {
+        let rect = {
+            let mut inner = self.inner.lock().unwrap();
+            if inner.under == under {
+                return;
+            }
+            inner.under = under;
+            inner.rect
+        };
+        self.set(rect);
+    }
+
     /// Shows `frame` (none: black), from any thread.
     pub fn show(&self, frame: Option<Arc<Frame>>) {
         let mut inner = self.inner.lock().unwrap();
@@ -104,6 +130,13 @@ impl Screen {
     pub fn painted(&self) -> (u64, Duration) {
         self.inner.lock().unwrap().painted
     }
+}
+
+/// Whether the picture can go under the window's surface: under Wayland.
+/// Call on the main thread.
+pub(crate) fn can_go_under() -> bool {
+    use gtk::glib::prelude::ObjectExt;
+    gtk::gdk::Display::default().is_some_and(|d| d.type_().name() == "GdkWaylandDisplay")
 }
 
 impl Inner {
@@ -134,6 +167,9 @@ impl Inner {
         match self.drawn.as_mut() {
             Some(drawn) => drawn.native.place(place),
             None => self.drawn = Some(Drawn::new(&window, place)?),
+        }
+        if let Some(Native::Wayland(w)) = self.drawn.as_ref().map(|d| &d.native) {
+            w.stack(self.under);
         }
         if matches!(self.drawn.as_ref().map(|d| &d.native), Some(Native::Wayland(_))) {
             // A subsurface's position takes effect when its parent commits.
@@ -185,7 +221,7 @@ impl Drawn {
     /// A surface over `window`'s (a GTK toplevel), at `place`.
     fn new(window: &gtk::gdk::Window, place: Place) -> Result<Drawn> {
         let native = match window.display().type_().name() {
-            "GdkWaylandDisplay" => Native::Wayland(Wayland::new(window, place)?),
+            "GdkWaylandDisplay" => Native::Wayland(Box::new(Wayland::new(window, place)?)),
             "GdkX11Display" => Native::X11(Box::new(X11::new(window, place)?)),
             other => bail!("no surface for {other}"),
         };
@@ -276,7 +312,7 @@ fn painter(native: &Native, size: (u32, u32)) -> Result<SurfacePainter> {
 }
 
 enum Native {
-    Wayland(Wayland),
+    Wayland(Box<Wayland>),
     X11(Box<X11>),
 }
 
@@ -336,6 +372,8 @@ struct Wayland {
     queue: EventQueue<Ignore>,
     surface: WlSurface,
     subsurface: WlSubsurface,
+    /// The window's surface, which it's a subsurface of.
+    parent: WlSurface,
 }
 
 impl Wayland {
@@ -371,9 +409,20 @@ impl Wayland {
         let nothing = compositor.create_region(&qh, ());
         surface.set_input_region(Some(&nothing));
         nothing.destroy();
-        let mut wayland = Wayland { display, conn, queue, surface, subsurface };
+        let mut wayland = Wayland { display, conn, queue, surface, subsurface, parent };
         wayland.place(place);
         Ok(wayland)
+    }
+
+    /// Over the window's surface, or under it (where the window and the page
+    /// are clear). Takes effect as the window's surface next commits.
+    fn stack(&self, under: bool) {
+        if under {
+            self.subsurface.place_below(&self.parent);
+        } else {
+            self.subsurface.place_above(&self.parent);
+        }
+        let _ = self.conn.flush();
     }
 
     fn place(&mut self, place: Place) {
