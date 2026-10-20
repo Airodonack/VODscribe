@@ -25,6 +25,28 @@
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
+  // The video kept as VODs from sites play: how much, and the most it may take.
+  const FOOTAGE_CAPS = [5, 10, 20, 50];
+  let footageCap = $derived(appSettings.value?.footage_gb ?? 10);
+  let footageBytes = $state<number | null>(null);
+  let clearingFootage = $state(false);
+  async function setFootageCap(gb: number) {
+    await appSettings.update({ footage_gb: gb });
+    // Lowered, what's past it goes now.
+    await api.clearFootage(false).catch(() => {});
+    footageBytes = await api.footageBytes().catch(() => footageBytes);
+  }
+  async function clearFootage() {
+    clearingFootage = true;
+    try {
+      await api.clearFootage(true);
+      footageBytes = await api.footageBytes();
+    } catch (e) {
+      error = String(e);
+    } finally {
+      clearingFootage = false;
+    }
+  }
   let clearing = $state(false);
   let gpu = $state<GpuStatus | null>(null);
   let step = $state<DownloadProgress | null>(null);
@@ -37,7 +59,12 @@
   let asked = 0;
   async function refresh() {
     const n = ++asked;
-    const [status, cache, media] = await Promise.all([api.gpuStatus(), api.cacheSize(), api.mediaSize()]);
+    const [status, cache, media, footage] = await Promise.all([
+      api.gpuStatus(),
+      api.cacheSize(),
+      api.mediaSize(),
+      api.footageBytes().catch(() => null),
+    ]);
     if (n !== asked) return;
     gpu = status;
     // Opened partway through a download: start from where it is, not a blank
@@ -46,6 +73,7 @@
     if (!gpu.installing) step = null;
     cacheBytes = cache;
     mediaBytes = media;
+    footageBytes = footage;
   }
 
   let deletingVideos = $state(false);
@@ -53,7 +81,7 @@
   async function deleteAllVideos() {
     const ok = await ask(
       `Delete all downloaded videos${mediaBytes ? ` (${formatBytes(mediaBytes)})` : ""}? Transcripts and clips stay; ` +
-        "the videos play on their sites instead. Downloads under way stop.",
+        "the videos play from their sites instead. Downloads under way stop.",
       "Delete videos",
       "Keep",
     );
@@ -305,6 +333,29 @@
       </button>
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
+    <p class="label">Video kept as it plays</p>
+    <p class="muted hint">
+      VODs from Kick, Twitch and YouTube play from stretches of their video downloaded as they play, kept to play again
+      and to make clips and edits of{footageBytes ? `. They use ${formatBytes(footageBytes)}` : ""}, at most:
+    </p>
+    <div class="segmented" role="radiogroup" aria-label="Most video kept as it plays">
+      {#each FOOTAGE_CAPS as gb (gb)}
+        <button
+          role="radio"
+          aria-checked={footageCap === gb}
+          class:on={footageCap === gb}
+          onclick={() => setFootageCap(gb)}
+        >
+          {gb} GB
+        </button>
+      {/each}
+    </div>
+    <p class="muted hint">
+      The least recently played go first. What your edits use is always kept: the site may not have it any more.
+    </p>
+    <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
+      {clearingFootage ? "Deleting…" : "Delete the video kept as it played"}
+    </button>
     <p class="label">Clips and edits are made as</p>
     <div class="segmented" role="radiogroup" aria-label="Clip format">
       {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}

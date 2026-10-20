@@ -18,6 +18,7 @@
   import Settings from "./Settings.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
+  import { ownPlayer } from "./ownPlayer.svelte";
   import EditView from "./EditView.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
@@ -289,6 +290,8 @@
   });
 
   onMount(async () => {
+    // Whether VODs from sites play in the app's own player: known before one opens.
+    void ownPlayer.ask();
     // The window starts hidden (tauri.conf.json) and is shown now that the page
     // is in place, in the theme chosen, rather than as a blank white window or
     // in the system's colors first. (Not after an animation frame: a hidden

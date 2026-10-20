@@ -153,6 +153,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     app.state::<AppState>().clips.run(app.handle().clone())?;
     app.state::<AppState>().videos.run(app.handle().clone())?;
     app.state::<AppState>().footage.run(app.handle().clone())?;
+    player::feed(app.handle().clone());
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
     // What quitting didn't get to of the VODs nothing uses any more.
@@ -296,6 +297,8 @@ pub fn run() {
             edits::add_range_to_edit,
             edits::edit_thumb,
             footage::vod_frame,
+            footage::footage_bytes,
+            footage::clear_footage,
             history::set_view,
             history::undo,
             history::redo,

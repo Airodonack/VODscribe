@@ -50,6 +50,9 @@ pub struct Settings {
     pub video_height: Option<u32>,
     /// What clips and rendered edits are made as.
     pub clip_format: ClipFormat,
+    /// The most the video kept as VODs from sites play (footage) may take,
+    /// in gigabytes; `footage_cap()` gives the default when unset.
+    pub footage_gb: Option<u32>,
 }
 
 /// Every known emote provider, each once, in priority order.
@@ -104,7 +107,15 @@ fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D
 /// (platform.ts) is checked to agree.
 pub const DEFAULT_VIDEO_HEIGHT: u32 = 1080;
 
+/// The most footage may take unless chosen otherwise, in gigabytes.
+pub const DEFAULT_FOOTAGE_GB: u32 = 10;
+
 impl Settings {
+    /// The most footage may take, in bytes (`DEFAULT_FOOTAGE_GB` unless chosen).
+    pub fn footage_cap(&self) -> u64 {
+        u64::from(self.footage_gb.unwrap_or(DEFAULT_FOOTAGE_GB)) << 30
+    }
+
     /// The tallest video to download (`DEFAULT_VIDEO_HEIGHT` unless chosen).
     pub fn video_height(&self) -> u32 {
         self.video_height.unwrap_or(DEFAULT_VIDEO_HEIGHT)

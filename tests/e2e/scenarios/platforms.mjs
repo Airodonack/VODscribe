@@ -55,7 +55,8 @@ export default {
         );
         if (chat === "failed") throw new Error("its chat replay failed");
 
-        // Played in the app: the site's embed, or the app's own player.
+        // Played in the app: in its own player, from footage fetched as it
+        // plays, where it can draw (else the site's embed).
         await app.openVod(vod.id);
         await until(
           "the Play button",
@@ -72,6 +73,7 @@ export default {
           await app.click('.bar button[aria-label="Play"]');
         }
         const from = await app.shownTime();
+        const asked = Date.now();
         const to = await until(
           `${site} to play`,
           async () => {
@@ -82,7 +84,11 @@ export default {
         );
         await ctx.checkpoint(`${site}-playing`);
         await app.pause().catch(() => {});
-        ctx.log(`${site}: ${lines.length} lines, chat ${chat}, played ${from} to ${to} s`);
+        const own = await app.js(`return !!document.querySelector(".own-player")`);
+        ctx.log(
+          `${site}: ${lines.length} lines, chat ${chat}, played ${from} to ${to} s in ${own ? "the app's own player" : "the site's"}` +
+            ` (${((Date.now() - asked) / 1000).toFixed(1)} s from Play to 3 s played)`,
+        );
 
         // A clip, cut from footage downloaded for it; resized a little, cut
         // again from the same footage, with no new download.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-footage"
+description = "Enables the clear_footage command without any pre-configured scope."
+commands.allow = ["clear_footage"]
+
+[[permission]]
+identifier = "deny-clear-footage"
+description = "Denies the clear_footage command without any pre-configured scope."
+commands.deny = ["clear_footage"]

@@ -18,7 +18,7 @@
   import { keysForApp } from "./demo";
   import { editShortcuts, playerKey, stepOf, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
-  import { playsHere } from "./embed";
+  import { playsFromFile } from "./embed";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
@@ -685,7 +685,7 @@
       const vod = piece && vods.get(piece.vod_id);
       if (!piece || !vod) return;
       const { start, end } = piece;
-      carry({ vod, start, end, title: nameOf(piece), ownPlayer: playsHere(vod), from, x, y, home });
+      carry({ vod, start, end, title: nameOf(piece), ownPlayer: playsFromFile(vod), from, x, y, home });
     },
   };
 

@@ -19,7 +19,7 @@
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
   import { playerKey, stepOf, transportKey, vodShortcuts } from "./playerKeys";
-  import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
+  import { canEmbed, createPlayer, playsFromFile, playsHere, type EmbeddedPlayer } from "./embed";
   import { formatFraction, formatTime, keepsVideo, os, playbackHint, siteName, watchUrl } from "./platform";
   import { nav } from "./nav.svelte";
 
@@ -100,7 +100,7 @@
   cuts.open(untrack(() => vod.id));
   clips.open(
     untrack(() => vod.id),
-    untrack(() => !playsHere(vod)),
+    untrack(() => !playsFromFile(vod)),
   );
 
   /** Plays from `time`, starting the player if it isn't yet. */
@@ -247,7 +247,7 @@
       vod,
       start: range.start,
       end: range.end,
-      ownPlayer: playsHere(vod),
+      ownPlayer: playsFromFile(vod),
       from,
       x: e.clientX,
       y: e.clientY,
@@ -462,7 +462,7 @@
         highlight={clipHover && canClip ? (cuts.selection ?? stretch) : null}
         ranges={editRanges}
         current={between ? stretch : null}
-        ownPlayer={playsHere(vod)}
+        ownPlayer={playsFromFile(vod)}
         onpause={() => player?.playing() && player.togglePlay()}
         onseek={seekTo}
       />
@@ -520,7 +520,7 @@
 {#snippet below()}
   {#if canEmbed(vod)}
     {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length)}
-      <ClipStrip {vod} ownPlayer={playsHere(vod)} onplay={playFrom} />
+      <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}
       <p class="error-text note">

@@ -36,7 +36,7 @@ fn plan(path: &Path) -> Timeline {
     };
     let until = mkv::written(path).map_or(0.0, |w| (w - 1.0).max(0.0));
     let source = Source { path: path.to_path_buf(), offset: 0.0, section: None };
-    Timeline::of(&[piece], |_, _, _| Some((source.clone(), until)))
+    Timeline::of(&[piece], |_, _, _| if until > 0.0 { vec![(0.0, until, source.clone())] } else { vec![] })
 }
 
 #[test]

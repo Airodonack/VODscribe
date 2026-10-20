@@ -4,6 +4,7 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 
+import { ownPlayer } from "./ownPlayer.svelte";
 import { elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { Clock } from "./playerClock";
@@ -375,12 +376,11 @@ async function twitchClip(
   );
 }
 
-/** Whether the app's own player (NativePlayer.svelte) plays here; asked once. */
-let nativeHere: Promise<boolean> | null = null;
-
-/** A file on this computer in the app's own player (NativePlayer.svelte),
- *  or where that can't draw yet, or the file is sound alone, streamed by
- *  the app's local media server into the webview's (LocalPlayer.svelte). */
+/** A file on this computer, or a VOD from a site (from its footage, fetched
+ *  as it plays: ownPlayer.svelte.ts), in the app's own player
+ *  (NativePlayer.svelte); or where that can't draw yet, or the file is sound
+ *  alone, streamed by the app's local media server into the webview's
+ *  (LocalPlayer.svelte). */
 async function local(
   el: HTMLElement,
   vod: Vod,
@@ -388,8 +388,7 @@ async function local(
   play: boolean,
   onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> {
-  nativeHere ??= api.playerAvailable().catch(() => false);
-  if (!vod.audio_only && (await nativeHere)) {
+  if (!vod.audio_only && (await ownPlayer.ask())) {
     const player = mount(NativePlayer, { target: el, props: { vod, start: time, autoplay: play, onerror } });
     return {
       seek: player.seek,
@@ -441,10 +440,24 @@ const players: Record<string, CreatePlayer> = {
   local,
 };
 
-/** A kept video, played like a local file; else the platform's player. */
+/** A kept video, played like a local file; a VOD from a site, in the app's
+ *  own player where it plays here (ownPlayer.svelte.ts); else the
+ *  platform's player. */
 function playerFor(vod: Vod): CreatePlayer | undefined {
   if (vod.media) return local;
+  if (ownsSite(vod)) return local;
   return Object.hasOwn(players, vod.platform) ? players[vod.platform] : undefined;
+}
+
+/** Whether VOD `vod` from a site plays in the app's own player. */
+function ownsSite(vod: Vod): boolean {
+  return (
+    ["youtube", "twitch", "kick"].includes(vod.platform) &&
+    !isTwitchClip(vod) &&
+    !vod.audio_only &&
+    ownPlayer.here === true &&
+    !ownPlayer.fellBack.has(vod.id)
+  );
 }
 
 /** Creates a player inside `el`, or returns null if there's nothing to play here. */
@@ -460,5 +473,10 @@ export function createPlayer(
 
 export const canEmbed = (vod: Vod) => playerFor(vod) !== undefined;
 
-/** Whether `vod` plays from a file here, in the app's own player. */
+/** Whether `vod` plays in the app's own player: a file here, or a VOD
+ *  from a site from its footage. */
 export const playsHere = (vod: Vod) => playerFor(vod) === local;
+
+/** Whether `vod` is a file here (on this computer, or its video kept):
+ *  its frames are read, and its clips cut, from that, not downloaded. */
+export const playsFromFile = (vod: Vod) => !!vod.media || vod.platform === "local";

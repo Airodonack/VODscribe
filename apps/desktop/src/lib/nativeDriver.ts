@@ -14,6 +14,10 @@ export class NativeDriver {
   private isPlaying = false;
   /** Where the frame on screen is, as the player last said (null: none shows). */
   private shownAt: number | null = null;
+  /** The time stands for footage still to come (a VOD from a site). */
+  private waitingFor = false;
+  /** A frame has shown since it opened. */
+  private everShown = false;
   private seq = 0;
   private unlisten: UnlistenFn | null = null;
   private gone = false;
@@ -43,6 +47,18 @@ export class NativeDriver {
     this.clock.speed = status.speed;
     this.isPlaying = status.playing;
     this.shownAt = status.shown;
+    this.waitingFor = status.waiting ?? false;
+    if (status.shown !== null) this.everShown = true;
+  }
+
+  /** Whether the time stands for footage still to come (a VOD from a site, fetched as it plays). */
+  waiting() {
+    return this.waitingFor;
+  }
+
+  /** Whether a frame has shown since it opened. */
+  showed() {
+    return this.everShown;
   }
 
   /** What the page guesses until the player says: at `time`, not running. */

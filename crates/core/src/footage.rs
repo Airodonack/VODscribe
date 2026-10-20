@@ -109,6 +109,71 @@ pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Op
     Ok(found.map(|(path, from, to)| Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) }))
 }
 
+/// Where the footage of `start`..`end` of VOD `vod_id` is here, in order:
+/// each stretch (from, to: the VOD's time) and the file it plays from, the
+/// one reaching furthest at each point (the VOD's own file, a clip's, a
+/// section, or `growing`, the section downloading, as far as it's in).
+/// What none of them holds is left out: there the player waits.
+pub fn cover(
+    db: &Db,
+    dir: &Path,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    growing: Option<&Growing>,
+) -> Result<Vec<(f64, f64, Source)>> {
+    let Some(vod) = db.vod(vod_id)? else { return Ok(Vec::new()) };
+    let own = vod.source_path.clone().or(db.media_path(vod_id)?);
+    if let Some(path) = own.map(PathBuf::from).filter(|p| p.is_file()) {
+        return Ok(vec![(start, end, Source { path, offset: 0.0, section: None })]);
+    }
+    // Each file: from where it can play, to where it ends, and what it is.
+    let mut files: Vec<(f64, f64, Source)> = Vec::new();
+    for clip in db.clips(vod_id)? {
+        if clip.status == ClipStatus::Ready
+            && let Some(path) = clip.file_path.map(PathBuf::from).filter(|p| p.is_file())
+        {
+            files.push((clip.start, clip.end, Source { path, offset: clip.start, section: None }));
+        }
+    }
+    for (path, from, to) in sections(dir, vod_id) {
+        files.push((
+            picture_from(from),
+            to,
+            Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) },
+        ));
+    }
+    if let Some(g) = growing.filter(|g| g.vod_id == vod_id) {
+        let source = Source { path: g.path.clone(), offset: g.from, section: Some(section_stem(vod_id, g.from, g.to)) };
+        files.push((picture_from(g.from), g.usable(), source));
+    }
+    let mut out: Vec<(f64, f64, Source)> = Vec::new();
+    let mut at = start;
+    while at < end - EPSILON {
+        let here = files
+            .iter()
+            .filter(|(from, to, _)| *from <= at + EPSILON && *to > at + EPSILON)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        match here {
+            Some((_, to, source)) => {
+                let to = to.min(end);
+                // Used now, for tidying.
+                if source.section.is_some() && source.path.is_file() {
+                    touch(&source.path);
+                }
+                out.push((at, to, source.clone()));
+                at = to;
+            }
+            // Nothing here: on from where the next file starts, if any does.
+            None => match files.iter().map(|(from, _, _)| *from).filter(|from| *from > at).min_by(f64::total_cmp) {
+                Some(next) if next < end => at = next,
+                _ => break,
+            },
+        }
+    }
+    Ok(out)
+}
+
 /// The section to download for `start`..`end` of a VOD `duration` seconds
 /// long (if known): `MARGIN` more either side, within the VOD.
 pub fn section(start: f64, end: f64, duration: Option<f64>) -> (f64, f64) {
@@ -226,6 +291,32 @@ mod tests {
         fs::write(&own, b"x").unwrap();
         db.set_media_path(vod, Some(&own.to_string_lossy())).unwrap();
         assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: own, offset: 0.0, section: None }));
+    }
+
+    #[test]
+    fn a_long_stretch_plays_from_each_section_with_waits_between() {
+        let dir = crate::TempDir::new("cover");
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let file = |from: f64, to: f64| {
+            let path = dir.join(format!("{}.mkv", section_stem(vod, from, to)));
+            fs::write(&path, b"x").unwrap();
+            path
+        };
+        // Sections 0-100 and 80-200 (its picture from 90), then 300-400 (from 310).
+        let (a, b, c) = (file(0.0, 100.0), file(80.0, 200.0), file(300.0, 400.0));
+        let growing = Growing { vod_id: vod, from: 380.0, to: 500.0, path: "/w/g.part".into(), whole: 451.0 };
+        let got: Vec<(f64, f64, PathBuf)> = cover(&db, &dir, vod, 0.0, 600.0, Some(&growing))
+            .unwrap()
+            .into_iter()
+            .map(|(from, to, s)| (from, to, s.path))
+            .collect();
+        assert_eq!(
+            got,
+            [(0.0, 100.0, a), (100.0, 200.0, b), (310.0, 400.0, c), (400.0, 450.0, PathBuf::from("/w/g.part")),],
+            "the furthest reaching at each point; 200-310 and from 450 wait"
+        );
+        assert_eq!(cover(&db, &dir, vod, 210.0, 300.0, None).unwrap(), [], "none of it here");
     }
 
     #[test]

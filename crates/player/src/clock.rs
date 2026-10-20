@@ -123,6 +123,9 @@ struct Inner {
     /// Frames shown, and dropped for being late (for measuring).
     shown_count: AtomicU64,
     dropped: AtomicU64,
+    /// Where the footage isn't here, the time stands until it is (a VOD from
+    /// a site, fetched as it plays), rather than passing it in black (an edit).
+    waits_for_footage: AtomicBool,
 }
 
 impl Inner {
@@ -191,6 +194,7 @@ impl Player {
             quit: AtomicBool::new(false),
             shown_count: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
+            waits_for_footage: AtomicBool::new(false),
         });
         let shared = inner.clone();
         std::thread::Builder::new().name("player".into()).spawn(move || run(&shared))?;
@@ -372,6 +376,25 @@ impl Player {
         f32::from_bits(self.inner.volume.lock().unwrap().load(Ordering::Acquire))
     }
 
+    /// Whether the time stands where the footage isn't here, until it is
+    /// (`set_timeline` with it there plays on), rather than passing it.
+    pub fn set_waits_for_footage(&self, waits: bool) {
+        self.inner.waits_for_footage.store(waits, Ordering::Release);
+        self.inner.wake.notify_all();
+    }
+
+    /// Whether the time stands where it is for footage not here yet.
+    pub fn waiting_for_footage(&self) -> bool {
+        if !self.inner.waits_for_footage.load(Ordering::Acquire) {
+            return false;
+        }
+        let s = self.inner.state.lock().unwrap();
+        let time = s.time(self.inner.duration());
+        let playing = s.playing;
+        drop(s);
+        playing && self.inner.timeline.lock().unwrap().at(time).is_some_and(|stretch| stretch.source.is_none())
+    }
+
     pub fn set_volume(&self, volume: f32) {
         self.inner.volume.lock().unwrap().store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
     }
@@ -507,6 +530,22 @@ fn run(inner: &Inner) {
                 .source
                 .as_ref()
                 .and_then(|s| inner.info(&s.path)?.picture.map(|p| Video::new(&inner.ffmpeg, &s.path, p)));
+            if stretch.source.is_none() && inner.waits_for_footage.load(Ordering::Acquire) {
+                // Footage not here yet, and the time waits for it: it stands
+                // at the stretch's start (begun again there if it ran into
+                // it) till a timeline with the footage, or a seek, starts over.
+                *inner.shown.lock().unwrap() = None;
+                if !first {
+                    let mut s = inner.state.lock().unwrap();
+                    if s.epoch == epoch {
+                        s.restart(walk.from.max(stretch.at));
+                        inner.wake.notify_all();
+                    }
+                    continue 'start;
+                }
+                wait_until(inner, epoch, f64::INFINITY);
+                continue 'start;
+            }
             let Some(video) = video else {
                 // No footage, or no picture: nothing shows while the time passes it.
                 *inner.shown.lock().unwrap() = None;

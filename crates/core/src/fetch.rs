@@ -252,7 +252,14 @@ pub fn download(
                 tools::FFMPEG_AUDIO,
                 tools::FFMPEG_PICTURE
             ))
-            .args(if matroska { ["--downloader-args", "ffmpeg_o:-ss 0 -f matroska"].as_slice() } else { &[] })
+            // (From the VOD's start there's nothing before to drop, and the
+            // copy, which can only start at a keyframe, would lose the first
+            // one, a hair before 0, and the picture till the next.)
+            .args(match (matroska, start > 0.0) {
+                (true, true) => ["--downloader-args", "ffmpeg_o:-ss 0 -f matroska"].as_slice(),
+                (true, false) => ["--downloader-args", "ffmpeg_o:-f matroska"].as_slice(),
+                (false, _) => &[],
+            })
             .arg("--postprocessor-args")
             .arg(ffmpeg_reading_files())
             .arg("--ffmpeg-location")
