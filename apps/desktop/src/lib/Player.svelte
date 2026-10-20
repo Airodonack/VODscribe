@@ -32,9 +32,17 @@
   } from "./platform";
   import { nav } from "./nav.svelte";
 
-  // One instance per VOD (the parent keys it by id). `at` is a fresh object per
-  // jump, so jumping to the same timestamp twice still seeks.
-  let { vod, at }: { vod: Vod; at: { time: number; play: boolean } } = $props();
+  // One instance per VOD (the parent keys it by id). `at` is a jump (a search
+  // result, a transcript line, a source link), a fresh object each time, so
+  // jumping to the same timestamp twice still seeks; null opens it where its
+  // playhead was left this session (nav.svelte.ts), or at its start.
+  let { vod, at }: { vod: Vod; at: { time: number; play: boolean } | null } = $props();
+  const start = untrack(() => {
+    const doc = { kind: "vod" as const, id: vod.id };
+    return at?.time ?? nav.bringBack(doc)?.time ?? nav.lastSeen(doc)?.time ?? 0;
+  });
+  // Where it opened, or was last jumped to: the moment the header links to.
+  let from = $state(start);
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
   let collapsed = $state(false);
@@ -43,7 +51,7 @@
   let copied = $state<"ok" | "failed" | null>(null);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyLink() {
-    copied = await writeText(watchUrl(vod, at.time)).then(
+    copied = await writeText(watchUrl(vod, from)).then(
       () => "ok" as const,
       (e) => (console.error("copy failed", e), "failed" as const),
     );
@@ -95,11 +103,13 @@
   // Opened by a jump (a search result or transcript line): start straight away.
   // Later jumps arrive as a new `at` object.
   let handled = untrack(() => at);
-  if (handled.play && untrack(() => canEmbed(vod))) activate(handled.time);
+  if (handled?.play && untrack(() => canEmbed(vod))) activate(handled.time);
   $effect(() => {
     if (at === handled) return;
     handled = at;
+    if (!at) return;
     const { time, play } = at;
+    from = time;
     collapsed = false;
     if (!active) activate(time, play);
     else if (player) player.seek(time, play);
@@ -144,7 +154,7 @@
   });
 
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
-  const reading = new PlayerReading(untrack(() => at.time));
+  const reading = new PlayerReading(start);
   let captionsAvailable = $state(false);
   let captionsOn = $state(false);
   let playerDuration = $state(0);
@@ -331,7 +341,7 @@
       return;
     }
     if (!active && (key === " " || key === "k")) {
-      activate(at.time);
+      activate(from);
       e.preventDefault();
       return;
     }
@@ -363,9 +373,9 @@
         {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
-      {#if at.time > 0 && isLocal}
-        <span class="stamp"><span class="time">{formatTime(at.time)}</span></span>
-      {:else if at.time > 0}
+      {#if from > 0 && isLocal}
+        <span class="stamp"><span class="time">{formatTime(from)}</span></span>
+      {:else if from > 0}
         <button
           class="stamp"
           class:copied={copied === "ok"}
@@ -373,7 +383,7 @@
           onclick={copyLink}
           title="Copy a link to this moment"
         >
-          <span class="time">{formatTime(at.time)}</span>
+          <span class="time">{formatTime(from)}</span>
           <Icon name={copied === "ok" ? "check" : copied === "failed" ? "error" : "copy"} size={12} />
           {#if copied}<span class="copied-text">{copied === "ok" ? "Copied" : "Couldn't copy"}</span>{/if}
         </button>
@@ -386,7 +396,7 @@
         Show in folder
       </button>
     {:else}
-      <button class="link open" onclick={() => openUrl(watchUrl(vod, at.time))}>
+      <button class="link open" onclick={() => openUrl(watchUrl(vod, from))}>
         Open on {site}
         <Icon name="external" size={12} />
       </button>
@@ -412,11 +422,11 @@
         {#if active}
           <div class="host" bind:this={host}></div>
         {:else if audioOnly}
-          <button class="poster bar" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
-            <Icon name="play" size={16} /> Play from {formatTime(at.time)}
+          <button class="poster bar" onclick={() => activate(from)} aria-label="Play {vod.title}">
+            <Icon name="play" size={16} /> Play from {formatTime(from)}
           </button>
         {:else}
-          <button class="poster" onclick={() => activate(at.time)} aria-label="Play {vod.title}">
+          <button class="poster" onclick={() => activate(from)} aria-label="Play {vod.title}">
             {#if vod.thumb}<Thumb name={vod.thumb} />{/if}
             <span class="play"><Icon name="play" size={26} /></span>
           </button>
@@ -524,11 +534,11 @@
   {:else}
     <p class="muted note">
       {#if keepsVideo(vod) && vod.status !== "done" && vod.status !== "error"}
-        The video plays here once it's downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(at.time)}.
+        The video plays here once it's downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(from)}.
       {:else if keepsVideo(vod)}
-        This video isn't kept on this computer. Use “Open on {site}” to watch from {formatTime(at.time)}.
+        This video isn't kept on this computer. Use “Open on {site}” to watch from {formatTime(from)}.
       {:else}
-        {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(at.time)}.
+        {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(from)}.
       {/if}
     </p>
   {/if}

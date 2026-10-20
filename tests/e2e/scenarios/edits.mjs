@@ -48,6 +48,11 @@ export default {
     );
     ctx.log(`made "${made.title}"`);
 
+    // The VOD's playhead left at 4 s, to find there again after the edit.
+    await app.toStart();
+    for (let i = 0; i < 4; i++) await app.key("ArrowRight", { shift: true });
+    await until("the VOD at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+
     // Opened from its row (the search cleared: results take the main area).
     await app.type('input[placeholder="Search for a phrase…"]', "");
     await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
@@ -65,6 +70,11 @@ export default {
     ).then((t) => {
       if (t !== NAME) throw new Error(`the row says "${t}"`);
     });
+    // Back to the VOD: where its playhead was left, not its start; then the edit again.
+    await app.click(`.vod[data-key="${vod.id}"] button.main`);
+    await until("the VOD where it was left, at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+    await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+    await until("the edit open again", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
 
     await ctx.checkpoint("edit-view");
     const edit = () => app.invoke("get_edit", { id: made.id });

@@ -111,11 +111,8 @@
     }
     edits.openEdit(null);
     selectedId = doc?.id ?? null;
-    if (doc) {
-      const at = { time: step.left.time ?? 0, play: false };
-      if (playing?.vodId === doc.id) playing.at = at;
-      else playing = { vodId: doc.id, at };
-    }
+    // Brought back as it was left (Player.svelte reads nav.bringBack).
+    if (doc) playing = { vodId: doc.id, at: null };
     if (step.left.scroll) bringScroll(step.left.scroll);
   }
   /** Scrolls the transcript (or results) back to `top`, as it fills in. */
@@ -197,7 +194,9 @@
   }
 
   // `at` is replaced on every jump; the player seeks rather than reloading.
-  let playing = $state<{ vodId: number; at: { time: number; play: boolean } } | null>(null);
+  // The VOD in the player's place, and the jump asked of it (none: it opens
+  // where it was left, Player.svelte).
+  let playing = $state<{ vodId: number; at: { time: number; play: boolean } | null } | null>(null);
   let playingVod = $derived(playing ? vodsById.get(playing.vodId) : undefined);
 
   const unlisten: UnlistenFn[] = [];
@@ -457,13 +456,15 @@
     else playing = { vodId, at: { time, play: false } };
   }
 
-  /** Opens VOD `id` (or none), paused where its playhead was left this session (its start if it's new). */
+  /** Opens VOD `id` (or none), paused where its playhead was left this session (its start if it's new),
+   *  unless it's the one on screen. */
   function select(id: number | null) {
     if (id !== edits.lit?.vodId) edits.lit = null;
+    // On screen already: as it is. Else it opens where it was left (Player.svelte).
+    const shown = edits.openId === null && playing?.vodId === id;
     edits.openEdit(null);
     selectedId = id;
-    const time = id === null ? 0 : (nav.lastSeen({ kind: "vod", id })?.time ?? 0);
-    if (id !== null && playing?.vodId !== id) playing = { vodId: id, at: { time, play: false } };
+    if (id !== null && !shown) playing = { vodId: id, at: null };
   }
 
   // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
