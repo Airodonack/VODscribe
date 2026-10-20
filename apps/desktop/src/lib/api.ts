@@ -474,8 +474,9 @@ export const api = {
   setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),
   renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
-  /** Takes off VOD `vodId`'s clip bar the clips whose file was deleted outside the app (`clip-removed` for each). */
-  forgetGoneClips: (vodId: number) => invoke<void>("forget_gone_clips", { vodId }),
+  /** Takes clips whose file was deleted outside the app off `doc`'s clip bar (`clip-removed` for each). */
+  forgetGoneClips: (doc: Doc) =>
+    invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging clip `id`'s file out of the window; call while the mouse button is down. */
   /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */

@@ -461,16 +461,31 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Takes off VOD `vod_id`'s clip bar the clips whose file was deleted outside
-/// the app (in a file manager), as one change undo can take back. Only where
+/// Takes off a clip bar (VOD `vod_id`'s, or edit `edit_id`'s) the clips
+/// whose file was deleted outside the app (in a file manager), as one change
+/// undo can take back. Only where
 /// the file's folder is still there: a drive that's away (unmounted,
 /// unplugged) takes none of them.
 #[tauri::command]
-pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>, vod_id: i64) -> CmdResult<()> {
+pub(crate) async fn forget_gone_clips(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    vod_id: Option<i64>,
+    edit_id: Option<i64>,
+) -> CmdResult<()> {
+    let doc = match (vod_id, edit_id) {
+        (Some(vod), None) => Doc::Vod(vod),
+        (None, Some(edit)) => Doc::Edit(edit),
+        _ => return Err("Say whose clip bar: a VOD's or an edit's.".into()),
+    };
     let finished = |clip: &Clip| clip.shown && clip.status == ClipStatus::Ready;
     let files: Vec<(i64, String)> = {
         let db = state.db.lock().unwrap();
-        let clips = db.clips(vod_id).map_err(err)?;
+        let clips = match doc {
+            Doc::Vod(vod) => db.clips(vod),
+            Doc::Edit(edit) => db.bar_clips(edit),
+        }
+        .map_err(err)?;
         clips.into_iter().filter(finished).filter_map(|c| Some((c.id, c.file_path?))).collect()
     };
     // Looked at without the library held: a sleeping disk or a network folder
@@ -487,9 +502,8 @@ pub(crate) async fn forget_gone_clips(app: AppHandle, state: State<'_, AppState>
     .await
     .map_err(err)?;
     let db = state.db.lock().unwrap();
-    // A change of its own in the VOD's history: undone, the clips come back
+    // A change of its own in the bar's history: undone, the clips come back
     // (made again), apart from what was done before or after.
-    let doc = Doc::Vod(vod_id);
     let before = history::snapshot(&db, doc).ok().flatten();
     let mut taken = 0;
     for (id, path) in gone {

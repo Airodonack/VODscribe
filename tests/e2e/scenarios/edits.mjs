@@ -8,7 +8,7 @@
 // deleted, after asking, and with nothing using the VOD it's erased by the
 // next start (added again, it's a new one).
 
-import { existsSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
@@ -439,6 +439,21 @@ export default {
       MINUTE,
     );
     ctx.log(`C in the edit: a ${barClip.length} s clip on its bar (${back.file_path}), undone and redone`);
+    // Its file deleted outside the app (in a file manager): back in the
+    // window, the clip has left the bar; Ctrl+Z brings it back, made again.
+    rmSync(back.file_path);
+    await app.js(`window.dispatchEvent(new Event("focus"))`);
+    await until("the clip gone with its file", async () => (await barClips()).length === 0, 10_000);
+    await undoKey(false);
+    await until(
+      "the clip back after its file went",
+      async () => {
+        const [c] = await barClips();
+        return c?.status === "ready" && existsSync(c.file_path ?? "") && c;
+      },
+      MINUTE,
+    );
+    ctx.log("its file deleted outside the app: off the bar, and back with Ctrl+Z");
 
     // Rendered: E.
     await app.key("e");
