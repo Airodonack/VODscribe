@@ -141,6 +141,30 @@ pub(crate) async fn chat_windows(
     crate::with_reads(app, move |db| db.chat_windows(vod_id, &ranges, cap)).await
 }
 
+/// Edit `id`'s chat as a whole, on its timeline: how many messages play in
+/// it and how busy each of `bins` stretches of its `duration` is. No events
+/// yet.
+#[tauri::command]
+pub(crate) async fn edit_chat_overview(app: AppHandle, id: i64, duration: f64, bins: usize) -> CmdResult<ChatOverview> {
+    crate::with_reads(app, move |db| {
+        let (count, histogram) = db.edit_chat_histogram(id, duration, bins.min(10_000))?;
+        Ok(ChatOverview { count, histogram, events: Some(Vec::new()) })
+    })
+    .await
+}
+
+/// For each stretch of edit `id`'s timeline (from, to: seconds), its first
+/// `cap` messages and how many it has.
+#[tauri::command]
+pub(crate) async fn edit_chat_windows(
+    app: AppHandle,
+    id: i64,
+    ranges: Vec<(f64, f64)>,
+    cap: usize,
+) -> CmdResult<Vec<ChatWindow>> {
+    crate::with_reads(app, move |db| db.edit_chat_windows(id, &ranges, cap)).await
+}
+
 /// The emotes in VOD `vod_id`'s chat, as (name, image URL).
 #[tauri::command]
 pub(crate) async fn chat_emotes(app: AppHandle, vod_id: i64) -> CmdResult<Vec<(String, String)>> {

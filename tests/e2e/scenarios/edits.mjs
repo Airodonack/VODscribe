@@ -73,6 +73,27 @@ export default {
     if (pieces(first)[0].group?.title !== clip.title)
       throw new Error(`the clip came in as ${JSON.stringify(pieces(first)[0].group)}, not a group named for it`);
 
+    // Chat written into the library for the VOD (a file has none of its
+    // own) at 1.5 and 2.5 s, in the edit's stretch, and at 4 s, outside it:
+    // once the edit next changes (the split below), its transcript has the
+    // two beside it, at 0.5 and 1.5 s of the edit.
+    const library = path.join(process.env.XDG_DATA_HOME ?? "", "app.vodscribe", "library.sqlite");
+    const chatWritten = existsSync(library);
+    if (chatWritten) {
+      const { DatabaseSync } = await import("node:sqlite");
+      const db = new DatabaseSync(library);
+      const add = db.prepare(
+        "INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?, ?, ?, NULL, ?, ?)",
+      );
+      for (const [time, text] of [
+        [1.5, "liftoff"],
+        [2.5, "eagle"],
+        [4, "after"],
+      ])
+        add.run(vod.id, time, "viewer", text, JSON.stringify([{ type: "text", text }]));
+      db.close();
+    } else ctx.log("no library here to write chat into: the edit's chat isn't tried");
+
     // Split at the playhead, a second into the edit (its one piece, 2 s long).
     await app.toStart();
     await until("the start", async () => (await app.shownTime()) === 0, 10_000);
@@ -119,6 +140,24 @@ export default {
       if (changed < 3 || same > changed / 3) throw new Error("the edit's captions don't show over its picture");
     }
     ctx.log(`captions: ${cues.length}, the first "${cues[0].text}"`);
+    if (chatWritten) {
+      const said = await until(
+        "the edit's chat beside its transcript",
+        async () => {
+          const shown = await app.js(
+            `return [...document.querySelectorAll(".transcript .chat .message")].map((m) => m.textContent.trim())`,
+          );
+          return shown.length === 2 && shown;
+        },
+        10_000,
+      );
+      if (!said[0].includes("liftoff") || !said[1].includes("eagle")) throw new Error(`the edit's chat: ${said}`);
+      const map = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4 });
+      if (map.count !== 2 || map.histogram[1] !== 1 || map.histogram[3] !== 1)
+        throw new Error(`the edit's chat overview: ${JSON.stringify(map)}`);
+      await ctx.checkpoint("edit-chat");
+      ctx.log("the edit's chat: the VOD's two messages in its stretch, beside its transcript");
+    }
     // Delete held down: its repeats remove nothing (only a press does).
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", repeat: true, bubbles: true }))`,

@@ -162,7 +162,16 @@ fn chat_line_row(r: &Row) -> rusqlite::Result<ChatLineRow> {
 impl ChatLineRow {
     fn into_line(self) -> Result<ChatLine> {
         let ChatLineRow(id, time, author, color, parts, kind, amount) = self;
-        Ok(ChatLine { id, time, author, color, parts: serde_json::from_str(&parts)?, kind: Kind::parse(&kind), amount })
+        Ok(ChatLine {
+            id,
+            time,
+            author,
+            color,
+            parts: serde_json::from_str(&parts)?,
+            kind: Kind::parse(&kind),
+            amount,
+            platform: None,
+        })
     }
 }
 
@@ -177,6 +186,9 @@ pub struct ChatLine {
     pub parts: Vec<ChatPart>,
     pub kind: Kind,
     pub amount: Option<f64>,
+    /// The site its VOD is from, where the list mixes VODs' (an edit's chat).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -2595,6 +2607,29 @@ mod tests {
 
         db.delete_vod(vod.id).unwrap();
         assert!(db.search("clutch", &SearchFilter::default(), 10).unwrap().hits.is_empty(), "cascade clears index");
+    }
+
+    #[test]
+    fn an_edits_chat_is_its_pieces_vods_where_they_play() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let at = [5.0, 11.0, 13.0, 15.0, 31.0];
+        let messages: Vec<_> = at.iter().map(|&t| message(t, "a", &format!("at {t}"))).collect();
+        db.add_chat(vod, &messages, &[]).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        // 10-20 s with 12-14 struck (plays 0-2, 2-8), then 30-35 s (8-13).
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
+        let first = db.piece_rows(edit).unwrap()[0].id;
+        db.set_piece_struck(first, &[(12.0, 14.0)]).unwrap();
+        let w = db.edit_chat_windows(edit, &[(0.0, 13.0), (2.0, 9.5)], 2).unwrap();
+        let times = |i: usize| w[i].messages.iter().map(|m| m.time).collect::<Vec<_>>();
+        assert_eq!((times(0), w[0].total), (vec![1.0, 3.0], 3), "11 and 15 s; 31 s counted; 13 s struck");
+        assert_eq!((times(1), w[1].total), (vec![3.0, 9.0], 2));
+        assert_eq!(w[0].messages[0].platform.as_deref(), Some("youtube"));
+        let (count, histogram) = db.edit_chat_histogram(edit, 13.0, 13).unwrap();
+        assert_eq!(count, 3);
+        assert_eq!((histogram[1], histogram[3], histogram[9]), (1, 1, 1));
     }
 
     fn message(time: f64, author: &str, text: &str) -> ChatMessage {

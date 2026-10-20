@@ -326,6 +326,8 @@ export interface ChatLine {
   kind: ChatKind;
   /** For a gift, how many; for a tip, how many bits or KICKs. */
   amount: number | null;
+  /** Its VOD's site, in a list mixing VODs' (an edit's chat). */
+  platform?: string;
 }
 
 /** A document with an undo history (crates' history.rs): an edit, or a VOD's marks and clip bar. */
@@ -516,6 +518,12 @@ export const api = {
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>
     invoke<ChatOverview & { events: ChatLine[] | null }>("chat_overview", { vodId, duration, bins, events }),
   /** For each [from, to) in seconds, its first `cap` messages and how many it has. */
+  /** Edit `id`'s chat as a whole, on its timeline. */
+  editChatOverview: (id: number, duration: number, bins: number) =>
+    invoke<ChatOverview>("edit_chat_overview", { id, duration, bins }),
+  /** For each stretch of edit `id`'s timeline, its first `cap` messages and how many. */
+  editChatWindows: (id: number, ranges: [number, number][], cap: number) =>
+    invoke<ChatWindow[]>("edit_chat_windows", { id, ranges, cap }),
   chatWindows: (vodId: number, ranges: [number, number][], cap: number) =>
     invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
   /** The emotes in a VOD's chat, as [name, image URL]. */

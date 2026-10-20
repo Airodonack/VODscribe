@@ -29,6 +29,7 @@
 
   // Reload when the VOD changes, and periodically while it is still transcribing
   // (segments are indexed as they are produced).
+  // What chat is of: the VOD, or the edit as it is (its pieces place it).
   let vodId = $derived(vod?.id ?? -1);
   let step = $derived(vod?.status === "transcribing" ? Math.floor(vod.progress * 20) : vod?.status);
   // An edit's lines are asked for again at each change to it.
@@ -72,13 +73,16 @@
   let chatError = $state<string | null>(null);
   let chatProgress = $state<number | null>(null);
   let chatOpen = $state(load(CHAT_OPEN) !== "false");
-  let hasChat = $derived(!!vod && vod.platform !== "local");
+  // The chat as a whole (counts and events), when it's been asked for.
+  let overview = $state.raw<ChatOverview | null>(null);
+  // An edit's chat is its pieces' VODs' where they play: shown once there's some.
+  let hasChat = $derived(vod ? vod.platform !== "local" : (overview?.count ?? 0) > 0);
   // A VOD without a chat replay (a video that wasn't a livestream, say): its
   // toggle is grayed out and the column stays shut.
-  let chatStatus = $derived(vod?.chat ?? "none");
+  let chatStatus = $derived(vod ? vod.chat : "done");
   let noChat = $derived(chatStatus === "none");
   let showChat = $derived(hasChat && chatOpen && !noChat);
-  let canHaveChat = $derived(hasChat && (chatStatus === "done" || chatStatus === "pending"));
+  let canHaveChat = $derived(!vod || (hasChat && (chatStatus === "done" || chatStatus === "pending")));
 
   let root: HTMLDivElement;
 
@@ -234,9 +238,9 @@
   let chatGen = 0;
 
   // A different VOD, or a different chat status, starts afresh.
-  let chatOf: number | null = null;
+  let chatOf: number | string | null = null;
   $effect(() => {
-    const id = vodId;
+    const id = vod ? vodId : `edit ${edit} ${revision}`;
     void chatStatus;
     void canHaveChat;
     // Only those: what the loads read and change mustn't start this over.
@@ -276,11 +280,17 @@
     if (wanted.length === 0) return;
     for (const row of wanted) loading.add(row.key);
     const fetch = (batch: Row[], cap: number) =>
-      api.chatWindows(
-        id,
-        batch.map((r) => [r.from, r.to]),
-        cap,
-      );
+      edit !== null
+        ? api.editChatWindows(
+            edit,
+            batch.map((r) => [r.from, r.to]),
+            cap,
+          )
+        : api.chatWindows(
+            id,
+            batch.map((r) => [r.from, r.to]),
+            cap,
+          );
     // One request per limit: almost every row has the first one.
     const byLimit = new Map<number, Row[]>();
     for (const row of wanted) byLimit.set(limitOf(row), [...(byLimit.get(limitOf(row)) ?? []), row]);
@@ -327,7 +337,6 @@
 
   // The chat as a whole: how many messages, how busy each stretch was, and the events.
   const BINS = 1000;
-  let overview = $state.raw<ChatOverview | null>(null);
   let mapDuration = $derived(Math.max(duration, lines.at(-1)?.start ?? 0));
   /** The counts, and with `events` the subs, gifts and tips too, which
    *  otherwise keep what was had: while a fetch is saving, they're a megabyte
@@ -348,7 +357,10 @@
       eventsAt = Date.now();
     }
     const latest = () => id === vodId && mine === (withEvents ? eventsSeq : countsSeq);
-    api.chatOverview(id, mapDuration, BINS, withEvents).then(
+    (edit !== null
+      ? api.editChatOverview(edit, mapDuration, BINS)
+      : api.chatOverview(id, mapDuration, BINS, withEvents)
+    ).then(
       (o) => latest() && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
       (e) => latest() && (chatError = String(e)),
     );
@@ -731,7 +743,7 @@
               {#each win?.messages ?? [] as message (message.id)}
                 <ChatMessage
                   {message}
-                  platform={vod!.platform}
+                  platform={message.platform ?? vod?.platform ?? ""}
                   highlight={marks.highlightOf(message.id)}
                   words={marks.words}
                   onplay={play}

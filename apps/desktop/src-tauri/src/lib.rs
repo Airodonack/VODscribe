@@ -287,6 +287,8 @@ pub fn run() {
             clips::add_edit_mark,
             clips::edit_clips,
             clips::add_edit_clip,
+            chats::edit_chat_overview,
+            chats::edit_chat_windows,
             edits::remove_stretch,
             edits::rename_edit,
             edits::delete_edit,

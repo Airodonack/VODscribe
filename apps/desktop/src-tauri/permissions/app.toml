@@ -49,6 +49,8 @@ permissions = [
   "allow-add-edit-mark",
   "allow-edit-clips",
   "allow-add-edit-clip",
+  "allow-edit-chat-overview",
+  "allow-edit-chat-windows",
   "allow-remove-stretch",
   "allow-rename-edit",
   "allow-delete-edit",

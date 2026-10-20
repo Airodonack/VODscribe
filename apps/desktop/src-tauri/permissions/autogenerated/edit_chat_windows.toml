@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-edit-chat-windows"
+description = "Enables the edit_chat_windows command without any pre-configured scope."
+commands.allow = ["edit_chat_windows"]
+
+[[permission]]
+identifier = "deny-edit-chat-windows"
+description = "Denies the edit_chat_windows command without any pre-configured scope."
+commands.deny = ["edit_chat_windows"]

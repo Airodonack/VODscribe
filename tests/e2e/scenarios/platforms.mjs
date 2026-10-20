@@ -101,6 +101,28 @@ export default {
         await app.invoke("set_clip_range", { id: clip.id, start: 18, end: 26 });
         await made({ ...clip, start: 18, end: 26 }, "made again");
         ctx.log(`${site}: a clip made, and made again longer in ${((Date.now() - began) / 1000).toFixed(1)} s`);
+        // An edit of 10-40 s then 0-10 s: its chat is the VOD's there, on
+        // the edit's timeline, and shows beside its transcript.
+        if (chat === "done") {
+          const edit = await app.invoke("create_edit");
+          await app.invoke("add_range_to_edit", { editId: edit.id, vodId: vod.id, start: 10, end: 40 });
+          await app.invoke("add_range_to_edit", { editId: edit.id, vodId: vod.id, start: 0, end: 10 });
+          const [inVod] = await app.invoke("chat_windows", { vodId: vod.id, ranges: [[0, 40]], cap: 1 });
+          const inEdit = await app.invoke("edit_chat_overview", { id: edit.id, duration: 40, bins: 40 });
+          if (inEdit.count !== inVod.total)
+            throw new Error(`the edit's chat has ${inEdit.count} messages, the VOD ${inVod.total} there`);
+          if (inVod.total) {
+            await app.click(`.vod.edit[data-key="-${edit.id}"]`);
+            await until(
+              "the edit's chat beside its transcript",
+              () => app.js(`return document.querySelectorAll(".transcript .chat .message").length`),
+              MINUTE,
+            );
+            await ctx.checkpoint(`${site}-edit-chat`);
+            await app.toLibrary();
+          }
+          ctx.log(`${site}: an edit of 0-40 s has the VOD's ${inVod.total} messages there`);
+        }
         // Each site on its own: the next one's link goes in a cleared box.
         await app.type('input[aria-label="VOD link"]', "");
       } catch (e) {

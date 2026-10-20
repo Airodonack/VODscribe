@@ -804,6 +804,72 @@ impl Db {
         })
     }
 
+    /// For each stretch (`from`, `to`: seconds of edit `edit`'s timeline),
+    /// the first `cap` chat messages of what plays there and how many it
+    /// has: each piece's VOD's chat where it plays, at its time in the edit.
+    pub fn edit_chat_windows(
+        &self,
+        edit: i64,
+        ranges: &[(f64, f64)],
+        cap: usize,
+    ) -> Result<Vec<crate::db::ChatWindow>> {
+        let pieces = self.edit_pieces(edit)?;
+        let mut platforms = std::collections::HashMap::new();
+        let mut out = Vec::with_capacity(ranges.len());
+        for &(from, to) in ranges {
+            let mut messages = Vec::new();
+            let mut total = 0;
+            let mut at = 0.0;
+            for p in &pieces {
+                for (a, b) in p.spans() {
+                    let (s, e) = (from.max(at), to.min(at + b - a));
+                    if e > s {
+                        let (src, end) = (a + s - at, a + e - at);
+                        let [w]: [crate::db::ChatWindow; 1] =
+                            self.chat_windows(p.vod_id, &[(src, end)], cap)?.try_into().expect("one range");
+                        total += w.total;
+                        if let std::collections::hash_map::Entry::Vacant(e) = platforms.entry(p.vod_id) {
+                            e.insert(self.vod(p.vod_id)?.map(|v| v.info.platform));
+                        }
+                        for mut m in w.messages {
+                            m.time = s + m.time - src;
+                            m.platform = platforms[&p.vod_id].clone();
+                            messages.push(m);
+                        }
+                    }
+                    at += b - a;
+                }
+            }
+            messages.truncate(cap);
+            out.push(crate::db::ChatWindow { messages, total });
+        }
+        Ok(out)
+    }
+
+    /// How many chat messages play in each of `bins` equal stretches of
+    /// edit `edit`'s timeline (`duration` seconds), and in all: each piece's
+    /// VOD's chat where it plays.
+    pub fn edit_chat_histogram(&self, edit: i64, duration: f64, bins: usize) -> Result<(u32, Vec<u32>)> {
+        let mut out = vec![0u32; bins];
+        let mut count = 0;
+        if duration <= 0.0 || bins == 0 {
+            return Ok((count, out));
+        }
+        let mut stmt = self.conn.prepare("SELECT time FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3")?;
+        let mut at = 0.0;
+        for p in self.edit_pieces(edit)? {
+            for (a, b) in p.spans() {
+                for time in stmt.query_map(params![p.vod_id, a, b], |r| r.get::<_, f64>(0))? {
+                    let t = at + time? - a;
+                    out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
+                    count += 1;
+                }
+                at += b - a;
+            }
+        }
+        Ok((count, out))
+    }
+
     /// Moves mark `id` to VOD `vod_id`'s moment `at` (seconds of it); false if it's gone.
     pub fn move_mark_to(&self, id: i64, vod_id: i64, at: f64) -> Result<bool> {
         let clip = self.conn.query_row("SELECT clip_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?;
