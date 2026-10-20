@@ -24,7 +24,7 @@ use crate::db::{ClipStatus, Db, now};
 use crate::footage::Source;
 use crate::render::Piece;
 use crate::time::Flicks;
-use crate::transcript::Cue;
+use crate::transcript::{Cue, Segment, Word};
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
 const SLIVER: f64 = 0.04;
@@ -204,8 +204,28 @@ pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
 /// cut to the stretch it shows in, slivers left out.
 pub fn on_timeline<T: Clone>(
     pieces: &[EditPiece],
-    mut of: impl FnMut(i64) -> Result<Vec<(f64, f64, T)>>,
+    of: impl FnMut(i64) -> Result<Vec<(f64, f64, T)>>,
 ) -> Result<Vec<(f64, f64, T)>> {
+    on_timeline_cut(pieces, of, |thing, _| Some(thing.clone()))
+}
+
+/// What of a thing over a stretch of a VOD shows where only part of it
+/// plays (`on_timeline_cut`): `from`..`to` of it, in the VOD's time, put
+/// `shift` seconds later on the clip's timeline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shown {
+    pub from: f64,
+    pub to: f64,
+    pub shift: f64,
+}
+
+/// As `on_timeline`, with `cut` saying what of each thing shows in the
+/// stretch of it that plays (none: it's left out).
+pub fn on_timeline_cut<T, U>(
+    pieces: &[EditPiece],
+    mut of: impl FnMut(i64) -> Result<Vec<(f64, f64, T)>>,
+    mut cut: impl FnMut(&T, Shown) -> Option<U>,
+) -> Result<Vec<(f64, f64, U)>> {
     let mut known = std::collections::HashMap::new();
     let mut out = Vec::new();
     let mut at = 0.0;
@@ -217,8 +237,11 @@ pub fn on_timeline<T: Clone>(
         for (a, b) in p.spans() {
             for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
                 let (start, end) = (start.max(a), end.min(b));
-                if end - start >= SLIVER {
-                    out.push((at + start - a, at + end - a, thing.clone()));
+                if end - start < SLIVER {
+                    continue;
+                }
+                if let Some(shown) = cut(thing, Shown { from: start, to: end, shift: at - a }) {
+                    out.push((at + start - a, at + end - a, shown));
                 }
             }
             at += b - a;
@@ -227,11 +250,77 @@ pub fn on_timeline<T: Clone>(
     Ok(out)
 }
 
-/// Captions for a clip of `pieces`, on its timeline (`cues_of`: a VOD's
-/// captions, in its time).
-pub fn clip_cues(pieces: &[EditPiece], mut cues_of: impl FnMut(i64) -> Result<Vec<Cue>>) -> Result<Vec<Cue>> {
-    let placed = on_timeline(pieces, |vod| Ok(cues_of(vod)?.into_iter().map(|c| (c.start, c.end, c.text)).collect()))?;
-    Ok(placed.into_iter().map(|(start, end, text)| Cue { start, end, text }).collect())
+/// What of transcript line `segment` shows where only `shown` of it plays:
+/// all of it, or the words said there (each where most of it is), moved onto
+/// the clip's timeline; none if no word is. A line without word times shows whole.
+pub fn segment_shown(segment: &Segment, shown: Shown) -> Option<Segment> {
+    let whole = shown.from <= segment.start + 1e-6 && shown.to >= segment.end - 1e-6;
+    let words: Vec<Word> = segment
+        .words
+        .iter()
+        .filter(|w| whole || (w.start + w.end) / 2.0 >= shown.from && (w.start + w.end) / 2.0 < shown.to)
+        // Within what plays: a word begun just before it starts with it.
+        .map(|w| Word {
+            text: w.text.clone(),
+            start: w.start.max(shown.from) + shown.shift,
+            end: w.end.min(shown.to) + shown.shift,
+        })
+        .collect();
+    if segment.words.is_empty() || whole {
+        let text = segment.text.clone();
+        return Some(Segment { start: shown.from + shown.shift, end: shown.to + shown.shift, text, words });
+    }
+    let text = words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+    let (first, last) = (words.first()?, words.last()?);
+    Some(Segment { start: first.start, end: last.end, text, words })
+}
+
+/// A clip of `pieces`' transcript, on its timeline (`segments_of`: a VOD's
+/// lines, in its time): each line where it plays, only the words said there.
+pub fn clip_segments(
+    pieces: &[EditPiece],
+    mut segments_of: impl FnMut(i64) -> Result<Vec<Segment>>,
+) -> Result<Vec<Segment>> {
+    let placed = on_timeline_cut(
+        pieces,
+        |vod| Ok(segments_of(vod)?.into_iter().map(|s| (s.start, s.end, s)).collect()),
+        segment_shown,
+    )?;
+    Ok(placed.into_iter().map(|(_, _, s)| s).collect())
+}
+
+/// Captions for a clip of `pieces`, on its timeline (`segments_of`: a VOD's
+/// lines, in its time), made from the words that play: each within the
+/// stretch it plays in, then held a moment as a VOD's are, over no other.
+pub fn clip_cues(pieces: &[EditPiece], mut segments_of: impl FnMut(i64) -> Result<Vec<Segment>>) -> Result<Vec<Cue>> {
+    let placed = on_timeline_cut(
+        pieces,
+        |vod| Ok(segments_of(vod)?.into_iter().map(|s| (s.start, s.end, s)).collect()),
+        |segment, shown| {
+            let (from, to) = (shown.from + shown.shift, shown.to + shown.shift);
+            let line = segment_shown(segment, shown)?;
+            let cues = crate::transcript::cues(std::slice::from_ref(&line));
+            // Whether it runs to where the stretch ends (a join, or the end).
+            let cues = cues
+                .into_iter()
+                .map(|c| (Cue { start: c.start.max(from), end: c.end.min(to), text: c.text }, c.end >= to));
+            Some(cues.collect::<Vec<_>>())
+        },
+    )?;
+    let mut out: Vec<(Cue, bool)> = placed.into_iter().flat_map(|(_, _, cues)| cues).collect();
+    out.sort_by(|a, b| a.0.start.total_cmp(&b.0.start));
+    // One that runs to a join is held there a moment, as a VOD's are after
+    // their last word (so captions don't blink off at each join), but never
+    // over the next, nor past the clip's end.
+    for i in 0..out.len().saturating_sub(1) {
+        let next = out[i + 1].0.start;
+        let (cue, at_join) = &mut out[i];
+        if *at_join && cue.end < next {
+            cue.end = (cue.end + crate::transcript::CUE_HOLD).min(next);
+        }
+        cue.end = cue.end.min(next).max(cue.start);
+    }
+    Ok(out.into_iter().map(|(c, _)| c).collect())
 }
 
 /// Where a clip of `pieces` shows its `marks` on its timeline, in time
@@ -569,7 +658,7 @@ impl Db {
             .conn
             .query_row(
                 "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision,
-                        (SELECT whole_of FROM clips o WHERE o.id = c.bar_of)
+                        (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -581,12 +670,21 @@ impl Db {
                         r.get::<_, i64>(4)?,
                         r.get::<_, Option<i64>>(5)?,
                         r.get::<_, Option<i64>>(6)?,
+                        r.get::<_, Option<String>>(7)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_path, error, revision, rendered, snippet_of)) = row else { return Ok(None) };
+        let Some((title, status, file_path, error, revision, rendered, snippet_of, made_of)) = row else {
+            return Ok(None);
+        };
         let pieces = self.edit_pieces(id)?;
+        // Of the edit as it is if made of what it's made of now (a file made
+        // before that was recorded: of the revision it was made at).
+        let current = match made_of {
+            Some(made) => made == self.made_of(id, &title, &pieces)?,
+            None => rendered == Some(revision),
+        };
         let ranges: Vec<EditRange> = pieces
             .iter()
             .flat_map(|p| p.spans().into_iter().map(|(start, end)| EditRange { vod_id: p.vod_id, start, end }))
@@ -601,13 +699,43 @@ impl Db {
             file_path,
             error,
             revision,
-            current: rendered == Some(revision),
+            current,
             pieces: pieces.len(),
             length: ranges.iter().map(|r| r.end - r.start).sum(),
             vod_ids,
             ranges,
             snippet_of,
         }))
+    }
+
+    /// The chapters a file of clip `id` (of `pieces`) has, on its timeline:
+    /// each one's start and title ("Chapter n" if it has none).
+    pub fn file_chapters(&self, id: i64, pieces: &[EditPiece]) -> Result<Vec<(f64, String)>> {
+        Ok(place_marks(pieces, &self.clip_marks(id)?)
+            .into_iter()
+            .filter(|m| m.kind == "chapter")
+            .enumerate()
+            .map(|(i, m)| (m.start, m.text.unwrap_or_else(|| format!("Chapter {}", i + 1))))
+            .collect())
+    }
+
+    /// What a file of clip `id` (titled `title`, of `pieces`) is made of: its
+    /// name, what plays (each VOD's stretches, in order, to the microsecond)
+    /// and its chapters. A change that leaves this as it was (a highlight, a
+    /// cut, a group opened) leaves its file as it is.
+    pub fn made_of(&self, id: i64, title: &str, pieces: &[EditPiece]) -> Result<String> {
+        let us = |t: f64| (t * 1e6).round() as i64;
+        let plays: Vec<(i64, i64, i64)> =
+            pieces.iter().flat_map(|p| p.spans().into_iter().map(|(a, b)| (p.vod_id, us(a), us(b)))).collect();
+        let chapters: Vec<(i64, String)> =
+            self.file_chapters(id, pieces)?.into_iter().map(|(start, text)| (us(start), text)).collect();
+        Ok(serde_json::to_string(&(title, plays, chapters))?)
+    }
+
+    /// Records that clip `id`'s file was made of `made_of` (`made_of`).
+    pub fn set_made_of(&self, id: i64, made_of: &str) -> Result<()> {
+        self.conn.execute("UPDATE renders SET made_of = ?2 WHERE clip_id = ?1", params![id, made_of])?;
+        Ok(())
     }
 
     /// A new, empty edit, at the top of the library's list (as new VODs go).
@@ -1315,7 +1443,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn captions_follow_the_pieces_onto_the_clips_timeline() {
+    fn lines_and_captions_follow_the_pieces_with_the_words_that_play() {
         let piece = |id, vod_id, start, end, struck: &[(f64, f64)]| EditPiece {
             id,
             edit_id: 1,
@@ -1328,21 +1456,42 @@ pub(crate) mod tests {
             hole: false,
             group: None,
         };
-        let cue = |start, end, text: &str| Cue { start, end, text: text.into() };
-        let cues = |vod| -> Result<Vec<Cue>> {
+        let word = |text: &str, start: f64| Word { text: text.into(), start, end: start + 1.0 };
+        let line =
+            |start: f64, end: f64, text: &str, words: Vec<Word>| Segment { start, end, text: text.into(), words };
+        let lines = |vod| -> Result<Vec<Segment>> {
             Ok(match vod {
-                1 => vec![cue(0.0, 2.0, "one"), cue(2.0, 4.0, "two"), cue(4.0, 6.0, "three"), cue(10.0, 12.0, "ten")],
-                _ => vec![cue(100.0, 103.0, "elsewhere")],
+                1 => vec![
+                    line(0.0, 4.0, "a b c d", vec![word("a", 0.0), word("b", 1.0), word("c", 2.0), word("d", 3.0)]),
+                    line(10.0, 11.0, "ten", vec![word("ten", 10.0)]),
+                ],
+                _ => vec![line(100.0, 103.0, "elsewhere", vec![])],
             })
         };
-        // VOD 1 from 1 to 6 s with 2-4 struck, then VOD 2 from 101 s, then VOD 1 again at 10.
-        let pieces =
-            [piece(1, 1, 1.0, 6.0, &[(2.0, 4.0)]), piece(2, 2, 101.0, 105.0, &[]), piece(3, 1, 10.0, 11.0, &[])];
-        let got = clip_cues(&pieces, cues).unwrap();
-        assert_eq!(
-            got,
-            [cue(0.0, 1.0, "one"), cue(1.0, 3.0, "three"), cue(3.0, 5.0, "elsewhere"), cue(7.0, 8.0, "ten"),]
-        );
+        // VOD 1 from 1 to 2.6 s (b, and most of c), VOD 2 from 101 s (a
+        // line without word times), VOD 1 from 3 s (d, the line split
+        // between them), then at 10 (all of "ten").
+        let pieces = [
+            piece(1, 1, 1.0, 2.6, &[]),
+            piece(2, 2, 101.0, 102.0, &[]),
+            piece(3, 1, 3.0, 4.0, &[]),
+            piece(4, 1, 10.0, 11.0, &[]),
+        ];
+        let got: Vec<(f64, f64, String)> =
+            clip_segments(&pieces, lines).unwrap().into_iter().map(|s| (s.start, s.end, s.text)).collect();
+        let want = [(0.0, 1.6, "b c"), (1.6, 2.6, "elsewhere"), (2.6, 3.6, "d"), (3.6, 4.6, "ten")];
+        assert_eq!(got.len(), want.len(), "{got:?}");
+        for ((start, end, text), (s, e, t)) in got.iter().zip(want) {
+            assert!((start - s).abs() < 1e-9 && (end - e).abs() < 1e-9 && text == t, "{got:?}");
+        }
+        // Captions are made from the words that play: none of "a".
+        let cues = clip_cues(&pieces, lines).unwrap();
+        assert_eq!(cues.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["b c", "elsewhere", "d", "ten"]);
+        // Each within the stretch it plays in ("c" runs past its piece's end at 2.6 s), none over the next.
+        let within = [(0.0, 1.6), (1.6, 2.6), (2.6, 3.6), (3.6, 4.6)];
+        for (c, (from, to)) in cues.iter().zip(within) {
+            assert!(c.start >= from - 1e-9 && c.end <= to + 1e-9 && c.end > c.start, "{cues:?}");
+        }
     }
 
     #[test]
@@ -1651,6 +1800,32 @@ pub(crate) mod tests {
             .query_row("SELECT count(*) FROM items WHERE clip_id = ?1 AND kind = 'group'", [edit], |r| r.get(0))
             .unwrap();
         assert_eq!(groups, 0, "the emptied group goes");
+    }
+
+    #[test]
+    fn a_rendered_file_is_out_of_date_only_when_what_it_holds_changes() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let made = || {
+            let e = db.edit(edit).unwrap().unwrap();
+            db.made_of(edit, &e.title, &db.edit_pieces(edit).unwrap()).unwrap()
+        };
+        db.set_edit_render(edit, ClipStatus::Ready, Some("/x.mp4"), None, db.revision(edit).unwrap()).unwrap();
+        db.set_made_of(edit, &made()).unwrap();
+        let current = || db.edit(edit).unwrap().unwrap().current;
+        assert!(current());
+        db.add_clip_mark(edit, vod, "highlight", 12.0, None).unwrap();
+        db.add_clip_mark(edit, vod, "cut", 13.0, None).unwrap();
+        assert!(current(), "a highlight and a cut leave the file as it is");
+        let chapter = db.add_clip_mark(edit, vod, "chapter", 14.0, Some("Start")).unwrap();
+        assert!(!current(), "a chapter is in the file");
+        assert_eq!(db.file_chapters(edit, &db.edit_pieces(edit).unwrap()).unwrap(), [(4.0, "Start".to_string())]);
+        db.delete_mark(chapter).unwrap();
+        assert!(current(), "and back as it was");
+        db.remove_edit_stretch(edit, 1.0, 2.0).unwrap();
+        assert!(!current(), "what plays changed");
     }
 
     #[test]

@@ -151,7 +151,7 @@ const CUE_CHARS: usize = 84;
 const CUE_GAP: f64 = 1.0;
 const CUE_LONGEST: f64 = 6.0;
 /// How long a cue stays up after its last word, unless the next one comes first.
-const CUE_HOLD: f64 = 0.6;
+pub const CUE_HOLD: f64 = 0.6;
 
 /// Captions for `segments`, cut from their words: at a sentence's end, at a
 /// pause, before running past `CUE_CHARS`, or at a comma once a line is full.

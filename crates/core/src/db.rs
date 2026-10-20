@@ -551,6 +551,11 @@ ALTER TABLE clips DROP COLUMN handed_out;";
 /// chat erased while clips still have pieces of it, which are holes.
 const MIGRATE_V25: &str = "ALTER TABLE vods ADD COLUMN gone INTEGER NOT NULL DEFAULT 0;";
 
+/// Version 26: what a clip's rendered file was made of (`Db::made_of`: its
+/// title, what plays and its chapters), so a change that leaves those as
+/// they were (a highlight, a cut) doesn't leave it out of date.
+const MIGRATE_V26: &str = "ALTER TABLE renders ADD COLUMN made_of TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -905,6 +910,7 @@ impl Db {
             MIGRATE_V23,
             MIGRATE_V24,
             MIGRATE_V25,
+            MIGRATE_V26,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be

@@ -93,24 +93,61 @@ pub fn graph(pieces: &[(Option<usize>, f64, f64)], inputs: &[Media], picture: Op
 }
 
 /// Renders `pieces` one after another into `out` (an MP4, or an M4A if none
-/// has a picture), at `picture` or the first piece's, reporting progress from
-/// 0 to 1. `out` is replaced only once the new one is whole.
+/// has a picture), at `picture` or the first piece's, with `chapters` (start,
+/// title; a WAV has none), reporting progress from 0 to 1. `out` is replaced
+/// only once the new one is whole.
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     ffmpeg: &Path,
     pieces: &[Piece],
     picture: Option<Picture>,
+    chapters: &[(f64, String)],
     format: ClipFormat,
     out: &Path,
     cancel: &AtomicBool,
     progress: impl FnMut(f64),
 ) -> Result<PathBuf> {
-    encode_pieces(ffmpeg, pieces, picture, format, out, cancel, progress)
+    encode_pieces(ffmpeg, pieces, picture, chapters, format, out, cancel, progress)
 }
 
+/// `chapters` (start, title) of a video `length` seconds long, as an ffmpeg
+/// metadata file: each to the next one's start, the last to the end.
+pub fn chapters_file(chapters: &[(f64, String)], length: f64) -> String {
+    // =, ;, #, \ and line ends are escaped with a backslash in a value.
+    let escaped = |text: &str| {
+        let mut out = String::new();
+        for c in text.chars() {
+            if matches!(c, '=' | ';' | '#' | '\\' | '\n') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out
+    };
+    let ms = |t: f64| (t.clamp(0.0, length) * 1000.0).round() as i64;
+    let mut out = String::from(";FFMETADATA1\n");
+    for (i, (start, title)) in chapters.iter().enumerate() {
+        let end = chapters.get(i + 1).map_or(length, |(next, _)| *next);
+        if ms(end) <= ms(*start) {
+            continue;
+        }
+        let _ = write!(
+            out,
+            "[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle={}\n",
+            ms(*start),
+            ms(end),
+            escaped(title)
+        );
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
 fn encode_pieces(
     ffmpeg: &Path,
     pieces: &[Piece],
     given: Option<Picture>,
+    chapters: &[(f64, String)],
     format: ClipFormat,
     out: &Path,
     cancel: &AtomicBool,
@@ -166,18 +203,45 @@ fn encode_pieces(
     // input only, and a second piece's file would otherwise be read with
     // any format and decoder ffmpeg has.
     let decoders = format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE);
+    let sources = files.len();
     for (source, seek) in files {
         tools::ffmpeg_allow_for(&mut cmd, &decoders, source);
         cmd.args(["-ss", &format!("{seek:.6}")]).arg("-i").arg(source);
+    }
+    // The chapters, from a metadata file of their own read as the last input
+    // (a WAV keeps none).
+    let wav = out.extension().is_some_and(|e| e == "wav");
+    let marks = dir.join(format!(".{name}.chapters"));
+    let with_chapters = !chapters.is_empty() && !wav;
+    if with_chapters {
+        std::fs::write(&marks, chapters_file(chapters, length))?;
+        cmd.args(["-format_whitelist", "ffmetadata", "-protocol_whitelist", "file", "-f", "ffmetadata", "-i"])
+            .arg(&marks);
     }
     cmd.args(["-filter_complex", &graph(&at, &inputs, picture)]);
     if picture.is_some() {
         cmd.args(["-map", "[v]"]);
     }
     cmd.args(["-map", "[a]"]);
-    cmd.args(crate::clips::output_args(format, picture.is_some()));
+    // The output's tags and chapters are none of the sources' (`output_args`);
+    // with chapters, the metadata file's instead, which has only those (its
+    // chapters' titles come only with its metadata, not after a -1).
+    let chapters_input = sources.to_string();
+    let mut args = crate::clips::output_args(format, picture.is_some());
+    if with_chapters {
+        for pair in args.chunks_mut(2) {
+            if matches!(pair, ["-map_metadata" | "-map_chapters", "-1"]) {
+                pair[1] = &chapters_input;
+            }
+        }
+    }
+    cmd.args(args);
     cmd.args(["-progress", "pipe:1", "-y"]).arg(&part);
-    tools::encode(cmd, &part, out, length, cancel, progress, "the video")?;
+    let made = tools::encode(cmd, &part, out, length, cancel, progress, "the video");
+    if with_chapters {
+        let _ = std::fs::remove_file(&marks);
+    }
+    made?;
     Ok(out.clone())
 }
 
@@ -248,7 +312,7 @@ mod tests {
             Piece { source: Some(nut), start: 0.0, end: 0.5 },
         ];
         let bad = dir.join("out").join("bad.mp4");
-        assert!(render(&ffmpeg, &refused, None, ClipFormat::Mp4, &bad, &AtomicBool::new(false), |_| {}).is_err());
+        assert!(render(&ffmpeg, &refused, None, &[], ClipFormat::Mp4, &bad, &AtomicBool::new(false), |_| {}).is_err());
         let pieces = [
             Piece { source: Some(a.clone()), start: 1.0, end: 2.5 },
             Piece { source: Some(b), start: 0.0, end: 2.0 },
@@ -258,7 +322,9 @@ mod tests {
         ];
         let out = dir.join("out").join("edit.mp4");
         let mut seen = Vec::new();
-        render(&ffmpeg, &pieces, None, ClipFormat::Mp4, &out, &AtomicBool::new(false), |p| seen.push(p)).unwrap();
+        let chapters = [(0.0, "Intro".to_string()), (2.0, "Part = two; #2".to_string())];
+        render(&ffmpeg, &pieces, None, &chapters, ClipFormat::Mp4, &out, &AtomicBool::new(false), |p| seen.push(p))
+            .unwrap();
         assert_eq!(seen.last(), Some(&1.0));
         let probe = |args: &[&str]| {
             let o = std::process::Command::new(&ffprobe).args(["-v", "error"]).args(args).arg(&out).output().unwrap();
@@ -275,12 +341,25 @@ mod tests {
         assert!((seconds("video") - 5.0).abs() < 0.05, "{streams}");
         assert!((seconds("audio") - 5.0).abs() < 0.06, "{streams}");
         assert!(!dir.join("out").join(".edit.mp4.part").exists());
+        // Its chapters: each to the next's start, the last to the end, titles as written.
+        let marks = probe(&["-show_entries", "chapter=start_time,end_time:chapter_tags=title", "-of", "csv=p=0"]);
+        let marks: Vec<Vec<&str>> = marks.lines().map(|l| l.split(',').collect()).collect();
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert_eq!(marks[0][2], "Intro", "{marks:?}");
+        assert_eq!(marks[1][2..].join(","), "Part = two; #2", "{marks:?}");
+        let time = |s: &str| s.parse::<f64>().unwrap();
+        assert!((time(marks[0][1]) - 2.0).abs() < 0.01 && (time(marks[1][0]) - 2.0).abs() < 0.01, "{marks:?}");
+        assert!((time(marks[1][1]) - 5.0).abs() < 0.01, "{marks:?}");
+        assert!(!dir.join("out").join(".edit.mp4.chapters").exists());
 
         // Sound alone, asked for as a video file: named for what it holds.
         let tone = make("tone.m4a", &["-f", "lavfi", "-i", "sine=duration=2"]);
         let asked = dir.join("out").join("sound.mov");
         let pieces = [Piece { source: Some(tone), start: 0.0, end: 1.0 }];
-        let made = render(&ffmpeg, &pieces, None, ClipFormat::Mov, &asked, &AtomicBool::new(false), |_| {}).unwrap();
+        // (A WAV keeps no chapters: they're left out.)
+        let chapters = [(0.0, "Tone".to_string())];
+        let made = render(&ffmpeg, &pieces, None, &chapters, ClipFormat::Mov, &asked, &AtomicBool::new(false), |_| {})
+            .unwrap();
         assert_eq!(made, dir.join("out").join("sound.wav"));
         assert!(made.is_file() && !asked.exists());
     }

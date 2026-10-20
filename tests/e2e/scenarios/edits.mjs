@@ -8,6 +8,7 @@
 // deleted, after asking, and with nothing using the VOD it's erased by the
 // next start (added again, it's a new one).
 
+import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -182,7 +183,8 @@ export default {
       ctx.log(
         `the edit's picture, lower part: ${changed.toFixed(1)} apart with captions toggled, ${same.toFixed(1)} back`,
       );
-      if (changed < 3 || same > changed / 3) throw new Error("the edit's captions don't show over its picture");
+      // (A short caption, a few words, changes little of it: against nothing at all back.)
+      if (changed < 0.5 || same > changed / 3) throw new Error("the edit's captions don't show over its picture");
     }
     ctx.log(`captions: ${cues.length}, the first "${cues[0].text}"`);
     if (chatWritten) {
@@ -468,7 +470,8 @@ export default {
     );
     ctx.log("its file deleted outside the app: off the bar, and back with Ctrl+Z");
 
-    // Rendered: E.
+    // Rendered (E) with a chapter, which its file has.
+    await app.invoke("add_edit_mark", { editId: made.id, time: 0.5, kind: "chapter", text: "Landing" });
     await app.key("e");
     const rendered = await until(
       "the render",
@@ -485,6 +488,24 @@ export default {
     if (path.extname(rendered.file_path) !== ".m4a") throw new Error(`rendered as ${rendered.file_path}, not an .m4a`);
     ctx.log(`rendered ${rendered.file_path}`);
     await ctx.checkpoint("edit-rendered");
+    const probe = spawnSync(
+      "ffprobe",
+      ["-v", "error", "-show_entries", "chapter_tags=title", "-of", "csv=p=0", rendered.file_path],
+      { encoding: "utf8" },
+    );
+    if (probe.error) ctx.log(`no ffprobe here: the file's chapters aren't looked at (${probe.error.message})`);
+    else if (!probe.stdout.includes("Landing"))
+      throw new Error(`the rendered file's chapters: ${probe.stdout || probe.stderr}`);
+    else ctx.log("its file has the edit's chapter");
+    // A highlight added since leaves it as rendered; a chapter doesn't.
+    if (!rendered.current) throw new Error("just rendered, it says it's changed since");
+    await app.invoke("add_edit_mark", { editId: made.id, time: 1.5, kind: "highlight", text: null });
+    await new Promise((r) => setTimeout(r, 500));
+    if (!(await app.invoke("list_edits"))[0].current) throw new Error("a highlight made the render out of date");
+    const later = await app.invoke("add_edit_mark", { editId: made.id, time: 1.5, kind: "chapter", text: "Later" });
+    await until("a chapter making it out of date", async () => !(await app.invoke("list_edits"))[0].current, 10_000);
+    await app.invoke("delete_mark", { id: later.id });
+    await until("current again with the chapter gone", async () => (await app.invoke("list_edits"))[0].current, 10_000);
 
     // Renamed and rendered again: a file of the new name; the one before goes
     // (it was never dragged out).

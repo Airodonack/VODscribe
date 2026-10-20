@@ -17,6 +17,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A clip, a stretch put in an edit, and a clip added to an edit bring the chapters and highlights in them along, on the same moments.
 - An edit's transcript has chat beside it: each piece's VOD's chat where that piece plays, and the minimap shows how busy it is over the edit. Its header has the line count, the Chat button to hide or show it, and the Timeline button, as a VOD's does: subs, gifts and tips, and the Timeline layers of each piece's VOD, show where they play, and the emotes its chat writes as words show as images.
 - In an edit, B puts a cut, as in a VOD: a mark you can move, take away (B on it again, or Delete) or drag off. Delete with nothing selected takes out the stretch between cuts at the playhead: the piece splits there, and those cuts become a real split, drawn as a plain line; with no cuts in the piece, it takes out the piece. With lines selected, B cuts at both ends of them.
+- A line of the transcript split between two pieces of an edit shows, under each, only the words said there, and the edit's captions likewise.
+- A rendered edit has its chapters, as chapters of the video file that players and editors show. It shows as changed since it was rendered only when its video would be different: a highlight or a cut added doesn't count, and a clip opened in the editor isn't made again for one.
 - A VOD that's only sound goes full screen too (F, or the button): black, with its captions large in the middle.
 - Fixes:
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.

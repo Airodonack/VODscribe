@@ -47,6 +47,15 @@ pub(crate) fn remake_snippet(app: &AppHandle, db: &Db, id: i64) {
     if db.is_snippet(id).ok().flatten() != Some(true) {
         return;
     }
+    // Its file as it is if what it's made of hasn't changed (a highlight or
+    // a cut added, say), unless that file's gone.
+    if let Ok(Some(edit)) = db.edit(id)
+        && edit.current
+        && edit.status == ClipStatus::Ready
+        && edit.file_path.as_deref().is_some_and(|p| Path::new(p).is_file())
+    {
+        return;
+    }
     let state = app.state::<AppState>();
     state.clips.stop(id);
     if db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok() {
@@ -103,6 +112,9 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let edit = db.edit(id)?.context("That edit is gone.")?;
         let version = db.revision(id)?;
         let edit_pieces = pieces(app, &db, id)?;
+        // What it's made of, to know later whether a change touched it.
+        let made_of = db.made_of(id, &edit.title, &edit_pieces)?;
+        let chapters = db.file_chapters(id, &edit_pieces)?;
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::find(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
@@ -119,9 +131,9 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             _ => clips::unique_path(&edits_dir(app), &name),
         };
         crate::clips::writing(&out);
-        anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path))
+        anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path, made_of, chapters))
     })();
-    let (pieces, ffmpeg, out, version, format, before) = match prepared {
+    let (pieces, ffmpeg, out, version, format, before, made_of, chapters) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -141,13 +153,16 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             let _ = app.emit("edit-progress", Progress { id, progress });
         }
     };
-    let result = render::render(&ffmpeg, &pieces, None, format, &out, stop, report);
+    let result = render::render(&ffmpeg, &pieces, None, &chapters, format, &out, stop, report);
     // As made: sound alone is named so (an .m4a or .wav), found only then.
     let out = result.as_ref().map_or(out, |made| made.clone());
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
     match &result {
-        Ok(_) => db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?,
+        Ok(_) => {
+            db.set_edit_render(id, ClipStatus::Ready, Some(&path), None, version)?;
+            db.set_made_of(id, &made_of)?;
+        }
         // Stopped, or deleted: as it was before, if it's still there.
         Err(e) if vodscribe_core::is_canceled(e) => db.set_edit_render(id, ClipStatus::Waiting, None, None, None)?,
         Err(e) => db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?,
@@ -239,26 +254,26 @@ pub(crate) async fn get_edit(app: AppHandle, id: i64) -> CmdResult<EditView> {
 pub(crate) async fn edit_captions(app: AppHandle, id: i64) -> CmdResult<Vec<vodscribe_core::transcript::Cue>> {
     crate::with_reads(app, move |db| {
         let pieces = db.edit_pieces(id)?;
-        vodscribe_core::edits::clip_cues(&pieces, |vod| Ok(vodscribe_core::transcript::cues(&db.segments(vod)?)))
+        vodscribe_core::edits::clip_cues(&pieces, |vod| db.segments(vod))
     })
     .await
 }
 
 /// Edit (any clip) `id`'s transcript, on its timeline: its pieces' VODs'
-/// lines where they play, cut to what plays.
+/// lines where they play, each with only the words said there.
 #[tauri::command]
 pub(crate) async fn edit_lines(app: AppHandle, id: i64) -> CmdResult<Vec<crate::vods::Line>> {
     crate::with_reads(app, move |db| {
         let pieces = db.edit_pieces(id)?;
-        let placed = vodscribe_core::edits::on_timeline(&pieces, |vod| db.lines(vod, None))?;
-        Ok(placed.into_iter().map(|(start, end, text)| crate::vods::Line { start, end, text }).collect())
+        let lines = vodscribe_core::edits::clip_segments(&pieces, |vod| db.segments(vod))?;
+        Ok(lines.into_iter().map(|s| crate::vods::Line { start: s.start, end: s.end, text: s.text }).collect())
     })
     .await
 }
 
-/// Takes `from`..`to` (seconds of its timeline) out of edit `id`: struck
-/// from each piece it reaches, its split marks there made a real split, as
-/// one change.
+/// Takes `from`..`to` (seconds of its timeline) out of edit `id`: the
+/// pieces it reaches split at its ends and what's between goes, its cuts
+/// there made a real split, as one change.
 #[tauri::command]
 pub(crate) async fn remove_stretch(app: AppHandle, id: i64, from: f64, to: f64) -> CmdResult<EditView> {
     if !(from.is_finite() && to.is_finite() && to > from) {
