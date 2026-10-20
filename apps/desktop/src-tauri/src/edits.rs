@@ -351,16 +351,6 @@ pub(crate) async fn trim_piece(app: AppHandle, id: i64, start: f64, end: f64) ->
     changing(&app, edit, "Piece resized", |db| db.set_piece_range(id, start, end))
 }
 
-/// Sets the stretches of piece `id` (in its VOD's time) to jump over.
-#[tauri::command]
-pub(crate) async fn strike_piece(app: AppHandle, id: i64, struck: Vec<(f64, f64)>) -> CmdResult<EditView> {
-    if struck.iter().any(|(a, b)| !(a.is_finite() && b.is_finite())) || struck.len() > 10_000 {
-        return Err("Those aren't times in the video.".into());
-    }
-    let edit = edit_of(&app, id)?;
-    changing(&app, edit, "Lines struck", |db| db.set_piece_struck(id, &struck))
-}
-
 /// Splits piece `id` in two at `at` seconds of its VOD.
 #[tauri::command]
 pub(crate) async fn split_piece(app: AppHandle, id: i64, at: f64) -> CmdResult<EditView> {

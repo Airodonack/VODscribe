@@ -314,7 +314,6 @@ pub fn run() {
             player::player_set_volume,
             edits::move_piece,
             edits::trim_piece,
-            edits::strike_piece,
             edits::remove_piece,
             edits::split_piece,
             edits::render_edit_now,

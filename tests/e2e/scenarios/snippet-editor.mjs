@@ -1,7 +1,8 @@
 // A clip opened in the editor: double-click its name in the clip bar. It's
 // a clip there (named "Clip name", no Render or Delete, not a row of the
-// library's list); split (B), its file is made again with both pieces;
-// undone (Ctrl+Z), it's one piece again, made again too.
+// library's list); cut a second in (B) and the rest taken out (Delete), its
+// file is made again, a second long; undone (Ctrl+Z), it's two seconds
+// again, made again too.
 
 import { existsSync } from "node:fs";
 
@@ -31,31 +32,47 @@ export default {
     if (shown[0] || shown[1]) throw new Error(`a clip in the editor shows Render ${shown[0]}, Delete ${shown[1]}`);
     if ((await app.invoke("list_edits")).length) throw new Error("the clip is in the library's list of edits");
 
-    // Split a second in: its file made again, of both pieces.
+    // A cut a second in, and the rest taken out: its file made again, a second long.
     const before = (await app.invoke("list_clips", { vodId: vod.id }))[0].file_path;
-    const pieces = async () => (await app.invoke("get_edit", { id: clip.id })).pieces.length;
+    const length = async () =>
+      (await app.invoke("get_edit", { id: clip.id })).pieces.reduce((t, p) => t + p.end - p.start, 0);
     await app.toStart();
     await app.key("ArrowRight", { shift: true });
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
     await app.key("b");
-    await until("two pieces", async () => (await pieces()) === 2, 10_000);
+    await until(
+      "the cut",
+      async () => (await app.invoke("edit_marks", { id: clip.id })).some((m) => m.kind === "cut"),
+      10_000,
+    );
+    await app.key("Escape");
+    await app.key("Delete");
+    await until("a second long", async () => Math.abs((await length()) - 1) < 0.05, 10_000);
+    // Made again from the revision now (the cut was a change of its own, made too).
+    const now = (await app.invoke("list_clips", { vodId: vod.id }))[0].revision;
     const made = (what) =>
       until(
         `the clip made again (${what})`,
         async () => {
           const [c] = await app.invoke("list_clips", { vodId: vod.id });
           if (c?.status === "error") throw new Error(`it failed: ${c.error}`);
-          return c?.status === "ready" && c.revision > clip.revision && existsSync(c.file_path ?? "") && c;
+          return (
+            c?.status === "ready" &&
+            c.revision >= now &&
+            c.revision > clip.revision &&
+            existsSync(c.file_path ?? "") &&
+            c
+          );
         },
         MINUTE,
       );
-    const split = await made("split");
-    log(`split in the editor: made again, ${before} → ${split.file_path}`);
+    const split = await made("shortened");
+    log(`shortened in the editor: made again, ${before} → ${split.file_path}`);
 
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
     );
-    await until("one piece again", async () => (await pieces()) === 1, 10_000);
+    await until("two seconds again", async () => Math.abs((await length()) - 2) < 0.05, 10_000);
     const back = await until(
       "the clip made again after the undo",
       async () => {
@@ -64,6 +81,6 @@ export default {
       },
       MINUTE,
     );
-    log(`undone: one piece, made again: ${back.file_path}`);
+    log(`undone: two seconds, made again: ${back.file_path}`);
   },
 };

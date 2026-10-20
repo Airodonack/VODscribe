@@ -9,8 +9,8 @@
   // rendered video, makes it. Its pieces
   // are bands in the timeline's lane (Scrubber.svelte): clicked to go to,
   // dragged to move (pulled off the timeline, carried out), their edges dragged to resize. Under it, the edit's
-  // transcript, piece by piece: a click on a line strikes it out (the edit
-  // jumps over it) or brings it back.
+  // transcript, only what plays: a click on a line plays from it, and lines
+  // selected are a slice of the timeline that Delete takes out as any other.
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
@@ -306,8 +306,8 @@
       );
   }
 
-  /** The lines selected in the transcript, out of the edit (struck from the
-   *  pieces they're in); the transcript then has them no more. */
+  /** The lines selected in the transcript: their slice of the timeline out
+   *  of the edit (the pieces split at its ends); the transcript then has them no more. */
   function removeSelection() {
     const id = edit?.id;
     if (id === undefined) return;

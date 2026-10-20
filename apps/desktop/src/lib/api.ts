@@ -457,7 +457,6 @@ export const api = {
     invoke<ArrayBuffer>("vod_frame", { vodId, at, width }).then((b) => new Uint8Array(b)),
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
-  strikePiece: (id: number, struck: [number, number][]) => invoke<EditView>("strike_piece", { id, struck }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
   splitPiece: (id: number, at: number) => invoke<EditView>("split_piece", { id, at }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),

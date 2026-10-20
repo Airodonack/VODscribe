@@ -76,7 +76,6 @@ permissions = [
   "allow-player-set-volume",
   "allow-move-piece",
   "allow-trim-piece",
-  "allow-strike-piece",
   "allow-remove-piece",
   "allow-split-piece",
   "allow-render-edit-now",

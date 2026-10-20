@@ -211,28 +211,6 @@ class Edits {
   rename = (id: number, title: string) => this.#change(api.renameEdit(id, title));
   move = (pieceId: number, index: number) => this.#change(api.movePiece(pieceId, index));
   trim = (pieceId: number, start: number, end: number) => this.#change(api.trimPiece(pieceId, start, end));
-  /** Strikes `struck` of piece `pieceId`: shown at once, and saved after any
-   *  strikes before it, so a line clicked before the last is saved builds on it. */
-  strike(pieceId: number, struck: [number, number][]): Promise<unknown> {
-    this.pieces = this.pieces.map((p) => (p.id === pieceId ? { ...p, struck } : p));
-    this.#striking++;
-    const save = async () => {
-      try {
-        const view = await api.strikePiece(pieceId, struck);
-        // What's saved shows once the last strike is (each one's answer would undo the next on screen).
-        if (--this.#striking === 0) this.#show(view);
-        this.error = null;
-      } catch (e) {
-        this.#striking--;
-        this.error = String(e);
-        if (this.openId !== null) this.#load(this.openId);
-      }
-    };
-    this.#strikes = this.#strikes.then(save);
-    return this.#strikes;
-  }
-  #striking = 0;
-  #strikes: Promise<unknown> = Promise.resolve();
   removePiece = (pieceId: number) => this.#change(api.removePiece(pieceId));
   split = (pieceId: number, at: number) => this.#change(api.splitPiece(pieceId, at));
 

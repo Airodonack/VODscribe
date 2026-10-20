@@ -1,6 +1,6 @@
 // Edits: a clip added to a new edit from its pill (a group, one band); the
 // edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
-// and the second half moved first and back (Ctrl+← and →), a line struck out and the strike undone
+// and the second half moved first and back (Ctrl+← and →), a line's slice taken out and brought back
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
 // Remove and delete the video: it leaves the library, and the stretches
@@ -103,7 +103,8 @@ export default {
     // takes out the stretch from it to the piece's end, the cut then a real
     // split (gone as a mark); Ctrl+Z brings both back, and B takes it away.
     const editCuts = async () => (await app.invoke("edit_marks", { id: made.id })).filter((m) => m.kind === "cut");
-    const struckNow = async () => (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);
+    // How long the edit plays (nothing's struck: a slice taken out splits the pieces).
+    const lengthNow = async () => (await edit()).pieces.reduce((t, p) => t + p.end - p.start, 0);
     await app.key("b");
     const [cut] = await until(
       "a cut at 1 s",
@@ -123,7 +124,7 @@ export default {
     await app.key("Delete");
     await until(
       "the stretch after the cut taken out",
-      async () => (await struckNow()) === 1 && (await editCuts()).length === 0,
+      async () => Math.abs((await lengthNow()) - 1) < 0.05 && (await editCuts()).length === 0,
       10_000,
     );
     if (pieces(await edit()).length !== 1) throw new Error("Delete after a cut removed the piece");
@@ -132,7 +133,7 @@ export default {
     );
     await until(
       "the stretch and its cut back",
-      async () => (await struckNow()) === 0 && (await editCuts()).length === 1,
+      async () => Math.abs((await lengthNow()) - 2) < 0.05 && (await editCuts()).length === 1,
       10_000,
     );
     await app.toStart();
@@ -288,8 +289,9 @@ export default {
 
     // The edit's transcript, under its player as a VOD's is: only what
     // plays. A click on a line plays from it and changes nothing; Shift+click
-    // selects it, and Delete takes it out of the edit (struck from its
-    // piece), gone from the transcript; Ctrl+Z brings it back.
+    // selects it, and Delete takes it out of the edit (its slice of the timeline,
+    // the pieces split there, as any removal), gone from the transcript;
+    // Ctrl+Z brings it back.
     const rows = "section.edit-view ~ .body .transcript .line button.row";
     const lineCount = () => app.js(`return document.querySelectorAll(arguments[0]).length`, rows);
     const lines = await until("the edit's transcript", lineCount, 10_000);
@@ -310,8 +312,13 @@ export default {
       () => app.js(`return !!document.querySelector(".transcript .line.picked")`),
       10_000,
     );
+    const played = await lengthNow();
     await app.key("Delete");
-    await until("the line taken out", async () => (await struckCount()) > 0 && (await lineCount()) < lines, 10_000);
+    await until(
+      "the line taken out",
+      async () => (await lengthNow()) < played - 0.01 && (await lineCount()) < lines && (await struckCount()) === 0,
+      10_000,
+    );
     const shorter = await until(
       "the timeline shorter",
       async () => (await spanNow()) < whole - 0.01 && spanNow(),
@@ -320,7 +327,11 @@ export default {
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
     );
-    await until("the line back", async () => (await struckCount()) === 0 && (await lineCount()) === lines, 10_000);
+    await until(
+      "the line back",
+      async () => Math.abs((await lengthNow()) - played) < 0.01 && (await lineCount()) === lines,
+      10_000,
+    );
     await until(
       "the timeline showing all of the edit again",
       async () => {

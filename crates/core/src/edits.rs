@@ -329,23 +329,56 @@ pub fn stretch_pieces(pieces: &[EditPiece], from: f64, to: f64) -> Vec<StretchPi
     out
 }
 
-/// What taking `from`..`to` of a clip of `pieces`' timeline out strikes:
-/// for each piece it reaches, all it has struck then (in its VOD's time).
-pub fn struck_by_removing(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Vec<(f64, f64)>)> {
+/// What taking a slice of a clip's timeline out does to a piece it reaches
+/// (`cutting_out`), in its VOD's seconds.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cutting {
+    /// All of it goes.
+    Whole,
+    /// It keeps `start`..`end` (the slice took its beginning or its end).
+    Keep(f64, f64),
+    /// It's split: the first part ends at `first_end`, the second starts at
+    /// `second_start`, and what's between goes.
+    Split { first_end: f64, second_start: f64 },
+}
+
+/// Taking `from`..`to` of a clip of `pieces`' timeline out: for each piece
+/// it reaches, what becomes of it. A slice is a slice, however it was
+/// picked: the pieces split at its ends and the middle goes (nothing is
+/// struck). Within a sliver of a piece's edge counts as at it.
+pub fn cutting_out(pieces: &[EditPiece], from: f64, to: f64) -> Vec<(i64, Cutting)> {
     let mut out = Vec::new();
     let mut at = 0.0;
     for p in pieces {
-        let mut more = Vec::new();
-        for (a, b) in p.spans() {
-            let (start, end) = (from.max(at), to.min(at + b - a));
-            if end > start {
-                more.push((a + start - at, a + end - at));
+        let spans = p.spans();
+        let length: f64 = spans.iter().map(|(a, b)| b - a).sum();
+        let (lo, hi) = (from.max(at) - at, to.min(at + length) - at);
+        at += length;
+        if hi - lo < SLIVER {
+            continue;
+        }
+        // The VOD's moment `t` seconds into the piece: where a span ends
+        // (`ending`), or where the next starts.
+        let source = |t: f64, ending: bool| {
+            let mut into = 0.0;
+            for &(a, b) in &spans {
+                if t < into + b - a || (ending && t <= into + b - a) {
+                    return a + t - into;
+                }
+                into += b - a;
             }
-            at += b - a;
-        }
-        if !more.is_empty() {
-            out.push((p.id, [p.struck.clone(), more].concat()));
-        }
+            p.end
+        };
+        let (keeps_start, keeps_end) = (lo > SLIVER, hi < length - SLIVER);
+        out.push((
+            p.id,
+            match (keeps_start, keeps_end) {
+                (false, false) => Cutting::Whole,
+                (true, false) => Cutting::Keep(p.start, source(lo, true)),
+                (false, true) => Cutting::Keep(source(hi, false), p.end),
+                (true, true) => Cutting::Split { first_end: source(lo, true), second_start: source(hi, false) },
+            },
+        ));
     }
     out
 }
@@ -1109,9 +1142,10 @@ impl Db {
         })
     }
 
-    /// Takes `from`..`to` of edit `edit`'s timeline out, struck from each
-    /// piece it reaches, as one change. Its split marks at either end, and
-    /// any in it, go too: where what's left meets is now a real split.
+    /// Takes `from`..`to` of edit `edit`'s timeline out, as one change: the
+    /// pieces it reaches split at its ends, and what's between goes
+    /// (`cutting_out`); a group left empty goes too. Its cuts at either end,
+    /// and any in it, go as well: where what's left meets is a real split.
     pub fn remove_edit_stretch(&self, edit: i64, from: f64, to: f64) -> Result<()> {
         let pieces = self.edit_pieces(edit)?;
         let spent: Vec<i64> = place_marks(&pieces, &self.clip_marks(edit)?)
@@ -1120,9 +1154,28 @@ impl Db {
             .map(|m| m.id)
             .collect();
         self.change(edit, None, |db| {
-            for (piece, struck) in struck_by_removing(&pieces, from, to) {
-                db.set_piece_struck(piece, &struck)?;
+            for (id, cutting) in cutting_out(&pieces, from, to) {
+                let Some(p) = pieces.iter().find(|p| p.id == id) else { continue };
+                match cutting {
+                    Cutting::Whole => {
+                        db.conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
+                    }
+                    Cutting::Keep(start, end) => db.set_piece_range(id, start, end)?,
+                    Cutting::Split { first_end, second_start } => {
+                        // The second part split off where it starts, then the
+                        // first cut short where it ends.
+                        db.split_piece(id, second_start)?;
+                        db.set_piece_range(id, p.start, first_end)?;
+                    }
+                }
             }
+            // Groups emptied, from the innermost out.
+            while db.conn.execute(
+                "DELETE FROM items WHERE clip_id = ?1 AND kind = 'group'
+                 AND NOT EXISTS (SELECT 1 FROM items i WHERE i.parent = items.id)",
+                [edit],
+            )? > 0
+            {}
             for id in &spent {
                 db.conn.execute("DELETE FROM marks WHERE id = ?1", [id])?;
             }
@@ -1266,7 +1319,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn removing_a_stretch_strikes_it_from_each_piece_it_reaches() {
+    fn removing_a_slice_splits_the_pieces_it_reaches() {
         let piece = |id, start, end, struck: &[(f64, f64)]| EditPiece {
             id,
             edit_id: 1,
@@ -1279,13 +1332,26 @@ pub(crate) mod tests {
             hole: false,
             group: None,
         };
-        // Pieces 10-20 (15-16 struck: plays 0-5 and 5-9 of the timeline) and 100-110 (9-19).
-        let pieces = [piece(1, 10.0, 20.0, &[(15.0, 16.0)]), piece(2, 100.0, 110.0, &[])];
+        // Pieces 10-20 (15-16 struck: plays 0-5 and 5-9 of the timeline),
+        // 100-110 (9-19) and 200-210 (19-29).
+        let pieces = [piece(1, 10.0, 20.0, &[(15.0, 16.0)]), piece(2, 100.0, 110.0, &[]), piece(3, 200.0, 210.0, &[])];
         assert_eq!(
-            struck_by_removing(&pieces, 4.0, 11.0),
-            [(1, vec![(15.0, 16.0), (14.0, 15.0), (16.0, 20.0)]), (2, vec![(100.0, 102.0)])]
+            cutting_out(&pieces, 4.0, 11.0),
+            [(1, Cutting::Keep(10.0, 14.0)), (2, Cutting::Keep(102.0, 110.0))],
+            "the end of one and the start of the next"
         );
-        assert_eq!(struck_by_removing(&pieces, 19.0, 30.0), [], "past the end");
+        assert_eq!(
+            cutting_out(&pieces, 21.0, 24.0),
+            [(3, Cutting::Split { first_end: 202.0, second_start: 205.0 })],
+            "the middle of one: split"
+        );
+        assert_eq!(cutting_out(&pieces, 8.98, 19.01), [(2, Cutting::Whole)], "all of one, give or take a sliver");
+        assert_eq!(
+            cutting_out(&pieces, 5.0, 7.0),
+            [(1, Cutting::Split { first_end: 15.0, second_start: 18.0 })],
+            "across a struck stretch: what played before it, and from 2 s after it"
+        );
+        assert_eq!(cutting_out(&pieces, 29.0, 40.0), [], "past the end");
     }
 
     pub(crate) fn info(id: &str) -> VodInfo {
@@ -1529,9 +1595,35 @@ pub(crate) mod tests {
         let now = placed();
         assert_eq!(now.len(), 1);
         assert!(now[0].id == after && (now[0].start - 5.02).abs() < 1e-6, "18 s, 2.98 s sooner");
-        let struck = &db.edit_pieces(edit).unwrap()[0].struck;
-        assert_eq!(struck.len(), 1);
-        assert!((struck[0].0 - 13.01).abs() < 1e-6 && (struck[0].1 - 15.99).abs() < 1e-6);
+        // Two pieces now, nothing struck: 10-13.01 s and 15.99-20 s.
+        let now: Vec<(f64, f64, usize)> =
+            db.edit_pieces(edit).unwrap().iter().map(|p| (p.start, p.end, p.struck.len())).collect();
+        assert_eq!(now.len(), 2);
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
+        assert!(near(now[0].0, 10.0) && near(now[0].1, 13.01) && near(now[1].0, 15.99) && near(now[1].1, 20.0));
+        assert!(now.iter().all(|p| p.2 == 0), "nothing struck");
+    }
+
+    #[test]
+    fn removing_all_of_a_groups_pieces_takes_the_group_too() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let clip = db.add_edit("clip").unwrap().id;
+        db.add_piece(clip, vod, (10.0, 14.0), "a", None).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_group(edit, clip, None).unwrap();
+        db.add_piece(edit, vod, (30.0, 35.0), "b", None).unwrap();
+        // The group's split within, then all of it (0-4 s) taken out.
+        db.remove_edit_stretch(edit, 1.0, 2.0).unwrap();
+        assert_eq!(db.edit_pieces(edit).unwrap().len(), 3);
+        db.remove_edit_stretch(edit, 0.0, 3.0).unwrap();
+        let left: Vec<(f64, f64)> = db.edit_pieces(edit).unwrap().iter().map(|p| (p.start, p.end)).collect();
+        assert_eq!(left, [(30.0, 35.0)]);
+        let groups: i64 = db
+            .conn
+            .query_row("SELECT count(*) FROM items WHERE clip_id = ?1 AND kind = 'group'", [edit], |r| r.get(0))
+            .unwrap();
+        assert_eq!(groups, 0, "the emptied group goes");
     }
 
     #[test]
