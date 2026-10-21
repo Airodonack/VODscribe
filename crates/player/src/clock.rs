@@ -322,7 +322,18 @@ impl Player {
     /// Goes to the frame showing at `time`.
     pub fn seek(&self, time: f64) {
         let fps = self.fps_at(time).unwrap_or(DEFAULT_FPS);
-        let time = ((time.max(0.0) * fps + 1e-6).floor() / fps).min(self.inner.duration());
+        let time = time.max(0.0);
+        let mut snapped = ((time * fps + 1e-6).floor() / fps).min(self.inner.duration());
+        // Not back out of the footage `time` is in, into a gap before it: a
+        // site's footage can start off the frame grid (Twitch's, where its
+        // sound starts, 0.035 s), and in the gap the player waits for footage.
+        if let Some(start) = self.inner.timeline.lock().unwrap().at(time).filter(|s| s.source.is_some()).map(|s| s.at)
+            && snapped < start
+            && time >= start
+        {
+            snapped = start;
+        }
+        let time = snapped;
         let mut s = self.inner.state.lock().unwrap();
         s.ended = false;
         s.restart(time);
