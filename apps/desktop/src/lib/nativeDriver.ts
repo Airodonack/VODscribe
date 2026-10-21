@@ -7,14 +7,14 @@
 // open, a seek, play or speed asked is kept for then.
 
 import { api, events, type PlayerStatus, type UnlistenFn } from "./api";
+import { OwnStatus } from "./ownStatus";
 import { Clock } from "./playerClock";
 
 export class NativeDriver {
   private clock: Clock;
   private isPlaying = false;
-  /** Where the frame on screen is, as the player last said (null: none shows). */
-  private shownAt: number | null = null;
-  private seq = 0;
+  /** What the player last said: where the frame on screen is, the frame rate there. */
+  private status = new OwnStatus();
   private unlisten: UnlistenFn | null = null;
   private gone = false;
   private open = false;
@@ -25,7 +25,7 @@ export class NativeDriver {
   /** How long what's open is, once known (the time stays within it). */
   length = 0;
   /** Its frame rate at the start, once known. */
-  fps: number | null = null;
+  private startFps: number | null = null;
 
   constructor(start = 0) {
     this.clock = new Clock(start, false);
@@ -34,20 +34,16 @@ export class NativeDriver {
 
   private tell(status: PlayerStatus) {
     // A reply that arrives after a newer event is stale.
-    if (status.seq !== undefined) {
-      if (status.seq <= this.seq) return;
-      this.seq = status.seq;
-    }
+    if (!this.status.take(status)) return;
     this.clock.set(status.time);
     this.clock.playing = status.running;
     this.clock.speed = status.speed;
     this.isPlaying = status.playing;
-    this.shownAt = status.shown;
   }
 
   /** What the page guesses until the player says: at `time`, not running. */
   private guess(time: number, playing: boolean, speed = this.clock.speed) {
-    this.tell({ time, playing, running: false, speed, shown: this.shownAt });
+    this.tell({ time, playing, running: false, speed, shown: this.status.shown(), fps: this.status.fps() });
   }
 
   /** Something else is being opened, at `time`: nothing's sent until it is. */
@@ -60,7 +56,7 @@ export class NativeDriver {
   /** It opened: what was asked meanwhile is done now. */
   opened({ fps, duration }: { fps: number | null; duration: number }) {
     this.open = true;
-    this.fps = fps;
+    this.startFps = fps;
     this.length = duration;
     api.playerSetVolume(this.quiet ? 0 : this.loud).catch(() => {});
     if (this.wantedSpeed !== null) this.speed.set(this.wantedSpeed);
@@ -84,7 +80,12 @@ export class NativeDriver {
   }
 
   shown() {
-    return this.shownAt;
+    return this.status.shown();
+  }
+
+  /** The frame rate at the frame shown, else at the start, once known. */
+  get fps(): number | null {
+    return this.status.fps() ?? this.startFps;
   }
 
   togglePlay() {

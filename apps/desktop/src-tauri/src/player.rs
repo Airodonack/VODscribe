@@ -56,6 +56,9 @@ pub(crate) struct Status {
     shown: Option<f64>,
     /// The time stands for footage still to come (a VOD from a site).
     waiting: bool,
+    /// The frame rate of what plays at the frame shown (else at the time), if
+    /// known: frames are counted by it.
+    fps: Option<f64>,
 }
 
 /// What a player opened says of what it plays.
@@ -80,6 +83,7 @@ fn status(player: &Player) -> Status {
         speed: player.speed(),
         shown: player.shown(),
         waiting: player.waiting_for_footage(),
+        fps: player.fps_at(player.shown().unwrap_or_else(|| player.time())),
     }
 }
 

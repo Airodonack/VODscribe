@@ -51,6 +51,8 @@ export interface PlayerStatus {
   shown: number | null;
   /** The time stands for footage still to come (a VOD from a site, fetched as it plays). */
   waiting?: boolean;
+  /** The frame rate at the frame shown, if known: frames are counted by it. */
+  fps?: number | null;
 }
 
 /** What the app's own player says of what it opened: the frame rate at the start, if known, and the length. */

@@ -12,6 +12,7 @@
 import { ownPlayer } from "./ownPlayer.svelte";
 import { cueAt, elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
+import { OwnStatus } from "./ownStatus";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
 import { invoke } from "@tauri-apps/api/core";
@@ -200,14 +201,18 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       return data.event === "onReady" || data.event === "initialDelivery";
     },
     (cleanup) => ({
-      ...clocked(clock, {
-        seek: (seconds) => {
-          bridged?.asked();
-          command("seekTo", [seconds, true]);
+      ...clocked(
+        clock,
+        {
+          seek: (seconds) => {
+            bridged?.asked();
+            command("seekTo", [seconds, true]);
+          },
+          play: () => command("playVideo"),
+          pause: () => command("pauseVideo"),
         },
-        play: () => command("playVideo"),
-        pause: () => command("pauseVideo"),
-      }),
+        bridged,
+      ),
       volume: {
         get: () => sound.volume,
         muted: () => sound.muted,
@@ -252,8 +257,14 @@ function heard(clock: Clock, at: unknown, moving: boolean | undefined, playing: 
 }
 
 /** What a site's player answers from its clock, given how to tell it to
- *  seek, play and pause (it says where it is only now and then). */
-function clocked(clock: Clock, tell: { seek(seconds: number): void; play(): void; pause(): void }) {
+ *  seek, play and pause (it says where it is only now and then). Where the
+ *  app's player draws its picture (`bridged`), the frame shown and the frame
+ *  rate are that player's, exactly; else as near as the site's reports say. */
+function clocked(
+  clock: Clock,
+  tell: { seek(seconds: number): void; play(): void; pause(): void },
+  bridged: ReturnType<typeof bridge> | null,
+) {
   return {
     seek(seconds: number, play: boolean) {
       tell.seek(seconds);
@@ -261,7 +272,8 @@ function clocked(clock: Clock, tell: { seek(seconds: number): void; play(): void
       clock.asked(seconds, play);
     },
     time: () => clock.now(),
-    shown: () => clock.shown(),
+    shown: () => (bridged?.drawing() ? bridged.own.shown() : clock.shown()),
+    fps: () => (bridged?.drawing() ? bridged.own.fps() : null),
     playing: () => clock.playing,
     togglePlay() {
       if (clock.playing) tell.pause();
@@ -349,14 +361,18 @@ async function twitch(
       return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
     },
     (cleanup) => ({
-      ...clocked(clock, {
-        seek: (seconds) => {
-          bridged?.asked();
-          command(TWITCH_SEEK, seconds);
+      ...clocked(
+        clock,
+        {
+          seek: (seconds) => {
+            bridged?.asked();
+            command(TWITCH_SEEK, seconds);
+          },
+          play: () => command(TWITCH_PLAY),
+          pause: () => command(TWITCH_PAUSE),
         },
-        play: () => command(TWITCH_PLAY),
-        pause: () => command(TWITCH_PAUSE),
-      }),
+        bridged,
+      ),
       ownControls: true,
       captions: bridged?.captions,
       destroy: () => {
@@ -591,6 +607,10 @@ function bridge(
   seekTheirs: (at: number) => void,
 ): {
   stop: () => void;
+  /** What the app's player last said of itself (the frame shown, its rate). */
+  own: OwnStatus;
+  /** Whether the app's player draws the picture still (not fallen back). */
+  drawing: () => boolean;
   /** The app's controls asked their player to seek. */
   asked: () => void;
   captions: NonNullable<EmbeddedPlayer["captions"]>;
@@ -734,7 +754,7 @@ function bridge(
   // Statuses can arrive out of order (a command's reply and the events
   // travel apart): only a newer one is told, or a late "playing" would
   // undo a pause.
-  let newest = 0;
+  const own = new OwnStatus();
   // Our captions, drawn over our picture (under their frame, as it is): the
   // cue at the player's time, again whenever it, the box or full screen changes.
   // Asked again as the VOD changes: a VOD just added gets its transcript
@@ -767,10 +787,7 @@ function bridge(
     tick = requestAnimationFrame(each);
   });
   const told = events.playerTime((status) => {
-    if (status.seq !== undefined) {
-      if (status.seq <= newest) return;
-      newest = status.seq;
-    }
+    if (!own.take(status)) return;
     at = status.time;
     playing = status.playing;
     frame.contentWindow?.postMessage(
@@ -808,6 +825,8 @@ function bridge(
   hooks.__vodscribeFallback = hook;
   return {
     stop,
+    own,
+    drawing: () => !stopped,
     asked: () => (askedAt = performance.now()),
     // An ad began (their player said): the frame hands new sources to their
     // element. If none comes, the ad is in the stream itself: fall back.
