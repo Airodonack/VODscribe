@@ -41,6 +41,12 @@ function frame({ name = "" } = {}) {
       this.tagName = "VIDEO";
       this.className = "";
       this.parentElement = null;
+      const props = new Map();
+      this.style = {
+        getPropertyValue: (n) => props.get(n)?.[0] ?? "",
+        getPropertyPriority: (n) => props.get(n)?.[1] ?? "",
+        setProperty: (n, v, p = "") => (v ? props.set(n, [v, p]) : props.delete(n)),
+      };
     }
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 0, height: 0 };
@@ -140,6 +146,8 @@ test("the VOD's own source is taken over: the app's player plays it", async () =
   assert.match(f.video.src, /vodscribe-/);
   assert.equal(typeof f.video.currentTime, "number");
   assert.equal(source.readyState, "open");
+  // Their element, which shows nothing now, is see-through (a GPU draws an empty one black).
+  assert.equal(f.video.style.getPropertyValue("opacity"), "0");
   // Their play is the app's player's play.
   f.video.play();
   assert.ok(f.posted.some((m) => m.kind === "media" && m.event === "play"));
@@ -157,6 +165,7 @@ test("while an ad shows, a new source plays in their element, not ours", async (
   const ad = f.attach(f.video);
   await settle();
   assert.match(f.video.src, /^blob:real-/, "their element plays a real source");
+  assert.equal(f.video.style.getPropertyValue("opacity"), "", "and shows again");
   assert.equal(f.video.currentTime, "real", "the element's own state again");
   assert.equal(ad.readyState, "open", "their player hears sourceopen through ours");
   const buffer = ad.addSourceBuffer('video/webm; codecs="vp9"');

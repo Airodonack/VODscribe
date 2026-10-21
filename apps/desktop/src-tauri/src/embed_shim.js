@@ -683,6 +683,8 @@
     if (playing === media) playing = null;
     if (media.source.element === element) media.source.element = null;
     for (const name of OWN) delete element[name];
+    // Its own again (an ad it plays itself shows).
+    element.style.setProperty("opacity", media.opacity, media.opacityPriority);
     element.media = null;
   };
 
@@ -790,6 +792,12 @@
     };
     clear();
     setTimeout(clear, 1000);
+    // Their element itself shows nothing (no frame ever reaches it), but
+    // drawn by a GPU an empty video is a black layer of its own (WebKitGTK
+    // on NVIDIA: their overlays over black): see-through while it stands in.
+    media.opacity = element.style.getPropertyValue("opacity");
+    media.opacityPriority = element.style.getPropertyPriority("opacity");
+    element.style.setProperty("opacity", "0", "important");
     media.fire("loadstart");
     setTimeout(() => {
       source.readyState = "open";
