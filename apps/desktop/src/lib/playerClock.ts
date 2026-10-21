@@ -20,23 +20,45 @@ export class Clock {
    *  near the target since. */
   private seeking: { target: number; play: boolean; until: number; seen: boolean } | null = null;
   private seconds: number;
-  playing: boolean;
+  private isPlaying: boolean;
   /** Its time runs only once the player has said it's moving: a site's
-   *  player, asked to play as it loads, says nothing for a few seconds, then
-   *  that it's at the start; run on meanwhile, the time went back. */
+   *  player says it plays as soon as it's asked to, then buffers before its
+   *  picture moves; run on meanwhile, the time went ahead, then back. */
   private waits: boolean;
   constructor(seconds: number, playing: boolean, { waitsForPlayer = false } = {}) {
     this.seconds = seconds;
-    this.playing = playing;
+    this.isPlaying = playing;
     this.waits = waitsForPlayer;
+  }
+  /** Whether it plays (or is about to: buffering). The time goes on from
+   *  where it is as this changes. */
+  get playing() {
+    return this.isPlaying;
+  }
+  set playing(playing: boolean) {
+    this.keeping(() => (this.isPlaying = playing));
   }
   set(seconds: number) {
     this.seconds = seconds;
     this.at = performance.now();
   }
+  /** Whether its time runs now. */
+  private running() {
+    return this.isPlaying && (!this.waits || this.heard?.moving === true);
+  }
   now() {
-    const running = this.playing && (!this.waits || this.heard?.moving === true);
-    return this.seconds + (running ? ((performance.now() - this.at) / 1000) * this.speed : 0);
+    return this.seconds + (this.running() ? ((performance.now() - this.at) / 1000) * this.speed : 0);
+  }
+  /** Makes `change`, the time going on from where it was, if it starts or
+   *  stops running: not leaping by the time it stood, nor back by the time
+   *  it ran. */
+  private keeping(change: () => void) {
+    const [time, was] = [this.now(), this.running()];
+    change();
+    if (this.running() !== was) this.set(time);
+  }
+  private hear(heard: { seconds: number; at: number; moving: boolean }) {
+    this.keeping(() => (this.heard = heard));
   }
   /** Plays `speed` times as fast from now: both positions run on from
    *  where they are, rather than jumping. */
@@ -72,7 +94,7 @@ export class Clock {
         // At the target, or where it's been seen near it since; moving or not as it says.
         const shown = this.shown();
         const there = this.seeking.seen && shown !== null ? shown : target;
-        this.heard = { seconds: there, at: now, moving: moving ?? this.heard?.moving ?? false };
+        this.hear({ seconds: there, at: now, moving: moving ?? this.heard?.moving ?? false });
         return;
       }
       // There: the seek is through once it plays there, or at once if it stays paused.
@@ -81,12 +103,21 @@ export class Clock {
     }
     // Playing still, it's run on from where it first said.
     if (again && this.heard?.moving && (moving ?? true)) return;
+    // Stopped, said with the place it last said while moving (Twitch, as it
+    // pauses): it stopped where it had run on to, as near as that says,
+    // not back there; its true place, if said after, counts.
+    if (again && this.heard?.moving && moving === false) {
+      const ran = this.shown() ?? seconds;
+      this.set(ran);
+      this.heard = { seconds: ran, at: now, moving: false };
+      return;
+    }
     this.set(seconds);
     this.heard = { seconds, at: now, moving: moving ?? this.heard?.moving ?? false };
   }
   /** The player said whether it's moving, without a position. */
   heardMoving(moving: boolean) {
-    if (this.heard) this.heard = { seconds: this.shown()!, at: performance.now(), moving };
+    if (this.heard) this.hear({ seconds: this.shown()!, at: performance.now(), moving });
   }
   /** Where the player really is, as near as its reports say: run on from the
    *  last only while it said it was moving, and at most `STALE` seconds past

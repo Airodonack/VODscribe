@@ -158,3 +158,44 @@ test("a seek of a second while paused stays at the target when the old place is 
   assert.equal(clock.shown(), 33.77);
   assert.equal(clock.now(), 33.77);
 });
+
+test("a clock that waits doesn't leap on by the time it stood, after a seek", async () => {
+  const clock = new Clock(0, true, { waitsForPlayer: true });
+  clock.heardAt(10, true);
+  clock.asked(100, true);
+  // Twitch: the old place, buffering at the new one; then playing there.
+  clock.heardAt(10, false);
+  await wait(300);
+  assert.ok(Math.abs(clock.now() - 100) < 0.01, `stands at the target while buffering: ${clock.now()}`);
+  clock.heardAt(10, true);
+  assert.ok(clock.now() < 100.05, `runs on from the target, not 0.3 s ahead: ${clock.now()}`);
+});
+
+test("a clock that waits doesn't leap when told it's moving without a position", async () => {
+  const clock = new Clock(0, true, { waitsForPlayer: true });
+  clock.heardAt(0, false);
+  await wait(300);
+  clock.heardMoving(true);
+  assert.ok(clock.now() < 0.05, `from 0, not 0.3: ${clock.now()}`);
+});
+
+test("a clock that waits doesn't jump back when told it stopped without a position", async () => {
+  const clock = new Clock(0, true, { waitsForPlayer: true });
+  clock.heardAt(5, true);
+  await wait(300);
+  clock.heardMoving(false);
+  assert.ok(clock.now() > 5.25, `stays where it ran to, not back to 5: ${clock.now()}`);
+});
+
+test("pausing, the last position said again doesn't pull it back", async () => {
+  // Twitch, as it pauses: Idle, with the position it last said while playing.
+  const clock = new Clock(0, true);
+  clock.heardAt(4.4, true);
+  await wait(300);
+  clock.heardAt(4.4, false);
+  assert.ok(clock.now() > 4.65, `the time where it ran to: ${clock.now()}`);
+  assert.ok((clock.shown() ?? 0) > 4.65, `shown where it ran to: ${clock.shown()}`);
+  // Its true place, said after, counts.
+  clock.heardAt(4.77, false);
+  assert.equal(clock.shown(), 4.77);
+});
