@@ -91,6 +91,8 @@ export default {
     await app.key("ArrowRight", { shift: true });
     await to(3);
     await expect(3);
+    // The time by the button is the frame on screen (the app's own player says which).
+    if (native) ctx.log(await app.timeIsPicture("after the seeks, paused"));
 
     // Played with a real click on Play (trusted, hit-tested): it moves on.
     await app.toStart();
@@ -108,6 +110,7 @@ export default {
     const later = named(await shown());
     ctx.log(`playing: ${first}, then ${later}`);
     if (first === later) throw new Error(`playing, the picture stayed ${first} for 1.5 s`);
+    if (native) ctx.log(await app.timeIsPicture("playing", { playing: true }));
 
     // Paused with a real click: it stands.
     const pause = await os.rectOf(app, '.bar button[aria-label="Pause"]');
@@ -124,6 +127,7 @@ export default {
     if (os.distance(still, stillLater) > 30)
       throw new Error(`paused, the picture changed from ${still} to ${stillLater}`);
     ctx.log(`paused: stays ${named(still)}`);
+    if (native) ctx.log(await app.timeIsPicture("paused"));
 
     // A panel opened over the picture (Settings) shows there: the picture
     // draws on a surface over the page, which mustn't cover the panel.

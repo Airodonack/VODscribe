@@ -304,6 +304,34 @@ export class App {
   }
 
   /**
+   * Checks the time by the play button is the frame the app's own player
+   * shows: by frame, the number of the frame it says is on screen, at its
+   * frame rate; with no picture (sound alone), its time. Exactly, paused; within `slack` seconds of frames, playing
+   * (the two are read a moment apart). The time shown as a clock is switched to frames to
+   * read, and back. Returns what it saw.
+   */
+  async timeIsPicture(label, { playing = false, slack = 0.1 } = {}) {
+    const { text, status } = await this.js(`
+      const status = await window.__TAURI_INTERNALS__.invoke("player_set_speed", { speed: 1 });
+      const button = document.querySelector(".bar button.time");
+      const byFrame = !!button.querySelector(".stack");
+      const frames = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      if (!byFrame) { button.click(); await frames(); }
+      const text = button.querySelector(".now:not(.clock) > span:not(.widest)")?.textContent ?? "";
+      if (!byFrame) { button.click(); await frames(); }
+      return { text, status };`);
+    if (!status) throw new Error(`${label}: the app's player isn't open`);
+    const fps = status.fps ?? 30;
+    const at = status.shown ?? status.time;
+    const want = Math.floor(at * fps + 1e-3);
+    const got = Number(text);
+    const what = status.shown === null ? "no picture: the time is" : "the picture is";
+    const seen = `${label}: the time shows frame ${text}, ${what} frame ${want} (${at.toFixed(3)} s at ${fps} fps)`;
+    if (!Number.isInteger(got) || Math.abs(got - want) > (playing ? Math.ceil(slack * fps) : 0)) throw new Error(seen);
+    return seen;
+  }
+
+  /**
    * Plays the open VOD with the bar's Play button, whichever player it has
    * (the app's own draws outside the page, with no <video>), and checks the
    * time it shows runs on; returns the time it got to.

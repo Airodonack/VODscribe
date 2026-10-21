@@ -120,6 +120,8 @@ export default {
       }
     }
     shot("playing");
+    // The time by the button is our picture's frame, not their player's word.
+    ctx.log(await app.timeIsPicture("playing", { playing: true }));
 
     // Captions from the transcript: drawn over the picture by the screen, or
     // in the page where the page draws the picture (X11); seen only there.
@@ -146,6 +148,7 @@ export default {
       MINUTE,
     );
     ctx.log(`jumped: from ${before.toFixed(2)} s to ${jumped.time.toFixed(2)} s`);
+    ctx.log(await app.timeIsPicture("after the jump", { playing: true }));
     shot("jumped");
 
     // Paused from the app's controls: it stands.
@@ -156,6 +159,7 @@ export default {
     const b = await ours();
     ctx.log(`paused: ${a.time.toFixed(3)} s, then ${b.time.toFixed(3)} s`);
     if (a.playing || b.playing || Math.abs(a.time - b.time) > 0.05) throw new Error("it didn't stay paused");
+    ctx.log(await app.timeIsPicture("paused"));
     shot("paused");
 
     /** What went wrong, as the frame and the page reported it. */

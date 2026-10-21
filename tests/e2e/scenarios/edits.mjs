@@ -77,6 +77,23 @@ export default {
     await until("the edit open again", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
 
     await ctx.checkpoint("edit-view");
+    // Played (not to its end: it's 2 s) and paused, the time by the button is
+    // where the player is (sound alone here: its time); then back at the
+    // start, where it opened, for what follows.
+    if (await app.invoke("player_available")) {
+      const opened = await app.shownTime();
+      await app.click('.bar button[aria-label="Play"]');
+      await until(
+        "the edit to play",
+        async () => (await app.invoke("player_set_speed", { speed: 1 }))?.running,
+        10_000,
+      );
+      ctx.log(await app.timeIsPicture("the edit playing", { playing: true }));
+      await app.pause();
+      ctx.log(await app.timeIsPicture("the edit paused"));
+      await app.toStart();
+      if (opened !== 0) throw new Error(`the edit opened at ${opened} s, not its start: left at its start`);
+    }
     const edit = () => app.invoke("get_edit", { id: made.id });
     const first = await edit();
     const pieces = (e) => e.pieces;
@@ -402,6 +419,9 @@ export default {
     // timeline, in its chapters lane and over its transcript; Ctrl+Z takes
     // it back, as the edit's own change.
     const editMarks = () => app.invoke("edit_marks", { id: made.id });
+    // Paused: the click on a line above played it, and N puts the chapter
+    // where the playhead is when it's pressed.
+    await app.pause();
     await app.toStart();
     await until("the start", async () => (await app.shownTime()) === 0, 10_000);
     await app.key("ArrowRight", { shift: true });
