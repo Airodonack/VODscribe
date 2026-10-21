@@ -26,7 +26,8 @@ pub use macos::Screen;
 
 /// Whether the picture can go under the page (`Screen::set_under`): it can
 /// but under X11, where a child window is always drawn over its parent's own
-/// drawing, the page's. Call on the main thread.
+/// drawing, the page's, and with NVIDIA's own driver under Wayland, where the
+/// window doesn't come out see-through (present_linux.rs). Call on the main thread.
 pub fn can_go_under() -> bool {
     #[cfg(target_os = "linux")]
     return linux::can_go_under();

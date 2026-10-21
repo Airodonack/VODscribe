@@ -132,11 +132,20 @@ impl Screen {
     }
 }
 
-/// Whether the picture can go under the window's surface: under Wayland.
+/// Whether the picture can go under the window's surface: under Wayland,
+/// but not with NVIDIA's own driver loaded. There (GNOME 48, driver 615) the
+/// window doesn't come out see-through: drawn through the GPU it's opaque,
+/// and drawn without it (WebKit's DMABuf renderer off, or GDK_GL=disable)
+/// it isn't drawn whole. VODSCRIBE_PICTURE_UNDER=1 or 0 says otherwise.
 /// Call on the main thread.
 pub(crate) fn can_go_under() -> bool {
     use gtk::glib::prelude::ObjectExt;
-    gtk::gdk::Display::default().is_some_and(|d| d.type_().name() == "GdkWaylandDisplay")
+    let wayland = gtk::gdk::Display::default().is_some_and(|d| d.type_().name() == "GdkWaylandDisplay");
+    match std::env::var("VODSCRIBE_PICTURE_UNDER").as_deref() {
+        Ok("1") => wayland,
+        Ok("0") => false,
+        _ => wayland && !std::path::Path::new("/sys/module/nvidia_drm").exists(),
+    }
 }
 
 impl Inner {

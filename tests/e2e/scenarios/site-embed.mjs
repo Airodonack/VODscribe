@@ -62,7 +62,22 @@ export default {
     const shot = (name) => {
       if (!process.env.E2E_SHOTS) return;
       const file = path.join(shots, name);
-      if (process.env.WAYLAND_DISPLAY) {
+      if (process.env.E2E_GNOME_SHELL) {
+        // GNOME Shell's own screenshots (the test session's Shell allows them: unsafe mode).
+        execFileSync("gdbus", [
+          "call",
+          "--session",
+          "--dest",
+          "org.gnome.Shell.Screenshot",
+          "--object-path",
+          "/org/gnome/Shell/Screenshot",
+          "--method",
+          "org.gnome.Shell.Screenshot.Screenshot",
+          "false",
+          "false",
+          `${file}.png`,
+        ]);
+      } else if (process.env.WAYLAND_DISPLAY) {
         const before = new Set(readdirSync(shots));
         execFileSync("weston-screenshooter", [], { cwd: shots });
         const made = readdirSync(shots).find((f) => f.startsWith("wayland-screenshot") && !before.has(f));
@@ -158,7 +173,9 @@ export default {
       },
       MINUTE,
     );
-    ctx.log(`fell back at ${from} s: their player alone at ${t1} s (${await app.js(`return document.querySelector("iframe")?.src ?? ""`)})`);
+    ctx.log(
+      `fell back at ${from} s: their player alone at ${t1} s (${await app.js(`return document.querySelector("iframe")?.src ?? ""`)})`,
+    );
     if ((await app.js(`return document.querySelector("iframe")?.name ?? ""`)) !== "vodscribe-plain")
       throw new Error("their frame wasn't loaded plain");
     if (t1 < from - 2) throw new Error(`their player went back to ${t1} s from ${from} s`);

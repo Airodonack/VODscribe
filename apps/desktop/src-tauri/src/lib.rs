@@ -255,6 +255,11 @@ pub fn run() {
                     Ok(tauri::Theme::Dark) => tauri::window::Color(0x14, 0x14, 0x13, 0xff),
                     _ => tauri::window::Color(0xf4, 0xf4, 0xf2, 0xff),
                 };
+                // On Linux nothing goes under the page then (X11, NVIDIA's driver):
+                // the page's view has it too, as it always did there.
+                #[cfg(target_os = "linux")]
+                let _ = main.set_background_color(Some(bg));
+                #[cfg(not(target_os = "linux"))]
                 let _ = main.as_ref().window().set_background_color(Some(bg));
             }
             std::thread::spawn(move || {
