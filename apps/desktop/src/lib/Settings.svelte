@@ -333,14 +333,14 @@
       </button>
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
-    <p class="label">Keep streamed videos</p>
+    <p class="label">Keep fetched video</p>
     <p class="muted hint">
-      VODs from Kick, Twitch and YouTube stream a few minutes at a time as they play. What's streamed is kept, to play
-      again and to clip or edit without downloading it again{footageBytes
+      Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What's fetched is
+      kept, to clip or edit again without downloading it again{footageBytes
         ? `. It uses ${formatBytes(footageBytes)}`
         : ""}. Up to:
     </p>
-    <div class="segmented" role="radiogroup" aria-label="Most streamed video kept">
+    <div class="segmented" role="radiogroup" aria-label="Most fetched video kept">
       {#each FOOTAGE_CAPS as gb (gb)}
         <button
           role="radio"
@@ -353,10 +353,10 @@
       {/each}
     </div>
     <p class="muted hint">
-      The least recently played go first. What your edits use is always kept: the site may not have it any more.
+      The least recently used go first. What your edits use is always kept: the site may not have it any more.
     </p>
     <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
-      {clearingFootage ? "Deleting…" : "Delete streamed videos"}
+      {clearingFootage ? "Deleting…" : "Delete fetched video"}
     </button>
     <p class="label">Clips and edits are made as</p>
     <div class="segmented" role="radiogroup" aria-label="Clip format">
