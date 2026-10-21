@@ -40,6 +40,7 @@
   }: {
     player: EmbeddedPlayer | null;
     playing: boolean;
+    /** Where the picture is (PlayerReading.actual): the time shown, by frame and as a clock. */
     now: number;
     duration: number;
     volume: number;

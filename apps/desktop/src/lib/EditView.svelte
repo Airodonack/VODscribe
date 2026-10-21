@@ -811,7 +811,7 @@
   <PlayerBar
     {player}
     playing={reading.playing}
-    {now}
+    now={reading.actual}
     duration={total}
     volume={reading.volume}
     muted={reading.muted}

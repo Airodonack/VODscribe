@@ -18,6 +18,9 @@ export class PlayerReading {
   now = $state(0);
   /** Where the frame on screen is, where the player knows (the app's own). */
   shown = $state<number | null>(null);
+  /** Where the picture is: the frame on screen where known, else the time.
+   *  The time shown and the solid playhead (Scrubber.svelte) are this. */
+  actual = $state(0);
   playing = $state(false);
   volume = $state(1);
   muted = $state(false);
@@ -27,11 +30,13 @@ export class PlayerReading {
 
   constructor(now = 0) {
     this.now = now;
+    this.actual = now;
   }
 
   read(p: Readable) {
     this.now = p.time();
     this.shown = p.shown?.() ?? null;
+    this.actual = this.shown ?? this.now;
     this.playing = p.playing();
     this.fps = p.fps?.() ?? DEFAULT_FPS;
     if (p.volume) [this.volume, this.muted] = [p.volume.get(), p.volume.muted()];

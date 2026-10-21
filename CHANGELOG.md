@@ -22,6 +22,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A clip, a stretch put in an edit, and a clip added to an edit bring the chapters and highlights in them along, on the same moments.
 - Removing a VOD that an edit uses leaves the edit's pieces of it where they are, and asks whether its video goes too. Removed from the library, its transcript and video stay on this computer until no edit uses them, then are erased when VODscribe quits (or else the next time it starts). Removed with its video, only the stretches the edits use are kept, as videos of their own, and the rest is erased at once; if those stretches can't be kept (offline, say), it asks whether to try again, keep the video, or delete it anyway, leaving gaps in the edits.
 - In an edit, a piece whose video file you deleted outside VODscribe shows striped in the timeline and plays and renders as black and silence, rather than stopping the edit from rendering.
+- The time under the player, as a clock or by frame, is the frame on screen: after a jump it changes as the picture does, and the frame number is the one you see, at the video's own frame rate.
 - Fixes:
   - A VOD opened again after an edit started at its beginning, not where you'd left it.
   - On macOS, clips of VODs from Kick, Twitch and YouTube, and edits with pieces of them, couldn't get their video ("Couldn't get this video"): the video reader didn't trust the sites' certificates.
