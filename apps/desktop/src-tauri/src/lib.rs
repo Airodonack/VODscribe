@@ -118,6 +118,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
     let _ = std::fs::remove_dir_all(paths.local.join("preview"));
+    embed::clear(&paths.local);
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
     // Kept videos' leftovers from VODs no longer in the library; only

@@ -1,6 +1,7 @@
 // Runs in every frame of the app's window; acts only inside a site's
 // embedded player (YouTube's, Twitch's), and not in one the page loaded to
-// play by itself (named "vodscribe-plain": embed.ts).
+// play by itself (named "vodscribe-plain", or with that as its URL's
+// fragment: embed.ts).
 // The media seam their player plays through is ours. MediaSource, its
 // SourceBuffers, and the state of the <video> it's attached to are
 // stand-ins: their player appends its segments to us, and we hand them to
@@ -217,6 +218,12 @@
           if (o + 16 > buf.length) break;
           size = Number(v.getBigUint64(o + 8));
           head = 16;
+        }
+        // No size, or less than its own head: what's left can't be read (and
+        // would never move on).
+        if (size < head) {
+          o = buf.length;
+          break;
         }
         if (type === "ftyp" || type === "moov") this.sawInit = true;
         if (type !== "moov" && type !== "moof") {
@@ -621,6 +628,8 @@
       }
     }
     play() {
+      // Played at its end, it starts again, as an element does.
+      if (this.ended) this.seek(0);
       if (this.paused) {
         this.time = this.now();
         this.since = performance.now();
@@ -685,7 +694,8 @@
     release(element);
     const real = new RealMediaSource();
     source.real = real;
-    for (const name of ["sourceopen", "sourceended", "sourceclose"]) real.addEventListener(name, () => source.fire(name));
+    for (const name of ["sourceopen", "sourceended", "sourceclose"])
+      real.addEventListener(name, () => source.fire(name));
     srcDescriptor.set.call(element, createObjectURL.call(URL, real));
     post({ kind: "ad", phase: "handed", source: source.id });
   };

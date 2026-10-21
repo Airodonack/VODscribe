@@ -34,6 +34,9 @@ struct Open {
     player: Player,
     /// Opened for this VOD or edit; a page that asks for the same one keeps it.
     doc: Doc,
+    /// For a VOD played from what its site's player fetches: its session's
+    /// token (embed.rs), so only that session changes or closes it.
+    embed: Option<u64>,
 }
 
 /// What the page is told of the player: `running` once the time moves
@@ -98,7 +101,7 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
             .ok_or_else(|| anyhow::anyhow!("This VOD has no file here to play."))?;
         Player::open_file(&ffmpeg, file.as_ref())
     };
-    open_with(app, Doc::Vod(id), at, play, make).await
+    open_with(app, Doc::Vod(id), at, play, None, make).await
 }
 
 /// Opens edit `id`, its pieces end to end from their footage, at `at`
@@ -112,7 +115,7 @@ pub(crate) async fn player_open_edit(app: AppHandle, id: i64, at: f64, play: boo
         let (timeline, _) = edit_timeline(app, id)?;
         Player::open(&ffmpeg, timeline)
     };
-    open_with(app, Doc::Edit(id), at, play, make).await
+    open_with(app, Doc::Edit(id), at, play, None, make).await
 }
 
 /// Edit `id`'s timeline as its pieces and the footage here are now, and
@@ -181,13 +184,14 @@ async fn open_with(
     doc: Doc,
     at: f64,
     play: bool,
+    embed: Option<u64>,
     make: impl FnOnce(&AppHandle) -> anyhow::Result<Player> + Send + 'static,
 ) -> CmdResult<Opened> {
     let state = app.state::<AppState>();
     let asked = state.player.asked.fetch_add(1, Ordering::AcqRel) + 1;
     let same = {
         let open = state.player.open.lock().unwrap();
-        open.as_ref().filter(|o| o.doc == doc).map(|o| opened(&o.player))
+        open.as_ref().filter(|o| o.doc == doc && o.embed == embed).map(|o| opened(&o.player))
     };
     let opened = match same {
         Some(opened) => opened,
@@ -213,7 +217,7 @@ async fn open_with(
             if state.player.asked.load(Ordering::Acquire) != asked {
                 return Err(CLOSED.into());
             }
-            *open = Some(Open { player, doc });
+            *open = Some(Open { player, doc, embed });
             opened
         }
     };
@@ -233,9 +237,16 @@ async fn open_with(
     Ok(opened)
 }
 
-/// Opens VOD `vod_id` on `timeline` (what its site's player has appended:
-/// embed.rs), waiting where there's nothing yet, at `at`, paused.
-pub(crate) async fn open_embed(app: AppHandle, vod_id: i64, timeline: Timeline, at: f64) -> CmdResult<Opened> {
+/// Opens VOD `vod_id` for embed session `token` on `timeline` (what its
+/// site's player has appended: embed.rs), waiting where there's nothing yet,
+/// at `at`, paused.
+pub(crate) async fn open_embed(
+    app: AppHandle,
+    vod_id: i64,
+    token: u64,
+    timeline: Timeline,
+    at: f64,
+) -> CmdResult<Opened> {
     let make = move |app: &AppHandle| {
         let state = app.state::<AppState>();
         let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
@@ -244,18 +255,37 @@ pub(crate) async fn open_embed(app: AppHandle, vod_id: i64, timeline: Timeline, 
         Ok(player)
     };
     // A new one each time: what's kept starts over.
-    player_close(app.clone());
-    open_with(app, Doc::Vod(vod_id), at, false, make).await
+    close(&app);
+    open_with(app, Doc::Vod(vod_id), at, false, Some(token), make).await
 }
 
-/// VOD `vod_id`'s player, opened by `open_embed`, plays `timeline` from here on.
-pub(crate) fn set_embed_timeline(app: &AppHandle, vod_id: i64, timeline: Timeline) {
+/// Embed session `token`'s player, if it's the one open, plays `timeline`
+/// from here on.
+pub(crate) fn set_embed_timeline(app: &AppHandle, token: u64, timeline: Timeline) {
     let state = app.state::<AppState>();
     let open = state.player.open.lock().unwrap();
-    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id))
+    if let Some(o) = open.as_ref().filter(|o| o.embed == Some(token))
         && o.player.timeline() != timeline
     {
         o.player.set_timeline(timeline);
+    }
+}
+
+/// Closes embed session `token`'s player, if it's the one open (a late
+/// close of an earlier VOD's leaves the next one's be).
+pub(crate) fn close_embed(app: &AppHandle, token: u64) {
+    let state = app.state::<AppState>();
+    let closed = {
+        let mut open = state.player.open.lock().unwrap();
+        // Checked and taken under one lock: nothing opened in between goes.
+        open.as_ref().is_some_and(|o| o.embed == Some(token)).then(|| {
+            state.player.asked.fetch_add(1, Ordering::AcqRel);
+            open.take()
+        })
+    };
+    if closed.is_some() {
+        drop(closed);
+        crate::screen::show(app, None);
     }
 }
 
@@ -325,13 +355,24 @@ fn scale_rgba(rgb: &[u8], fw: u32, fh: u32, w: u32, h: u32, out: &mut Vec<u8>) {
 /// What an open that the page moved on from is told.
 pub(crate) const CLOSED: &str = "The player was closed while opening.";
 
-/// Closes the player, clearing the screen.
+/// Closes the player, clearing the screen; not one an embed session has
+/// open (only that session closes it: `close_embed`), so a page that closes
+/// late leaves the next VOD's be.
 #[tauri::command]
 pub(crate) fn player_close(app: AppHandle) {
     let state = app.state::<AppState>();
+    if state.player.open.lock().unwrap().as_ref().is_some_and(|o| o.embed.is_some()) {
+        return;
+    }
+    close(&app);
+}
+
+/// Closes whatever player is open, clearing the screen.
+fn close(app: &AppHandle) {
+    let state = app.state::<AppState>();
     state.player.asked.fetch_add(1, Ordering::AcqRel);
     drop(state.player.open.lock().unwrap().take());
-    crate::screen::show(&app, None);
+    crate::screen::show(app, None);
 }
 
 /// Does `f` with the player open, telling the page the time after.

@@ -38,11 +38,13 @@ impl Stretch {
     }
 
     /// Whether `other` is this stretch, or this one played further (more
-    /// of its footage in): what plays up to this one's end is the same.
+    /// of its footage in): what plays up to this one's end is the same, its
+    /// sound too (a sound that came after the picture isn't).
     pub fn continued_by(&self, other: &Stretch) -> bool {
         self.at == other.at
             && self.from == other.from
             && self.source == other.source
+            && self.sound == other.sound
             && self.piece_id == other.piece_id
             && other.length >= self.length
     }
@@ -181,6 +183,25 @@ mod tests {
             hole: false,
             group: None,
         }
+    }
+
+    #[test]
+    fn a_stretch_whose_sound_came_after_isnt_the_same_stretch() {
+        let picture = Stretch {
+            at: 0.0,
+            length: 4.0,
+            piece_id: None,
+            source: Some(Source { path: PathBuf::from("v.mp4"), offset: 0.0, section: None }),
+            from: 0.0,
+            sound: None,
+        };
+        let with_sound = Stretch {
+            length: 6.0,
+            sound: Some(Sound { path: PathBuf::from("a.mp4"), offset: 0.0 }),
+            ..picture.clone()
+        };
+        assert!(!picture.continued_by(&with_sound));
+        assert!(with_sound.continued_by(&Stretch { length: 8.0, ..with_sound.clone() }));
     }
 
     #[test]

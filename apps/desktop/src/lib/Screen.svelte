@@ -12,6 +12,17 @@
   over it then simply draws over the picture. Where the surface can't go
   under the page (X11), the page draws the picture itself, in the box.
 -->
+<script lang="ts" module>
+  // The newest screen box is the one the surface follows: one going (the
+  // page moved on to another VOD) neither moves nor hides it after.
+  let newest = 0;
+  // Backgrounds painted around a box (`holes`), as they were before any box
+  // painted them, and which box painted each last: boxes can share
+  // ancestors, so only the last one to paint an element puts it back.
+  const before = new Map<HTMLElement, string>();
+  const painter = new Map<HTMLElement, number>();
+</script>
+
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "./api";
@@ -53,17 +64,28 @@
     return true;
   }
 
+  // This box, among all there have been (`newest`).
+  const me = ++newest;
+
   // Under the page, every opaque background above the box is painted
   // around it, not through it: four bands of its own colour about the box
   // (no layout changes, no elements added). Put back as it was after.
-  const holed = new Map<HTMLElement, string>();
+  const holed = new Set<HTMLElement>();
   let holedAt: { x: number; y: number; width: number; height: number } | null = null;
+  /** Puts `el`'s background back as it was before any box painted it. */
+  const unpaint = (el: HTMLElement) => {
+    el.style.background = before.get(el) ?? "";
+    before.delete(el);
+    painter.delete(el);
+  };
   function holes(rect: { x: number; y: number; width: number; height: number } | null) {
-    for (const [el, before] of holed) el.style.background = before;
+    for (const el of holed) if (painter.get(el) === me) unpaint(el);
     holed.clear();
     holedAt = rect;
     if (!rect) return;
     for (let el = box.parentElement; el; el = el.parentElement) {
+      // Another box's bands first go, to read its own colour.
+      if (painter.has(el)) unpaint(el);
       const cs = getComputedStyle(el);
       if (cs.backgroundColor === "rgba(0, 0, 0, 0)" || cs.backgroundColor === "transparent") continue;
       const e = el.getBoundingClientRect();
@@ -71,7 +93,9 @@
       const [x, y, w, h] = [rect.x - e.left, rect.y - e.top, rect.width, rect.height];
       const c = `linear-gradient(${cs.backgroundColor}, ${cs.backgroundColor})`;
       const band = (pos: string, size: string) => `${c} ${pos} / ${size} no-repeat border-box`;
-      holed.set(el, el.style.background);
+      before.set(el, el.style.background);
+      painter.set(el, me);
+      holed.add(el);
       el.style.background = [
         band(`0 0`, `100% ${px(y)}`),
         band(`0 ${px(y + h)}`, `100% calc(100% - ${px(y + h)})`),
@@ -85,26 +109,27 @@
    *  pixels, until `stopped()`. */
   function drawFrames(stopped: () => boolean) {
     let since: number | null = null;
+    let size = "";
     let image: ImageData | null = null;
     const tick = async () => {
       if (stopped()) return;
       const r = box.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      const bytes = await api
-        .playerFrame(since, Math.round(r.width * dpr), Math.round(r.height * dpr))
-        .catch(() => new ArrayBuffer(0));
+      const [width, height] = [Math.round(r.width * dpr), Math.round(r.height * dpr)];
+      // A new size (full screen, say): the frame showing again, at it.
+      if (`${width}x${height}` !== size) [size, since] = [`${width}x${height}`, null];
+      const bytes = await api.playerFrame(since, width, height).catch(() => new ArrayBuffer(0));
       if (bytes.byteLength >= 16) {
         const view = new DataView(bytes);
-        const width = view.getUint32(0, true);
-        const height = view.getUint32(4, true);
+        const [w, h] = [view.getUint32(0, true), view.getUint32(4, true)];
         since = Number(view.getBigUint64(8, true));
-        if (bytes.byteLength >= 16 + width * height * 4) {
-          if (image?.width !== width || image.height !== height) {
-            image = new ImageData(width, height);
-            still.width = width;
-            still.height = height;
+        if (bytes.byteLength >= 16 + w * h * 4) {
+          if (image?.width !== w || image.height !== h) {
+            image = new ImageData(w, h);
+            still.width = w;
+            still.height = h;
           }
-          image.data.set(new Uint8ClampedArray(bytes, 16, width * height * 4));
+          image.data.set(new Uint8ClampedArray(bytes, 16, w * h * 4));
           still.getContext("2d")?.putImageData(image, 0, 0);
           stillShown = true;
         }
@@ -123,7 +148,8 @@
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
-      if (stopped || !mode) return;
+      // Out of the page, or another box come since: the surface isn't this one's.
+      if (stopped || !mode || newest !== me || !box.isConnected) return;
       const r = box.getBoundingClientRect();
       const here = { x: r.x, y: r.y, width: r.width, height: r.height };
       if (mode !== "over") {
@@ -199,7 +225,7 @@
       holes(null);
       cancelAnimationFrame(frame);
       sizes.disconnect();
-      api.setScreen(null).catch(() => {});
+      if (newest === me) api.setScreen(null).catch(() => {});
     };
   });
 </script>

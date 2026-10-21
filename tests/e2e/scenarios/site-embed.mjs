@@ -52,7 +52,9 @@ export default {
       await app.click('.bar button[aria-label="Play"]');
     }
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    /** The app's player: where it is (null: none open). */
+    /** The app's player: where it is (null: none open). Its status comes
+     *  back from any command; setting the speed it plays at (1, as the test
+     *  never changes it) changes nothing. */
     const ours = () => app.invoke("player_set_speed", { speed: 1 }).catch(() => null);
     const reports = () => app.js(`return window.__vodscribeEmbed?.reports ?? []`);
     const shots = path.join(process.env.E2E_OUT ?? ".", "site-embed");
@@ -86,8 +88,15 @@ export default {
     // Captions from the transcript: drawn over the picture by the screen, or
     // in the page where the page draws the picture (X11); seen only there.
     const cues = await app.invoke("captions", { vodId: vod.id });
-    const inPage = await app.js(`return !!document.querySelector(".screen .over canvas")`);
-    ctx.log(`captions: ${cues.length} cues; one drawn in the page: ${inPage}`);
+    const pageDraws = !(await app.invoke("screen_under"));
+    ctx.log(`captions: ${cues.length} cues${pageDraws ? " (the page draws the picture)" : ""}`);
+    // Where the page draws the picture, it draws the caption too, once there's one now.
+    if (pageDraws && cues.some((c) => c.start <= playing.time + 1 && playing.time < c.end - 1))
+      await until(
+        "the page's caption",
+        () => app.js(`return !!document.querySelector(".screen .over canvas")`),
+        10_000,
+      );
 
     // A jump from the app's controls (L: 10 s each): their player seeks, ours follows.
     const before = (await ours()).time;
@@ -113,8 +122,12 @@ export default {
     if (a.playing || b.playing || Math.abs(a.time - b.time) > 0.05) throw new Error("it didn't stay paused");
     shot("paused");
 
-    const failed = (await reports()).filter((m) => m.kind === "appendError" || m.kind === "fallback");
-    if (failed.length) throw new Error(`the frame reported: ${JSON.stringify(failed).slice(0, 400)}`);
+    /** What went wrong, as the frame and the page reported it. */
+    const failures = async () => {
+      const bad = (await reports()).filter((m) => ["appendError", "error", "mismatch", "fallback"].includes(m.kind));
+      if (bad.length) throw new Error(`the frame reported: ${JSON.stringify(bad).slice(0, 400)}`);
+    };
+    await failures();
 
     // Played again: on from where it stood (Twitch's player has been seen to
     // seek itself to the start as it resumes; the page sends it back).
@@ -127,10 +140,13 @@ export default {
     );
     if (!resumed.playing || resumed.time < b.time - 0.5)
       throw new Error(`resumed at ${resumed.time} s, paused at ${b.time} s`);
+    await failures();
 
     // Stepped aside (as for an ad in the stream): ours closes, theirs plays on from there alone.
     const from = await app.shownTime();
-    await app.js(`window.__vodscribeFallback?.()`);
+    if (!(await app.js(`return typeof window.__vodscribeFallback === "function"`)))
+      throw new Error("no fallback to ask for (embed.ts's test hook)");
+    await app.js(`window.__vodscribeFallback()`);
     await until("the app's player closed", async () => (await ours()) === null, 30_000);
     const t1 = await until(
       "their player playing alone",
@@ -143,6 +159,8 @@ export default {
       MINUTE,
     );
     ctx.log(`fell back at ${from} s: their player alone at ${t1} s`);
+    if ((await app.js(`return document.querySelector("iframe")?.name ?? ""`)) !== "vodscribe-plain")
+      throw new Error("their frame wasn't loaded plain");
     if (t1 < from - 2) throw new Error(`their player went back to ${t1} s from ${from} s`);
     shot("alone");
   },

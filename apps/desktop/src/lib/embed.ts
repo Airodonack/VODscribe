@@ -136,8 +136,7 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
           plain = true;
           params.set("start", String(Math.floor(at)));
           params.set("autoplay", playing ? "1" : "0");
-          frame.name = PLAIN;
-          frame.src = `${embedUrl()}#${PLAIN}`;
+          reloadPlain(frame, embedUrl());
           // It reports to a page that says it's listening, again.
           const timer = setInterval(() => post({ event: "listening" }), 250);
           setTimeout(() => clearInterval(timer), 10_000);
@@ -182,10 +181,6 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         sound.rate = data.info.playbackRate;
         clock.setSpeed(sound.rate);
       }
-      // Our captions show over our picture (bridge), so theirs are turned
-      // off, through their player's own API, once, when it says its captions
-      // module has loaded (apiInfoDelivery naming it). Turned on again in
-      // their player, they stay.
       // Their ads: told to us once we ask (addEventListener through their API).
       if (data.event === "onReady" && bridged) {
         command("addEventListener", ["onAdStart"]);
@@ -193,6 +188,10 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       }
       if (data.event === "onAdStart") bridged?.adStarted();
       if (data.event === "onAdEnd") bridged?.adEnded();
+      // Our captions show over our picture (bridge), so theirs are turned
+      // off, through their player's own API, once, when it says its captions
+      // module has loaded (apiInfoDelivery naming it). Turned on again in
+      // their player, they stay.
       if (data.event === "apiInfoDelivery" && data.info?.namespaces?.includes("captions") && !captionsOff && !plain) {
         captionsOff = true;
         command("setOption", ["captions", "track", {}]);
@@ -308,8 +307,7 @@ async function twitch(
         (at, playing) => {
           params.set("time", twitchTime(at));
           params.set("autoplay", String(playing));
-          frame.name = PLAIN;
-          frame.src = `${TWITCH}/?${params}#${PLAIN}`;
+          reloadPlain(frame, `${TWITCH}/?${params}`);
         },
         (at) => command(TWITCH_SEEK, at),
       )
@@ -540,6 +538,14 @@ function playerFor(vod: Vod): CreatePlayer | undefined {
  *  embed_shim.js, in every frame, then leaves it alone. */
 const PLAIN = "vodscribe-plain";
 
+/** Loads `url` in `frame` as their plain player (`PLAIN`), by way of a
+ *  blank page: a URL that differs only after its "#" wouldn't load anew. */
+function reloadPlain(frame: HTMLIFrameElement, url: string) {
+  frame.name = PLAIN;
+  frame.addEventListener("load", () => (frame.src = `${url}#${PLAIN}`), { once: true });
+  frame.src = "about:blank";
+}
+
 /** Whether VOD `vod`'s picture can be the app's, under its site's player:
  *  the app's player draws here, and it's a picture (not sound alone) of a
  *  known length (a stream still going on may not say yet). */
@@ -547,7 +553,11 @@ async function bridgeable(vod: Vod): Promise<boolean> {
   return !vod.audio_only && (vod.duration ?? 0) > 0 && (await ownPlayer.ask());
 }
 
-// What the frames' script reported lately, for the tests (not its appends).
+/** Appends waiting to reach the app at most: past it, it can't keep up. */
+const MOST_PENDING = 400;
+
+// What the frames' script reported lately, for the tests
+// (tests/e2e/scenarios/site-embed.mjs; not its appends).
 const reports: unknown[] = [];
 (window as unknown as { __vodscribeEmbed: { reports: unknown[] } }).__vodscribeEmbed = { reports };
 const report = (m: object) => {
@@ -578,9 +588,10 @@ function bridge(
   adEnded: () => void;
 } {
   let stopped = false;
-  // An ad their player plays itself (embed_shim.js hands its source to their
-  // element): when the last one was handed over, and when an ad last began.
+  // When an ad's source was last handed to their element (embed_shim.js), so
+  // their player plays it itself.
   let handedAt = -Infinity;
+  // Whether the app's player plays, as it last said.
   let playing = false;
   // When their player last resumed, and when the app's controls last asked it to seek.
   let resumedAt = -Infinity;
@@ -594,7 +605,8 @@ function bridge(
     at > 2 &&
     performance.now() - resumedAt < 2000 &&
     performance.now() - askedAt > 2000 &&
-    !(vod.duration && at > vod.duration - 1);
+    // (Their stream may end a little before the VOD's length says.)
+    !(vod.duration && at > vod.duration - 3);
   el.style.position = "relative";
   // Our screen's box goes under their frame, never over it: their player stays
   // on top, and the picture shows through it from under the page.
@@ -603,8 +615,19 @@ function bridge(
   host.style.cssText = "position: absolute; inset: 0; pointer-events: none; z-index: -1";
   el.insertBefore(host, el.firstChild);
   const screen = mount(Screen, { target: host, props: { under: true } });
-  const opened = invoke("embed_open", { vodId: vod.id, at: time }).catch((e) => console.warn("embed_open", e));
+  // The session embed.rs keeps for this VOD: its token goes with each append and the close.
+  let token: number | null = null;
+  const opened = invoke<number>("embed_open", { vodId: vod.id, at: time }).then(
+    (t) => void (token = t),
+    (e) => {
+      console.warn("embed_open", e);
+      fallback("the app's player didn't open");
+    },
+  );
+  // Appends go one at a time, in the order they came: each follows on from
+  // the last. Too many waiting, and the app can't keep up: their player alone.
   let appends: Promise<unknown> = opened;
+  let pending = 0;
   const listener = (e: MessageEvent) => {
     if (e.source !== frame.contentWindow || e.origin !== origin) return;
     const m = (
@@ -630,9 +653,10 @@ function bridge(
     if (!m || stopped) return;
     if (m.kind !== "append") report(m);
     if (m.kind === "loaded") {
-      frame.contentWindow?.postMessage({ vodscribeVod: { duration: vod.duration ?? 0 } }, "*");
+      frame.contentWindow?.postMessage({ vodscribeVod: { duration: vod.duration ?? 0 } }, origin);
       return;
     }
+    if (m.kind === "error") console.warn("embed frame", m);
     if (m.kind === "ad") {
       // Their element plays the ad, over our picture; ours waits for the VOD's next source.
       handedAt = performance.now();
@@ -649,18 +673,24 @@ function bridge(
       if (stopped) return;
       if (m.kind === "append" && m.bytes) {
         const bytes = m.bytes;
-        // One at a time, in the order they came: each follows on from the last.
-        appends = appends.then(() =>
-          invoke("embed_append", bytes, {
+        if (++pending > MOST_PENDING) return fallback("appends piling up");
+        appends = appends.then(() => {
+          pending--;
+          if (stopped || token === null) return;
+          return invoke("embed_append", bytes, {
             headers: {
+              "x-session": String(token),
               "x-buffer": String(m.id ?? 0),
               "x-type": m.type ?? "",
               "x-init": m.init ? "1" : "0",
               "x-ranges": JSON.stringify(m.ranges ?? []),
               "x-complete": m.complete ? "1" : "0",
             },
-          }).catch((e) => report({ kind: "appendError", message: String(e) })),
-        );
+          }).catch((e) => {
+            console.warn("embed_append", e);
+            report({ kind: "appendError", message: String(e) });
+          });
+        });
       } else if (m.kind === "media" && m.event === "play") {
         resumedAt = performance.now();
         api.playerPlay().catch(() => {});
@@ -712,6 +742,8 @@ function bridge(
     overlay.show(text ? overlay.caption(text, r.width, r.height, fullscreen, controlsCover) : null);
   };
   let tick = requestAnimationFrame(function each() {
+    // Their frame gone (the page moved on while it was still loading): so is this.
+    if (!frame.isConnected) return stop();
     caption();
     tick = requestAnimationFrame(each);
   });
@@ -724,7 +756,7 @@ function bridge(
     playing = status.playing;
     frame.contentWindow?.postMessage(
       { vodscribeClock: { time: status.time, playing: status.playing && status.running && !status.waiting } },
-      "*",
+      origin,
     );
   });
   const stop = () => {
@@ -737,8 +769,9 @@ function bridge(
     void changed.then((unlisten) => unlisten());
     unmount(screen);
     host.remove();
-    void invoke("embed_close");
-    void api.playerClose();
+    // Only this session's: a later VOD's is left be.
+    void opened.then(() => token !== null && invoke("embed_close", { token }));
+    if (hooks.__vodscribeFallback === hook) delete hooks.__vodscribeFallback;
   };
   // Something of theirs we can't play as the VOD (an ad in its stream, a
   // source of another length): their plain player from here, reloaded where
@@ -750,23 +783,26 @@ function bridge(
     stop();
     reload(where, was);
   };
-  // For the tests: what an ad in the stream would do.
-  (window as unknown as { __vodscribeFallback?: () => void }).__vodscribeFallback = () => fallback("asked (test)");
+  // For the tests (tests/e2e/scenarios/site-embed.mjs): what an ad in the stream would do.
+  const hooks = window as unknown as { __vodscribeFallback?: () => void };
+  const hook = () => fallback("asked (test)");
+  hooks.__vodscribeFallback = hook;
   return {
     stop,
     asked: () => (askedAt = performance.now()),
     // An ad began (their player said): the frame hands new sources to their
     // element. If none comes, the ad is in the stream itself: fall back.
     adStarted: () => {
-      frame.contentWindow?.postMessage({ vodscribeAd: true }, "*");
+      frame.contentWindow?.postMessage({ vodscribeAd: true }, origin);
       const began = performance.now();
       setTimeout(() => {
         if (handedAt < began - 5000) fallback("an ad in the stream");
       }, 3000);
     },
-    adEnded: () => frame.contentWindow?.postMessage({ vodscribeAd: false }, "*"),
+    adEnded: () => frame.contentWindow?.postMessage({ vodscribeAd: false }, origin),
+    // None once it's stopped (their plain player, its own captions).
     captions: {
-      available: () => cues.length > 0,
+      available: () => !stopped && cues.length > 0,
       on: () => prefs.captions,
       toggle: () => prefs.toggleCaptions(),
     },

@@ -4,14 +4,21 @@
 //! (embed_shim.js in the frame, through the page: embed.ts), and the app's
 //! player plays it. Each buffer's appends are kept as runs: media that
 //! follows on, after the buffer's init segment, one file each, in a folder
-//! for the VOD that lasts while it plays. The runs are laid out as the
-//! player's timeline, picture with sound; where nothing has been appended,
-//! the player waits.
+//! of the app's that lasts while the VOD is open (a session: what it kept
+//! goes when it closes, and any left over when the app starts). The runs
+//! are laid out as the player's timeline, picture with sound; where nothing
+//! has been appended, the player waits.
+//!
+//! What comes from the frame is the site's to say, so it's checked: each
+//! session has a token the page sends with each append and the close (a
+//! closing VOD's last appends never reach the next one's), the times it
+//! names are kept within the VOD, and what's kept is capped (`MOST`).
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::{AppHandle, Manager};
 use vodscribe_core::footage::Source;
@@ -23,17 +30,25 @@ use crate::{AppState, CmdResult, err};
 #[derive(Default)]
 pub(crate) struct Embed {
     session: Mutex<Option<Session>>,
+    /// The tokens given out, counted.
+    made: AtomicU64,
 }
 
 struct Session {
-    vod_id: i64,
+    /// What the page sends with what's for this session.
+    token: u64,
     duration: f64,
     dir: PathBuf,
     buffers: HashMap<u32, Buffer>,
+    /// Files made, counted (each run's is named by it).
     files: u32,
+    /// Bytes kept in all.
+    bytes: u64,
 }
 
 struct Buffer {
+    /// Its type as the site's player gave it (`x-type`).
+    kind: String,
     /// Picture (else sound only).
     video: bool,
     ext: &'static str,
@@ -52,29 +67,58 @@ struct Run {
     /// How far it reaches for certain: as of the append before the last
     /// (the last one's media may still be coming in the next).
     safe: f64,
+    /// The bytes in its file.
+    bytes: u64,
 }
 
 /// An append starting this near where its run ends follows on.
 const FOLLOWS: f64 = 0.25;
 
+/// The most a session keeps; past it, the runs farthest from what's being
+/// appended go (the site's player fetches them again if they're played).
+const MOST: u64 = 4 << 30;
+
+/// How far past the VOD's length an append's times may reach (a site's
+/// stream can run a little longer than it says).
+const PAST_END: f64 = 60.0;
+
+/// The folder sessions keep their files in, in the app's data.
+fn root(app: &AppHandle) -> PathBuf {
+    app.state::<AppState>().paths.local.join("embed")
+}
+
+/// Deletes what sessions left (the app quit, or stopped, while one was open).
+pub(crate) fn clear(local: &Path) {
+    let _ = std::fs::remove_dir_all(local.join("embed"));
+}
+
 /// Starts keeping what VOD `vod_id`'s embed appends, and opens the player
-/// on it, waiting for it, at `at`.
+/// on it, waiting for it, at `at`: the session's token, which the page
+/// sends with each append and the close. Fails if it's closed (or another
+/// opened) before the player is.
 #[tauri::command]
-pub(crate) async fn embed_open(app: AppHandle, vod_id: i64, at: f64) -> CmdResult<()> {
+pub(crate) async fn embed_open(app: AppHandle, vod_id: i64, at: f64) -> CmdResult<u64> {
     let duration = {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
         db.vod(vod_id).map_err(err)?.and_then(|v| v.info.duration).unwrap_or(0.0)
     };
-    // One VOD's at a time: whatever an earlier one left goes.
-    let root = std::env::temp_dir().join("vodscribe-embed");
-    let _ = std::fs::remove_dir_all(&root);
-    let dir = root.join(vod_id.to_string());
+    let state = app.state::<AppState>();
+    let token = state.embed.made.fetch_add(1, Ordering::AcqRel) + 1;
+    let dir = root(&app).join(token.to_string());
     std::fs::create_dir_all(&dir).map_err(err)?;
-    *app.state::<AppState>().embed.session.lock().unwrap() =
-        Some(Session { vod_id, duration, dir, buffers: HashMap::new(), files: 0 });
-    crate::player::open_embed(app.clone(), vod_id, timeline_of_nothing(duration), at).await?;
-    Ok(())
+    let session = Session { token, duration, dir, buffers: HashMap::new(), files: 0, bytes: 0 };
+    // One at a time: an earlier one's files go.
+    if let Some(old) = state.embed.session.lock().unwrap().replace(session) {
+        forget(old);
+    }
+    crate::player::open_embed(app.clone(), vod_id, token, timeline_of_nothing(duration), at).await?;
+    // Closed, or another opened, while the player opened: it goes too.
+    if !state.embed.session.lock().unwrap().as_ref().is_some_and(|s| s.token == token) {
+        crate::player::close_embed(&app, token);
+        return Err(crate::player::CLOSED.into());
+    }
+    Ok(token)
 }
 
 fn timeline_of_nothing(duration: f64) -> Timeline {
@@ -88,25 +132,41 @@ fn timeline_of_nothing(duration: f64) -> Timeline {
     }])
 }
 
-/// Stops keeping appends, and drops what was kept.
-#[tauri::command]
-pub(crate) fn embed_close(app: AppHandle) {
-    if let Some(session) = app.state::<AppState>().embed.session.lock().unwrap().take() {
+/// Deletes what `session` kept, off the caller's thread.
+fn forget(session: Session) {
+    std::thread::spawn(move || {
         let _ = std::fs::remove_dir_all(&session.dir);
-    }
+    });
 }
 
-/// One append: the body is its bytes; the headers say its buffer
-/// (`x-buffer`), the buffer's type (`x-type`), whether an init segment is in
-/// it (`x-init`), the VOD times its media holds (`x-ranges`, JSON pairs), and
-/// whether it ends on a whole box or block (`x-complete`). Off the main
-/// thread (it writes to disk); the page sends one at a time, in order.
+/// Ends session `token`, if it's the one open: its player closes, and what
+/// it kept goes.
+#[tauri::command]
+pub(crate) async fn embed_close(app: AppHandle, token: u64) {
+    let state = app.state::<AppState>();
+    let session = {
+        let mut guard = state.embed.session.lock().unwrap();
+        if guard.as_ref().is_some_and(|s| s.token == token) { guard.take() } else { None }
+    };
+    if let Some(session) = session {
+        forget(session);
+    }
+    crate::player::close_embed(&app, token);
+}
+
+/// One append: the body is its bytes; the headers say its session
+/// (`x-session`, the token), its buffer (`x-buffer`), the buffer's type
+/// (`x-type`), whether an init segment is in it (`x-init`), the VOD times its
+/// media holds (`x-ranges`, JSON pairs), and whether it ends on a whole box
+/// or block (`x-complete`). One for a session not open is dropped. Off the
+/// main thread (it writes to disk); the page sends one at a time, in order.
 #[tauri::command(async)]
 pub(crate) fn embed_append(app: AppHandle, request: tauri::ipc::Request<'_>) -> CmdResult<()> {
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("An append comes as bytes.".into());
     };
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let token: u64 = header("x-session").parse().map_err(err)?;
     let id: u32 = header("x-buffer").parse().map_err(err)?;
     let kind = header("x-type").to_string();
     let init = header("x-init") == "1";
@@ -115,18 +175,29 @@ pub(crate) fn embed_append(app: AppHandle, request: tauri::ipc::Request<'_>) -> 
 
     let state = app.state::<AppState>();
     let mut guard = state.embed.session.lock().unwrap();
-    let Some(session) = guard.as_mut() else { return Ok(()) };
+    let Some(session) = guard.as_mut().filter(|s| s.token == token) else { return Ok(()) };
+    let ranges = session.within(&ranges);
     if !session.append(id, &kind, init, complete, &ranges, bytes).map_err(err)? {
         return Ok(());
     }
     let timeline = layout(session);
-    let vod_id = session.vod_id;
     drop(guard);
-    crate::player::set_embed_timeline(&app, vod_id, timeline);
+    crate::player::set_embed_timeline(&app, token, timeline);
     Ok(())
 }
 
 impl Session {
+    /// `ranges` as times of the VOD: in order, from 0, and not far past its end.
+    fn within(&self, ranges: &[(f64, f64)]) -> Vec<(f64, f64)> {
+        let most = if self.duration > 0.0 { self.duration + PAST_END } else { f64::MAX };
+        ranges
+            .iter()
+            .filter(|(a, b)| a.is_finite() && b.is_finite())
+            .map(|&(a, b)| (a.max(0.0), b.min(most)))
+            .filter(|(a, b)| b > a)
+            .collect()
+    }
+
     /// One append to buffer `id` (of type `kind`): `bytes`, with an init
     /// segment first if `init`, holding the VOD times `ranges`, ending on a
     /// whole box or block if `complete`. Kept in its run's file; whether
@@ -141,12 +212,21 @@ impl Session {
         bytes: &[u8],
     ) -> std::io::Result<bool> {
         let buffer = self.buffers.entry(id).or_insert_with(|| Buffer {
-            video: !is_sound(kind),
-            ext: if kind.contains("webm") { "webm" } else { "mp4" },
+            kind: String::new(),
+            video: false,
+            ext: "mp4",
             init: Vec::new(),
             runs: Vec::new(),
             current: None,
         });
+        // A buffer's type can change (SourceBuffer.changeType): what follows is read as the new one's.
+        if buffer.kind != kind {
+            buffer.kind = kind.to_string();
+            buffer.video = !is_sound(kind);
+            buffer.ext = if kind.contains("webm") { "webm" } else { "mp4" };
+            buffer.init.clear();
+            buffer.current = None;
+        }
         let mut bytes = bytes;
         if init {
             // An init segment, then maybe media. The same init again (Twitch
@@ -179,11 +259,15 @@ impl Session {
             self.files += 1;
             let path = self.dir.join(format!("{id}-{}.{}", self.files, buffer.ext));
             std::fs::write(&path, &buffer.init)?;
-            buffer.runs.push(Run { path, start, end: start, safe: start });
+            let bytes = buffer.init.len() as u64;
+            self.bytes += bytes;
+            buffer.runs.push(Run { path, start, end: start, safe: start, bytes });
             buffer.current = Some(buffer.runs.len() - 1);
         }
         let run = &mut buffer.runs[buffer.current.unwrap()];
         std::fs::OpenOptions::new().append(true).open(&run.path).and_then(|mut f| f.write_all(bytes))?;
+        run.bytes += bytes.len() as u64;
+        self.bytes += bytes.len() as u64;
         if !ranges.is_empty() {
             run.safe = run.end;
             run.end = run.end.max(end);
@@ -193,7 +277,35 @@ impl Session {
         if complete {
             run.safe = run.end;
         }
+        if self.bytes > MOST {
+            self.shed(if start.is_finite() { start } else { 0.0 });
+        }
         Ok(true)
+    }
+
+    /// Past `MOST`: deletes the runs farthest from `at` (never one an append
+    /// goes to now) until what's kept is well within it again.
+    fn shed(&mut self, at: f64) {
+        let distance = |r: &Run| if at < r.start { r.start - at } else { (at - r.end).max(0.0) };
+        let mut far: Vec<(f64, PathBuf)> = self
+            .buffers
+            .values()
+            .flat_map(|b| b.runs.iter().enumerate().filter(|(i, _)| b.current != Some(*i)).map(|(_, r)| r))
+            .map(|r| (distance(r), r.path.clone()))
+            .collect();
+        far.sort_by(|x, y| y.0.total_cmp(&x.0));
+        for (_, path) in far {
+            if self.bytes <= MOST / 5 * 4 {
+                break;
+            }
+            for buffer in self.buffers.values_mut() {
+                let Some(i) = buffer.runs.iter().position(|r| r.path == path) else { continue };
+                let run = buffer.runs.remove(i);
+                self.bytes -= run.bytes;
+                let _ = std::fs::remove_file(&run.path);
+                buffer.current = buffer.current.map(|c| if c > i { c - 1 } else { c });
+            }
+        }
     }
 }
 
@@ -203,19 +315,20 @@ fn split_init(bytes: &[u8], webm: bool) -> (&[u8], &[u8]) {
     let at = if webm {
         bytes.windows(4).position(|w| w == [0x1f, 0x43, 0xb6, 0x75]).unwrap_or(bytes.len())
     } else {
+        // Box by box to the first moof; a size that doesn't fit what's here
+        // (or is no size) ends it: all of it counts as the init.
         let mut o = 0;
         while o + 8 <= bytes.len() && &bytes[o + 4..o + 8] != b"moof" {
-            let size = u32::from_be_bytes(bytes[o..o + 4].try_into().unwrap()) as usize;
+            let size = u32::from_be_bytes(bytes[o..o + 4].try_into().unwrap()) as u64;
             let size = if size == 1 && o + 16 <= bytes.len() {
-                u64::from_be_bytes(bytes[o + 8..o + 16].try_into().unwrap()) as usize
+                u64::from_be_bytes(bytes[o + 8..o + 16].try_into().unwrap())
             } else {
                 size
             };
-            if size < 8 {
-                o = bytes.len();
-                break;
+            match usize::try_from(size) {
+                Ok(size) if size >= 8 && size <= bytes.len() - o => o += size,
+                _ => return bytes.split_at(bytes.len()),
             }
-            o += size;
         }
         o.min(bytes.len())
     };
@@ -306,7 +419,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vodscribe-embed-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        Session { vod_id: 1, duration, dir, buffers: HashMap::new(), files: 0 }
+        Session { token: 1, duration, dir, buffers: HashMap::new(), files: 0, bytes: 0 }
     }
 
     #[test]
@@ -370,6 +483,78 @@ mod tests {
         // Past the sound, it waits, to the VOD's end.
         assert_eq!((st[1].at, st[1].length), (8.0, 12.0));
         assert!(st[1].source.is_none());
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn a_box_size_that_doesnt_fit_ends_the_init_rather_than_the_app() {
+        // A 64-bit size near the largest there is: it would wrap the offset.
+        let mut bad = vec![0, 0, 0, 1];
+        bad.extend_from_slice(b"ftyp");
+        bad.extend_from_slice(&u64::MAX.wrapping_sub(7).to_be_bytes());
+        assert_eq!(split_init(&bad, false), (&bad[..], &[][..]));
+        // Past what's here, or under a box's own head: the same.
+        let long = [&100u32.to_be_bytes()[..], b"moov"].concat();
+        assert_eq!(split_init(&long, false).0.len(), long.len());
+        let short = [&3u32.to_be_bytes()[..], b"moov"].concat();
+        assert_eq!(split_init(&short, false).0.len(), short.len());
+    }
+
+    #[test]
+    fn the_times_an_append_names_stay_within_the_vod() {
+        let s = session("within", 100.0);
+        assert_eq!(
+            s.within(&[(-5.0, 2.0), (3.0, 1.0), (f64::MIN, f64::MAX), (150.0, 1e300), (10.0, 12.0)]),
+            [(0.0, 2.0), (0.0, 160.0), (150.0, 160.0), (10.0, 12.0)]
+        );
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn a_buffer_that_changes_type_starts_over_as_the_new_one() {
+        let mut s = session("kind", 60.0);
+        let init = [mp4_box(b"ftyp", b"isom"), mp4_box(b"moov", b"v")].concat();
+        let seg = mp4_box(b"moof", b"m");
+        s.append(1, r#"video/mp4; codecs="avc1""#, true, true, &[(0.0, 2.0)], &[init, seg].concat()).unwrap();
+        // Now WebM: its init up to the first cluster, a run of its own.
+        let webm = [&[0x1a, 0x45, 0xdf, 0xa3, 0x80][..], &[0x1f, 0x43, 0xb6, 0x75, 0x81, 0x00]].concat();
+        s.append(1, r#"video/webm; codecs="vp9""#, true, true, &[(2.0, 4.0)], &webm).unwrap();
+        let b = &s.buffers[&1];
+        assert_eq!((b.ext, b.runs.len()), ("webm", 2));
+        assert_eq!(b.init, webm[..5]);
+        assert!(b.runs[1].path.extension().is_some_and(|e| e == "webm"));
+        let _ = std::fs::remove_dir_all(&s.dir);
+    }
+
+    #[test]
+    fn past_the_most_kept_the_farthest_runs_go() {
+        let mut s = session("shed", 4000.0);
+        let init = [mp4_box(b"ftyp", b"isom"), mp4_box(b"moov", b"v")].concat();
+        let seg = mp4_box(b"moof", b"m");
+        let video = r#"video/mp4; codecs="avc1""#;
+        // Three runs: at 0 s, 1000 s and 3000 s.
+        for at in [0.0, 1000.0, 3000.0] {
+            s.append(
+                1,
+                video,
+                at == 0.0,
+                true,
+                &[(at, at + 2.0)],
+                &[if at == 0.0 { &init[..] } else { &[] }, &seg].concat(),
+            )
+            .unwrap();
+        }
+        // As if they held all but a little of the most: the next append, at 3002 s, goes past it.
+        let runs = s.buffers.get_mut(&1).unwrap();
+        for r in &mut runs.runs {
+            r.bytes = MOST / 3;
+        }
+        s.bytes = MOST;
+        s.append(1, video, false, true, &[(3002.0, 3004.0)], &seg).unwrap();
+        let starts: Vec<f64> = s.buffers[&1].runs.iter().map(|r| r.start).collect();
+        // The one at 0 s, farthest from 3002 s, went; the one appended to stays.
+        assert_eq!(starts, [1000.0, 3000.0]);
+        assert_eq!(s.buffers[&1].current, Some(1));
         let _ = std::fs::remove_dir_all(&s.dir);
     }
 }

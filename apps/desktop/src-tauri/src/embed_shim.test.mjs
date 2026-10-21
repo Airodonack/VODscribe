@@ -208,3 +208,80 @@ test("reloaded plain, the shim does nothing", () => {
     ["plain"],
   );
 });
+
+/** An MP4 box: size, type, then `parts` (byte arrays or 32-bit numbers). */
+function box(type, ...parts) {
+  const body = parts.flatMap((p) =>
+    typeof p === "number" ? [p >>> 24, (p >>> 16) & 255, (p >>> 8) & 255, p & 255] : [...p],
+  );
+  const size = 8 + body.length;
+  return [
+    size >>> 24,
+    (size >>> 16) & 255,
+    (size >>> 8) & 255,
+    size & 255,
+    ...[...type].map((c) => c.charCodeAt(0)),
+    ...body,
+  ];
+}
+/** An init segment: a timescale of 1000, and frames 33 long by default. */
+const INIT = [
+  ...box("ftyp", [...Buffer.from("isom")]),
+  ...box("moov", box("trak", box("mdia", box("mdhd", 0, 0, 0, 1000, 0))), box("mvex", box("trex", 0, 1, 1, 33, 0, 0))),
+];
+/** A media segment from `base` (in 1/1000 s) holding `count` frames, and its data. */
+const segment = (base, count) => [
+  ...box("moof", box("traf", box("tfdt", 0, base), box("trun", 0, count))),
+  ...box("mdat", [1, 2, 3]),
+];
+
+test("an fMP4 append says the times it holds, and whether it ends whole", async () => {
+  const f = frame();
+  const source = f.attach(f.video);
+  await settle();
+  const buffer = source.addSourceBuffer('video/mp4; codecs="avc1"');
+  const appended = () => f.posted.filter((m) => m.kind === "append");
+  buffer.appendBuffer(new Uint8Array([...INIT, ...segment(5000, 30)]));
+  await settle();
+  const [first] = appended();
+  assert.equal(first.init, true);
+  assert.equal(first.complete, true);
+  assert.equal(first.ranges.length, 1);
+  assert.ok(Math.abs(first.ranges[0][0] - 5) < 1e-9 && Math.abs(first.ranges[0][1] - 5.99) < 1e-9);
+  // A segment split across two appends: its times come with the second, the first not whole.
+  const next = segment(5990, 30);
+  buffer.appendBuffer(new Uint8Array(next.slice(0, 20)));
+  await settle();
+  buffer.appendBuffer(new Uint8Array(next.slice(20)));
+  await settle();
+  const [, half, rest] = appended();
+  assert.equal(JSON.stringify([half.ranges, half.complete]), "[[],false]");
+  assert.ok(Math.abs(rest.ranges[0][0] - 5.99) < 1e-9 && rest.complete);
+  clearInterval(f.video.media.controls);
+});
+
+test("a box with no size doesn't stop the frame", async () => {
+  const f = frame();
+  const source = f.attach(f.video);
+  await settle();
+  const buffer = source.addSourceBuffer('video/mp4; codecs="avc1"');
+  buffer.appendBuffer(new Uint8Array([...INIT, 0, 0, 0, 0, ...[..."moof"].map((c) => c.charCodeAt(0)), 9, 9]));
+  await settle();
+  assert.ok(
+    f.posted.some((m) => m.kind === "append"),
+    "the append went through",
+  );
+  clearInterval(f.video.media.controls);
+});
+
+test("played at its end, it starts again from the beginning", async () => {
+  const f = frame();
+  f.attach(f.video);
+  await settle();
+  f.video.media.ended = true;
+  f.video.media.time = 70;
+  f.video.play();
+  assert.ok(f.posted.some((m) => m.kind === "media" && m.event === "seek" && m.time === 0));
+  f.video.pause();
+  clearInterval(f.video.media.controls);
+});
