@@ -308,11 +308,14 @@ async function twitch(
           params.set("time", twitchTime(at));
           params.set("autoplay", String(playing));
           reloadPlain(frame, `${TWITCH}/?${params}`);
+          resumeAt = at;
         },
         (at) => command(TWITCH_SEEK, at),
       )
     : null;
   const clock = new Clock(time, play);
+  // Where their plain player, reloaded, is to go on from (bridge), till it does.
+  let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>
     frame.contentWindow?.postMessage({ eventName, params, namespace: TWITCH_PROXY }, TWITCH);
 
@@ -327,6 +330,13 @@ async function twitch(
       };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
+        // Reloaded plain (bridge), it now and then starts from the start
+        // whatever its URL said (seen in macOS's WebKit): sent where it was, once.
+        const now = data.params?.currentTime;
+        if (resumeAt !== null && playback === "Playing" && typeof now === "number") {
+          if (Math.abs(now - resumeAt) > 3) command(TWITCH_SEEK, resumeAt);
+          resumeAt = null;
+        }
         const moving = playback ? playback === "Playing" : undefined;
         heard(
           clock,

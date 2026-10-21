@@ -158,7 +158,7 @@ export default {
       },
       MINUTE,
     );
-    ctx.log(`fell back at ${from} s: their player alone at ${t1} s`);
+    ctx.log(`fell back at ${from} s: their player alone at ${t1} s (${await app.js(`return document.querySelector("iframe")?.src ?? ""`)})`);
     if ((await app.js(`return document.querySelector("iframe")?.name ?? ""`)) !== "vodscribe-plain")
       throw new Error("their frame wasn't loaded plain");
     if (t1 < from - 2) throw new Error(`their player went back to ${t1} s from ${from} s`);
