@@ -3,7 +3,11 @@
 // from it, and real clicks from the OS (trusted, hit-tested, focusing).
 // Each works where the test runs on the app's own computer and session:
 //
-// - Linux (X11, as under Xvfb): ffmpeg's x11grab and xdotool.
+// - Linux (X11, as under Xvfb): ffmpeg's x11grab and xdotool. Under a
+//   headless Wayland compositor the screen only (E2E_DISPLAY: "weston", its
+//   screenshooter; "gnome", GNOME Shell's Screenshot over D-Bus, which its
+//   test extension allows): no clicks, and the window's place on the screen
+//   found from a mark the page shows a moment (Wayland doesn't tell it).
 // - Windows (run in the signed-in session: runners.mjs): PowerShell, with
 //   System.Drawing for the screen and user32 for the mouse.
 // - macOS: screencapture, and CoreGraphics events for clicks (the process
@@ -14,7 +18,7 @@
 // window calls, allowed to every window).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -54,11 +58,41 @@ export function unavailable() {
   return null;
 }
 
+/** Under a Wayland compositor, which (E2E_DISPLAY), else null. */
+function wayland() {
+  return process.platform === "linux" && process.env.WAYLAND_DISPLAY && process.env.GDK_BACKEND !== "x11"
+    ? (process.env.E2E_DISPLAY ?? "")
+    : null;
+}
+
+/** Why the screen can't be seen here (no screenshot), or null if it can. */
+export function cannotSee() {
+  const compositor = wayland();
+  if (compositor === null)
+    return process.platform === "linux" && !process.env.DISPLAY ? "no X display (DISPLAY)" : null;
+  return ["weston", "gnome"].includes(compositor) ? null : "a Wayland compositor the tests can't see into";
+}
+
 /** A PNG of the whole screen, in its pixels. */
 export function screenshot() {
   const file = temp("screen.png");
   try {
-    if (process.platform === "linux") {
+    if (wayland() === "gnome") {
+      execFileSync("gdbus", [
+        ...["call", "--session", "--dest", "org.gnome.Shell.Screenshot"],
+        ...["--object-path", "/org/gnome/Shell/Screenshot", "--method", "org.gnome.Shell.Screenshot.Screenshot"],
+        ...["false", "false", file],
+      ]);
+    } else if (wayland() === "weston") {
+      // It writes wayland-screenshot-<time>.png where it's run.
+      const dir = temp("weston");
+      mkdirSync(dir, { recursive: true });
+      execFileSync("weston-screenshooter", [], { cwd: dir });
+      const made = readdirSync(dir).find((f) => f.endsWith(".png"));
+      if (!made) throw new Error("weston-screenshooter made no screenshot (is weston run with --debug?)");
+      renameSync(path.join(dir, made), file);
+      rmSync(dir, { recursive: true, force: true });
+    } else if (process.platform === "linux") {
       execFileSync(ffmpeg(), [
         "-loglevel",
         "error",
@@ -190,6 +224,23 @@ export async function gesture(steps) {
  * and the window's scale factor.
  */
 export async function rectOf(app, selector) {
+  if (wayland() !== null) {
+    const origin = await windowOrigin(app);
+    const box = await app.js(
+      `const el = document.querySelector(arguments[0]);
+       if (!el) throw new Error("no " + arguments[0]);
+       const r = el.getBoundingClientRect();
+       return { x: r.left, y: r.top, w: r.width, h: r.height };`,
+      selector,
+    );
+    return {
+      x: Math.round(origin.x + box.x),
+      y: Math.round(origin.y + box.y),
+      w: Math.round(box.w),
+      h: Math.round(box.h),
+      scale: 1,
+    };
+  }
   const r = await app.js(
     `const el = document.querySelector(arguments[0]);
      if (!el) throw new Error("no " + arguments[0]);
@@ -284,7 +335,7 @@ export function pixels(png, rect, w = 64, h = 16) {
         "rgb24",
         "-",
       ],
-      { maxBuffer: 1 << 20 },
+      { maxBuffer: 1 << 26 },
     );
   } finally {
     rmSync(file, { force: true });
@@ -301,4 +352,40 @@ export function difference(a, b) {
 /** A PNG's size in pixels, from its header. */
 export function sizeOf(png) {
   return { w: png.readUInt32BE(16), h: png.readUInt32BE(20) };
+}
+
+/** Where the page's top-left corner is on the screen, under Wayland (which
+ *  doesn't tell a window where it is): the page shows a magenta mark there a
+ *  moment, and the screenshot says where it is. Found once (the window
+ *  doesn't move in a test's compositor); at a scale of 1. */
+let origin = null;
+async function windowOrigin(app) {
+  if (origin) return origin;
+  await app.js(
+    `const mark = document.createElement("div");
+     mark.id = "e2e-mark";
+     mark.style.cssText = "position: fixed; left: 0; top: 0; width: 8px; height: 8px; background: #ff00ff; z-index: 2147483647";
+     document.body.append(mark);
+     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+     await new Promise((r) => setTimeout(r, 300));`,
+  );
+  try {
+    const png = screenshot();
+    const { w, h } = sizeOf(png);
+    const rgb = pixels(png, { x: 0, y: 0, w, h }, w, h);
+    const magenta = (i) => rgb[i] > 240 && rgb[i + 1] < 16 && rgb[i + 2] > 240;
+    for (let y = 0; y + 7 < h && !origin; y++)
+      for (let x = 0; x + 7 < w; x++) {
+        const i = (y * w + x) * 3;
+        // The mark's corner: its 8x8 all magenta.
+        if (magenta(i) && magenta(i + 21) && magenta(((y + 7) * w + x) * 3) && magenta(((y + 7) * w + x + 7) * 3)) {
+          origin = { x, y };
+          break;
+        }
+      }
+  } finally {
+    await app.js(`document.getElementById("e2e-mark")?.remove()`);
+  }
+  if (!origin) throw new Error("the page's mark isn't on the screen (the window is hidden or covered?)");
+  return origin;
 }

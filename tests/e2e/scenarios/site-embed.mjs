@@ -3,11 +3,11 @@
 // E2E_SITE=youtube) played from the app's controls. The app's player runs in
 // step with it, follows a jump and a pause, draws captions, and when it
 // steps aside (as for an ad in the stream) their player plays on alone.
-// E2E_SHOTS: the whole screen at each step, native picture and all (an X
-// server: xwd; headless weston: weston-screenshooter; macOS: screencapture).
+// Where the screen can be seen (lib/os.mjs), it checks the picture shows
+// through their frame; E2E_SHOTS keeps the whole screen at each step.
+// E2E_SCHEME (light, dark): the colour scheme the run is in, checked.
 
-import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, renameSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
@@ -42,6 +42,15 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
       MINUTE,
     );
+    // The colour scheme asked for (E2E_SCHEME), as the page sees it: a run in
+    // the wrong one would prove nothing about it.
+    if (process.env.E2E_SCHEME) {
+      const dark = await app.js(`return matchMedia("(prefers-color-scheme: dark)").matches`);
+      if (dark !== (process.env.E2E_SCHEME === "dark"))
+        throw new Error(
+          `asked for the ${process.env.E2E_SCHEME} scheme; the page has the ${dark ? "dark" : "light"} one`,
+        );
+    }
     // Clicked by the system's pointer where there is one: their player may
     // only start for a real click.
     if (!os.unavailable()) {
@@ -59,32 +68,29 @@ export default {
     const reports = () => app.js(`return window.__vodscribeEmbed?.reports ?? []`);
     const shots = path.join(process.env.E2E_OUT ?? ".", "site-embed");
     mkdirSync(shots, { recursive: true });
+    /** The whole screen into `name`.png (E2E_SHOTS), where it can be seen. */
     const shot = (name) => {
-      if (!process.env.E2E_SHOTS) return;
-      const file = path.join(shots, name);
-      if (process.env.E2E_GNOME_SHELL) {
-        // GNOME Shell's own screenshots (the test session's Shell allows them: unsafe mode).
-        execFileSync("gdbus", [
-          "call",
-          "--session",
-          "--dest",
-          "org.gnome.Shell.Screenshot",
-          "--object-path",
-          "/org/gnome/Shell/Screenshot",
-          "--method",
-          "org.gnome.Shell.Screenshot.Screenshot",
-          "false",
-          "false",
-          `${file}.png`,
-        ]);
-      } else if (process.env.WAYLAND_DISPLAY) {
-        const before = new Set(readdirSync(shots));
-        execFileSync("weston-screenshooter", [], { cwd: shots });
-        const made = readdirSync(shots).find((f) => f.startsWith("wayland-screenshot") && !before.has(f));
-        if (made) renameSync(path.join(shots, made), `${file}.png`);
-      } else if (process.platform === "darwin") execFileSync("screencapture", ["-x", `${file}.png`]);
-      else if (process.platform === "linux") execFileSync("xwd", ["-root", "-silent", "-out", `${file}.xwd`]);
+      if (process.env.E2E_SHOTS && !os.cannotSee()) writeFileSync(path.join(shots, `${name}.png`), os.screenshot());
     };
+
+    // From the play press: the playhead never goes back, nor runs on ahead of
+    // the app's player while that waits for their player to start (it ran
+    // ~4 s ahead, then jumped back to 0, on a desktop).
+    const pressed = Date.now();
+    let furthest = 0;
+    const seen = [];
+    while (Date.now() - pressed < 8_000) {
+      const [bar, s] = [await app.shownTime(), await ours()];
+      seen.push(
+        `+${((Date.now() - pressed) / 1000).toFixed(1)} s: bar ${bar}, ours ${s ? `${s.time.toFixed(2)}${s.running ? " running" : ""}` : "none"}`,
+      );
+      const fail = (why) => new Error(`${why}; from the press:\n    ${seen.join("\n    ")}`);
+      if (bar < furthest - 0.5) throw fail(`the playhead went back, from ${furthest} s to ${bar} s`);
+      furthest = Math.max(furthest, bar);
+      if (s && !s.running && bar > s.time + 1.5)
+        throw fail(`the playhead ran on to ${bar} s, the app's player not playing yet (at ${s.time} s)`);
+      await wait(200);
+    }
 
     // Playing: the app's player runs, in step with the playhead.
     const playing = await until(
@@ -98,6 +104,21 @@ export default {
     const bar = await app.shownTime();
     ctx.log(`playing: ours at ${playing.time.toFixed(2)} s (frame ${playing.shown?.toFixed(3)}), the bar at ${bar} s`);
     if (Math.abs(playing.time - bar) > 2) throw new Error(`ours at ${playing.time} s, the playhead at ${bar} s`);
+    // On the screen, their frame shows the picture: the test video's colour
+    // (each segment has its own) at a spot clear of its text and their
+    // overlays, not grey (their frame drawn opaque over it, as it was in a
+    // dark scheme).
+    if (!os.cannotSee()) {
+      const png = os.screenshot();
+      const frame = await os.rectOf(app, "iframe");
+      const spot = { x: Math.round(frame.x + frame.w * 0.1), y: Math.round(frame.y + frame.h * 0.55), w: 12, h: 12 };
+      const [r, g, b] = os.colourIn(png, spot);
+      ctx.log(`the picture on the screen: rgb(${r}, ${g}, ${b})`);
+      if (Math.max(r, g, b) - Math.min(r, g, b) < 40) {
+        writeFileSync(path.join(shots, "grey.png"), png);
+        throw new Error(`their frame shows grey, rgb(${r}, ${g}, ${b}), not the picture (site-embed/grey.png)`);
+      }
+    }
     shot("playing");
 
     // Captions from the transcript: drawn over the picture by the screen, or
