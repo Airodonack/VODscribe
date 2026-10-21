@@ -356,8 +356,6 @@ export interface Undone {
 /** A footage download done (footage.rs `Fetched`). */
 export interface Fetched {
   vod_id: number;
-  /** Asked by the player, ahead of where a VOD from a site plays; else for an edit. */
-  player: boolean;
   /** Why it couldn't be fetched, if it couldn't. */
   error: string | null;
 }

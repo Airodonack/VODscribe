@@ -9,8 +9,6 @@ import { api } from "./api";
 const RETRIES = [500, 1500, 3000, 10000];
 
 class OwnPlayer {
-  /** Whether the app's own player draws here; null until known. */
-  here = $state<boolean | null>(null);
   #asked: Promise<boolean> | null = null;
 
   /** Whether the app's own player draws here. Asked once; a no is asked
@@ -23,7 +21,6 @@ class OwnPlayer {
 
   async #askUntil(retries: number[]): Promise<boolean> {
     const here = await api.playerAvailable().catch(() => false);
-    this.here = here;
     if (!here && retries.length) {
       setTimeout(
         () => void this.#askUntil(retries.slice(1)).then((h) => h && (this.#asked = Promise.resolve(true))),

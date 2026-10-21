@@ -1,8 +1,6 @@
 //! Footage (`vodscribe_core::footage`): where a stretch of a VOD plays from,
 //! and a queue that downloads, one at a time, the sections of VODs from sites
-//! that edits need, and that the player needs ahead of where a VOD from a
-//! site plays (first, in place of what it asked before), into the app's
-//! data (`footage/`), telling the page how far each is (`footage-progress`)
+//! that edits need, into the app's data (`footage/`), telling the page how far each is (`footage-progress`)
 //! and when it's in (`footage`). What's in of the one downloading plays
 //! already (`footage::Growing`). Sections not used for a while, or past a
 //! cap, go when the app starts.
@@ -29,9 +27,8 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 /// How long what the site said of a VOD is used for its sections.
 const INFO_FOR: Duration = Duration::from_secs(20 * 60);
 
-/// A stretch to fetch: VOD, start, end, and whether the player asked (it's
-/// ahead of where a VOD plays).
-type Ask = (i64, f64, f64, bool);
+/// A stretch to fetch: VOD, start, end.
+type Ask = (i64, f64, f64);
 
 #[derive(Default)]
 pub(crate) struct Footage {
@@ -40,18 +37,11 @@ pub(crate) struct Footage {
     wake: Condvar,
     /// Held while a section downloads, so the queue and a render don't fetch the same one.
     fetching: Mutex<()>,
-    /// What the queue is fetching (VOD, start, end, and whether the player
-    /// asked), and what stops it (the VOD removed, or the player gone elsewhere).
+    /// What the queue is fetching, and what stops it (the VOD removed).
     current: Mutex<Option<(Ask, Arc<AtomicBool>)>>,
     /// The section downloading, and how far it's in.
     growing: Mutex<Option<Growing>>,
-    /// When a download of each VOD last failed: the player doesn't ask again
-    /// for a while (the site may not have it any more).
-    failed: Mutex<std::collections::HashMap<i64, Instant>>,
 }
-
-/// How long after a VOD's download failed the player asks for its footage again.
-const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 /// How far a section's download is: to `usable` (the VOD's time) its footage
 /// can be used already; before that's known, `progress` (0..1) is a guess
@@ -68,8 +58,6 @@ struct Fetching {
 #[derive(Serialize, Clone)]
 struct Fetched {
     vod_id: i64,
-    /// Asked by the player (ahead of where a VOD plays), not for an edit.
-    player: bool,
     /// Why it couldn't be fetched, if it couldn't.
     error: Option<String>,
 }
@@ -236,7 +224,7 @@ impl Footage {
             tidy(&app, None);
             loop {
                 let stop = Arc::new(AtomicBool::new(false));
-                let (vod_id, start, end, player) = {
+                let (vod_id, start, end) = {
                     let mut waiting = state.footage.waiting.lock().unwrap();
                     let next = loop {
                         if let Some(next) = waiting.pop_front() {
@@ -245,23 +233,20 @@ impl Footage {
                         waiting = state.footage.wake.wait(waiting).unwrap();
                     };
                     // What it's fetching, known before the queue is let go, so
-                    // an ask in between (the player gone elsewhere) can stop it.
+                    // a removal in between can stop it.
                     *state.footage.current.lock().unwrap() = Some((next, stop.clone()));
                     next
                 };
                 let result = ensure(&app, vod_id, start, end, &stop, &|_| {});
                 *state.footage.current.lock().unwrap() = None;
-                // Within the cap still, after each (a VOD playing fetches one every two minutes).
+                // Within the cap still, after each.
                 tidy(&app, None);
-                // Stopped (the player went elsewhere, the VOD removed) is no failure.
+                // Stopped (the VOD removed) is no failure.
                 let error = result.err().filter(|e| !vodscribe_core::is_canceled(e));
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
-                    if player {
-                        state.footage.failed.lock().unwrap().insert(vod_id, Instant::now());
-                    }
                 }
-                let _ = app.emit("footage", Fetched { vod_id, player, error: error.map(|e| format!("{e:#}")) });
+                let _ = app.emit("footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
         })?;
         Ok(())
@@ -270,8 +255,8 @@ impl Footage {
     /// Stops fetching VOD `vod_id`'s footage (it's being removed): what's
     /// waiting, and the download under way.
     pub(crate) fn stop_vod(&self, vod_id: i64) {
-        self.waiting.lock().unwrap().retain(|&(v, _, _, _)| v != vod_id);
-        if let Some(((v, _, _, _), stop)) = &*self.current.lock().unwrap()
+        self.waiting.lock().unwrap().retain(|&(v, _, _)| v != vod_id);
+        if let Some(((v, _, _), stop)) = &*self.current.lock().unwrap()
             && *v == vod_id
         {
             stop.store(true, Ordering::Relaxed);
@@ -282,44 +267,11 @@ impl Footage {
     pub(crate) fn ask(&self, stretches: impl IntoIterator<Item = (i64, f64, f64)>) {
         let mut waiting = self.waiting.lock().unwrap();
         for (vod, start, end) in stretches {
-            if !waiting.iter().any(|&(v, a, b, _)| (v, a, b) == (vod, start, end)) {
-                waiting.push_back((vod, start, end, false));
+            if !waiting.contains(&(vod, start, end)) {
+                waiting.push_back((vod, start, end));
             }
         }
         self.wake.notify_one();
-    }
-
-    /// Fetches the footage of `start`..`end` of VOD `vod_id` for the player,
-    /// before anything else, in place of what it asked for before (from
-    /// where it was playing then).
-    /// Not if a download of the VOD failed lately (`RETRY_AFTER`).
-    pub(crate) fn ask_first(&self, vod_id: i64, start: f64, end: f64) {
-        if self.failed.lock().unwrap().get(&vod_id).is_some_and(|at| at.elapsed() < RETRY_AFTER) {
-            return;
-        }
-        let mut waiting = self.waiting.lock().unwrap();
-        waiting.retain(|&(v, a, b, player)| !player && (v, a, b) != (vod_id, start, end));
-        waiting.push_front((vod_id, start, end, true));
-        // What the player asked for before, from where it was then (a seek
-        // far off, another VOD), stops: this one shouldn't wait for it.
-        if let Some(((v, a, b, true), stop)) = &*self.current.lock().unwrap() {
-            let (from, to) = footage::section(*a, *b, None);
-            if *v != vod_id || start < from || start >= to {
-                stop.store(true, Ordering::Relaxed);
-            }
-        }
-        self.wake.notify_one();
-    }
-
-    /// Whether the footage of VOD `vod_id` from `at` is being fetched or
-    /// waits to be (by a section that holds `at`).
-    pub(crate) fn coming(&self, vod_id: i64, at: f64) -> bool {
-        let holds = |start: f64, end: f64| {
-            let (from, to) = footage::section(start, end, None);
-            from <= at && at < to
-        };
-        self.waiting.lock().unwrap().iter().any(|&(v, a, b, _)| v == vod_id && holds(a, b))
-            || self.growing.lock().unwrap().as_ref().is_some_and(|g| g.vod_id == vod_id && g.from <= at && at < g.to)
     }
 }
 
@@ -466,45 +418,4 @@ fn part_file(work: &std::path::Path, prefix: &str) -> Option<PathBuf> {
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         name.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('.')) && name.ends_with(".part")
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A queue fetching `ask`, and what stops that.
-    fn fetching(ask: Ask) -> (Footage, Arc<AtomicBool>) {
-        let footage = Footage::default();
-        let stop = Arc::new(AtomicBool::new(false));
-        *footage.current.lock().unwrap() = Some((ask, stop.clone()));
-        (footage, stop)
-    }
-
-    #[test]
-    fn the_player_asking_elsewhere_stops_what_it_asked_before() {
-        // Fetching 100-220 s (a section of 70-250 s) for the player.
-        let (footage, stop) = fetching((1, 100.0, 220.0, true));
-        footage.ask_first(1, 240.0, 360.0);
-        assert!(!stop.load(Ordering::Relaxed), "still within the section");
-        footage.ask_first(1, 900.0, 1020.0);
-        assert!(stop.load(Ordering::Relaxed), "a seek far off");
-        let (footage, stop) = fetching((1, 100.0, 220.0, true));
-        footage.ask_first(2, 0.0, 120.0);
-        assert!(stop.load(Ordering::Relaxed), "another VOD");
-        // An edit's footage isn't the player's to stop.
-        let (footage, stop) = fetching((1, 100.0, 220.0, false));
-        footage.ask_first(1, 900.0, 1020.0);
-        assert!(!stop.load(Ordering::Relaxed));
-        // The player's asks before go; the edit's stay.
-        let waiting: Vec<Ask> = footage.waiting.lock().unwrap().iter().copied().collect();
-        assert_eq!(waiting, [(1, 900.0, 1020.0, true)]);
-        footage.ask([(3, 0.0, 10.0)]);
-        footage.ask_first(1, 1500.0, 1620.0);
-        let waiting: Vec<Ask> = footage.waiting.lock().unwrap().iter().copied().collect();
-        assert_eq!(waiting, [(1, 1500.0, 1620.0, true), (3, 0.0, 10.0, false)]);
-        // A VOD whose download just failed isn't asked for again yet.
-        footage.failed.lock().unwrap().insert(4, Instant::now());
-        footage.ask_first(4, 0.0, 120.0);
-        assert!(!footage.waiting.lock().unwrap().iter().any(|a| a.0 == 4));
-    }
 }

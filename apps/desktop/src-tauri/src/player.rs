@@ -1,11 +1,9 @@
-//! The app's own player (crates/player) playing a VOD's file, a VOD from a
-//! site, or an edit on the screen (screen.rs), driven by the page's controls
-//! (NativePlayer.svelte): one player at a time. The page is told the time and
-//! whether it's playing at every change and now and then while playing
+//! The app's own player (crates/player) playing a VOD's file, an edit, or
+//! what a site's player fetches (embed.rs), on the screen (screen.rs), driven
+//! by the page's controls (NativePlayer.svelte) or the site's player
+//! (embed.ts): one player at a time. The page is told the time and whether
+//! it's playing at every change and now and then while playing
 //! (`player-time`), and keeps time between by its own clock.
-//! A VOD from a site plays from footage fetched as it plays (footage.rs):
-//! `feed` asks for what's ahead of the playhead, first in line, and plays the
-//! footage as it comes in; where it isn't here yet, the time waits for it.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,9 +34,6 @@ struct Open {
     player: Player,
     /// Opened for this VOD or edit; a page that asks for the same one keeps it.
     doc: Doc,
-    /// For a VOD from a site: the VOD and its own clip, which plays from
-    /// footage fetched as it plays (`feed`).
-    fetched: Option<(i64, i64)>,
 }
 
 /// What the page is told of the player: `running` once the time moves
@@ -91,30 +86,17 @@ pub(crate) fn player_available(app: AppHandle) -> bool {
     crate::screen::attached(&app)
 }
 
-/// Opens VOD `id` at `at` seconds, playing if `play`: its file, or one from
-/// a site from its footage, fetched as it plays (`feed`). The one open for
-/// it already is kept, moved there. Fails if the page closed the player, or
-/// opened another, while the file was being probed.
+/// Opens VOD `id`'s file at `at` seconds, playing if `play`. The one open
+/// for it already is kept, moved there. Fails if the page closed the player,
+/// or opened another, while the file was being probed.
 #[tauri::command]
 pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) -> CmdResult<Opened> {
     let make = move |app: &AppHandle| {
         let state = app.state::<AppState>();
         let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
-        let (file, clip) = {
-            let db = state.db.lock().unwrap();
-            let file = crate::media::playable_file(&db, id);
-            let site =
-                db.vod(id)?.is_some_and(|v| vodscribe_core::pipeline::SITE_PLAYERS.contains(&v.info.platform.as_str()));
-            (file, if site { db.vod_clip(id)? } else { None })
-        };
-        if let Some(file) = file {
-            return Ok((Player::open_file(&ffmpeg, file.as_ref())?, None));
-        }
-        let clip = clip.ok_or_else(|| anyhow::anyhow!("This VOD has no file here to play."))?;
-        let (timeline, _) = clip_timeline(app, clip)?;
-        let player = Player::open(&ffmpeg, timeline)?;
-        player.set_waits_for_footage(true);
-        Ok((player, Some((id, clip))))
+        let file = crate::media::playable_file(&state.db.lock().unwrap(), id)
+            .ok_or_else(|| anyhow::anyhow!("This VOD has no file here to play."))?;
+        Player::open_file(&ffmpeg, file.as_ref())
     };
     open_with(app, Doc::Vod(id), at, play, make).await
 }
@@ -128,7 +110,7 @@ pub(crate) async fn player_open_edit(app: AppHandle, id: i64, at: f64, play: boo
         let state = app.state::<AppState>();
         let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
         let (timeline, _) = edit_timeline(app, id)?;
-        Ok((Player::open(&ffmpeg, timeline)?, None))
+        Player::open(&ffmpeg, timeline)
     };
     open_with(app, Doc::Edit(id), at, play, make).await
 }
@@ -146,8 +128,8 @@ fn edit_timeline(app: &AppHandle, id: i64) -> anyhow::Result<(Timeline, Vec<Plan
     clip_timeline(app, id)
 }
 
-/// Clip `id`'s timeline (an edit's, or a VOD's own) as its pieces and the
-/// footage here are now, and its stretches for the page.
+/// Clip `id`'s timeline (an edit's) as its pieces and the footage here are
+/// now, and its stretches for the page.
 fn clip_timeline(app: &AppHandle, id: i64) -> anyhow::Result<(Timeline, Vec<PlannedStretch>)> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
@@ -199,7 +181,7 @@ async fn open_with(
     doc: Doc,
     at: f64,
     play: bool,
-    make: impl FnOnce(&AppHandle) -> anyhow::Result<(Player, Option<(i64, i64)>)> + Send + 'static,
+    make: impl FnOnce(&AppHandle) -> anyhow::Result<Player> + Send + 'static,
 ) -> CmdResult<Opened> {
     let state = app.state::<AppState>();
     let asked = state.player.asked.fetch_add(1, Ordering::AcqRel) + 1;
@@ -211,7 +193,7 @@ async fn open_with(
         Some(opened) => opened,
         None => {
             let handle = app.clone();
-            let (player, fetched) =
+            let player =
                 tauri::async_runtime::spawn_blocking(move || make(&handle)).await.map_err(err)?.map_err(err)?;
             let opened = opened(&player);
             // Each frame due goes to the screen; the time to the page now and
@@ -231,7 +213,7 @@ async fn open_with(
             if state.player.asked.load(Ordering::Acquire) != asked {
                 return Err(CLOSED.into());
             }
-            *open = Some(Open { player, doc, fetched });
+            *open = Some(Open { player, doc });
             opened
         }
     };
@@ -259,7 +241,7 @@ pub(crate) async fn open_embed(app: AppHandle, vod_id: i64, timeline: Timeline, 
         let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
         let player = Player::open(&ffmpeg, timeline)?;
         player.set_waits_for_footage(true);
-        Ok((player, None))
+        Ok(player)
     };
     // A new one each time: what's kept starts over.
     player_close(app.clone());
@@ -270,75 +252,10 @@ pub(crate) async fn open_embed(app: AppHandle, vod_id: i64, timeline: Timeline, 
 pub(crate) fn set_embed_timeline(app: &AppHandle, vod_id: i64, timeline: Timeline) {
     let state = app.state::<AppState>();
     let open = state.player.open.lock().unwrap();
-    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id) && o.fetched.is_none())
+    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id))
         && o.player.timeline() != timeline
     {
         o.player.set_timeline(timeline);
-    }
-}
-
-/// How far ahead of where a VOD from a site plays its footage is fetched.
-const AHEAD: f64 = 90.0;
-/// How long a stretch the player asks for at a time (a section holds a
-/// margin more either side: `footage::section`).
-const ASK: f64 = 120.0;
-/// A gap in the footage ahead shorter than this isn't asked for (one section ends where the next begins).
-const NEAR: f64 = 0.5;
-/// How often `feed` looks.
-const FEED_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
-
-/// While a VOD from a site plays (or is paused) in the player: asks for the
-/// footage of what's ahead of the playhead that isn't here or coming, first
-/// in line, and plays what's come in since (`set_timeline`, without a break).
-/// The page is told the time while it waits for footage.
-pub(crate) fn feed(app: AppHandle) {
-    let spawned = std::thread::Builder::new().name("player feed".into()).spawn(move || {
-        let mut told_waiting = false;
-        loop {
-            std::thread::sleep(FEED_EVERY);
-            let state = app.state::<AppState>();
-            let (vod, clip, time) = {
-                let open = state.player.open.lock().unwrap();
-                match open.as_ref().and_then(|o| Some((o.fetched?, o.player.time()))) {
-                    Some(((vod, clip), time)) => (vod, clip, time),
-                    None => continue,
-                }
-            };
-            // The first moment ahead that isn't here, if it's near.
-            let gap = {
-                let db = state.db.lock().unwrap();
-                let duration = db.vod(vod).ok().flatten().and_then(|v| v.info.duration).unwrap_or(0.0);
-                let until = (time + AHEAD).min(duration);
-                let mut at = time;
-                for (from, to, _) in crate::footage::cover(&app, &db, vod, time, until) {
-                    if from > at + NEAR {
-                        break;
-                    }
-                    at = at.max(to);
-                }
-                (at < until - NEAR).then_some(at)
-            };
-            if let Some(at) = gap
-                && !state.footage.coming(vod, at)
-            {
-                state.footage.ask_first(vod, at, at + ASK);
-            }
-            let Ok((timeline, _)) = clip_timeline(&app, clip) else { continue };
-            let open = state.player.open.lock().unwrap();
-            let Some(o) = open.as_ref().filter(|o| o.fetched == Some((vod, clip))) else { continue };
-            if o.player.timeline() != timeline {
-                o.player.set_timeline(timeline);
-            }
-            // Waiting, no frames come to tell the page the time: told here.
-            let waiting = o.player.waiting_for_footage();
-            if waiting || told_waiting {
-                let _ = app.emit("player-time", status(&o.player));
-            }
-            told_waiting = waiting;
-        }
-    });
-    if let Err(e) = spawned {
-        eprintln!("player feed: {e}");
     }
 }
 
