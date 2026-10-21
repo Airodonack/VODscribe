@@ -121,7 +121,12 @@ function frame({ name = "" } = {}) {
     clearTimeout,
     setInterval,
     clearInterval,
-    getComputedStyle: () => ({ backgroundColor: "rgba(0, 0, 0, 0)", backgroundImage: "none", opacity: "1", colorScheme: "normal" }),
+    getComputedStyle: () => ({
+      backgroundColor: "rgba(0, 0, 0, 0)",
+      backgroundImage: "none",
+      opacity: "1",
+      colorScheme: "normal",
+    }),
     queueMicrotask,
   });
   vm.runInContext(SHIM, context);
@@ -292,6 +297,30 @@ test("played at its end, it starts again from the beginning", async () => {
   f.video.media.time = 70;
   f.video.play();
   assert.ok(f.posted.some((m) => m.kind === "media" && m.event === "seek" && m.time === 0));
+  f.video.pause();
+  clearInterval(f.video.media.controls);
+});
+
+test("asked to play, its time stands, waiting, till the app's player runs", async () => {
+  const f = frame();
+  const source = f.attach(f.video);
+  await settle();
+  const buffer = source.addSourceBuffer('video/mp4; codecs="avc1"');
+  buffer.appendBuffer(new Uint8Array([...INIT, ...segment(0, 300)]));
+  await settle();
+  const events = [];
+  for (const name of ["playing", "waiting"]) f.video.addEventListener(name, () => events.push(name));
+  f.video.play();
+  // Their player has the data, the app's player hasn't started (it took 6 s on a desktop).
+  await new Promise((r) => setTimeout(r, 900));
+  assert.ok(f.video.currentTime < 0.05, `stood at the start, not run on to ${f.video.currentTime}`);
+  assert.ok(!events.includes("playing"), `not playing yet: ${events}`);
+  // The app's player runs: so does the element.
+  f.tell({ vodscribeClock: { time: 0, playing: true } });
+  await settle();
+  assert.equal(events.at(-1), "playing");
+  await new Promise((r) => setTimeout(r, 200));
+  assert.ok(f.video.currentTime > 0.1, `runs on with it: ${f.video.currentTime}`);
   f.video.pause();
   clearInterval(f.video.media.controls);
 });

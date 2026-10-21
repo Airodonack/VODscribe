@@ -555,6 +555,14 @@
     /** Told by the app's player where it is. */
     tell(clock) {
       this.told = { ...clock, at: performance.now() };
+      this.update();
+    }
+    /** Asked to play, with the app's player not running yet (it may take
+     *  seconds to start): waiting, as an element is for data, so their
+     *  player doesn't count the time on meanwhile (the app's time went
+     *  ahead, then back, as it started). */
+    held() {
+      return !this.paused && !(this.told && this.told.playing);
     }
     asked() {
       this.quietUntil = performance.now() + 600;
@@ -605,6 +613,7 @@
       if (hasInit && ahead > 0.05) state = 2;
       if (hasInit && (ahead > 0.5 || (end && ahead > 0))) state = 3;
       if (hasInit && (ahead > 3 || (end && ahead > 0))) state = 4;
+      if (this.held()) state = Math.min(state, 2);
       if (this.seeking && state >= 2) {
         this.seeking = false;
         this.since = performance.now();
@@ -642,8 +651,10 @@
         this.paused = false;
         this.ended = false;
         this.fire("play");
-        if (this.readyState >= 3) this.fire("playing");
-        else this.fire("waiting");
+        // Ready or waiting, as it is now that it's asked to play (held).
+        const was = this.readyState;
+        this.update();
+        if (this.readyState === was) this.fire(this.readyState >= 3 ? "playing" : "waiting");
         clearInterval(this.timer);
         this.timer = setInterval(() => this.tick(), 50);
         this.asked();
