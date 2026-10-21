@@ -624,6 +624,8 @@ function bridge(
   const host = document.createElement("div");
   host.style.cssText = "position: absolute; inset: 0; pointer-events: none; z-index: -1";
   el.insertBefore(host, el.firstChild);
+  // Light till their document says (a site's player that says nothing is light).
+  frame.style.colorScheme = "light";
   const screen = mount(Screen, { target: host, props: { under: true } });
   // The session embed.rs keeps for this VOD: its token goes with each append and the close.
   let token: number | null = null;
@@ -657,6 +659,7 @@ function bridge(
           complete?: boolean;
           bytes?: ArrayBuffer;
           cover?: number;
+          scheme?: string;
         };
       } | null
     )?.vodscribeShim;
@@ -674,6 +677,12 @@ function bridge(
       return;
     }
     if (m.kind === "mismatch") return fallback("a source that isn't the VOD's");
+    if (m.kind === "scheme" && m.scheme) {
+      // Their frame in their document's own colour scheme: one that differs
+      // is drawn on an opaque background (a dark app, a light player: grey).
+      frame.style.colorScheme = m.scheme === "normal" ? "light" : m.scheme;
+      return;
+    }
     if (m.kind === "controls") {
       // Their controls over the bottom of the picture: our captions above them.
       controlsCover = m.cover ?? 0;

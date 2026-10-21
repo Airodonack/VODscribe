@@ -78,6 +78,7 @@ function frame({ name = "" } = {}) {
         : null,
     documentElement: {},
     elementsFromPoint: () => [],
+    addEventListener: () => {},
   };
   const parent = {
     postMessage: (data) => posted.push(data.vodscribeShim),
@@ -120,7 +121,7 @@ function frame({ name = "" } = {}) {
     clearTimeout,
     setInterval,
     clearInterval,
-    getComputedStyle: () => ({ backgroundColor: "rgba(0, 0, 0, 0)", backgroundImage: "none", opacity: "1" }),
+    getComputedStyle: () => ({ backgroundColor: "rgba(0, 0, 0, 0)", backgroundImage: "none", opacity: "1", colorScheme: "normal" }),
     queueMicrotask,
   });
   vm.runInContext(SHIM, context);

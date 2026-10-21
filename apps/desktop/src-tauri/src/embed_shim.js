@@ -32,6 +32,12 @@
     return;
   }
   post({ kind: "loaded", url: location.href.slice(0, 120) });
+  // The colour scheme their document uses, for the page to give their frame
+  // the same: a frame whose scheme differs from its document's gets an
+  // opaque background (so its text stays readable), over our picture.
+  const scheme = () => post({ kind: "scheme", scheme: getComputedStyle(document.documentElement).colorScheme });
+  document.addEventListener("DOMContentLoaded", scheme);
+  window.addEventListener("load", scheme);
 
   // --- What the page tells us -------------------------------------------
   /** The VOD's length (seconds), once the page says; 0 until then. */
