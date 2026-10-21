@@ -144,7 +144,7 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         (at) => command("seekTo", [at, true]),
       )
     : null;
-  const clock = new Clock(time, play);
+  const clock = new Clock(time, play, { waitsForPlayer: true });
   const sound = { volume: 1, muted: false, rate: 1 };
   const post = (message: object) =>
     frame.contentWindow?.postMessage(JSON.stringify({ ...message, id: 1, channel: "widget" }), YOUTUBE);
@@ -313,7 +313,7 @@ async function twitch(
         (at) => command(TWITCH_SEEK, at),
       )
     : null;
-  const clock = new Clock(time, play);
+  const clock = new Clock(time, play, { waitsForPlayer: true });
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>

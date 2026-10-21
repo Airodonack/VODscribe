@@ -8,6 +8,23 @@ test("before the player says anything, there's no shown position", () => {
   assert.equal(new Clock(5, true).shown(), null);
 });
 
+test("a clock that waits for its player stands until the player says it's moving", async () => {
+  // A site's player asked to play as it loads: nothing heard for a while.
+  const clock = new Clock(0, true, { waitsForPlayer: true });
+  await wait(150);
+  assert.equal(clock.now(), 0, "no word yet: it stands");
+  clock.heardAt(0, false);
+  await wait(100);
+  assert.equal(clock.now(), 0, "there, not moving yet: it stands");
+  clock.heardAt(0.2, true);
+  await wait(100);
+  assert.ok(clock.now() > 0.25, `moving: it runs (${clock.now()})`);
+  // One that doesn't wait runs from the start, as before.
+  const eager = new Clock(0, true);
+  await wait(100);
+  assert.ok(eager.now() > 0.05);
+});
+
 test("shown runs on from a report only while the player said it was moving", async () => {
   const clock = new Clock(0, true);
   clock.heardAt(10, true);

@@ -21,16 +21,22 @@ export class Clock {
   private seeking: { target: number; play: boolean; until: number; seen: boolean } | null = null;
   private seconds: number;
   playing: boolean;
-  constructor(seconds: number, playing: boolean) {
+  /** Its time runs only once the player has said it's moving: a site's
+   *  player, asked to play as it loads, says nothing for a few seconds, then
+   *  that it's at the start; run on meanwhile, the time went back. */
+  private waits: boolean;
+  constructor(seconds: number, playing: boolean, { waitsForPlayer = false } = {}) {
     this.seconds = seconds;
     this.playing = playing;
+    this.waits = waitsForPlayer;
   }
   set(seconds: number) {
     this.seconds = seconds;
     this.at = performance.now();
   }
   now() {
-    return this.seconds + (this.playing ? ((performance.now() - this.at) / 1000) * this.speed : 0);
+    const running = this.playing && (!this.waits || this.heard?.moving === true);
+    return this.seconds + (running ? ((performance.now() - this.at) / 1000) * this.speed : 0);
   }
   /** Plays `speed` times as fast from now: both positions run on from
    *  where they are, rather than jumping. */
