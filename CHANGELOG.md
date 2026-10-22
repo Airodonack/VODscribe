@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.5.1 (unreleased)
 
+- After a click on the timeline, the time by the play button no longer flicks back to where the video was until the picture gets there: it shows the new time at once and stays on it.
+
 ## 0.5.0 — 2026-10-22
 
 - VODs and edits open in one player: the same picture, timeline, controls, keys, transcript and clip bar, each doing what it can (an edit's pieces move and resize; a VOD stays whole). Edits gain what VODs had, below.

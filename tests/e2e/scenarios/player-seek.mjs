@@ -132,25 +132,21 @@ export default {
       );
       const between = arrived.filter((a) => a.kind === "event" && reply && a.at > reply.sent && a.at < reply.at);
       inFlight += between.length;
-      // The time on the bar. It shows the frame on screen (playerReading.svelte.ts):
-      // put at the seek's time by the page at once, then back on the old frame
-      // until the player draws the new one, then there. Once there for good,
-      // it mustn't go back.
+      // The time on the bar, once it has shown the seek's time, never
+      // earlier (but for the frame the player lands on, up to a frame before
+      // the time asked; the bar shows whole seconds).
       const bar = [...samples, ...changes].sort((x, y) => x.at - y.at);
-      const far = (s) => s.time >= Math.floor(target) - 1;
-      const there = bar.findIndex(far);
-      const left = there < 0 ? -1 : bar.findIndex((s, k) => k > there && !far(s));
-      const settled = left < 0 ? there : bar.findIndex((s, k) => k > left && far(s));
-      const back = settled < 0 ? [] : bar.slice(settled).filter((s) => !far(s));
-      const bounce = left < 0 || settled < 0 ? 0 : bar[settled].at - bar[left].at;
+      const floor = Math.floor(target - 1 / 30);
+      const there = bar.findIndex((s) => s.time >= floor);
+      const back = there < 0 ? [] : bar.slice(there).filter((s) => s.time < floor);
       const flicked = bar.filter((s) => s.button === "Play").length;
       const line =
         `seek ${i + 1}: ${before} s → ${target.toFixed(2)} s; reply in ${reply ? (reply.at - reply.sent).toFixed(1) : "?"} ms, ` +
         `${between.length} event(s) arrived meanwhile; ${stale.length} stale taken; ` +
-        `the bar on the old frame ${bounce.toFixed(0)} ms, back after ${back.length} time(s)` +
+        `the bar back ${back.length} time(s)` +
         (flicked ? `; the button said Play ${flicked} time(s)` : "");
       ctx.log(line);
-      if (settled < 0) failures.push(`seek ${i + 1}: the bar never stayed at ${target.toFixed(2)} s`);
+      if (there < 0) failures.push(`seek ${i + 1}: the bar never showed ${target.toFixed(2)} s`);
       if (stale.length || back.length)
         failures.push(
           `${line}: ${JSON.stringify({ stale, back: back.slice(0, 5), arrived: arrived.filter((a) => a.at >= start).slice(0, 12) })}`,
