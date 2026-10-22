@@ -129,11 +129,14 @@ export default {
       );
       if (seen.error) throw new Error(`seek ${i + 1}: ${seen.error}`);
       const { start, target, before, samples, changes, arrived } = seen;
-      // The page's rule (ownStatus.ts): what arrives is taken if its seq is the newest yet.
+      // The page's rule (nativeDriver.ts, ownStatus.ts): what arrives is taken
+      // if its seq is the newest yet, but for events while a command is out.
+      const replies = arrived.filter((a) => a.kind !== "event");
+      const out = (a) => a.kind === "event" && replies.some((r) => r.sent <= a.at && a.at < r.at);
       let newest = 0;
       const taken = [];
       for (const a of [...arrived].sort((x, y) => x.at - y.at)) {
-        if (a.seq <= newest) continue;
+        if (a.seq <= newest || out(a)) continue;
         newest = a.seq;
         taken.push(a);
       }

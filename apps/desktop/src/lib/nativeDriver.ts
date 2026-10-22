@@ -1,7 +1,8 @@
 // The page's side of the app's own player (player.rs, crates/player), for
 // whichever view plays in it: a file's player (NativePlayer.svelte) and an
 // edit's (editPlayer.ts). It keeps what the player last told (its
-// `player-time` events and its commands' replies, the newest by `seq`), runs
+// `player-time` events and its commands' replies, the newest by `seq`; while
+// a command is out, its reply alone), runs
 // the time on by the page's clock while the player's runs (after play it
 // stands until the sound starts), and sends what's asked; until the player is
 // open, a seek, play or speed asked is kept for then.
@@ -29,10 +30,17 @@ export class NativeDriver {
   /** Seeks sent; when the last one's reply came (null while it's out). */
   private seeks = 0;
   private seekSettled: number | null = -Infinity;
+  /** Commands out whose reply says where the player is. Meanwhile events
+   *  aren't taken: one made before the command, arriving after the page's
+   *  guess, would put the time back where it was (seen in CI); the reply,
+   *  made after, is what's so. Those after the reply are newer by `seq`. */
+  private pending = 0;
 
   constructor(start = 0) {
     this.clock = new Clock(start, false);
-    events.playerTime((s) => !this.gone && this.tell(s)).then((u) => (this.gone ? u() : (this.unlisten = u)));
+    events
+      .playerTime((s) => !this.gone && !this.pending && this.tell(s))
+      .then((u) => (this.gone ? u() : (this.unlisten = u)));
   }
 
   private tell(status: PlayerStatus) {
@@ -42,6 +50,23 @@ export class NativeDriver {
     this.clock.playing = status.running;
     this.clock.speed = status.speed;
     this.isPlaying = status.playing;
+  }
+
+  /** Sends a command whose reply says where the player is; resolves true
+   *  once that's taken, false if it was refused. */
+  private command(sent: Promise<PlayerStatus>): Promise<boolean> {
+    this.pending++;
+    return sent.then(
+      (s) => {
+        this.pending--;
+        this.tell(s);
+        return true;
+      },
+      () => {
+        this.pending--;
+        return false;
+      },
+    );
   }
 
   /** What the page guesses until the player says: at `time`, not running. */
@@ -98,10 +123,7 @@ export class NativeDriver {
       this.wanted = { time: this.time(), play: playing };
       return;
     }
-    (playing ? api.playerPlay() : api.playerPause()).then(
-      (s) => this.tell(s),
-      () => {},
-    );
+    this.command(playing ? api.playerPlay() : api.playerPause());
   }
 
   /** Goes to `seconds`, and plays if `play`; one that plays goes on playing
@@ -119,15 +141,9 @@ export class NativeDriver {
     this.guess(seconds, play || this.isPlaying);
     const mine = ++this.seeks;
     this.seekSettled = null;
-    api.playerSeek(seconds, play).then(
-      (s) => {
-        this.tell(s);
-        if (mine === this.seeks) this.seekSettled = performance.now();
-      },
-      () => {
-        if (mine === this.seeks) this.seekSettled = -Infinity;
-      },
-    );
+    this.command(api.playerSeek(seconds, play)).then((took) => {
+      if (mine === this.seeks) this.seekSettled = took ? performance.now() : -Infinity;
+    });
   }
 
   /** When the last seek's reply came (performance.now()), null while it's
@@ -139,10 +155,7 @@ export class NativeDriver {
   /** Steps `frames` frames on (back, if negative), paused. */
   step(frames: number) {
     if (!this.open) return;
-    api.playerStep(frames).then(
-      (s) => this.tell(s),
-      () => {},
-    );
+    this.command(api.playerStep(frames));
   }
 
   speed = {
@@ -153,10 +166,7 @@ export class NativeDriver {
         this.wantedSpeed = speed;
         return;
       }
-      api.playerSetSpeed(speed).then(
-        (s) => this.tell(s),
-        () => {},
-      );
+      this.command(api.playerSetSpeed(speed));
     },
   };
 
