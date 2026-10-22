@@ -71,6 +71,24 @@ export default {
       const button = await os.rectOf(app, "button.action.clip");
       const edge = await os.windowRect(app);
       const [cx, cy] = [button.x + Math.round(button.w / 2), button.y + Math.round(button.h / 2)];
+      // What the page saw, for when something is left: its pointer events
+      // (where, on what) and the app's news of clips, in order.
+      await app.js(
+        `const t0 = performance.now();
+         const trace = (window.__trace = []);
+         const at = (el) => (el?.tagName ?? "?") + (el?.className ? "." + String(el.className).replaceAll(" ", ".") : "");
+         for (const type of ["pointerdown", "pointermove", "pointerup", "click"])
+           window.addEventListener(type, (e) => trace.push(\`\${Math.round(performance.now() - t0)} \${type} \${e.clientX},\${e.clientY} \${at(e.target)}\`), true);
+         const internals = window.__TAURI_INTERNALS__;
+         for (const event of ["clip", "clip-removed", "drag-ended"]) {
+           const handler = internals.transformCallback((e) => {
+             const p = e.payload;
+             const what = p && typeof p === "object" ? \`#\${p.id} \${p.status} shown=\${p.shown} \${p.file_path ?? ""}\` : String(p);
+             trace.push(\`\${Math.round(performance.now() - t0)} \${event} \${what}\`);
+           });
+           await internals.invoke("plugin:event|listen", { event, target: { kind: "Any" }, handler });
+         }`,
+      );
       await os.gesture([
         ["down", cx, cy],
         ["move", cx - 20, cy],
@@ -79,7 +97,14 @@ export default {
       ]);
       await sleep(5000);
       const left = readdirSync(folder).filter((f) => !before.has(f));
-      if (left.length) throw new Error(`Clip dragged out and let go at once left ${left.join(", ")}`);
+      if (left.length) {
+        const trace = await app.js(`return window.__trace`).catch(() => []);
+        const marks = await app.js(`return performance.getEntriesByType("mark").map((m) => m.name)`).catch(() => []);
+        const clips = await app.invoke("list_clips", { vodId: vod.id }).catch(() => []);
+        ctx.log(`the page saw: ${trace.join(" | ")}`);
+        ctx.log(`marks: ${marks.join(", ")}; clips now: ${JSON.stringify(clips)}`);
+        throw new Error(`Clip dragged out and let go at once left ${left.join(", ")}`);
+      }
       ctx.log("Clip dragged out and let go at once: nothing left behind");
     }
 
