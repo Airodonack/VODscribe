@@ -111,6 +111,22 @@ export class App {
     );
   }
 
+  /**
+   * Leaves the input `selector` (its blur event, as moving focus away fires).
+   * WebKit fires focus and blur only in a page that has the keyboard, and a
+   * headless Wayland compositor with no seat (weston) never gives the window
+   * the keyboard: there the event is sent by hand.
+   */
+  blur(selector) {
+    return this.js(
+      `const input = document.querySelector(arguments[0]);
+       if (!input) throw new Error("no " + arguments[0]);
+       if (document.hasFocus()) input.blur();
+       else input.dispatchEvent(new FocusEvent("blur"));`,
+      selector,
+    );
+  }
+
   /** Submits the form `selector` is in, as Enter would (macOS 12's WebKit has no requestSubmit). */
   submit(selector) {
     return this.js(

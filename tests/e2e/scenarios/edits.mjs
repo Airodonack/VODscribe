@@ -61,7 +61,7 @@ export default {
     // Renamed as typed: focused, typed into, then left (it saves on blur).
     await app.js(`document.querySelector(arguments[0]).focus()`, title);
     await app.type(title, NAME);
-    await app.js(`document.querySelector(arguments[0]).blur()`, title);
+    await app.blur(title);
     await until("the new name", async () => (await app.invoke("list_edits"))[0]?.title === NAME, 10_000);
     await until(
       "the row's new name",
@@ -599,7 +599,7 @@ export default {
     const typed = await app.js(`return document.querySelector(arguments[0]).value`, title);
     if (typed !== "Half typ") throw new Error(`the name being typed became "${typed}" when the edit changed`);
     await app.type(title, NAME);
-    await app.js(`document.querySelector(arguments[0]).blur()`, title);
+    await app.blur(title);
 
     // Still there after a restart.
     app = await ctx.restart();
