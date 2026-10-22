@@ -20,9 +20,10 @@
 //   --scheme dark        the dark colour scheme (GTK's theme, GNOME's setting)
 //   --gpu nvidia         the host's NVIDIA GPU in the container (podman's
 //                        CDI device), drawing with NVIDIA's own libraries
-//   --gpu dri            the host's /dev/dri in the container, drawing with
-//                        the distribution's Mesa (Intel and AMD GPUs; on a
-//                        GPU Mesa has no driver for, its software fallback)
+//   --gpu dri            the host's render nodes (/dev/dri/renderD*) in the
+//                        container, drawing with the distribution's Mesa
+//                        (Intel and AMD GPUs; on a GPU Mesa has no driver
+//                        for, its software fallback)
 //
 // Portals, real desktops and window managers' own ways aren't here: that's
 // the QA VMs'.
@@ -64,10 +65,18 @@ const GPU_PACKAGES = {
 };
 /** How each GPU gets into the container (podman's options). */
 const GPU_DEVICES = {
-  nvidia: ["--device", "nvidia.com/gpu=all"],
-  // The render nodes belong to the video and render groups: rootless podman
-  // drops the user's groups unless asked to keep them (crun only).
-  dri: ["--device", "/dev/dri", "--group-add", "keep-groups"],
+  nvidia: () => ["--device", "nvidia.com/gpu=all"],
+  // The render nodes only (renderD*), not the card* nodes, which also drive
+  // the displays (KMS): drawing needs no more. They belong to the render
+  // group: rootless podman drops the user's groups unless asked to keep them
+  // (crun only), and keep-groups keeps all the user's supplementary groups.
+  dri: () => [
+    ...(existsSync("/dev/dri") ? readdirSync("/dev/dri") : [])
+      .filter((name) => name.startsWith("renderD"))
+      .flatMap((name) => ["--device", `/dev/dri/${name}`]),
+    "--group-add",
+    "keep-groups",
+  ],
 };
 
 const APT = (image) => ({
@@ -252,7 +261,7 @@ for (const name of names) {
       "run",
       "--rm",
       ...(distro.podman ?? []),
-      ...(opts.gpu ? GPU_DEVICES[opts.gpu] : []),
+      ...(opts.gpu ? GPU_DEVICES[opts.gpu]() : []),
       "-v",
       `${repo}:/repo:ro`,
       "-v",
