@@ -2,6 +2,8 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
+## 0.5.1 (unreleased)
+
 ## 0.5.0 — 2026-10-22
 
 - VODs and edits open in one player: the same picture, timeline, controls, keys, transcript and clip bar, each doing what it can (an edit's pieces move and resize; a VOD stays whole). Edits gain what VODs had, below.
