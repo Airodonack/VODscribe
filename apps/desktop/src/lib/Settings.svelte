@@ -25,21 +25,13 @@
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
-  // The video kept as VODs from sites play: how much, and the most it may take.
-  const FOOTAGE_CAPS = [5, 10, 20, 50];
-  let footageCap = $derived(appSettings.value?.footage_gb ?? 10);
+  // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
-  async function setFootageCap(gb: number) {
-    await appSettings.update({ footage_gb: gb });
-    // Lowered, what's past it goes now.
-    await api.clearFootage(false).catch(() => {});
-    footageBytes = await api.footageBytes().catch(() => footageBytes);
-  }
   async function clearFootage() {
     clearingFootage = true;
     try {
-      await api.clearFootage(true);
+      await api.clearFootage();
       footageBytes = await api.footageBytes();
     } catch (e) {
       error = String(e);
@@ -333,27 +325,11 @@
       </button>
     </div>
     {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
-    <p class="label">Keep fetched video</p>
+    <p class="label">Fetched video</p>
     <p class="muted hint">
-      Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What's fetched is
-      kept, to clip or edit again without downloading it again{footageBytes
-        ? `. It uses ${formatBytes(footageBytes)}`
-        : ""}. Up to:
-    </p>
-    <div class="segmented" role="radiogroup" aria-label="Most fetched video kept">
-      {#each FOOTAGE_CAPS as gb (gb)}
-        <button
-          role="radio"
-          aria-checked={footageCap === gb}
-          class:on={footageCap === gb}
-          onclick={() => setFootageCap(gb)}
-        >
-          {gb} GB
-        </button>
-      {/each}
-    </div>
-    <p class="muted hint">
-      The least recently used go first. What your edits use is always kept: the site may not have it any more.
+      Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits use
+      is kept, as the site may not have it any more{footageBytes ? ` (${formatBytes(footageBytes)})` : ""}; the rest
+      goes within an hour of its last use, and is fetched again if needed.
     </p>
     <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
       {clearingFootage ? "Deleting…" : "Delete fetched video"}

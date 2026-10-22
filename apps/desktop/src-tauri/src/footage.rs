@@ -21,8 +21,13 @@ use vodscribe_core::{clips, fetch, mkv, tools};
 
 use crate::AppState;
 
-/// Sections older than this go when the app starts.
-const KEEP_FOR: Duration = Duration::from_secs(30 * 24 * 3600);
+/// Sections no edit uses go once unused this long: the sites' terms don't
+/// allow keeping their video, so it's kept only as long as a clip or an
+/// edit's work needs it (fetched, then cut from at once), and fetched again
+/// if needed later.
+const UNUSED_FOR: Duration = Duration::from_secs(3600);
+/// How often what's fetched is tidied, besides after each fetch.
+const TIDY_EVERY: Duration = Duration::from_secs(600);
 const PROGRESS_EVERY: Duration = Duration::from_millis(500);
 /// How long what the site said of a VOD is used for its sections.
 const INFO_FOR: Duration = Duration::from_secs(20 * 60);
@@ -99,14 +104,13 @@ pub(crate) fn find(app: &AppHandle, db: &Db, vod_id: i64, start: f64, end: f64) 
     })
 }
 
-/// Deletes the sections not used for a while, then the least recently used
-/// past the cap (Settings), or past `max_bytes` if given; never what an edit
-/// uses (its site may not have the VOD any more).
-fn tidy(app: &AppHandle, max_bytes: Option<u64>) {
+/// Deletes the sections no edit uses (its site may not have the VOD any
+/// more) once unused for `UNUSED_FOR`, or all of them if `now`.
+fn tidy(app: &AppHandle, now: bool) {
     let state = app.state::<AppState>();
     let used = state.db.lock().unwrap().piece_ranges().unwrap_or_default();
-    let cap = max_bytes.unwrap_or_else(|| Settings::load(&state.paths.settings()).footage_cap());
-    footage::tidy(&dir(app), KEEP_FOR, cap, |path| {
+    let (age, cap) = if now { (Duration::ZERO, 0) } else { (UNUSED_FOR, u64::MAX) };
+    footage::tidy(&dir(app), age, cap, |path| {
         footage::section_of(path)
             .is_some_and(|(vod, from, to)| used.iter().any(|&(v, start, end)| v == vod && from < end && to > start))
     });
@@ -127,11 +131,10 @@ pub(crate) async fn footage_bytes(app: AppHandle) -> u64 {
     .unwrap_or(0)
 }
 
-/// Deletes the footage kept, but what edits use; then the cap (Settings)
-/// applies again, if it was changed.
+/// Deletes the footage kept, but what edits use.
 #[tauri::command]
-pub(crate) async fn clear_footage(app: AppHandle, all: bool) {
-    let _ = tauri::async_runtime::spawn_blocking(move || tidy(&app, all.then_some(0))).await;
+pub(crate) async fn clear_footage(app: AppHandle) {
+    let _ = tauri::async_runtime::spawn_blocking(move || tidy(&app, true)).await;
 }
 
 /// Where the footage of `start`..`end` of VOD `vod_id` is here, stretch by
@@ -221,7 +224,15 @@ impl Footage {
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         std::thread::Builder::new().name("footage".into()).spawn(move || {
             let state = app.state::<AppState>();
-            tidy(&app, None);
+            tidy(&app, false);
+            // And now and then, so what's unused goes though nothing more is fetched.
+            let every = app.clone();
+            let _ = std::thread::Builder::new().name("footage-tidy".into()).spawn(move || {
+                loop {
+                    std::thread::sleep(TIDY_EVERY);
+                    tidy(&every, false);
+                }
+            });
             loop {
                 let stop = Arc::new(AtomicBool::new(false));
                 let (vod_id, start, end) = {
@@ -239,8 +250,8 @@ impl Footage {
                 };
                 let result = ensure(&app, vod_id, start, end, &stop, &|_| {});
                 *state.footage.current.lock().unwrap() = None;
-                // Within the cap still, after each.
-                tidy(&app, None);
+                // What's done with goes, after each.
+                tidy(&app, false);
                 // Stopped (the VOD removed) is no failure.
                 let error = result.err().filter(|e| !vodscribe_core::is_canceled(e));
                 if let Some(e) = &error {

@@ -82,7 +82,6 @@ export interface Settings {
   /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
   clip_format: ClipFormat;
   /** The most the video kept as VODs from sites play may take, in GB; unset means 10. */
-  footage_gb?: number | null;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
@@ -431,7 +430,7 @@ export const api = {
   /** How many bytes the video kept as VODs from sites play takes. */
   footageBytes: () => invoke<number>("footage_bytes"),
   /** Deletes the video kept as VODs from sites play, but what edits use (`all`); else only what's past the cap. */
-  clearFootage: (all: boolean) => invoke<void>("clear_footage", { all }),
+  clearFootage: () => invoke<void>("clear_footage"),
   playerPlay: () => invoke<PlayerStatus>("player_play"),
   playerPause: () => invoke<PlayerStatus>("player_pause"),
   playerSeek: (time: number, play: boolean) => invoke<PlayerStatus>("player_seek", { time, play }),
