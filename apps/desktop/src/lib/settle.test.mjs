@@ -16,6 +16,18 @@ test("Twitch's gesture capture (play, pause at once, play later) reaches the app
   assert.deepEqual(sent, [true]);
 });
 
+test("Twitch's real play coming late, the app's player is told the pause it was in, then the play", async () => {
+  /** @type {boolean[]} */
+  const sent = [];
+  const s = settling((playing) => sent.push(playing), 30);
+  s.want(true);
+  s.want(false);
+  await wait(400);
+  s.want(true);
+  await wait(60);
+  assert.deepEqual(sent, [false, true], "never started and stopped");
+});
+
 test("a pause that stands is passed on", async () => {
   /** @type {boolean[]} */
   const sent = [];
