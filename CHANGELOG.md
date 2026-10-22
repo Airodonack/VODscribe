@@ -7,6 +7,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - After a click on the timeline, the time by the play button no longer flicks back to where the video was while the picture catches up: it shows the new time at once and stays on it.
 - Moving around a video while it plays (a click on the timeline, the arrow keys) no longer flashes the Play button for a moment: it goes on saying Pause.
 - The time and frame count under a Twitch video no longer jump back and forth about once a second while it plays.
+- I and O set where the selection starts and ends, as in video editors: I at the playhead is its start, O its end. With nothing selected, I selects from the playhead to the next cut (or the end), and O back to the cut before (or the start). Put past the other end, the two swap, so the selection runs between them. B, C and (in an edit) Delete then act on it as on lines selected in the transcript.
 
 ## 0.5.0 — 2026-10-22
 

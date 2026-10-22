@@ -4,6 +4,8 @@
 // that and the resize. Last, its file deleted outside the app (as in a file
 // manager): back in the window, its pill goes; undone, the clip is made
 // again, and the chapter added before that goes only with the next undo.
+// Then I and O: O at 2 s selects back to the cut at 1, I at 4 s (past that
+// selection's end) makes it run from 2 to 4, and C clips just that.
 
 import { existsSync, rmSync } from "node:fs";
 
@@ -97,5 +99,31 @@ export default {
     if ((await app.invoke("list_clips", { vodId: done.id })).length !== 1)
       throw new Error("undoing the chapter changed the clip bar too");
     app.log("undone: the file's deletion (the clip made again), then the chapter, one at a time");
+
+    // O with nothing selected: a selection back from the playhead to the cut
+    // before; I past its end swaps the ends, so it runs from O to I.
+    const to = (seconds) =>
+      until(`the player at ${seconds} s`, async () => (await app.shownTime()) === seconds, 10_000);
+    await app.toStart();
+    await app.key("ArrowRight", { shift: true });
+    await app.key("ArrowRight", { shift: true });
+    await to(2);
+    await app.key("o");
+    await until("a selection", () => app.js(`return !!document.querySelector(".selection")`), 10_000);
+    await app.key("ArrowRight", { shift: true });
+    await app.key("ArrowRight", { shift: true });
+    await to(4);
+    await app.key("i");
+    await app.key("c");
+    await until(
+      "a clip of 2 to 4 s",
+      async () => {
+        const all = await app.invoke("list_clips", { vodId: done.id });
+        if (all.some((c) => Math.abs(c.start - 2) < 0.05 && Math.abs(c.end - 4) < 0.05)) return true;
+        throw new Error(`clips: ${JSON.stringify(all.map((c) => [c.start, c.end]))}`);
+      },
+      MINUTE,
+    );
+    app.log("O then I past it: the selection ran from 2 to 4 s, and C clipped it");
   },
 };

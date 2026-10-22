@@ -6,7 +6,7 @@
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import ClipStrip from "./ClipStrip.svelte";
-  import { cuts } from "./cuts.svelte";
+  import { cuts, markKey } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
   import { frameStart, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
@@ -18,7 +18,7 @@
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
   import { keysForApp } from "./demo";
-  import { markKey, playerKey, transportKey, vodShortcuts } from "./playerKeys";
+  import { inOut, playerKey, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import {
     formatFraction,
@@ -317,6 +317,20 @@
       return;
     }
     if (e.ctrlKey || e.metaKey) return;
+    // I and O put the selection's in and out points at the playhead, as in
+    // video editors; with none, I or O begins one.
+    if ((key === "i" || key === "o") && !e.shiftKey) {
+      const stops = cuts.list.map((m) => m.start);
+      const picked = duration ? inOut(key, frameStart(now, fps), cuts.selection, stops, duration) : null;
+      // The arrows go on moving the playhead, not an edge or a mark.
+      if (picked) {
+        cuts.selection = picked;
+        cuts.selectedEdge = null;
+        cuts.selected = null;
+      }
+      e.preventDefault();
+      return;
+    }
     // Shift with a letter is the player's own: captions (C) and mute (M).
     if (e.shiftKey && (key === "c" || key === "m")) {
       if (key === "c") player?.captions?.toggle();

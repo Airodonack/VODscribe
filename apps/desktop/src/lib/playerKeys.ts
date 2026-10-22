@@ -1,9 +1,7 @@
 // The keys a VOD's player and an edit's share (play, seek, step a frame,
-// full screen; the selected mark's), and the shortcuts each lists in its
-// legend (Shortcuts.svelte).
-
-import { cuts } from "./cuts.svelte";
-import { inFrame } from "./media";
+// full screen, a selection's in and out points; the selected mark's are
+// cuts.svelte.ts `markKey`), and the shortcuts each lists in its legend
+// (Shortcuts.svelte).
 
 /** Seconds the arrows and J/L move the playhead (Shift with an arrow: 1 s). */
 export const STEPS: Record<string, number> = { ArrowLeft: -5, ArrowRight: 5, j: -10, l: 10 };
@@ -47,6 +45,27 @@ export function transportKey(key: string, shift: boolean, t: Transport): boolean
   return true;
 }
 
+/** A stretch of a timeline, in seconds. */
+export type Span = { start: number; end: number };
+
+/**
+ * I and O, as in video editors: the selection's in (I) or out (O) point put
+ * at `at`, the playhead. Put past the other end, the two swap, so the
+ * selection runs between them either way round. With no selection, I starts
+ * one that runs on to the next of `stops` (the cuts; an edit's piece ends
+ * too) or the end, the stretch Clip would take from here, and O one back to
+ * the one before or the start. Null if it would be empty: nothing changes.
+ */
+export function inOut(key: "i" | "o", at: number, picked: Span | null, stops: number[], length: number): Span | null {
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+  let other: number;
+  if (picked) other = key === "i" ? picked.end : picked.start;
+  else if (key === "i") other = Math.min(length, ...stops.filter((t) => t > at && !near(t, at)));
+  else other = Math.max(0, ...stops.filter((t) => t < at && !near(t, at)));
+  if (near(other, at) || (!picked && (key === "i" ? at >= length : at <= 0))) return null;
+  return { start: Math.min(at, other), end: Math.max(at, other) };
+}
+
 /** A line of a legend: the keys (each its own key cap; "+" and "or" are
  *  written between them) and what they do. */
 export type Shortcut = { keys: string[]; does: string };
@@ -68,6 +87,7 @@ const playing = (framed: boolean): Shortcut[] => [
 export const vodShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   ...playing(framed),
   { keys: ["B"], does: "cut here" },
+  { keys: ["I", "O"], does: "start or end the selection here" },
   { keys: ["C"], does: "clip the stretch" },
   { keys: ["M"], does: "highlight here" },
   { keys: ["N"], does: "new chapter here" },
@@ -86,6 +106,7 @@ export const vodShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
 export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   ...playing(framed),
   { keys: ["B"], does: "cut here (or at both ends of the selection)" },
+  { keys: ["I", "O"], does: "start or end the selection here" },
   { keys: ["M"], does: "highlight here" },
   { keys: ["N"], does: "new chapter here" },
   { keys: ["Enter"], does: "rename the selected chapter or highlight" },
@@ -105,44 +126,3 @@ export const editShortcuts = (framed: boolean, mac: boolean): Shortcut[] => [
   { keys: ["F"], does: "full screen" },
   undo(mac),
 ];
-
-/**
- * The selected mark's keys (cuts.svelte.ts), the same in a VOD's player and
- * an edit's: Enter renames a chapter or highlight, as a double-click does;
- * , and . move it a frame (ten with Shift), the arrows, J and L as far as
- * they'd move the playhead, in whole frames, the playback stopping on its
- * frame, which the picture then shows; Delete takes it away (a press, not
- * its repeats); Escape lets go of it, or of the selection. True if `key` was
- * one of them, done.
- */
-export function markKey(
-  key: string,
-  e: KeyboardEvent,
-  at: { fps: number; length: number; pause: () => void; seekTo: (time: number) => void },
-): boolean {
-  if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
-    cuts.editing = cuts.selected;
-    return true;
-  }
-  if (key === "Escape" && cuts.selection) {
-    cuts.clearSelection();
-    return true;
-  }
-  const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
-  const frameKey = key === "," || key === "." || key === "<" || key === ">";
-  if (moving && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
-    const frames = frameKey
-      ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
-      : Math.round(stepOf(key, e.shiftKey)! * at.fps);
-    at.pause();
-    const time = cuts.nudgeSelected(frames, at.fps, at.length);
-    if (time !== null) at.seekTo(inFrame(time, at.fps, at.length));
-    return true;
-  }
-  if (cuts.selected !== null && (key === "Delete" || key === "Backspace" || key === "Escape")) {
-    if (key === "Escape") cuts.selected = null;
-    else if (!e.repeat) cuts.remove(cuts.selected);
-    return true;
-  }
-  return false;
-}

@@ -1,7 +1,7 @@
 // The keys both players share: node --test apps/desktop/src/lib/playerKeys.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { editShortcuts, stepOf, transportKey, vodShortcuts } from "./playerKeys.ts";
+import { editShortcuts, inOut, stepOf, transportKey, vodShortcuts } from "./playerKeys.ts";
 
 test("arrows step 5 s, 1 s with Shift; J and L 10 s whatever Shift", () => {
   assert.equal(stepOf("ArrowLeft", false), -5);
@@ -41,4 +41,32 @@ test("each legend lists a key once for each thing it does", () => {
     !vodShortcuts(false, false).some((s) => s.does === "a frame back or on"),
     "no frame steps on a site's player",
   );
+});
+
+test("I and O move the selection's ends, swapping past the other end", () => {
+  const picked = { start: 10, end: 20 };
+  assert.deepEqual(inOut("i", 12, picked, [], 100), { start: 12, end: 20 });
+  assert.deepEqual(inOut("o", 15, picked, [], 100), { start: 10, end: 15 });
+  // O before the in point: the selection runs from O to I; I after the out
+  // point likewise.
+  assert.deepEqual(inOut("o", 4, picked, [], 100), { start: 4, end: 10 });
+  assert.deepEqual(inOut("i", 30, picked, [], 100), { start: 20, end: 30 });
+  // Onto the other end it would be empty: nothing changes.
+  assert.equal(inOut("i", 20, picked, [], 100), null);
+  assert.equal(inOut("o", 10, picked, [], 100), null);
+});
+
+test("with no selection, I runs one on to the next cut, O back to the one before", () => {
+  const cuts = [30, 10, 50];
+  assert.deepEqual(inOut("i", 12, null, cuts, 100), { start: 12, end: 30 });
+  assert.deepEqual(inOut("o", 12, null, cuts, 100), { start: 10, end: 12 });
+  // On a cut, it's the stretch on from it, or back from it.
+  assert.deepEqual(inOut("i", 30, null, cuts, 100), { start: 30, end: 50 });
+  assert.deepEqual(inOut("o", 30, null, cuts, 100), { start: 10, end: 30 });
+  // No cuts: to the end, or from the start.
+  assert.deepEqual(inOut("i", 60, null, [], 100), { start: 60, end: 100 });
+  assert.deepEqual(inOut("o", 60, null, [], 100), { start: 0, end: 60 });
+  // At the end (I) or the start (O) there's nothing to select.
+  assert.equal(inOut("i", 100, null, [], 100), null);
+  assert.equal(inOut("o", 0, null, [], 100), null);
 });

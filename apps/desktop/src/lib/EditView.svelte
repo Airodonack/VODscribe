@@ -16,16 +16,16 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { editShortcuts, markKey, playerKey, transportKey } from "./playerKeys";
+  import { editShortcuts, inOut, playerKey, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
-  import { cuts } from "./cuts.svelte";
+  import { cuts, markKey } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { PEAKS_RATE, cueAt, playedSpans, stretchIn } from "./media";
+  import { PEAKS_RATE, cueAt, frameStart, playedSpans, stretchIn } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
@@ -420,6 +420,19 @@
     }
     if (e.ctrlKey || e.metaKey) return;
     const p = player;
+    // I and O put the selection's in and out points at the playhead (as on
+    // a VOD); with none, I or O begins one, up to a cut or a piece's end.
+    if ((key === "i" || key === "o") && !e.shiftKey) {
+      const stops = [...lane.flatMap((u) => [u.start, u.end]), ...cuts.list.map((m) => m.start)];
+      const picked = total ? inOut(key, frameStart(now, fps), edits.selection, stops, total) : null;
+      if (picked) {
+        edits.selection = picked;
+        // The arrows go on moving the playhead, not a mark.
+        cuts.selected = null;
+      }
+      e.preventDefault();
+      return;
+    }
     // M marks a highlight here, N starts a chapter, each with its title to
     // write; Enter renames the selected one (as on a VOD).
     // C makes a clip of the selection, or of the piece at the playhead, on
