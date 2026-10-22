@@ -814,6 +814,7 @@ fn start_drag(
         // Taken (above), then the page told, so a drag of its own coming back
         // in isn't taken for one to add. Off the main thread, for the
         // library's lock.
+        let page = crate::webview::page(&told);
         let (dropped, taken, told) = (asked.get() && !failed.get(), taken.clone(), told.clone());
         std::thread::spawn(move || {
             if dropped {
@@ -823,7 +824,7 @@ fn start_drag(
         });
         // The press that started the drag never comes back up in the page:
         // the drag took the release. Without one, its next press is lost.
-        if let Some(page) = find_webview(source.upcast_ref()) {
+        if let Ok(page) = page {
             release_button(&page);
         }
     });
@@ -895,16 +896,6 @@ fn drag_picture(png: &[u8]) -> Option<gtk::cairo::ImageSurface> {
         }
     }
     Some(surface)
-}
-
-/// The page's WebKitGTK view, inside the window.
-#[cfg(target_os = "linux")]
-fn find_webview(widget: &gtk::Widget) -> Option<gtk::Widget> {
-    use gtk::prelude::*;
-    if widget.type_().name() == "WebKitWebView" {
-        return Some(widget.clone());
-    }
-    widget.downcast_ref::<gtk::Container>()?.children().iter().find_map(find_webview)
 }
 
 /// Sends `page` the release of the first mouse button, where the pointer is.
