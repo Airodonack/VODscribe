@@ -130,13 +130,30 @@
     }
     return range;
   };
-  /** What an init segment says: its timescale, default sample duration, picture size. */
+  /** What an init segment says: its timescale, default sample duration, picture size,
+   *  and where its edit list starts the media (in the timescale's units). */
   const readInit = (v) => {
     const moov = find(v, 0, v.byteLength, ["moov"]);
     if (!moov) return null;
-    const init = { timescale: 1000, duration: 0, width: 0, height: 0 };
+    const init = { timescale: 1000, duration: 0, width: 0, height: 0, mediaStart: 0 };
     const mdhd = find(v, moov[0], moov[1], ["trak", "mdia", "mdhd"]);
     if (mdhd) init.timescale = u32(v, mdhd[0] + (v.getUint8(mdhd[0]) === 1 ? 20 : 12));
+    // An edit list shows the media from its first edit's media time: a
+    // writer's way to have B-frames' reordering delay shown from 0. (An
+    // empty edit, -1, delays the start instead: rare in fragmented MP4, and
+    // not counted.)
+    const elst = find(v, moov[0], moov[1], ["trak", "edts", "elst"]);
+    if (elst) {
+      const wide = v.getUint8(elst[0]) === 1;
+      const count = u32(v, elst[0] + 4);
+      for (let i = 0, o = elst[0] + 8; i < count && o + (wide ? 20 : 12) <= elst[1]; i++, o += wide ? 20 : 12) {
+        const time = wide ? Number(v.getBigInt64(o + 8)) : v.getInt32(o + 4);
+        if (time !== -1) {
+          init.mediaStart = time;
+          break;
+        }
+      }
+    }
     const trex = find(v, moov[0], moov[1], ["mvex", "trex"]);
     if (trex) init.duration = u32(v, trex[0] + 12);
     const tkhd = find(v, moov[0], moov[1], ["trak", "tkhd"]);
@@ -147,20 +164,26 @@
     }
     return init;
   };
-  /** The stretches (seconds) the media segments in `v` hold, by `init`. */
+  /** The stretches (seconds) the media segments in `v` hold, by `init`, in
+   *  presentation time, as a browser's `buffered` says them: each sample
+   *  shows at its decode time plus its composition offset (B-frames: Twitch's
+   *  H.264, decoded from 0, first shown 2 frames on), less the edit list's
+   *  start. Sound has no offsets: its stretch is its decode times'. */
   const mediaTimes = (v, init) => {
     const out = [];
     for (const [type, s, e] of boxes(v, 0, v.byteLength)) {
       if (type !== "moof") continue;
       for (const [t, ts, te] of boxes(v, s, e)) {
         if (t !== "traf") continue;
-        let base = 0;
+        let decode = 0;
         let defaultDuration = init.duration;
-        let total = 0;
+        let first = Infinity;
+        let lastShown = -Infinity;
+        let last = -Infinity;
         for (const [b, bs] of boxes(v, ts, te)) {
           const version = v.getUint8(bs);
           const flags = u32(v, bs) & 0xffffff;
-          if (b === "tfdt") base = version === 1 ? Number(v.getBigUint64(bs + 4)) : u32(v, bs + 4);
+          if (b === "tfdt") decode = version === 1 ? Number(v.getBigUint64(bs + 4)) : u32(v, bs + 4);
           if (b === "tfhd") {
             let o = bs + 8;
             if (flags & 0x1) o += 8;
@@ -172,14 +195,27 @@
             let o = bs + 8;
             if (flags & 0x1) o += 4;
             if (flags & 0x4) o += 4;
-            const each = [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length * 4;
             for (let i = 0; i < count; i++) {
-              total += flags & 0x100 ? u32(v, o) : defaultDuration;
-              o += each;
+              const duration = flags & 0x100 ? u32(v, o) : defaultDuration;
+              if (flags & 0x100) o += 4;
+              if (flags & 0x200) o += 4;
+              if (flags & 0x400) o += 4;
+              // Signed in version 1, so a writer can show the first frame at its decode time.
+              const offset = !(flags & 0x800) ? 0 : version === 1 ? v.getInt32(o) : u32(v, o);
+              if (flags & 0x800) o += 4;
+              const shown = decode + offset;
+              first = Math.min(first, shown);
+              // The stretch ends as the last frame shown stops showing.
+              if (shown >= lastShown) {
+                lastShown = shown;
+                last = shown + duration;
+              }
+              decode += duration;
             }
           }
         }
-        if (total > 0) out.push([base / init.timescale, (base + total) / init.timescale]);
+        if (last > first)
+          out.push([(first - init.mediaStart) / init.timescale, (last - init.mediaStart) / init.timescale]);
       }
     }
     return out;

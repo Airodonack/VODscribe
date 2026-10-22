@@ -1,7 +1,11 @@
 // A site's first segment as Twitch's player hands it over: H.264 with
 // B-frames and no edit list, so it's decoded from 0 but its first frame is
 // shown 2 frames on. Their player starts where the picture and sound both
-// begin as it reckons them, which can fall between the two.
+// begin as it reckons them from the embed shim's buffered ranges. Those
+// once said the picture's decode times (from 0), so it started at the
+// sound's 0.035, before the first shown frame; they now say when frames
+// show, as a browser's do. The case stays: a start between a run's first
+// decode time and its first shown frame must still play.
 
 use std::path::Path;
 use std::time::{Duration, Instant};

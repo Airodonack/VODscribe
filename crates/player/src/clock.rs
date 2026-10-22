@@ -326,7 +326,8 @@ impl Player {
         let mut snapped = ((time * fps + 1e-6).floor() / fps).min(self.inner.duration());
         // Not back out of the footage `time` is in, into a gap before it: a
         // site's footage can start off the frame grid (Twitch's, where its
-        // sound starts, 0.035 s), and in the gap the player waits for footage.
+        // first frame shows, 0.067 s in its millisecond times, just past the
+        // grid's 0.0667), and in the gap the player waits for footage.
         if let Some(start) = self.inner.timeline.lock().unwrap().at(time).filter(|s| s.source.is_some()).map(|s| s.at)
             && snapped < start
             && time >= start

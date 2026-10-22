@@ -275,6 +275,97 @@ test("an fMP4 append says the times it holds, and whether it ends whole", async 
   clearInterval(f.video.media.controls);
 });
 
+/** What the frame says an fMP4 `init` and `media` appended together hold. */
+async function heldBy(init, media) {
+  const f = frame();
+  const source = f.attach(f.video);
+  await settle();
+  source.addSourceBuffer('video/mp4; codecs="avc1"').appendBuffer(new Uint8Array([...init, ...media]));
+  await settle();
+  clearInterval(f.video.media.controls);
+  // Arrays of this realm, to compare (the frame's are another's), rounded off.
+  return Array.from(f.posted.find((m) => m.kind === "append").ranges, ([a, b]) => [+a.toFixed(6), +b.toFixed(6)]);
+}
+/** Four frames 33 long from `base`, decoded I P B B and shown I B B P, each with its composition offset. */
+const reordered = (base, offsets, version = 0) => [
+  ...box("moof", box("traf", box("tfdt", 0, base), box("trun", (version << 24) | 0x800, offsets.length, ...offsets))),
+  ...box("mdat", [1, 2, 3]),
+];
+
+test("an fMP4 append's times are when its frames show, not when they decode", async () => {
+  // As Twitch's H.264: decoded from 0, its first frame shown 2 frames on (no edit list).
+  // Shown at 0.066, 0.165, 0.099, 0.132: from 0.066 till the last, at 0.165, ends.
+  assert.deepEqual(await heldBy(INIT, reordered(0, [66, 132, 33, 33])), [[0.066, 0.198]]);
+  // Decode times alone would say it starts 2 frames early, which a browser's buffered never says.
+  assert.notDeepEqual(await heldBy(INIT, reordered(0, [66, 132, 33, 33])), [[0, 0.132]]);
+  // Later in the VOD, the same.
+  assert.deepEqual(await heldBy(INIT, reordered(5000, [66, 132, 33, 33])), [[5.066, 5.198]]);
+  // Version 1's offsets are signed: a writer shows the first frame at its decode time.
+  assert.deepEqual(await heldBy(INIT, reordered(5000, [0, 66, -33, -33], 1)), [[5, 5.132]]);
+});
+
+/**
+ * The test VOD's (2901646294) first 2 s of picture: Twitch's H.264 from its
+ * first HLS segment, put in fMP4 by ffmpeg (-c copy -use_editlist 0) as their
+ * player hands it over: its init and first moof, the frames themselves (mdat)
+ * left out, as the shim never reads them. ffprobe: first decoded at 0, first
+ * shown at 0.067; the last shown at 2.034, for 1/30 s.
+ */
+const TWITCH = Buffer.from(
+  "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",
+  "base64",
+);
+
+test("Twitch's own frames are said from when the first shows", async () => {
+  assert.deepEqual(await heldBy([...TWITCH], []), [[0.067, 2.067]]);
+});
+
+test("an fMP4 init's edit list moves its times by where it starts the media", async () => {
+  /** INIT with an edit list starting the media at `mediaTime` (in version 1's wide fields if `wide`). */
+  const edited = (mediaTime, wide = false) => [
+    ...box("ftyp", [...Buffer.from("isom")]),
+    ...box(
+      "moov",
+      box(
+        "trak",
+        box(
+          "edts",
+          wide
+            ? box("elst", 1 << 24, 1, 0, 4000, 0, mediaTime, 0x10000)
+            : box("elst", 0, 2, 0, -1, 0x10000, 4000, mediaTime, 0x10000),
+        ),
+        box("mdia", box("mdhd", 0, 0, 0, 1000, 0)),
+      ),
+      box("mvex", box("trex", 0, 1, 1, 33, 0, 0)),
+    ),
+  ];
+  // The reordering delay edited out, as most writers do: shown from 0. (An empty edit first is passed over.)
+  assert.deepEqual(await heldBy(edited(66), reordered(0, [66, 132, 33, 33])), [[0, 0.132]]);
+  // Its first second edited out: what decodes from 5 s shows from 4 s.
+  assert.deepEqual(await heldBy(edited(1000, true), segment(5000, 30)), [[4, 4.99]]);
+});
+
 test("a box with no size doesn't stop the frame", async () => {
   const f = frame();
   const source = f.attach(f.video);
