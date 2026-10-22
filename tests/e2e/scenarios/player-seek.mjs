@@ -1,5 +1,6 @@
 // A far seek while the app's own player plays: the time shown goes there
-// and stays, never back to where it was. The player tells the page its time
+// and stays, never back to where it was, and the button goes on saying
+// Pause (a seek doesn't pause; nativeDriver.ts). The player tells the page its time
 // with every frame (`player-time` events) and in each command's reply, apart,
 // and the page keeps the newest by `seq` (nativeDriver.ts); an event made
 // just before the seek that arrived after the page had gone to the seek's
@@ -14,8 +15,11 @@ import path from "node:path";
 import { MINUTE, until } from "../lib/app.mjs";
 import { minute } from "../lib/fixtures.mjs";
 
-/** Seeks traced: enough for an event in flight to meet one, if they can. */
-const ATTEMPTS = 20;
+/** Seeks traced: enough for an event in flight to meet one, if they can,
+ *  and for a frame to be drawn in the few milliseconds before a seek's
+ *  status comes (it was, in about one seek in twelve, before the button
+ *  kept saying Pause). */
+const ATTEMPTS = 40;
 /** Where on the timeline it plays from, and where it seeks to (fractions of its width). */
 const FROM = 0.1;
 const TO = 0.85;
@@ -147,12 +151,14 @@ export default {
         (flicked ? `; the button said Play ${flicked} time(s)` : "");
       ctx.log(line);
       if (there < 0) failures.push(`seek ${i + 1}: the bar never showed ${target.toFixed(2)} s`);
+      // Playing, and no pause asked: the button says so throughout.
+      if (flicked) failures.push(`${line}: the button said Play while it played`);
       if (stale.length || back.length)
         failures.push(
           `${line}: ${JSON.stringify({ stale, back: back.slice(0, 5), arrived: arrived.filter((a) => a.at >= start).slice(0, 12) })}`,
         );
     }
     ctx.log(`${ATTEMPTS} seeks: ${inFlight} event(s) arrived between a seek and its reply`);
-    if (failures.length) throw new Error(`after a seek, the time went back:\n${failures.join("\n")}`);
+    if (failures.length) throw new Error(`after a seek:\n${failures.join("\n")}`);
   },
 };

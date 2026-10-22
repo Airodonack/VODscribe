@@ -101,11 +101,14 @@ export class NativeDriver {
     );
   }
 
+  /** Goes to `seconds`, and plays if `play`; one that plays goes on playing
+   *  (the player doesn't pause for a seek: player.rs). */
   seek(seconds: number, play: boolean) {
+    const playing = play || this.isPlaying;
     // The picture shows what it did until the player has the new frame.
-    this.guess(seconds, play);
+    this.guess(seconds, playing);
     if (!this.open) {
-      this.wanted = { time: seconds, play };
+      this.wanted = { time: seconds, play: playing };
       return;
     }
     api.playerSeek(seconds, play).then(

@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.5.1 (unreleased)
 
 - After a click on the timeline, the time by the play button no longer flicks back to where the video was until the picture gets there: it shows the new time at once and stays on it.
+- Moving around a video while it plays (a click on the timeline, the arrow keys) no longer flashes the Play button for a moment: it goes on saying Pause.
 
 ## 0.5.0 — 2026-10-22
 
