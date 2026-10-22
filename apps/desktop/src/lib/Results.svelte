@@ -12,6 +12,7 @@
     scope,
     columns,
     onplay,
+    onreveal,
     onclearscope,
   }: {
     hits: SearchHit[];
@@ -23,6 +24,8 @@
     /** Audio and chat matches side by side, as beside the transcript. */
     columns: boolean;
     onplay: (vodId: number, time: number) => void;
+    /** A match double-clicked: shown where it is, in its VOD's transcript or chat. */
+    onreveal: (hit: SearchHit) => void;
     onclearscope: () => void;
   } = $props();
 
@@ -59,7 +62,15 @@
 </script>
 
 {#snippet match(hit: SearchHit)}
-  <button class="row" class:from-chat={hit.source === "chat"} onclick={() => onplay(hit.vod_id, hit.time)}>
+  <button
+    class="row"
+    class:from-chat={hit.source === "chat"}
+    onclick={() => onplay(hit.vod_id, hit.time)}
+    ondblclick={() => onreveal(hit)}
+    title="Play from {formatTime(hit.time)}; double-click to show it in the {hit.source === 'chat'
+      ? 'chat'
+      : 'transcript'}"
+  >
     <span class="time">{formatTime(hit.time)}</span>
     <span class="text">
       {#if hit.source === "chat"}{#if !columns}<span class="chat-icon" title="Written in chat"

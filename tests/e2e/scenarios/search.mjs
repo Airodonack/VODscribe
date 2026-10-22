@@ -1,6 +1,7 @@
-// Searching two VODs: results grouped by VOD; "This VOD" (in the From
-// filter) narrows to the open one; a phrase in neither says so, and offers
-// to search every VOD.
+// Searching two VODs: results grouped by VOD; a result double-clicked shows
+// its line in its VOD's transcript; "This VOD" (in the From filter) narrows
+// to the open one; a phrase in neither says so, and offers to search every
+// VOD.
 
 import path from "node:path";
 
@@ -44,6 +45,38 @@ export default {
     if (all.sections !== 2) throw new Error(`the results are in ${all.sections} groups, not one for each VOD`);
     ctx.log(`all VODs: ${all.summary}`);
     await ctx.checkpoint("search-grouped");
+
+    // A result double-clicked plays it (its clicks) and opens its VOD's
+    // transcript in the results' place, with its line in view. The fixtures'
+    // transcripts fit in the view, so here they're given room either side,
+    // for the line to be out of it unless scrolled to.
+    await app.js(
+      `const room = document.createElement("style");
+       room.id = "e2e-room";
+       room.textContent = "#transcript { padding-top: 3000px !important; padding-bottom: 3000px !important }";
+       document.head.append(room);`,
+    );
+    await app.doubleClick(".results button.row");
+    const shown = await until(
+      "the line in the transcript, in view",
+      () =>
+        app.js(`
+          if (document.querySelector(".results")) return false;
+          const body = document.querySelector(".body").getBoundingClientRect();
+          const line = [...document.querySelectorAll("#transcript .line > .row:not(.chapter-head)")]
+            .find((b) => /landed/i.test(b.textContent));
+          if (!line) return false;
+          const box = line.getBoundingClientRect();
+          return box.top >= body.top && box.bottom <= body.bottom && {
+            query: document.querySelector('input[aria-label="Search"]').value,
+            open: Number(document.querySelector(".list .vod.selected")?.dataset.key ?? 0),
+          };`),
+      MINUTE,
+    );
+    if (shown.query !== "") throw new Error(`the search box still says "${shown.query}"`);
+    if (!shown.open) throw new Error("the result's VOD isn't open");
+    await app.js(`document.getElementById("e2e-room").remove()`);
+    ctx.log("a double-clicked result shows its line in the transcript");
 
     // The audio file opened, then the search narrowed to it.
     await app.type(SEARCH, "");

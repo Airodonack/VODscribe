@@ -89,6 +89,18 @@ export class App {
     );
   }
 
+  /** Double-clicks `selector`, as the page gets one: two clicks, then the double-click. */
+  doubleClick(selector) {
+    return this.js(
+      `const el = document.querySelector(arguments[0]);
+       if (!el) throw new Error("no " + arguments[0]);
+       el.click();
+       el.click();
+       el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
+      selector,
+    );
+  }
+
   /** Clicks the button whose text is `text`. */
   clickText(text) {
     return this.js(

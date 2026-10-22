@@ -1,7 +1,16 @@
 <script lang="ts">
   import { flushSync, untrack } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
-  import { api, events, type ChatOverview, type ChatWindow, type Line, type Mark, type Vod } from "./api";
+  import {
+    api,
+    events,
+    type ChatOverview,
+    type ChatWindow,
+    type Line,
+    type Mark,
+    type SearchHit,
+    type Vod,
+  } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
   import TranscriptHead from "./TranscriptHead.svelte";
@@ -23,12 +32,18 @@
     vod = null,
     edit = null,
     vods = new Map(),
+    reveal = null,
+    onrevealed,
     onplay,
   }: {
     vod?: Vod | null;
     edit?: number | null;
     /** The library's VODs, for an edit's: whose chat it has. */
     vods?: Map<number, Vod>;
+    /** A search match to scroll to and light for a moment (a double-click on it, App.svelte). */
+    reveal?: SearchHit | null;
+    /** `reveal` taken in hand: it isn't shown again. */
+    onrevealed?: () => void;
     onplay: (time: number) => void;
   } = $props();
 
@@ -662,7 +677,8 @@
   // arrives, so for a moment after a seek, each of those re-centers it
   // (`remeasure`, `loadWindows`), until the reader scrolls by themselves.
   const SETTLE_MS = 2000;
-  let aim: { time: number; until: number } | null = null;
+  // A search match aimed at is found by itself (`found`), and lit once found.
+  let aim: { time: number; until: number; hit?: SearchHit; lit?: boolean } | null = null;
   const aimed = () => aim !== null && performance.now() < aim.until;
 
   /** Scrolls the moment aimed at to the middle of the view: the chat message
@@ -672,10 +688,17 @@
   function place() {
     if (!aim || !scroller) return;
     const middle = headHeight + (railHeight - headHeight) / 2;
-    const message = nearestMessage(aim.time);
-    if (message) {
-      const top = message.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    const hit = aim.hit;
+    const target = hit ? found(hit) : nearestMessage(aim.time);
+    if (target) {
+      const box = target.getBoundingClientRect();
+      // A match's middle goes to the view's; a message's top, as the minimap places it.
+      const top = box.top - scroller.getBoundingClientRect().top + (hit ? box.height / 2 : 0);
       scroller.scrollTop += top - middle;
+      if (hit && !aim.lit) {
+        aim.lit = true;
+        light(target);
+      }
     } else {
       scroller.scrollTop = listTop + yAtTime(aim.time) - middle;
     }
@@ -699,6 +722,38 @@
     if (!best) return null;
     return root.querySelector<HTMLElement>(`.line[data-index="${best.index}"] [data-time="${best.time}"]`);
   }
+
+  /** Search match `hit`, if it's laid out: its chat message (or, with chat
+   *  hidden or the message not among those shown, the one nearest its time),
+   *  or its line of the transcript. */
+  function found(hit: SearchHit): HTMLElement | null {
+    if (hit.source === "chat" && showChat) {
+      return root.querySelector<HTMLElement>(`.chat [data-id="${hit.id}"]`) ?? nearestMessage(hit.time);
+    }
+    const index = rowAtTime(hit.time);
+    if (!rows[index]?.line) return null;
+    return root.querySelector<HTMLElement>(`.line[data-index="${index}"] > .row:not(.chapter-head)`);
+  }
+
+  /** Lights `el` for a moment, so the eye finds it (`.lit`). */
+  function light(el: HTMLElement) {
+    el.classList.remove("lit");
+    void el.offsetWidth;
+    el.classList.add("lit");
+    el.addEventListener("animationend", () => el.classList.remove("lit"), { once: true });
+  }
+
+  // A search match double-clicked (App.svelte): to the middle of the view
+  // once the rows are in, kept there as they're measured, as a seek is.
+  $effect(() => {
+    const hit = reveal;
+    if (!hit || rows.length === 0 || !scroller) return;
+    untrack(() => {
+      onrevealed?.();
+      aim = { time: hit.time, until: performance.now() + SETTLE_MS, hit };
+      place();
+    });
+  });
 
   function seek(time: number) {
     aim = { time, until: performance.now() + SETTLE_MS };
@@ -899,6 +954,17 @@
     font-weight: 400;
     font-style: italic;
     color: var(--muted);
+  }
+
+  /* A search match brought into view (`light`): the accent, fading. */
+  .transcript :global(.lit) {
+    animation: -global-transcript-lit 1.6s ease-out;
+  }
+
+  @keyframes -global-transcript-lit {
+    from {
+      background: color-mix(in srgb, var(--accent) 24%, transparent);
+    }
   }
 
   .line.picked > :global(.row:not(.chapter-head)) {
