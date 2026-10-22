@@ -20,6 +20,9 @@
 //   --scheme dark        the dark colour scheme (GTK's theme, GNOME's setting)
 //   --gpu nvidia         the host's NVIDIA GPU in the container (podman's
 //                        CDI device), drawing with NVIDIA's own libraries
+//   --gpu dri            the host's /dev/dri in the container, drawing with
+//                        the distribution's Mesa (Intel and AMD GPUs; on a
+//                        GPU Mesa has no driver for, its software fallback)
 //
 // Portals, real desktops and window managers' own ways aren't here: that's
 // the QA VMs'.
@@ -48,6 +51,23 @@ const ENV_PACKAGES = {
   x11: { apt: [], dnf: [], pacman: [] },
   weston: { apt: ["weston"], dnf: ["weston"], pacman: ["weston"] },
   gnome: { apt: ["gnome-shell", "libglib2.0-bin"], dnf: ["gnome-shell"], pacman: ["gnome-shell"] },
+};
+
+/** What each GPU needs installed, by package manager: NVIDIA's libraries come with its CDI device. */
+const GPU_PACKAGES = {
+  nvidia: { apt: [], dnf: [], pacman: [] },
+  dri: {
+    apt: ["libgl1-mesa-dri", "libegl-mesa0", "libgbm1"],
+    dnf: ["mesa-dri-drivers", "mesa-libEGL", "mesa-libgbm"],
+    pacman: ["mesa"],
+  },
+};
+/** How each GPU gets into the container (podman's options). */
+const GPU_DEVICES = {
+  nvidia: ["--device", "nvidia.com/gpu=all"],
+  // The render nodes belong to the video and render groups: rootless podman
+  // drops the user's groups unless asked to keep them (crun only).
+  dri: ["--device", "/dev/dri", "--group-add", "keep-groups"],
 };
 
 const APT = (image) => ({
@@ -112,7 +132,7 @@ const { values: opts, positionals } = parseArgs({
 const [packages, ...rest] = positionals;
 if (!packages) {
   console.error(
-    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia] [-- run.mjs options]",
+    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia|dri] [-- run.mjs options]",
   );
   process.exit(2);
 }
@@ -132,7 +152,8 @@ const names = opts.only?.split(",") ?? Object.keys(DISTROS);
 if (!Object.hasOwn(ENV_PACKAGES, opts.env))
   throw new Error(`no environment ${opts.env} (there are: ${Object.keys(ENV_PACKAGES).join(", ")})`);
 if (!["light", "dark"].includes(opts.scheme)) throw new Error(`no scheme ${opts.scheme} (light, dark)`);
-if (opts.gpu && opts.gpu !== "nvidia") throw new Error(`no GPU ${opts.gpu} (nvidia)`);
+if (opts.gpu && !Object.hasOwn(GPU_PACKAGES, opts.gpu))
+  throw new Error(`no GPU ${opts.gpu} (there are: ${Object.keys(GPU_PACKAGES).join(", ")})`);
 /** The cell's name: the distribution, then what differs from the default. */
 const cell = (name) =>
   [name, opts.env !== "x11" && opts.env, opts.scheme !== "light" && opts.scheme, opts.gpu].filter(Boolean).join("-");
@@ -145,6 +166,7 @@ function inEnvironment(run) {
     // GTK's (WebKit's prefers-color-scheme follows it), and GNOME's own.
     ...(dark ? ["export GTK_THEME=Adwaita:dark"] : []),
   ];
+  // NVIDIA's libraries chosen over Mesa's; with dri, Mesa's are the only ones there.
   const gpu =
     opts.gpu === "nvidia"
       ? [
@@ -209,7 +231,7 @@ for (const name of names) {
   const args = rest.map(quote).join(" ");
   const script = [
     "set -e",
-    `EXTRA="${ENV_PACKAGES[opts.env][distro.pm].join(" ")}"`,
+    `EXTRA="${[...ENV_PACKAGES[opts.env][distro.pm], ...(opts.gpu ? GPU_PACKAGES[opts.gpu][distro.pm] : [])].join(" ")}"`,
     distro.install,
     "export XDG_DATA_HOME=/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
     // Passed on: scenarios that need the network, screenshots kept.
@@ -230,7 +252,7 @@ for (const name of names) {
       "run",
       "--rm",
       ...(distro.podman ?? []),
-      ...(opts.gpu === "nvidia" ? ["--device", "nvidia.com/gpu=all"] : []),
+      ...(opts.gpu ? GPU_DEVICES[opts.gpu] : []),
       "-v",
       `${repo}:/repo:ro`,
       "-v",
