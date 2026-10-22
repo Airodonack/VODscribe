@@ -456,7 +456,9 @@ pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id:
     };
     // Forgotten first, so nothing starts on it; deleted with the library let
     // go (a big video can take a moment). Unless a "Keep video" queued it
-    // again meanwhile: those files are that download's.
+    // again meanwhile: those files are that download's. Only with a video
+    // kept (`had`): Delete video is offered only then, and a paused
+    // download's parts are Delete all's to clear.
     if had && !state.videos.wanted(id) {
         pipeline::remove_media(&state.paths.work(), id);
     }
