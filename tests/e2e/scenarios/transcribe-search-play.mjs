@@ -1,12 +1,16 @@
 // Adding a file, transcribing it, searching, and playing from the result in
-// the app's own player: a waveform read from the file, the transcript as captions.
+// the app's own player: a waveform read from the file, the transcript as
+// captions. Then a transcript long enough to scroll, followed as it plays.
+
+import path from "node:path";
 
 import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 import { MINUTE, until } from "../lib/app.mjs";
+import { longSpeech } from "../lib/fixtures.mjs";
 
 export default {
   name: "transcribe-search-play",
-  async run(app, { fixtures, checkpoint }) {
+  async run(app, { fixtures, out, checkpoint }) {
     await app.toLibrary();
     const done = await app.addAndTranscribe(fixtures.landed);
     const text = (await app.invoke("transcript", { vodId: done.id })).map((l) => l.text).join(" ");
@@ -79,5 +83,89 @@ export default {
     }
     app.log(`waveform and captions: "${caption}"`);
     await checkpoint("player-caption");
+
+    // Following along: the file's transcript is a line or two, so ten minutes
+    // of the landing, over and over, gives one to scroll.
+    await app.type('input[placeholder="Search for a phrase…"]', "");
+    await app.pickFiles([longSpeech(path.join(out, "fixtures"))]);
+    await app.clickText("add video files…");
+    const long = await until(
+      "the ten minutes transcribed",
+      async () => {
+        const v = (await app.invoke("list_vods")).find((v) => v.id !== done.id);
+        if (v?.status === "error") throw new Error(`transcription failed: ${v.error}`);
+        return v?.status === "done" && v;
+      },
+      10 * MINUTE,
+    );
+    await app.openVod(long.id);
+    await until(
+      "the long transcript",
+      () => app.js(`return document.querySelectorAll("#transcript .line button.row").length > 10`),
+      MINUTE,
+    );
+    // Where the line playing is, next to the view below the transcript's header, and the follow button.
+    const following = () =>
+      app.js(`
+        const body = document.querySelector(".body");
+        const head = body.querySelector(".layout > .head");
+        const view = body.getBoundingClientRect();
+        const top = view.top + (head?.offsetHeight ?? 0);
+        const line = document.querySelector("#transcript .line.now");
+        const box = line?.getBoundingClientRect();
+        return {
+          at: line?.querySelector(".row .time")?.textContent ?? null,
+          inView: !!box && box.bottom > top + 4 && box.top < view.bottom - 4,
+          button: document.querySelector("#transcript button.follow")?.textContent.trim() ?? null,
+        };`);
+    // Playing from the first line, then a click halfway along the timeline:
+    // the transcript follows the jump.
+    await app.click("#transcript .line button.row");
+    await until(
+      "it to play",
+      () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
+      MINUTE,
+    );
+    await app.js(
+      `const box = document.querySelector(".scrubber canvas").getBoundingClientRect();
+       const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0, bubbles: true, pointerId: 1 };
+       const el = document.elementFromPoint(at.clientX, at.clientY);
+       el.dispatchEvent(new PointerEvent("pointerdown", at));
+       el.dispatchEvent(new PointerEvent("pointerup", at));`,
+    );
+    const halfway = await until(
+      "the line playing halfway in view",
+      async () => {
+        const f = await following();
+        const [m] = (f.at ?? "0:00").split(":").map(Number);
+        return f.inView && m >= 4 && !f.button && f;
+      },
+      15_000,
+    );
+    app.log(`following: the line at ${halfway.at} is in view`);
+    // Scrolled away (by script: no wheel or keys), it follows no more, and says so.
+    await app.js(`document.querySelector(".body").scrollTop = 0`);
+    const away = await until(
+      "the follow button",
+      async () => {
+        const f = await following();
+        return f.button && f;
+      },
+      10_000,
+    );
+    if (away.inView) throw new Error("scrolled to the top, the line playing is still in view");
+    if (away.button !== "Follow along") throw new Error(`the follow button says "${away.button}"`);
+    await checkpoint("transcript-not-following");
+    await app.click("#transcript button.follow");
+    const back = await until(
+      "following again",
+      async () => {
+        const f = await following();
+        return f.inView && !f.button && f;
+      },
+      10_000,
+    );
+    app.log(`scrolled away, then Follow along: the line at ${back.at} is in view again`);
+    await checkpoint("transcript-following");
   },
 };

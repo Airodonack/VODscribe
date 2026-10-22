@@ -23,11 +23,13 @@
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
+  import Icon from "./Icon.svelte";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
   // plays from it; dragging across lines selects them: a VOD's to cut
-  // around (Split), an edit's to take out (Delete).
+  // around (Split), an edit's to take out (Delete). As it plays, the line
+  // playing is kept in view, until the reader scrolls away.
   let {
     vod = null,
     edit = null,
@@ -159,11 +161,14 @@
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
   let rows = $derived(buildRows(lines, duration, showChat));
 
+  // Whether the marks open (cuts.svelte.ts) are this VOD's or edit's: then
+  // so is the playhead there.
+  const mine = $derived(vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit);
+
   // Each chapter's title (cuts.svelte.ts) as a heading over the line that
   // starts nearest its start.
   const heads = $derived.by(() => {
     const out = new Map<Line, Mark[]>();
-    const mine = vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit;
     if (!mine || !lines.length) return out;
     for (const chapter of cuts.chapters) {
       const line = lines[nearestLine(lines, chapter.start)];
@@ -457,7 +462,13 @@
     return () => void unlisten.then((u) => u());
   });
 
-  const play = (time: number) => onplay(time);
+  // Playing from a line (or a chapter, a chat message, lines selected, a
+  // search match shown here) is choosing to follow: the transcript follows
+  // the playhead from there.
+  function play(time: number) {
+    followFrom(time);
+    onplay(time);
+  }
 
   // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
   // Split then cuts either side); a click without a drag still plays the line.
@@ -750,6 +761,8 @@
     if (!hit || rows.length === 0 || !scroller) return;
     untrack(() => {
       onrevealed?.();
+      // It plays from there (App.svelte), as a click on its line does.
+      followFrom(hit.time);
       aim = { time: hit.time, until: performance.now() + SETTLE_MS, hit };
       place();
     });
@@ -760,15 +773,133 @@
     place();
   }
 
-  // Scrolling by wheel, touch or keys is the reader's own: no more re-centering.
+  // Scrolling by wheel, touch, keys or the scrollbar is the reader's own: no
+  // more re-centering, and no more following (until they ask for it again).
+  const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"]);
   $effect(() => {
     const s = scroller;
     if (!s) return;
-    const stop = () => (aim = null);
-    const kinds = ["wheel", "touchstart", "keydown"] as const;
+    const stop = (e: Event) => {
+      if (e instanceof KeyboardEvent && !SCROLL_KEYS.has(e.key)) return void (aim = null);
+      // A press on the scroller itself, not on what's in it, is on its scrollbar.
+      if (e.type === "pointerdown" && e.target !== s) return;
+      aim = null;
+      if (s.scrollHeight > s.clientHeight) following = false;
+    };
+    const kinds = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
     for (const kind of kinds) s.addEventListener(kind, stop, { passive: true });
     return () => kinds.forEach((kind) => s.removeEventListener(kind, stop));
   });
+
+  // Following the playhead. While it plays, the line playing stays in view:
+  // the view stays still while it moves down the page, and once it nears the
+  // bottom (or is out of view, after a jump), the view moves so that it's a
+  // third of the way down, with what's coming below it. Moving once a
+  // screenful rather than with every line keeps the text still to read.
+  // Scrolling away stops it (above, or by any other way the line playing
+  // leaves the view, as the minimap does); playing from the transcript, or
+  // the button that then shows, starts it again.
+  let following = $state(true);
+  /** Just after playing from the transcript, the moment played from, until
+   *  the player says it's there: the line followed meanwhile, not the one before. */
+  const HOLD_MS = 3000;
+  let playedFrom = $state<number | null>(null);
+  let playedTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(playedTimer));
+  function followFrom(time: number) {
+    following = true;
+    playedFrom = time;
+    clearTimeout(playedTimer);
+    playedTimer = setTimeout(() => (playedFrom = null), HOLD_MS);
+  }
+  let now = $derived.by(() => {
+    if (!mine) return null;
+    return playedFrom !== null && Math.abs(cuts.now - playedFrom) > 2 ? playedFrom : cuts.now;
+  });
+  $effect(() => {
+    if (playedFrom !== null && mine && Math.abs(cuts.now - playedFrom) <= 2) playedFrom = null;
+  });
+  /** The row playing, or -1. */
+  let nowRow = $derived(now === null || rows.length === 0 ? -1 : rowAtTime(now));
+  /** How tall the view is below the header. */
+  const viewHeight = () => Math.max(0, railHeight - headHeight);
+  /** Where the line playing is, next to the view: "above", "below" or in "view". */
+  let nowPlace = $derived.by(() => {
+    if (nowRow < 0) return null;
+    const top = scrollTop + headHeight - listTop;
+    if (offsets[nowRow + 1] <= top) return "above";
+    if (offsets[nowRow] >= top + viewHeight()) return "below";
+    return "view";
+  });
+
+  /** The view gliding there itself, from `from` to `to`, until `until` at the latest. A
+   *  scroll anywhere else meanwhile (back up, say) isn't its own. */
+  let ownScroll: { from: number; to: number; until: number } | null = null;
+  const ownScrolling = () => {
+    if (!ownScroll || !scroller || performance.now() >= ownScroll.until) return false;
+    const { from, to } = ownScroll;
+    const at = scroller.scrollTop;
+    return at >= Math.min(from, to) - 1 && at <= Math.max(from, to) + 1 && Math.abs(at - to) > 1;
+  };
+
+  /** Brings row `i` into view a third of the way down, unless it's well in view already. */
+  function bring(i: number) {
+    if (!scroller || i < 0 || i >= rows.length) return;
+    const height = viewHeight();
+    if (height <= 0) return;
+    const top = viewY();
+    const [a, b] = [offsets[i], offsets[i + 1]];
+    // In view and clear of the bottom, or (a tall row) starting high enough.
+    if (a >= top && (b <= top + height * 0.9 || a <= top + height / 3)) return;
+    const target = Math.max(0, listTop + a - headHeight - height / 3);
+    const far = Math.abs(target - scroller.scrollTop) > height;
+    // Nearby, it glides there, so the eye can keep its place; far (a jump), it's there at once.
+    ownScroll = far ? null : { from: scroller.scrollTop, to: target, until: performance.now() + 1000 };
+    scroller.scrollTo({ top: target, behavior: far ? "auto" : "smooth" });
+  }
+
+  $effect(() => {
+    const i = nowRow;
+    if (!following || !cuts.playing || !mine || i < 0) return;
+    // Again as rows are measured or the view resizes: where the row is changes.
+    void offsets;
+    void railHeight;
+    void headHeight;
+    void listTop;
+    // A seek or a search match being centred (`place`) goes first.
+    untrack(() => !aimed() && bring(i));
+  });
+
+  // The line playing scrolled out of view by anything but following (the
+  // minimap, a script, a way of scrolling not caught above): no more following.
+  // A jump of the playhead isn't a scroll: following catches up with it.
+  let seen = { row: -1, top: 0, place: null as string | null };
+  $effect(() => {
+    const row = nowRow;
+    const place = nowPlace;
+    const top = scrollTop;
+    untrack(() => {
+      const was = seen;
+      seen = { row, top, place };
+      if (
+        following &&
+        row === was.row &&
+        top !== was.top &&
+        was.place === "view" &&
+        place !== "view" &&
+        !ownScrolling() &&
+        // A search match being centred (`reveal`) is the view's own too.
+        !(aimed() && aim?.hit)
+      )
+        following = false;
+    });
+  });
+
+  /** The follow button: back to the line playing, and following again. */
+  function followAgain() {
+    following = true;
+    bring(nowRow);
+  }
 </script>
 
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
@@ -820,6 +951,7 @@
           use:measure
           class:empty={!row.line && !win?.total}
           class:picked={row.line && picked(range[0] + k, row)}
+          class:now={row.line && range[0] + k === nowRow}
         >
           {#if row.line}
             {@const line = row.line}
@@ -857,6 +989,18 @@
         </div>
       {/each}
       <div style:height="{offsets[rows.length] - offsets[range[1]]}px"></div>
+      {#if !following && nowRow >= 0}
+        <!-- At the bottom of the view, over the lines: back to the line playing. -->
+        <div class="follow-anchor">
+          <button class="follow" onclick={followAgain} title="Scroll to the line playing and keep it in view">
+            {#if nowPlace === "above"}<Icon name="chevron-up" size={14} />{:else if nowPlace === "below"}<Icon
+                name="chevron-down"
+                size={14}
+              />{/if}
+            Follow along
+          </button>
+        </div>
+      {/if}
     </div>
     {#if showMap}
       <div class="rail" style:top="{headHeight}px" style:height="{Math.max(0, railHeight - headHeight)}px">
@@ -965,6 +1109,32 @@
     from {
       background: color-mix(in srgb, var(--accent) 24%, transparent);
     }
+  }
+
+  /* The line playing. */
+  .line.now > :global(.row:not(.chapter-head)) {
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  /* Sticks to the bottom of the view; takes no room in the list. */
+  .follow-anchor {
+    position: sticky;
+    bottom: 0;
+    height: 0;
+  }
+
+  .follow {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    gap: 4px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    color: var(--accent);
+    box-shadow: var(--shadow);
   }
 
   .line.picked > :global(.row:not(.chapter-head)) {

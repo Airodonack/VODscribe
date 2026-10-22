@@ -172,6 +172,12 @@
   const playing = $derived(reading.playing);
   const fps = $derived(reading.fps);
   poll = requestAnimationFrame(read);
+  // The transcript follows the playhead (cuts.svelte.ts), while its marks are this VOD's.
+  $effect(() => {
+    if (!cuts.isOf({ kind: "vod", id: vod.id })) return;
+    cuts.now = reading.actual;
+    cuts.playing = reading.playing;
+  });
   // The VOD's length as the site said, or as the player found when the site didn't say.
   const duration = $derived(vod.duration || playerDuration);
 

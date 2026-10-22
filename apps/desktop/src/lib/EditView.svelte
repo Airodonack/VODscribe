@@ -224,6 +224,13 @@
     if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: reading.now });
   });
 
+  // The transcript follows the playhead (cuts.svelte.ts), while its marks are this edit's.
+  $effect(() => {
+    if (!edit || !cuts.isOf({ kind: "edit", id: edit.id })) return;
+    cuts.now = reading.actual;
+    cuts.playing = reading.playing;
+  });
+
   const seekTo = (time: number) => {
     reading.at(time);
     // Still waiting to seek to where it was left (no plan yet to seek in):

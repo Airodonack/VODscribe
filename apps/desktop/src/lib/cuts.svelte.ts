@@ -7,7 +7,8 @@
 // a moment. A selected mark moves by frames with , and . or by seconds with
 // the arrows, J and L (`markKey` below), or by dragging it on the
 // timeline (Scrubber.svelte). Saved per VOD or clip (crates/core db.rs
-// `marks`); changes show at once and are saved after.
+// `marks`); changes show at once and are saved after. It also carries where
+// the open VOD's or edit's player is, for its transcript to follow.
 
 import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
@@ -35,6 +36,10 @@ class Cuts {
   selectedEdge = $state<"start" | "end" | null>(null);
   /** The open VOD's or edit's frame rate, as its player says, for marks placed elsewhere. */
   fps = DEFAULT_FPS;
+  /** Where its player is (the time it shows) and whether it plays, as its
+   *  player says: the transcript follows it (Transcript.svelte). */
+  now = $state(0);
+  playing = $state(false);
   error = $state<string | null>(null);
   #seq = 0;
 
@@ -47,12 +52,19 @@ class Cuts {
     if (this.doc && docKey(this.doc) === docKey(doc)) return;
     this.doc = doc;
     this.all = [];
+    this.now = 0;
+    this.playing = false;
     this.selected = null;
     this.editing = null;
     this.fresh = null;
     this.selection = null;
     this.selectedEdge = null;
     this.#reload();
+  }
+
+  /** Whether these are `doc`'s marks (it's the VOD or edit open). */
+  isOf(doc: Doc | null | undefined): boolean {
+    return !!doc && !!this.doc && docKey(this.doc) === docKey(doc);
   }
 
   /** Loads `doc`'s marks again (undo or redo changed them, or an edit's
