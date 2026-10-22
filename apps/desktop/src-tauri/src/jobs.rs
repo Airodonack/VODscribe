@@ -16,11 +16,13 @@ struct Queue<J> {
 
 pub(crate) struct Jobs<J> {
     shared: Arc<(Mutex<Queue<J>>, Condvar)>,
+    started: AtomicBool,
 }
 
 impl<J: Clone + Send + 'static> Jobs<J> {
     pub(crate) fn new() -> Self {
-        Jobs { shared: Arc::new((Mutex::new(Queue { waiting: VecDeque::new(), running: None }), Condvar::new())) }
+        let queue = Queue { waiting: VecDeque::new(), running: None };
+        Jobs { shared: Arc::new((Mutex::new(queue), Condvar::new())), started: AtomicBool::new(false) }
     }
 
     /// Adds `job` last.
@@ -95,6 +97,12 @@ impl<J: Clone + Send + 'static> Jobs<J> {
 
     /// Starts the thread (`name`) doing each job with `work`, given its stop.
     pub(crate) fn run(&self, name: &str, work: impl Fn(J, &AtomicBool) + Send + 'static) -> Result<()> {
+        // A second thread would run two jobs at once, and `running` holds one.
+        let again = self.started.swap(true, Ordering::Relaxed);
+        debug_assert!(!again, "the {name} queue's thread was started twice");
+        if again {
+            return Ok(());
+        }
         let shared = self.shared.clone();
         std::thread::Builder::new().name(name.into()).spawn(move || {
             let (queue, wake) = &*shared;
