@@ -2,8 +2,8 @@
 //! and a queue that downloads, one at a time, the sections of VODs from sites
 //! that edits need, into the app's data (`footage/`), telling the page how far each is (`footage-progress`)
 //! and when it's in (`footage`). What's in of the one downloading plays
-//! already (`footage::Growing`). Sections not used for a while, or past a
-//! cap, go when the app starts.
+//! already (`footage::Growing`). Sections no edit uses go about an hour after
+//! their last use (`tidy`).
 
 use std::collections::VecDeque;
 use std::path::PathBuf;

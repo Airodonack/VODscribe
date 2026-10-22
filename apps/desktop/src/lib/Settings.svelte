@@ -328,8 +328,8 @@
     <p class="label">Fetched video</p>
     <p class="muted hint">
       Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits use
-      is kept, as the site may not have it any more{footageBytes ? ` (${formatBytes(footageBytes)})` : ""}; the rest
-      goes within an hour of its last use, and is fetched again if needed.
+      is kept, as the site may not have it any more; the rest goes about an hour after its last use, and is fetched
+      again if needed.{footageBytes ? ` Fetched video takes ${formatBytes(footageBytes)} now.` : ""}
     </p>
     <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
       {clearingFootage ? "Deleting…" : "Delete fetched video"}

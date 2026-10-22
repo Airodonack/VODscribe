@@ -1,7 +1,8 @@
 // Whether the app's own player draws here (asked once, at start): files
-// play in it (NativePlayer.svelte), and a site's VOD has its picture drawn
-// by it under the site's player (embed.ts); where it can't, files play in
-// the web view and a site's VOD in the site's player alone.
+// play in it (NativePlayer.svelte), and, in a build with the embed-takeover
+// feature, a site's VOD has its picture drawn by it under the site's player
+// (embed.ts); where it can't, files play in the web view. A site's VOD
+// otherwise plays in the site's player alone.
 
 import { api } from "./api";
 

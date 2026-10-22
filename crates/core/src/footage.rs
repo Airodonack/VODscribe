@@ -219,8 +219,9 @@ pub fn remove(dir: &Path, vod_id: i64) {
 }
 
 /// Removes files in `dir` not used for `max_age`, then the least recently
-/// used until they take at most `max_bytes`; never those `kept` says to keep
-/// (footage an edit uses: its site may not have the VOD any more).
+/// used until they take at most `max_bytes` (the app passes no limit, or 0
+/// to remove all at once); never those `kept` says to keep (footage an edit
+/// uses: its site may not have the VOD any more).
 pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64, kept: impl Fn(&Path) -> bool) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     let mut files: Vec<(PathBuf, SystemTime, u64)> = entries

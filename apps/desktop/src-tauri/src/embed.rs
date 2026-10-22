@@ -92,10 +92,6 @@ pub(crate) fn clear(local: &Path) {
     let _ = std::fs::remove_dir_all(local.join("embed"));
 }
 
-/// Starts keeping what VOD `vod_id`'s embed appends, and opens the player
-/// on it, waiting for it, at `at`: the session's token, which the page
-/// sends with each append and the close. Fails if it's closed (or another
-/// opened) before the player is.
 /// Whether a site's VOD's picture can be taken into the app's player (built
 /// with the embed-takeover feature); the page leaves their players alone if not.
 #[tauri::command]
@@ -105,6 +101,10 @@ pub(crate) fn embed_takeover() -> bool {
 
 const NO_TAKEOVER: &str = "a site's player isn't taken over in this build";
 
+/// Starts keeping what VOD `vod_id`'s embed appends, and opens the player
+/// on it, waiting for it, at `at`: the session's token, which the page
+/// sends with each append and the close. Fails if it's closed (or another
+/// opened) before the player is.
 #[tauri::command]
 pub(crate) async fn embed_open(app: AppHandle, vod_id: i64, at: f64) -> CmdResult<u64> {
     if !embed_takeover() {

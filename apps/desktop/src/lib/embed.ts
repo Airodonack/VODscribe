@@ -4,10 +4,12 @@
 // window (where it could reach the app's commands). They still give a real
 // seek(), so jumping between timestamps doesn't reload the player.
 //
-// Where the app's own player can draw, a YouTube or Twitch VOD's picture is
-// the app's, under their player (bridge): their player stays on top, with its
-// controls, ads and all, and what it fetches the app's player plays,
-// frame-exact (embed_shim.js in their frame, embed.rs).
+// In a build with the embed-takeover feature (off in releases: the sites'
+// terms forbid it), where the app's own player can draw, a YouTube or Twitch
+// VOD's picture is the app's, under their player (bridge): their player stays
+// on top, with its controls, ads and all, and what it fetches the app's
+// player plays, frame-exact (embed_shim.js in their frame, embed.rs).
+// Otherwise their player plays it alone, as served.
 
 import { ownPlayer } from "./ownPlayer.svelte";
 import { cueAt, elementSound, unplayable } from "./media";

@@ -30,6 +30,10 @@ export default {
       },
       5 * MINUTE,
     );
+    // Anything the app's frame script (embed_shim.js) says, from any frame:
+    // injected, it says so even in a frame left plain ({ kind: "plain" }).
+    await app.js(`window.__fromFrames = [];
+      window.addEventListener("message", (e) => e.data?.vodscribeShim && window.__fromFrames.push(e.data.vodscribeShim.kind));`);
     await app.openVod(vod.id);
     await until(
       "the Play button",
@@ -59,10 +63,10 @@ export default {
       2 * MINUTE,
     );
     ctx.log(`playing: the time at ${started} s`);
-    // Their frame as it is: nothing of the app's ran in it (it reports when it
-    // does), and the app's own player never opened.
-    const reports = await app.js(`return (window.__vodscribeEmbed?.reports ?? []).length`);
-    if (reports) throw new Error(`the app's script ran in their frame: ${reports} reports`);
+    // Their frame as it is: nothing of the app's ran in it (its script says
+    // so wherever it runs), and the app's own player never opened.
+    const said = await app.js(`return window.__fromFrames`);
+    if (said.length) throw new Error(`the app's script ran in their frame: it said ${said.join(", ")}`);
     if (await ours()) throw new Error("the app's own player opened for a site's VOD");
     if ((await app.js(`return document.querySelector("iframe")?.name ?? ""`)) !== "vodscribe-plain")
       throw new Error("their frame isn't the plain one");
