@@ -47,6 +47,17 @@ export default {
       MINUTE,
     );
     if (native !== "native") ctx.skip("it plays in the web view here, not the app's own player");
+    // The time as a clock (whole seconds), which is what's read below; by
+    // frame (a setting kept from before), it's switched.
+    await until(
+      "the time shown as a clock",
+      () =>
+        app.js(`const button = document.querySelector(".bar button.time");
+                if (!button.querySelector(".stack")) return true;
+                button.click();
+                return false;`),
+      10_000,
+    );
 
     // The trace: every `player-time` event and every player command's reply,
     // stamped as they arrive (the page's own listener gets the same events
