@@ -26,6 +26,9 @@ export class NativeDriver {
   length = 0;
   /** Its frame rate at the start, once known. */
   private startFps: number | null = null;
+  /** Seeks sent; when the last one's reply came (null while it's out). */
+  private seeks = 0;
+  private seekSettled: number | null = -Infinity;
 
   constructor(start = 0) {
     this.clock = new Clock(start, false);
@@ -111,10 +114,23 @@ export class NativeDriver {
       this.wanted = { time: seconds, play: playing };
       return;
     }
+    const mine = ++this.seeks;
+    this.seekSettled = null;
     api.playerSeek(seconds, play).then(
-      (s) => this.tell(s),
-      () => {},
+      (s) => {
+        this.tell(s);
+        if (mine === this.seeks) this.seekSettled = performance.now();
+      },
+      () => {
+        if (mine === this.seeks) this.seekSettled = -Infinity;
+      },
     );
+  }
+
+  /** When the last seek's reply came (performance.now()), null while it's
+   *  out, -Infinity if it was refused or none was sent. */
+  settled() {
+    return this.seekSettled;
   }
 
   /** Steps `frames` frames on (back, if negative), paused. */

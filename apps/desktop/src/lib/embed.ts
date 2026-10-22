@@ -43,6 +43,9 @@ export interface EmbeddedPlayer {
   /** Where the frame on screen is, where the player knows (the app's own;
    *  null: none shows). The playhead follows it; `time` may run ahead. */
   shown?(): number | null;
+  /** When its last seek's reply came (performance.now()), null while one is
+   *  out (the app's own player: playerReading.svelte.ts). */
+  settled?(): number | null;
   /** Its sound, where the app's controls set it (0..1). */
   volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
   /** Its speed, where the app's controls set it. */
@@ -519,6 +522,7 @@ async function local(
       duration: player.mediaDuration,
       fps: player.frameRate,
       shown: player.shownTime,
+      settled: player.seekSettled,
       volume: player.sound,
       rate: player.speed,
       captions: player.captions,

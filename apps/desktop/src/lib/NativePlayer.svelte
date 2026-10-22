@@ -97,6 +97,8 @@
   export const isPlaying = () => driver.playing();
   /** Where the frame on screen is, as the player last said (null: none shows). */
   export const shownTime = () => driver.shown();
+  /** When the last seek's reply came (nativeDriver.ts). */
+  export const seekSettled = () => driver.settled();
   export const mediaDuration = () => driver.length;
   export const frameRate = () => driver.fps;
   export const togglePlay = () => driver.togglePlay();

@@ -11,6 +11,7 @@
 // far: 40 seeks on Linux, the replies in 1 to 15 ms; a guard.)
 
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { minute } from "../lib/fixtures.mjs";
@@ -160,5 +161,30 @@ export default {
     }
     ctx.log(`${ATTEMPTS} seeks: ${inFlight} event(s) arrived between a seek and its reply`);
     if (failures.length) throw new Error(`after a seek:\n${failures.join("\n")}`);
+
+    // Paused, a seek's time shows until its frame is drawn, then the frame:
+    // once the reply has come and the frame with it, the time is the
+    // picture's, to the frame.
+    await app.pause();
+    const sent = await app.js(
+      `const box = document.querySelector(".scrubber canvas").getBoundingClientRect();
+       const at = { clientX: box.left + box.width * 0.3, clientY: box.top + box.height / 2, button: 0, bubbles: true, pointerId: 1 };
+       const el = document.elementFromPoint(at.clientX, at.clientY);
+       const sent = performance.now();
+       el.dispatchEvent(new PointerEvent("pointerdown", at));
+       el.dispatchEvent(new PointerEvent("pointerup", at));
+       return sent;`,
+    );
+    await until(
+      "the paused seek's reply",
+      () =>
+        app.js(
+          `return window.__seekTrace.arrived.some((a) => a.kind === "player_seek" && a.sent >= arguments[0])`,
+          sent,
+        ),
+      10_000,
+    );
+    await sleep(600);
+    ctx.log(await app.timeIsPicture("after a paused seek"));
   },
 };

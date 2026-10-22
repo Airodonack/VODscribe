@@ -78,6 +78,7 @@ export class EditPlayer implements EditPlayback {
   time = () => this.driver.time();
   playing = () => this.driver.playing();
   shown = () => this.driver.shown();
+  settled = () => this.driver.settled();
   togglePlay = () => this.driver.togglePlay();
   seek = (seconds: number, play: boolean) => this.driver.seek(seconds, play);
   step = (frames: number) => this.driver.step(frames);

@@ -10,9 +10,16 @@ interface Readable {
   shown?(): number | null;
   playing(): boolean;
   fps?(): number | null;
+  /** When its last seek's reply came (performance.now()), null while one
+   *  is out, -Infinity if it failed (the app's own player). */
+  settled?(): number | null;
   volume?: { get(): number; muted(): boolean };
   rate?: { get(): number };
 }
+
+/** How long a paused seek's frame may take after its reply (ms) before the
+ *  time shown goes back to the frame on screen (playing, four times this). */
+const SETTLING = 250;
 
 export class PlayerReading {
   now = $state(0);
@@ -35,6 +42,25 @@ export class PlayerReading {
    *  old frame after showing the new time. */
   private left: number | null = null;
 
+  /** Whether what shows is still from before the page moved the playhead
+   *  (`at`), the time not on it. Playing, the old frames may go on being
+   *  drawn a moment after the seek: held until one is drawn near the time.
+   *  Paused, until any other frame is drawn, and not for long once the
+   *  seek's reply has come: a seek may draw no new frame at all (past the
+   *  last one, or refused), and the reply comes before the frame does, so it
+   *  alone would show the old frame again. */
+  private holds(p: Readable): boolean {
+    if (this.left === null || this.shown === null) return false;
+    const off = Math.abs(this.shown - this.now);
+    if (off < 0.5 / this.fps) return false;
+    // How long since the seek's reply came: 0 while it's out, or where the
+    // player doesn't say (a site's).
+    const settled = p.settled?.() ?? null;
+    const since = settled === null ? 0 : performance.now() - settled;
+    if (p.playing()) return (this.shown === this.left || off > 1 / this.fps + 1e-3) && since < SETTLING * 4;
+    return this.shown === this.left && p.settled !== undefined && since < SETTLING;
+  }
+
   constructor(now = 0) {
     this.now = now;
     this.actual = now;
@@ -51,22 +77,14 @@ export class PlayerReading {
   read(p: Readable) {
     this.now = p.time();
     this.shown = p.shown?.() ?? null;
-    const fps = p.fps?.() ?? DEFAULT_FPS;
-    // Moved by the page: what shows is still the frame it left, until a new
-    // one is drawn near the time (or the time is on the frame it left).
-    if (
-      this.left !== null &&
-      this.shown !== null &&
-      (this.shown === this.left || Math.abs(this.shown - this.now) > 1 / fps + 1e-3) &&
-      Math.abs(this.shown - this.now) >= 0.5 / fps
-    ) {
+    this.fps = p.fps?.() ?? DEFAULT_FPS;
+    if (this.holds(p)) {
       this.actual = this.now;
     } else {
       this.left = null;
       this.actual = this.shown ?? this.now;
     }
     this.playing = p.playing();
-    this.fps = p.fps?.() ?? DEFAULT_FPS;
     if (p.volume) [this.volume, this.muted] = [p.volume.get(), p.volume.muted()];
     this.rate = p.rate?.get() ?? 1;
   }
