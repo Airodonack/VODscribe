@@ -391,7 +391,7 @@
     if (key === null || !keysForApp()) return;
     // E renders even where edits can't play here: then it's the way to watch one.
     if (key === "e" && !player) {
-      if (!e.repeat && edit && !snippet && edit.status !== "cutting" && segments.length) edits.render(edit.id);
+      if (!e.repeat && renderable !== null) edits.render(renderable);
       e.preventDefault();
       return;
     }
@@ -406,7 +406,7 @@
     if (key === "b" || key === "e") {
       if (!e.repeat) {
         if (key === "b") split();
-        else if (edit && !snippet && edit.status !== "cutting" && segments.length) edits.render(edit.id);
+        else if (renderable !== null) edits.render(renderable);
       }
       e.preventDefault();
       return;
@@ -698,6 +698,8 @@
   /** A clip of a clip bar, opened here: it's made again by itself as it
    *  changes, and is deleted from its clip bar. */
   const snippet = $derived(edit?.snippet_of != null);
+  /** The edit E renders, if it can be: one with pieces, not a snippet, not rendering already. */
+  const renderable = $derived(edit && !snippet && edit.status !== "cutting" && segments.length ? edit.id : null);
 </script>
 
 <svelte:window onkeydown={onKey} onpointermove={onOutMove} onpointerup={() => (outPress = null)} />
