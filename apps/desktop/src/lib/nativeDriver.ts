@@ -107,13 +107,16 @@ export class NativeDriver {
   /** Goes to `seconds`, and plays if `play`; one that plays goes on playing
    *  (the player doesn't pause for a seek: player.rs). */
   seek(seconds: number, play: boolean) {
-    const playing = play || this.isPlaying;
     // The picture shows what it did until the player has the new frame.
-    this.guess(seconds, playing);
     if (!this.open) {
-      this.wanted = { time: seconds, play: playing };
+      // Not open, what it says of playing may be the last file's (a late
+      // event): only what's been asked of this one counts.
+      const asked = play || (this.wanted?.play ?? false);
+      this.guess(seconds, asked);
+      this.wanted = { time: seconds, play: asked };
       return;
     }
+    this.guess(seconds, play || this.isPlaying);
     const mine = ++this.seeks;
     this.seekSettled = null;
     api.playerSeek(seconds, play).then(
