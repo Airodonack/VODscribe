@@ -2,7 +2,8 @@
   import { theme } from "./theme.svelte";
   // A strip beside the transcript with the whole VOD top to bottom: how busy
   // it was at each moment, drawn as a mirrored waveform, and a box for the part
-  // that's in view. Clicking or dragging on it scrolls there.
+  // that's in view. Clicking or dragging on it scrolls there. A moment
+  // pointed at on the timeline shows as a thin line across it.
 
   let {
     times = [],
@@ -13,7 +14,9 @@
     overlays = [],
     events = [],
     eventColor = "#888888",
+    pointed = null,
     onseek,
+    onpoint,
   }: {
     /** When each line started (with no chat to draw), in seconds. */
     times?: number[];
@@ -31,7 +34,12 @@
      *  strip, each moment as opaque as the money it saw, next to the VOD's biggest. */
     events?: { time: number; value: number }[];
     eventColor?: string;
+    /** A moment pointed at elsewhere (the timeline), marked across the strip. */
+    pointed?: number | null;
     onseek: (time: number) => void;
+    /** The moment under the pointer, as it moves over the strip (a mouse's or
+     *  pen's, not a finger's), and null as it leaves. */
+    onpoint?: (time: number | null) => void;
   } = $props();
 
   let canvas = $state<HTMLCanvasElement>();
@@ -178,13 +186,22 @@
     }
     seekTo(e);
   }}
-  onpointermove={(e) => dragging && seekTo(e)}
+  onpointermove={(e) => {
+    if (dragging) seekTo(e);
+    if (e.pointerType === "touch") return;
+    const box = e.currentTarget.getBoundingClientRect();
+    onpoint?.(Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)) * duration);
+  }}
+  onpointerleave={() => onpoint?.(null)}
   onpointerup={release}
   onpointercancel={release}
 >
   <canvas bind:this={canvas}></canvas>
   {#if shown}
     <div class="view" style:top="{shown.from * 100}%" style:height="{(shown.to - shown.from) * 100}%"></div>
+  {/if}
+  {#if pointed !== null && duration > 0 && pointed >= 0 && pointed <= duration}
+    <div class="pointed" style:top="{(pointed / duration) * 100}%"></div>
   {/if}
 </div>
 
@@ -210,6 +227,15 @@
        under layers. The canvas has no border; the property only carries a color. */
     color: color-mix(in srgb, var(--accent) 55%, transparent);
     border-top-color: color-mix(in srgb, var(--muted) 35%, transparent);
+  }
+
+  .pointed {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--accent);
+    pointer-events: none;
   }
 
   .view {

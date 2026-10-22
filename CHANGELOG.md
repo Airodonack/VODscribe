@@ -12,6 +12,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Double-click a search result to see it where it was said: it plays, as a click does, and the VOD opens in the results' place with its transcript scrolled to that line (or, for a chat match, to that message in the chat), lit for a moment. Your words stay in the search box: click in it, or change them, to see the results again.
 - Back and forward know your searches: leave a search's results (double-click a result, open a VOD, clear the search box) and Back brings them back as they were, with the same words and filter, scrolled where you left them. A VOD removed since has no matches there.
 - The transcript follows the video as it plays: the line being said is lit up and kept in view, the page moving on once the line nears the bottom rather than with every line. Scroll the transcript yourself and it stops following; Follow along, at the bottom of it, goes back to the line playing and follows again, as does a click on any line.
+- Pointing at the timeline marks the same moment with a thin line on the strip beside the transcript, and pointing at a line of the transcript or a chat message marks its time on the timeline.
 
 ## 0.5.0 — 2026-10-22
 

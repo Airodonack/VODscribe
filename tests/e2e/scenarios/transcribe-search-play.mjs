@@ -1,12 +1,14 @@
 // Adding a file, transcribing it, searching, and playing from the result in
 // the app's own player: a waveform read from the file, the transcript as
-// captions. Then a transcript long enough to scroll, followed as it plays.
+// captions. Then a transcript long enough to scroll, followed as it plays,
+// and its lines' times marked on the timeline as the pointer goes over them.
 
 import path from "node:path";
 
 import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 import { MINUTE, until } from "../lib/app.mjs";
 import { longSpeech } from "../lib/fixtures.mjs";
+import * as os from "../lib/os.mjs";
 
 export default {
   name: "transcribe-search-play",
@@ -167,5 +169,83 @@ export default {
     );
     app.log(`scrolled away, then Follow along: the line at ${back.at} is in view again`);
     await checkpoint("transcript-following");
+
+    // The pointer over a line marks its time on the timeline, and over the
+    // timeline, its moment on the transcript's minimap (moving the OS's
+    // pointer is Linux-only, so far: hover needs a real pointer).
+    if (process.platform !== "linux" || os.unavailable()) {
+      app.log(`hover marks not checked: ${os.unavailable() ?? "the OS pointer moves on Linux only, so far"}`);
+      return;
+    }
+    await app.pause();
+    // A line well inside the view, under no button.
+    const line = await app.js(`
+      const body = document.querySelector(".body").getBoundingClientRect();
+      const row = [...document.querySelectorAll("#transcript .line button.row")].find((b) => {
+        const r = b.getBoundingClientRect();
+        return r.top > body.top + 120 && r.bottom < body.bottom - 80;
+      });
+      return row && { index: row.closest(".line").dataset.index, time: Number(row.dataset.time) };`);
+    if (!line) throw new Error("no line well inside the transcript's view");
+    const row = await os.rectOf(app, `#transcript .line[data-index="${line.index}"] button.row`);
+    os.activate();
+    await os.gesture([["move", row.x + Math.round(row.w / 2), row.y + Math.round(row.h / 2)]]);
+    const marked = await until(
+      "the line's time marked on the timeline",
+      () =>
+        app.js(
+          `
+          const bar = document.querySelector(".scrubber");
+          const mark = bar.querySelector(".pointed");
+          if (!mark) return false;
+          const box = bar.getBoundingClientRect();
+          const r = mark.getBoundingClientRect();
+          const want = ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+          return { x: r.left + r.width / 2 - box.left, want };`,
+          line.time,
+        ),
+      10_000,
+    );
+    if (Math.abs(marked.x - marked.want) > 3)
+      throw new Error(
+        `the line at ${line.time} s is marked at ${marked.x.toFixed(1)} px, not ${marked.want.toFixed(1)}`,
+      );
+    app.log(`a line hovered: marked on the timeline at ${marked.x.toFixed(1)} px (${line.time} s)`);
+    await checkpoint("line-marked-on-timeline");
+    // Over the timeline, a quarter of the way along: the minimap marks that moment.
+    const bar = await os.rectOf(app, ".scrubber canvas");
+    await os.gesture([["move", bar.x + Math.round(bar.w / 4), bar.y + Math.round(bar.h / 2)]]);
+    const onMap = await until(
+      "the timeline's moment marked on the minimap",
+      () =>
+        app.js(
+          `
+          if (document.querySelector(".scrubber .pointed")) return false;
+          const map = document.querySelector(".minimap");
+          const mark = map?.querySelector(".pointed");
+          const tip = document.querySelector(".timeline .tip")?.textContent.trim();
+          if (!mark || !tip) return false;
+          const at = tip.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+          const box = map.getBoundingClientRect();
+          const y = mark.getBoundingClientRect().top - box.top;
+          return { y, want: (at / arguments[0]) * box.height, at, slack: box.height / arguments[0] };`,
+          long.duration,
+        ),
+      10_000,
+    );
+    // Within a few pixels, and the tip's whole second.
+    if (Math.abs(onMap.y - onMap.want) > 3 + onMap.slack)
+      throw new Error(
+        `the timeline at ${onMap.at} s is marked on the minimap at ${onMap.y.toFixed(1)} px, not ${onMap.want.toFixed(1)}`,
+      );
+    app.log(`the timeline hovered: marked on the minimap at ${onMap.y.toFixed(1)} px (${onMap.at} s)`);
+    // Gone as the pointer leaves.
+    const list = await os.rectOf(app, ".toolbar");
+    await os.gesture([["move", list.x + 4, list.y + Math.round(list.h / 2)]]);
+    await until(
+      "the marks gone",
+      () => app.js(`return !document.querySelector(".scrubber .pointed, .minimap .pointed")`),
+      10_000,
+    );
   },
 };

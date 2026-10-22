@@ -377,7 +377,11 @@
     e.preventDefault();
   }
 
+  /** Whether the pointer moving is a finger: a touch has no hover to share. */
+  let touch = false;
+
   function onMove(e: PointerEvent) {
+    touch = e.pointerType === "touch";
     const over = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-mark], [data-chapter]");
     const id = over && root?.contains(over) ? Number(over.dataset.mark ?? over.dataset.chapter) : null;
     hoverMark = id === null ? null : (cuts.all.find((m) => m.id === id && m.kind !== "cut") ?? null);
@@ -581,6 +585,19 @@
     return others[drag.to]?.start ?? others.at(-1)?.end ?? 0;
   });
   let hoverMark = $state<Mark | null>(null);
+
+  // The moment under the pointer, marked on the transcript's minimap; and the
+  // moment of the line or chat message under it there, marked here, a thin
+  // line (cuts.svelte.ts `pointed`). Only on the VOD's or edit's own timeline.
+  const mine = $derived(cuts.isOf(memo));
+  $effect(() => {
+    if (!mine || hoverTime === null || touch) return;
+    cuts.pointed = { time: hoverTime, on: "timeline" };
+    return () => {
+      if (cuts.pointed?.on === "timeline") cuts.pointed = null;
+    };
+  });
+  const pointedAt = $derived(mine && cuts.pointed?.on === "transcript" ? cuts.pointed.time : null);
 
   /** Where mark `m` is drawn: where it's being dragged to, while it is. */
   const placed = (m: Mark) => (drag?.kind === "mark" && drag.id === m.id ? drag.at : m.start);
@@ -834,6 +851,9 @@
     {/each}
     {#if hoverTime !== null && hover !== null}
       <span class="hover" style:left="{hover}px"></span>
+    {/if}
+    {#if pointedAt !== null && pointedAt >= viewStart && pointedAt <= viewStart + span}
+      <span class="pointed" style:left={pct(pointedAt)}></span>
     {/if}
   </div>
   {#if hoverTime !== null && hover !== null}
@@ -1296,6 +1316,16 @@
     bottom: 0;
     width: 1px;
     background: color-mix(in srgb, var(--text) 35%, transparent);
+    pointer-events: none;
+  }
+
+  /* The moment of the line or chat message the pointer is over in the transcript. */
+  .pointed {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--accent);
     pointer-events: none;
   }
 

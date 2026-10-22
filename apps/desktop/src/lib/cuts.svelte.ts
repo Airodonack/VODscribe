@@ -7,8 +7,9 @@
 // a moment. A selected mark moves by frames with , and . or by seconds with
 // the arrows, J and L (`markKey` below), or by dragging it on the
 // timeline (Scrubber.svelte). Saved per VOD or clip (crates/core db.rs
-// `marks`); changes show at once and are saved after. It also carries where
-// the open VOD's or edit's player is, for its transcript to follow.
+// `marks`); changes show at once and are saved after. It also carries what
+// the open VOD's or edit's timeline and transcript share: where its player
+// is, and a moment pointed at in either.
 
 import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
@@ -40,6 +41,9 @@ class Cuts {
    *  player says: the transcript follows it (Transcript.svelte). */
   now = $state(0);
   playing = $state(false);
+  /** A moment the pointer is over on its timeline (Scrubber.svelte) or in its
+   *  transcript (a line or a chat message), marked on the other. */
+  pointed = $state<{ time: number; on: "timeline" | "transcript" } | null>(null);
   error = $state<string | null>(null);
   #seq = 0;
 
@@ -54,6 +58,7 @@ class Cuts {
     this.all = [];
     this.now = 0;
     this.playing = false;
+    this.pointed = null;
     this.selected = null;
     this.editing = null;
     this.fresh = null;

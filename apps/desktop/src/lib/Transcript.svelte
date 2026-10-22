@@ -162,7 +162,7 @@
   let rows = $derived(buildRows(lines, duration, showChat));
 
   // Whether the marks open (cuts.svelte.ts) are this VOD's or edit's: then
-  // so is the playhead there.
+  // so are the playhead and the moment pointed at on the timeline there.
   const mine = $derived(vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit);
 
   // Each chapter's title (cuts.svelte.ts) as a heading over the line that
@@ -731,7 +731,7 @@
       }
     }
     if (!best) return null;
-    return root.querySelector<HTMLElement>(`.line[data-index="${best.index}"] [data-time="${best.time}"]`);
+    return root.querySelector<HTMLElement>(`.line[data-index="${best.index}"] .chat [data-time="${best.time}"]`);
   }
 
   /** Search match `hit`, if it's laid out: its chat message (or, with chat
@@ -900,6 +900,22 @@
     following = true;
     bring(nowRow);
   }
+
+  // The moment of the line or chat message under the pointer, marked on the
+  // timeline (Scrubber.svelte); a mouse's or a pen's, not a finger's.
+  function pointAt(time: number | null) {
+    if (!mine) return;
+    if (time !== null) cuts.pointed = { time, on: "transcript" };
+    else if (cuts.pointed?.on === "transcript") cuts.pointed = null;
+  }
+  function onHover(e: PointerEvent) {
+    if (e.pointerType === "touch") return;
+    const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-time]");
+    pointAt(el && root.contains(el) ? Number(el.dataset.time) : null);
+  }
+  $effect(() => () => pointAt(null));
+  // The moment pointed at on the timeline, marked on the minimap.
+  let pointed = $derived(mine && cuts.pointed?.on === "timeline" ? cuts.pointed.time : null);
 </script>
 
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
@@ -922,6 +938,8 @@
     bind:height={headHeight}
   />
   <div class="cols">
+    <!-- Hover only marks the timeline: the lines and messages are the buttons. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="transcript"
       id="transcript"
@@ -929,6 +947,8 @@
       class:dragging={drag}
       bind:this={root}
       bind:clientWidth={width}
+      onpointermove={onHover}
+      onpointerleave={() => pointAt(null)}
     >
       {#if error}
         <p class="error-text">{error}</p>
@@ -956,12 +976,17 @@
           {#if row.line}
             {@const line = row.line}
             {#each heads.get(line) ?? [] as chapter (chapter.id)}
-              <button class="row chapter-head" onclick={() => play(chapter.start)}>
+              <button class="row chapter-head" data-time={chapter.start} onclick={() => play(chapter.start)}>
                 <span class="time">{formatTime(chapter.start)}</span>
                 <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
               </button>
             {/each}
-            <button class="row" onpointerdown={(e) => onRowDown(e, range[0] + k)} onclick={(e) => onRowClick(e, line)}>
+            <button
+              class="row"
+              data-time={line.start}
+              onpointerdown={(e) => onRowDown(e, range[0] + k)}
+              onclick={(e) => onRowClick(e, line)}
+            >
               <span class="time">{formatTime(line.start)}</span>
               <span>{line.text}</span>
             </button>
@@ -1013,7 +1038,9 @@
           overlays={marks.overlays}
           events={marks.eventMarks}
           eventColor={eventColor(vod?.platform ?? "local")}
+          {pointed}
           onseek={seek}
+          onpoint={pointAt}
         />
       </div>
     {/if}
