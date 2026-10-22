@@ -5,7 +5,7 @@ These tests drive a built VODscribe through its page, as a person would: a libra
 ## The three runners
 
 - **`run.mjs`** drives one app binary on this computer, through WebDriver on Linux (tauri-driver with WebKitWebDriver) or, on Windows and macOS, through the app's own test hook in a build made with the `e2e` feature (`--driver bridge`). The other two runners end up calling it.
-- **`distros.mjs`** (Linux only) runs the suite inside a podman container per distribution, its "cell": our .deb or .rpm installed with that distribution's package manager, then `run.mjs` under a headless display. `--only debian-13,fedora-44` picks distributions (the list is `DISTROS` at the top of the file). `--env weston` or `--env gnome` runs under a headless Wayland compositor instead of Xvfb with openbox; `--scheme dark` in the dark colour scheme; `--gpu nvidia` with the host's NVIDIA GPU, `--gpu dri` with the host's `/dev/dri` and the distribution's Mesa (Intel and AMD).
+- **`distros.mjs`** (Linux only) runs the suite inside a podman container per distribution, its "cell": our .deb or .rpm installed with that distribution's package manager, then `run.mjs` under a headless display. `--only debian-13,fedora-44` picks distributions (the list is `DISTROS` in distros.mjs). `--env weston` or `--env gnome` runs under a headless Wayland compositor instead of Xvfb with openbox; `--scheme dark` in the dark colour scheme; `--gpu nvidia` with the host's NVIDIA GPU, `--gpu dri` with the host's render nodes (`/dev/dri/renderD*`) and the distribution's Mesa (Intel and AMD).
 - **`runners.mjs`** runs the suite on another computer over SSH (a "runner"): it copies the harness and the app there, runs `run.mjs`, and brings the results back. Runners are listed in `runners.json`, which isn't in the repository: copy `runners.example.json` and fill in each one's name, SSH host, operating system (`windows` or `macos`), a folder to work in, and for Windows the folders to put first on `PATH`. Someone must be signed in on the runner, and its app data is emptied before each scenario, so use a computer kept for testing.
 
 `contact-sheet.mjs` makes a page of the checkpoints a run took (`ctx.checkpoint`), one column per run, for looking at what the tests can't judge.
@@ -15,7 +15,7 @@ These tests drive a built VODscribe through its page, as a person would: a libra
 - **Node 24** (the version in `.nvmrc`), through mise or any other way. The harness imports a TypeScript file from the app, which Node 24 runs as it is.
 - **tauri-driver**, from cargo: `cargo install tauri-driver --locked`. It must be on `PATH`, or named by `TAURI_DRIVER`. `distros.mjs` mounts this binary into each container.
 - **podman**, for `distros.mjs`. The containers pull public images (Debian, Ubuntu, Fedora, Arch and others) and install packages, so the first run of each needs the network.
-- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg.
+- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg.
 - For `runners.mjs`: SSH access to each runner by key (it runs in batch mode), and Node on the runner.
 
 ### Building the packages
