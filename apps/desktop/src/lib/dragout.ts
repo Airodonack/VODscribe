@@ -45,6 +45,12 @@ export function isOutgoing(paths: string[]): boolean {
   return outgoing !== null && paths.length > 0 && paths.every((p) => p === outgoing);
 }
 
+/** Forgets `clip` if it was made only to be dragged out (no pill in the clip
+ *  bar); its file stays, if it was handed out. */
+function forgetHidden(clip: Clip | null | undefined) {
+  if (clip && !clip.shown) api.deleteClip(clip.id).catch((e) => console.error("forget dragged clip", e));
+}
+
 /** Drags clip `clip`'s file out of the window, if it's made (a pill on an edit's clip bar). */
 export const dragFileOut = (clip: Clip) => dragOut(clip);
 
@@ -70,7 +76,7 @@ async function dragOut(clip: Clip, image?: Uint8Array, held: () => boolean = () 
     stop?.();
     // Made only for this: forgotten (the file stays, if it was handed out);
     // unless it was brought back and dropped on the clip bar, which keeps it.
-    if (!clip.shown && !back?.kept) api.deleteClip(clip.id).catch(() => {});
+    if (!back?.kept) forgetHidden(clip);
     back = null;
     backLeft();
     setTimeout(() => mine === drags && (out = false), 1000);
@@ -353,9 +359,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     let leaving = false;
     const finish = () => {
       // Made ahead for a drag out that didn't come: it goes.
-      early?.then((c) => {
-        if (c && !c.shown) api.deleteClip(c.id).catch(() => {});
-      });
+      early?.then(forgetHidden);
       early = null;
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
@@ -403,10 +407,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
         kept = true;
         return (ahead ?? Promise.resolve(null)).then(() => make(true));
       });
-      if (!kept)
-        ahead?.then((c) => {
-          if (c && !c.shown) api.deleteClip(c.id).catch(() => {});
-        });
+      if (!kept) ahead?.then(forgetHidden);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {
@@ -443,7 +444,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
         finish();
         // Let go before its file was ready, or before the drag began: the
         // clip made only for the drag goes (dragOut forgets it, after a drag).
-        if (made && !made.shown && !dragged) api.deleteClip(made.id).catch(() => {});
+        if (!dragged) forgetHidden(made);
       }
     };
     window.addEventListener("pointermove", onMove, true);
