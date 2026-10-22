@@ -66,9 +66,18 @@ export class App {
     return this.driver.run(body, args);
   }
 
-  /** Calls the app's command `cmd` from the page, as the interface does. */
+  /** Calls the app's command `cmd` from the page, as the interface does; a
+   *  command's refusal comes back as a rejection with its words. (The app
+   *  rejects with a string, which WebKit's WebDriver can't pass back: "Could
+   *  not parse script result"; an Error it can.) */
   invoke(cmd, args = {}) {
-    return this.js(`return window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1])`, cmd, args);
+    return this.js(
+      `return window.__TAURI_INTERNALS__.invoke(arguments[0], arguments[1]).catch((e) => {
+         throw e instanceof Error ? e : new Error(typeof e === "string" ? e : JSON.stringify(e));
+       })`,
+      cmd,
+      args,
+    );
   }
 
   click(selector) {
