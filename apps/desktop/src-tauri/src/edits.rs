@@ -410,11 +410,15 @@ pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView>
 /// now, so it isn't asked for twice. Asked again while it waits, once is enough.
 #[tauri::command]
 pub(crate) async fn render_edit_now(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    // Shown as rendering before it's queued: its render could otherwise end
-    // first, and be shown as rendering after.
+    // Waiting already: nothing to do (it renders the edit as it is when its
+    // turn comes). Asked first, as `queue_once` answers only after the status
+    // below is written and sent. One running renders the edit as it was, so
+    // it's queued again.
     if state.clips.is_waiting(id) {
         return Ok(());
     }
+    // Shown as rendering before it's queued: its render could otherwise end
+    // first, and be shown as rendering after.
     {
         let db = state.db.lock().unwrap();
         db.set_edit_render(id, ClipStatus::Cutting, None, None, None).map_err(err)?;
