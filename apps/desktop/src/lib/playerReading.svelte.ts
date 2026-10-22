@@ -33,6 +33,13 @@ export class PlayerReading {
     this.actual = now;
   }
 
+  /** Put at `time` by the page itself (no player to read yet, or the
+   *  playhead moved ahead of it): the time and where the picture is both. */
+  at(time: number) {
+    this.now = time;
+    this.actual = time;
+  }
+
   read(p: Readable) {
     this.now = p.time();
     this.shown = p.shown?.() ?? null;

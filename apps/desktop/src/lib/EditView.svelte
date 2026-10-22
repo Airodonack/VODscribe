@@ -190,7 +190,7 @@
         // Where its playhead was left (or its start), once there's a plan to seek in.
         if (bringTime !== null && plan.length) {
           p.seek(bringTime, false);
-          reading.now = bringTime;
+          reading.at(bringTime);
           bringTime = null;
           playsEdit = id;
         }
@@ -225,7 +225,7 @@
   });
 
   const seekTo = (time: number) => {
-    reading.now = time;
+    reading.at(time);
     // Still waiting to seek to where it was left (no plan yet to seek in):
     // this is where it goes instead, and it's what's remembered meanwhile.
     if (bringTime !== null && edit) {
@@ -340,7 +340,7 @@
       edits.wanted = null;
       if (bringTime !== null || !player) seekTo(wanted.time);
       else {
-        reading.now = wanted.time;
+        reading.at(wanted.time);
         player.seek(wanted.time, true);
       }
     });

@@ -77,6 +77,9 @@ export class Clock {
    *  it reports the old place once, Idle, and then nothing until played. */
   asked(seconds: number, play: boolean) {
     this.set(seconds);
+    // The picture stands where it was while the player seeks.
+    const shown = this.shown();
+    if (this.heard && shown !== null) this.heard = { seconds: shown, at: performance.now(), moving: false };
     this.seeking = { target: seconds, play, until: performance.now() + SEEK_GIVE_UP * 1000, seen: false };
   }
   /** The player said it's at `seconds`, moving or not (unknown: as it last said). */
@@ -95,6 +98,8 @@ export class Clock {
         const shown = this.shown();
         const there = this.seeking.seen && shown !== null ? shown : target;
         this.hear({ seconds: there, at: now, moving: moving ?? this.heard?.moving ?? false });
+        // Not moving there yet: the time stands at the target, not where it had run on to.
+        if (!this.heard!.moving) this.set(this.seeking.target);
         return;
       }
       // There: the seek is through once it plays there, or at once if it stays paused.

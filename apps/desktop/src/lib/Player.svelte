@@ -177,7 +177,7 @@
 
   /** Moves the playhead, starting the player there (paused) if it isn't yet. */
   function seekTo(time: number) {
-    reading.now = time;
+    reading.at(time);
     if (player) player.seek(time, false);
     else if (active) pending = { time, play: false };
     else activate(time, false);

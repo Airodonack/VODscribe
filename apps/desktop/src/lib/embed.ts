@@ -367,6 +367,8 @@ async function twitch(
         {
           seek: (seconds) => {
             bridged?.asked();
+            // Sent elsewhere: where a plain reload was to go on from no longer counts.
+            resumeAt = null;
             command(TWITCH_SEEK, seconds);
           },
           play: () => command(TWITCH_PLAY),

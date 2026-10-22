@@ -199,3 +199,26 @@ test("pausing, the last position said again doesn't pull it back", async () => {
   clock.heardAt(4.77, false);
   assert.equal(clock.shown(), 4.77);
 });
+
+test("a seek while playing, the player buffering at the old place: the time stands at the target, not past it", async () => {
+  const clock = new Clock(0, true, { waitsForPlayer: true });
+  clock.heardAt(10, true);
+  clock.asked(100, true);
+  await wait(300);
+  clock.heardAt(10, false);
+  assert.ok(Math.abs(clock.now() - 100) < 0.02, `at the target: ${clock.now()}`);
+  clock.heardAt(10, true);
+  assert.ok(clock.now() < 100.05, `runs on from the target: ${clock.now()}`);
+});
+
+test("after a seek, where the picture is stands at its old place till the player says (it's seeking)", async () => {
+  const clock = new Clock(0, true);
+  clock.heardAt(10, true);
+  await wait(100);
+  clock.asked(100, true);
+  const at = clock.shown() ?? 0;
+  await wait(300);
+  assert.ok(Math.abs((clock.shown() ?? 0) - at) < 0.02, `stands at ${at}, not run on: ${clock.shown()}`);
+  clock.heardAt(100.1, true);
+  assert.ok(Math.abs((clock.shown() ?? 0) - 100.1) < 0.02, `there once said: ${clock.shown()}`);
+});
