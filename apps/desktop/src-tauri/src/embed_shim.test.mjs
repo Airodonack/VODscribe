@@ -366,6 +366,36 @@ test("an fMP4 init's edit list moves its times by where it starts the media", as
   assert.deepEqual(await heldBy(edited(1000, true), segment(5000, 30)), [[4, 4.99]]);
 });
 
+test("a run's count is taken as far as its box holds", async () => {
+  // No per-sample fields: any count, worked out at once, not sample by sample.
+  const began = performance.now();
+  assert.deepEqual(await heldBy(INIT, segment(0, 0xffffffff)), [[0, 141733920.735]]);
+  assert.ok(performance.now() - began < 500, "a sample count read whole");
+  // Durations per sample, a thousand said and two there: those two.
+  const short = [...box("moof", box("traf", box("tfdt", 0, 0), box("trun", 0x100, 1000, 40, 20))), ...box("mdat", [1])];
+  assert.deepEqual(await heldBy(INIT, short), [[0, 0.06]]);
+});
+
+test("a box that can't be read is said and passed over, and what follows is read", async () => {
+  const f = frame();
+  const source = f.attach(f.video);
+  await settle();
+  const buffer = source.addSourceBuffer('video/mp4; codecs="avc1"');
+  // A track header saying it has a default duration, and too short to hold it.
+  const broken = box("moof", box("traf", box("tfdt", 0, 0), box("trun", 0, 1), box("tfhd", 0x8)));
+  buffer.appendBuffer(new Uint8Array([...INIT, ...broken, ...segment(1000, 30)]));
+  await settle();
+  buffer.appendBuffer(new Uint8Array(segment(1990, 30)));
+  await settle();
+  const appended = f.posted.filter((m) => m.kind === "append").map((m) => JSON.stringify(m.ranges));
+  assert.ok(
+    f.posted.some((m) => m.kind === "error"),
+    "the broken box is said",
+  );
+  assert.deepEqual(appended, ["[[1,1.99]]", "[[1.99,2.98]]"]);
+  clearInterval(f.video.media.controls);
+});
+
 test("a box with no size doesn't stop the frame", async () => {
   const f = frame();
   const source = f.attach(f.video);

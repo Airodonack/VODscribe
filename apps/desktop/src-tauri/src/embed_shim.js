@@ -180,7 +180,7 @@
         let first = Infinity;
         let lastShown = -Infinity;
         let last = -Infinity;
-        for (const [b, bs] of boxes(v, ts, te)) {
+        for (const [b, bs, be] of boxes(v, ts, te)) {
           const version = v.getUint8(bs);
           const flags = u32(v, bs) & 0xffffff;
           if (b === "tfdt") decode = version === 1 ? Number(v.getBigUint64(bs + 4)) : u32(v, bs + 4);
@@ -195,7 +195,23 @@
             let o = bs + 8;
             if (flags & 0x1) o += 4;
             if (flags & 0x4) o += 4;
-            for (let i = 0; i < count; i++) {
+            const each = [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length * 4;
+            if (!each) {
+              // Nothing per sample: each the default length, shown as decoded.
+              if (count > 0) {
+                first = Math.min(first, decode);
+                const lastOne = decode + (count - 1) * defaultDuration;
+                if (lastOne >= lastShown) {
+                  lastShown = lastOne;
+                  last = lastOne + defaultDuration;
+                }
+                decode += count * defaultDuration;
+              }
+              continue;
+            }
+            // No more samples than the box holds, whatever its count says.
+            const held = Math.min(count, Math.floor((be - o) / each));
+            for (let i = 0; i < held; i++) {
               const duration = flags & 0x100 ? u32(v, o) : defaultDuration;
               if (flags & 0x100) o += 4;
               if (flags & 0x200) o += 4;
@@ -239,6 +255,8 @@
       this.pending = new Uint8Array(0);
       this.skip = 0;
       this.init = null;
+      /** What went wrong reading the last append, if anything. */
+      this.failed = null;
     }
     push(bytes) {
       const buf = join(this.pending, bytes);
@@ -276,8 +294,14 @@
         }
         if (o + size > buf.length) break;
         const box = new DataView(buf.buffer, buf.byteOffset + o, size);
-        if (type === "moov") this.init = readInit(box) ?? this.init;
-        else if (this.init) out.push(...mediaTimes(box, this.init));
+        // A box that can't be read is passed over, said (`failed`), and the
+        // rest read on: what's kept for the next append starts after it.
+        try {
+          if (type === "moov") this.init = readInit(box) ?? this.init;
+          else if (this.init) out.push(...mediaTimes(box, this.init));
+        } catch (e) {
+          this.failed = e;
+        }
         o += size;
       }
       this.pending = buf.slice(o);
@@ -424,6 +448,10 @@
             if (to > from) this.held = addRange(this.held, from, to);
           }
           this.init = this.reader.init;
+          if (this.reader.failed) {
+            post({ kind: "error", id: this.id, message: String(this.reader.failed) });
+            this.reader.failed = null;
+          }
         } catch (e) {
           // Never left updating: their player would wait on it for good.
           post({ kind: "error", id: this.id, message: String(e) });
