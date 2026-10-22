@@ -25,6 +25,9 @@ export class Clock {
    *  player says it plays as soon as it's asked to, then buffers before its
    *  picture moves; run on meanwhile, the time went ahead, then back. */
   private waits: boolean;
+  /** Played, paused, sought or sped up since the player last said where it
+   *  is: its next report is where it is now, exactly, however near. */
+  private changed = true;
   constructor(seconds: number, playing: boolean, { waitsForPlayer = false } = {}) {
     this.seconds = seconds;
     this.isPlaying = playing;
@@ -36,6 +39,7 @@ export class Clock {
     return this.isPlaying;
   }
   set playing(playing: boolean) {
+    if (playing !== this.isPlaying) this.changed = true;
     this.keeping(() => (this.isPlaying = playing));
   }
   set(seconds: number) {
@@ -64,6 +68,7 @@ export class Clock {
    *  where they are, rather than jumping. */
   setSpeed(speed: number) {
     if (speed === this.speed) return;
+    this.changed = true;
     this.set(this.now());
     const shown = this.shown();
     if (this.heard && shown !== null) this.heard = { ...this.heard, seconds: shown, at: performance.now() };
@@ -76,6 +81,7 @@ export class Clock {
    *  while buffering there, and still as it starts playing there; paused,
    *  it reports the old place once, Idle, and then nothing until played. */
   asked(seconds: number, play: boolean) {
+    this.changed = true;
     this.set(seconds);
     // The picture stands where it was while the player seeks.
     const shown = this.shown();
@@ -117,11 +123,28 @@ export class Clock {
       this.heard = { seconds: ran, at: now, moving: false };
       return;
     }
+    // Playing on, said near where it has run to: it agrees, as near as the
+    // player can say; taken as exact, the time went back and on by that much
+    // (`AGREES`). Kept running from where it is, from now, so it isn't stale.
+    const ran = this.shown();
+    if (
+      !this.changed &&
+      !this.seeking &&
+      this.heard?.moving &&
+      moving !== false &&
+      ran !== null &&
+      Math.abs(seconds - ran) <= AGREES
+    ) {
+      this.heard = { seconds: ran, at: now, moving: true };
+      return;
+    }
+    this.changed = false;
     this.set(seconds);
     this.heard = { seconds, at: now, moving: moving ?? this.heard?.moving ?? false };
   }
   /** The player said whether it's moving, without a position. */
   heardMoving(moving: boolean) {
+    if (moving !== this.heard?.moving) this.changed = true;
     if (this.heard) this.hear({ seconds: this.shown()!, at: performance.now(), moving });
   }
   /** Where the player really is, as near as its reports say: run on from the
@@ -138,6 +161,10 @@ export class Clock {
 /** How far past an embed's last report its position is taken to run:
  *  Twitch reports once a second while playing. */
 const STALE = 1.5;
+/** How far a playing site player's report may be from where its clock has
+ *  run to and still agree with it: Twitch's position moves on in quarter
+ *  seconds (its reports a second apart said 0.75 s, then 1.25 s, on). */
+const AGREES = 0.3;
 /** How near a seek's target a report must be to count as there, and how
  *  long reports from elsewhere are set aside before the seek is given up on. */
 const NEAR = 2;

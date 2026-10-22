@@ -6,6 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 - After a click on the timeline, the time by the play button no longer flicks back to where the video was while the picture catches up: it shows the new time at once and stays on it.
 - Moving around a video while it plays (a click on the timeline, the arrow keys) no longer flashes the Play button for a moment: it goes on saying Pause.
+- The time and frame count under a Twitch video no longer jump back and forth about once a second while it plays.
 
 ## 0.5.0 — 2026-10-22
 

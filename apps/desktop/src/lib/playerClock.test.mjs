@@ -222,3 +222,69 @@ test("after a seek, where the picture is stands at its old place till the player
   clock.heardAt(100.1, true);
   assert.ok(Math.abs((clock.shown() ?? 0) - 100.1) < 0.02, `there once said: ${clock.shown()}`);
 });
+
+/** The page's time made up for the test (`t.after` puts it back): `at(ms)` sets it.
+ *  @param {import("node:test").TestContext} t */
+function madeUpTime(t) {
+  const real = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(globalThis, "performance"));
+  let ms = 0;
+  Object.defineProperty(globalThis, "performance", { value: { now: () => ms }, configurable: true });
+  t.after(() => Object.defineProperty(globalThis, "performance", real));
+  return { at: (/** @type {number} */ to) => (ms = to) };
+}
+
+// Recorded from Twitch's embed (WebKitGTK 2.54, October 22): its position
+// moves on in quarter seconds, so one report came 0.25 s short and the next
+// made up for it; taken as exact, the time by frame went 7 back, then 9 on.
+test("Twitch's reports a quarter second off don't move the time by frame back or on in leaps", (t) => {
+  const time = madeUpTime(t);
+  const clock = new Clock(4, true, { waitsForPlayer: true });
+  const said = [
+    [0, 4.338],
+    [188, 4.338],
+    [1001, 5.091],
+    [1211, 5.091],
+    [2004, 6.341],
+    [2231, 6.341],
+  ];
+  let last = null;
+  for (let ms = 0; ms <= 3000; ms += 50) {
+    time.at(ms);
+    for (; said.length && said[0][0] <= ms; said.shift()) clock.heardAt(said[0][1], true);
+    const frame = Math.floor((clock.shown() ?? 0) * 30);
+    if (last !== null) assert.ok(frame >= last && frame - last <= 3, `at ${ms} ms: frame ${last} -> ${frame}`);
+    last = frame;
+  }
+});
+
+test("a report further off than that is taken as it comes", (t) => {
+  const time = madeUpTime(t);
+  const clock = new Clock(4, true, { waitsForPlayer: true });
+  clock.heardAt(10, true);
+  time.at(1000);
+  clock.heardAt(10.6, true);
+  assert.equal(clock.shown(), 10.6);
+});
+
+test("after a pause, play or speed change, a report near the time is taken exactly", (t) => {
+  const time = madeUpTime(t);
+  const clock = new Clock(4, true, { waitsForPlayer: true });
+  clock.heardAt(10, true);
+  time.at(500);
+  clock.playing = false;
+  clock.playing = true;
+  time.at(600);
+  clock.heardAt(10.5, true);
+  assert.equal(clock.shown(), 10.5, "after play: exact");
+  time.at(700);
+  clock.setSpeed(2);
+  time.at(800);
+  clock.heardAt(10.8, true);
+  assert.equal(clock.shown(), 10.8, "after a speed change: exact");
+  time.at(900);
+  clock.heardMoving(false);
+  clock.heardMoving(true);
+  time.at(1000);
+  clock.heardAt(11.1, true);
+  assert.equal(clock.shown(), 11.1, "moving again after a stop: exact");
+});
