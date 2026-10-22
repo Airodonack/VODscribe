@@ -125,7 +125,9 @@ export class Clock {
     }
     // Playing on, said near where it has run to: it agrees, as near as the
     // player can say; taken as exact, the time went back and on by that much
-    // (`AGREES`). Kept running from where it is, from now, so it isn't stale.
+    // (`AGREES`). Both run on from there, from now: the solid line so it
+    // isn't stale, the page's clock so it can't run off from the player
+    // (reports more than `STALE` apart, the player losing time unsaid).
     const ran = this.shown();
     if (
       !this.changed &&
@@ -135,6 +137,7 @@ export class Clock {
       ran !== null &&
       Math.abs(seconds - ran) <= AGREES
     ) {
+      this.set(ran);
       this.heard = { seconds: ran, at: now, moving: true };
       return;
     }

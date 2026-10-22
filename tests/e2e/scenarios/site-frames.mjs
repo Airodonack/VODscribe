@@ -22,6 +22,12 @@ const SAMPLE_MS = 50;
 const FOR_MS = 10_000;
 /** The most frames the number may move on between samples (about 1.5 at 30 fps). */
 const MOST = 3;
+/** The least the number must move on over the samples while their player
+ *  says it plays (in proportion when it doesn't throughout): every run
+ *  recorded moved 310 to 318 frames in them (10.3 s at 30 fps); two thirds
+ *  of that leaves room for a slow machine, and a number that stood still
+ *  (0) or crawled fails. */
+const LEAST = 200;
 
 export default {
   name: "site-frames",
@@ -152,5 +158,11 @@ export default {
     ctx.log(`jumps while Playing: ${bad.length ? bad.join("; ") : "none"}`);
     if (bad.length)
       throw new Error(`the frame number jumped ${bad.length}× while ${SITE} played: ${bad.slice(0, 8).join("; ")}`);
+    // And it moved on: a number that stands still takes no wrong steps.
+    const moved = frames.at(-1).frame - frames[0].frame;
+    const least = Math.floor((LEAST * frames.filter((f) => playingAt(f.t)).length) / frames.length);
+    ctx.log(`moved on ${moved} frames over the samples (at least ${least})`);
+    if (!(moved >= least))
+      throw new Error(`the frame number moved on ${moved} frames while ${SITE} played, not ${least}`);
   },
 };

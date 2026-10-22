@@ -254,9 +254,11 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
 /** What a site's player reported, told to its clock: where it is (if it
  *  said), whether it's moving, and whether it's playing (buffering counts). */
 function heard(clock: Clock, at: unknown, moving: boolean | undefined, playing: boolean | undefined) {
+  // The state first: a position said with a change of it is judged as after
+  // the change (taken exactly, not as agreeing with where it ran to).
+  if (playing !== undefined) clock.playing = playing;
   if (typeof at === "number") clock.heardAt(at, moving);
   else if (moving !== undefined) clock.heardMoving(moving);
-  if (playing !== undefined) clock.playing = playing;
 }
 
 /** What a site's player answers from its clock, given how to tell it to

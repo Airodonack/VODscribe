@@ -288,3 +288,15 @@ test("after a pause, play or speed change, a report near the time is taken exact
   clock.heardAt(11.1, true);
   assert.equal(clock.shown(), 11.1, "moving again after a stop: exact");
 });
+
+test("reports further apart than STALE, the player losing a little each time: the time stays near them", (t) => {
+  const time = madeUpTime(t);
+  const clock = new Clock(10, true, { waitsForPlayer: true });
+  // Each 1.7 s on, the player 1.5 s on: it lost 0.2 s in stalls it didn't say.
+  for (let i = 0; i <= 5; i++) {
+    time.at(i * 1700);
+    const said = 10 + i * 1.5;
+    clock.heardAt(said, true);
+    assert.ok(Math.abs(clock.now() - said) <= 0.3, `report ${i}: the time ${clock.now()}, the player ${said}`);
+  }
+});
