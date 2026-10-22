@@ -13,6 +13,7 @@ import { ownPlayer } from "./ownPlayer.svelte";
 import { cueAt, elementSound, unplayable } from "./media";
 import { landingSeeks } from "./mediaSeek";
 import { OwnStatus } from "./ownStatus";
+import { settling } from "./settle";
 import { Clock } from "./playerClock";
 import { mount, unmount } from "svelte";
 import { invoke } from "@tauri-apps/api/core";
@@ -656,6 +657,13 @@ function bridge(
       fallback("the app's player didn't open");
     },
   );
+  // Their element played or paused, passed on to the app's player once it
+  // stands (settle.ts: Twitch plays and pauses at once on a user's play);
+  // reported, for the tests.
+  const playOrPause = settling((play) => {
+    report({ kind: "told", playing: play });
+    (play ? api.playerPlay() : api.playerPause()).catch(() => {});
+  });
   // Appends go one at a time, in the order they came: each follows on from
   // the last. Too many waiting, and the app can't keep up: their player alone.
   let appends: Promise<unknown> = opened;
@@ -693,6 +701,7 @@ function bridge(
     if (m.kind === "ad") {
       // Their element plays the ad, over our picture; ours waits for the VOD's next source.
       handedAt = performance.now();
+      playOrPause.stop();
       api.playerPause().catch(() => {});
       return;
     }
@@ -732,8 +741,8 @@ function bridge(
         });
       } else if (m.kind === "media" && m.event === "play") {
         resumedAt = performance.now();
-        api.playerPlay().catch(() => {});
-      } else if (m.kind === "media" && m.event === "pause") api.playerPause().catch(() => {});
+        playOrPause.want(true);
+      } else if (m.kind === "media" && m.event === "pause") playOrPause.want(false);
       else if (m.kind === "media" && m.event === "seek" && typeof m.time === "number") {
         // Their player sent back where it was, as a viewer would.
         if (spurious(m.time)) {
@@ -798,6 +807,7 @@ function bridge(
   const stop = () => {
     if (stopped) return;
     stopped = true;
+    playOrPause.stop();
     cancelAnimationFrame(tick);
     overlay.show(null);
     window.removeEventListener("message", listener);

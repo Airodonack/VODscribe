@@ -170,9 +170,21 @@ export default {
     await failures();
 
     // Played again: on from where it stood (Twitch's player has been seen to
-    // seek itself to the start as it resumes; the page sends it back).
+    // seek itself to the start as it resumes; the page sends it back). Twitch,
+    // on a user's play, plays its element and pauses it at once (its gesture
+    // capture): the app's player is told only the play.
+    const heard = (await reports()).length;
     await app.key(" ");
     await wait(3_000);
+    const since = (await reports()).slice(heard);
+    const frameSaid = since
+      .filter((m) => m.kind === "media" && ["play", "pause"].includes(m.event))
+      .map((m) => m.event);
+    const told = since.filter((m) => m.kind === "told").map((m) => (m.playing ? "play" : "pause"));
+    ctx.log(
+      `resuming: their element ${frameSaid.join(", ") || "nothing"}; the app's player told ${told.join(", ") || "nothing"}`,
+    );
+    if (told.includes("pause")) throw new Error(`resuming, the app's player was told to pause: ${told.join(", ")}`);
     const resumed = await ours();
     const restored = (await reports()).filter((m) => m.kind === "restored");
     ctx.log(
