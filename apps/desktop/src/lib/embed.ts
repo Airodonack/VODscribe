@@ -706,7 +706,7 @@ function bridge(
       return;
     }
     if (m.kind === "mismatch") return fallback("a source that isn't the VOD's");
-    if (m.kind === "scheme" && m.scheme) {
+    if (m.kind === "scheme" && typeof m.scheme === "string") {
       // Their frame in their document's own colour scheme: one that differs
       // is drawn on an opaque background (a dark app, a light player: grey).
       frame.style.colorScheme = m.scheme === "normal" ? "light" : m.scheme;

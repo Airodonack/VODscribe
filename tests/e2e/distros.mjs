@@ -129,7 +129,8 @@ const tauriDriver = process.env.TAURI_DRIVER ?? which("tauri-driver");
 if (!tauriDriver) throw new Error("no tauri-driver: put it on PATH or set TAURI_DRIVER");
 const work = process.env.E2E_WORK ?? path.join(here, "out", "distros");
 const names = opts.only?.split(",") ?? Object.keys(DISTROS);
-if (!Object.hasOwn(ENV_PACKAGES, opts.env)) throw new Error(`no environment ${opts.env} (there are: ${Object.keys(ENV_PACKAGES).join(", ")})`);
+if (!Object.hasOwn(ENV_PACKAGES, opts.env))
+  throw new Error(`no environment ${opts.env} (there are: ${Object.keys(ENV_PACKAGES).join(", ")})`);
 if (!["light", "dark"].includes(opts.scheme)) throw new Error(`no scheme ${opts.scheme} (light, dark)`);
 if (opts.gpu && opts.gpu !== "nvidia") throw new Error(`no GPU ${opts.gpu} (nvidia)`);
 /** The cell's name: the distribution, then what differs from the default. */
@@ -176,7 +177,7 @@ function inEnvironment(run) {
       "gsettings set org.gnome.desktop.session idle-delay 0",
       ...(dark ? ["gsettings set org.gnome.desktop.interface color-scheme prefer-dark"] : []),
       // A system bus of its own (the Shell asks for one; no logind on it: it copes).
-      'dbus-daemon --session --nofork --address=unix:path=$XDG_RUNTIME_DIR/system_bus > /dev/null 2>&1 &',
+      "dbus-daemon --session --nofork --address=unix:path=$XDG_RUNTIME_DIR/system_bus > /dev/null 2>&1 &",
       "export DBUS_SYSTEM_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/system_bus",
       "unset DISPLAY",
       `dbus-run-session -- sh -c 'gnome-shell --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display wl-e2e > /out/shell.log 2>&1 & sleep 8; export WAYLAND_DISPLAY=wl-e2e GDK_BACKEND=wayland E2E_DISPLAY=gnome; ${quoted}'`,
@@ -204,14 +205,17 @@ for (const name of names) {
     const from = process.env.E2E_SEED && path.join(process.env.E2E_SEED, kept);
     if (from && existsSync(from)) cpSync(from, path.join(data, kept), { recursive: true });
   }
-  const args = rest.map((a) => `'${a.replaceAll("'", "'\\''")}'`).join(" ");
+  const quote = (a) => `'${a.replaceAll("'", "'\\''")}'`;
+  const args = rest.map(quote).join(" ");
   const script = [
     "set -e",
     `EXTRA="${ENV_PACKAGES[opts.env][distro.pm].join(" ")}"`,
     distro.install,
     "export XDG_DATA_HOME=/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
     // Passed on: scenarios that need the network, screenshots kept.
-    ...["E2E_NETWORK", "E2E_SHOTS", "E2E_SITE"].filter((k) => process.env[k]).map((k) => `export ${k}=${process.env[k]}`),
+    ...["E2E_NETWORK", "E2E_SHOTS", "E2E_SITE"]
+      .filter((k) => process.env[k])
+      .map((k) => `export ${k}=${quote(process.env[k])}`),
     `echo "installed: $(. /etc/os-release; echo $PRETTY_NAME)"`,
     // An app that can't load its libraries never starts: say which, rather than time out each scenario.
     `missing=$(ldd /usr/bin/vodscribe /usr/bin/vodscribe-worker | grep "not found" || true); if [ -n "$missing" ]; then echo "missing libraries: $missing" | tee /out/run.log; exit 3; fi`,
