@@ -67,6 +67,14 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         self.shared.0.lock().unwrap().waiting.iter().any(which)
     }
 
+    /// Whether a job `which` finds is waiting, or running and not stopped: one
+    /// that will still write what it makes.
+    pub(crate) fn is_wanted(&self, which: impl Fn(&J) -> bool) -> bool {
+        let queue = self.shared.0.lock().unwrap();
+        let running = queue.running.as_ref().is_some_and(|(j, stop)| !stop.load(Ordering::Relaxed) && which(j));
+        running || queue.waiting.iter().any(which)
+    }
+
     /// Stops the job running if it's one `which` finds; whether it was.
     pub(crate) fn stop_running(&self, which: impl Fn(&J) -> bool) -> bool {
         let queue = self.shared.0.lock().unwrap();
@@ -159,5 +167,16 @@ mod tests {
         assert!(!jobs.push_new(1, |&j| j == 1), "running: push_new won't");
         assert!(jobs.push_once(1, |&j| j == 1), "running: push_once will, to run again after");
         assert_eq!(jobs.listed(), [1, 2, 1]);
+    }
+
+    #[test]
+    fn a_job_is_wanted_while_waiting_or_running_unstopped() {
+        let jobs = Jobs::new();
+        jobs.push(2);
+        assert!(jobs.is_wanted(|&j| j == 2) && !jobs.is_wanted(|&j| j == 1));
+        jobs.shared.0.lock().unwrap().running = Some((1, Arc::default()));
+        assert!(jobs.is_wanted(|&j| j == 1));
+        jobs.stop_running(|&j| j == 1);
+        assert!(!jobs.is_wanted(|&j| j == 1), "stopped: it deletes what it made");
     }
 }

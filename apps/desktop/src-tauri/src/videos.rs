@@ -76,6 +76,12 @@ impl Videos {
         self.0.listed().into_iter().map(|(id, _)| id).collect()
     }
 
+    /// Whether VOD `id`'s video is waiting to download, or downloading and not
+    /// stopped: its files are that download's, not to be deleted.
+    pub(crate) fn wanted(&self, id: i64) -> bool {
+        self.0.is_wanted(|(v, _)| *v == id)
+    }
+
     /// Stops every download and empties the queue (deleting what each had).
     pub(crate) fn stop_all(&self, app: &AppHandle) {
         for (id, _) in self.0.take_waiting(|_| true) {
@@ -215,8 +221,13 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
         }
     }
     // Deleted with the library let go: many big files can take a while.
+    // Meanwhile a "Keep video" may have queued one of them again (it no
+    // longer has its video): that download's parts stay. Those of VODs without
+    // a kept video go too (a download paused by quitting leaves its parts).
     for id in gone {
-        pipeline::remove_media(&work, id);
+        if !state.videos.wanted(id) {
+            pipeline::remove_media(&work, id);
+        }
     }
     Ok(kept)
 }

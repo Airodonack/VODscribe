@@ -444,7 +444,7 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
 /// plays on its site instead.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    {
+    let had = {
         let db = state.db.lock().unwrap();
         let vod = db.vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
         if busy(vod.status) {
@@ -452,10 +452,14 @@ pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id:
         }
         forget_video(&db, &state.paths.work(), id).map_err(err)?;
         emit_vod(&app, &db, id)?;
-    }
+        vod.media
+    };
     // Forgotten first, so nothing starts on it; deleted with the library let
-    // go (a big video can take a moment).
-    pipeline::remove_media(&state.paths.work(), id);
+    // go (a big video can take a moment). Unless a "Keep video" queued it
+    // again meanwhile: those files are that download's.
+    if had && !state.videos.wanted(id) {
+        pipeline::remove_media(&state.paths.work(), id);
+    }
     Ok(())
 }
 
