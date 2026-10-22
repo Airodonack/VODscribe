@@ -211,7 +211,7 @@ for (const name of names) {
     distro.install,
     "export XDG_DATA_HOME=/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
     // Passed on: scenarios that need the network, screenshots kept.
-    ...["E2E_NETWORK", "E2E_SHOTS"].filter((k) => process.env[k]).map((k) => `export ${k}=${process.env[k]}`),
+    ...["E2E_NETWORK", "E2E_SHOTS", "E2E_SITE"].filter((k) => process.env[k]).map((k) => `export ${k}=${process.env[k]}`),
     `echo "installed: $(. /etc/os-release; echo $PRETTY_NAME)"`,
     // An app that can't load its libraries never starts: say which, rather than time out each scenario.
     `missing=$(ldd /usr/bin/vodscribe /usr/bin/vodscribe-worker | grep "not found" || true); if [ -n "$missing" ]; then echo "missing libraries: $missing" | tee /out/run.log; exit 3; fi`,
