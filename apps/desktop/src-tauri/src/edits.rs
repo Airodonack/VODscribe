@@ -145,7 +145,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             _ if edit.snippet_of.is_some() => clips::unique_path(&crate::clips::clips_dir(app), &name),
             _ => clips::unique_path(&edits_dir(app), &name),
         };
-        crate::clips::writing(&out);
+        crate::files::writing(&out);
         anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path, made_of, chapters))
     })();
     let (pieces, ffmpeg, out, version, format, before, made_of, chapters) = match prepared {
@@ -183,18 +183,18 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         Err(e) => db.set_edit_render(id, ClipStatus::Error, None, Some(&format!("{e:#}")), None)?,
     }
     if result.is_ok() && db.edit(id)?.is_none() {
-        crate::clips::delete_file(&out);
+        crate::files::delete_file(&out);
     }
     // The video made before under another name (renamed, or the other format)
     // goes, unless another app took it.
     if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out)
         && !db.edit_handed_out(id, true)?
     {
-        crate::clips::delete_file(old);
+        crate::files::delete_file(old);
     }
     emit(app, &db, id);
     // The render may have been what held files deleted meanwhile.
-    crate::clips::delete_leftovers();
+    crate::files::delete_leftovers();
     Ok(())
 }
 
@@ -320,7 +320,7 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
     // Its render stops (one that ends now finds it gone, and deletes its file).
     state.clips.cancel(id);
     if let Some(file) = file {
-        crate::clips::delete_file(file);
+        crate::files::delete_file(file);
     }
     let _ = app.emit("edit-removed", id);
     Ok(())

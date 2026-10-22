@@ -12,6 +12,7 @@ mod clips;
 mod e2e;
 mod edits;
 mod embed;
+mod files;
 mod footage;
 mod history;
 mod jobs;
@@ -431,7 +432,7 @@ fn quit(app: &AppHandle) {
         std::mem::forget(db);
     }
     vodscribe_core::tools::stop_tracked();
-    clips::delete_leftovers();
+    files::delete_leftovers();
 }
 
 #[cfg(test)]
