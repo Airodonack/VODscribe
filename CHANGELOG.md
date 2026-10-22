@@ -26,6 +26,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - A VOD opened again after an edit started at its beginning, not where you'd left it.
   - On macOS, clips of VODs from Kick, Twitch and YouTube, and edits with pieces of them, couldn't get their video ("Couldn't get this video"): the video reader didn't trust the sites' certificates.
   - Undoing a cut, chapter or highlight made before you deleted a clip's file outside VODscribe brought the clip back with it. The clip going is now its own step: undo brings it back (made again), and the next undo takes back the mark.
+  - A stretch pulled out of the window with Clip and let go the moment it left could stay as a clip, with its file, when the file had already been made; it goes now.
 
 ## 0.4.1 — 2026-10-19
 

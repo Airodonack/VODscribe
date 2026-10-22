@@ -89,23 +89,33 @@ export default {
            await internals.invoke("plugin:event|listen", { event, target: { kind: "Any" }, handler });
          }`,
       );
-      await os.gesture([
-        ["down", cx, cy],
-        ["move", cx - 20, cy],
-        ["move", cx - 60, cy],
-        ["letgo", edge.x, cy],
-      ]);
-      await sleep(5000);
-      const left = readdirSync(folder).filter((f) => !before.has(f));
+      // Twice: let go as soon as the edge is reached, and again after a
+      // pause long enough for the clip's file to be made first (the release
+      // then arrives as the drag is being asked for: 0.5.0 began the system's
+      // drag with no button held, which never ended, and the file stayed).
+      for (const pause of [0, 500]) {
+        await os.gesture([
+          ["down", cx, cy],
+          ["move", cx - 20, cy],
+          ["move", cx - 60, cy],
+          ...(pause ? [["wait", pause]] : []),
+          ["letgo", edge.x, cy],
+        ]);
+        await sleep(5000);
+        const left = readdirSync(folder).filter((f) => !before.has(f));
+        await leftNothing(left, pause ? "after a pause" : "at once");
+      }
+    }
+    async function leftNothing(left, how) {
       if (left.length) {
         const trace = await app.js(`return window.__trace`).catch(() => []);
         const marks = await app.js(`return performance.getEntriesByType("mark").map((m) => m.name)`).catch(() => []);
         const clips = await app.invoke("list_clips", { vodId: vod.id }).catch(() => []);
         ctx.log(`the page saw: ${trace.join(" | ")}`);
         ctx.log(`marks: ${marks.join(", ")}; clips now: ${JSON.stringify(clips)}`);
-        throw new Error(`Clip dragged out and let go at once left ${left.join(", ")}`);
+        throw new Error(`Clip dragged out and let go ${how} left ${left.join(", ")}`);
       }
-      ctx.log("Clip dragged out and let go at once: nothing left behind");
+      ctx.log(`Clip dragged out and let go ${how}: nothing left behind`);
     }
 
     // Clip pulled out and held there: how long the system's drag takes to

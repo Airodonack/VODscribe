@@ -863,10 +863,26 @@ fn start_drag(
         }
     });
     handlers.borrow_mut().push(begin);
-    if source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1).is_none() {
+    let undo = || {
         for handler in handlers.borrow_mut().drain(..) {
             source.disconnect(handler);
         }
+    };
+    // A drag begun with no button held never ends (nothing releases it), and
+    // the file it was for is never forgotten: the release may have come in
+    // the moment between the page asking and this. Refused, so the page
+    // treats it as a drag that didn't happen.
+    let held = source.window().and_then(|w| {
+        let pointer = w.display().default_seat()?.pointer()?;
+        let (_, _, _, state) = w.device_position(&pointer);
+        Some(state.contains(gtk::gdk::ModifierType::BUTTON1_MASK))
+    });
+    if held == Some(false) {
+        undo();
+        anyhow::bail!("The button was released before the drag could begin.");
+    }
+    if source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1).is_none() {
+        undo();
         anyhow::bail!("The drag couldn't start.");
     }
     Ok(())

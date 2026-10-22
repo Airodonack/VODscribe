@@ -48,9 +48,15 @@ export function isOutgoing(paths: string[]): boolean {
 /** Drags clip `clip`'s file out of the window, if it's made (a pill on an edit's clip bar). */
 export const dragFileOut = (clip: Clip) => dragOut(clip);
 
-/** Starts the system drag of `clip`, if its file is made, showing `image` (a PNG) if given. */
-async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
-  if (clip.status !== "ready" || !clip.file_path) return;
+/**
+ * Starts the system drag of `clip`, if its file is made, showing `image` (a
+ * PNG) if given; while `held()`, the button is still down. True if the drag
+ * was asked for (then its end, "drag-ended", forgets a clip made only for
+ * it); false if the button was let go first, when nothing is asked and the
+ * clip is the caller's to forget.
+ */
+async function dragOut(clip: Clip, image?: Uint8Array, held: () => boolean = () => true): Promise<boolean> {
+  if (clip.status !== "ready" || !clip.file_path) return false;
   outgoing = clip.file_path;
   clearTimeout(forget);
   forget = setTimeout(() => (outgoing = null), 60_000);
@@ -71,12 +77,23 @@ async function dragOut(clip: Clip, image?: Uint8Array): Promise<void> {
   };
   const limit = setTimeout(over, 60_000);
   stop = await events.dragEnded(over).catch(() => undefined);
+  // Let go while that was set up (the release was already on its way when
+  // the edge was crossed): a drag begun now, with no button down, would
+  // never end. Nothing begun; undone as if never asked.
+  if (!held()) {
+    clearTimeout(limit);
+    stop?.();
+    backLeft();
+    if (mine === drags) out = false;
+    return false;
+  }
   performance.mark("drag-start");
   await api.dragClip(clip.id, image).catch((e) => {
     console.error("drag", e);
     over();
   });
   formatHint.dragged();
+  return true;
 }
 
 /** The format clip `clip`'s file is in, by its extension. */
@@ -412,15 +429,20 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
         made = await (ahead ?? make(false));
         const cut = made && (await clips.ready(made.id, () => down, vod.id));
         const ready = cut && (await inFormat(cut, vod.id, () => down));
+        // Its file can be ready as the edge is crossed (a short clip from a
+        // file here, on a slow machine); the release then arrives during the
+        // waits below, so the button is checked again before the drag is
+        // asked for (dragOut), not only here.
+        const png = ready && down ? await image : null;
         if (ready && down) {
-          dragged = true;
           back = { stretch, clip: () => make(true) };
-          await dragOut(ready, await image);
+          dragged = await dragOut(ready, png ?? undefined, () => down);
+          if (!dragged) back = null;
         }
       } finally {
         finish();
-        // Let go before its file was ready: the clip made only for the drag
-        // goes (dragOut forgets it, after a drag).
+        // Let go before its file was ready, or before the drag began: the
+        // clip made only for the drag goes (dragOut forgets it, after a drag).
         if (made && !made.shown && !dragged) api.deleteClip(made.id).catch(() => {});
       }
     };
