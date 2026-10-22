@@ -9,9 +9,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The time and frame count under a Twitch video no longer jump back and forth about once a second while it plays.
 - I and O set where the selection starts and ends, as in video editors: I at the playhead is its start, O its end. With nothing selected, I selects from the playhead to the next cut (or the end), and O back to the cut before (or the start). Put past the other end, the two swap, so the selection runs between them. B, C and (in an edit) Delete then act on it as on lines selected in the transcript.
 - Press and hold the speed button under the player for a menu of the speeds, the current one ticked: let go over one to play at that speed, or anywhere else to leave it as it was. A click still steps to the next speed.
-- Double-click a search result to see it where it was said: it plays, as a click does, and the search gives way to the VOD's transcript, scrolled to that line (or, for a chat match, to that message in the chat), lit for a moment.
-- Back and forward know your searches: leave a search's results (open a VOD, double-click a result, clear the search box) and Back brings them back as they were, with the same words and filter, scrolled where you left them. A VOD removed since has no matches there.
-
+- Double-click a search result to see it where it was said: it plays, as a click does, and the VOD opens in the results' place with its transcript scrolled to that line (or, for a chat match, to that message in the chat), lit for a moment. Your words stay in the search box: click in it, or change them, to see the results again.
+- Back and forward know your searches: leave a search's results (double-click a result, open a VOD, clear the search box) and Back brings them back as they were, with the same words and filter, scrolled where you left them. A VOD removed since has no matches there.
 
 ## 0.5.0 — 2026-10-22
 

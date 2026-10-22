@@ -66,9 +66,10 @@ export default {
     );
     ctx.log(`${mac ? "⌘F" : "Ctrl+F"} focuses the search box`);
 
-    // Leaving a search's results (a result double-clicked) is a step: back
-    // brings them back as they were, the same words and scrolled where they
-    // were, and forward the VOD again. The results get room below them to
+    // Leaving a search's results (a result double-clicked: the VOD, with the
+    // words kept in the box) is a step: back brings them back as they were,
+    // the same words and scrolled where they were, and forward the VOD again;
+    // the box focused brings the results back too. The results get room below them to
     // scroll in (one match doesn't fill the view).
     await app.js(
       `const room = document.createElement("style");
@@ -105,11 +106,15 @@ export default {
       "forward to the VOD",
       async () => {
         const s = await search();
-        return s.query === "" && s.transcript && (await open()) === second.id;
+        return s.query === "landed" && s.transcript && !s.rows && (await open()) === second.id;
       },
       10_000,
     );
+    await app.focus('input[aria-label="Search"]');
+    await until("the results, the box focused", async () => (await search()).rows > 0, 10_000);
     await app.js(`document.getElementById("e2e-room").remove()`);
+    await app.type('input[aria-label="Search"]', "");
+    await until("the results gone", async () => !(await search()).rows, 10_000);
     ctx.log(`back to the results (${results.rows} at ${results.scroll} px), forward to the VOD`);
 
     // A VOD removed leaves back and forward (nav.svelte.ts forget): back goes

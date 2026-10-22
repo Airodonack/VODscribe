@@ -73,6 +73,11 @@
   });
   let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
   let searchError = $state<string | null>(null);
+  // The results set aside for the VOD under them (a match double-clicked),
+  // the words kept in the box: back again when the box is focused or
+  // edited, a VOD is picked from the list, or Back takes them there.
+  let aside = $state(false);
+  const showResults = $derived(!aside && (results !== null || searchError !== null));
 
   let showSettings = $state(false);
   let settingsEl = $state<HTMLElement>();
@@ -96,7 +101,7 @@
 
   // Back and forward (nav.svelte.ts): a step each time what's open changes,
   // or a search's results come up in its place or go.
-  const search = $derived<Search>({ query, all: scopeAll, audio: sources.audio, chat: sources.chat });
+  const search = $derived<Search>({ query, all: scopeAll, audio: sources.audio, chat: sources.chat, aside });
   $effect(() => {
     const doc = view;
     const now = search;
@@ -119,6 +124,7 @@
   function goTo(step: Step) {
     revealing = null;
     query = step.search.query;
+    aside = step.search.aside;
     scopeAll = step.search.all;
     sources = { audio: step.search.audio, chat: step.search.chat };
     const top = searching(step.search) ? step.left.results : step.left.scroll;
@@ -201,6 +207,7 @@
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
+      aside = false;
       searchInput?.focus();
       searchInput?.select();
     }
@@ -409,7 +416,7 @@
 
   // An edit open shows in the player's place, its transcript in the body's,
   // unless a search's results are up.
-  const editOpen = $derived(edits.openId !== null && !results && !searchError);
+  const editOpen = $derived(edits.openId !== null && !showResults);
 
   function play(vodId: number, time: number) {
     edits.openEdit(null);
@@ -467,10 +474,13 @@
   let revealing = $state<SearchHit | null>(null);
   /** Match `hit` double-clicked: its two clicks have played it, and now the
    *  results give way to its VOD's transcript, scrolled to it in the
-   *  transcript or the chat (a step: back brings the results back). */
+   *  transcript or the chat (a step: back brings the results back). The
+   *  words stay in the box, and the search's scope with them: results over
+   *  every VOD stay so with this one open, to come back as they were. */
   function reveal(hit: SearchHit) {
+    if (scopeId !== hit.vod_id) scopeAll = true;
     select(hit.vod_id);
-    query = "";
+    aside = true;
     revealing = hit;
   }
 
@@ -497,6 +507,13 @@
     if (id !== null && !shown) playing = { vodId: id, at: null };
   }
 
+  /** VOD `id` picked from the list: opened, with a search's results over it
+   *  (limited to it) if the box has words, even ones set aside. */
+  function pick(id: number | null) {
+    aside = false;
+    select(id);
+  }
+
   // Edits show in the clip bar under the player (ClipStrip.svelte); one opened
   // there takes the main area, and a VOD picked (or played) takes it back.
   edits.start();
@@ -519,7 +536,7 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {rows} {selectedId} onselect={select} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
+    <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
@@ -553,6 +570,9 @@
             placeholder="Search for a phrase…"
             bind:value={query}
             bind:this={searchInput}
+            onfocus={() => (aside = false)}
+            onclick={() => (aside = false)}
+            oninput={() => (aside = false)}
             aria-label="Search"
             autocorrect="off"
             autocapitalize="off"
@@ -593,9 +613,9 @@
       {/if}
 
       <div class="body" bind:this={body} onscroll={noteScroll}>
-        {#if searchError}
+        {#if showResults && searchError}
           <p class="error-text pad">{searchError}</p>
-        {:else if results}
+        {:else if showResults && results}
           <Results
             hits={results.hits}
             truncated={results.truncated}

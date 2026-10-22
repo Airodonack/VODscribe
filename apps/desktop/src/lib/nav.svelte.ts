@@ -28,6 +28,9 @@ export interface Search {
   all: boolean;
   audio: boolean;
   chat: boolean;
+  /** Its results set aside for the view under them (a match double-clicked),
+   *  the words kept in the box. */
+  aside: boolean;
 }
 
 export interface Step {
@@ -42,9 +45,10 @@ const KEEP = 100;
 const key = (doc: Doc | null) => (doc ? docKey(doc) : "none");
 const same = (a: Doc | null, b: Doc | null) => key(a) === key(b);
 /** Whether a search's results are up, rather than the view itself. */
-export const searching = (search: Search) => search.query.trim() !== "";
-/** The same results: the same words, whatever the spaces round them. */
-const sameSearch = (a: Search, b: Search) => a.query.trim() === b.query.trim();
+export const searching = (search: Search) => search.query.trim() !== "" && !search.aside;
+/** The same results (the same words, whatever the spaces round them), or both the view itself. */
+const sameSearch = (a: Search, b: Search) =>
+  searching(a) === searching(b) && (!searching(a) || a.query.trim() === b.query.trim());
 /** Two steps that would bring back the same thing. */
 const samePlace = (a: Step, b: Step) => same(a.doc, b.doc) && sameSearch(a.search, b.search);
 
@@ -53,7 +57,7 @@ class Nav {
   forward = $state.raw<Step[]>([]);
   /** The view open now, and the search over it. */
   #here: Doc | null = null;
-  #search: Search = { query: "", all: false, audio: true, chat: true };
+  #search: Search = { query: "", all: false, audio: true, chat: true, aside: false };
   /** Set while a step is being taken, so arriving there isn't one of its own. */
   #moving = false;
   /** What each view says of itself now. */

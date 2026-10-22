@@ -1,5 +1,6 @@
 // Searching two VODs: results grouped by VOD; a result double-clicked shows
-// its line in its VOD's transcript; "This VOD" (in the From filter) narrows
+// its line in its VOD's transcript, the words kept in the box, and the box
+// focused shows the results again; "This VOD" (in the From filter) narrows
 // to the open one; a phrase in neither says so, and offers to search every
 // VOD.
 
@@ -47,7 +48,8 @@ export default {
     await ctx.checkpoint("search-grouped");
 
     // A result double-clicked plays it (its clicks) and opens its VOD's
-    // transcript in the results' place, with its line in view. The fixtures'
+    // transcript in the results' place, with its line in view and the words
+    // still in the box. The fixtures'
     // transcripts fit in the view, so here they're given room either side,
     // for the line to be out of it unless scrolled to.
     await app.js(
@@ -73,10 +75,12 @@ export default {
           };`),
       MINUTE,
     );
-    if (shown.query !== "") throw new Error(`the search box still says "${shown.query}"`);
+    if (shown.query !== "landed") throw new Error(`the search box says "${shown.query}", not "landed"`);
     if (!shown.open) throw new Error("the result's VOD isn't open");
     await app.js(`document.getElementById("e2e-room").remove()`);
-    ctx.log("a double-clicked result shows its line in the transcript");
+    await app.focus(SEARCH);
+    await until("the results again", async () => (await results()).rows === 2, 10_000);
+    ctx.log("a double-clicked result shows its line in the transcript; the box focused, the results");
 
     // The audio file opened, then the search narrowed to it.
     await app.type(SEARCH, "");

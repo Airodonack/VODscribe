@@ -101,6 +101,22 @@ export class App {
     );
   }
 
+  /**
+   * Focuses the input `selector`, with its focus event. As with `blur`, a window without the
+   * keyboard (weston) gets no focus event from it: there it's sent by hand.
+   */
+  focus(selector) {
+    return this.js(
+      `const input = document.querySelector(arguments[0]);
+       if (!input) throw new Error("no " + arguments[0]);
+       // Focused already (a click that moved nothing), it's left first, as a person's click elsewhere would.
+       if (document.activeElement === input) input.blur();
+       input.focus();
+       if (!document.hasFocus()) input.dispatchEvent(new FocusEvent("focus"));`,
+      selector,
+    );
+  }
+
   /** Clicks the button whose text is `text`. */
   clickText(text) {
     return this.js(
