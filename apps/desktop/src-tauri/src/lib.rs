@@ -218,10 +218,14 @@ pub fn run() {
             // Hidden until App.svelte has mounted and shows it, so it never opens
             // as a blank white window. If the page never gets that far, it's
             // shown anyway, broken page and all.
-            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?
-                // In a site's player's frame, what it plays goes to the app's player
-                // (embed.ts, embed.rs); it does nothing in other frames.
-                .initialization_script_for_all_frames(include_str!("embed_shim.js"))
+            let builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &window)?;
+            // In a site's player's frame, what it plays goes to the app's player
+            // (embed.ts, embed.rs); it does nothing in other frames. Only where
+            // built in (the embed-takeover feature): their frames are otherwise
+            // left as they are.
+            #[cfg(feature = "embed-takeover")]
+            let builder = builder.initialization_script_for_all_frames(include_str!("embed_shim.js"));
+            let builder = builder
                 // No background behind the page: it paints its own, and where it's
                 // clear the player's picture under it shows (a site's player over
                 // it). On macOS it's given as the WKWebView is made: wry turns its
@@ -230,8 +234,11 @@ pub fn run() {
             // Under Wayland the picture lies under the window's own surface, which
             // is see-through there. (Under X11 it never goes under the page, and on
             // macOS and Windows it's under the page inside the window.)
-            #[cfg(target_os = "linux")]
+            // Only a site's VOD's picture goes under (embed-takeover).
+            #[cfg(all(target_os = "linux", feature = "embed-takeover"))]
             let see_through = vodscribe_player::present::can_go_under();
+            #[cfg(all(target_os = "linux", not(feature = "embed-takeover")))]
+            let see_through = false;
             #[cfg(not(target_os = "linux"))]
             let see_through = false;
             let builder = builder.transparent(see_through);
@@ -337,6 +344,7 @@ pub fn run() {
             player::player_open_edit,
             player::player_plan,
             player::player_close,
+            embed::embed_takeover,
             embed::embed_open,
             embed::embed_append,
             embed::embed_close,

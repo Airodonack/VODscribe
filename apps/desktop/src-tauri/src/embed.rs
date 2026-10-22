@@ -96,8 +96,20 @@ pub(crate) fn clear(local: &Path) {
 /// on it, waiting for it, at `at`: the session's token, which the page
 /// sends with each append and the close. Fails if it's closed (or another
 /// opened) before the player is.
+/// Whether a site's VOD's picture can be taken into the app's player (built
+/// with the embed-takeover feature); the page leaves their players alone if not.
+#[tauri::command]
+pub(crate) fn embed_takeover() -> bool {
+    cfg!(feature = "embed-takeover")
+}
+
+const NO_TAKEOVER: &str = "a site's player isn't taken over in this build";
+
 #[tauri::command]
 pub(crate) async fn embed_open(app: AppHandle, vod_id: i64, at: f64) -> CmdResult<u64> {
+    if !embed_takeover() {
+        return Err(NO_TAKEOVER.into());
+    }
     let duration = {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
@@ -162,6 +174,9 @@ pub(crate) async fn embed_close(app: AppHandle, token: u64) {
 /// main thread (it writes to disk); the page sends one at a time, in order.
 #[tauri::command(async)]
 pub(crate) fn embed_append(app: AppHandle, request: tauri::ipc::Request<'_>) -> CmdResult<()> {
+    if !embed_takeover() {
+        return Err(NO_TAKEOVER.into());
+    }
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err("An append comes as bytes.".into());
     };

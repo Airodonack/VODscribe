@@ -579,8 +579,13 @@ function reloadPlain(frame: HTMLIFrameElement, url: string) {
  *  the app's player draws here, and it's a picture (not sound alone) of a
  *  known length (a stream still going on may not say yet). */
 async function bridgeable(vod: Vod): Promise<boolean> {
-  return !vod.audio_only && (vod.duration ?? 0) > 0 && (await ownPlayer.ask());
+  return !vod.audio_only && (vod.duration ?? 0) > 0 && (await takeover()) && (await ownPlayer.ask());
 }
+
+/** Whether this build takes a site's VOD's picture into the app's player at
+ *  all (embed.rs embed_takeover; off in releases, for the sites' terms). */
+let asked: Promise<boolean> | null = null;
+const takeover = () => (asked ??= invoke<boolean>("embed_takeover").catch(() => false));
 
 /** Appends waiting to reach the app at most: past it, it can't keep up. */
 const MOST_PENDING = 400;

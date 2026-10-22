@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-embed-takeover"
+description = "Enables the embed_takeover command without any pre-configured scope."
+commands.allow = ["embed_takeover"]
+
+[[permission]]
+identifier = "deny-embed-takeover"
+description = "Denies the embed_takeover command without any pre-configured scope."
+commands.deny = ["embed_takeover"]

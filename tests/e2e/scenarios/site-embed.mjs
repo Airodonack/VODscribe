@@ -23,6 +23,8 @@ export default {
   name: "site-embed",
   needs: ["network"],
   async run(app, ctx) {
+    if (!(await app.invoke("embed_takeover")))
+      ctx.skip("this build leaves the sites' players alone (no embed-takeover)");
     if (!(await app.invoke("player_available"))) ctx.skip("the app's own player doesn't draw here");
     await app.toLibrary();
     await app.type('input[aria-label="VOD link"]', SITES[SITE]);

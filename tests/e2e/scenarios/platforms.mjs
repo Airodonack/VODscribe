@@ -57,8 +57,8 @@ export default {
         );
         if (chat === "failed") throw new Error("its chat replay failed");
 
-        // Played in the app: in its own player, from footage fetched as it
-        // plays, where it can draw (else the site's embed).
+        // Played in the app: in the site's own player (with the app's
+        // picture under it where the build takes it over: site-embed.mjs).
         await app.openVod(vod.id);
         await until(
           "the Play button",

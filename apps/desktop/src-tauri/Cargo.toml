@@ -17,6 +17,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs).
 # Test builds only: never in a release.
 e2e = []
+# A site's VOD's picture taken from its player into the app's own, under it
+# (embed_shim.js, embed.rs, embed.ts bridge). Off in releases: YouTube's and
+# Twitch's developer terms forbid playing their video through another player.
+embed-takeover = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

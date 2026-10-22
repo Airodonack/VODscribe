@@ -70,6 +70,7 @@ permissions = [
   "allow-player-open-edit",
   "allow-player-plan",
   "allow-player-close",
+  "allow-embed-takeover",
   "allow-embed-open",
   "allow-embed-append",
   "allow-embed-close",
