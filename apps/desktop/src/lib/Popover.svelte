@@ -7,14 +7,16 @@
   // against the window, so nothing can clip it or draw over it (a scrolling
   // area, a sticky header, a playing video in WebKit). It sits below its
   // button, right edges aligned (shifted to stay inside the window), or above
-  // it when there's more room there, and scrolls within the space it has. A
-  // click outside it or its button, or Escape, closes it.
+  // it when there's more room there (or `above` it when asked, as a menu
+  // from the player's bar, where it has the room), and scrolls within the
+  // space it has. A click outside it or its button, or Escape, closes it.
   let {
     open = $bindable(),
     anchor,
     label,
     width,
     padding = 12,
+    above = false,
     children,
   }: {
     open: boolean;
@@ -23,6 +25,8 @@
     label: string;
     width: number;
     padding?: number;
+    /** Above the button if it fits there, rather than below. */
+    above?: boolean;
     children: Snippet;
   } = $props();
 
@@ -37,13 +41,12 @@
     // Right edges aligned, but never past the window's left edge (a button near it).
     const right = Math.max(8, Math.min(window.innerWidth - box.right, window.innerWidth - width - 8));
     const below = window.innerHeight - box.bottom - 16;
-    const above = box.top - 16;
-    place =
-      below >= ROOM || (below >= above && below >= LEAST)
-        ? { top: box.bottom + 8, right, maxHeight: below - 8 }
-        : above >= LEAST
-          ? { bottom: window.innerHeight - box.top + 8, right, maxHeight: above - 8 }
-          : { top: 8, right, maxHeight: window.innerHeight - 16 };
+    const up = box.top - 16;
+    place = (above ? up < LEAST && below >= LEAST : below >= ROOM || (below >= up && below >= LEAST))
+      ? { top: box.bottom + 8, right, maxHeight: below - 8 }
+      : up >= LEAST
+        ? { bottom: window.innerHeight - box.top + 8, right, maxHeight: up - 8 }
+        : { top: 8, right, maxHeight: window.innerHeight - 16 };
   }
   $effect(() => {
     if (open) fit();

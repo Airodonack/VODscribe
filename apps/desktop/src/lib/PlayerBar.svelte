@@ -15,10 +15,12 @@
   // sound, speed, captions and full screen, where the player has them.
 
   import type { Snippet } from "svelte";
+  import { DRAG_SLOP } from "./dragout";
   import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
   import { frameIndex } from "./media";
   import { formatTime } from "./platform";
+  import Popover from "./Popover.svelte";
   import { load, save } from "./stored";
 
   let {
@@ -72,7 +74,55 @@
   function nextSpeed() {
     player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
   }
+
+  // The speed button pressed and held opens a menu of the speeds above it;
+  // let go over one, it's picked, and elsewhere the menu just closes. A
+  // plain click still steps to the next speed. A press that moves first is
+  // a drag, not a hold.
+  const HOLD_MS = 400;
+  let speedButton = $state<HTMLElement>();
+  let speedMenu = $state(false);
+  let speedPress: { x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  // The menu was opened by this press: its let-go isn't a click on the button.
+  let held = false;
+  function onSpeedDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    held = false;
+    const timer = setTimeout(() => {
+      // Let go (or moved away) meanwhile: speedPress is gone, no menu.
+      if (!speedPress) return;
+      speedPress = null;
+      held = true;
+      speedMenu = true;
+    }, HOLD_MS);
+    speedPress = { x: e.clientX, y: e.clientY, timer };
+  }
+  function letGoOfPress() {
+    if (speedPress) clearTimeout(speedPress.timer);
+    speedPress = null;
+  }
+  function onWindowPointerMove(e: PointerEvent) {
+    if (speedPress && (!(e.buttons & 1) || Math.hypot(e.clientX - speedPress.x, e.clientY - speedPress.y) >= DRAG_SLOP))
+      letGoOfPress();
+    // Its let-go missed (it happened outside the window): closed.
+    else if (speedMenu && held && !(e.buttons & 1)) speedMenu = false;
+  }
+  function onWindowPointerUp(e: PointerEvent) {
+    letGoOfPress();
+    if (!speedMenu || !held) return;
+    speedMenu = false;
+    // By where it's let go: the press began on the button, so the button may be the event's target.
+    const item = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-speed]");
+    if (item) player?.rate?.set(Number(item.dataset.speed));
+    // The click that may follow (let go on the button) comes before this.
+    setTimeout(() => (held = false));
+  }
+  function onSpeedClick() {
+    if (!held) nextSpeed();
+  }
 </script>
+
+<svelte:window onpointermove={onWindowPointerMove} onpointerup={onWindowPointerUp} onpointercancel={letGoOfPress} />
 
 <!-- Not "row": that's the transcript's lines, styled app-wide. -->
 <div class="bar">
@@ -133,7 +183,26 @@
     />
   {/if}
   {#if player?.rate && !player.ownControls}
-    <button class="control speed" onclick={nextSpeed} title="Playback speed">{rate}×</button>
+    <button
+      class="control speed"
+      bind:this={speedButton}
+      onpointerdown={onSpeedDown}
+      onclick={onSpeedClick}
+      title="Playback speed (hold for a list)">{rate}×</button
+    >
+    <Popover bind:open={speedMenu} anchor={speedButton} label="Playback speed" width={84} padding={4} above>
+      <div class="speeds">
+        {#each [...SPEEDS].sort((a, b) => b - a) as s (s)}
+          <button
+            data-speed={s}
+            class:current={s === rate}
+            aria-pressed={s === rate}
+            onclick={() => player?.rate?.set(s)}
+            >{#if s === rate}<Icon name="check" size={12} />{/if}<span>{s}×</span></button
+          >
+        {/each}
+      </div>
+    </Popover>
   {/if}
   {#if captionsAvailable}
     <button
@@ -237,6 +306,37 @@
     font-size: 12px;
     font-variant-numeric: tabular-nums;
     min-width: 42px;
+  }
+
+  /* The speeds held open from the speed button, fastest at the top. */
+  .speeds {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .speeds button {
+    display: grid;
+    grid-template-columns: 14px auto;
+    align-items: center;
+    padding: 5px 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+  }
+
+  .speeds button span {
+    grid-column: 2;
+  }
+
+  .speeds button:hover {
+    background: var(--surface-2);
+  }
+
+  .speeds .current {
+    color: var(--accent);
   }
 
   .time {
