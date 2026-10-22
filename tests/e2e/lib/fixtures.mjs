@@ -92,3 +92,13 @@ export function colours(dir) {
     "30",
   ]);
 }
+
+/** A minute of picture and sound (a tone), made in `dir` once: long enough to seek far in. */
+export function minute(dir) {
+  mkdirSync(dir, { recursive: true });
+  return make(dir, "minute.mp4", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=60"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-c:a", "aac", "-shortest"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+  ]);
+}
