@@ -55,8 +55,11 @@ Directly against an installed app, headless, on a library of its own:
 ```sh
 export XDG_DATA_HOME=$HOME/.cache/vodscribe-e2e-data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1
 unset WAYLAND_DISPLAY; export GDK_BACKEND=x11
+export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
 dbus-run-session -- xvfb-run -a -s '-screen 0 1400x900x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
 ```
+
+The private runtime dir matters: with the shared one, the test bus's gnome-keyring finds your session's keyring there and quits without claiming its name, and GTK's portal start then waits out D-Bus's 25 s activation timeout before the window appears.
 
 On another computer: `node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] --only edits`.
 
