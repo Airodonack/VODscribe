@@ -1,6 +1,6 @@
 // Keys for getting around: Ctrl+F (⌘F on a Mac) goes to the search box from
 // anywhere, and back and forward (Alt+← and Alt+→, or ⌘[ and ⌘]) step
-// between the VODs opened, a removed one left out.
+// between the VODs opened and a search's results, a removed VOD left out.
 
 import path from "node:path";
 
@@ -65,6 +65,52 @@ export default {
       10_000,
     );
     ctx.log(`${mac ? "⌘F" : "Ctrl+F"} focuses the search box`);
+
+    // Leaving a search's results (a result double-clicked) is a step: back
+    // brings them back as they were, the same words and scrolled where they
+    // were, and forward the VOD again. The results get room below them to
+    // scroll in (one match doesn't fill the view).
+    await app.js(
+      `const room = document.createElement("style");
+       room.id = "e2e-room";
+       room.textContent = ".results { padding-bottom: 3000px !important }";
+       document.head.append(room);`,
+    );
+    await app.type('input[aria-label="Search"]', "landed");
+    await until("a result", () => app.js(`return !!document.querySelector(".results button.row")`), 60_000);
+    await app.js(`document.querySelector(".body").scrollTop = 150`);
+    // The scroll is noted as its event comes, a frame or so later.
+    await new Promise((r) => setTimeout(r, 300));
+    await app.doubleClick(".results button.row");
+    await until("the transcript", () => app.js(`return !!document.querySelector("#transcript")`), 30_000);
+    const search = () =>
+      app.js(`return {
+        query: document.querySelector('input[aria-label="Search"]').value,
+        rows: document.querySelectorAll(".results button.row").length,
+        scroll: document.querySelector(".body").scrollTop,
+        transcript: !!document.querySelector("#transcript") }`);
+    await (mac ? press("[", { metaKey: true }) : press("ArrowLeft", { altKey: true }));
+    const results = await until(
+      "back to the results, as they were",
+      async () => {
+        const s = await search();
+        return s.query === "landed" && s.rows > 0 && Math.abs(s.scroll - 150) <= 1 && s;
+      },
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(await search())}`);
+    });
+    await (mac ? press("]", { metaKey: true }) : press("ArrowRight", { altKey: true }));
+    await until(
+      "forward to the VOD",
+      async () => {
+        const s = await search();
+        return s.query === "" && s.transcript && (await open()) === second.id;
+      },
+      10_000,
+    );
+    await app.js(`document.getElementById("e2e-room").remove()`);
+    ctx.log(`back to the results (${results.rows} at ${results.scroll} px), forward to the VOD`);
 
     // A VOD removed leaves back and forward (nav.svelte.ts forget): back goes
     // to the first, and forward to where it was left (nothing open), never

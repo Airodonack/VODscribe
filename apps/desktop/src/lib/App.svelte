@@ -38,7 +38,7 @@
   import { toast } from "./toasts.svelte";
   import Toast from "./Toast.svelte";
   import type { Doc } from "./api";
-  import { nav, type Step } from "./nav.svelte";
+  import { nav, searching, type Search, type Step } from "./nav.svelte";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -94,26 +94,45 @@
     if (!DEMO) api.setView(view).catch(() => {});
   });
 
-  // Back and forward (nav.svelte.ts): a step each time what's open changes.
+  // Back and forward (nav.svelte.ts): a step each time what's open changes,
+  // or a search's results come up in its place or go.
+  const search = $derived<Search>({ query, all: scopeAll, audio: sources.audio, chat: sources.chat });
   $effect(() => {
     const doc = view;
-    untrack(() => nav.arrived(doc));
+    const now = search;
+    untrack(() => {
+      nav.arrived(doc, now);
+      // Where the body is scrolled to now (swapping results and transcript
+      // may move it without a scroll).
+      noteScroll();
+    });
   });
-  nav.attach(goTo, () => query);
-  /** Takes step `step`: its view open again, paused where it was, with its search. */
+  nav.attach(goTo);
+  /** How far the body (the results, or else the transcript) is scrolled, for back and forward. */
+  function noteScroll() {
+    const top = body?.scrollTop ?? 0;
+    nav.note(view, searching(search) ? { results: top } : { scroll: top });
+  }
+  /** Takes step `step`: its view open again, paused where it was, with its
+   *  search, and the search's results if it had them, scrolled as they were
+   *  (the search runs again, so a VOD removed since has no rows there). */
   function goTo(step: Step) {
-    query = step.query;
+    revealing = null;
+    query = step.search.query;
+    scopeAll = step.search.all;
+    sources = { audio: step.search.audio, chat: step.search.chat };
+    const top = searching(step.search) ? step.left.results : step.left.scroll;
     const doc = step.doc;
     if (doc?.kind === "edit") {
       edits.openEdit(doc.id);
-      if (step.left.scroll) bringScroll(step.left.scroll);
+      if (top) bringScroll(top);
       return;
     }
     edits.openEdit(null);
     selectedId = doc?.id ?? null;
     // Brought back as it was left (Player.svelte reads nav.bringBack).
     if (doc) playing = { vodId: doc.id, at: null };
-    if (step.left.scroll) bringScroll(step.left.scroll);
+    if (top) bringScroll(top);
   }
   /** Scrolls the transcript (or results) back to `top`, as it fills in. */
   function bringScroll(top: number) {
@@ -444,6 +463,17 @@
     requestAnimationFrame(step);
   }
 
+  /** The search match last double-clicked, for its VOD's transcript to show (Transcript.svelte). */
+  let revealing = $state<SearchHit | null>(null);
+  /** Match `hit` double-clicked: its two clicks have played it, and now the
+   *  results give way to its VOD's transcript, scrolled to it in the
+   *  transcript or the chat (a step: back brings the results back). */
+  function reveal(hit: SearchHit) {
+    select(hit.vod_id);
+    query = "";
+    revealing = hit;
+  }
+
   // Selecting a VOD opens its player paused, ready to jump around.
   /** Out of the open edit to VOD `vodId`, paused at `time` (a source link was
    *  followed); what the edit plays of it stays lit (`edits.lit`). */
@@ -562,7 +592,7 @@
         {/key}
       {/if}
 
-      <div class="body" bind:this={body} onscroll={() => nav.note(view, { scroll: body?.scrollTop ?? 0 })}>
+      <div class="body" bind:this={body} onscroll={noteScroll}>
         {#if searchError}
           <p class="error-text pad">{searchError}</p>
         {:else if results}
@@ -574,6 +604,7 @@
             scope={scopeAll ? undefined : selected}
             columns={sources.audio && sources.chat}
             onplay={play}
+            onreveal={reveal}
             onclearscope={() => (scopeAll = true)}
           />
         {:else if editOpen}
@@ -584,7 +615,12 @@
           <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
                heights, a seek in progress) shows under the next while it loads. -->
           {#key selected.id}
-            <Transcript vod={selected} onplay={(time) => play(selected.id, time)} />
+            <Transcript
+              vod={selected}
+              reveal={revealing?.vod_id === selected.id ? revealing : null}
+              onrevealed={() => (revealing = null)}
+              onplay={(time) => play(selected.id, time)}
+            />
           {/key}
         {:else}
           <div class="home">
