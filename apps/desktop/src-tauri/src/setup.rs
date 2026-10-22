@@ -1,7 +1,7 @@
 //! Commands for what the app needs to run: first-run setup, settings, the GPU
 //! pack and downloaded files.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -119,15 +119,15 @@ pub(crate) async fn run_setup(app: AppHandle, state: State<'_, AppState>) -> Cmd
     })
 }
 
-/// A long download's flags: `running` while it's under way (one at a time) and
+/// A long download's flags: `held` while it's under way (one at a time) and
 /// `cancel`, which `cancel()` sets to stop it. Canceling isn't an error: the
 /// done event carries null. Tools and model files that finished stay; the GPU
 /// pack starts over, since its parts are only kept together.
 pub(crate) struct Install {
-    running: Arc<AtomicBool>,
-    /// `running` is held by something other than an install (`Claim`): a
-    /// yt-dlp update, the add-on being removed. No done event follows.
-    claimed: Arc<AtomicBool>,
+    /// `FREE`, `INSTALLING`, or `CLAIMED`: held by something other than an
+    /// install (a yt-dlp update, the add-on being removed), so no done event
+    /// follows. One value, so taking it and saying by whom is one step.
+    held: Arc<AtomicU8>,
     cancel: Arc<AtomicBool>,
     /// The latest progress event's payload while running (see `Reporter`).
     last: Arc<Mutex<Option<serde_json::Value>>>,
@@ -171,18 +171,21 @@ impl Reporter {
     }
 }
 
+const FREE: u8 = 0;
+const INSTALLING: u8 = 1;
+const CLAIMED: u8 = 2;
+
 impl Install {
     pub(crate) fn new() -> Self {
         Self {
-            running: Arc::new(AtomicBool::new(false)),
-            claimed: Arc::new(AtomicBool::new(false)),
+            held: Arc::new(AtomicU8::new(FREE)),
             cancel: Arc::new(AtomicBool::new(false)),
             last: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(crate) fn running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.held.load(Ordering::Relaxed) != FREE
     }
 
     /// The latest progress the running install reported, if any.
@@ -199,7 +202,7 @@ impl Install {
     }
 
     /// Runs `install` on its own thread, unless one is already running, with a
-    /// `Reporter` for its `progress_event`s. Then clears `running` and emits
+    /// `Reporter` for its `progress_event`s. Then frees `held` and emits
     /// `done_event` with an error message, or null when it finished or was canceled.
     /// With one running already its done event comes as for this one; held
     /// by something else (`busy`), none would, so that's an error.
@@ -211,19 +214,21 @@ impl Install {
         busy: &'static str,
         install: impl FnOnce(&AppHandle, &AtomicBool, &Reporter) -> anyhow::Result<()> + Send + 'static,
     ) -> CmdResult<()> {
-        // Cleared before `running` is set, so a cancel that lands as this
+        // Cleared before `held` is taken, so a cancel that lands as this
         // starts is kept rather than wiped.
         self.cancel.store(false, Ordering::Relaxed);
-        if self.running.swap(true, Ordering::Relaxed) {
-            return if self.claimed.load(Ordering::Relaxed) { Err(busy.into()) } else { Ok(()) };
+        match self.held.compare_exchange(FREE, INSTALLING, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => {}
+            Err(CLAIMED) => return Err(busy.into()),
+            Err(_) => return Ok(()),
         }
         *self.last.lock().unwrap() = None;
-        let (running, cancel, last) = (self.running.clone(), self.cancel.clone(), self.last.clone());
+        let (held, cancel, last) = (self.held.clone(), self.cancel.clone(), self.last.clone());
         std::thread::spawn(move || {
             let report = Reporter::new(app.clone(), progress_event, last.clone());
             let result = install(&app, &cancel, &report);
             *last.lock().unwrap() = None;
-            running.store(false, Ordering::Relaxed);
+            held.store(FREE, Ordering::Relaxed);
             let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
             let _ = app.emit(done_event, error);
         });
@@ -441,23 +446,19 @@ pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> C
 
 /// An `Install`'s busy flag, held by something other than an install until
 /// dropped.
-struct Claim(Arc<AtomicBool>, Arc<AtomicBool>);
+struct Claim(Arc<AtomicU8>);
 
 impl Claim {
     /// Holds `install`'s flag, or returns None if something already does.
     fn take(install: &Install) -> Option<Self> {
-        if install.running.swap(true, Ordering::Relaxed) {
-            return None;
-        }
-        install.claimed.store(true, Ordering::Relaxed);
-        Some(Claim(install.running.clone(), install.claimed.clone()))
+        install.held.compare_exchange(FREE, CLAIMED, Ordering::Relaxed, Ordering::Relaxed).ok()?;
+        Some(Claim(install.held.clone()))
     }
 }
 
 impl Drop for Claim {
     fn drop(&mut self) {
-        self.1.store(false, Ordering::Relaxed);
-        self.0.store(false, Ordering::Relaxed);
+        self.0.store(FREE, Ordering::Relaxed);
     }
 }
 
@@ -469,12 +470,12 @@ mod tests {
     fn a_claim_holds_the_flag_and_says_it_isnt_an_install() {
         let install = Install::new();
         let claim = Claim::take(&install).expect("free");
-        assert!(install.running() && install.claimed.load(Ordering::Relaxed));
+        assert!(install.running() && install.held.load(Ordering::Relaxed) == CLAIMED);
         assert!(Claim::take(&install).is_none(), "one holder at a time");
         drop(claim);
-        assert!(!install.running() && !install.claimed.load(Ordering::Relaxed));
+        assert!(!install.running());
         // Held by an install (as spawn sets it), it isn't claimed.
-        install.running.store(true, Ordering::Relaxed);
-        assert!(Claim::take(&install).is_none() && !install.claimed.load(Ordering::Relaxed));
+        install.held.store(INSTALLING, Ordering::Relaxed);
+        assert!(Claim::take(&install).is_none() && install.held.load(Ordering::Relaxed) == INSTALLING);
     }
 }
