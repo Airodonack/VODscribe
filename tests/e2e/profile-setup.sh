@@ -29,6 +29,11 @@ for pkg in libwebkit2gtk-4.1-0 libjavascriptcoregtk-4.1-0; do
     continue
   }
   curl -fsS -o "$work/$pkg-dbgsym.deb" "https://snapshot.debian.org/file/$hash"
+  # The archive names a file by its SHA-1: what came must be that file.
+  echo "$hash  $work/$pkg-dbgsym.deb" | sha1sum -c --quiet - || {
+    echo "$pkg-dbgsym $version: the file fetched isn't the one asked for; not installed"
+    exit 1
+  }
   sudo dpkg -i "$work/$pkg-dbgsym.deb" > /dev/null
   echo "$pkg-dbgsym $version: installed"
 done
