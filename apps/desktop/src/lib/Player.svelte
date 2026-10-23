@@ -17,6 +17,7 @@
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import Thumb from "./Thumb.svelte";
+  import TranscribeFrom from "./TranscribeFrom.svelte";
   import { keysForApp } from "./demo";
   import { inOut, playerKey, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
@@ -271,6 +272,25 @@
   }
   const canClip = $derived(!!cuts.selection || !!stretch);
 
+  // Transcribe (T): the selection, else a stretch from the playhead, picked
+  // from a menu (TranscribeFrom.svelte). Offered while some of the VOD isn't
+  // transcribed, or to transcribe a selection again.
+  let transcribeButton = $state<HTMLElement>();
+  let transcribeMenu = $state(false);
+  // Where the menu was opened: the stretch starts there, though the video plays on.
+  let transcribeFrom = $state(0);
+  let transcribeError = $state<string | null>(null);
+  const canTranscribe = $derived(vod.transcribed !== "all" || !!cuts.selection);
+  function transcribe() {
+    transcribeError = null;
+    const picked = cuts.selection;
+    if (picked) api.transcribeStretch(vod.id, picked.start, picked.end).catch((e) => (transcribeError = String(e)));
+    else {
+      transcribeFrom = now;
+      transcribeMenu = !transcribeMenu;
+    }
+  }
+
   // Clip dragged rather than clicked: the lit-up stretch carried, as a clip's
   // pill is (dragout.ts carry), with no key held: onto an edit or the clip
   // bar, or past the window's edge into another app. Pressed and let go in
@@ -334,14 +354,17 @@
   function onKey(e: KeyboardEvent) {
     const key = playerKey(e);
     if (key === null || !canEmbed(vod) || !keysForApp()) return;
-    // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), and C
-    // makes a clip (bare: Ctrl+C is copy).
-    if (key === "b" || (key === "c" && !e.shiftKey && !e.ctrlKey && !e.metaKey)) {
+    // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), C
+    // makes a clip (bare: Ctrl+C is copy), and T transcribes, where the
+    // button's offered.
+    const bare = !e.shiftKey && !e.ctrlKey && !e.metaKey;
+    if (key === "b" || (key === "c" && bare) || (key === "t" && bare && canTranscribe)) {
       // Held down, it's one press.
       if (e.repeat) return e.preventDefault();
       collapsed = false;
       if (key === "b") split();
-      else makeClip();
+      else if (key === "c") makeClip();
+      else transcribe();
       e.preventDefault();
       return;
     }
@@ -568,8 +591,32 @@
         >
           <Icon name="film" size={14} /> Clip <kbd>C</kbd>
         </button>
+        {#if canTranscribe}
+          <button
+            class="action transcribe"
+            class:picking={!!cuts.selection}
+            bind:this={transcribeButton}
+            onclick={transcribe}
+            aria-expanded={cuts.selection ? undefined : transcribeMenu}
+            title={cuts.selection
+              ? "Transcribe the selection, replacing any lines there (T)"
+              : "Transcribe from here: pick how much (T)"}
+          >
+            <Icon name="audio-lines" size={14} /> Transcribe <kbd>T</kbd>
+          </button>
+          <TranscribeFrom
+            bind:open={transcribeMenu}
+            anchor={transcribeButton}
+            {vod}
+            from={transcribeFrom}
+            above
+            onerror={(e) => (transcribeError = e)}
+          />
+        {/if}
         {#if cuts.error}
           <span class="context error-text" title={cuts.error}>{cuts.error}</span>
+        {:else if transcribeError}
+          <span class="context error-text" title={transcribeError}>{transcribeError}</span>
         {:else}
           <span class="context muted" title={context}>{context}</span>
         {/if}
@@ -631,16 +678,18 @@
   }
 
   /* A selection (made on the timeline or in the transcript) waits to be cut
-     or clipped: Split and Clip take its color. (:not(:disabled) to win
+     or clipped (or transcribed): Split, Clip and Transcribe take its color. (:not(:disabled) to win
      over the bar's own style for its buttons.) */
   .split.picking:not(:disabled),
-  .clip.picking:not(:disabled) {
+  .clip.picking:not(:disabled),
+  .transcribe.picking:not(:disabled) {
     color: var(--pick);
     background: color-mix(in srgb, var(--pick) 14%, transparent);
   }
 
   .split.picking :global(svg),
-  .clip.picking :global(svg) {
+  .clip.picking :global(svg),
+  .transcribe.picking :global(svg) {
     color: var(--pick);
   }
 
