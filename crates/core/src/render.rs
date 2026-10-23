@@ -32,7 +32,7 @@ pub fn picture_of(sources: &[Media], given: Option<Picture>) -> Option<Picture> 
     // Even sizes, which H.264's 4:2:0 needs.
     let even = |n: u32| n.max(2) & !1;
     let p = given.unwrap_or(first);
-    Some(Picture { width: even(p.width), height: even(p.height), fps: if p.fps > 0.0 { p.fps } else { 30.0 } })
+    Some(Picture { width: even(p.width), height: even(p.height), fps: if p.fps > 0.0 { p.fps } else { 30.0 }, ..p })
 }
 
 /// How far before a piece its file is read from: the seek there needs no
@@ -255,11 +255,18 @@ fn encode_pieces(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::local::Colour;
 
-    const VIDEO: Media =
-        Media { picture: Some(Picture { width: 1920, height: 1080, fps: 30.0 }), audio: true, duration: None };
-    const SILENT: Media =
-        Media { picture: Some(Picture { width: 1280, height: 720, fps: 60.0 }), audio: false, duration: None };
+    const VIDEO: Media = Media {
+        picture: Some(Picture { width: 1920, height: 1080, fps: 30.0, colour: Colour::UNTAGGED }),
+        audio: true,
+        duration: None,
+    };
+    const SILENT: Media = Media {
+        picture: Some(Picture { width: 1280, height: 720, fps: 60.0, colour: Colour::UNTAGGED }),
+        audio: false,
+        duration: None,
+    };
     const SOUND: Media = Media { picture: None, audio: true, duration: None };
 
     #[test]
@@ -275,7 +282,11 @@ mod tests {
     #[test]
     fn the_graph_trims_fits_and_joins_each_piece() {
         let p = picture_of(&[VIDEO, SILENT], None);
-        assert_eq!(p, Some(Picture { width: 1920, height: 1080, fps: 30.0 }), "the first one's");
+        assert_eq!(
+            p,
+            Some(Picture { width: 1920, height: 1080, fps: 30.0, colour: Colour::UNTAGGED }),
+            "the first one's"
+        );
         let g = graph(
             &[(Some(0), 1.0, 2.5), (Some(1), 0.0, 1.0), (Some(2), 3.0, 4.0), (None, 0.0, 2.0)],
             &[VIDEO, SILENT, SOUND],
@@ -293,8 +304,11 @@ mod tests {
             "[0:a:0]atrim=start=0.000000:end=0.999500,asetpts=PTS-STARTPTS,aresample=48000,\
              aformat=sample_fmts=fltp:channel_layouts=stereo[a0];[a0]concat=n=1:v=0:a=1[a]"
         );
-        let odd = Picture { width: 1081, height: 1921, fps: 0.0 };
-        assert_eq!(picture_of(&[VIDEO], Some(odd)), Some(Picture { width: 1080, height: 1920, fps: 30.0 }));
+        let odd = Picture { width: 1081, height: 1921, fps: 0.0, colour: Colour::UNTAGGED };
+        assert_eq!(
+            picture_of(&[VIDEO], Some(odd)),
+            Some(Picture { width: 1080, height: 1920, fps: 30.0, colour: Colour::UNTAGGED })
+        );
         assert_eq!(picture_of(&[SOUND], Some(odd)), None, "no picture to make");
     }
 

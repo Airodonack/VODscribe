@@ -1,5 +1,5 @@
 //! The player shows exactly the frame asked for: a video whose every frame's
-//! colour is its number (lossless PNG frames, among the codecs the player
+//! grey says its number (lossless PNG frames, among the codecs the player
 //! lets ffmpeg decode) is sought and stepped through, and what the
 //! compositor draws of the frame showing is read back and its number
 //! checked. Skipped where there's no ffmpeg on PATH or no software GPU
@@ -18,17 +18,25 @@ use vodscribe_player::timeline::{Stretch, Timeline};
 
 const FPS: f64 = 30.0;
 
-/// A 4 s video at 30 fps whose frame N is red N mod 256, green N / 256 * 16.
+/// A 4 s video at 30 fps whose frame N is grey 2N. Grey, as the player
+/// decodes to YUV: a grey's luma is the grey itself, where a colour's comes
+/// back from YUV a level or two off.
 fn numbered(dir: &Path) -> Option<PathBuf> {
     let path = dir.join("numbered.mkv");
     let made = Command::new("ffmpeg")
         .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
-        .arg("color=black:s=64x36:r=30:d=4,format=gbrp,geq=r='mod(N,256)':g='floor(N/256)*16':b='128'")
+        .arg("color=black:s=64x36:r=30:d=4,format=gbrp,geq=r='2*N':g='2*N':b='2*N'")
         .args(["-c:v", "png"])
         .arg(&path)
         .status()
         .ok()?;
     made.success().then_some(path)
+}
+
+/// The number of the frame `image` is (`numbered`), read at its middle.
+fn number(image: &vodscribe_player::compose::Image) -> u32 {
+    let i = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
+    (image.rgba[i] as u32).div_ceil(2)
 }
 
 #[test]
@@ -61,8 +69,7 @@ fn seeks_and_steps_show_exactly_the_frame_asked_for() {
         while rx.try_recv().is_ok() {}
         let frame = player.frame().expect("a frame showing");
         let image = compositor.render((frame.width, frame.height), Some(&frame), None).unwrap();
-        let i = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
-        image.rgba[i] as u32 + image.rgba[i + 1] as u32 / 16 * 256
+        number(&image)
     };
 
     assert_eq!(showing(), 0, "the first frame on opening");
@@ -115,15 +122,14 @@ fn a_replanned_next_stretch_plays_its_own_footage() {
     player.on_frame(Box::new(move |event| {
         let _ = tx.send(event);
     }));
-    let mut number = |frame: &vodscribe_player::decode::Frame| {
+    let mut frame_number = |frame: &vodscribe_player::decode::Frame| {
         let image = compositor.render((frame.width, frame.height), Some(frame), None).unwrap();
-        let i = ((image.height / 2 * image.width + image.width / 2) * 4) as usize;
-        image.rgba[i] as u32 + image.rgba[i + 1] as u32 / 16 * 256
+        number(&image)
     };
     // Paused within a second of the cut: the next stretch is readied.
     player.seek(0.5);
     while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
-    assert_eq!(number(&player.frame().unwrap()), 15);
+    assert_eq!(frame_number(&player.frame().unwrap()), 15);
     // The second piece now plays from 1 s, not 2 s.
     player.set_timeline(Timeline::from_stretches(vec![piece(0.0, 0.0), piece(1.0, 1.0)]));
     player.play();
@@ -132,7 +138,7 @@ fn a_replanned_next_stretch_plays_its_own_footage() {
         assert_ne!(event, Event::Ended, "ended before the second piece showed");
         let (Some(frame), Some(shown)) = (player.frame(), player.shown()) else { continue };
         if shown >= 1.0 - 1e-6 {
-            let n = number(&frame);
+            let n = frame_number(&frame);
             assert!((30..60).contains(&n), "frame {n} at {shown:.3} s, from the old plan");
             break;
         }

@@ -13,35 +13,60 @@
 use anyhow::{Context, Result};
 
 use crate::Overlay;
-use crate::decode::Frame;
+use crate::decode::{self, Frame};
 
-/// A texture drawn in a box, as a quad in clip space: the picture, opaque
-/// (`fs`); the overlay, premultiplied, blended over it (`fs_over`).
+/// Textures drawn in a box, as a quad in clip space: the picture, opaque,
+/// from its three planes of YUV turned into RGB by its matrix (`fs_picture`:
+/// `decode::to_rgb`'s); the overlay, premultiplied RGBA, blended over it
+/// (`fs_over`).
 const SHADER: &str = "
-struct Box_ { corners: vec4<f32> };
-@group(0) @binding(0) var picture: texture_2d<f32>;
-@group(0) @binding(1) var smp: sampler;
-@group(0) @binding(2) var<uniform> box_: Box_;
-
 struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
-@vertex
-fn vs(@builtin(vertex_index) i: u32) -> Out {
+fn quad(i: u32, corners: vec4<f32>) -> Out {
     let corner = vec2<f32>(f32(i & 1u), f32(i >> 1u));
     var out: Out;
     out.uv = vec2<f32>(corner.x, 1.0 - corner.y);
-    out.pos = vec4<f32>(mix(box_.corners.xy, box_.corners.zw, corner), 0.0, 1.0);
+    out.pos = vec4<f32>(mix(corners.xy, corners.zw, corner), 0.0, 1.0);
     return out;
 }
 
+struct Picture { corners: vec4<f32>, r: vec4<f32>, g: vec4<f32>, b: vec4<f32> };
+@group(0) @binding(0) var luma: texture_2d<f32>;
+@group(0) @binding(1) var cb: texture_2d<f32>;
+@group(0) @binding(2) var cr: texture_2d<f32>;
+@group(0) @binding(3) var planes: sampler;
+@group(0) @binding(4) var<uniform> picture: Picture;
+
+@vertex
+fn vs_picture(@builtin(vertex_index) i: u32) -> Out {
+    return quad(i, picture.corners);
+}
+
 @fragment
-fn fs(in: Out) -> @location(0) vec4<f32> {
-    return vec4<f32>(textureSample(picture, smp, in.uv).rgb, 1.0);
+fn fs_picture(in: Out) -> @location(0) vec4<f32> {
+    let yuv = vec4<f32>(
+        textureSample(luma, planes, in.uv).r,
+        textureSample(cb, planes, in.uv).r,
+        textureSample(cr, planes, in.uv).r,
+        1.0,
+    );
+    let rgb = vec3<f32>(dot(picture.r, yuv), dot(picture.g, yuv), dot(picture.b, yuv));
+    return vec4<f32>(clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+
+struct Box_ { corners: vec4<f32> };
+@group(0) @binding(0) var over: texture_2d<f32>;
+@group(0) @binding(1) var smp: sampler;
+@group(0) @binding(2) var<uniform> box_: Box_;
+
+@vertex
+fn vs_over(@builtin(vertex_index) i: u32) -> Out {
+    return quad(i, box_.corners);
 }
 
 @fragment
 fn fs_over(in: Out) -> @location(0) vec4<f32> {
-    return textureSample(picture, smp, in.uv);
+    return textureSample(over, smp, in.uv);
 }
 ";
 
@@ -70,11 +95,21 @@ pub struct Compositor {
     pipeline: wgpu::RenderPipeline,
     over_pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
+    over_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    picture: Option<Quad>,
+    picture: Option<Planes>,
     over: Option<Quad>,
-    /// RGB to RGBA, kept to reuse.
-    rgba: Vec<u8>,
+}
+
+/// A frame's three planes, as textures of one 8-bit value each, and the
+/// uniform with the box it's drawn in and its matrix to RGB.
+struct Planes {
+    textures: [wgpu::Texture; 3],
+    uniform: wgpu::Buffer,
+    bind: wgpu::BindGroup,
+    size: (u32, u32),
+    /// What's in it (`Frame::id`).
+    id: u64,
 }
 
 /// A texture and the box it's drawn in.
@@ -114,55 +149,64 @@ impl Compositor {
             label: Some("compose"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
+        let texture = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let sampler = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
+        let uniform = |binding, visibility| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("quad"),
+            label: Some("picture"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                texture(0),
+                texture(1),
+                texture(2),
+                sampler(3),
+                uniform(4, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
             ],
         });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("quad"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
+        let over_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("over"),
+            entries: &[texture(0), sampler(1), uniform(2, wgpu::ShaderStages::VERTEX)],
         });
-        let pipeline = |fragment: &str, blend: Option<wgpu::BlendState>| {
+        let pipeline = |name: &str, layout: &wgpu::BindGroupLayout, blend: Option<wgpu::BlendState>| {
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(name),
+                bind_group_layouts: &[Some(layout)],
+                immediate_size: 0,
+            });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(fragment),
+                label: Some(name),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: Some("vs"),
+                    entry_point: Some(&format!("vs_{name}")),
                     buffers: &[],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some(&format!("fs_{name}")),
                     targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
                     compilation_options: Default::default(),
                 }),
@@ -176,8 +220,8 @@ impl Compositor {
                 cache: None,
             })
         };
-        let (picture, over) =
-            (pipeline("fs", None), pipeline("fs_over", Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING)));
+        let picture = pipeline("picture", &layout, None);
+        let over = pipeline("over", &over_layout, Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING));
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -191,10 +235,10 @@ impl Compositor {
             pipeline: picture,
             over_pipeline: over,
             layout,
+            over_layout,
             sampler,
             picture: None,
             over: None,
-            rgba: Vec::new(),
         }
     }
 
@@ -223,19 +267,14 @@ impl Compositor {
             [c(x, w), -c(y + bh, h), c(x + bw, w), -c(y, h)]
         };
         if let Some(frame) = frame {
-            if self.picture.as_ref().is_none_or(|q| q.id != frame.id) {
-                // RGB to RGBA: the texture takes four bytes a pixel.
-                let pixels = frame.width as usize * frame.height as usize;
-                self.rgba.resize(pixels * 4, 255);
-                for (to, from) in self.rgba.as_chunks_mut::<4>().0.iter_mut().zip(frame.rgb.as_chunks::<3>().0) {
-                    to[..3].copy_from_slice(from);
-                }
-                let (rgba, quad) = (std::mem::take(&mut self.rgba), self.picture.take());
-                self.picture = Some(self.fill(quad, (frame.width, frame.height), &rgba, frame.id));
-                self.rgba = rgba;
+            if self.picture.as_ref().is_none_or(|p| p.id != frame.id) {
+                let planes = self.picture.take();
+                self.picture = Some(self.fill_planes(planes, frame));
             }
             let (fx, fy, fw, fh) = fit(frame, (w, h));
-            self.queue.write_buffer(&self.picture.as_ref().unwrap().corners, 0, &bytes(clip(fx, fy, fw, fh)));
+            let [r, g, b] = decode::to_rgb(frame.colour);
+            let uniform = [clip(fx, fy, fw, fh), r, g, b].concat();
+            self.queue.write_buffer(&self.picture.as_ref().unwrap().uniform, 0, &bytes(&uniform));
         }
         if let Some((overlay, scale)) = overlay {
             if self.over.as_ref().is_none_or(|q| q.id != overlay.id) {
@@ -244,7 +283,7 @@ impl Compositor {
             }
             let r = overlay.rect;
             let corners = clip(r.x * scale, r.y * scale, r.width * scale, r.height * scale);
-            self.queue.write_buffer(&self.over.as_ref().unwrap().corners, 0, &bytes(corners));
+            self.queue.write_buffer(&self.over.as_ref().unwrap().corners, 0, &bytes(&corners));
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
@@ -261,9 +300,9 @@ impl Compositor {
                 })],
                 ..Default::default()
             });
-            if let (Some(_), Some(quad)) = (frame, self.picture.as_ref()) {
+            if let (Some(_), Some(planes)) = (frame, self.picture.as_ref()) {
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &quad.bind, &[]);
+                pass.set_bind_group(0, &planes.bind, &[]);
                 pass.draw(0..4, 0..1);
             }
             if let (Some(_), Some(quad)) = (overlay, self.over.as_ref()) {
@@ -363,7 +402,7 @@ impl Compositor {
                 let view = texture.create_view(&Default::default());
                 let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("quad"),
-                    layout: &self.layout,
+                    layout: &self.over_layout,
                     entries: &[
                         wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
                         wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
@@ -381,6 +420,69 @@ impl Compositor {
         );
         quad.id = id;
         quad
+    }
+
+    /// `planes` (made anew if there are none or their size differs)
+    /// holding `frame`'s.
+    fn fill_planes(&self, planes: Option<Planes>, frame: &Frame) -> Planes {
+        let size = (frame.width, frame.height);
+        let (cw, ch) = frame.chroma();
+        let extents = [size, (cw, ch), (cw, ch)].map(|(width, height)| wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        });
+        let mut planes = match planes {
+            Some(planes) if planes.size == size => planes,
+            _ => {
+                let textures = extents.map(|size| {
+                    self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: Some("plane"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::R8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                        view_formats: &[],
+                    })
+                });
+                let uniform = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("picture"),
+                    size: 64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                let views = textures.each_ref().map(|t| t.create_view(&Default::default()));
+                let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("picture"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&views[0]) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&views[1]) },
+                        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&views[2]) },
+                        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        wgpu::BindGroupEntry { binding: 4, resource: uniform.as_entire_binding() },
+                    ],
+                });
+                Planes { textures, uniform, bind, size, id: u64::MAX }
+            }
+        };
+        let (y, u, v) = frame.planes();
+        for ((texture, data), extent) in planes.textures.iter().zip([y, u, v]).zip(extents) {
+            self.queue.write_texture(
+                texture.as_image_copy(),
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(extent.width),
+                    rows_per_image: Some(extent.height),
+                },
+                extent,
+            );
+        }
+        planes.id = frame.id;
+        planes
     }
 
     /// Submits what `draw` made.
@@ -451,29 +553,49 @@ pub fn fit(frame: &Frame, size: (f64, f64)) -> (f64, f64, f64, f64) {
     (((w - fw) / 2.0).round(), ((h - fh) / 2.0).round(), fw, fh)
 }
 
-/// Four floats as bytes, for a uniform buffer.
-fn bytes(values: [f32; 4]) -> [u8; 16] {
-    let mut out = [0; 16];
-    for (to, v) in out.as_chunks_mut::<4>().0.iter_mut().zip(values) {
-        *to = v.to_ne_bytes();
-    }
-    out
+/// Floats as bytes, for a uniform buffer.
+fn bytes(values: &[f32]) -> Vec<u8> {
+    values.iter().flat_map(|v| v.to_ne_bytes()).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Rect;
+    use vodscribe_core::local::{Colour, Matrix};
 
-    /// A frame `w` by `h` filled by `color(x, y)`.
-    fn frame(id: u64, w: u32, h: u32, color: impl Fn(u32, u32) -> [u8; 3]) -> Frame {
-        let rgb = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).flat_map(|(x, y)| color(x, y)).collect();
-        Frame { id, pts: 0.0, width: w, height: h, rgb }
+    const BT709: Colour = Colour { matrix: Matrix::Bt709, full_range: false };
+    const JPEG: Colour = Colour { matrix: Matrix::Bt601, full_range: true };
+
+    /// A frame `w` by `h` of luma `luma(x, y)` and of chroma
+    /// `chroma(x, y)` for each two by two pixels from (x, y).
+    fn frame(
+        id: u64,
+        (w, h): (u32, u32),
+        colour: Colour,
+        luma: impl Fn(u32, u32) -> u8,
+        chroma: impl Fn(u32, u32) -> [u8; 2],
+    ) -> Frame {
+        let points = |w: u32, h: u32, k: u32| (0..h).flat_map(move |y| (0..w).map(move |x| (x * k, y * k)));
+        let mut yuv: Vec<u8> = points(w, h, 1).map(|(x, y)| luma(x, y)).collect();
+        let (cw, ch) = decode::chroma(w, h);
+        yuv.extend(points(cw, ch, 2).map(|(x, y)| chroma(x, y)[0]));
+        yuv.extend(points(cw, ch, 2).map(|(x, y)| chroma(x, y)[1]));
+        Frame { id, pts: 0.0, width: w, height: h, yuv, colour }
+    }
+
+    /// A frame of one colour, `yuv`.
+    fn flat(id: u64, size: (u32, u32), colour: Colour, [y, u, v]: [u8; 3]) -> Frame {
+        frame(id, size, colour, |_, _| y, |_, _| [u, v])
     }
 
     fn at(image: &Image, x: u32, y: u32) -> [u8; 4] {
         let i = ((y * image.width + x) * 4) as usize;
         image.rgba[i..i + 4].try_into().unwrap()
+    }
+
+    fn near(got: [u8; 4], want: [u8; 3], within: i32) -> bool {
+        got[3] == 255 && got.iter().zip(want).all(|(&g, w)| (g as i32 - w as i32).abs() <= within)
     }
 
     /// A software adapter, or None where there isn't one (skipped then,
@@ -490,33 +612,85 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_at_its_own_size_reads_back_as_it_is() {
+    fn the_cpu_turns_yuv_into_the_colours_meant() {
+        // Each matrix and range's red, green, blue, white and black.
+        let cases = [
+            (BT709, [63, 102, 240], [255, 0, 0]),
+            (BT709, [173, 42, 26], [0, 255, 0]),
+            (BT709, [32, 240, 118], [0, 0, 255]),
+            (BT709, [235, 128, 128], [255, 255, 255]),
+            (BT709, [16, 128, 128], [0, 0, 0]),
+            (Colour::UNTAGGED, [81, 90, 240], [255, 0, 0]),
+            (Colour::UNTAGGED, [145, 54, 34], [0, 255, 0]),
+            (Colour::UNTAGGED, [41, 240, 110], [0, 0, 255]),
+            (JPEG, [76, 85, 255], [255, 0, 0]),
+            (JPEG, [150, 44, 21], [0, 255, 0]),
+            (JPEG, [255, 128, 128], [255, 255, 255]),
+            (JPEG, [0, 128, 128], [0, 0, 0]),
+        ];
+        for (colour, yuv, want) in cases {
+            let mut rgb = Vec::new();
+            flat(0, (2, 2), colour, yuv).to_rgb(decode::Layout::Rgb, &mut rgb);
+            let got = [rgb[0], rgb[1], rgb[2], 255];
+            assert!(near(got, want, 2), "{colour:?} {yuv:?}: {got:?}, not {want:?}");
+            let mut bgrx = Vec::new();
+            flat(0, (2, 2), colour, yuv).to_rgb(decode::Layout::Bgrx, &mut bgrx);
+            assert_eq!([bgrx[2], bgrx[1], bgrx[0]], [rgb[0], rgb[1], rgb[2]], "the same, laid out the other way");
+        }
+    }
+
+    #[test]
+    fn a_frame_at_its_own_size_reads_back_as_the_cpu_turns_it() {
         let Some(mut c) = compositor() else { return };
         assert_eq!(c.adapter().device_type, wgpu::DeviceType::Cpu, "never a real GPU in tests");
-        let f = frame(1, 64, 36, |x, y| [(x * 4) as u8, (y * 7) as u8, ((x + y) * 3) as u8]);
-        let image = c.render((64, 36), Some(&f), None).unwrap();
-        let want: Vec<u8> = f.rgb.as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect();
-        assert_eq!(image.rgba, want, "pixel for pixel");
+        // Luma that changes from pixel to pixel; one chroma, as the GPU
+        // blends chroma between its samples where the CPU doesn't.
+        // An odd size too: its chroma planes are half each side rounded up.
+        for (id, size) in [(1, (64, 36)), (5, (33, 17))] {
+            let f = frame(id, size, BT709, |x, y| (16 + (x * 3 + y * 5) % 220) as u8, |_, _| [90, 200]);
+            let image = c.render(size, Some(&f), None).unwrap();
+            let mut rgb = Vec::new();
+            f.to_rgb(decode::Layout::Rgb, &mut rgb);
+            assert_eq!(image.rgba.len() / 4, rgb.len() / 3);
+            for (i, (got, want)) in image.rgba.as_chunks::<4>().0.iter().zip(rgb.as_chunks::<3>().0).enumerate() {
+                assert!(near(*got, *want, 1), "{size:?}, pixel {i}: {got:?}, not {want:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_gpu_turns_yuv_into_the_colours_meant() {
+        let Some(mut c) = compositor() else { return };
+        // Four quarters: red, green, blue and white in BT.709's limited range.
+        let quarters = [[63, 102, 240], [173, 42, 26], [32, 240, 118], [235, 128, 128]];
+        let quarter = |x: u32, y: u32| quarters[(x / 16 + y / 16 * 2) as usize];
+        let f = frame(3, (32, 32), BT709, |x, y| quarter(x, y)[0], |x, y| [quarter(x, y)[1], quarter(x, y)[2]]);
+        let image = c.render((32, 32), Some(&f), None).unwrap();
+        for ((x, y), want) in
+            [((8, 8), [255, 0, 0]), ((24, 8), [0, 255, 0]), ((8, 24), [0, 0, 255]), ((24, 24), [255; 3])]
+        {
+            assert!(near(at(&image, x, y), want, 2), "at {x}, {y}: {:?}, not {want:?}", at(&image, x, y));
+        }
+        // Full range (a JPEG's): red.
+        let image = c.render((8, 8), Some(&flat(4, (8, 8), JPEG, [76, 85, 255])), None).unwrap();
+        assert!(near(at(&image, 4, 4), [255, 0, 0], 2), "{:?}", at(&image, 4, 4));
     }
 
     #[test]
     fn a_frame_is_fitted_on_black_and_the_overlay_blended_over_it() {
         let Some(mut c) = compositor() else { return };
         // A wide frame in a square box: black bars above and below.
-        let f = frame(2, 40, 20, |_, _| [200, 100, 50]);
+        // (200, 100, 50) in full-range BT.601.
+        let f = flat(2, (40, 20), JPEG, [124, 86, 182]);
         let image = c.render((40, 40), Some(&f), None).unwrap();
         assert_eq!(at(&image, 20, 2), [0, 0, 0, 255], "bar above");
-        assert_eq!(at(&image, 20, 20), [200, 100, 50, 255], "picture");
+        assert!(near(at(&image, 20, 20), [200, 100, 50], 1), "picture: {:?}", at(&image, 20, 20));
         assert_eq!(at(&image, 20, 37), [0, 0, 0, 255], "bar below");
         // Half-transparent white over the top-left quarter (premultiplied).
         let overlay =
             Overlay::new(Rect { x: 0.0, y: 0.0, width: 10.0, height: 10.0 }, (1, 1), vec![128, 128, 128, 128]);
         let image = c.render((40, 40), Some(&f), Some((&overlay, 2.0))).unwrap();
-        let [r, g, b, _] = at(&image, 5, 15);
-        assert!(
-            (r as i32 - 228).abs() <= 2 && (g as i32 - 178).abs() <= 2 && (b as i32 - 153).abs() <= 2,
-            "{r} {g} {b}"
-        );
-        assert_eq!(at(&image, 30, 15), [200, 100, 50, 255], "outside it, as it was");
+        assert!(near(at(&image, 5, 15), [228, 178, 153], 2), "{:?}", at(&image, 5, 15));
+        assert!(near(at(&image, 30, 15), [200, 100, 50], 1), "outside it, as it was");
     }
 }

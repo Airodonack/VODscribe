@@ -12,6 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::tools;
 use vodscribe_player::clock::{Event, Player};
+use vodscribe_player::decode::Layout;
 use vodscribe_player::timeline::Timeline;
 
 use crate::history::Doc;
@@ -301,10 +302,13 @@ pub(crate) fn player_still(app: AppHandle) -> tauri::ipc::Response {
     let state = app.state::<AppState>();
     let frame = state.player.open.lock().unwrap().as_ref().and_then(|o| o.player.frame());
     let bytes = frame.map_or_else(Vec::new, |f| {
-        let mut out = Vec::with_capacity(8 + f.rgb.len());
+        // The frame is YUV; the page takes RGB, turned here on the CPU.
+        let mut rgb = Vec::new();
+        f.to_rgb(Layout::Rgb, &mut rgb);
+        let mut out = Vec::with_capacity(8 + rgb.len());
         out.extend_from_slice(&f.width.to_le_bytes());
         out.extend_from_slice(&f.height.to_le_bytes());
-        out.extend_from_slice(&f.rgb);
+        out.extend_from_slice(&rgb);
         out
     });
     tauri::ipc::Response::new(bytes)
@@ -328,7 +332,10 @@ pub(crate) async fn player_frame(app: AppHandle, since: Option<u64>, width: u32,
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
     out.extend_from_slice(&f.id.to_le_bytes());
-    scale_rgba(&f.rgb, f.width, f.height, w, h, &mut out);
+    // The frame is YUV: turned into RGB here, on the CPU, then scaled.
+    let mut rgb = Vec::new();
+    f.to_rgb(Layout::Rgb, &mut rgb);
+    scale_rgba(&rgb, f.width, f.height, w, h, &mut out);
     tauri::ipc::Response::new(out)
 }
 

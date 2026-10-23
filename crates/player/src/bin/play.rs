@@ -14,9 +14,10 @@
 //! how long paints took is printed.
 //!
 //! `--bench` measures without a window: how fast the file decodes (frames
-//! and megabytes a second, against its rate), how long seeks take to show
-//! their frame, and over ten seconds of play how many frames are dropped
-//! and how evenly they come.
+//! and megabytes a second, against its rate), how long a frame takes to
+//! turn into RGB on the CPU, how long seeks take to show their frame, and
+//! over ten seconds of play how many frames are dropped and how evenly
+//! they come.
 
 #[cfg(target_os = "linux")]
 fn main() -> anyhow::Result<()> {
@@ -213,11 +214,12 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
     let video = Video::new(ffmpeg, file, picture);
     let mut stream = video.from(0.0)?;
     let began = Instant::now();
-    let (mut frames, mut bytes) = (0u64, 0u64);
+    let (mut frames, mut bytes, mut last) = (0u64, 0u64, None);
     while began.elapsed() < Duration::from_secs(5) {
         let Some(frame) = stream.recv() else { break };
         frames += 1;
-        bytes += frame.rgb.len() as u64;
+        bytes += frame.yuv.len() as u64;
+        last = Some(frame);
     }
     let secs = began.elapsed().as_secs_f64();
     println!(
@@ -227,6 +229,17 @@ fn measure(ffmpeg: &std::path::Path, file: &std::path::Path) -> anyhow::Result<(
         bytes as f64 / secs / 1e6
     );
     drop(stream);
+
+    // The CPU's conversion to RGB, as the screens without a GPU (macOS's,
+    // Windows' GDI) do for each frame.
+    if let Some(frame) = last {
+        let mut bgrx = Vec::new();
+        let began = Instant::now();
+        for _ in 0..30 {
+            frame.to_rgb(decode::Layout::Bgrx, &mut bgrx);
+        }
+        println!("to RGB on the CPU: {:.2} ms a frame", began.elapsed().as_secs_f64() * 1e3 / 30.0);
+    }
 
     // Seeks, paused: from asking to the frame there showing.
     let player = Player::open_file(ffmpeg, file)?;

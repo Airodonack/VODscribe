@@ -152,6 +152,62 @@ pub struct Picture {
     pub width: u32,
     pub height: u32,
     pub fps: f64,
+    /// How its YUV is turned into RGB, as the stream says.
+    pub colour: Colour,
+}
+
+/// How a picture's YUV values are turned into RGB: the matrix its stream
+/// declares, and whether its values take the full 0-255 (JPEG's, "pc") or
+/// the limited 16-235 of video ("tv").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Colour {
+    pub matrix: Matrix,
+    pub full_range: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Matrix {
+    Bt601,
+    Bt709,
+    Bt2020,
+}
+
+impl Colour {
+    /// What a stream that declares nothing is read as: limited BT.601,
+    /// as ffmpeg's own conversion to RGB reads it.
+    pub const UNTAGGED: Colour = Colour { matrix: Matrix::Bt601, full_range: false };
+
+    /// The colour ffmpeg's details give in a video stream's line: the pixel
+    /// format and what's in brackets after it, as in "yuv420p(tv, bt709,
+    /// progressive)" or "yuvj420p(pc, bt470bg/unknown/unknown)" (the first
+    /// of three slashed is the matrix). An RGB stream (a PNG's "rgb24(pc,
+    /// gbr/…)") is turned into YUV by ffmpeg with BT.601, as untagged.
+    fn of(line: &str) -> Colour {
+        let Some(format) = fields(line).nth(1) else { return Colour::UNTAGGED };
+        let (name, tags) = format.split_once('(').unwrap_or((format, ""));
+        let tags: Vec<&str> = tags.trim_end_matches(')').split(',').map(str::trim).collect();
+        let matrix = tags
+            .iter()
+            .find_map(|t| match t.split('/').next() {
+                Some("bt709") => Some(Matrix::Bt709),
+                Some("bt2020nc" | "bt2020c") => Some(Matrix::Bt2020),
+                _ => None,
+            })
+            .unwrap_or(Matrix::Bt601);
+        Colour { matrix, full_range: tags.contains(&"pc") || name.trim().starts_with("yuvj") }
+    }
+}
+
+/// A stream line's fields after "Video: ", split at the commas that aren't
+/// in brackets: the codec, the pixel format, the size, …
+fn fields(line: &str) -> impl Iterator<Item = &str> {
+    let rest = line.split_once(": Video: ").map_or("", |(_, rest)| rest);
+    let mut depth = 0i32;
+    rest.split(move |c: char| {
+        depth += (c == '(') as i32 - (c == ')') as i32;
+        c == ',' && depth == 0
+    })
+    .map(str::trim)
 }
 
 /// What's in `path` (`Media`), as ffmpeg reads it.
@@ -174,7 +230,12 @@ fn parse_media(details: &str) -> Media {
             let (w, h) = w.split_once('x')?;
             Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)).filter(|(w, h)| *w > 0 && *h > 0)
         })?;
-        Some(Picture { width: size.0, height: size.1, fps: parse_frame_rate(line).unwrap_or(30.0) })
+        Some(Picture {
+            width: size.0,
+            height: size.1,
+            fps: parse_frame_rate(line).unwrap_or(30.0),
+            colour: Colour::of(line),
+        })
     });
     Media { picture, audio: streams().any(|l| l.contains(": Audio: ")), duration: parse_streams(details).duration }
 }
@@ -283,11 +344,32 @@ mod tests {
         let details = "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 5000 kb/s, 29.97 fps, 29.97 tbr, 30k tbn (default)
   Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)";
         let media = parse_media(details);
-        assert_eq!(media.picture, Some(Picture { width: 1920, height: 1080, fps: 30000.0 / 1001.0 }));
+        let colour = Colour { matrix: Matrix::Bt709, full_range: false };
+        assert_eq!(media.picture, Some(Picture { width: 1920, height: 1080, fps: 30000.0 / 1001.0, colour }));
         assert!(media.audio);
         let cover = "  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 320 kb/s
   Stream #0:1: Video: mjpeg (Baseline), yuvj420p(pc, bt470bg/unknown/unknown), 600x600 [SAR 1:1 DAR 1:1], 90k tbr, 90k tbn (attached pic)";
         assert_eq!(parse_media(cover), Media { picture: None, audio: true, duration: None });
+    }
+
+    #[test]
+    fn reads_the_colour_a_stream_declares() {
+        let colour = |format: &str| {
+            Colour::of(&format!("  Stream #0:0: Video: h264 (High) (avc1 / 0x31637661), {format}, 1920x1080, 30 fps"))
+        };
+        let (limited, full) =
+            (|matrix| Colour { matrix, full_range: false }, |matrix| Colour { matrix, full_range: true });
+        assert_eq!(colour("yuv420p(tv, bt709, progressive)"), limited(Matrix::Bt709));
+        assert_eq!(colour("yuv420p(tv, smpte170m/unknown/unknown, progressive)"), limited(Matrix::Bt601));
+        assert_eq!(colour("yuv420p10le(tv, bt2020nc/bt2020/smpte2084)"), limited(Matrix::Bt2020));
+        assert_eq!(colour("yuvj420p(pc, bt709/unknown/unknown, progressive)"), full(Matrix::Bt709));
+        assert_eq!(colour("yuvj420p(progressive)"), full(Matrix::Bt601), "a JPEG format is full range");
+        assert_eq!(colour("yuv420p(pc)"), full(Matrix::Bt601));
+        assert_eq!(colour("rgb24(pc, gbr/unknown/unknown, progressive)"), full(Matrix::Bt601));
+        // Only the matrix counts, not the primaries after it.
+        assert_eq!(colour("yuv420p(tv, unknown/bt709/bt709)"), Colour::UNTAGGED);
+        assert_eq!(colour("yuv420p(progressive)"), Colour::UNTAGGED);
+        assert_eq!(colour("yuv420p"), Colour::UNTAGGED);
     }
 
     #[test]

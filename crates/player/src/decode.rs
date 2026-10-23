@@ -14,7 +14,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, bail};
-use vodscribe_core::local::{self, Picture};
+use vodscribe_core::local::{self, Colour, Matrix, Picture};
 use vodscribe_core::tools;
 
 /// A file's picture, sound and length, as ffmpeg reads it.
@@ -34,7 +34,9 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<Info> {
     Ok(Info { picture: media.picture, audio: media.audio, duration: media.duration })
 }
 
-/// One decoded picture: `width` by `height` pixels of packed 8-bit RGB.
+/// One decoded picture: `width` by `height` pixels of planar 8-bit YUV
+/// 4:2:0, as ffmpeg's decoders give most video. The GPU turns it into RGB
+/// (compose.rs); `Frame::to_rgb` does on the CPU, for what needs RGB.
 pub struct Frame {
     /// Its own number, unlike any other frame's this run: what's drawn is told apart by it.
     pub id: u64,
@@ -42,7 +44,105 @@ pub struct Frame {
     pub pts: f64,
     pub width: u32,
     pub height: u32,
-    pub rgb: Vec<u8>,
+    /// The Y plane (`width` by `height`), then the Cb and the Cr planes
+    /// (each `Frame::chroma` in size: a value for each two by two pixels).
+    pub yuv: Vec<u8>,
+    pub colour: Colour,
+}
+
+/// How `Frame::to_rgb` lays out a pixel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// R, G, B.
+    Rgb,
+    /// B, G, R and a byte unused (a DIB's, and a CGImage's little-endian 32 bits).
+    Bgrx,
+}
+
+impl Frame {
+    /// The size of each chroma plane: half each side, rounded up.
+    pub fn chroma(&self) -> (u32, u32) {
+        chroma(self.width, self.height)
+    }
+
+    /// The Y, Cb and Cr planes.
+    pub fn planes(&self) -> (&[u8], &[u8], &[u8]) {
+        let luma = self.width as usize * self.height as usize;
+        let (cw, ch) = self.chroma();
+        let (y, rest) = self.yuv.split_at(luma);
+        let (u, v) = rest.split_at(cw as usize * ch as usize);
+        (y, u, v)
+    }
+
+    /// The picture as RGB, laid out as `layout` says, into `out`. For what
+    /// can't take YUV: the page's copy of the frame (player_still,
+    /// player_frame), and the screens that draw without a GPU (macOS's
+    /// images, Windows' GDI). In fixed point, each chroma pair used as it is
+    /// for its two by two pixels (the GPU blends between pairs, so the
+    /// edges of colours can differ a little).
+    pub fn to_rgb(&self, layout: Layout, out: &mut Vec<u8>) {
+        match layout {
+            Layout::Rgb => self.convert::<3>([0, 1, 2], out),
+            Layout::Bgrx => self.convert::<4>([2, 1, 0], out),
+        }
+    }
+
+    fn convert<const N: usize>(&self, [r, g, b]: [usize; 3], out: &mut Vec<u8>) {
+        let (w, h) = (self.width as usize, self.height as usize);
+        out.resize(w * h * N, 0);
+        let (ys, us, vs) = self.planes();
+        let cw = self.chroma().0 as usize;
+        // Each row of the matrix in 16.16 fixed point, for values of 0-255.
+        let m = to_rgb(self.colour).map(|row| row.map(|c| (c * 65536.0).round() as i32));
+        let luma = m[0][0];
+        let offsets = m.map(|row| row[3] * 255 + 32768);
+        // The chroma's share of each colour, for one row of chroma.
+        let mut shares = vec![[0i32; 3]; cw];
+        for y in 0..h {
+            if y % 2 == 0 {
+                let row = y / 2 * cw;
+                for (share, (&u, &v)) in shares.iter_mut().zip(us[row..row + cw].iter().zip(&vs[row..row + cw])) {
+                    let (u, v) = (u as i32, v as i32);
+                    *share = [0, 1, 2].map(|i| m[i][1] * u + m[i][2] * v + offsets[i]);
+                }
+            }
+            let line = &ys[y * w..(y + 1) * w];
+            for (x, (px, &yv)) in
+                out[y * w * N..(y + 1) * w * N].as_chunks_mut::<N>().0.iter_mut().zip(line).enumerate()
+            {
+                let (l, s) = (luma * yv as i32, &shares[x / 2]);
+                px[r] = ((l + s[0]) >> 16).clamp(0, 255) as u8;
+                px[g] = ((l + s[1]) >> 16).clamp(0, 255) as u8;
+                px[b] = ((l + s[2]) >> 16).clamp(0, 255) as u8;
+            }
+        }
+    }
+}
+
+/// The size of a chroma plane of a 4:2:0 picture `width` by `height`.
+pub fn chroma(width: u32, height: u32) -> (u32, u32) {
+    (width.div_ceil(2), height.div_ceil(2))
+}
+
+/// The matrix taking (Y, Cb, Cr, 1), each value 0 to 1 as stored (8-bit
+/// over 255), to R, G and B 0 to 1: a row for each. The shader and
+/// `Frame::to_rgb` both convert with it.
+pub fn to_rgb(colour: Colour) -> [[f32; 4]; 3] {
+    let (kr, kb) = match colour.matrix {
+        Matrix::Bt601 => (0.299, 0.114),
+        Matrix::Bt709 => (0.2126, 0.0722),
+        Matrix::Bt2020 => (0.2627, 0.0593),
+    };
+    let kg = 1.0 - kr - kb;
+    // Luma and chroma scaled to 0-1 and ±0.5 from the values stored: the
+    // whole of 0-255, or video's 16-235 (luma) and 16-240 (chroma).
+    let (ly, lo, cs) = if colour.full_range { (1.0, 0.0, 1.0) } else { (255.0 / 219.0, -16.0 / 219.0, 255.0 / 224.0) };
+    let mid = 128.0 / 255.0;
+    // R = Y' + (2 - 2Kr) Cr; B = Y' + (2 - 2Kb) Cb; G from the two and Y'.
+    let (rv, bu) = (2.0 * (1.0 - kr), 2.0 * (1.0 - kb));
+    let (gu, gv) = (-kb * bu / kg, -kr * rv / kg);
+    let row = |u: f64, v: f64| [ly as f32, (u * cs) as f32, (v * cs) as f32, (lo - (u + v) * cs * mid) as f32];
+    [row(0.0, rv), row(gu, gv), row(bu, 0.0)]
 }
 
 /// Samples: interleaved stereo 16-bit, from `pts` (seconds into the file) on.
@@ -158,23 +258,31 @@ impl Video {
     /// frames would be stamped at the wrong speed.
     /// Frames are scaled to the probe's size, or down to `MAX_SIDE` where
     /// that's larger, so each is the size read (even where the stream's
-    /// size changes partway).
+    /// size changes partway). They come as YUV 4:2:0 whatever the stream's
+    /// format (most video is that already; others, ffmpeg converts), half
+    /// the bytes of RGB, and the conversion to RGB is the GPU's.
     pub fn from(&self, from: f64) -> Result<Stream<Arc<Frame>>> {
-        let Picture { width, height, fps } = self.picture;
+        let Picture { width, height, fps, colour } = self.picture;
         let (width, height) = within(width, height, MAX_SIDE);
         let rate = format!("{fps}");
-        let scale = format!("scale={width}:{height}");
-        let output = ["-vf", &scale, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "rgb24"];
+        // The range said outright, as the probe read it: ffmpeg keeps a YUV
+        // stream's as it is, but turns RGB (a PNG's, said to be full) into
+        // limited unless told. The matrix is left be: a YUV stream's own, or
+        // for RGB ffmpeg's BT.601, which is what `Colour` reads either as.
+        let range = if colour.full_range { "pc" } else { "tv" };
+        let scale = format!("scale={width}:{height}:out_range={range}");
+        let output = ["-vf", &scale, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "yuv420p"];
         start(&self.ffmpeg, &self.path, from, "0:v:0", &output, move |mut out, tx| {
-            let size = width as usize * height as usize * 3;
+            let (cw, ch) = chroma(width, height);
+            let size = width as usize * height as usize + 2 * cw as usize * ch as usize;
             let mut n = 0u64;
             loop {
-                let mut rgb = vec![0u8; size];
-                if out.read_exact(&mut rgb).is_err() {
+                let mut yuv = vec![0u8; size];
+                if out.read_exact(&mut yuv).is_err() {
                     return;
                 }
                 let id = FRAMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let frame = Frame { id, pts: from + n as f64 / fps, width, height, rgb };
+                let frame = Frame { id, pts: from + n as f64 / fps, width, height, yuv, colour };
                 if tx.send(Arc::new(frame)).is_err() {
                     return;
                 }

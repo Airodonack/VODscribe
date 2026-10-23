@@ -32,7 +32,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 use crate::compose::SurfacePainter;
-use crate::decode::Frame;
+use crate::decode::{Frame, Layout};
 use crate::{Overlay, Rect};
 
 /// The surface in the app's window, to tell what to show.
@@ -405,12 +405,8 @@ impl Gdi {
     /// Stretches `frame` into `dc`, fitted in `size` and centred.
     fn picture(&mut self, dc: HDC, size: (u32, u32), frame: &Frame) {
         if self.id != Some(frame.id) {
-            self.bgrx.resize(frame.width as usize * frame.height as usize * 4, 0);
-            for (to, from) in self.bgrx.as_chunks_mut::<4>().0.iter_mut().zip(frame.rgb.as_chunks::<3>().0) {
-                to[0] = from[2];
-                to[1] = from[1];
-                to[2] = from[0];
-            }
+            // GDI takes RGB: the frame is turned into it here, on the CPU.
+            frame.to_rgb(Layout::Bgrx, &mut self.bgrx);
             self.id = Some(frame.id);
         }
         let (x, y, fw, fh) = fit(frame, size);

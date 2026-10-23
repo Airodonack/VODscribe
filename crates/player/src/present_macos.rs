@@ -22,7 +22,7 @@ use objc2_core_graphics::{
 };
 use objc2_quartz_core::{CALayer, CATransaction, kCAGravityResizeAspect};
 
-use crate::decode::Frame;
+use crate::decode::{Frame, Layout};
 use crate::{Overlay, Rect};
 
 define_class!(
@@ -222,12 +222,8 @@ impl Inner {
     /// `frame` as an image.
     fn image(&mut self, frame: &Frame) -> Option<CFRetained<CGImage>> {
         if self.id != Some(frame.id) {
-            self.bgrx.resize(frame.width as usize * frame.height as usize * 4, 0);
-            for (to, from) in self.bgrx.as_chunks_mut::<4>().0.iter_mut().zip(frame.rgb.as_chunks::<3>().0) {
-                to[0] = from[2];
-                to[1] = from[1];
-                to[2] = from[0];
-            }
+            // A CGImage takes RGB: the frame is turned into it here, on the CPU.
+            frame.to_rgb(Layout::Bgrx, &mut self.bgrx);
             self.id = Some(frame.id);
         }
         // Little-endian 32-bit with the top byte unused: B, G, R, X in memory.
