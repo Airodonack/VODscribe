@@ -9,11 +9,15 @@
 //! command or permission for it. Every request carries the token.
 
 use std::collections::HashMap;
+use std::net::{Ipv4Addr, TcpListener};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Listener, Manager};
+
+use crate::loopback::{self, Response};
 
 type Waiting = Arc<Mutex<HashMap<u64, mpsc::Sender<String>>>>;
 
@@ -42,7 +46,7 @@ pub(crate) fn start(app: &AppHandle) {
     };
     let port: u16 = port.parse().expect("VODSCRIBE_E2E_PORT: a port");
     assert!(token.len() >= 16, "VODSCRIBE_E2E_TOKEN: at least 16 characters");
-    let server = tiny_http::Server::http(("127.0.0.1", port)).expect("the e2e port");
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).expect("the e2e port");
     let waiting: Waiting = Arc::default();
     {
         let waiting = waiting.clone();
@@ -55,36 +59,25 @@ pub(crate) fn start(app: &AppHandle) {
             }
         });
     }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let mut next = 0u64;
-        for mut request in server.incoming_requests() {
-            let authorized = request
-                .headers()
-                .iter()
-                .any(|h| h.field.equiv("Authorization") && h.value.as_str() == format!("Bearer {token}"));
-            if !authorized {
-                let _ = request.respond(tiny_http::Response::empty(403));
-                continue;
-            }
-            let (status, body) = match request.url() {
-                "/run" => {
-                    next += 1;
-                    let mut body = String::new();
-                    let _ = request.as_reader().read_to_string(&mut body);
-                    run(&app, &waiting, next, &body)
-                }
-                "/quit" => {
-                    let _ = request.respond(tiny_http::Response::empty(200));
-                    app.exit(0);
-                    return;
-                }
-                _ => (404, String::new()),
-            };
-            let json = tiny_http::Header::from_bytes("Content-Type", "application/json").unwrap();
-            let _ = request.respond(tiny_http::Response::from_string(body).with_status_code(status).with_header(json));
+    let (app, next) = (app.clone(), AtomicU64::new(0));
+    let answer = move |request: &loopback::Request| {
+        if !request.headers("Authorization").any(|h| h == format!("Bearer {token}")) {
+            return Response::empty(403);
         }
-    });
+        let (status, body) = match request.url.as_str() {
+            "/run" => {
+                let id = next.fetch_add(1, Ordering::SeqCst) + 1;
+                run(&app, &waiting, id, &String::from_utf8_lossy(&request.body))
+            }
+            "/quit" => {
+                let app = app.clone();
+                return Response::empty(200).then(move || app.exit(0));
+            }
+            _ => (404, String::new()),
+        };
+        Response::bytes(status, body.into_bytes()).header("Content-Type", "application/json")
+    };
+    std::thread::spawn(move || loopback::serve(listener, "e2e", usize::MAX, Arc::new(answer)));
 }
 
 /// Runs `body` (a `Run`) in the main window and waits for its answer:

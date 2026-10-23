@@ -18,18 +18,18 @@
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager, State};
-use tiny_http::{Header, Request, Response, Server, StatusCode};
 
 use vodscribe_core::db::Db;
 use vodscribe_core::{local, peaks, tools};
 
-use crate::{AppState, CmdResult, err, loopback};
+use crate::loopback::{self, Request, Response};
+use crate::{AppState, CmdResult, err};
 
 /// Requests served at once.
 const MAX_ACTIVE: usize = 32;
@@ -56,8 +56,8 @@ impl MediaServer {
     /// `find` gives the file asked for, if there is one.
     pub(crate) fn start(find: impl Fn(Served) -> Option<String> + Send + Sync + 'static) -> Result<Self> {
         let find = Arc::new(find);
-        let server = Server::http("127.0.0.1:0").map_err(|e| anyhow::anyhow!("start the media server: {e}"))?;
-        let port = server.server_addr().to_ip().context("media server address")?.port();
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).context("start the media server")?;
+        let port = listener.local_addr().context("media server address")?.port();
         let random = || -> Result<String> {
             let mut bytes = [0u8; 16];
             getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("random token: {e}"))?;
@@ -66,24 +66,14 @@ impl MediaServer {
         let (token, footage_token) = (random()?, random()?);
         let origin = format!("http://127.0.0.1:{port}");
         let host = format!("127.0.0.1:{port}");
-        let prefixes = Arc::new((format!("/{token}/"), format!("/{footage_token}/footage/")));
-        let active = Arc::new(AtomicUsize::new(0));
-        std::thread::Builder::new().name("media".into()).spawn(move || {
-            for request in server.incoming_requests() {
-                // A video streams for a long time, so each request gets a thread,
-                // up to a limit that a player seeking around never reaches.
-                if active.fetch_add(1, Ordering::SeqCst) >= MAX_ACTIVE {
-                    active.fetch_sub(1, Ordering::SeqCst);
-                    let _ = request.respond(Response::empty(503));
-                    continue;
-                }
-                let (find, host, prefixes, active) = (find.clone(), host.clone(), prefixes.clone(), active.clone());
-                std::thread::spawn(move || {
-                    serve(&*find, request, &host, &prefixes);
-                    active.fetch_sub(1, Ordering::SeqCst);
-                });
-            }
-        })?;
+        let prefixes = (format!("/{token}/"), format!("/{footage_token}/footage/"));
+        // A video streams for a long time, so each request gets a thread, up
+        // to a limit that a player seeking around never reaches.
+        let answer =
+            move |request: &Request| respond(&*find, request, &host, &prefixes).unwrap_or_else(Response::empty);
+        std::thread::Builder::new()
+            .name("media".into())
+            .spawn(move || loopback::serve(listener, "media", MAX_ACTIVE, Arc::new(answer)))?;
         Ok(Self { origin, token, footage_token })
     }
 }
@@ -181,31 +171,9 @@ type Find = dyn Fn(Served) -> Option<String> + Send + Sync;
 /// The start of a VOD's URL path, and of a footage section's.
 type Prefixes = (String, String);
 
-fn serve(find: &Find, request: Request, host: &str, prefixes: &Prefixes) {
-    let response = match respond(find, &request, host, prefixes) {
-        Ok(response) => response,
-        Err(status) => Response::new(
-            StatusCode(status),
-            Vec::new(),
-            Box::new(std::io::empty()) as Box<dyn Read + Send>,
-            Some(0),
-            None,
-        ),
-    };
-    let _ = request.respond(response);
-}
-
-fn respond(
-    find: &Find,
-    request: &Request,
-    host: &str,
-    (vods, footage): &Prefixes,
-) -> Result<Response<Box<dyn Read + Send>>, u16> {
-    let header = |name: &'static str| {
-        request.headers().iter().find(|h| h.field.equiv(name)).map(|h| h.value.as_str().to_string())
-    };
+fn respond(find: &Find, request: &Request, host: &str, (vods, footage): &Prefixes) -> Result<Response, u16> {
     loopback::check(request, host)?;
-    let url = request.url();
+    let url = request.url.as_str();
     let asked = match (url.strip_prefix(footage.as_str()), url.strip_prefix(vods.as_str())) {
         // Only a section's name: digits and dashes.
         (Some(name), _) if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
@@ -218,32 +186,23 @@ fn respond(
     let mut file = open_regular(Path::new(&source)).ok_or(404u16)?;
     let size = file.metadata().map_err(|_| 500u16)?.len();
 
-    let (start, end) = match header("Range").as_deref().map(|r| parse_range(r, size)) {
+    let range = request.header("Range");
+    let (start, end) = match range.map(|r| parse_range(r, size)) {
         None => (0, size.saturating_sub(1)),
         Some(Some(range)) => range,
-        Some(None) => {
-            let range = Header::from_bytes("Content-Range", format!("bytes */{size}")).unwrap();
-            return Ok(Response::new(StatusCode(416), vec![range], Box::new(std::io::empty()), Some(0), None));
-        }
+        Some(None) => return Ok(Response::empty(416).header("Content-Range", format!("bytes */{size}"))),
     };
     let len = if size == 0 { 0 } else { end - start + 1 };
     file.seek(SeekFrom::Start(start)).map_err(|_| 500u16)?;
-    let mut headers = vec![
-        Header::from_bytes("Content-Type", content_type(Path::new(&source))).unwrap(),
-        Header::from_bytes("Accept-Ranges", "bytes").unwrap(),
-        Header::from_bytes("Cache-Control", "no-store").unwrap(),
-    ];
-    let status = if header("Range").is_some() {
-        headers.push(Header::from_bytes("Content-Range", format!("bytes {start}-{end}/{size}")).unwrap());
-        206
-    } else {
-        200
-    };
-    let body: Box<dyn Read + Send> = Box::new(file.take(len));
-    // Always send Content-Length: tiny_http otherwise switches large bodies to
-    // chunked encoding, and without a length the player can't seek or show a
-    // timeline.
-    Ok(Response::new(StatusCode(status), headers, body, Some(len as usize), None).with_chunked_threshold(usize::MAX))
+    let status = if range.is_some() { 206 } else { 200 };
+    let mut response = Response::reader(status, Box::new(file.take(len)), len)
+        .header("Content-Type", content_type(Path::new(&source)))
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "no-store");
+    if range.is_some() {
+        response = response.header("Content-Range", format!("bytes {start}-{end}/{size}"));
+    }
+    Ok(response)
 }
 
 /// Opens `path` only if it's a regular file and not a symlink, and (on Unix)
@@ -354,7 +313,7 @@ mod tests {
     #[test]
     fn serves_only_local_vods_to_its_own_host_with_the_token() {
         let path = std::env::temp_dir().join(format!("vodscribe-media-{}.mp4", std::process::id()));
-        // Larger than tiny_http's 32 KB threshold for switching to chunked encoding.
+        // Large, as a video is: the length still goes out (players need it to seek).
         let data: Vec<u8> = (0..100_000u32).map(|i| (i % 10) as u8 + b'0').collect();
         std::fs::write(&path, &data).unwrap();
         let file = path.to_string_lossy().into_owned();
@@ -439,6 +398,40 @@ mod tests {
         let elsewhere = PathBuf::from(format!("http://localhost:{}/x", media.origin.rsplit(':').next().unwrap()));
         assert!(!vodscribe_core::tools::served(&elsewhere));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A burst of range requests while other connections stay open (a player
+    /// seeking while another holds its stream): each one answered. Under
+    /// tiny_http's pool one could wait for minutes (loopback::serve).
+    #[test]
+    fn answers_a_burst_of_connections_while_others_stay_open() {
+        use std::io::Write;
+        let path = std::env::temp_dir().join(format!("vodscribe-media-burst-{}.mp4", std::process::id()));
+        std::fs::write(&path, b"0123456789").unwrap();
+        let file = path.to_string_lossy().into_owned();
+        let media = MediaServer::start(move |_| Some(file.clone())).unwrap();
+        let addr = media.origin.strip_prefix("http://").unwrap().to_string();
+        for _ in 0..20 {
+            let open: Vec<_> = (0..8).map(|_| std::net::TcpStream::connect(&addr).unwrap()).collect();
+            let burst: Vec<_> = (0..8)
+                .map(|i| {
+                    let mut conn = std::net::TcpStream::connect(&addr).unwrap();
+                    let range = format!("Range: bytes={i}-{i}\r\n");
+                    let req = format!("GET /{}/7 HTTP/1.1\r\nHost: {addr}\r\n{range}\r\n", media.token);
+                    conn.write_all(req.as_bytes()).unwrap();
+                    conn
+                })
+                .collect();
+            for (i, mut conn) in burst.into_iter().enumerate() {
+                conn.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+                let mut out = String::new();
+                conn.read_to_string(&mut out).unwrap();
+                assert!(out.starts_with("HTTP/1.1 206"), "{out}");
+                assert!(out.ends_with(&format!("\r\n\r\n{i}")), "{out}");
+            }
+            drop(open);
+        }
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Serves $VODSCRIBE_MEDIA_FILE as VOD 1 for a few minutes and prints its

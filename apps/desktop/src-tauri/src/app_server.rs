@@ -15,15 +15,13 @@
 // Debug builds compile this only for its tests; `tauri dev` doesn't start it.
 #![cfg_attr(dev, allow(dead_code))]
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use tauri::{AppHandle, Manager, Runtime};
 
-use crate::loopback;
+use crate::loopback::{self, Request, Response};
 
 /// The origin the app is served from, such as `http://localhost:41723`.
 pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
@@ -35,7 +33,7 @@ pub(crate) fn start<R: Runtime>(app: &AppHandle<R>) -> Result<String> {
     });
     for listener in listeners {
         let (find, host) = (find.clone(), host.clone());
-        std::thread::Builder::new().name("app-server".into()).spawn(move || serve(listener, &host, find))?;
+        std::thread::Builder::new().name("app-server".into()).spawn(move || serve(listener, host, find))?;
     }
     let origin = format!("http://localhost:{port}");
     allow_commands(app, &origin)?;
@@ -52,85 +50,34 @@ struct Page {
 /// Finds the page at a path, such as `/_app/immutable/entry/app.js`.
 type Find = dyn Fn(&str) -> Option<Page> + Send + Sync;
 
-/// Answers each connection on a thread of its own, one request per connection.
-///
-/// This was tiny_http, and the page then sometimes stayed empty for two
-/// minutes at start (WebKitGTK and macOS's WebKit, mostly in the tests): its
-/// thread pool can count a thread as free that it has already woken for an
-/// earlier connection, and then leaves the new connection waiting until a
-/// thread comes back, which a kept-alive connection only does when the web
-/// view drops it, about two minutes later. The start's burst of script
-/// preloads hit that, one preload never got its answer, and the page waited
-/// on it. (tiny_http also drops a `Connection: close` set on a response.)
-fn serve(listener: TcpListener, host: &str, find: Arc<Find>) {
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
-        let (host, find) = (host.to_string(), find.clone());
-        let _ = std::thread::Builder::new().name("app-server".into()).spawn(move || {
-            let _ = answer(stream, &host, &*find);
-        });
-    }
+fn serve(listener: TcpListener, host: String, find: Arc<Find>) {
+    loopback::serve(listener, "app-server", usize::MAX, Arc::new(move |request| answer(request, &host, &*find)));
 }
 
-/// Reads one request from `stream`, answers it and closes the connection.
-fn answer(mut stream: TcpStream, host: &str, find: &Find) -> std::io::Result<()> {
-    // A connection that never sends its request doesn't hold a thread for long.
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+fn answer(request: &Request, host: &str, find: &Find) -> Response {
     // The tests' builds say what was asked and when (a start that stalls
     // with the page empty: was its script asked for, and answered?).
     #[cfg(feature = "e2e")]
-    let asked = std::time::Instant::now();
-    let mut reader = BufReader::new(&stream).take(64 * 1024);
-    let mut first = String::new();
-    reader.read_line(&mut first)?;
-    let mut words = first.split_whitespace();
-    let (method, url) = (words.next().unwrap_or(""), words.next().unwrap_or("/"));
-    let (mut line, mut hosts) = (String::new(), Vec::new());
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 || line.trim_end().is_empty() {
-            break;
-        }
-        if let Some((name, value)) = line.split_once(':')
-            && name.trim().eq_ignore_ascii_case("host")
-        {
-            hosts.push(value.trim().to_string());
-        }
-    }
-    let allowed = loopback::allowed(method, hosts.iter().map(String::as_str), host).is_ok();
-    let path = url.split(['?', '#']).next().unwrap_or("/");
-    let (status, page) = match allowed.then(|| find(path)).flatten() {
-        Some(page) => ("200 OK", Some(page)),
-        None if allowed => ("404 Not Found", None),
-        None => ("403 Forbidden", None),
-    };
-    let mut head = format!("HTTP/1.1 {status}\r\nConnection: close\r\n");
-    let body = match &page {
+    let (asked, url) = (std::time::Instant::now(), request.url.clone());
+    let allowed = loopback::check(request, host).is_ok();
+    let path = request.url.split(['?', '#']).next().unwrap_or("/");
+    let response = match allowed.then(|| find(path)).flatten() {
         Some(page) => {
-            head += &format!(
-                "Content-Type: {}\r\nContent-Length: {}\r\nCache-Control: no-cache\r\nX-Content-Type-Options: nosniff\r\n",
-                page.mime,
-                page.bytes.len()
-            );
-            if let Some(csp) = &page.csp {
-                head += &format!("Content-Security-Policy: {csp}\r\n");
+            let mut response = Response::bytes(200, page.bytes)
+                .header("Content-Type", page.mime)
+                .header("Cache-Control", "no-cache")
+                .header("X-Content-Type-Options", "nosniff");
+            if let Some(csp) = page.csp {
+                response = response.header("Content-Security-Policy", csp);
             }
-            &page.bytes[..]
+            response
         }
-        None => {
-            head += "Content-Length: 0\r\n";
-            &[][..]
-        }
+        None => Response::empty(if allowed { 404 } else { 403 }),
     };
-    head += "\r\n";
-    stream.write_all(head.as_bytes())?;
-    if method != "HEAD" {
-        stream.write_all(body)?;
-    }
-    stream.flush()?;
     #[cfg(feature = "e2e")]
-    eprintln!("app-server {}: {url} in {} ms", chrono_ms(), asked.elapsed().as_millis());
-    Ok(())
+    let response =
+        response.then(move || eprintln!("app-server {}: {url} in {} ms", chrono_ms(), asked.elapsed().as_millis()));
+    response
 }
 
 /// The time of day to the millisecond (UTC), to line the log up with the tests'.
@@ -155,6 +102,9 @@ fn allow_commands<R: Runtime>(app: &AppHandle<R>, origin: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
 
     /// A server on 127.0.0.1 with one page, `/a.js`; its port.
     fn server() -> u16 {
@@ -164,7 +114,7 @@ mod tests {
             (path == "/a.js").then(|| Page { bytes: b"x".to_vec(), mime: "text/javascript".into(), csp: None })
         });
         let host = format!("localhost:{port}");
-        std::thread::spawn(move || serve(listener, &host, find));
+        std::thread::spawn(move || serve(listener, host, find));
         port
     }
 
