@@ -1,7 +1,8 @@
 // Upgrading: a library and settings as 0.3.0 left them (fixtures/, made by
 // make-old-library.mjs) open in this version with the VOD, its transcript
-// and the setting kept, a copy of the old library kept beside it, and this
-// version's features working on the old VOD (a clip: 0.3.0 had none).
+// (one stretch, all of it) and the setting kept, a copy of the old library
+// kept beside it, and this version's features working on the old VOD (a
+// clip: 0.3.0 had none).
 
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -33,6 +34,11 @@ export default {
     if (vods.length !== 1 || vods[0].status !== "done")
       throw new Error(`after the upgrade the library has ${JSON.stringify(vods.map((v) => [v.title, v.status]))}`);
     const [vod] = vods;
+    // Transcribed whole, before stretches: one done from its start to its end.
+    const stretches = await app.invoke("transcript_stretches", { vodId: vod.id });
+    const whole = stretches.map((s) => [s.start, s.end, s.status]);
+    if (JSON.stringify(whole) !== JSON.stringify([[0, null, "done"]]) || vod.transcribed !== "all")
+      throw new Error(`after the upgrade it's transcribed ${vod.transcribed}, in ${JSON.stringify(stretches)}`);
     await ctx.checkpoint("upgraded-library");
     const text = (await app.invoke("transcript", { vodId: vod.id })).map((l) => l.text).join(" ");
     if (!/landed/i.test(text)) throw new Error(`the transcript doesn't have "landed": ${text}`);
