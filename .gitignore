@@ -24,3 +24,9 @@ vodscribe-data/
 # Python environment for tools/model-export
 .venv/
 __pycache__/
+
+# Videos dropped in the repo root to try the player on (vodscribe-play t.mp4)
+/*.mp4
+/*.mkv
+/*.webm
+/*.mov
