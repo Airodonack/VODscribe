@@ -35,10 +35,27 @@ export function resetData() {
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;
     for (const name of readdirSync(dir)) {
-      // Retried for a while: on Windows the last app's WebView2 processes
-      // can hold its files for some seconds after it's gone.
-      if (!KEPT.has(name))
-        rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
+      if (!KEPT.has(name)) removeForSure(path.join(dir, name));
+    }
+  }
+}
+
+/**
+ * Deletes `target` (a file or a folder), trying for up to 20 s: on Windows
+ * the last app's WebView2 processes can hold its folder for some seconds
+ * after it's gone ("EPERM, Permission denied: ...\EBWebView"), and node's
+ * own retries don't always cover that (eleven scenarios failed in a second
+ * once, 2026-10-23).
+ */
+function removeForSure(target) {
+  const until = Date.now() + 20_000;
+  for (;;) {
+    try {
+      rmSync(target, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      return;
+    } catch (e) {
+      if (Date.now() >= until) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
     }
   }
 }

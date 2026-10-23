@@ -32,7 +32,10 @@ export default {
     const piece = async () => (await app.invoke("get_edit", { id: edit.id })).pieces[0];
     if ((await piece()).hole) throw new Error("a piece of a file that's there is a hole");
 
-    rmSync(file);
+    // Deleted outside the app. On Windows a file another process reads can't
+    // be deleted, and the app may still be reading this one for a moment
+    // (its waveform, its pictures): tried for a while, as a person would.
+    rmSync(file, { maxRetries: 50, retryDelay: 200 });
     if (!(await piece()).hole) throw new Error("the piece of the deleted file isn't a hole");
     log("the file deleted: its piece is a hole");
 
