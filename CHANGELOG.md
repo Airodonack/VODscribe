@@ -4,6 +4,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.5.2 (unreleased)
 
+- The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
 - The window no longer sometimes stays empty for about two minutes when VODscribe starts.
 - Cancelling a transcription keeps the lines transcribed so far, instead of throwing them away.
 - On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.

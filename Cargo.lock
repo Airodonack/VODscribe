@@ -6655,7 +6655,6 @@ dependencies = [
  "getrandom 0.4.3",
  "glib",
  "gtk",
- "libc",
  "png 0.18.1",
  "serde",
  "serde_json",

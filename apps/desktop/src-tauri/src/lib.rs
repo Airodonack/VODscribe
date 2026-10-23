@@ -258,10 +258,6 @@ pub fn run() {
                 _ => builder,
             };
             let main = builder.build()?;
-            #[cfg(target_os = "linux")]
-            if let Err(e) = webview::media_session_off(&main) {
-                eprintln!("WebKit's Media Session couldn't be turned off: {e:#}");
-            }
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
             app.manage(screen::Screen::default());
