@@ -93,12 +93,12 @@ async function windows() {
   // The scheduled task runs in a signed-in session, and only then.
   if (!ps(`(quser 2>$null) -match 'Active'; exit 0`))
     throw new Error(`no one is signed in on ${name}: the tests need someone's desktop (sign in, then run this again)`);
-  // What the tests need there, found the way the task will look for it.
+  // What the tests need there, found the way the task will look for it:
+  // Node alone, since the app is driven through its own test hook (bridge),
+  // not through tauri-driver.
   const pathed = (runner.path ?? []).map((p) => `$env:PATH = '${p.replaceAll("/", "\\")};' + $env:PATH;`).join(" ");
-  for (const tool of ["node", "tauri-driver"]) {
-    if (!ps(`${pathed} (Get-Command ${tool} -ErrorAction SilentlyContinue).Source; exit 0`))
-      throw new Error(`${name} has no ${tool} on PATH (or in its "path" in runners.json)`);
-  }
+  if (!ps(`${pathed} (Get-Command node -ErrorAction SilentlyContinue).Source; exit 0`))
+    throw new Error(`${name} has no node on PATH (or in its "path" in runners.json)`);
   sendHarness(`if not exist "${dir}" mkdir "${dir}"`);
   log("harness sent");
 
