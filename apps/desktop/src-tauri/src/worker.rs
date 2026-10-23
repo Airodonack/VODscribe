@@ -298,9 +298,10 @@ pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read 
 /// as it reached (`Db::end_request`). Its section of audio goes; with no
 /// other request of its VOD left, the VOD's work files go, and a partly downloaded video where
 /// downloading it is part of transcribing (one kept whole, or downloaded on
-/// request (videos.rs), stays).
+/// request (videos.rs), stays). A stretch already done isn't a request:
+/// it's left as it is.
 pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
-    let Some(stretch) = db.stretch(stretch_id)? else { return Ok(()) };
+    let Some(stretch) = db.stretch(stretch_id)?.filter(|s| s.status != Status::Done) else { return Ok(()) };
     let vod_id = stretch.vod_id;
     remove_section(work_dir, &stretch);
     db.end_request(stretch_id)?;
@@ -654,6 +655,20 @@ mod tests {
             finish(Stage::Transcribe, &db, &work, id, Ok(()), Some(stop), 1.0).unwrap();
             assert_eq!(status(&db, id), (Status::Done, None));
         }
+    }
+
+    #[test]
+    fn a_cancel_of_a_stretch_already_done_changes_nothing() {
+        // Only requests are ended: a done stretch is the record of what's
+        // transcribed, and the VOD's audio may serve a request made later.
+        let (db, work, id) = setup(Status::Transcribing);
+        let vod = vod_of(&db, id);
+        db.finish_stretch(id).unwrap();
+        let done = db.stretches(vod).unwrap();
+        cancel(&db, &work, done[0].id).unwrap();
+        assert_eq!(db.stretches(vod).unwrap(), done);
+        assert!(db.audio_path(vod).unwrap().is_some());
+        assert!(work.join(format!("{vod}.m4a")).exists());
     }
 
     #[test]
