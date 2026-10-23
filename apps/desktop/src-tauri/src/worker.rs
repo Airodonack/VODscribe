@@ -296,13 +296,16 @@ pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read 
 
 /// Ends request `stretch_id`, keeping the lines it wrote: it's done as far
 /// as it reached (`Db::end_request`). Its section of audio goes; with no
-/// other request of its VOD left, the VOD's work files go, and a partly downloaded video where
-/// downloading it is part of transcribing (one kept whole, or downloaded on
-/// request (videos.rs), stays). A stretch already done isn't a request:
-/// it's left as it is.
+/// other request of its VOD left, the VOD's work files go, and, if it asked
+/// for all of the VOD, a partly downloaded video where downloading it is
+/// part of transcribing (one kept whole, or downloaded on request
+/// (videos.rs), stays). A stretch's own section never downloads the video:
+/// a download there is "Keep video"'s, or Play's. A stretch already done
+/// isn't a request: it's left as it is.
 pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
     let Some(stretch) = db.stretch(stretch_id)?.filter(|s| s.status != Status::Done) else { return Ok(()) };
     let vod_id = stretch.vod_id;
+    let whole = stretch.is_whole();
     remove_section(work_dir, &stretch);
     db.end_request(stretch_id)?;
     if !db.requests(vod_id)?.is_empty() {
@@ -310,7 +313,7 @@ pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()
     }
     pipeline::remove_work_files(work_dir, vod_id);
     db.set_audio_path(vod_id, None)?;
-    if db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media) {
+    if whole && db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media) {
         pipeline::remove_media(work_dir, vod_id);
     }
     Ok(())
@@ -567,6 +570,36 @@ mod tests {
         let vod = vod_of(db, id);
         let line = vodscribe_core::transcript::Segment { start: 0.0, end: 10.0, text: "hi".into(), words: Vec::new() };
         db.replace_segments(vod, id, (0.0, Some(10.0)), &[line], 10.0).unwrap();
+    }
+
+    /// A VOD from a site without its own player, its video downloading to
+    /// play (videos.rs), and a stretch of it transcribed from a section of
+    /// its sound: stopping that stretch leaves the video's download be.
+    #[test]
+    fn a_cancelled_stretch_leaves_the_video_downloading_to_play() {
+        let (_, work, _) = setup(Status::Transcribing);
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "rumble".into(),
+            platform_id: "r".into(),
+            url: "https://rumble.com/r".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(600.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0.id;
+        let media = pipeline::media_dir(&work);
+        std::fs::create_dir_all(&media).unwrap();
+        let part = pipeline::media_stem(&media, vod, "t").with_extension("mp4.part");
+        std::fs::write(&part, b"half a video").unwrap();
+        let id = db.request(vod, 100.0, Some(130.0)).unwrap().id;
+        db.set_stretch_status(id, Status::Transcribing, 0.5, None).unwrap();
+        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.5)
+            .unwrap();
+        assert_eq!(db.requests(vod).unwrap(), []);
+        assert!(part.exists(), "a stretch's section never downloads the video: not its to delete");
     }
 
     #[test]
