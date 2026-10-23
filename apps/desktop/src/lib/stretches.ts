@@ -2,7 +2,7 @@
 // stretches.rs, read with `transcript_stretches`): for the transcript's rows
 // where there are no lines yet (Transcript.svelte), and Transcribe the rest.
 
-import type { Stretch } from "./api";
+import type { Stretch, Vod, api } from "./api";
 
 /** Ranges this close count as touching (crates/core stretches.rs `EDGE`):
  *  a VOD's length from its site and the end of its audio differ by a little. */
@@ -67,4 +67,18 @@ export function gaps(stretches: Stretch[], duration: number | null): Gap[] {
     if (b - from > EDGE) push(from, b, null);
   }
   return out;
+}
+
+/** Asks for every part of `vod` not transcribed, nor asked for yet, to be
+ *  transcribed (Transcribe the rest): one request a gap, in time order. The
+ *  page's `api` is passed in, so node's tests can load this module (and give
+ *  it one of their own) without the app's. */
+export async function transcribeRest(
+  vod: Vod,
+  calls: Pick<typeof api, "transcriptStretches" | "transcribeStretch">,
+): Promise<void> {
+  const stretches = await calls.transcriptStretches(vod.id);
+  for (const gap of gaps(stretches, vod.duration)) {
+    if (!gap.request) await calls.transcribeStretch(vod.id, gap.start, gap.end);
+  }
 }

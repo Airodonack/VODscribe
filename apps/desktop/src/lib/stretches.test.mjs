@@ -1,7 +1,7 @@
 // What of a VOD is transcribed (stretches.ts): node --test apps/desktop/src/lib/stretches.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { covered, gaps } from "./stretches.ts";
+import { covered, gaps, transcribeRest } from "./stretches.ts";
 
 let ids = 0;
 /**
@@ -63,4 +63,27 @@ test("a request over lines already there is no gap", () => {
 
 test("an unknown length: the last gap is open", () => {
   assert.deepEqual(spans(gaps([stretch(0, 60)], null)), [[60, null, null]]);
+});
+
+test("transcribing the rest asks for each gap not asked for, and nothing else", async () => {
+  /** @type {[number, number, number | null][]} */
+  const asked = [];
+  const calls = {
+    transcriptStretches: async () => [stretch(120, 180), stretch(300, 360, "queued")],
+    transcribeStretch: async (
+      /** @type {number} */ id,
+      /** @type {number} */ start,
+      /** @type {number | null} */ end,
+    ) => {
+      asked.push([id, start, end]);
+      return stretch(start, end, "queued");
+    },
+  };
+  // @ts-ignore: a VOD with only what's read of it.
+  await transcribeRest({ id: 7, duration: 600 }, calls);
+  assert.deepEqual(asked, [
+    [7, 0, 120],
+    [7, 180, 300],
+    [7, 360, null],
+  ]);
 });

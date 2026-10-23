@@ -22,6 +22,7 @@
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
   import { gaps as gapsOf, type Gap } from "./stretches";
+  import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
@@ -163,6 +164,16 @@
   function transcribe(start: number, end: number | null) {
     if (!vod) return;
     api.transcribeStretch(vod.id, start, end).catch((e) => (error = String(e)));
+  }
+
+  // "Transcribe from here": how much from the playhead, from the player
+  // bar's menu (TranscribeFrom.svelte), from where it was when opened.
+  let fromButton = $state<HTMLElement>();
+  let fromMenu = $state(false);
+  let fromHere = $state(0);
+  function transcribeFromHere() {
+    fromHere = mine ? cuts.now : 0;
+    fromMenu = !fromMenu;
   }
 
   /** Stops request `id`, keeping the lines it has written. */
@@ -1058,10 +1069,15 @@
           {:else if vod.transcribed === "none" && vod.status === "none"}
             Not transcribed yet.
             <button class="link accent" onclick={() => transcribe(0, null)}>Transcribe the whole VOD</button> ·
-            <!-- For now to the end; the popover of how long from here (PlayerBar's Transcribe) is to take this over. -->
-            <button class="link accent" onclick={() => transcribe(mine ? cuts.now : 0, null)}
-              >Transcribe from here</button
+            <button class="link accent" bind:this={fromButton} onclick={transcribeFromHere}>Transcribe from here</button
             >
+            <TranscribeFrom
+              bind:open={fromMenu}
+              anchor={fromButton}
+              {vod}
+              from={fromHere}
+              onerror={(e) => (error = e)}
+            />
           {:else if vod.transcribed === "all"}
             No speech was found in this VOD.
           {:else}

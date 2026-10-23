@@ -2,7 +2,7 @@
   import { api, type SearchHit, type Vod } from "./api";
   import { DEMO_NAMES } from "./demo";
   import { formatTime } from "./platform";
-  import { gaps } from "./stretches";
+  import { transcribeRest } from "./stretches";
   import Icon from "./Icon.svelte";
 
   let {
@@ -65,17 +65,11 @@
   let untranscribed = $derived([...vods.values()].filter((v) => v.transcribed === "none").length);
   let error = $state<string | null>(null);
 
-  /** Asks for every part of `vod` not transcribed, nor asked for yet, to be transcribed. */
-  async function transcribeRest(vod: Vod) {
-    try {
-      const stretches = await api.transcriptStretches(vod.id);
-      for (const gap of gaps(stretches, vod.duration)) {
-        if (!gap.request) await api.transcribeStretch(vod.id, gap.start, gap.end);
-      }
-      error = null;
-    } catch (e) {
-      error = String(e);
-    }
+  function transcribeTheRest(vod: Vod) {
+    transcribeRest(vod, api).then(
+      () => (error = null),
+      (e) => (error = String(e)),
+    );
   }
 </script>
 
@@ -149,7 +143,7 @@
           <!-- With a request waiting or under way, the rest is already asked for, or soon will be. -->
           {#if scope.status === "none"}
             {@const vod = scope}
-            <button class="link accent" onclick={() => transcribeRest(vod)}>Transcribe the rest</button>
+            <button class="link accent" onclick={() => transcribeTheRest(vod)}>Transcribe the rest</button>
           {/if}
         </p>
         {#if error}<p class="error-text">{error}</p>{/if}
