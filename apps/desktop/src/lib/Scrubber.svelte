@@ -56,6 +56,7 @@
   import Spinner from "./Spinner.svelte";
   import ScrubFrame from "./ScrubFrame.svelte";
   import { nearWithin, place } from "./scrubFrame";
+  import { ExactFrame } from "./exactFrame.svelte";
   import type { Mark } from "./api";
 
   /** An edit's piece on its timeline (in the edit's time). */
@@ -648,6 +649,14 @@
       !hoverMark &&
       (!drag || drag.kind === "scrub" || drag.kind === "edge"),
   );
+  // Its exact frame, from the app's own player, once the pointer rests.
+  const exact = new ExactFrame();
+  $effect(() => {
+    const doc = framed && hover !== null ? memo : undefined;
+    const at = tipTime;
+    untrack(() => exact.want(doc, at));
+  });
+  $effect(() => () => exact.clear());
   let frameWidth = $state(0);
   let tipWidth = $state(0);
   const beside = $derived(
@@ -932,6 +941,7 @@
         within={nearWithin(span, width)}
         left={beside.frame ?? 0}
         dragging={!!drag}
+        exact={exact.frame}
         bind:shown={frameWidth}
       />
     {/if}

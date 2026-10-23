@@ -12,7 +12,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::tools;
 use vodscribe_player::clock::{Event, Player};
-use vodscribe_player::decode::Layout;
+use vodscribe_player::decode::{Frame, Layout};
 use vodscribe_player::timeline::Timeline;
 
 use crate::history::Doc;
@@ -402,23 +402,84 @@ pub(crate) async fn player_frame(app: AppHandle, since: Option<u64>, width: u32,
     let Some(f) = frame.filter(|f| Some(f.id) != since && f.width > 0 && f.height > 0) else {
         return tauri::ipc::Response::new(Vec::new());
     };
-    let k = (width.max(1) as f64 / f.width as f64).min(height.max(1) as f64 / f.height as f64).min(1.0);
-    let (w, h) = (((f.width as f64 * k).round() as u32).max(1), ((f.height as f64 * k).round() as u32).max(1));
+    let (w, h) = fit(&f, width, height);
     let mut out = Vec::with_capacity(16 + (w * h * 4) as usize);
     out.extend_from_slice(&w.to_le_bytes());
     out.extend_from_slice(&h.to_le_bytes());
     out.extend_from_slice(&f.id.to_le_bytes());
-    // The frame is YUV: turned into RGB here, on the CPU, then scaled.
-    let mut rgb = Vec::new();
-    f.to_rgb(Layout::Rgb, &mut rgb);
-    scale_rgba(&rgb, f.width, f.height, w, h, &mut out);
+    rgba(&f, w, h, &mut out);
     tauri::ipc::Response::new(out)
 }
 
+/// `f`'s size scaled down to fit in `width` by `height` (never up).
+fn fit(f: &Frame, width: u32, height: u32) -> (u32, u32) {
+    let k = (width.max(1) as f64 / f.width as f64).min(height.max(1) as f64 / f.height as f64).min(1.0);
+    (((f.width as f64 * k).round() as u32).max(1), ((f.height as f64 * k).round() as u32).max(1))
+}
+
+/// `f` as RGBA `w` by `h`, onto `out`. The frame is YUV: turned into RGB
+/// here, on the CPU, then scaled.
+fn rgba(f: &Frame, w: u32, h: u32, out: &mut Vec<u8>) {
+    let mut rgb = Vec::new();
+    f.to_rgb(Layout::Rgb, &mut rgb);
+    scale_rgba(&rgb, f.width, f.height, w, h, out);
+}
+
+/// The frame a seek to `time` of `doc` would show, for the timeline's
+/// thumbnail, if `doc` is what the player has open (a site's VOD played
+/// from its player has none): its width and height (4 bytes each), the
+/// time it shows at (an f64) and whether it's exactly the frame there (4
+/// bytes, 1 or 0), all little-endian, then RGBA pixels scaled down to fit
+/// in `width` by `height`. Empty if there's none. The player isn't moved.
+#[tauri::command]
+pub(crate) async fn player_preview(
+    app: AppHandle,
+    doc: Doc,
+    time: f64,
+    width: u32,
+    height: u32,
+) -> CmdResult<tauri::ipc::Response> {
+    let previewer = {
+        let state = app.state::<AppState>();
+        let open = state.player.open.lock().unwrap();
+        open.as_ref().filter(|o| o.doc == doc && o.embed.is_none()).map(|o| o.player.previewer())
+    };
+    let Some(previewer) = previewer else { return Ok(tauri::ipc::Response::new(Vec::new())) };
+    // Off the main thread, and without the player held: a frame not held
+    // yet is decoded first.
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let Some(preview) = previewer.preview(time) else { return Vec::new() };
+        let f = &preview.frame;
+        let (w, h) = fit(f, width, height);
+        let mut out = Vec::with_capacity(20 + (w * h * 4) as usize);
+        out.extend_from_slice(&w.to_le_bytes());
+        out.extend_from_slice(&h.to_le_bytes());
+        out.extend_from_slice(&preview.time.to_le_bytes());
+        out.extend_from_slice(&(preview.exact as u32).to_le_bytes());
+        rgba(f, w, h, &mut out);
+        out
+    })
+    .await
+    .map_err(err)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// How many video decoders the player has started since the app did: for
+/// the end-to-end tests, that play where the pointer rested started none.
+#[tauri::command]
+pub(crate) fn player_decoders_started() -> u64 {
+    vodscribe_player::decode::video_starts()
+}
+
 /// `rgb` (`fw` by `fh`) scaled to `w` by `h` as RGBA onto `out`: each pixel
-/// the bilinear mix at its centre (at half size, the mean of four).
+/// the bilinear mix at its centre (at half size, the mean of four); more
+/// than halved, the mean of all the pixels it covers, which bilinear's four
+/// would skip most of (fine lines flicker, edges alias).
 fn scale_rgba(rgb: &[u8], fw: u32, fh: u32, w: u32, h: u32, out: &mut Vec<u8>) {
     let (sx, sy) = (fw as f32 / w as f32, fh as f32 / h as f32);
+    if sx > 2.0 || sy > 2.0 {
+        return area_rgba(rgb, fw as usize, fh as usize, w as usize, h as usize, out);
+    }
     let (fw, fh) = (fw as usize, fh as usize);
     for y in 0..h {
         let v = ((y as f32 + 0.5) * sy - 0.5).max(0.0);
@@ -434,6 +495,32 @@ fn scale_rgba(rgb: &[u8], fw: u32, fh: u32, w: u32, h: u32, out: &mut Vec<u8>) {
                 let bottom = at(x0, y1, c) * (1.0 - tx) + at(x1, y1, c) * tx;
                 out.push((top * (1.0 - ty) + bottom * ty + 0.5) as u8);
             }
+            out.push(255);
+        }
+    }
+}
+
+/// `scale_rgba` by area: each pixel the mean of the source pixels under it.
+fn area_rgba(rgb: &[u8], fw: usize, fh: usize, w: usize, h: usize, out: &mut Vec<u8>) {
+    let span = |i: usize, n: usize, of: usize| {
+        let (a, b) = (i * of / n, ((i + 1) * of / n).max(i * of / n + 1).min(of));
+        a..b
+    };
+    for y in 0..h {
+        let rows = span(y, h, fh);
+        for x in 0..w {
+            let cols = span(x, w, fw);
+            let mut sum = [0u32; 3];
+            for yy in rows.clone() {
+                for xx in cols.clone() {
+                    let at = (yy * fw + xx) * 3;
+                    for c in 0..3 {
+                        sum[c] += rgb[at + c] as u32;
+                    }
+                }
+            }
+            let n = (rows.len() * cols.len()) as u32;
+            out.extend(sum.map(|s| ((s + n / 2) / n) as u8));
             out.push(255);
         }
     }
@@ -512,4 +599,30 @@ pub(crate) fn player_set_volume(state: State<'_, AppState>, volume: f32) -> CmdR
     let open = state.player.open.lock().unwrap();
     open.as_ref().ok_or("No player is open.")?.player.set_volume(volume);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frames_scale_down_by_mixing_or_by_area() {
+        // 4 by 2: a white column, then black ones, over two rows.
+        let row = [255u8, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let rgb = [row, row].concat();
+        // Halved: each pixel the mean of the two under it.
+        let mut out = Vec::new();
+        scale_rgba(&rgb, 4, 2, 2, 1, &mut out);
+        assert_eq!(out, [128, 128, 128, 255, 0, 0, 0, 255]);
+        // To one pixel, a quarter: the mean of all four columns, not two of them.
+        let mut out = Vec::new();
+        scale_rgba(&rgb, 4, 2, 1, 1, &mut out);
+        assert_eq!(out, [64, 64, 64, 255]);
+        // A thin line in a 12x reduction still counts, as bilinear's taps would miss it.
+        let mut wide = vec![0u8; 24 * 3];
+        wide[13 * 3..14 * 3].copy_from_slice(&[240, 240, 240]);
+        let mut out = Vec::new();
+        scale_rgba(&wide, 24, 1, 2, 1, &mut out);
+        assert_eq!(out, [0, 0, 0, 255, 20, 20, 20, 255]);
+    }
 }

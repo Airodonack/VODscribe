@@ -77,6 +77,8 @@ permissions = [
   "allow-embed-close",
   "allow-player-still",
   "allow-player-frame",
+  "allow-player-preview",
+  "allow-player-decoders-started",
   "allow-screen-under",
   "allow-player-play",
   "allow-player-pause",

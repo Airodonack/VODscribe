@@ -159,6 +159,15 @@ const AHEAD: usize = 4;
 /// Frame numbers given out (`Frame::id`).
 static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Video decoders started (`Video::from`) since the program began.
+static VIDEO_STARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many video decoders (ffmpeg processes) have been started: for tests
+/// that a frame was played from one already running rather than a new one.
+pub fn video_starts() -> u64 {
+    VIDEO_STARTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A stream of frames or samples from one ffmpeg process.
 pub struct Stream<T> {
     child: Child,
@@ -272,6 +281,7 @@ impl Video {
         let range = if colour.full_range { "pc" } else { "tv" };
         let scale = format!("scale={width}:{height}:out_range={range}");
         let output = ["-vf", &scale, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "yuv420p"];
+        VIDEO_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         start(&self.ffmpeg, &self.path, from, "0:v:0", &output, move |mut out, tx| {
             let (cw, ch) = chroma(width, height);
             let size = width as usize * height as usize + 2 * cw as usize * ch as usize;

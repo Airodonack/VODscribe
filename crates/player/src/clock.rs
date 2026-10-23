@@ -9,8 +9,15 @@
 //! pause, starts both over from the new time, so a paused seek shows the
 //! frame there. Time is kept in seconds but every seek lands on a frame of
 //! the file's rate there, so a step is exactly one frame.
+//!
+//! Besides the decoder playing, a second one previews: the exact frame at a
+//! time the timeline's pointer rests on (`Player::preview`), and half a
+//! second on from it. A seek to a moment it holds (play where the pointer
+//! was) takes that decoder over rather than starting another (`adopt`):
+//! the picture is there at once. The one that was playing becomes the
+//! preview decoder, with the frames it holds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -105,8 +112,142 @@ impl State {
     }
 }
 
+/// How far past the frame previewed the preview decoder reads on, in seconds.
+const PREVIEW_AHEAD: f64 = 0.5;
+/// The most a decoder holds of frames read, in bytes: half a second of
+/// 1080p and more, fewer frames of larger video.
+const HOLD_BYTES: usize = 96 << 20;
+/// How much of what it's shown the playing decoder keeps, in seconds: what
+/// it held when it's taken over plays, so it needn't keep more, and the
+/// rest would only weigh on playing. The preview decoder keeps all it can.
+const PLAYED_KEPT: f64 = 0.5;
+
+/// A decoder: one ffmpeg reading a stretch's file from a frame on, and the
+/// frames read from it, held.
+struct Decoder {
+    stretch: Stretch,
+    picture: Picture,
+    stream: Stream<Arc<Frame>>,
+    /// Frames read, in order: those before `next` given out already (kept
+    /// to preview from), the rest still to come.
+    frames: VecDeque<Arc<Frame>>,
+    next: usize,
+    /// Bytes of `frames`.
+    bytes: usize,
+    /// Read ahead (by `fill`) to this pts in the file.
+    until: f64,
+    /// How many seconds of the frames given out it keeps, behind the last.
+    kept: f64,
+}
+
+impl Decoder {
+    /// Decoding `stretch`'s file, of `picture`, from `file_time`.
+    fn start(ffmpeg: &Path, stretch: &Stretch, picture: Picture, file_time: f64) -> Option<Decoder> {
+        let path = &stretch.source.as_ref()?.path;
+        let stream = Video::new(ffmpeg, path, picture).from(file_time).ok()?;
+        Some(Decoder::new(stretch.clone(), picture, stream))
+    }
+
+    fn new(stretch: Stretch, picture: Picture, stream: Stream<Arc<Frame>>) -> Decoder {
+        Decoder {
+            stretch,
+            picture,
+            stream,
+            frames: VecDeque::new(),
+            next: 0,
+            bytes: 0,
+            until: f64::NEG_INFINITY,
+            kept: PLAYED_KEPT,
+        }
+    }
+
+    /// The next frame: one held, or the next out of ffmpeg.
+    fn recv(&mut self) -> Option<Arc<Frame>> {
+        if let Some(frame) = self.frames.get(self.next).cloned() {
+            self.next += 1;
+            self.trim();
+            return Some(frame);
+        }
+        let frame = self.stream.recv()?;
+        self.hold(frame.clone());
+        self.next = self.frames.len();
+        self.trim();
+        Some(frame)
+    }
+
+    fn hold(&mut self, frame: Arc<Frame>) {
+        self.bytes += frame.yuv.len();
+        self.frames.push_back(frame);
+        self.trim();
+    }
+
+    /// Lets go of the frames given out longest ago: those more than `kept`
+    /// seconds behind the last given out, and any while over `HOLD_BYTES`.
+    fn trim(&mut self) {
+        let last = self.next.checked_sub(1).map(|i| self.frames[i].pts);
+        while self.next > 0 {
+            let old = self.frames[0].pts < last.unwrap_or(f64::NEG_INFINITY) - self.kept - 1e-6;
+            if !old && self.bytes <= HOLD_BYTES {
+                break;
+            }
+            let gone = self.frames.pop_front().expect("one given out");
+            self.bytes -= gone.yuv.len();
+            self.next -= 1;
+        }
+    }
+
+    /// Reads on what ffmpeg has decoded, up to `until` (within
+    /// `HOLD_BYTES`); whether it's to read more when there's more.
+    fn fill(&mut self) -> bool {
+        loop {
+            let reached = self.frames.back().is_some_and(|f| f.pts >= self.until - 1e-6);
+            if reached || self.bytes >= HOLD_BYTES {
+                return false;
+            }
+            match self.stream.try_recv() {
+                Some(frame) => self.hold(frame),
+                None => return true,
+            }
+        }
+    }
+
+    /// Which of the frames held is the one at `file_time`, if this decodes
+    /// `stretch` at `picture`'s rate and size.
+    fn holds(&self, stretch: &Stretch, picture: Picture, file_time: f64) -> Option<usize> {
+        if self.stretch != *stretch || self.picture != picture {
+            return None;
+        }
+        let half = 0.5 / picture.fps;
+        self.frames.iter().position(|f| (f.pts - file_time).abs() < half)
+    }
+}
+
+/// What `Player::preview` gives: the frame at a time, where in the
+/// timeline it is, and whether it's exactly the one showing there (else the
+/// first ffmpeg gave, the file not reaching the time).
+pub struct Preview {
+    pub frame: Arc<Frame>,
+    pub time: f64,
+    pub exact: bool,
+}
+
+/// Where a seek to `time` lands: on the frame showing there, at `fps`,
+/// within `duration`; but not back out of a stretch with footage that
+/// starts at `start`, off the frame grid, into the gap before it.
+fn snap(time: f64, fps: f64, duration: f64, start: Option<f64>) -> f64 {
+    let time = time.max(0.0);
+    let snapped = ((time * fps + 1e-6).floor() / fps).min(duration);
+    match start {
+        Some(start) if snapped < start && time >= start => start,
+        _ => snapped,
+    }
+}
+
 struct Inner {
     ffmpeg: PathBuf,
+    /// The preview decoder (`Player::preview`), and what wakes its thread to read on.
+    preview: Mutex<Option<Decoder>>,
+    preview_wake: Condvar,
     /// What plays.
     timeline: Mutex<Timeline>,
     /// What each file holds, as probed when first needed (None: couldn't be read).
@@ -148,6 +289,38 @@ impl Inner {
         let source = self.timeline.lock().unwrap().at(time)?.source.clone()?;
         self.info(&source.path)?.picture
     }
+
+    /// Where a seek to `time` lands (`Player::snap`).
+    fn snap(&self, time: f64) -> f64 {
+        let fps = self.picture_at(time).map_or(DEFAULT_FPS, |p| p.fps);
+        let start = self.timeline.lock().unwrap().at(time.max(0.0)).filter(|s| s.source.is_some()).map(|s| s.at);
+        snap(time, fps, self.duration(), start)
+    }
+
+    /// The preview decoder, if it holds the frame at `file_time` of
+    /// `stretch` (at `picture`): taken to play from that frame on.
+    fn adopt(&self, stretch: &Stretch, picture: Picture, file_time: f64) -> Option<Decoder> {
+        let mut slot = self.preview.lock().unwrap();
+        let at = slot.as_ref()?.holds(stretch, picture, file_time)?;
+        let mut decoder = slot.take()?;
+        // Those before it count as given out: kept, to preview from later.
+        decoder.next = at;
+        decoder.until = f64::NEG_INFINITY;
+        decoder.kept = PLAYED_KEPT;
+        decoder.trim();
+        Some(decoder)
+    }
+
+    /// `decoder`, played from till now, previews from here on with what it
+    /// holds, unless a preview was asked for meanwhile.
+    fn keep_for_preview(&self, mut decoder: Decoder) {
+        let mut slot = self.preview.lock().unwrap();
+        if slot.is_none() {
+            decoder.until = f64::NEG_INFINITY;
+            decoder.kept = f64::INFINITY;
+            *slot = Some(decoder);
+        }
+    }
 }
 
 /// A timeline, playing or paused at a time.
@@ -173,6 +346,8 @@ impl Player {
     pub fn open(ffmpeg: &Path, timeline: Timeline) -> Result<Player> {
         let inner = Arc::new(Inner {
             ffmpeg: ffmpeg.to_path_buf(),
+            preview: Mutex::new(None),
+            preview_wake: Condvar::new(),
             timeline: Mutex::new(timeline),
             sources: Mutex::default(),
             volume: Mutex::new(Arc::new(AtomicU32::new(1f32.to_bits()))),
@@ -200,6 +375,8 @@ impl Player {
         std::thread::Builder::new().name("player".into()).spawn(move || run(&shared))?;
         let shared = inner.clone();
         std::thread::Builder::new().name("sound".into()).spawn(move || run_sound(&shared))?;
+        let shared = inner.clone();
+        std::thread::Builder::new().name("preview".into()).spawn(move || run_preview(&shared))?;
         Ok(Player { inner })
     }
 
@@ -319,26 +496,33 @@ impl Player {
         if self.playing() { self.pause() } else { self.play() }
     }
 
+    /// Where a seek to `time` lands: the start of the frame showing there.
+    /// Not back out of the footage `time` is in, into a gap before it: a
+    /// site's footage can start off the frame grid (Twitch's, where its
+    /// first frame shows, 0.067 s in its millisecond times, just past the
+    /// grid's 0.0667), and in the gap the player waits for footage.
+    pub fn snap(&self, time: f64) -> f64 {
+        self.inner.snap(time)
+    }
+
     /// Goes to the frame showing at `time`.
     pub fn seek(&self, time: f64) {
-        let fps = self.fps_at(time).unwrap_or(DEFAULT_FPS);
-        let time = time.max(0.0);
-        let mut snapped = ((time * fps + 1e-6).floor() / fps).min(self.inner.duration());
-        // Not back out of the footage `time` is in, into a gap before it: a
-        // site's footage can start off the frame grid (Twitch's, where its
-        // first frame shows, 0.067 s in its millisecond times, just past the
-        // grid's 0.0667), and in the gap the player waits for footage.
-        if let Some(start) = self.inner.timeline.lock().unwrap().at(time).filter(|s| s.source.is_some()).map(|s| s.at)
-            && snapped < start
-            && time >= start
-        {
-            snapped = start;
-        }
-        let time = snapped;
+        let time = self.snap(time);
         let mut s = self.inner.state.lock().unwrap();
         s.ended = false;
         s.restart(time);
         self.inner.wake.notify_all();
+    }
+
+    /// The frame a seek to `time` would show, without seeking (`Previewer::preview`).
+    pub fn preview(&self, time: f64) -> Option<Preview> {
+        self.previewer().preview(time)
+    }
+
+    /// What previews this player's frames, apart from it: so the app can
+    /// wait for a frame without holding the player meanwhile.
+    pub fn previewer(&self) -> Previewer {
+        Previewer { inner: self.inner.clone() }
     }
 
     /// Moves `frames` frames (back, if negative), pausing.
@@ -423,9 +607,80 @@ impl Drop for Player {
     fn drop(&mut self) {
         // Under the state's lock, so no thread between reading `quit` and
         // waiting misses the wake.
-        let _s = self.inner.state.lock().unwrap();
+        let s = self.inner.state.lock().unwrap();
         self.inner.quit.store(true, Ordering::Release);
         self.inner.wake.notify_all();
+        drop(s);
+        // And the preview's thread, under its lock likewise.
+        let _p = self.inner.preview.lock().unwrap();
+        self.inner.preview_wake.notify_all();
+    }
+}
+
+/// Previews a player's frames (`Player::previewer`).
+pub struct Previewer {
+    inner: Arc<Inner>,
+}
+
+impl Previewer {
+    /// The frame a seek to `time` would show, without seeking: from the
+    /// preview decoder if it holds it, else from a new one started there
+    /// (which then reads on half a second, for the next times asked, and for
+    /// play from one of them to take over). None where nothing plays at
+    /// `time`, ffmpeg gives nothing, or the player is closed.
+    pub fn preview(&self, time: f64) -> Option<Preview> {
+        if self.inner.quit.load(Ordering::Acquire) {
+            return None;
+        }
+        let time = self.inner.snap(time);
+        let stretch = self.inner.timeline.lock().unwrap().at(time)?.clone();
+        let source = stretch.source.as_ref()?;
+        let picture = self.inner.info(&source.path)?.picture?;
+        let file_time = stretch.file_time(time);
+        let mut slot = self.inner.preview.lock().unwrap();
+        if let Some(decoder) = slot.as_mut()
+            && let Some(at) = decoder.holds(&stretch, picture, file_time)
+        {
+            let frame = decoder.frames[at].clone();
+            decoder.until = decoder.until.max(frame.pts + PREVIEW_AHEAD);
+            self.inner.preview_wake.notify_all();
+            return Some(Preview { time: stretch.time(frame.pts), frame, exact: true });
+        }
+        // The one there stops before another starts.
+        *slot = None;
+        let mut decoder = Decoder::start(&self.inner.ffmpeg, &stretch, picture, file_time)?;
+        decoder.kept = f64::INFINITY;
+        let frame = decoder.stream.recv()?;
+        decoder.hold(frame.clone());
+        decoder.until = frame.pts + PREVIEW_AHEAD;
+        let exact = (frame.pts - file_time).abs() < 0.5 / picture.fps;
+        // Closed meanwhile: its thread no longer clears the slot.
+        if !self.inner.quit.load(Ordering::Acquire) {
+            *slot = Some(decoder);
+        }
+        self.inner.preview_wake.notify_all();
+        Some(Preview { time: stretch.time(frame.pts), frame, exact })
+    }
+}
+
+/// The preview decoder's thread: reads on what it's decoded, up to half a
+/// second past the frame last previewed, so the next frames are at hand.
+fn run_preview(inner: &Inner) {
+    let mut slot = inner.preview.lock().unwrap();
+    loop {
+        if inner.quit.load(Ordering::Acquire) {
+            // Its ffmpeg stops now, not when the last of the player goes.
+            *slot = None;
+            return;
+        }
+        if slot.as_mut().is_some_and(Decoder::fill) {
+            // More to read, not decoded yet.
+            drop(slot);
+            std::thread::sleep(Duration::from_millis(5));
+            slot = inner.preview.lock().unwrap();
+        } else {
+            slot = inner.preview_wake.wait(slot).unwrap();
+        }
     }
 }
 
@@ -528,6 +783,9 @@ fn mark_ready(inner: &Inner, epoch: u64) {
 
 /// The player's thread: decodes from the time, shows each frame at its moment.
 fn run(inner: &Inner) {
+    // The decoder playing, kept past a seek: if the one previewing is taken
+    // over there, this one previews in its place.
+    let mut current: Option<Decoder> = None;
     'start: loop {
         if inner.quit.load(Ordering::Acquire) {
             return;
@@ -578,11 +836,21 @@ fn run(inner: &Inner) {
                 }
                 continue;
             };
-            let stream = match walk.readied(next.take()) {
-                Some(stream) if !first => Some(stream),
-                _ => video.from(stretch.file_time(walk.from)).ok(),
+            let file_time = stretch.file_time(walk.from);
+            let picture = video.picture();
+            let (decoder, adopted) = match walk.readied(next.take()) {
+                Some(stream) if !first => (Some(Decoder::new(stretch.clone(), picture, stream)), false),
+                // The preview decoder, if it holds the frame here; else a new one.
+                _ => match inner.adopt(&stretch, picture, file_time) {
+                    Some(decoder) => (Some(decoder), true),
+                    None => (Decoder::start(&inner.ffmpeg, &stretch, picture, file_time), false),
+                },
             };
-            let Some(mut stream) = stream else {
+            let old = std::mem::replace(&mut current, decoder);
+            if let Some(old) = old.filter(|_| adopted) {
+                inner.keep_for_preview(old);
+            }
+            let Some(stream) = current.as_mut() else {
                 // ffmpeg wouldn't start: nothing to show till the next seek.
                 mark_ready(inner, epoch);
                 wait_until(inner, epoch, f64::INFINITY);
@@ -616,7 +884,7 @@ fn run(inner: &Inner) {
                 }
                 first = false;
             }
-            drop(stream);
+            current = None;
             mark_ready(inner, epoch);
             // The file ran out before the stretch's end: the time passes the rest.
             if !wait_until(inner, epoch, stretch.end()) {
@@ -959,6 +1227,18 @@ mod tests {
         s.playing = true;
         s.resume();
         assert_eq!((s.epoch, s.ready), (0, true), "no new epoch: the decoders keep where they are");
+    }
+
+    #[test]
+    fn a_seek_and_a_preview_land_on_the_frame_showing() {
+        assert_eq!(snap(1.51, 30.0, 4.0, None), 1.5);
+        // A frame's start, a hair below in floating point, is that frame.
+        assert_eq!(snap(52.0 / 30.0 - 1e-9, 30.0, 4.0, None), 52.0 / 30.0);
+        assert_eq!(snap(9.0, 30.0, 4.0, None), 4.0, "within the timeline");
+        assert_eq!(snap(-1.0, 30.0, 4.0, None), 0.0);
+        // Footage starting off the grid: not back into the gap before it.
+        assert_eq!(snap(0.07, 30.0, 4.0, Some(0.067)), 0.067);
+        assert_eq!(snap(0.05, 30.0, 4.0, Some(0.067)), 1.0 / 30.0, "before it, as ever");
     }
 
     #[test]

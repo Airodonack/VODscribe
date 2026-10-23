@@ -365,6 +365,8 @@ pub fn run() {
             embed::embed_close,
             player::player_still,
             player::player_frame,
+            player::player_preview,
+            player::player_decoders_started,
             screen::screen_under,
             player::player_play,
             player::player_pause,

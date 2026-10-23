@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-player-decoders-started"
+description = "Enables the player_decoders_started command without any pre-configured scope."
+commands.allow = ["player_decoders_started"]
+
+[[permission]]
+identifier = "deny-player-decoders-started"
+description = "Denies the player_decoders_started command without any pre-configured scope."
+commands.deny = ["player_decoders_started"]

@@ -537,6 +537,21 @@ export const api = {
   /** The frame showing, for the page to draw (player_frame); empty if it's `since`. */
   playerFrame: (since: number | null, width: number, height: number) =>
     invoke<ArrayBuffer>("player_frame", { since, width, height }),
+  /** The frame a seek to `time` of `doc` would show (the player not moved), scaled to fit `width` by `height`:
+   *  where it shows, whether it's exactly the frame there, and its pixels; null if `doc` isn't open in the player. */
+  playerPreview: (doc: Doc, time: number, width: number, height: number) =>
+    invoke<ArrayBuffer>("player_preview", { doc, time, width, height }).then((b) => {
+      if (b.byteLength < 20) return null;
+      const view = new DataView(b);
+      const [w, h] = [view.getUint32(0, true), view.getUint32(4, true)];
+      return {
+        time: view.getFloat64(8, true),
+        exact: view.getUint32(16, true) === 1,
+        pixels: new ImageData(new Uint8ClampedArray(b, 20, w * h * 4), w, h),
+      };
+    }),
+  /** How many video decoders the player has started (for the end-to-end tests). */
+  playerDecodersStarted: () => invoke<number>("player_decoders_started"),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
