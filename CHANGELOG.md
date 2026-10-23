@@ -12,6 +12,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 0:24:00 of 3:04:00"), and Transcribe the rest does what's left.
 - A VOD from a site whose player VODscribe can't show (anything but YouTube, Twitch and Kick) now shows its thumbnail: press Play to download its video, after the usual note about downloading, and it plays in VODscribe once it's in. Keep video on the row does the same.
 - Transcribe, beside Split and Clip under the player (or T), transcribes part of a VOD: the selection, if there is one, or else from the playhead for 5 minutes, 15 minutes, an hour, to the end, or the whole VOD. It remembers your last choice. With a selection, it also transcribes that stretch again, replacing its lines.
+- The timeline of a VOD from a site shows its waveform only over the parts transcribed so far; elsewhere it's a flat line.
 
 
 ## 0.5.1 — 2026-10-23

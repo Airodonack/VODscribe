@@ -16,6 +16,7 @@ import {
   stretchIn,
   stretches,
   tickStep,
+  waveformGaps,
 } from "./media.ts";
 
 test("the caption up is the last one started, until it ends", () => {
@@ -167,4 +168,43 @@ test("a frame's start counts as that frame; an edge is the nearest", () => {
     assert.equal(edgeIndex((k + 0.4) / fps, fps), k);
     assert.equal(edgeIndex((k + 0.6) / fps, fps), k + 1);
   }
+});
+
+test("a site VOD's waveform has gaps where nothing is transcribed or fetched", () => {
+  /**
+   * @param {number} start @param {number | null} end
+   * @param {import("./api").Stretch["status"]} status @param {number | null} reached
+   * @returns {import("./api").Stretch}
+   */
+  const stretch = (start, end, status, reached = null) => ({
+    id: 0,
+    vod_id: 1,
+    start,
+    end,
+    status,
+    progress: 0,
+    reached,
+    error: null,
+    model: null,
+  });
+  // Nothing asked for: all of it.
+  assert.deepEqual(waveformGaps([], 600), [{ start: 0, end: 600 }]);
+  // All of it transcribed (a VOD from before stretches): none.
+  assert.deepEqual(waveformGaps([stretch(0, null, "done")], 600), []);
+  // Transcribed 2:00–3:00 and 2:30–4:00 (overlapping), and a request whose
+  // audio is here: levels there.
+  assert.deepEqual(
+    waveformGaps([stretch(150, 240, "done"), stretch(120, 180, "done"), stretch(500, null, "transcribing")], 600),
+    [
+      { start: 0, end: 120 },
+      { start: 240, end: 500 },
+    ],
+  );
+  // A request still waiting or paused: levels only as far as it has written lines.
+  assert.deepEqual(
+    waveformGaps([stretch(0, 300, "paused", 100), stretch(300, 400, "queued"), stretch(400, null, "error", 400)], 600),
+    [{ start: 100, end: 600 }],
+  );
+  // Ends meeting within a level: no gap between them.
+  assert.deepEqual(waveformGaps([stretch(0, 100, "done"), stretch(100.05, null, "done")], 600), []);
 });

@@ -1,8 +1,8 @@
 // The arithmetic behind the player and its timeline: which caption is up,
-// the waveform's columns, where a frame step or a cut lands, the stretches
+// the waveform's columns and its gaps, where a frame step or a cut lands, the stretches
 // cuts make, and the timeline's ticks.
 
-import type { Cue } from "./api";
+import type { Cue, Stretch } from "./api";
 
 /** Levels per second in a VOD's waveform (crates/core peaks.rs). */
 export const PEAKS_RATE = 10;
@@ -37,6 +37,35 @@ export function columns(levels: Uint8Array, duration: number, columns: number): 
     out[c] = max / 255;
   }
   return out;
+}
+
+/**
+ * Where a VOD from a site has no waveform yet, in order: its levels are read
+ * from the audio fetched to transcribe each stretch (crates/core peaks.rs
+ * `merge`), so they're there for what's transcribed, and all of a request
+ * whose audio is here (ready or transcribing); elsewhere they're 0, as
+ * silence is, hence asked of its stretches rather than read from its levels.
+ */
+export function waveformGaps(stretches: Stretch[], duration: number): { start: number; end: number }[] {
+  const heard = stretches
+    .map((s) => ({
+      start: s.start,
+      end:
+        s.status === "done" || s.status === "ready" || s.status === "transcribing"
+          ? (s.end ?? duration)
+          : (s.reached ?? s.start),
+    }))
+    .filter((s) => s.end > s.start)
+    .sort((a, b) => a.start - b.start);
+  const gaps = [];
+  let at = 0;
+  for (const s of heard) {
+    // Less than a level apart: no gap.
+    if (s.start - at >= 1 / PEAKS_RATE) gaps.push({ start: at, end: s.start });
+    at = Math.max(at, s.end);
+  }
+  if (duration - at >= 1 / PEAKS_RATE) gaps.push({ start: at, end: duration });
+  return gaps;
 }
 
 /** The number of the frame showing at `time`, at `fps`: its start counts

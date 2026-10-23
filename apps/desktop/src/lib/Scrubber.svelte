@@ -8,7 +8,8 @@
   // dragging pans (sideways) and zooms (up and down) about where it was
   // pressed; a middle click fits the whole VOD. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
-  // playhead until panned.
+  // playhead until panned. A VOD from a site has its waveform only where its
+  // audio was fetched to transcribe; elsewhere the bar is flat.
   //
   // Chapters (cuts.svelte.ts) show in a lane above it once there are any,
   // each from its start to the next one's; highlights are stars on its top
@@ -36,12 +37,21 @@
   // dragged. Not for a finger, which has no hover.
 
   import { onMount, untrack } from "svelte";
-  import { api, type Vod } from "./api";
+  import { api, events, type Stretch, type Vod } from "./api";
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
-  import { columns, edgeIndex, edgeShows, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
+  import {
+    columns,
+    edgeIndex,
+    edgeShows,
+    frameStart,
+    inFrame as frameAfter,
+    PEAKS_RATE,
+    tickStep,
+    waveformGaps,
+  } from "./media";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
-  import { formatFraction, formatTime, os } from "./platform";
+  import { formatFraction, formatTime, os, playsFromFile } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
   import Spinner from "./Spinner.svelte";
   import ScrubFrame from "./ScrubFrame.svelte";
@@ -162,12 +172,31 @@
   // Chapters and highlights: a VOD's, or an edit's.
   const named = $derived(marking || marks);
 
+  // Where a VOD from a site has no levels yet (media.ts `waveformGaps`), once
+  // its stretches are known. A file, or a video kept here, has all of its
+  // waveform read from that.
+  let stretches = $state.raw<Stretch[] | null>(null);
+  const gaps = $derived(vod && stretches && !playsFromFile(vod) ? waveformGaps(stretches, duration) : []);
+
+  // Asked again as the VOD changes: a stretch's levels arrive once its audio is fetched.
   onMount(() => {
     if (!vod) return;
-    api.peaks(vod.id).then(
-      (l) => (fetched = l),
-      (e) => console.error("waveform", e),
-    );
+    const id = vod.id;
+    let asked = 0;
+    const load = () => {
+      const mine = ++asked;
+      api.peaks(id).then(
+        (l) => mine === asked && (fetched = l),
+        (e) => console.error("waveform", e),
+      );
+      api.transcriptStretches(id).then(
+        (s) => mine === asked && (stretches = s),
+        (e) => console.error("waveform", e),
+      );
+    };
+    load();
+    const unlisten = events.vod((v) => v.id === id && load());
+    return () => void unlisten.then((u) => u());
   });
 
   // A VOD whose length was unknown (or wrong) until the player said, or an
@@ -226,7 +255,8 @@
   }
 
   // The waveform of the stretch shown: played (left of the playhead) in the
-  // accent, the rest muted; a plain track where there's no waveform.
+  // accent, the rest muted; a plain track where there's no waveform, or a
+  // gap in it.
   let canvas = $state<HTMLCanvasElement>();
   const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
   $effect(() => {
@@ -244,23 +274,29 @@
     const rest = style.getPropertyValue("--unplayed").trim();
     const at = x(actual) * ratio;
     const mid = h / 2 + 6 * ratio;
-    if (!levels.length) {
+    // The plain track from `from` to `to` (in pixels).
+    const flat = (from: number, to: number) => {
       ctx.fillStyle = rest;
-      ctx.fillRect(0, mid - 2 * ratio, w, 4 * ratio);
+      ctx.fillRect(from, mid - 2 * ratio, to - from, 4 * ratio);
       ctx.fillStyle = played;
-      ctx.fillRect(0, mid - 2 * ratio, Math.max(0, at), 4 * ratio);
-      return;
-    }
+      ctx.fillRect(from, mid - 2 * ratio, Math.max(0, Math.min(to, at) - from), 4 * ratio);
+    };
+    if (!levels.length) return flat(0, w);
     // Only the stretch shown: the levels from its start, as many as it holds.
     const first = Math.floor(viewStart * PEAKS_RATE);
     const shown = levels.subarray(first, Math.ceil((viewStart + span) * PEAKS_RATE) + 1);
     const bars = columns(shown, span, Math.floor(width / 2));
+    const seen = gaps.filter((g) => g.end > viewStart && g.start < viewStart + span);
     for (let i = 0; i < bars.length; i++) {
+      // A column whose middle is in a gap is the gap's.
+      const t = viewStart + ((i + 0.5) / bars.length) * span;
+      if (seen.some((g) => t >= g.start && t < g.end)) continue;
       const px = i * 2 * ratio;
       const b = Math.max(ratio, bars[i] * (h - 16 * ratio));
       ctx.fillStyle = px < at ? played : rest;
       ctx.fillRect(px, mid - b / 2, ratio, b);
     }
+    for (const g of seen) flat(Math.max(0, x(g.start) * ratio), Math.min(w, x(g.end) * ratio));
   });
 
   const ticks = $derived.by(() => {
