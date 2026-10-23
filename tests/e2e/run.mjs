@@ -29,6 +29,8 @@
 // --profile <dir> (Linux, webdriver): each scenario's app sampled by perf,
 // with its children (lib/profile.sh, lib/profile.mjs): <dir>/<scenario>/
 // gets the recordings, folded.txt and top.txt (README, "Profiling").
+// Without it, E2E_OUT/perf/<scenario>/page.json still has what the page
+// measured (App.pageMeasures).
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -84,6 +86,9 @@ for (const warning of preflight()) console.log(`preflight: ${warning}`);
 
 const started = Date.now();
 const results = [];
+// Where each scenario's measures go (<scenario>/page.json): with the profile, if there's one.
+const perfOut = profileDir ?? path.join(out, "perf");
+if (!profileDir) rmSync(perfOut, { recursive: true, force: true });
 // Each profiled scenario's summary, for perf.json.
 const profiles = {};
 // How many checkpoints taken, numbering their files in order.
@@ -95,6 +100,13 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
   // The app as it is now: `ctx.restart()` (for what must survive one) replaces it.
   let current;
+  // What the page measured, from each start of the app (App.pageMeasures),
+  // read before it closes.
+  const pages = [];
+  const measurePage = async () => {
+    const measured = await current?.app.pageMeasures().catch(() => null);
+    if (measured) pages.push(measured);
+  };
   const launch = async () => {
     const driver = traced(await startDriver(app), log);
     current = { driver, app: new App(driver, log) };
@@ -107,6 +119,7 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     out,
     log,
     quit: async () => {
+      await measurePage();
       const closing = current;
       current = null;
       await closing?.driver.close();
@@ -157,10 +170,18 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
       if (current) await diagnose(current.driver, name);
     }
   } finally {
+    await measurePage();
     await current?.driver.close();
   }
+  const page = pages.length
+    ? { pages, slowEvents: pages.flatMap((p) => p.slowEvents), frameGaps: pages.flatMap((p) => p.frameGaps) }
+    : null;
+  if (page) {
+    mkdirSync(path.join(perfOut, name), { recursive: true });
+    writeFileSync(path.join(perfOut, name, "page.json"), JSON.stringify(page, null, 2));
+  }
   if (profileDir) {
-    const summary = await profile.finish(profileDir, name).catch((e) => {
+    const summary = await profile.finish(profileDir, name, [], page).catch((e) => {
       console.error(`${name}: its profile couldn't be read: ${e.message}`);
       return null;
     });

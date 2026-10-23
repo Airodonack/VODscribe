@@ -288,6 +288,79 @@ export class App {
         }
         return real(url, init);
       };`);
+    await this.watchPerformance();
+  }
+
+  /**
+   * What the page's own measures can't say afterwards, watched from its
+   * load: input events whose handling took 16 ms or more (WebKit has the
+   * Event Timing API, not long tasks), and gaps between animation frames
+   * over 50 ms, the main thread busy (or the page not drawn) that long.
+   * Read with pageMeasures().
+   */
+  watchPerformance() {
+    return this.js(`
+      if (window.__e2ePerf) return;
+      const perf = (window.__e2ePerf = { slowEvents: [], frameGaps: [] });
+      const keep = (list, item) => list.length < 500 && list.push(item);
+      // An element by its label, else its tag and first class.
+      const describe = (el) => {
+        if (!el) return null;
+        const label = el.getAttribute?.("aria-label");
+        if (label) return label;
+        const [first] = typeof el.className === "string" ? el.className.trim().split(" ") : [];
+        return el.tagName.toLowerCase() + (first ? "." + first : "");
+      };
+      try {
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries())
+            keep(perf.slowEvents, { name: e.name, duration: Math.round(e.duration), at: Math.round(e.startTime), target: describe(e.target) });
+        }).observe({ type: "event", durationThreshold: 16, buffered: true });
+      } catch {}
+      let last = performance.now();
+      const frame = (now) => {
+        if (now - last > 50) keep(perf.frameGaps, { ms: Math.round(now - last), at: Math.round(last) });
+        last = now;
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);`);
+  }
+
+  /**
+   * The page's measures since it loaded: its load (navigation, first paint,
+   * largest paint), the app's marks and measures, what it fetched, and
+   * what watchPerformance saw.
+   */
+  pageMeasures() {
+    return this.js(`
+      const round = (n) => Math.round(n);
+      const [nav] = performance.getEntriesByType("navigation");
+      const resources = performance.getEntriesByType("resource");
+      const lcp = (() => {
+        try {
+          return PerformanceObserver.supportedEntryTypes.includes("largest-contentful-paint")
+            ? performance.getEntriesByType("largest-contentful-paint").at(-1)?.startTime ?? null
+            : null;
+        } catch {
+          return null;
+        }
+      })();
+      return {
+        url: location.pathname,
+        load: nav ? { domContentLoaded: round(nav.domContentLoadedEventEnd), load: round(nav.loadEventEnd) } : null,
+        paint: Object.fromEntries(performance.getEntriesByType("paint").map((e) => [e.name, round(e.startTime)])),
+        largestPaint: lcp === null ? null : round(lcp),
+        marks: performance.getEntriesByType("mark").map((e) => ({ name: e.name, at: round(e.startTime) })),
+        measures: performance.getEntriesByType("measure").map((e) => ({ name: e.name, at: round(e.startTime), ms: round(e.duration) })),
+        resources: {
+          count: resources.length,
+          slowest: [...resources].sort((a, b) => b.duration - a.duration).slice(0, 5)
+            .map((r) => ({ name: r.name.slice(0, 100), at: round(r.startTime), ms: round(r.duration) })),
+        },
+        slowEvents: window.__e2ePerf?.slowEvents ?? [],
+        frameGaps: window.__e2ePerf?.frameGaps ?? [],
+        now: round(performance.now()),
+      };`);
   }
 
   /** Files the next file picker returns. */
