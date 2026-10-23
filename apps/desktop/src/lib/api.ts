@@ -496,6 +496,13 @@ export const api = {
   /** VOD `vodId`'s frame at `at` seconds, a JPEG `width` wide, from its footage here; empty if none of that moment is. */
   vodFrame: (vodId: number, at: number, width: number) =>
     invoke<ArrayBuffer>("vod_frame", { vodId, at, width }).then((b) => new Uint8Array(b)),
+  /** The storyboard frame of `doc` nearest `time` (within `within` seconds, or its storyboard's spacing): where it
+   *  shows in `doc`, and its JPEG; null if there's none (no footage here, its storyboard not made yet). */
+  storyboardFrame: (doc: Doc, time: number, within: number) =>
+    invoke<ArrayBuffer>("storyboard_frame", { doc, time, within }).then((b) => {
+      if (b.byteLength < 8) return null;
+      return { time: new DataView(b, 0, 8).getFloat64(0, true), jpeg: new Uint8Array(b, 8) };
+    }),
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),

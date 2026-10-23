@@ -88,6 +88,15 @@ export function frameStart(time: number, fps: number): number {
   return Math.max(0, frameIndex(time, fps) / fps);
 }
 
+/**
+ * The moment a selection's `edge` at `at` shows: its start's frame, or for
+ * its end the frame before (the last one in: the end is where the next
+ * starts), at `fps`.
+ */
+export function edgeShows(edge: "start" | "end", at: number, fps: number): number {
+  return edge === "end" ? frameStart(Math.max(0, at - 1 / fps), fps) : at;
+}
+
 /** A mark at `time` moved `frames` frames on (back, if negative), within 0..`duration`. */
 export function nudge(time: number, frames: number, fps: number, duration: number): number {
   return Math.min(duration, Math.max(0, (edgeIndex(time, fps) + frames) / fps));

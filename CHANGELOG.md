@@ -7,6 +7,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The window no longer sometimes stays empty for about two minutes when VODscribe starts.
 - Cancelling a transcription keeps the lines transcribed so far, instead of throwing them away.
 - On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.
+- Pointing at the timeline of a video on this computer (a file, a kept video, an edit's pieces) shows a small picture of that moment beside the time, and so does dragging the playhead. Dragging a selection's edge shows the frame at that edge: for the end, the last frame inside it, which the player now shows too. The pictures are made in the background from when a video is added, so a long one takes a moment.
+
 - A file's picture in the library is now a frame an eighth of the way in (it was a tenth), taken from the small frames VODscribe now keeps of each video on this computer for the timeline.
 
 ## 0.5.1 — 2026-10-23

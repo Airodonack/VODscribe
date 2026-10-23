@@ -28,16 +28,24 @@
   // aside as it goes, and the player shows the frame the edge is on. Footage still downloading
   // (a VOD from a site) is darker until it's in, and its piece's band shows
   // a spinner and how much is.
+  //
+  // Hovering, scrubbing or dragging a selection's edge shows a thumbnail of
+  // that moment beside the time tip (ScrubFrame.svelte), for what plays from
+  // a file here: a selection's start shows its first frame, its end the
+  // frame before it (the last one in), as the picture does while it's
+  // dragged. Not for a finger, which has no hover.
 
   import { onMount, untrack } from "svelte";
   import { api, type Vod } from "./api";
   import { clips } from "./clips.svelte";
   import { cuts } from "./cuts.svelte";
-  import { columns, edgeIndex, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
+  import { columns, edgeIndex, edgeShows, frameStart, inFrame as frameAfter, PEAKS_RATE, tickStep } from "./media";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { formatFraction, formatTime, os } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
   import Spinner from "./Spinner.svelte";
+  import ScrubFrame from "./ScrubFrame.svelte";
+  import { nearWithin, place } from "./scrubFrame";
   import type { Mark } from "./api";
 
   /** An edit's piece on its timeline (in the edit's time). */
@@ -299,6 +307,7 @@
       e.preventDefault();
       return;
     }
+    touch = e.pointerType === "touch";
     if (e.button !== 0) return;
     const onMark = named && !!(e.target as HTMLElement).closest("[data-mark], [data-chapter]");
     if (!marking && !onMark) {
@@ -378,7 +387,7 @@
   }
 
   /** Whether the pointer moving is a finger: a touch has no hover to share. */
-  let touch = false;
+  let touch = $state(false);
 
   function onMove(e: PointerEvent) {
     touch = e.pointerType === "touch";
@@ -459,7 +468,8 @@
       drag.moved = true;
       cuts.setEdge(drag.edge, frameStart(t, fps));
       drag.edge = cuts.selectedEdge ?? drag.edge;
-      onseek(inFrame(frameStart(t, fps)));
+      // The picture shows what the edge keeps: for an end, the frame before it.
+      onseek(inFrame(edgeShows(drag.edge, frameStart(t, fps), fps)));
     } else if (drag.kind === "mark") {
       // Pulled well off the timeline, up or down: let go there, it's removed.
       const box = bar!.getBoundingClientRect();
@@ -543,7 +553,7 @@
       follow = true;
       setView(0, duration);
     }
-    if (done?.kind === "edge" && !done.moved) onseek(inFrame(done.at));
+    if (done?.kind === "edge" && !done.moved) onseek(inFrame(edgeShows(done.edge, done.at, fps)));
     if (done?.kind === "mark") {
       // A click on a flag selects the mark and shows its frame; a drag moves it.
       if (done.away) cuts.remove(done.id);
@@ -585,6 +595,28 @@
     return others[drag.to]?.start ?? others.at(-1)?.end ?? 0;
   });
   let hoverMark = $state<Mark | null>(null);
+
+  // The moment the tip and the thumbnail show: the pointer's, or a
+  // selection's edge being dragged (its end: the frame before it).
+  const tipTime = $derived.by(() => {
+    const s = cuts.selection;
+    if (marking && drag?.kind === "edge" && drag.moved && s) return edgeShows(drag.edge, s[drag.edge], fps);
+    return hoverTime;
+  });
+  // A thumbnail where the footage plays from a file here (a file, a kept
+  // video, an edit's pieces), while hovering, scrubbing or dragging an edge.
+  const framed = $derived(
+    !!memo &&
+      (vod ? ownPlayer : true) &&
+      !touch &&
+      !hoverMark &&
+      (!drag || drag.kind === "scrub" || drag.kind === "edge"),
+  );
+  let frameWidth = $state(0);
+  let tipWidth = $state(0);
+  const beside = $derived(
+    place(hover ?? 0, width, tipWidth, framed && hoverTime !== null && hover !== null ? frameWidth : 0),
+  );
 
   // The moment under the pointer, marked on the transcript's minimap; and the
   // moment of the line or chat message under it there, marked here, a thin
@@ -857,9 +889,24 @@
     {/if}
   </div>
   {#if hoverTime !== null && hover !== null}
-    <span class="tip" class:wide={!!hoverMark} style:left="{Math.min(Math.max(hover, 28), width - 28)}px"
+    {#if framed && memo && tipTime !== null}
+      <ScrubFrame
+        doc={memo}
+        time={tipTime}
+        within={nearWithin(span, width)}
+        left={beside.frame ?? 0}
+        dragging={!!drag}
+        bind:shown={frameWidth}
+      />
+    {/if}
+    <span
+      class="tip"
+      class:wide={!!hoverMark}
+      class:beside={beside.frame !== null}
+      bind:offsetWidth={tipWidth}
+      style:left={beside.frame !== null ? `${beside.tip}px` : `${Math.min(Math.max(hover, 28), width - 28)}px`}
       >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
-          hoverTime,
+          tipTime ?? hoverTime,
         )}{/if}</span
     >
   {/if}
@@ -1090,6 +1137,11 @@
 
   .star.away {
     opacity: 0.35;
+  }
+
+  /* Beside the thumbnail, rather than centred on the hover line. */
+  .tip.beside {
+    transform: none;
   }
 
   .tip.wide {
