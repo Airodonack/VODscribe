@@ -77,7 +77,7 @@ pub(crate) fn start(app: &AppHandle) {
         };
         Response::bytes(status, body.into_bytes()).header("Content-Type", "application/json")
     };
-    std::thread::spawn(move || loopback::serve(listener, "e2e", usize::MAX, Arc::new(answer)));
+    std::thread::spawn(move || loopback::serve(listener, "e2e", usize::MAX, loopback::MAX_BODY, Arc::new(answer)));
 }
 
 /// Runs `body` (a `Run`) in the main window and waits for its answer:

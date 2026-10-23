@@ -73,7 +73,7 @@ impl MediaServer {
             move |request: &Request| respond(&*find, request, &host, &prefixes).unwrap_or_else(Response::empty);
         std::thread::Builder::new()
             .name("media".into())
-            .spawn(move || loopback::serve(listener, "media", MAX_ACTIVE, Arc::new(answer)))?;
+            .spawn(move || loopback::serve(listener, "media", MAX_ACTIVE, 0, Arc::new(answer)))?;
         Ok(Self { origin, token, footage_token })
     }
 }

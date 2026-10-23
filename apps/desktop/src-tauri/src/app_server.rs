@@ -50,8 +50,14 @@ struct Page {
 /// Finds the page at a path, such as `/_app/immutable/entry/app.js`.
 type Find = dyn Fn(&str) -> Option<Page> + Send + Sync;
 
+/// Requests answered at once: far more than a web view opens to one host
+/// (about six), and a bound on the threads another program can make the
+/// app start by connecting.
+const MAX_ACTIVE: usize = 64;
+
 fn serve(listener: TcpListener, host: String, find: Arc<Find>) {
-    loopback::serve(listener, "app-server", usize::MAX, Arc::new(move |request| answer(request, &host, &*find)));
+    let answer = Arc::new(move |request: &Request| answer(request, &host, &*find));
+    loopback::serve(listener, "app-server", MAX_ACTIVE, 0, answer);
 }
 
 fn answer(request: &Request, host: &str, find: &Find) -> Response {

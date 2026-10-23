@@ -4,7 +4,7 @@
 //! addresses, through [`serve`].
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::net::{Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -110,7 +110,8 @@ pub(crate) type Answer = dyn Fn(&Request) -> Response + Send + Sync;
 /// Answers each connection to `listener` on a thread of its own, one request
 /// per connection, with `answer`; past `max_active` connections at once, with
 /// 503. Always sends the body's length (players need it to seek and to show a
-/// timeline) and closes the connection after.
+/// timeline) and closes the connection after. A request's body may be at most
+/// `max_body` bytes (else 413).
 ///
 /// This was tiny_http, and the page then sometimes stayed empty for two
 /// minutes at start (WebKitGTK and macOS's WebKit, mostly in the tests): its
@@ -120,26 +121,45 @@ pub(crate) type Answer = dyn Fn(&Request) -> Response + Send + Sync;
 /// view drops it, about two minutes later. The start's burst of script
 /// preloads hit that, one preload never got its answer, and the page waited
 /// on it. (tiny_http also drops a `Connection: close` set on a response.)
-pub(crate) fn serve(listener: TcpListener, name: &str, max_active: usize, answer: Arc<Answer>) {
+pub(crate) fn serve(listener: TcpListener, name: &str, max_active: usize, max_body: u64, answer: Arc<Answer>) {
     let active = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
-        let (answer, active) = (answer.clone(), active.clone());
-        let _ = std::thread::Builder::new().name(name.into()).spawn(move || {
-            let busy = active.fetch_add(1, Ordering::SeqCst) >= max_active;
-            let refuse = |_: &Request| Response::empty(503);
-            let _ = handle(stream, if busy { &refuse } else { &*answer });
-            active.fetch_sub(1, Ordering::SeqCst);
+        // Refused here, without a thread or a wait for its request: another
+        // program on the computer opening connections by the thousand would
+        // otherwise get a thread in the app for each.
+        if active.load(Ordering::SeqCst) >= max_active {
+            refuse(stream);
+            continue;
+        }
+        // Only this loop adds, so the count checked is the count added to.
+        active.fetch_add(1, Ordering::SeqCst);
+        let (answer, done) = (answer.clone(), active.clone());
+        let spawned = std::thread::Builder::new().name(name.into()).spawn(move || {
+            let _ = handle(stream, max_body, &*answer);
+            done.fetch_sub(1, Ordering::SeqCst);
         });
+        if spawned.is_err() {
+            active.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
-/// The most a request's head (its line and headers) and body may take.
+/// Answers `stream` 503 without reading its request.
+fn refuse(mut stream: TcpStream) {
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+    let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    let _ = stream.shutdown(Shutdown::Write);
+}
+
+/// The most a request's head (its line and headers) may take.
 const MAX_HEAD: u64 = 64 * 1024;
-const MAX_BODY: u64 = 16 * 1024 * 1024;
+/// The most a body may take where one is taken at all (the tests' hook).
+#[cfg_attr(not(feature = "e2e"), allow(dead_code))]
+pub(crate) const MAX_BODY: u64 = 16 * 1024 * 1024;
 
 /// Reads one request from `stream`, answers it and closes the connection.
-fn handle(mut stream: TcpStream, answer: &Answer) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, max_body: u64, answer: &Answer) -> std::io::Result<()> {
     // A connection that never sends its request doesn't hold a thread for long.
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     let mut reader = BufReader::new(&stream);
@@ -160,7 +180,7 @@ fn handle(mut stream: TcpStream, answer: &Answer) -> std::io::Result<()> {
     }
     let mut request = Request { method, url, headers, body: Vec::new() };
     let len = request.header("Content-Length").and_then(|n| n.parse::<u64>().ok()).unwrap_or(0);
-    if len > MAX_BODY {
+    if len > max_body {
         return write(&mut stream, &request, Response::empty(413));
     }
     (&mut reader).take(len).read_to_end(&mut request.body)?;
@@ -222,6 +242,65 @@ mod tests {
         assert_eq!(check(&request("GET", Some("127.0.0.1:41723")), host), Err(403), "another name for it");
         assert_eq!(check(&request("GET", Some("localhost:41724")), host), Err(403));
         assert_eq!(check(&request("GET", None), host), Err(403));
+    }
+
+    /// A server on 127.0.0.1 answering every request with 200, `max_active`
+    /// at once; its address.
+    fn server(name: &'static str, max_active: usize) -> std::net::SocketAddr {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let answer = |_: &Request| Response::empty(200);
+        std::thread::spawn(move || serve(listener, name, max_active, 0, Arc::new(answer)));
+        addr
+    }
+
+    /// What `stream` is answered within two seconds (well inside the read
+    /// timeout a server waiting on the request would take).
+    fn answer_to(mut stream: &TcpStream) -> String {
+        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut out = Vec::new();
+        let _ = stream.read_to_end(&mut out);
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Threads of this process named `name`, where that can be counted.
+    fn threads_named(name: &str) -> Option<usize> {
+        let tasks = std::fs::read_dir("/proc/self/task").ok()?;
+        let named =
+            |t: &std::fs::DirEntry| std::fs::read_to_string(t.path().join("comm")).is_ok_and(|c| c.trim() == name);
+        Some(tasks.flatten().filter(named).count())
+    }
+
+    #[test]
+    fn past_its_limit_refuses_at_once_without_a_thread_each() {
+        // Another program on the computer opening connections and sending
+        // nothing: each one past the limit is refused now, not held on a
+        // thread of its own while its request is waited for.
+        let addr = server("lb-busy", 2);
+        let held: Vec<_> = (0..2).map(|_| TcpStream::connect(addr).unwrap()).collect();
+        std::thread::sleep(Duration::from_millis(200));
+        let more: Vec<_> = (0..50).map(|_| TcpStream::connect(addr).unwrap()).collect();
+        std::thread::sleep(Duration::from_millis(200));
+        if let Some(n) = threads_named("lb-busy") {
+            assert!(n <= 2, "{n} threads for 2 connections served and 50 refused");
+        }
+        for stream in &more {
+            let text = answer_to(stream);
+            assert!(text.starts_with("HTTP/1.1 503"), "{text:?}");
+        }
+        drop(held);
+    }
+
+    #[test]
+    fn a_body_where_none_is_taken_is_refused_unread() {
+        // A web page or program sending a large body to a server that takes
+        // none: refused before it's read, not waited for and kept in memory.
+        let addr = server("lb-body", 4);
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let host = format!("Host: {addr}");
+        stream.write_all(format!("POST / HTTP/1.1\r\n{host}\r\nContent-Length: 16000000\r\n\r\n").as_bytes()).unwrap();
+        let text = answer_to(&stream);
+        assert!(text.starts_with("HTTP/1.1 413"), "{text:?}");
     }
 
     #[test]
