@@ -51,10 +51,15 @@ export function videos(dir) {
   };
 }
 
-/** Ten minutes of speech (the landing, over and over), made in `dir` once: long enough to quit in the middle of. */
+/**
+ * Ten minutes of speech (the landing, over and over), made in `dir` once: long
+ * enough to quit in the middle of, and to scroll its transcript. The landing's
+ * own MP3, copied, not encoded again: the format the recorded file has, which
+ * plays in each system's webview (an AAC .m4a of it didn't play on macOS).
+ */
 export function longSpeech(dir) {
   mkdirSync(dir, { recursive: true });
-  return make(dir, "landed-10-minutes.m4a", ["-stream_loop", "119", "-i", LANDED, "-c:a", "aac", "-b:a", "64k"]);
+  return make(dir, "landed-10-minutes.mp3", ["-stream_loop", "119", "-i", LANDED, "-c", "copy"]);
 }
 
 /** The colour of each second of colours.mp4, in order. */
