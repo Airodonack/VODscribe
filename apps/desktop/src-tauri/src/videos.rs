@@ -7,12 +7,15 @@
 //!
 //! One download at a time, in a queue of its own, beside transcription's.
 
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{fetch, local, pipeline, tools};
@@ -26,8 +29,9 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 pub(crate) const HEIGHTS: [u32; 3] = [480, 720, 1080];
 
 /// VODs' whole videos downloaded one at a time: each VOD's id, and the
-/// height its video is capped at.
-pub(crate) struct Videos(Jobs<(i64, u32)>);
+/// height its video is capped at. Then the lock on the kept videos' files
+/// (`files`).
+pub(crate) struct Videos(Jobs<(i64, u32)>, Mutex<()>);
 
 /// Where a VOD's video download is, for the interface: `progress` is None
 /// while waiting its turn, and `error` is set if it failed.
@@ -40,7 +44,15 @@ struct VideoProgress {
 
 impl Videos {
     pub(crate) fn new() -> Self {
-        Videos(Jobs::new())
+        Videos(Jobs::new(), Mutex::default())
+    }
+
+    /// Held while a VOD's video files are deleted, and by a download as it
+    /// begins and as it records its file, so neither happens in the middle of
+    /// the other: a delete never takes a download's files, nor leaves a
+    /// recorded video behind untracked. Taken before the library's lock.
+    pub(crate) fn files(&self) -> MutexGuard<'_, ()> {
+        self.1.lock().unwrap()
     }
 
     /// Starts the queue's thread; called once the app's state is in place.
@@ -97,7 +109,7 @@ impl Videos {
 fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<()> {
     let state = app.state::<AppState>();
     let paths = &state.paths;
-    let Some(vod) = state.db.lock().unwrap().vod(id)? else { return Ok(()) };
+    let Some(vod) = begin(&state.db, &state.videos, id)? else { return Ok(()) };
     let bin = paths.bin();
     let yt_dlp = tools::find_yt_dlp(&bin).context(fetch::NO_YT_DLP)?;
     let ffmpeg = tools::find_ffmpeg(&bin).context(crate::worker::NO_FFMPEG)?;
@@ -134,7 +146,21 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
         let named = named.into_iter().flatten().collect::<Vec<_>>().join(", ");
         anyhow::bail!("This video came in a format that doesn't play here ({named}).");
     }
-    let db = state.db.lock().unwrap();
+    record(&state.db, &state.videos, &work, id, &file, stop)
+}
+
+/// The VOD a download of VOD `id`'s video is for, as it begins: after any
+/// delete of its files under way. None if it's gone, or has its video already
+/// (so a video recorded is never one a download is still writing).
+fn begin(db: &Mutex<Db>, videos: &Videos, id: i64) -> Result<Option<Vod>> {
+    let _files = videos.files();
+    Ok(db.lock().unwrap().vod(id)?.filter(|vod| !vod.media))
+}
+
+/// Records `file`, just downloaded, as VOD `id`'s kept video.
+fn record(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64, file: &Path, stop: &AtomicBool) -> Result<()> {
+    let _files = videos.files();
+    let db = db.lock().unwrap();
     if stop.load(Ordering::Relaxed) {
         // Stopped while its format was checked (the run loop deletes it):
         // checked under the lock, so "Delete all" never misses it.
@@ -142,7 +168,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     }
     if db.vod(id)?.is_none() {
         // Removed while downloading.
-        pipeline::remove_media(&work, id);
+        pipeline::remove_media(work, id);
         return Ok(());
     }
     db.set_media_path(id, Some(&file.to_string_lossy()))?;
@@ -183,12 +209,25 @@ pub(crate) async fn keep_video(
 /// takes it out of the queue.
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let queued = |(v, _): &(i64, u32)| *v == id;
-    state.videos.0.take_waiting(queued);
-    if !state.videos.0.stop_running(queued) {
+    if !stop(&state.db, &state.videos, &state.paths.work(), id) {
         let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
     }
     Ok(())
+}
+
+/// `stop_video`'s work; whether VOD `id`'s download was running (it then
+/// deletes what it had itself).
+fn stop(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64) -> bool {
+    let queued = |(v, _): &(i64, u32)| *v == id;
+    let _files = videos.files();
+    // Waiting, it has nothing of its own yet, but the VOD's files may be a
+    // video forgotten while it was queued (Delete all leaves those of a VOD
+    // queued again meanwhile) or a download's parts a quit left: without a
+    // video kept, they'd stay untracked.
+    if !videos.0.take_waiting(queued).is_empty() && db.lock().unwrap().media_path(id).ok().flatten().is_none() {
+        pipeline::remove_media(work, id);
+    }
+    videos.0.stop_running(queued)
 }
 
 /// The VODs whose video is downloading or waiting to (the interface asks at start).
@@ -224,6 +263,8 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
     // Meanwhile a "Keep video" may have queued one of them again (it no
     // longer has its video): that download's parts stay. Those of VODs without
     // a kept video go too (a download paused by quitting leaves its parts).
+    // No download begins meanwhile (`Videos::files`).
+    let _files = state.videos.files();
     for id in gone {
         if !state.videos.wanted(id) {
             pipeline::remove_media(&work, id);
@@ -240,4 +281,183 @@ pub(crate) async fn open_videos_dir(app: AppHandle, state: State<'_, AppState>) 
     let dir = state.paths.media();
     std::fs::create_dir_all(&dir).map_err(err)?;
     app.opener().open_path(dir.display().to_string(), None::<String>).map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::mpsc;
+
+    use vodscribe_core::db::Status;
+    use vodscribe_core::fetch::VodInfo;
+
+    use super::*;
+
+    const WAIT: Duration = Duration::from_secs(5);
+
+    /// A library with one finished YouTube VOD, and a work dir of its own
+    /// (with the media folder beside it), deleted when the test ends.
+    struct Setup {
+        db: Arc<Mutex<Db>>,
+        videos: Arc<Videos>,
+        work: std::path::PathBuf,
+        id: i64,
+        /// The test's own, not the queue thread's copy.
+        owner: bool,
+    }
+
+    impl Drop for Setup {
+        fn drop(&mut self) {
+            if self.owner {
+                let _ = std::fs::remove_dir_all(self.work.parent().unwrap());
+            }
+        }
+    }
+
+    impl Setup {
+        fn new() -> Self {
+            use std::sync::atomic::AtomicU64;
+            static N: AtomicU64 = AtomicU64::new(0);
+            let db = Db::open(Path::new(":memory:")).unwrap();
+            let info = VodInfo {
+                platform: "youtube".into(),
+                platform_id: "x".into(),
+                url: "https://youtu.be/x".into(),
+                title: "t".into(),
+                channel: None,
+                duration: Some(60.0),
+                thumbnail: None,
+                published: None,
+            };
+            let id = db.add_vod(&info).unwrap().0.id;
+            db.set_status(id, Status::Done, 1.0, None).unwrap();
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            let work = std::env::temp_dir().join(format!("vodscribe-videos-{}-{n}", std::process::id())).join("work");
+            std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
+            Setup { db: Arc::new(Mutex::new(db)), videos: Arc::new(Videos::new()), work, id, owner: true }
+        }
+
+        /// Where the VOD's video goes, with `ext`.
+        fn file(&self, ext: &str) -> std::path::PathBuf {
+            pipeline::media_stem(&pipeline::media_dir(&self.work), self.id, "t").with_extension(ext)
+        }
+
+        /// A video kept as a download leaves it: the file, recorded.
+        fn kept(&self) -> std::path::PathBuf {
+            let file = self.file("mp4");
+            std::fs::write(&file, b"video").unwrap();
+            self.db.lock().unwrap().set_media_path(self.id, Some(&file.to_string_lossy())).unwrap();
+            file
+        }
+
+        fn media_path(&self) -> Option<String> {
+            self.db.lock().unwrap().media_path(self.id).unwrap()
+        }
+
+        /// The queue's thread, running `download` as `download` in this file
+        /// does: begun, then whatever it does in between, its stop passed on.
+        fn run(&self, download: impl Fn(&Setup, &AtomicBool) + Send + 'static) {
+            let me = Setup {
+                db: self.db.clone(),
+                videos: self.videos.clone(),
+                work: self.work.clone(),
+                id: self.id,
+                owner: false,
+            };
+            self.videos
+                .0
+                .run("videos-test", move |_, stop| {
+                    if begin(&me.db, &me.videos, me.id).unwrap().is_some() {
+                        download(&me, stop);
+                    }
+                })
+                .unwrap();
+        }
+
+        /// What "Keep video" does to the queue.
+        fn keep_video(&self) {
+            let id = self.id;
+            self.videos.0.push_new((id, 720), |(v, _)| *v == id);
+        }
+    }
+
+    /// A download that has recorded its file, but whose job hasn't ended yet,
+    /// when "Delete video" comes: the file goes with the record.
+    #[test]
+    fn a_video_deleted_as_its_download_ends_is_deleted() {
+        let s = Setup::new();
+        let (recorded, has_recorded) = mpsc::channel();
+        let (end, ends) = mpsc::channel::<()>();
+        let ends = Mutex::new(ends);
+        s.run(move |s, stop| {
+            let file = s.file("mp4");
+            std::fs::write(&file, b"video").unwrap();
+            record(&s.db, &s.videos, &s.work, s.id, &file, stop).unwrap();
+            recorded.send(()).unwrap();
+            // Still the queue's running job (the pause).
+            let _ = ends.lock().unwrap().recv_timeout(WAIT);
+        });
+        s.keep_video();
+        has_recorded.recv_timeout(WAIT).unwrap();
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, pipeline::remove_media).unwrap();
+        end.send(()).unwrap();
+        assert_eq!(s.media_path(), None);
+        assert!(!s.file("mp4").exists(), "deleted, not left untracked");
+    }
+
+    /// "Keep video" again while "Delete video" deletes the old one: the new
+    /// download's files aren't deleted with it.
+    #[test]
+    fn a_download_started_during_a_delete_keeps_its_files() {
+        let s = Setup::new();
+        let old = s.kept();
+        let (wrote, has_written) = mpsc::channel();
+        s.run(move |s, _| {
+            std::fs::write(s.file("mp4.part"), b"new").unwrap();
+            wrote.send(()).unwrap();
+        });
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, |work, id| {
+            // Mid-delete (the pause): Keep video, and its download given the
+            // time to start.
+            s.keep_video();
+            let _ = has_written.recv_timeout(Duration::from_millis(500));
+            pipeline::remove_media(work, id);
+        })
+        .unwrap();
+        // The download writes now, if it couldn't during the delete.
+        let deadline = Instant::now() + WAIT;
+        while !s.file("mp4.part").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!old.exists(), "the old video goes");
+        assert!(s.file("mp4.part").exists(), "the new download's part stays");
+    }
+
+    /// "Delete video" with a "Keep video" queued (it lands between the
+    /// forget and the check: keep_video checks the record, then queues),
+    /// then that download stopped before it began: no file is left behind
+    /// with no record of it.
+    #[test]
+    fn a_redownload_stopped_while_waiting_leaves_no_file() {
+        let s = Setup::new();
+        let old = s.kept();
+        // No queue thread: the download waits.
+        s.keep_video();
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, pipeline::remove_media).unwrap();
+        assert!(!stop(&s.db, &s.videos, &s.work, s.id), "it was waiting");
+        assert_eq!(s.media_path(), None);
+        assert!(!old.exists(), "not left untracked");
+    }
+
+    /// The same through "Delete all", which leaves the files of a VOD queued
+    /// again meanwhile: stopped before it began, its download takes them.
+    #[test]
+    fn a_download_stopped_while_waiting_takes_its_vods_untracked_files() {
+        let s = Setup::new();
+        let left = s.file("mp4");
+        std::fs::write(&left, b"video").unwrap();
+        s.keep_video();
+        assert!(!stop(&s.db, &s.videos, &s.work, s.id));
+        assert!(!left.exists());
+    }
 }

@@ -444,23 +444,37 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
 /// plays on its site instead.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, pipeline::remove_media)?;
+    emit_vod(&app, &state.db.lock().unwrap(), id)
+}
+
+/// `delete_video`'s work: `remove` deletes the files (`pipeline::remove_media`).
+pub(crate) fn delete_kept_video(
+    db: &std::sync::Mutex<Db>,
+    videos: &crate::videos::Videos,
+    work: &Path,
+    id: i64,
+    remove: impl FnOnce(&Path, i64),
+) -> CmdResult<()> {
+    // Through to the files' deletion: a download recorded meanwhile, or one
+    // a "Keep video" begins meanwhile, waits for it (`Videos::files`).
+    let _files = videos.files();
     let had = {
-        let db = state.db.lock().unwrap();
+        let db = db.lock().unwrap();
         let vod = db.vod(id).map_err(err)?.ok_or("That VOD is gone.")?;
         if busy(vod.status) {
             return Err("Its video is still in use: wait until it's transcribed.".into());
         }
-        forget_video(&db, &state.paths.work(), id).map_err(err)?;
-        emit_vod(&app, &db, id)?;
+        forget_video(&db, work, id).map_err(err)?;
         vod.media
     };
     // Forgotten first, so nothing starts on it; deleted with the library let
-    // go (a big video can take a moment). Unless a "Keep video" queued it
-    // again meanwhile: those files are that download's. Only with a video
-    // kept (`had`): Delete video is offered only then, and a paused
-    // download's parts are Delete all's to clear.
-    if had && !state.videos.wanted(id) {
-        pipeline::remove_media(&state.paths.work(), id);
+    // go (a big video can take a moment). Only with a video kept (`had`):
+    // Delete video is offered only then, and a paused download's parts are
+    // Delete all's to clear. A download that recorded it has written all it
+    // will; a "Keep video" queued meanwhile begins after.
+    if had {
+        remove(work, id);
     }
     Ok(())
 }
