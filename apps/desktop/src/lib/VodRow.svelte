@@ -364,7 +364,7 @@
           ? `The video couldn't be downloaded: ${keepError} Click to try again.`
           : hasSitePlayer(vod)
             ? `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`
-            : `Download the video (up to ${height}p, ${keepSize}): ${platform} has no player VODscribe can show, so it plays here once it's downloaded.`}
+            : `Download the video (up to ${height}p, ${keepSize}): ${platform} has no player VODscribe can show, so it plays here, as it downloads.`}
       aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
       {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
     >

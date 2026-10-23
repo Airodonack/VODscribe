@@ -58,14 +58,21 @@
   let askingDownload = $state(false);
   function playByDownloading() {
     if (downloading !== undefined) return;
-    if (noteHidden()) videoDownloads.keep(vod.id);
+    if (noteHidden()) startDownload();
     else askingDownload = true;
   }
   function answerDownload(yes: boolean, hide: boolean) {
     askingDownload = false;
     if (!yes) return;
     if (hide) hideNote();
-    videoDownloads.keep(vod.id);
+    startDownload();
+  }
+  /** Downloads its video and plays it as it comes in: the app's own player
+   *  takes it from now (embed.ts), waiting where it hasn't come yet. */
+  async function startDownload() {
+    void videoDownloads.keep(vod.id);
+    await tick();
+    if (canEmbed(vod)) activate(from);
   }
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
@@ -527,8 +534,8 @@
     <Popover bind:open={askingDownload} anchor={playButton} label="Before downloading the video" width={340}>
       <PermissionNote action="Download video" onanswer={answerDownload}>
         <p class="muted">
-          {site} has no player VODscribe can show, so its video can only be downloaded, and then plays here. It's kept until
-          you delete it.
+          {site} has no player VODscribe can show, so its video can only be downloaded: it plays here as it comes in. It's
+          kept until you delete it.
         </p>
       </PermissionNote>
     </Popover>
@@ -630,6 +637,12 @@
 
 {#snippet below()}
   {#if canEmbed(vod)}
+    {#if download && downloading !== undefined}
+      <p class="muted note">
+        Downloading the video ({Math.round(downloading * 100)}%): it plays as far as it's in, and waits where it hasn't
+        come yet.
+      </p>
+    {/if}
     {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}

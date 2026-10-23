@@ -25,7 +25,8 @@ import * as overlay from "./screenOverlay";
 import { prefs } from "./playerPrefs.svelte";
 import LocalPlayer from "./LocalPlayer.svelte";
 import NativePlayer from "./NativePlayer.svelte";
-import { isTwitchClip, twitchId, twitchTime } from "./platform";
+import { isTwitchClip, keepsVideo, twitchId, twitchTime } from "./platform";
+import { videoDownloads } from "./videos.svelte";
 
 export interface EmbeddedPlayer {
   seek(seconds: number, play: boolean): void;
@@ -512,6 +513,10 @@ async function local(
   play: boolean,
   onerror?: (message: string | null) => void,
 ): Promise<EmbeddedPlayer> {
+  // Its video still downloading (a site without its own player): only the
+  // app's own player plays it as it comes in (player.rs `streamed`).
+  if (!vod.media && vod.platform !== "local" && !(await ownPlayer.ask()))
+    throw new Error("The video plays here once it's downloaded.");
   if (!vod.audio_only && (await ownPlayer.ask())) {
     const player = mount(NativePlayer, { target: el, props: { vod, start: time, autoplay: play, onerror } });
     return {
@@ -565,10 +570,14 @@ const players: Record<string, CreatePlayer> = {
   local,
 };
 
+/** Whether `vod`, from a site without its own player, has its video
+ *  downloading: it plays in the app's own player as it comes in. */
+const downloadingToPlay = (vod: Vod) => keepsVideo(vod) && videoDownloads.progress.has(vod.id);
+
 /** A kept video, played like a local file; a VOD from a site, in the
  *  platform's player (with the app's picture under it, where it can). */
 function playerFor(vod: Vod): CreatePlayer | undefined {
-  if (vod.media) return local;
+  if (vod.media || downloadingToPlay(vod)) return local;
   return Object.hasOwn(players, vod.platform) ? players[vod.platform] : undefined;
 }
 

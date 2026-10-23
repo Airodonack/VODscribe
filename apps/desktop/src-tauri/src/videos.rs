@@ -119,6 +119,28 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     std::fs::create_dir_all(&work)?;
     let media = paths.media();
     std::fs::create_dir_all(&media)?;
+    // A site without its own player: its video comes as a section of all
+    // of it, which plays as it comes in (player.rs `streamed`), then is kept.
+    // Where the site's streams can't be read in sections (ffmpeg reads only
+    // HTTPS and HLS: fetch.rs), it downloads whole, as for the other sites,
+    // and plays once it's in.
+    if pipeline::keeps_video(&vod.info.platform)
+        && let Some(duration) = vod.info.duration.filter(|d| *d > 0.0)
+    {
+        let report = Mutex::new(Instant::now());
+        let report = |progress: f64| {
+            let mut last = report.lock().unwrap();
+            if last.elapsed() >= PROGRESS_EVERY {
+                *last = Instant::now();
+                let _ = app.emit("video-progress", VideoProgress { id, progress: Some(progress), error: None });
+            }
+        };
+        match stream_then_keep(app, &vod, duration, height, stop, &report) {
+            Ok(()) => return Ok(()),
+            Err(e) if vodscribe_core::is_canceled(&e) => return Err(e),
+            Err(e) => eprintln!("VOD {id}: its video didn't come as a section, so it downloads whole: {e:#}"),
+        }
+    }
     let info = work.join(format!("video-{id}.info.json"));
     let playable = Playable::load(&paths.playable());
     let selector = playable.selector(height);
@@ -148,7 +170,54 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
         let named = named.into_iter().flatten().collect::<Vec<_>>().join(", ");
         anyhow::bail!("This video came in a format that doesn't play here ({named}).");
     }
-    record(&state.db, &state.videos, &work, id, &file, stop)
+    record(&state.db, &state.videos, &work, id, &file, stop)?;
+    // A player waiting for it plays it now.
+    if let Some(duration) = vod.info.duration {
+        crate::player::refile(app, id, &file, duration);
+    }
+    Ok(())
+}
+
+/// Downloads all of VOD `vod`'s video (`duration` long, as its site says)
+/// as a Matroska section through the footage queue (`footage::ensure_as`),
+/// which plays as far as it's in while it comes; then copies it, as it is,
+/// into an MP4 kept as its video (`clips::remux`), which the player
+/// waiting on it plays from then on. Fails, with nothing kept, where the
+/// site's streams can't be read in sections. The footage queue downloads
+/// one section at a time: an edit's footage waits behind it meanwhile.
+fn stream_then_keep(
+    app: &AppHandle,
+    vod: &Vod,
+    duration: f64,
+    height: u32,
+    stop: &AtomicBool,
+    report: &(dyn Fn(f64) + Sync),
+) -> Result<()> {
+    let state = app.state::<AppState>();
+    let paths = &state.paths;
+    let ffmpeg = tools::find_ffmpeg(&paths.bin()).context(crate::worker::NO_FFMPEG)?;
+    let playable = Playable::load(&paths.playable());
+    let selector = playable.selector(height);
+    crate::footage::ensure_as(app, vod.id, (0.0, duration), Some(&selector), stop, &|p| report(p * 0.95))?;
+    let section = {
+        let db = state.db.lock().unwrap();
+        crate::footage::find(app, &db, vod.id, 0.0, duration).context("Its video didn't download.")?
+    };
+    // Kept already (it was found as its own file): nothing more to do.
+    if section.section.is_none() {
+        return Ok(());
+    }
+    let streams = local::codecs(&ffmpeg, &section.path)?;
+    if !playable.plays(&streams) {
+        anyhow::bail!("its section came in a format that doesn't play here ({streams:?})");
+    }
+    let out = pipeline::media_stem(&paths.media(), vod.id, &vod.info.title).with_extension("mp4");
+    vodscribe_core::clips::remux(&ffmpeg, &section.path, &out, duration, stop, |p| report(0.95 + p * 0.05))?;
+    record(&state.db, &state.videos, &paths.work(), vod.id, &out, stop)?;
+    crate::player::refile(app, vod.id, &out, duration);
+    // It's the kept video now.
+    let _ = std::fs::remove_file(&section.path);
+    Ok(())
 }
 
 /// The VOD a download of VOD `id`'s video is for, as it begins: after any

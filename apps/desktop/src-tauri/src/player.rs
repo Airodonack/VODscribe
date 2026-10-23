@@ -105,16 +105,84 @@ pub(crate) fn player_available(app: AppHandle) -> bool {
 /// Opens VOD `id`'s file at `at` seconds, playing if `play`. The one open
 /// for it already is kept, moved there. Fails if the page closed the player,
 /// or opened another, while the file was being probed.
+///
+/// A VOD from a site without its own player whose video is still
+/// downloading (videos.rs) plays as far as it's in (`streamed`).
 #[tauri::command]
 pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) -> CmdResult<Opened> {
     let make = move |app: &AppHandle| {
         let state = app.state::<AppState>();
         let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
-        let file = crate::media::playable_file(&state.db.lock().unwrap(), id)
-            .ok_or_else(|| anyhow::anyhow!("This VOD has no file here to play."))?;
-        Player::open_file(&ffmpeg, file.as_ref())
+        let file = crate::media::playable_file(&state.db.lock().unwrap(), id);
+        match file {
+            Some(file) => Player::open_file(&ffmpeg, file.as_ref()),
+            None => streamed(app, &ffmpeg, id),
+        }
     };
     open_with(app, Doc::Vod(id), at, play, None, make).await
+}
+
+/// A player for VOD `id`, from a site without its own player, on the
+/// footage of its video as far as it has downloaded (`footage::whole_timeline`),
+/// as long as its site says it is: where the download hasn't reached, the
+/// time stands (the picture holding its last frame) and the page says it's
+/// waiting, till more comes in (`footage_grew`) and it plays on. A seek past
+/// what's in waits the same way. Once the download is done, it plays the
+/// video kept (`refile`).
+///
+/// The risk: the length is the site's, not the file's (not known till it's
+/// all in); a video that turns out shorter ends early in the wait, and one
+/// longer is cut short till it's kept. What's in is read through a growing
+/// Matroska file, up to its last whole cluster less a second (`footage::Growing`).
+fn streamed(app: &AppHandle, ffmpeg: &std::path::Path, id: i64) -> anyhow::Result<Player> {
+    let state = app.state::<AppState>();
+    let timeline = {
+        let db = state.db.lock().unwrap();
+        let vod = db.vod(id)?.ok_or_else(|| anyhow::anyhow!("That VOD is gone."))?;
+        let duration = vod.info.duration.filter(|d| *d > 0.0);
+        let Some(duration) = duration.filter(|_| vodscribe_core::pipeline::keeps_video(&vod.info.platform)) else {
+            anyhow::bail!("This VOD has no file here to play.");
+        };
+        crate::footage::whole_timeline(app, &db, id, duration)
+    };
+    let player = Player::open(ffmpeg, timeline)?;
+    player.set_waits_for_footage(true);
+    Ok(player)
+}
+
+/// More of VOD `vod_id`'s footage is in (or it's moved): if the player
+/// open plays it as it downloads (`streamed`: not a site's player, and no
+/// file of its own yet), it plays on into what came.
+pub(crate) fn footage_grew(app: &AppHandle, vod_id: i64) {
+    let state = app.state::<AppState>();
+    let streaming = |open: &Option<Open>| open.as_ref().is_some_and(|o| o.doc == Doc::Vod(vod_id) && o.embed.is_none());
+    if !streaming(&state.player.open.lock().unwrap()) {
+        return;
+    }
+    let timeline = {
+        let db = state.db.lock().unwrap();
+        let Ok(Some(vod)) = db.vod(vod_id) else { return };
+        let Some(duration) = vod.info.duration.filter(|_| !vod.media && vod.source_path.is_none()) else { return };
+        crate::footage::whole_timeline(app, &db, vod_id, duration)
+    };
+    let open = state.player.open.lock().unwrap();
+    if let Some(o) = open.as_ref().filter(|_| streaming(&open))
+        && o.player.timeline() != timeline
+    {
+        o.player.set_timeline(timeline);
+    }
+}
+
+/// VOD `vod_id`'s video is kept now, at `path` (`duration` long): the
+/// player open playing it as it downloaded plays that from here on, where
+/// it is, waiting for nothing.
+pub(crate) fn refile(app: &AppHandle, vod_id: i64, path: &std::path::Path, duration: f64) {
+    let state = app.state::<AppState>();
+    let open = state.player.open.lock().unwrap();
+    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id) && o.embed.is_none()) {
+        o.player.set_timeline(Timeline::file(path, duration));
+        o.player.set_waits_for_footage(false);
+    }
 }
 
 /// Opens edit `id`, its pieces end to end from their footage, at `at`

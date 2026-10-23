@@ -18,6 +18,7 @@ use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, fetch, mkv, tools};
+use vodscribe_player::timeline::Timeline;
 
 use crate::AppState;
 
@@ -297,6 +298,28 @@ pub(crate) fn ensure(
     stop: &AtomicBool,
     progress: &(dyn Fn(f64) + Sync),
 ) -> Result<()> {
+    ensure_as(app, vod_id, (start, end), None, stop, progress)
+}
+
+/// The footage of all of VOD `vod_id` (`duration` long, as its site says)
+/// as it plays here: what's in of a section of all of it downloading (and
+/// of any other footage), the rest waiting for it. For a VOD from a site
+/// without its own player while its video downloads (videos.rs): it plays
+/// as far as it's in.
+pub(crate) fn whole_timeline(app: &AppHandle, db: &Db, vod_id: i64, duration: f64) -> Timeline {
+    Timeline::covering(duration, cover(app, db, vod_id, 0.0, duration))
+}
+
+/// `ensure`, the section's formats chosen by `selector` (yt-dlp's format
+/// selection; None: the Storage height's, `clips::selector`).
+pub(crate) fn ensure_as(
+    app: &AppHandle,
+    vod_id: i64,
+    (start, end): (f64, f64),
+    selector: Option<&str>,
+    stop: &AtomicBool,
+    progress: &(dyn Fn(f64) + Sync),
+) -> Result<()> {
     let state = app.state::<AppState>();
     // Behind another download (the queue's, for an edit playing), stoppable.
     let _one = loop {
@@ -335,7 +358,8 @@ pub(crate) fn ensure(
     let fresh = std::fs::metadata(&info)
         .and_then(|m| m.modified())
         .is_ok_and(|at| at.elapsed().is_ok_and(|age| age < INFO_FOR));
-    let selector = clips::selector(Settings::load(&paths.settings()).video_height());
+    let selector =
+        selector.map_or_else(|| clips::selector(Settings::load(&paths.settings()).video_height()), str::to_string);
     let wanted = fetch::Wanted::Section {
         selector: &selector,
         ffmpeg: &ffmpeg,
@@ -365,6 +389,10 @@ pub(crate) fn ensure(
                     .or(last.and_then(|(usable, _)| usable));
                 let progress = f64::from_bits(guess.load(Ordering::Relaxed));
                 if last != Some((usable, progress)) {
+                    // More to play, for a VOD played as its video comes in.
+                    if last.is_none_or(|(before, _)| before != usable) {
+                        crate::player::footage_grew(app, vod_id);
+                    }
                     last = Some((usable, progress));
                     let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress, usable });
                 }
@@ -409,6 +437,8 @@ pub(crate) fn ensure(
         result
     });
     *state.footage.growing.lock().unwrap() = None;
+    // Now played from where it went (or no further).
+    crate::player::footage_grew(app, vod_id);
     // Failed (not stopped), the next asks the site afresh.
     if result.as_ref().is_err_and(|e| !vodscribe_core::is_canceled(e)) {
         let _ = std::fs::remove_file(&info);

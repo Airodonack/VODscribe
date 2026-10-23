@@ -78,3 +78,47 @@ fn running_into_footage_not_here_it_stops_there_and_waits() {
     assert!((time - 1.0).abs() < 0.05, "it stops where the footage does: {time}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn footage_coming_in_while_it_waits_plays_on_from_where_it_stood() {
+    let dir = std::env::temp_dir().join(format!("vodscribe-coming-in-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("growing.mkv");
+    let made = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25:duration=2"])
+        .args(["-c:v", "libx264", "-g", "5", "-f", "matroska"])
+        .arg(&file)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        eprintln!("skipped: no ffmpeg on PATH");
+        return;
+    }
+    // A VOD downloading (player.rs `streamed`): one second of it in, then
+    // two (the same file, read further), of ten.
+    let source = vodscribe_core::footage::Source { path: file, offset: 0.0, section: Some("1-0-10000".into()) };
+    let in_to = |seconds: f64| {
+        Timeline::from_stretches(vec![
+            Stretch { at: 0.0, length: seconds, piece_id: None, source: Some(source.clone()), from: 0.0, sound: None },
+            Stretch { at: seconds, length: 10.0 - seconds, piece_id: None, source: None, from: 0.0, sound: None },
+        ])
+    };
+    let player = Player::open(Path::new("ffmpeg"), in_to(1.0)).unwrap();
+    player.set_waits_for_footage(true);
+    player.play();
+    until("it to wait where what's in ends", 20, || player.waiting_for_footage());
+    let stood = player.time();
+    assert!((stood - 1.0).abs() < 0.05, "it stands where what's in ends: {stood}");
+    assert!(player.frame().is_some(), "the last frame holds");
+    // More comes in: it plays on, from where it stood, to the new end.
+    player.set_timeline(in_to(2.0));
+    until("it to play on", 20, || player.time() > 1.2);
+    until("it to wait again", 20, || player.waiting_for_footage());
+    let stood = player.time();
+    assert!((stood - 2.0).abs() < 0.05, "and stands where that ends: {stood}");
+    // A seek past what's in waits there the same way.
+    player.seek(6.0);
+    until("it to wait at the seek", 20, || player.waiting_for_footage());
+    std::thread::sleep(Duration::from_millis(300));
+    assert!((player.time() - 6.0).abs() < 0.05, "it stands at the seek: {}", player.time());
+    let _ = std::fs::remove_dir_all(dir);
+}

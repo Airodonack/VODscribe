@@ -139,6 +139,47 @@ impl Timeline {
         Timeline { stretches }
     }
 
+    /// A VOD `duration` long played from the footage `cover` gives for all
+    /// of it (`footage::cover`: in order, apart), as far as it's here: the
+    /// rest, between and after, waits for its footage. A VOD whose video is
+    /// still downloading plays this way, as far as it's in, grown as more
+    /// comes (`Player::set_timeline`).
+    pub fn covering(duration: f64, cover: Vec<(f64, f64, Source)>) -> Timeline {
+        let mut stretches = Vec::new();
+        let mut at = 0.0;
+        let wait = |stretches: &mut Vec<Stretch>, from: f64, to: f64| {
+            if to - from >= SLIVER {
+                stretches.push(Stretch {
+                    at: from,
+                    length: to - from,
+                    piece_id: None,
+                    source: None,
+                    from: 0.0,
+                    sound: None,
+                });
+            }
+        };
+        for (from, to, source) in cover {
+            let (from, to) = (from.max(at), to.min(duration));
+            if to - from < SLIVER {
+                continue;
+            }
+            wait(&mut stretches, at, from);
+            let start = from - source.offset;
+            stretches.push(Stretch {
+                at: from,
+                length: to - from,
+                piece_id: None,
+                source: Some(source),
+                from: start,
+                sound: None,
+            });
+            at = to;
+        }
+        wait(&mut stretches, at, duration);
+        Timeline { stretches }
+    }
+
     /// Stretches as given, laid end to end as they are.
     pub fn from_stretches(stretches: Vec<Stretch>) -> Timeline {
         Timeline { stretches }
@@ -169,6 +210,26 @@ impl Timeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_vod_downloading_plays_what_is_in_and_waits_for_the_rest() {
+        let source =
+            |from: f64| Source { path: "/f/section.mkv".into(), offset: from, section: Some("1-0-600000".into()) };
+        // In to 42 s of 600: footage to there, then a wait to the end.
+        let timeline = Timeline::covering(600.0, vec![(0.0, 42.0, source(0.0))]);
+        let spans: Vec<_> = timeline.stretches().iter().map(|s| (s.at, s.length, s.source.is_some())).collect();
+        assert_eq!(spans, [(0.0, 42.0, true), (42.0, 558.0, false)]);
+        assert_eq!(timeline.duration(), 600.0);
+        // More in: the same stretch, played further, so playing goes on unbroken.
+        let grown = Timeline::covering(600.0, vec![(0.0, 90.0, source(0.0))]);
+        assert!(timeline.stretches()[0].continued_by(&grown.stretches()[0]));
+        // Footage from 100 s (a section of it) and none before: a wait first.
+        let later = Timeline::covering(600.0, vec![(100.0, 200.0, source(70.0))]);
+        let spans: Vec<_> = later.stretches().iter().map(|s| (s.at, s.length, s.source.is_some(), s.from)).collect();
+        assert_eq!(spans, [(0.0, 100.0, false, 0.0), (100.0, 100.0, true, 30.0), (200.0, 400.0, false, 0.0)]);
+        // Nothing in yet: all of it waits.
+        assert_eq!(Timeline::covering(600.0, Vec::new()).stretches().len(), 1);
+    }
 
     fn piece(id: i64, vod_id: i64, start: f64, end: f64, struck: &[(f64, f64)]) -> EditPiece {
         EditPiece {

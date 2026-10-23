@@ -227,6 +227,34 @@ pub fn cut(
     tools::encode(cmd, &part, out, length, cancel, progress, "the clip")
 }
 
+/// Copies `source`'s picture and sound, `length` seconds, into an MP4 at
+/// `out` as they are (nothing encoded again: a minute's work is seconds),
+/// reporting progress from 0 to 1: a VOD's video downloaded as a Matroska
+/// section, to play while it came in, kept as its video
+/// (desktop videos.rs).
+pub fn remux(
+    ffmpeg: &Path,
+    source: &Path,
+    out: &Path,
+    length: f64,
+    cancel: &AtomicBool,
+    progress: impl FnMut(f64),
+) -> Result<()> {
+    let dir = out.parent().context("no folder for the video")?;
+    fs::create_dir_all(dir)?;
+    let name = out.file_name().context("no file name for the video")?.to_string_lossy();
+    let part = dir.join(format!(".{name}.part"));
+    let mut cmd = tools::command(ffmpeg);
+    cmd.args(["-hide_banner", "-nostdin", "-loglevel", "error"]);
+    tools::ffmpeg_allow_for(&mut cmd, &format!("{},{}", tools::FFMPEG_AUDIO, tools::FFMPEG_PICTURE), source)
+        .arg("-i")
+        .arg(source);
+    cmd.args(["-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", "-f", "mp4"]);
+    cmd.args(["-progress", "pipe:1", "-y"]);
+    cmd.arg(&part);
+    tools::encode(cmd, &part, out, length, cancel, progress, "the video")
+}
+
 /// A small picture of `clip`'s first frame, as a PNG at `out`, to show
 /// while it's dragged.
 pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
@@ -252,6 +280,33 @@ pub fn thumbnail(ffmpeg: &Path, clip: &Path, out: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Matroska file's streams copied into an MP4, as they were. Made with
+    /// ffmpeg; skipped where ffmpeg isn't installed.
+    #[test]
+    fn remuxes_into_an_mp4() {
+        let Ok(ffmpeg) = which::which("ffmpeg") else {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        };
+        let dir = crate::TempDir::new("remux");
+        let mkv = dir.join("section.mkv");
+        let made = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=25:duration=2"])
+            .args(["-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-c:a", "aac", "-f", "matroska"])
+            .arg(&mkv)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            eprintln!("skipped: this ffmpeg can't make the sample");
+            return;
+        }
+        let out = dir.join("kept.mp4");
+        remux(&ffmpeg, &mkv, &out, 2.0, &AtomicBool::new(false), |_| {}).unwrap();
+        let streams = crate::local::codecs(&ffmpeg, &out).unwrap();
+        assert_eq!((streams.video.as_deref(), streams.audio.as_deref()), (Some("h264"), Some("aac")));
+        let length = crate::local::probe(&ffmpeg, &out).unwrap().duration.unwrap();
+        assert!((length - 2.0).abs() < 0.1, "{length}");
+    }
 
     #[test]
     fn written_titles_are_trimmed_and_capped() {
