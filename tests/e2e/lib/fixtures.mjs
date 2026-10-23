@@ -62,7 +62,12 @@ export function longSpeech(dir) {
   return make(dir, "landed-10-minutes.mp3", ["-stream_loop", "119", "-i", LANDED, "-c", "copy"]);
 }
 
-/** The colour of each second of colours.mp4, in order. */
+/**
+ * The colour of each second of colours.mp4, in order. Twelve seconds, far
+ * apart in colour: a slow computer (a real laptop, screenshots taking
+ * seconds each) must not reach the end while player-picture is still
+ * sampling the playing picture.
+ */
 export const COLOURS = [
   ["red", [255, 0, 0]],
   ["lime", [0, 255, 0]],
@@ -70,6 +75,12 @@ export const COLOURS = [
   ["yellow", [255, 255, 0]],
   ["magenta", [255, 0, 255]],
   ["cyan", [0, 255, 255]],
+  ["white", [255, 255, 255]],
+  ["purple", [128, 0, 128]],
+  ["orange", [255, 165, 0]],
+  ["teal", [0, 128, 128]],
+  ["gray", [128, 128, 128]],
+  ["brown", [165, 42, 42]],
 ];
 
 /**
