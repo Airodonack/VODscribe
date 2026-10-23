@@ -37,8 +37,9 @@
 // result in results.json has them (`timings`, ms), and E2E_OUT/perf.json
 // has them across runs (--repeat N runs the chosen scenarios N times, in
 // turn: the median and spread) with what the run was on, for comparing
-// releases (perf-compare.mjs). A profiled run's timings are marked so:
-// perf slows what it watches.
+// releases (perf-compare.mjs), and the app's memory at each scenario's end
+// (Linux: its processes' Pss, lib/memory.mjs). A profiled run's timings are
+// marked so: perf slows what it watches.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -51,6 +52,7 @@ import { isUnplayable } from "../../apps/desktop/src/lib/media.ts";
 import { App, clock, watchWith } from "./lib/app.mjs";
 import { resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
+import { memoryOf } from "./lib/memory.mjs";
 import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import * as profile from "./lib/profile.mjs";
@@ -200,6 +202,7 @@ for (const { name, run } of turns) {
   );
   let error;
   let skipped;
+  let memory = null;
   try {
     // Scenarios that reach the sites run only when asked: E2E_NETWORK=1.
     if (scenario.needs?.includes("network") && process.env.E2E_NETWORK !== "1")
@@ -223,6 +226,8 @@ for (const { name, run } of turns) {
     }
   } finally {
     await measurePage();
+    // The app's memory at the end, with its children's (Linux; lib/memory.mjs).
+    memory = current ? memoryOf(positionals[0]) : null;
     await current?.driver.close();
   }
   const page = pages.length
@@ -247,6 +252,7 @@ for (const { name, run } of turns) {
     skipped,
     seconds: Math.round((Date.now() - begun) / 1000),
     timings: byStep(steps),
+    ...(memory && { memory }),
   });
   log(error ? "failed" : skipped ? `skipped: ${skipped}` : "passed");
 }
@@ -325,7 +331,10 @@ function perfSummary() {
     s.runs += 1;
     if (!r.ok) s.failed += 1;
     s.seconds.push(r.seconds);
+    // A failed run's numbers stop wherever it failed: they'd pull the medians.
+    if (!r.ok) continue;
     for (const [step, ms] of Object.entries(r.timings)) (s.timings[step] ??= []).push(ms);
+    if (r.memory) (s.memory ??= []).push(r.memory);
   }
   for (const [name, s] of Object.entries(scenarios)) {
     s.timings = Object.fromEntries(
@@ -334,11 +343,22 @@ function perfSummary() {
         { median: median(runs), least: Math.min(...runs), most: Math.max(...runs), runs },
       ]),
     );
+    // Memory (MiB, Pss) across runs, and by process in the last.
+    if (s.memory) {
+      const totals = s.memory.map((m) => m.pss);
+      s.memory = {
+        median: median(totals),
+        least: Math.min(...totals),
+        most: Math.max(...totals),
+        runs: totals,
+        processes: s.memory.at(-1).processes.map(({ name, pss, rss }) => ({ name, pss, rss })),
+      };
+    }
     if (profiles[name]) s.profile = profiles[name];
   }
   return {
     date: new Date().toISOString(),
-    commit: process.env.E2E_COMMIT ?? quiet("git", ["-C", here, "rev-parse", "--short", "HEAD"]),
+    commit: process.env.E2E_COMMIT ?? quiet("git", ["-C", here, "describe", "--tags", "--always", "--dirty"]),
     app: positionals[0],
     profiled: !!profileDir,
     repeat,
