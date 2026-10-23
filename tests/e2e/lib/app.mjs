@@ -566,8 +566,10 @@ export class App {
   /** Searches for `phrase` and plays from the first result. */
   async playFromSearch(phrase) {
     await this.type('input[placeholder="Search for a phrase…"]', phrase);
-    await until("a search result", () => this.js(`return !!document.querySelector("button.row")`), MINUTE);
-    await this.click("button.row");
+    // The results' rows, not the transcript's (both are button.row): the
+    // transcript stays up until the search answers, a moment on a slow computer.
+    await until("a search result", () => this.js(`return !!document.querySelector(".results button.row")`), MINUTE);
+    await this.click(".results button.row");
     await until("the player", () => this.js(`return !!document.querySelector("button.time")`), MINUTE);
   }
 

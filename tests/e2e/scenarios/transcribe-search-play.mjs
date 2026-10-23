@@ -20,8 +20,10 @@ export default {
     app.log(`transcribed: "${text}"`);
 
     await app.type('input[placeholder="Search for a phrase…"]', "landed");
-    await until("a search result", () => app.js(`return !!document.querySelector("button.row")`), MINUTE);
-    await app.click("button.row");
+    // The results' rows, not the transcript's (both are button.row): the
+    // transcript stays up until the search answers, a moment on a slow computer.
+    await until("a search result", () => app.js(`return !!document.querySelector(".results button.row")`), MINUTE);
+    await app.click(".results button.row");
     await until(
       "the player",
       async () => {
