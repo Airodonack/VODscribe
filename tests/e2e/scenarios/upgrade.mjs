@@ -4,12 +4,12 @@
 // kept beside it, and this version's features working on the old VOD (a
 // clip: 0.3.0 had none).
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { dataDirs, oldLibrary } from "../lib/data.mjs";
 import { LANDED } from "../lib/fixtures.mjs";
 
 const VERSION = "0.3.0";
@@ -18,15 +18,8 @@ const fixtures = path.dirname(LANDED);
 export default {
   name: "upgrade",
   before() {
-    const dir = dataDirs()[0];
-    mkdirSync(dir, { recursive: true });
-    const library = path.join(dir, "library.sqlite");
-    copyFileSync(path.join(fixtures, `library-${VERSION}.sqlite`), library);
-    copyFileSync(path.join(fixtures, `settings-${VERSION}.json`), path.join(dir, "settings.json"));
     // The fixture names its file by a placeholder for the fixtures folder.
-    const db = new DatabaseSync(library);
-    db.prepare("UPDATE vods SET source_path = replace(source_path, '{FIXTURES}', ?)").run(fixtures);
-    db.close();
+    oldLibrary(fixtures, VERSION, { "{FIXTURES}": fixtures });
   },
   async run(app, ctx) {
     await app.toLibrary();

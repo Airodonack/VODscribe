@@ -6,9 +6,10 @@
 // has no library yet: on a computer that's used, point XDG_DATA_HOME (Linux)
 // somewhere else, or run on a test machine.
 
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 const ID = "app.vodscribe";
 const KEPT = new Set(["bin", "models", "gpu"]);
@@ -40,4 +41,22 @@ export function resetData() {
         rmSync(path.join(dir, name), { recursive: true, force: true, maxRetries: 50, retryDelay: 200 });
     }
   }
+}
+
+/**
+ * Puts the library and settings release `version` left (`fixtures`'
+ * library-<version>.sqlite and settings-<version>.json, made by
+ * make-old-library.mjs) in the data folder, each of `places`' placeholders
+ * in its files' paths made a folder here ({ "{FIXTURES}": fixtures }).
+ */
+export function oldLibrary(fixtures, version, places) {
+  const dir = dataDirs()[0];
+  mkdirSync(dir, { recursive: true });
+  const library = path.join(dir, "library.sqlite");
+  copyFileSync(path.join(fixtures, `library-${version}.sqlite`), library);
+  copyFileSync(path.join(fixtures, `settings-${version}.json`), path.join(dir, "settings.json"));
+  const db = new DatabaseSync(library);
+  for (const [from, to] of Object.entries(places))
+    db.prepare("UPDATE vods SET source_path = replace(source_path, ?, ?)").run(from, to);
+  db.close();
 }
