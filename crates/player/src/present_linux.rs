@@ -12,6 +12,14 @@
 //! pointer and the wheel go to the page under it. It's made on the main
 //! thread when a box is first set (and the window is on screen), dropped
 //! when the box goes, and painted from any thread.
+//!
+//! It goes before the window does (`attach` drops it as the anchor is
+//! unrealized), and for good before the program ends (`close`). The player's
+//! thread paints each frame as it comes; when a quit while playing let the
+//! window and the GPU driver be torn down under a paint, NVIDIA's driver
+//! crashed in the swapchain's acquire. Paints, the drop and `close` all
+//! hold the screen's lock, so once one of them has the surface gone, no
+//! paint can still be in it.
 
 use std::ffi::{CString, c_void};
 use std::ptr::NonNull;
@@ -55,6 +63,8 @@ struct Inner {
     size: (u32, u32),
     /// Paints done, and the time they took in all (for measuring).
     painted: (u64, Duration),
+    /// Closed for good (`Screen::close`): nothing is made or painted again.
+    closed: bool,
 }
 
 impl Screen {
@@ -70,6 +80,7 @@ impl Screen {
             drawn: None,
             size: (1, 1),
             painted: Default::default(),
+            closed: false,
         };
         let screen = Screen { inner: Arc::new(Mutex::new(inner)), anchor: glib::SendWeakRef::from(anchor.downgrade()) };
         // A box set before the window was on screen is placed once it is.
@@ -77,6 +88,14 @@ impl Screen {
         anchor.connect_map(move |_| {
             let rect = again.inner.lock().unwrap().rect;
             again.set(rect);
+        });
+        // The surface is a child of the window's: it goes, under the lock,
+        // before the window's does (the window closed), so a paint from the
+        // player's thread never draws into a surface whose parent is gone.
+        // Mapped again, it's made again.
+        let gone = screen.clone();
+        anchor.connect_unrealize(move |_| {
+            gone.inner.lock().unwrap().drawn = None;
         });
         screen
     }
@@ -130,6 +149,17 @@ impl Screen {
     pub fn painted(&self) -> (u64, Duration) {
         self.inner.lock().unwrap().painted
     }
+
+    /// Takes the surface away for good, from any thread, once a paint under
+    /// way has finished; nothing is drawn after. Call before the program
+    /// ends while the player may still be painting: its thread isn't
+    /// stopped, and the GPU driver's teardown at exit with a paint in it
+    /// crashed (NVIDIA's).
+    pub fn close(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.closed = true;
+        inner.drawn = None;
+    }
 }
 
 /// Whether the picture can go under the window's surface: under Wayland,
@@ -151,7 +181,7 @@ pub(crate) fn can_go_under() -> bool {
 impl Inner {
     /// Puts the surface where the box is (on the main thread).
     fn place(&mut self, anchor: &gtk::Widget) -> Result<()> {
-        let Some(rect) = self.rect.filter(|r| r.width >= 1.0 && r.height >= 1.0) else {
+        let Some(rect) = self.rect.filter(|r| r.width >= 1.0 && r.height >= 1.0 && !self.closed) else {
             self.drawn = None;
             return Ok(());
         };

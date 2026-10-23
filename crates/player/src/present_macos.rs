@@ -110,6 +110,8 @@ struct Inner {
     bgrx: Vec<u8>,
     /// Paints done, and the time they took in all (for measuring).
     painted: (u64, std::time::Duration),
+    /// Closed for good (`Screen::close`): nothing is shown again.
+    closed: bool,
 }
 
 /// The picture's layer.
@@ -154,6 +156,7 @@ impl Screen {
             id: None,
             bgrx: Vec::new(),
             painted: Default::default(),
+            closed: false,
         };
         let cover = Arc::new(MainThreadBound::new((cover, webview), mtm));
         Ok(Screen { cover, under: Arc::default(), inner: Arc::new(Mutex::new(inner)) })
@@ -173,6 +176,9 @@ impl Screen {
         let under = self.under.load(Ordering::Acquire);
         self.cover.get_on_main(|(cover, webview)| cover.fill(webview, under));
         let inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
         changed(|| match rect {
             Some(r) => {
                 let frame = CGRect::new(CGPoint::new(r.x, r.y), CGSize::new(r.width, r.height));
@@ -186,6 +192,9 @@ impl Screen {
     /// Shows `frame` (none: black), from any thread.
     pub fn show(&self, frame: Option<Arc<Frame>>) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
         let began = std::time::Instant::now();
         let image = frame.as_deref().and_then(|frame| inner.image(frame));
         changed(|| set_contents(&inner.picture.0, image.as_deref()));
@@ -196,6 +205,9 @@ impl Screen {
     /// Shows `overlay` over the picture (none: nothing), from any thread.
     pub fn overlay(&self, overlay: Option<Arc<Overlay>>) {
         let inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return;
+        }
         // RGBA in memory, premultiplied.
         let info = CGBitmapInfo(CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0);
         let image = overlay.as_deref().and_then(|o| Some((o.rect, image(o.size, &o.pixels, info)?)));
@@ -215,6 +227,15 @@ impl Screen {
     /// Paints done, and the time they took in all.
     pub fn painted(&self) -> (u64, std::time::Duration) {
         self.inner.lock().unwrap().painted
+    }
+
+    /// Stops showing frames for good, from any thread, once one under way
+    /// has been shown. Call before the app's window goes or the program
+    /// ends while the player may still be painting, as on the other
+    /// systems; here the layers are Core Animation's and outlive the view,
+    /// so it's only for the same order everywhere.
+    pub fn close(&self) {
+        self.inner.lock().unwrap().closed = true;
     }
 }
 

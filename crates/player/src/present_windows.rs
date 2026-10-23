@@ -49,7 +49,8 @@ struct Inner {
     under: bool,
     frame: Option<Arc<Frame>>,
     overlay: Option<Arc<Overlay>>,
-    painter: Draw,
+    /// None once closed (`Screen::close`): nothing is painted again.
+    painter: Option<Draw>,
     /// The window's size in pixels, as last set.
     size: (u32, u32),
     /// Paints done, and the time they took in all (for measuring).
@@ -73,7 +74,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             // SAFETY: one of the screen's windows (only they have this procedure).
             if let Some(inner) = unsafe { screen_of(hwnd) }
                 && let Ok(mut inner) = inner.try_lock()
-                && matches!(inner.painter, Draw::Gdi(_))
+                && matches!(inner.painter, Some(Draw::Gdi(_)))
             {
                 inner.paint();
             }
@@ -193,7 +194,7 @@ impl Screen {
             under: false,
             frame: None,
             overlay: None,
-            painter,
+            painter: Some(painter),
             size: (1, 1),
             painted: Default::default(),
         };
@@ -295,6 +296,15 @@ impl Screen {
     pub fn painted(&self) -> (u64, std::time::Duration) {
         self.inner.lock().unwrap().painted
     }
+
+    /// Stops drawing for good, from any thread, once a paint under way has
+    /// finished, and lets Direct3D's surface go. Call before the app's
+    /// window goes or the program ends while the player may still be
+    /// painting: its thread isn't stopped, and a paint into a window and
+    /// GPU driver torn down under it crashed NVIDIA's driver on Linux.
+    pub fn close(&self) {
+        self.inner.lock().unwrap().painter = None;
+    }
 }
 
 impl Inner {
@@ -306,8 +316,9 @@ impl Inner {
         let overlay = overlay.as_deref().map(|o| (o, scale));
         let began = std::time::Instant::now();
         match &mut self.painter {
-            Draw::Gpu(painter) => painter.paint(size, frame.as_deref(), overlay),
-            Draw::Gdi(gdi) => gdi.paint(self.hwnd, size, frame.as_deref(), overlay),
+            Some(Draw::Gpu(painter)) => painter.paint(size, frame.as_deref(), overlay),
+            Some(Draw::Gdi(gdi)) => gdi.paint(self.hwnd, size, frame.as_deref(), overlay),
+            None => return,
         }
         self.painted.0 += 1;
         self.painted.1 += began.elapsed();

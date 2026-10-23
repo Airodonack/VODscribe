@@ -265,6 +265,13 @@ pub fn run() {
             if let Err(e) = screen::attach(app.handle(), &main) {
                 eprintln!("The player's screen couldn't be put in the window: {e:#}");
             }
+            // Closed before the window goes, while the player may be painting.
+            let closing = app.handle().clone();
+            main.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { .. } = event {
+                    screen::close(&closing);
+                }
+            });
             // Behind the page, the window's background is the theme's (--bg in
             // app.css), not white; but clear where the window is see-through.
             if !see_through {
@@ -439,6 +446,8 @@ pub fn run() {
 /// stop first, so the jobs whose processes stop don't record that as a
 /// failure: they carry on at the next start as after any quit.
 fn quit(app: &AppHandle) {
+    // First: the player may be painting, and must stop before the program ends.
+    screen::close(app);
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
         vods::sweep(app, Some(&db));

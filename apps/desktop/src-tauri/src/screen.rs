@@ -42,6 +42,19 @@ pub(crate) fn attached(app: &AppHandle) -> bool {
     app.state::<Screen>().0.lock().unwrap().is_some()
 }
 
+/// Takes the screen away for good, before the window goes or the app ends:
+/// the player's thread paints each frame as it comes and isn't stopped, and a
+/// paint into a surface torn down under it (the window closed, or the GPU
+/// driver's teardown as the program exits) crashed NVIDIA's driver on quit
+/// while playing. Waits out a paint under way; none comes after.
+pub(crate) fn close(app: &AppHandle) {
+    if let Some(screen) = app.try_state::<Screen>()
+        && let Some(screen) = screen.0.lock().unwrap().as_ref()
+    {
+        screen.close();
+    }
+}
+
 /// Shows `frame` on the screen (none: black), if there is one.
 pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_player::decode::Frame>>) {
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {

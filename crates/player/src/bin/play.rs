@@ -130,6 +130,10 @@ fn main() -> anyhow::Result<()> {
     window.connect_destroy(|_| gtk::main_quit());
     window.show_all();
     gtk::main();
+    // The player's thread paints on till the program ends: the screen is
+    // closed first, waiting out a paint under way, so the GPU driver isn't
+    // torn down at exit under one (a quit while playing crashed NVIDIA's).
+    screen.close();
     let (paints, took) = screen.painted();
     let (shown, dropped) = player.counts();
     if paints > 0 {
@@ -397,6 +401,10 @@ fn main() -> anyhow::Result<()> {
                 LRESULT(0)
             }
             WM_DESTROY => {
+                // Before the screen's window, a child of this one, goes with it.
+                if let Some(screen) = SCREEN.get() {
+                    screen.close();
+                }
                 // SAFETY: posts to this thread's own queue.
                 unsafe { PostQuitMessage(0) };
                 LRESULT(0)
@@ -459,6 +467,10 @@ fn main() -> anyhow::Result<()> {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+    // As on Linux: no paint from the player's thread as the program ends.
+    if let Some(screen) = SCREEN.get() {
+        screen.close();
     }
     let (shown, dropped) = player.counts();
     let (paints, took) = SCREEN.get().map_or((0, Default::default()), Screen::painted);
