@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, TIMED_POLL, until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
 
 const NAME = "Landing edit";
@@ -543,7 +543,7 @@ export default {
           return e?.status === "ready" && e;
         },
         2 * MINUTE,
-        { every: 50 },
+        { every: TIMED_POLL },
       );
     });
     if (!rendered.file_path || !existsSync(rendered.file_path))

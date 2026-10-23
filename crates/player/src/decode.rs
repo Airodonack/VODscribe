@@ -93,7 +93,7 @@ impl Frame {
         let (ys, us, vs) = self.planes();
         let cw = self.chroma().0 as usize;
         // Each row of the matrix in 16.16 fixed point, for values of 0-255.
-        let m = to_rgb(self.colour).map(|row| row.map(|c| (c * 65536.0).round() as i32));
+        let m = rgb_matrix(self.colour).map(|row| row.map(|c| (c * 65536.0).round() as i32));
         let luma = m[0][0];
         let offsets = m.map(|row| row[3] * 255 + 32768);
         // The chroma's share of each colour, for one row of chroma.
@@ -127,7 +127,7 @@ pub fn chroma(width: u32, height: u32) -> (u32, u32) {
 /// The matrix taking (Y, Cb, Cr, 1), each value 0 to 1 as stored (8-bit
 /// over 255), to R, G and B 0 to 1: a row for each. The shader and
 /// `Frame::to_rgb` both convert with it.
-pub fn to_rgb(colour: Colour) -> [[f32; 4]; 3] {
+pub fn rgb_matrix(colour: Colour) -> [[f32; 4]; 3] {
     let (kr, kb) = match colour.matrix {
         Matrix::Bt601 => (0.299, 0.114),
         Matrix::Bt709 => (0.2126, 0.0722),

@@ -22,6 +22,11 @@ export function formatTime(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
 
+/** From `start` to `end`: 65, 130 -> "1:05–2:10". */
+export function formatSpan(start: number, end: number): string {
+  return `${formatTime(start)}–${formatTime(end)}`;
+}
+
 /** `seconds` to `digits` places, cut (not rounded) as a frame's time should
  *  be, but not just under: frame starts (k/fps) land a hair below. 1:02:03.25. */
 export function formatFraction(seconds: number, digits: number): string {

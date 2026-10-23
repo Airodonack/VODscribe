@@ -690,20 +690,19 @@ pub(crate) struct Line {
     pub(crate) text: String,
 }
 
-/// VOD `vod_id`'s lines: all of them, those starting after `after`, or with
-/// `from`, those starting from it to before `to` (None: on to the end), the
-/// range of a stretch being transcribed, whose lines replace those there.
+/// VOD `vod_id`'s lines: all of them, or with `from`, those starting from it
+/// to before `to` (None: on to the end), the range of a stretch being
+/// transcribed, whose lines replace those there.
 #[tauri::command]
 pub(crate) async fn transcript(
     app: AppHandle,
     vod_id: i64,
-    after: Option<f64>,
     from: Option<f64>,
     to: Option<f64>,
 ) -> CmdResult<Vec<Line>> {
     let lines = crate::with_reads(app, move |db| match from {
         Some(from) => db.lines_between(vod_id, from, to),
-        None => db.lines(vod_id, after),
+        None => db.lines(vod_id),
     })
     .await?;
     Ok(lines.into_iter().map(|(start, end, text)| Line { start, end, text }).collect())

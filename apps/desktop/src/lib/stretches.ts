@@ -1,8 +1,21 @@
 // What of a VOD is transcribed, and what is asked to be (crates/core
 // stretches.rs, read with `transcript_stretches`): for the transcript's rows
-// where there are no lines yet (Transcript.svelte), and Transcribe the rest.
+// where there are no lines yet (Transcript.svelte), Transcribe the rest, and
+// how much a row says is transcribed (VodRow.svelte).
 
 import type { Status, Stretch, Vod, api } from "./api";
+
+/** A request's status in words, as a VOD's row and the transcript's rows say it; none for done or nothing asked. */
+export const statusLabel: Record<Status, string> = {
+  queued: "Waiting to download",
+  downloading: "Downloading",
+  ready: "Waiting to transcribe",
+  transcribing: "Transcribing",
+  paused: "Paused",
+  done: "",
+  error: "Failed",
+  none: "",
+};
 
 /** Ranges this close count as touching (crates/core stretches.rs `EDGE`):
  *  a VOD's length from its site and the end of its audio differ by a little. */

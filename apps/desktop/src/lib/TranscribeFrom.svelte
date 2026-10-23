@@ -7,7 +7,7 @@
 
   import { api, type Vod } from "./api";
   import Icon from "./Icon.svelte";
-  import { formatTime } from "./platform";
+  import { formatSpan, formatTime } from "./platform";
   import Popover from "./Popover.svelte";
   import { load, save } from "./stored";
 
@@ -53,7 +53,7 @@
   function describe(choice: Choice): string {
     const { start, end } = stretchOf(choice);
     const until = end ?? vod.duration;
-    return until ? `${formatTime(start)}–${formatTime(until)}` : `from ${formatTime(start)}`;
+    return until ? formatSpan(start, until) : `from ${formatTime(start)}`;
   }
 
   function pick(choice: Choice) {

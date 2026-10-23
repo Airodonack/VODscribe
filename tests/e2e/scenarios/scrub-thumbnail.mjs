@@ -57,12 +57,13 @@ export default {
     await app.toLibrary();
     await app.pickFiles([file]);
     await app.clickText("add video files…");
+    // Added, it isn't transcribed (it has no sound anyway): its picture is what's waited for.
     const vod = await until(
-      "the video, done, with its picture",
+      "the video, with its picture",
       async () => {
         const [vod] = await app.invoke("list_vods");
         if (vod?.status === "error") throw new Error(vod.error);
-        return vod?.status === "done" && vod.thumb && vod;
+        return vod?.thumb && vod;
       },
       5 * MINUTE,
     );

@@ -62,7 +62,7 @@ fn dir(app: &AppHandle) -> PathBuf {
 }
 
 /// Where the storyboard of `source`, a file of VOD `vod_id`'s, is kept.
-pub(crate) fn file(dir: &Path, vod_id: i64, source: &Path) -> PathBuf {
+fn file(dir: &Path, vod_id: i64, source: &Path) -> PathBuf {
     dir.join(format!("{vod_id}-{:016x}.sb", hash(source.to_string_lossy().as_bytes())))
 }
 

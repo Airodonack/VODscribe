@@ -17,7 +17,7 @@ use crate::decode::{self, Frame};
 
 /// Textures drawn in a box, as a quad in clip space: the picture, opaque,
 /// from its three planes of YUV turned into RGB by its matrix (`fs_picture`:
-/// `decode::to_rgb`'s); the overlay, premultiplied RGBA, blended over it
+/// `decode::rgb_matrix`); the overlay, premultiplied RGBA, blended over it
 /// (`fs_over`).
 const SHADER: &str = "
 struct Out { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -272,7 +272,7 @@ impl Compositor {
                 self.picture = Some(self.fill_planes(planes, frame));
             }
             let (fx, fy, fw, fh) = fit(frame, (w, h));
-            let [r, g, b] = decode::to_rgb(frame.colour);
+            let [r, g, b] = decode::rgb_matrix(frame.colour);
             let uniform = [clip(fx, fy, fw, fh), r, g, b].concat();
             self.queue.write_buffer(&self.picture.as_ref().unwrap().uniform, 0, &bytes(&uniform));
         }

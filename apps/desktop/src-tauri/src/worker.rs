@@ -295,18 +295,18 @@ fn finish(
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
 
 /// Ends request `stretch_id`, keeping the lines it wrote: it's done as far
-/// as it reached (`Db::end_request`). Its section of audio goes; with no
-/// other request of its VOD left, the VOD's work files go, and, if it asked
-/// for all of the VOD, a partly downloaded video where downloading it is
-/// part of transcribing (one kept whole, or downloaded on request
-/// (videos.rs), stays). A stretch's own section never downloads the video:
-/// a download there is "Keep video"'s, or Play's. A stretch already done
-/// isn't a request: it's left as it is.
+/// as it reached (`Db::end_request`). Its section of audio goes. With no
+/// other request of its VOD left, the VOD's work files go too, and, if it
+/// asked for all of the VOD, so does a partly downloaded video where
+/// downloading it is part of transcribing; a video kept whole, or downloaded
+/// on request (videos.rs), stays. A stretch's own section never downloads
+/// the video: a download there is "Keep video"'s, or Play's. A stretch
+/// already done isn't a request: it's left as it is.
 pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
     let Some(stretch) = db.stretch(stretch_id)?.filter(|s| s.status != Status::Done) else { return Ok(()) };
     let vod_id = stretch.vod_id;
     let whole = stretch.is_whole();
-    remove_section(work_dir, &stretch);
+    pipeline::remove_section(work_dir, stretch.vod_id, stretch.id);
     db.end_request(stretch_id)?;
     if !db.requests(vod_id)?.is_empty() {
         return Ok(());
@@ -317,12 +317,6 @@ pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()
         pipeline::remove_media(work_dir, vod_id);
     }
     Ok(())
-}
-
-/// Deletes request `stretch`'s section of audio, and any part of one.
-fn remove_section(work_dir: &std::path::Path, stretch: &Stretch) {
-    let stem = pipeline::section_stem(work_dir, stretch.vod_id, stretch.id);
-    pipeline::remove_work_prefix(work_dir, &stem.file_name().unwrap_or_default().to_string_lossy());
 }
 
 /// A progress reporter that throttles events and remembers the last value.
@@ -430,7 +424,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, pr
         let _ = crate::emit_vod(&app, &notes, vod.id);
     };
     pipeline::transcribe(&mut ctx.db, vod, stretch, &ffmpeg, &audio, &transcription, flag, &mut report, &mut notice)?;
-    remove_section(&ctx.paths.work(), stretch);
+    pipeline::remove_section(&ctx.paths.work(), vod.id, stretch.id);
     // The whole audio stays while another request of the VOD may use it.
     if ctx.db.requests(vod.id)?.is_empty() {
         pipeline::remove_work_files(&ctx.paths.work(), vod.id);
@@ -560,9 +554,9 @@ mod tests {
         (vod.status, vod.error)
     }
 
-    /// Request `stretch`'s VOD's lines, as (start, text).
+    /// VOD `vod`'s lines, as (start, text).
     fn lines(db: &Db, vod: i64) -> Vec<(f64, String)> {
-        db.lines(vod, None).unwrap().into_iter().map(|(start, _, text)| (start, text)).collect()
+        db.lines(vod).unwrap().into_iter().map(|(start, _, text)| (start, text)).collect()
     }
 
     /// Writes a line from 0 to 10 s for request `id`, which reached its end.

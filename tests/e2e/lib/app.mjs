@@ -61,7 +61,7 @@ export function watchWith(check) {
 }
 
 /** How often a timed step's wait looks (ms). */
-const TIMED_POLL = 50;
+export const TIMED_POLL = 50;
 
 /** The monotonic clock, in seconds: perf's samples are stamped by it (lib/profile.sh). */
 export const clock = () => Number(process.hrtime.bigint()) / 1e9;

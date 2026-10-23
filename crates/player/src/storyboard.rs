@@ -30,12 +30,12 @@ use vodscribe_core::tools;
 
 /// A frame's height in pixels: the timeline's thumbnail is 44 CSS pixels
 /// tall (88 at twice the density), the library row's 45.
-pub const HEIGHT: u32 = 90;
+const HEIGHT: u32 = 90;
 /// Slots are at least this far apart, in seconds…
-pub const SHORTEST_INTERVAL: f64 = 2.0;
+const SHORTEST_INTERVAL: f64 = 2.0;
 /// …and at most this many: past two hours they spread out, so a file's
 /// storyboard stays near 15 MB however long it is.
-pub const MOST_SLOTS: u32 = 3600;
+const MOST_SLOTS: u32 = 3600;
 /// Slots fetched by one ffmpeg: each its own input, sought to its time. Eight
 /// was about two and a half times as fast as one ffmpeg per frame (1080p
 /// H.264: 32 ms a frame against 74), at 210 MB of memory against 64; sixteen
@@ -109,7 +109,7 @@ impl Layout {
 /// Slots `0..slots` in the order they're made: the middle, then the
 /// quarters, then the eighths, and so on down, so wherever the pointer is
 /// a frame not far off is made early.
-pub fn order(slots: u32) -> Vec<u32> {
+fn order(slots: u32) -> Vec<u32> {
     let mut seen = vec![false; slots as usize];
     let mut out = Vec::with_capacity(slots as usize);
     let mut parts = 2u64;

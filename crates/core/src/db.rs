@@ -627,7 +627,7 @@ CREATE TRIGGER items_recounted AFTER UPDATE OF vod_id ON items WHEN OLD.vod_id I
 END;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
-/// Its stretches come as one JSON array (`stretches::STRETCH_JSON`), for its status.
+/// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, added_at,
      note, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
@@ -1502,14 +1502,8 @@ impl Db {
 
     /// VOD `vod_id`'s lines as (start, end, text), without the per-word
     /// timings that `segments` also parses: what the transcript view needs.
-    /// Those starting after `after`, if given.
-    pub fn lines(&self, vod_id: i64, after: Option<f64>) -> Result<Vec<(f64, f64, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT start, end, text FROM segments WHERE vod_id = ?1 AND start > ?2 ORDER BY start")?;
-        let rows =
-            stmt.query_map(params![vod_id, after.unwrap_or(f64::MIN)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    pub fn lines(&self, vod_id: i64) -> Result<Vec<(f64, f64, String)>> {
+        self.lines_between(vod_id, f64::MIN, None)
     }
 
     /// VOD `vod_id`'s lines starting from `from` to before `to` (None: on to
@@ -2564,16 +2558,14 @@ mod tests {
     }
 
     #[test]
-    fn lines_after_a_start() {
+    fn lines_all_or_between() {
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let line = |start: f64, text: &str| Segment { start, end: start + 1.0, text: text.into(), words: Vec::new() };
         db.insert_segments(vod, &[line(0.0, "one"), line(2.5, "two")]).unwrap();
         db.insert_segments(vod, &[line(4.0, "three")]).unwrap();
-        let texts = |after| db.lines(vod, after).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
-        assert_eq!(texts(None), ["one", "two", "three"]);
-        assert_eq!(texts(Some(2.5)), ["three"], "only those after the last one shown");
-        assert!(texts(Some(4.0)).is_empty());
+        let texts = db.lines(vod).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
+        assert_eq!(texts, ["one", "two", "three"]);
         let between =
             |from, to| db.lines_between(vod, from, to).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
         assert_eq!(between(2.5, Some(4.0)), ["two"], "from its start, to before its end");
@@ -2896,7 +2888,7 @@ mod tests {
         db.set_chat_status(b, ChatStatus::Failed, Some("Kick isn't responding")).unwrap();
         assert_eq!(db.chat_pending().unwrap(), [b]);
         while db.delete_some_of(a, 1).unwrap() > 0 {}
-        assert!(db.chat(a).unwrap().is_empty() && db.lines(a, None).unwrap().is_empty(), "deleted a part at a time");
+        assert!(db.chat(a).unwrap().is_empty() && db.lines(a).unwrap().is_empty(), "deleted a part at a time");
         assert!(db.vod(a).unwrap().is_some(), "the VOD itself stays until delete_vod");
         db.delete_vod(a).unwrap();
         assert!(db.search("gg", &SearchFilter::default(), 10).unwrap().hits.is_empty());

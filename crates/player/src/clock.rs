@@ -855,13 +855,13 @@ fn run(inner: &Inner) {
             if let Some(old) = old.filter(|_| adopted) {
                 inner.keep_for_preview(old);
             }
-            let Some(stream) = current.as_mut() else {
+            let Some(decoder) = current.as_mut() else {
                 // ffmpeg wouldn't start: nothing to show till the next seek.
                 mark_ready(inner, epoch);
                 wait_until(inner, epoch, f64::INFINITY);
                 continue 'start;
             };
-            while let Some(frame) = stream.recv() {
+            while let Some(frame) = decoder.recv() {
                 if first {
                     mark_ready(inner, epoch);
                 }

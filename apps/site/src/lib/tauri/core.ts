@@ -46,13 +46,8 @@ const commands: Record<string, (args: Args) => unknown> = {
   reorder_library: ({ items }) =>
     backend.reorder((items as { kind: string; id: number }[]).filter((i) => i.kind === "vod").map((i) => i.id)),
   search: ({ query, filter }) => backend.search(query as string, (filter ?? {}) as SearchFilter),
-  transcript: ({ vodId, after, from, to }) =>
-    backend.transcript(
-      vodId as number,
-      after as number | undefined,
-      from as number | undefined,
-      to as number | null | undefined,
-    ),
+  transcript: ({ vodId, from, to }) =>
+    backend.transcript(vodId as number, from as number | undefined, to as number | null | undefined),
   transcript_stretches: ({ vodId }) => backend.transcriptStretches(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),

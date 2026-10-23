@@ -582,11 +582,12 @@ export const api = {
     invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
   /** A URL that plays Twitch clip `slug`'s video, signed for a while. */
   twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
-  /** The transcript's lines; with `after`, only those starting after it. */
-  transcript: (vodId: number, after?: number) => invoke<Line[]>("transcript", { vodId, after }),
+  /** The transcript's lines. */
+  transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
   /** The lines starting from `from` to before `to` (null: on to the end): a stretch's, as it's transcribed. */
   transcriptRange: (vodId: number, from: number, to: number | null) =>
     invoke<Line[]>("transcript", { vodId, from, to }),
+  /** What of a VOD is transcribed and asked to be, in time order. */
   transcriptStretches: (vodId: number) => invoke<Stretch[]>("transcript_stretches", { vodId }),
   /** Asks for `start`..`end` (null: to the end) of a VOD to be transcribed. */
   transcribeStretch: (vodId: number, start: number, end: number | null) =>

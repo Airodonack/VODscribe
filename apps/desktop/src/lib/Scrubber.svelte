@@ -55,7 +55,7 @@
   import MarkEditor from "./MarkEditor.svelte";
   import Spinner from "./Spinner.svelte";
   import ScrubFrame from "./ScrubFrame.svelte";
-  import { nearWithin, place } from "./scrubFrame";
+  import { TIP_INSET, nearWithin, place } from "./scrubFrame";
   import { ExactFrame } from "./exactFrame.svelte";
   import type { Mark } from "./api";
 
@@ -950,7 +950,9 @@
       class:wide={!!hoverMark}
       class:beside={beside.frame !== null}
       bind:offsetWidth={tipWidth}
-      style:left={beside.frame !== null ? `${beside.tip}px` : `${Math.min(Math.max(hover, 28), width - 28)}px`}
+      style:left={beside.frame !== null
+        ? `${beside.tip}px`
+        : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
       >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
           tipTime ?? hoverTime,
         )}{/if}</span

@@ -21,7 +21,7 @@
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, nearestLine, type Row } from "./rows";
-  import { shownGaps, type Gap } from "./stretches";
+  import { shownGaps, statusLabel, type Gap } from "./stretches";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
@@ -178,20 +178,10 @@
     api.cancelStretch(id).catch((e) => (error = String(e)));
   }
 
-  // A request's state at its place, in the words of the VOD's row (VodRow.svelte).
-  const requestLabels: Record<Stretch["status"], string> = {
-    queued: "Waiting to download",
-    downloading: "Downloading",
-    ready: "Waiting to transcribe",
-    transcribing: "Transcribing",
-    paused: "Paused",
-    done: "",
-    error: "Failed",
-  };
   /** Request `request`'s state, as far as it's got: the VOD's own events have the latest of the one it shows. */
   function requestLabel(request: Stretch): string {
     const live = vod?.stretch === request.id ? vod : request;
-    const label = live.status === "none" ? "" : requestLabels[live.status];
+    const label = statusLabel[live.status];
     const busy = live.status === "downloading" || live.status === "transcribing";
     return busy ? `${label} ${Math.round(live.progress * 100)}%` : label;
   }

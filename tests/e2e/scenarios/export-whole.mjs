@@ -4,7 +4,7 @@
 
 import { existsSync } from "node:fs";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, TIMED_POLL, until } from "../lib/app.mjs";
 
 export default {
   name: "export-whole",
@@ -50,7 +50,7 @@ export default {
           return c?.status === "ready" && c;
         },
         MINUTE,
-        { every: 50 },
+        { every: TIMED_POLL },
       );
     });
     if (clip.start > 0.05 || Math.abs(clip.end - vod.duration) > 0.1)

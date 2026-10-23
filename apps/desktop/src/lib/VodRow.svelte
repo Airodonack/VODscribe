@@ -14,8 +14,8 @@
   import Icon from "./Icon.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, os, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
-  import { requestDetail } from "./stretches";
   import Spinner from "./Spinner.svelte";
+  import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
   import Thumb from "./Thumb.svelte";
 
   let {
@@ -37,17 +37,6 @@
     onerror: (message: string | null) => void;
   } = $props();
 
-  const statusLabel: Record<Vod["status"], string> = {
-    queued: "Waiting to download",
-    downloading: "Downloading",
-    ready: "Waiting to transcribe",
-    transcribing: "Transcribing",
-    paused: "Paused",
-    done: "",
-    error: "Failed",
-    none: "",
-  };
-
   // Nothing asked of it, and not all of it transcribed.
   const untouched = $derived(vod.status === "none");
   // Its stretches, read when the row says something of them: how much is
@@ -68,9 +57,7 @@
   });
   const covered = $derived.by(() => {
     const end = vod.duration ?? Infinity;
-    return stretches
-      .filter((s) => s.status === "done")
-      .reduce((sum, s) => sum + Math.max(0, Math.min(s.end ?? end, end) - s.start), 0);
+    return coveredBy(stretches).reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, end) - a), 0);
   });
   // After the request's state: its range, unless it's all of it, and how many more wait.
   const detail = $derived(

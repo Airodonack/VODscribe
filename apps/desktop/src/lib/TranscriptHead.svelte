@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, type Stretch, type Vod } from "./api";
-  import { formatTime } from "./platform";
+  import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
   import Icon from "./Icon.svelte";
   import Spinner from "./Spinner.svelte";
@@ -54,7 +54,7 @@
   // Which stretch is being transcribed; the whole VOD needs no saying.
   const span = $derived(
     stretch && !(stretch.start <= 0 && stretch.end === null)
-      ? `${formatTime(stretch.start)}–${formatTime(stretch.end ?? vod?.duration ?? 0)} · `
+      ? `${formatSpan(stretch.start, stretch.end ?? vod?.duration ?? 0)} · `
       : "",
   );
 </script>

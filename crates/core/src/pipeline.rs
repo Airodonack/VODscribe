@@ -78,6 +78,12 @@ pub fn section_stem(work_dir: &Path, vod_id: i64, stretch_id: i64) -> PathBuf {
     work_dir.join(format!("{vod_id}.s{stretch_id}"))
 }
 
+/// Deletes request `stretch_id`'s section of audio, and any part of one.
+pub fn remove_section(work_dir: &Path, vod_id: i64, stretch_id: i64) {
+    let stem = section_stem(work_dir, vod_id, stretch_id);
+    remove_work_prefix(work_dir, &stem.file_name().unwrap_or_default().to_string_lossy());
+}
+
 /// Gets the audio to transcribe `stretch` from, the first way that works:
 ///
 /// 1. a file on this computer, or the VOD's kept video, read in place (the
@@ -130,7 +136,7 @@ pub fn audio_for(
                     "VOD {}: its section {}-{end} didn't download, so all of it does: {e:#}",
                     vod.id, stretch.start
                 );
-                remove_work_prefix(work_dir, &format!("{}.s{}", vod.id, stretch.id));
+                remove_section(work_dir, vod.id, stretch.id);
             }
         }
     }
@@ -139,7 +145,7 @@ pub fn audio_for(
     Ok(Source::Whole { path, downloaded: true })
 }
 
-/// The stem of VOD `vod_id`'s info JSON in `work_dir`, probed again if
+/// Where VOD `vod`'s info JSON is in `work_dir`, probed again first if
 /// it's older than its URLs last.
 fn fresh_info(yt_dlp: &YtDlp, vod: &Vod, work_dir: &Path, cancel: &AtomicBool) -> Result<PathBuf> {
     fs::create_dir_all(work_dir)?;

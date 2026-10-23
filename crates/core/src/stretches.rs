@@ -160,7 +160,7 @@ pub(crate) fn summarize(stretches: &[Stretch], duration: Option<f64>, has_segmen
 /// The ranges of a VOD that are transcribed, in order and apart: its done
 /// stretches, and what its requests have reached. An end of infinity is the
 /// VOD's end.
-pub fn covered(stretches: &[Stretch]) -> Vec<(f64, f64)> {
+pub(crate) fn covered(stretches: &[Stretch]) -> Vec<(f64, f64)> {
     let mut ranges: Vec<(f64, f64)> = stretches
         .iter()
         .filter_map(|s| match s.status {
@@ -181,7 +181,7 @@ pub fn covered(stretches: &[Stretch]) -> Vec<(f64, f64)> {
 }
 
 /// How much of a VOD `duration` long (None: unknown) `stretches` cover.
-pub fn transcribed(stretches: &[Stretch], duration: Option<f64>) -> Transcribed {
+pub(crate) fn transcribed(stretches: &[Stretch], duration: Option<f64>) -> Transcribed {
     let covered = covered(stretches);
     let Some(&(a, b)) = covered.first() else { return Transcribed::None };
     let end = duration.map_or(f64::INFINITY, |d| d - EDGE);
@@ -318,12 +318,12 @@ impl Db {
     }
 
     /// Records how far request `id` has written lines.
-    pub fn set_reached(&self, id: i64, reached: Option<f64>) -> Result<()> {
+    pub(crate) fn set_reached(&self, id: i64, reached: Option<f64>) -> Result<()> {
         self.conn.execute("UPDATE stretches SET reached = ?2 WHERE id = ?1", params![id, reached])?;
         Ok(())
     }
 
-    pub fn set_stretch_model(&self, id: i64, model: Option<&str>) -> Result<()> {
+    pub(crate) fn set_stretch_model(&self, id: i64, model: Option<&str>) -> Result<()> {
         self.conn.execute("UPDATE stretches SET model = ?2 WHERE id = ?1", params![id, model])?;
         Ok(())
     }
@@ -357,7 +357,7 @@ impl Db {
     /// Widens request `id` outwards to the edges of any line its start or
     /// end cuts through, so a line is transcribed again whole or not at all;
     /// before it starts only (later, its audio is already cut to it).
-    pub fn snap_stretch(&self, id: i64) -> Result<Stretch> {
+    pub(crate) fn snap_stretch(&self, id: i64) -> Result<Stretch> {
         self.atomically(|db| {
             let stretch = db.stretch(id)?.context("That request is gone.")?;
             if stretch.reached.is_some() {
@@ -414,7 +414,7 @@ impl Db {
 
     /// Rewrites the transcript's search index without the entries of lines
     /// replaced since (`Db::tidy_index`): after a stretch replaced some.
-    pub fn tidy_segments(&self) -> Result<()> {
+    pub(crate) fn tidy_segments(&self) -> Result<()> {
         self.tidy_index("segments_fts")
     }
 
@@ -450,7 +450,7 @@ impl Db {
     /// overlap (`newest`, if given, is the latest; it's the one that just
     /// finished, whatever its id). Neighbours made by the same model become
     /// one. The rows are written anew.
-    pub fn merge_done(&self, vod_id: i64, newest: Option<i64>) -> Result<()> {
+    pub(crate) fn merge_done(&self, vod_id: i64, newest: Option<i64>) -> Result<()> {
         self.atomically(|db| {
             let mut done: Vec<Stretch> =
                 db.stretches(vod_id)?.into_iter().filter(|s| s.status == Status::Done).collect();

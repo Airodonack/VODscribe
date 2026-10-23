@@ -101,10 +101,9 @@ function segments(vodId: number): Promise<Indexed[]> {
   );
 }
 
-/** A demo VOD's lines: all, those after `after`, or from `from` to before `to` (null: on to the end). */
-export async function transcript(vodId: number, after?: number, from?: number, to?: number | null): Promise<Line[]> {
+/** A demo VOD's lines: all, or from `from` to before `to` (null: on to the end). */
+export async function transcript(vodId: number, from?: number, to?: number | null): Promise<Line[]> {
   return (await segments(vodId))
-    .filter(({ start }) => after === undefined || start > after)
     .filter(({ start }) => from === undefined || (start >= from && (to == null || start < to)))
     .map(({ start, text }) => ({ start, text }));
 }

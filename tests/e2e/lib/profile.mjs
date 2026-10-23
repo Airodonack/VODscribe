@@ -155,7 +155,7 @@ function frameName({ sym, dso }) {
  * (ffmpeg), "transcription" (the worker, but for our own code in it), "toolkit" (GTK,
  * GLib, fonts), "system" (the kernel, libc).
  */
-export function owner(sample, frame = sample.frames[0]) {
+function owner(sample, frame = sample.frames[0]) {
   const { sym, dso } = frame;
   if (/^ffmpeg|^ffprobe/.test(sample.process)) return "media";
   if (/^llvmpipe|^lavapipe/.test(sample.thread)) return "graphics";
