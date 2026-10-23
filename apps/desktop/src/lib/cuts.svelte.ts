@@ -13,7 +13,8 @@
 
 import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
-import { stepOf } from "./playerKeys";
+import { is } from "./keys.svelte";
+import { isEscape, markFramesOf } from "./playerKeys";
 
 class Cuts {
   /** Whose marks these are: a VOD's or an edit's. */
@@ -264,35 +265,32 @@ export const cuts = new Cuts();
  * , and . move it a frame (ten with Shift), the arrows, J and L as far as
  * they'd move the playhead, in whole frames, the playback stopping on its
  * frame, which the picture then shows; Delete takes it away (a press, not
- * its repeats); Escape lets go of it, or of the selection. True if `key` was
- * one of them, done.
+ * its repeats); Escape lets go of it, or of the selection. True if `e` was
+ * one of them, done. The keys are the map's (keys.svelte.ts), Escape aside.
  */
 export function markKey(
-  key: string,
   e: KeyboardEvent,
   at: { fps: number; length: number; pause: () => void; seekTo: (time: number) => void },
 ): boolean {
-  if (key === "Enter" && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
+  if (is(e, "mark.rename") && cuts.all.some((m) => m.id === cuts.selected && m.kind !== "cut")) {
     cuts.editing = cuts.selected;
     return true;
   }
-  if (key === "Escape" && cuts.selection) {
+  const escape = isEscape(e);
+  if (escape && cuts.selection) {
     cuts.clearSelection();
     return true;
   }
   const moving = cuts.selected !== null || (cuts.selection && cuts.selectedEdge);
-  const frameKey = key === "," || key === "." || key === "<" || key === ">";
-  if (moving && (frameKey || stepOf(key, e.shiftKey) !== undefined)) {
-    const frames = frameKey
-      ? (key === "," || key === "<" ? -1 : 1) * (e.shiftKey ? 10 : 1)
-      : Math.round(stepOf(key, e.shiftKey)! * at.fps);
+  const frames = markFramesOf(e, is, at.fps);
+  if (moving && frames !== undefined) {
     at.pause();
     const time = cuts.nudgeSelected(frames, at.fps, at.length);
     if (time !== null) at.seekTo(inFrame(time, at.fps, at.length));
     return true;
   }
-  if (cuts.selected !== null && (key === "Delete" || key === "Backspace" || key === "Escape")) {
-    if (key === "Escape") cuts.selected = null;
+  if (cuts.selected !== null && (is(e, "mark.remove") || escape)) {
+    if (escape) cuts.selected = null;
     else if (!e.repeat) cuts.remove(cuts.selected);
     return true;
   }

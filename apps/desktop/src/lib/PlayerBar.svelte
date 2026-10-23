@@ -19,6 +19,7 @@
   import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
   import { frameIndex } from "./media";
+  import { keyHint } from "./keys.svelte";
   import { formatTime } from "./platform";
   import Popover from "./Popover.svelte";
   import { load, save } from "./stored";
@@ -170,7 +171,7 @@
       class="control"
       onclick={() => toggleMute(player)}
       aria-label={muted ? "Unmute" : "Mute"}
-      title={muted ? "Unmute (Shift+M)" : "Mute (Shift+M)"}
+      title={`${muted ? "Unmute" : "Mute"}${keyHint("mute.toggle")}`}
     >
       <Icon name={muted ? "volume-off" : "volume"} size={16} />
     </button>
@@ -218,8 +219,8 @@
       title={!captionsAvailable
         ? "Transcribe to get captions"
         : captionsOn
-          ? "Hide captions (Shift+C)"
-          : "Show captions (Shift+C)"}
+          ? `Hide captions${keyHint("captions.toggle")}`
+          : `Show captions${keyHint("captions.toggle")}`}
     >
       <Icon name="captions" size={16} />
     </button>
@@ -229,7 +230,7 @@
       class="control"
       onclick={() => onfullscreen(!fullscreen)}
       aria-label={fullscreen ? "Exit full screen" : "Full screen"}
-      title={fullscreen ? "Exit full screen (Esc)" : "Full screen (F)"}
+      title={fullscreen ? "Exit full screen (Esc)" : `Full screen${keyHint("fullscreen.toggle")}`}
     >
       <Icon name={fullscreen ? "minimize" : "maximize"} size={16} />
     </button>

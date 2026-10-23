@@ -19,7 +19,8 @@
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { keysForApp } from "./demo";
-  import { inOut, playerKey, transportKey, vodShortcuts } from "./playerKeys";
+  import { bindingsOf, is } from "./keys.svelte";
+  import { inOut, isEscape, playerKey, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import {
     formatFraction,
@@ -359,30 +360,31 @@
   });
 
   // Keyboard control for whichever player is open. Keys pressed while the
-  // player's own iframe has focus go to that player instead.
+  // player's own iframe has focus go to that player instead. Which key does
+  // what is the map's (keys.svelte.ts); Escape is always Escape.
   function onKey(e: KeyboardEvent) {
-    const key = playerKey(e);
-    if (key === null || !canEmbed(vod) || !keysForApp()) return;
+    if (playerKey(e) === null || !canEmbed(vod) || !keysForApp()) return;
     // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), C
     // makes a clip (bare: Ctrl+C is copy), and T transcribes, where the
     // button's offered.
-    const bare = !e.shiftKey && !e.ctrlKey && !e.metaKey;
-    if (key === "b" || (key === "c" && bare) || (key === "t" && bare && canTranscribe)) {
+    const cut = is(e, "cut.here");
+    const clip = is(e, "clip.make");
+    if (cut || clip || (is(e, "transcribe.here") && canTranscribe)) {
       // Held down, it's one press.
       if (e.repeat) return e.preventDefault();
       collapsed = false;
-      if (key === "b") split();
-      else if (key === "c") makeClip();
+      if (cut) split();
+      else if (clip) makeClip();
       else transcribe();
       e.preventDefault();
       return;
     }
-    if (e.ctrlKey || e.metaKey) return;
     // I and O put the selection's in and out points at the playhead, as in
     // video editors; with none, I or O begins one.
-    if ((key === "i" || key === "o") && !e.shiftKey) {
+    const end = is(e, "selection.in") ? "i" : is(e, "selection.out") ? "o" : null;
+    if (end) {
       const stops = cuts.list.map((m) => m.start);
-      const picked = duration ? inOut(key, frameStart(now, fps), cuts.selection, stops, duration) : null;
+      const picked = duration ? inOut(end, frameStart(now, fps), cuts.selection, stops, duration) : null;
       // The arrows go on moving the playhead, not an edge or a mark.
       if (picked) {
         cuts.selection = picked;
@@ -393,27 +395,28 @@
       return;
     }
     // Shift with a letter is the player's own: captions (C) and mute (M).
-    if (e.shiftKey && (key === "c" || key === "m")) {
-      if (key === "c") player?.captions?.toggle();
+    if (is(e, "captions.toggle") || is(e, "mute.toggle")) {
+      if (is(e, "captions.toggle")) player?.captions?.toggle();
       else toggleMute(player);
       e.preventDefault();
       return;
     }
     // M marks a highlight here (a marker, as in video editors), N starts a
     // chapter, each with its title to write.
-    if (key === "m" || key === "n") {
-      if (!e.repeat) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
+    const highlight = is(e, "mark.highlight");
+    if (highlight || is(e, "mark.chapter")) {
+      if (!e.repeat) cuts.add(highlight ? "highlight" : "chapter", now, fps);
       collapsed = false;
       e.preventDefault();
       return;
     }
     // The selected mark (or the selection's edge): renamed, moved, taken away.
     const pause = () => player?.playing() && player.togglePlay();
-    if (markKey(key, e, { fps, length: duration, pause, seekTo })) {
+    if (markKey(e, { fps, length: duration, pause, seekTo })) {
       e.preventDefault();
       return;
     }
-    if (!active && (key === " " || key === "k")) {
+    if (!active && is(e, "play.toggle")) {
       activate(from);
       e.preventDefault();
       return;
@@ -421,14 +424,18 @@
     const p = player;
     // No player yet (loading, or failed): only full screen is for us; Space
     // and the arrows keep their usual meaning (a focused button, scrolling).
-    if (!p && key !== "f" && !(key === "Escape" && fullscreen)) return;
-    const done = transportKey(key, e.shiftKey, {
-      togglePlay: () => p?.togglePlay(),
-      seekBy: (s) => p?.seek(Math.max(0, p.time() + s), false),
-      step: p?.step && ((n) => p.step!(n)),
-      fullscreen,
-      setFullscreen,
-    });
+    if (!p && !is(e, "fullscreen.toggle") && !(isEscape(e) && fullscreen)) return;
+    const done = transportKey(
+      e,
+      {
+        togglePlay: () => p?.togglePlay(),
+        seekBy: (s) => p?.seek(Math.max(0, p.time() + s), false),
+        step: p?.step && ((n) => p.step!(n)),
+        fullscreen,
+        setFullscreen,
+      },
+      is,
+    );
     // preventDefault also stops Space from clicking a focused button, such
     // as the search result that was just clicked.
     if (done) e.preventDefault();
@@ -437,7 +444,7 @@
 
 <svelte:window onkeydown={onKey} onpointermove={onClipMove} onpointerup={() => (clipPress = null)} />
 
-<PlayerPanel bind:fullscreen shortcuts={vodShortcuts(framed, os === "mac")} controls={vodControls} {stage} {below}>
+<PlayerPanel bind:fullscreen shortcuts={vodShortcuts(framed, os, bindingsOf)} controls={vodControls} {stage} {below}>
   {#snippet head()}
     <div class="info">
       <strong title={vod.title}>{vod.title}</strong>

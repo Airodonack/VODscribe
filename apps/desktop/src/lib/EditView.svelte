@@ -16,7 +16,8 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { editShortcuts, inOut, playerKey, transportKey } from "./playerKeys";
+  import { bindingsOf, is } from "./keys.svelte";
+  import { editShortcuts, inOut, isEscape, playerKey, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -396,27 +397,28 @@
   const setFullscreen = (on: boolean) => (fullscreen = on);
 
   // The keys the VOD's player has, where they mean the same (playerKeys.ts);
-  // B splits, E exports (renders).
+  // B splits, E exports (renders). Which key does what is the map's
+  // (keys.svelte.ts); Escape is always Escape.
   function onKey(e: KeyboardEvent) {
-    const key = playerKey(e);
-    if (key === null || !keysForApp()) return;
+    if (playerKey(e) === null || !keysForApp()) return;
+    const render = is(e, "edit.render");
     // E renders even where edits can't play here: then it's the way to watch one.
-    if (key === "e" && !player) {
+    if (render && !player) {
       if (!e.repeat && renderable !== null) edits.render(renderable);
       e.preventDefault();
       return;
     }
     if (!player) return;
     // Shift with a letter is the player's own: captions (C) and mute (M).
-    if (e.shiftKey && (key === "c" || key === "m") && !e.ctrlKey && !e.metaKey) {
-      if (key === "c") prefs.toggleCaptions();
+    if (is(e, "captions.toggle") || is(e, "mute.toggle")) {
+      if (is(e, "captions.toggle")) prefs.toggleCaptions();
       else toggleMute(player);
       e.preventDefault();
       return;
     }
-    if (key === "b" || key === "e") {
+    if (is(e, "cut.here") || render) {
       if (!e.repeat) {
-        if (key === "b") split();
+        if (!render) split();
         else if (renderable !== null) edits.render(renderable);
       }
       e.preventDefault();
@@ -424,18 +426,19 @@
     }
     // Ctrl+← and → (⌘ on a Mac) move the piece at the playhead, as Alt+↑/↓
     // moves a row in the library (Alt+← and → are back and forward).
-    if ((os === "mac" ? e.metaKey : e.ctrlKey) && !e.shiftKey && (key === "ArrowLeft" || key === "ArrowRight")) {
-      if (!e.repeat) moveCurrent(key === "ArrowLeft" ? -1 : 1);
+    const earlier = is(e, "edit.pieceEarlier");
+    if (earlier || is(e, "edit.pieceLater")) {
+      if (!e.repeat) moveCurrent(earlier ? -1 : 1);
       e.preventDefault();
       return;
     }
-    if (e.ctrlKey || e.metaKey) return;
     const p = player;
     // I and O put the selection's in and out points at the playhead (as on
     // a VOD); with none, I or O begins one, up to a cut or a piece's end.
-    if ((key === "i" || key === "o") && !e.shiftKey) {
+    const end = is(e, "selection.in") ? "i" : is(e, "selection.out") ? "o" : null;
+    if (end) {
       const stops = [...lane.flatMap((u) => [u.start, u.end]), ...cuts.list.map((m) => m.start)];
-      const picked = total ? inOut(key, frameStart(now, fps), edits.selection, stops, total) : null;
+      const picked = total ? inOut(end, frameStart(now, fps), edits.selection, stops, total) : null;
       if (picked) {
         edits.selection = picked;
         // The arrows go on moving the playhead, not a mark.
@@ -448,26 +451,27 @@
     // write; Enter renames the selected one (as on a VOD).
     // C makes a clip of the selection, or of the piece at the playhead, on
     // the edit's clip bar (bare: Ctrl+C is copy).
-    if (key === "c" && !e.shiftKey) {
+    if (is(e, "clip.make")) {
       if (!e.repeat && !snippet) clipNow();
       e.preventDefault();
       return;
     }
-    if ((key === "m" || key === "n") && !e.shiftKey) {
-      if (!e.repeat && edit && segments.length) cuts.add(key === "m" ? "highlight" : "chapter", now, fps);
+    const highlight = is(e, "mark.highlight");
+    if (highlight || is(e, "mark.chapter")) {
+      if (!e.repeat && edit && segments.length) cuts.add(highlight ? "highlight" : "chapter", now, fps);
       e.preventDefault();
       return;
     }
     // The selected mark: renamed, moved, taken away (as on a VOD).
-    if (markKey(key, e, { fps, length: total, pause: () => p.playing() && p.togglePlay(), seekTo })) {
+    if (markKey(e, { fps, length: total, pause: () => p.playing() && p.togglePlay(), seekTo })) {
       e.preventDefault();
       return;
     }
-    if (key === "Escape" && edits.selection) {
+    if (isEscape(e) && edits.selection) {
       edits.selection = null;
-    } else if (key === "Escape" && openGroup !== null) {
+    } else if (isEscape(e) && openGroup !== null) {
       openGroup = null;
-    } else if (key === "Delete" || key === "Backspace") {
+    } else if (is(e, "edit.remove")) {
       // Held down, it's one press: one piece, not one after another. Lines
       // selected in the transcript go, or else the piece at the playhead.
       if (e.repeat) {
@@ -475,13 +479,17 @@
       } else if (edits.selection) removeSelection();
       else removeHere();
     } else if (
-      !transportKey(key, e.shiftKey, {
-        togglePlay: () => p.togglePlay(),
-        seekBy: (step) => seekTo(Math.max(0, (bringTime ?? p.time()) + step)),
-        step: p.step && ((n) => p.step!(n)),
-        fullscreen,
-        setFullscreen,
-      })
+      !transportKey(
+        e,
+        {
+          togglePlay: () => p.togglePlay(),
+          seekBy: (step) => seekTo(Math.max(0, (bringTime ?? p.time()) + step)),
+          step: p.step && ((n) => p.step!(n)),
+          fullscreen,
+          setFullscreen,
+        },
+        is,
+      )
     )
       return;
     e.preventDefault();
@@ -732,7 +740,7 @@
   <PlayerPanel
     bind:fullscreen
     label="edit-view"
-    shortcuts={editShortcuts(!!player?.step, os === "mac")}
+    shortcuts={editShortcuts(!!player?.step, os, bindingsOf)}
     stage={editStage}
     controls={editControls}
     below={editBelow}

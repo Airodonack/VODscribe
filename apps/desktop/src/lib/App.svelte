@@ -28,7 +28,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
-  import { os } from "./platform";
+  import { is, keyHint, labelOf } from "./keys.svelte";
   import { updates } from "./updates.svelte";
   import { savePlayable } from "./playable";
   import { settings } from "./appSettings.svelte";
@@ -84,7 +84,7 @@
 
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
-  const searchKey = os === "mac" ? "⌘F" : "Ctrl+F";
+  const searchKey = $derived(labelOf("search.focus"));
   // The document in view, whose history undo and redo go through: the edit
   // open, or else the VOD shown (its marks and clip bar). The backend's told,
   // as changes made now are made from it.
@@ -191,24 +191,22 @@
     // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
     const target = e.target as HTMLElement | null;
     const typing = !!target?.closest("input, textarea, select, [contenteditable]");
-    const key = e.key.toLowerCase();
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !typing && (key === "z" || key === "y")) {
+    const undo = is(e, "undo");
+    if (!typing && (undo || is(e, "redo"))) {
       e.preventDefault();
-      undoRedo(key === "y" || e.shiftKey);
+      undoRedo(!undo);
       return;
     }
     // Back and forward: Alt+Left and Alt+Right, or Cmd+[ and Cmd+] on a Mac.
-    const back = os === "mac" ? e.metaKey && !e.altKey && key === "[" : e.altKey && !e.ctrlKey && key === "arrowleft";
-    const forward =
-      os === "mac" ? e.metaKey && !e.altKey && key === "]" : e.altKey && !e.ctrlKey && key === "arrowright";
-    if (!typing && (back || forward)) {
+    const back = is(e, "nav.back");
+    if (!typing && (back || is(e, "nav.forward"))) {
       e.preventDefault();
       if (back) nav.goBack();
       else nav.goForward();
       return;
     }
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "f") {
+    if (is(e, "search.focus")) {
       e.preventDefault();
       aside = false;
       searchInput?.focus();
@@ -561,7 +559,7 @@
             class="icon back"
             onclick={() => nav.goBack()}
             disabled={!nav.back.length}
-            title={nav.back.length ? `Back to ${named(nav.back.at(-1))} (${os === "mac" ? "⌘[" : "Alt+←"})` : "Back"}
+            title={nav.back.length ? `Back to ${named(nav.back.at(-1))}${keyHint("nav.back")}` : "Back"}
             aria-label="Back"
           >
             <Icon name="arrow-left" size={18} />
@@ -570,9 +568,7 @@
             class="icon forward"
             onclick={() => nav.goForward()}
             disabled={!nav.forward.length}
-            title={nav.forward.length
-              ? `Forward to ${named(nav.forward.at(-1))} (${os === "mac" ? "⌘]" : "Alt+→"})`
-              : "Forward"}
+            title={nav.forward.length ? `Forward to ${named(nav.forward.at(-1))}${keyHint("nav.forward")}` : "Forward"}
             aria-label="Forward"
           >
             <Icon name="arrow-right" size={18} />
@@ -592,7 +588,7 @@
             autocorrect="off"
             autocapitalize="off"
             spellcheck="false"
-            title="Search ({searchKey})"
+            title="Search{keyHint('search.focus')}"
           />
         </div>
         <SearchFilter bind:scopeAll bind:sources {selected} />
