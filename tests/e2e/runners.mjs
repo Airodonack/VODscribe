@@ -86,6 +86,43 @@ function sendHarness(mkdir) {
   execFileSync("ssh", [...shared, runner.host, unpack], { input: tar.stdout });
 }
 
+/** The Windows runner's screen before the suite, run in the scheduled task
+ *  (over SSH there's no desktop to see): a screenshot to out\desktop-before.png,
+ *  the windows up to out\desktop-before.txt, and exit 3 if a window is in
+ *  front that isn't the desktop, the taskbar or the task's own console. */
+const WINDOWS_DESKTOP = String.raw`$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+Add-Type @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class Desk {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  public static string Text(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
+  public static string Class(IntPtr h) { var s = new StringBuilder(256); GetClassName(h, s, 256); return s.ToString(); }
+}
+'@
+$screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+[System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
+$bitmap.Save("$PSScriptRoot\out\desktop-before.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$front = [Desk]::GetForegroundWindow()
+$id = 0; [void][Desk]::GetWindowThreadProcessId($front, [ref]$id)
+$owner = (Get-Process -Id $id -ErrorAction SilentlyContinue).ProcessName
+$title = [Desk]::Text($front); $class = [Desk]::Class($front)
+$up = Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { "$($_.ProcessName)  $($_.MainWindowTitle)" }
+@("in front: $owner  $class  $title") + $up | Set-Content "$PSScriptRoot\out\desktop-before.txt"
+# Nothing in front, the desktop, the taskbar, or the console this task runs in.
+$own = $front -eq [Desk]::GetConsoleWindow() -or $title -like '*run.cmd*'
+if ($front -eq [IntPtr]::Zero -or $own -or $class -in 'Progman', 'WorkerW', 'Shell_TrayWnd') { exit 0 }
+Write-Output "the screen isn't clear: $owner ($title) is in front"
+exit 3
+`;
+
 async function windows() {
   const dir = runner.dir.replaceAll("/", "\\");
   // PowerShell reads the script from stdin: no quoting through cmd.exe.
@@ -133,12 +170,19 @@ async function windows() {
     `cd /d "${dir}"`,
     `if exist out rmdir /s /q out`,
     "mkdir out",
+    // A window over the desktop fails the screen-sampling scenarios: seen
+    // first. The check failing for itself (not 3) doesn't stop the tests.
+    "powershell -NoProfile -ExecutionPolicy Bypass -File desktop.ps1 > out\\desktop.log 2>&1",
+    "if errorlevel 3 (type out\\desktop.log > out\\run.log & echo 3 > out\\exit.txt & exit /b 3)",
     `node tests\\e2e\\run.mjs "${exe}" --driver bridge ${args} > out\\run.log 2>&1`,
     "echo %ERRORLEVEL% > out\\exit.txt",
   ].join("\r\n");
   const local = path.join(out, "run.cmd");
   writeFileSync(local, cmd);
   scp(local, `${runner.host}:${runner.dir}/run.cmd`);
+  const desktop = path.join(out, "desktop.ps1");
+  writeFileSync(desktop, WINDOWS_DESKTOP);
+  scp(desktop, `${runner.host}:${runner.dir}/desktop.ps1`);
   // Started through a script host with no window of its own: run.cmd's
   // console would otherwise open on the desktop, and on a computer whose
   // console is Windows Terminal it opens large and in front, over the app's
@@ -173,12 +217,58 @@ async function windows() {
       throw new Error("the scheduled task hasn't started the tests in a minute");
   }
   scp("-r", `${runner.host}:${runner.dir}/out/*`, out);
+  const checked = path.join(out, "desktop.log");
+  if (existsSync(checked) && readFileSync(checked, "utf8").trim())
+    log(`desktop: ${readFileSync(checked, "utf8").trim()}`);
   return Number(readFileSync(path.join(out, "exit.txt"), "utf8").trim());
+}
+
+/** What's on the Mac's screen, read by JavaScript for Automation from the
+ *  window server (not System Events: scripting that over SSH puts up a
+ *  permission prompt of its own): the frontmost app, then each window on
+ *  screen as owner, layer and title, tab-separated. */
+const MAC_WINDOWS = `ObjC.import("AppKit"); ObjC.import("CoreGraphics");
+const front = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+const ref = $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0);
+const windows = ObjC.deepUnwrap(ObjC.castRefToObject(ref)) || [];
+[front ? front.localizedName.js : "", ...windows.filter((w) => w.kCGWindowAlpha > 0)
+  .map((w) => [w.kCGWindowOwnerName, w.kCGWindowLayer, w.kCGWindowName || ""].join("\\t"))].join("\\n");`;
+/** Window layers from the Dock's up are the system's own (the Dock, the
+ *  menu bar, Notification Center, the pointer); an app's windows and its
+ *  dialogs sit below. */
+const MAC_DOCK_LAYER = 20;
+
+/** The runner's screen before the suite, kept as desktop-before.png: a
+ *  window left over it (a system alert, a prompt, another app) sits over
+ *  what the scenarios sample from the screen, and fails them while the app
+ *  is fine. Throws, listing what's there, if any app but Finder is in front
+ *  or has a window up. */
+function macDesktop() {
+  const shot = `${runner.dir}/desktop-before.png`;
+  // The display woken first, so the picture is of the desktop, not a dark screen.
+  ssh(`caffeinate -u -t 1; screencapture -x '${shot}'`);
+  scp(`${runner.host}:${shot}`, path.join(out, "desktop-before.png"));
+  const [front, ...windows] = ssh("osascript -l JavaScript -", { input: MAC_WINDOWS }).trim().split("\n");
+  const listed = windows.map((w) => w.split("\t"));
+  const foreign = listed.filter(([owner, layer]) => owner !== "Finder" && Number(layer) < MAC_DOCK_LAYER);
+  writeFileSync(
+    path.join(out, "desktop-before.txt"),
+    `frontmost: ${front}\n${listed.map((w) => w.join("  ")).join("\n")}\n`,
+  );
+  if (front !== "Finder" || foreign.length) {
+    const named = foreign.map(([owner, , title]) => (title ? `${owner} (${title})` : owner));
+    throw new Error(
+      `${name}'s screen isn't clear: ${front} is in front${named.length ? `, and up: ${named.join(", ")}` : ""}` +
+        ` (see ${path.join(out, "desktop-before.png")}); close it there, then run this again`,
+    );
+  }
+  log("desktop clear");
 }
 
 function mac() {
   sendHarness(`mkdir -p '${runner.dir}'`);
   log("harness sent");
+  macDesktop();
   const target = `${runner.dir}/${path.basename(app)}`;
   ssh(`rm -rf '${target}'`);
   scp("-r", app, `${runner.host}:${runner.dir}/`);
