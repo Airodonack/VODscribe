@@ -186,6 +186,19 @@ export default {
       if (tip.y < box.y + box.h && tip.y + tip.h > box.y)
         throw new Error(`the timeline's tip (${JSON.stringify(tip)}) is over the picture (${JSON.stringify(box)})`);
       ctx.log("the timeline's tip is clear of the picture");
+      // And the thumbnail beside it (the file's storyboard, once made), likewise.
+      const thumb = ".timeline .scrub-frame:not(.empty)";
+      await until(
+        "the timeline's thumbnail",
+        () => app.js(`return !!document.querySelector(arguments[0])`, thumb),
+        30_000,
+      );
+      const frame = await os.rectOf(app, thumb);
+      if (frame.y < box.y + box.h && frame.y + frame.h > box.y)
+        throw new Error(
+          `the timeline's thumbnail (${JSON.stringify(frame)}) is over the picture (${JSON.stringify(box)})`,
+        );
+      ctx.log("the timeline's thumbnail is clear of the picture");
     }
   },
 };
