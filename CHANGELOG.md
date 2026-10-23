@@ -2,7 +2,7 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.5.1 (unreleased)
+## 0.5.1 — 2026-10-23
 
 - After a click on the timeline, the time by the play button no longer flicks back to where the video was while the picture catches up: it shows the new time at once and stays on it.
 - Moving around a video while it plays (a click on the timeline, the arrow keys) no longer flashes the Play button for a moment: it goes on saying Pause.
