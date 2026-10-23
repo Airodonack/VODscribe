@@ -2,7 +2,16 @@
 // static/demo (made by scripts/export-demo.py), with the same phrase search as
 // the app (crates/core: db.rs `search`, transcript.rs `terms` and `find_phrase`).
 
-import type { ChatLine, ChatOverview, ChatWindow, Line, SearchFilter, SearchHit, Vod } from "desktop/lib/api.ts";
+import type {
+  ChatLine,
+  ChatOverview,
+  ChatWindow,
+  Line,
+  SearchFilter,
+  SearchHit,
+  Stretch,
+  Vod,
+} from "desktop/lib/api.ts";
 import { findPhrase, highlight, lastIsPrefix, terms } from "./search";
 
 /** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
@@ -41,8 +50,35 @@ async function json<T>(path: string): Promise<T> {
   return res.json();
 }
 
+// The demo's VODs are transcribed whole, as the export made them (it
+// predates stretches, so their fields are filled in here).
 export function listVods(): Promise<Vod[]> {
-  return cached(library, "vods", () => json<Vod[]>("/demo/vods.json"));
+  return cached(library, "vods", async () =>
+    (await json<Vod[]>("/demo/vods.json")).map((v) => ({
+      ...v,
+      status: "done",
+      stretch: null,
+      transcribed: "all",
+      waiting: 0,
+    })),
+  );
+}
+
+/** A demo VOD's stretches: one, done, the whole of it. */
+export function transcriptStretches(vodId: number): Stretch[] {
+  return [
+    {
+      id: vodId,
+      vod_id: vodId,
+      start: 0,
+      end: null,
+      status: "done",
+      progress: 1,
+      reached: null,
+      error: null,
+      model: null,
+    },
+  ];
 }
 
 /** Library order, changed by dragging; kept for this visit only. */

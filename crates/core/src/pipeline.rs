@@ -10,6 +10,7 @@ use serde::Deserialize;
 
 use crate::db::{Db, Status, Vod};
 use crate::fetch;
+use crate::stretches::Stretch;
 use crate::tools::{self, YtDlp};
 use crate::transcript::{Segmenter, Word};
 
@@ -51,10 +52,13 @@ pub fn info_path(work_dir: &Path, vod_id: i64) -> PathBuf {
     work_dir.join(format!("{vod_id}.info.json"))
 }
 
-/// Downloads a VOD's audio, resuming a partial download. Returns its path.
+/// Downloads a VOD's audio for `stretch`, resuming a partial download.
+/// Returns its path.
+#[allow(clippy::too_many_arguments)]
 pub fn download(
     db: &mut Db,
     vod: &Vod,
+    stretch: &Stretch,
     tools: &Tools,
     work_dir: &Path,
     video: Option<(&crate::playable::Playable, u32)>,
@@ -77,7 +81,7 @@ pub fn download(
         .and_then(|m| m.modified())
         .is_ok_and(|t| SystemTime::now().duration_since(t).unwrap_or_default() < INFO_MAX_AGE);
 
-    db.set_status(vod.id, Status::Downloading, 0.0, None)?;
+    db.set_stretch_status(stretch.id, Status::Downloading, 0.0, None)?;
     report(Status::Downloading, 0.0);
     let yt_dlp = tools.yt_dlp.context(fetch::NO_YT_DLP)?;
     if !fresh {
@@ -177,13 +181,14 @@ pub fn remove_media(work_dir: &Path, vod_id: i64) {
     remove_work_files(&media_dir(work_dir), vod_id);
 }
 
-/// Transcribes downloaded audio, writing segments to the index as they are
-/// produced so partial results are searchable during a long run. Picks up
-/// after the last indexed segment, so a paused or interrupted job resumes.
+/// Transcribes downloaded audio for `stretch`, writing segments to the index
+/// as they are produced so partial results are searchable during a long run.
+/// Picks up where it reached, so a paused or interrupted job resumes.
 #[allow(clippy::too_many_arguments)]
 pub fn transcribe(
     db: &mut Db,
     vod: &Vod,
+    stretch: &Stretch,
     ffmpeg: &Path,
     audio_path: &Path,
     transcription: &Transcription,
@@ -198,20 +203,22 @@ pub fn transcribe(
         bail!("{} couldn't be read.", tools::shown(audio_path));
     }
     if streams.audio.is_none() {
-        db.set_status(vod.id, Status::Done, 1.0, None)?;
+        db.set_stretch_model(stretch.id, Some(transcription.worker.model_id))?;
+        db.finish_stretch(stretch.id)?;
         report(Status::Done, 1.0);
         return Ok(());
     }
     let attempt = |spec: &WorkerSpec, db: &mut Db, report: &mut dyn FnMut(Status, f64)| {
-        run_worker(db, vod, spec, ffmpeg, audio_path, cancel, report)
+        run_worker(db, vod, stretch.id, spec, ffmpeg, audio_path, cancel, report)
     };
-    // A paused or interrupted job resumes after its last segment, but never on
-    // top of segments from an older model (or from before models were recorded).
-    if db.transcribed_until(vod.id)? > 0.0 && !db.model(vod.id)?.is_some_and(|m| crate::model::is_current(&m)) {
+    // A paused or interrupted job resumes where it reached, but never on top
+    // of segments from an older model (or from before models were recorded).
+    if stretch.from() > stretch.start && !stretch.model.as_deref().is_some_and(crate::model::is_current) {
         db.clear_segments(vod.id)?;
+        db.set_reached(stretch.id, None)?;
     }
     let mut used = &transcription.worker;
-    db.set_model(vod.id, Some(used.model_id))?;
+    db.set_stretch_model(stretch.id, Some(used.model_id))?;
     if let Err(e) = attempt(used, db, report) {
         let Some(fallback) = &transcription.fallback else { return Err(e) };
         if cancel.load(Ordering::Relaxed) {
@@ -220,10 +227,10 @@ pub fn transcribe(
         eprintln!("GPU transcription failed: {e:#}");
         notice("The graphics card ran into a problem, so the rest was transcribed with the processor.".into());
         used = fallback;
-        db.set_model(vod.id, Some(used.model_id))?;
+        db.set_stretch_model(stretch.id, Some(used.model_id))?;
         attempt(used, db, report)?;
     }
-    db.set_status(vod.id, Status::Done, 1.0, None)?;
+    db.finish_stretch(stretch.id)?;
     report(Status::Done, 1.0);
     Ok(())
 }
@@ -261,11 +268,13 @@ struct WorkerLine {
     words: Vec<Word>,
 }
 
-/// Runs one worker over the whole file, indexing segments as they stream in.
+/// Runs one worker over the whole file, from where request `stretch_id`
+/// reached, indexing segments as they stream in.
 #[allow(clippy::too_many_arguments)]
 fn run_worker(
     db: &mut Db,
     vod: &Vod,
+    stretch_id: i64,
     spec: &WorkerSpec,
     ffmpeg: &Path,
     audio_path: &Path,
@@ -274,8 +283,9 @@ fn run_worker(
 ) -> Result<()> {
     let duration = vod.info.duration.filter(|d| *d > 0.0);
     let fraction = |t: f64| duration.map_or(0.0, |d| (t / d).min(1.0));
-    let start = db.transcribed_until(vod.id)?;
-    db.set_status(vod.id, Status::Transcribing, fraction(start), None)?;
+    let stretch = db.stretch(stretch_id)?.context("That request is gone.")?;
+    let start = stretch.from();
+    db.set_stretch_status(stretch_id, Status::Transcribing, fraction(start), None)?;
     report(Status::Transcribing, fraction(start));
 
     let mut cmd = tools::command(&spec.program);
@@ -320,7 +330,11 @@ fn run_worker(
             let Some(line) = line else { continue };
             let line: WorkerLine = serde_json::from_str(&line).context("unreadable worker output")?;
             if let Some(end) = line.end {
-                db.insert_segments(vod.id, &segmenter.push(line.words))?;
+                let segments = segmenter.push(line.words);
+                db.insert_segments(vod.id, &segments)?;
+                if let Some(last) = segments.last() {
+                    db.set_reached(stretch_id, Some(last.end))?;
+                }
                 report(Status::Transcribing, fraction(end));
             }
         }
@@ -338,7 +352,8 @@ fn run_worker(
         bail!("{}", if msg.is_empty() { format!("worker exited with {status}") } else { msg });
     }
     if let Some(last) = segmenter.finish() {
-        db.insert_segments(vod.id, &[last])?;
+        db.insert_segments(vod.id, std::slice::from_ref(&last))?;
+        db.set_reached(stretch_id, Some(last.end))?;
     }
     Ok(())
 }
@@ -403,6 +418,7 @@ mod tests {
         assert!(made.success());
         let mut db = Db::open(Path::new(":memory:")).unwrap();
         let (vod, _) = db.add_vod(&crate::local::probe(&ffmpeg, &file).unwrap()).unwrap();
+        let stretch = db.request(vod.id, 0.0, None).unwrap();
         let none = WorkerSpec {
             program: dir.join("no-such-worker"),
             model_id: "none",
@@ -414,10 +430,11 @@ mod tests {
         let transcription = Transcription { worker: none, fallback: None };
         let mut seen = Vec::new();
         let (cancel, mut notice) = (AtomicBool::new(false), |_: String| {});
-        transcribe(&mut db, &vod, &ffmpeg, &file, &transcription, &cancel, &mut |s, _| seen.push(s), &mut notice)
-            .unwrap();
+        let mut report = |s, _| seen.push(s);
+        transcribe(&mut db, &vod, &stretch, &ffmpeg, &file, &transcription, &cancel, &mut report, &mut notice).unwrap();
         assert_eq!(seen, [Status::Done]);
-        assert_eq!(db.vod(vod.id).unwrap().unwrap().status, Status::Done);
+        let vod = db.vod(vod.id).unwrap().unwrap();
+        assert_eq!((vod.status, vod.transcribed), (Status::Done, crate::stretches::Transcribed::All));
         assert_eq!(db.transcribed_until(vod.id).unwrap(), 0.0, "no lines");
     }
 
@@ -495,10 +512,12 @@ mod tests {
         let vod = db.add_vod(&info).unwrap().0;
         db.set_source_path(vod.id, &source.to_string_lossy()).unwrap();
         let vod = db.vod(vod.id).unwrap().unwrap();
+        let stretch = db.request(vod.id, 0.0, None).unwrap();
 
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
         let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
-        let audio = download(&mut db, &vod, &tools, &paths.work(), None, &AtomicBool::new(false), |_, _| {}).unwrap();
+        let no = AtomicBool::new(false);
+        let audio = download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap();
         assert_eq!(audio, source, "transcribed in place, not copied");
         db.set_audio_path(vod.id, Some(&audio.to_string_lossy())).unwrap();
 
@@ -509,7 +528,7 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"the user's video");
 
         fs::remove_file(&source).unwrap();
-        assert!(download(&mut db, &vod, &tools, &paths.work(), None, &AtomicBool::new(false), |_, _| {}).is_err());
+        assert!(download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err());
     }
 
     /// A VOD whose video is kept is transcribed from that file, with nothing
@@ -531,6 +550,7 @@ mod tests {
             published: None,
         };
         let vod = db.add_vod(&info).unwrap().0;
+        let stretch = db.request(vod.id, 0.0, None).unwrap();
         let kept = media_dir(&paths.work()).join("x [1].mp4");
         fs::create_dir_all(kept.parent().unwrap()).unwrap();
         fs::write(&kept, b"video").unwrap();
@@ -538,9 +558,12 @@ mod tests {
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
         let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
         let no = AtomicBool::new(false);
-        assert_eq!(download(&mut db, &vod, &tools, &paths.work(), None, &no, |_, _| {}).unwrap(), kept);
+        assert_eq!(download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap(), kept);
         fs::remove_file(&kept).unwrap();
-        assert!(download(&mut db, &vod, &tools, &paths.work(), None, &no, |_, _| {}).is_err(), "downloads again");
+        assert!(
+            download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err(),
+            "downloads again"
+        );
     }
 
     #[test]
@@ -563,6 +586,7 @@ mod tests {
             published: None,
         };
         let (vod, _) = db.add_vod(&info).unwrap();
+        let stretch = db.request(vod.id, 0.0, None).unwrap();
         let spec = WorkerSpec {
             program,
             model_id: "m",
@@ -579,7 +603,16 @@ mod tests {
             flag.store(true, Ordering::Relaxed);
         });
         let started = Instant::now();
-        let result = run_worker(&mut db, &vod, &spec, Path::new("ffmpeg"), Path::new("audio"), &cancel, &mut |_, _| {});
+        let result = run_worker(
+            &mut db,
+            &vod,
+            stretch.id,
+            &spec,
+            Path::new("ffmpeg"),
+            Path::new("audio"),
+            &cancel,
+            &mut |_, _| {},
+        );
         assert!(result.is_err());
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
     }

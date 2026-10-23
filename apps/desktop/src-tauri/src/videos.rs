@@ -288,7 +288,6 @@ mod tests {
     use std::sync::Arc;
     use std::sync::mpsc;
 
-    use vodscribe_core::db::Status;
     use vodscribe_core::fetch::VodInfo;
 
     use super::*;
@@ -330,7 +329,8 @@ mod tests {
                 published: None,
             };
             let id = db.add_vod(&info).unwrap().0.id;
-            db.set_status(id, Status::Done, 1.0, None).unwrap();
+            let whole = db.request(id, 0.0, None).unwrap();
+            db.finish_stretch(whole.id).unwrap();
             let n = N.fetch_add(1, Ordering::Relaxed);
             let work = std::env::temp_dir().join(format!("vodscribe-videos-{}-{n}", std::process::id())).join("work");
             std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();

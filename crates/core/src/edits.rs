@@ -1662,6 +1662,7 @@ pub(crate) mod tests {
     fn sources_count_the_pieces_that_use_them() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
+        db.request(vod, 0.0, None).unwrap();
         let other = db.add_vod(&info("y")).unwrap().0.id;
         assert_eq!(db.uses(vod).unwrap(), 1, "its own clip");
         let edit = db.add_edit("e").unwrap().id;
@@ -1689,12 +1690,12 @@ pub(crate) mod tests {
         assert_eq!(db.listed_vods().unwrap().len(), 0);
         assert_eq!(db.vods().unwrap().len(), 2);
         assert!(!db.vod(vod).unwrap().unwrap().listed);
-        assert!(db.next_with_status(crate::db::Status::Queued).unwrap().is_none());
+        assert!(db.next_stretch(crate::db::Status::Queued, false).unwrap().is_none());
         // Added again, it's listed again, the same VOD.
         let (again, new) = db.add_vod(&info("x")).unwrap();
         assert_eq!((again.id, new, again.listed), (vod, false, true));
         assert_eq!(db.uses(vod).unwrap(), 1);
-        assert_eq!(db.next_with_status(crate::db::Status::Queued).unwrap().map(|v| v.id), Some(vod));
+        assert_eq!(db.next_stretch(crate::db::Status::Queued, false).unwrap().map(|(v, _)| v.id), Some(vod));
     }
 
     #[test]

@@ -109,6 +109,7 @@ permissions = [
   "allow-cancel-vod",
   "allow-search",
   "allow-transcript",
+  "allow-transcript-stretches",
   "allow-chat-overview",
   "allow-chat-windows",
   "allow-chat-emotes",

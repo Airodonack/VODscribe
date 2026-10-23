@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-transcript-stretches"
+description = "Enables the transcript_stretches command without any pre-configured scope."
+commands.allow = ["transcript_stretches"]
+
+[[permission]]
+identifier = "deny-transcript-stretches"
+description = "Denies the transcript_stretches command without any pre-configured scope."
+commands.deny = ["transcript_stretches"]

@@ -384,7 +384,7 @@ pub(crate) async fn remove_gpu_pack(state: State<'_, AppState>) -> CmdResult<()>
     let (_held, running) = state.worker.hold_starts();
     let db = state.db.lock().unwrap();
     for id in running {
-        if matches!(db.vod(id).map_err(err)?.map(|v| v.status), Some(Status::Ready | Status::Transcribing)) {
+        if matches!(db.stretch(id).map_err(err)?.map(|s| s.status), Some(Status::Ready | Status::Transcribing)) {
             return Err("Wait for the current transcription to finish, or pause it, first.".into());
         }
     }

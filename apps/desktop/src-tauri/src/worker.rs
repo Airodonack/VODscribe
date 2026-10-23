@@ -1,6 +1,8 @@
 //! The background queue, in two stages on their own threads: one downloads
-//! while the other transcribes, so a VOD can download while another is
-//! transcribed. Each stage runs one VOD at a time.
+//! while the other transcribes, so a stretch can download while another is
+//! transcribed. Each stage runs one request (`stretches`) at a time, in the
+//! order they were asked for. The queue is the library itself, so it
+//! survives a quit.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -12,10 +14,11 @@ use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
+use vodscribe_core::stretches::Stretch;
 use vodscribe_core::{Paths, gpu, model, pipeline, tools};
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
-/// How many downloaded VODs may wait for the transcriber before the
+/// How many downloaded requests may wait for the transcriber before the
 /// downloader pauses, so finished audio doesn't pile up on disk.
 const MAX_READY: usize = 2;
 
@@ -29,14 +32,15 @@ pub enum Stop {
 }
 
 struct Job {
+    stretch_id: i64,
     vod_id: i64,
     flag: Arc<AtomicBool>,
     reason: Arc<Mutex<Option<Stop>>>,
 }
 
 /// Queue state shared by the stages and the commands. Stages pick and
-/// register a job under this lock, and commands that stop or change a VOD
-/// take it too, so a command can't slip in between the two.
+/// register a job under this lock, and commands that stop or change a
+/// request take it too, so a command can't slip in between the two.
 #[derive(Default)]
 struct Queue {
     jobs: Vec<Job>,
@@ -121,27 +125,44 @@ impl Worker {
     }
 
     /// Stops new jobs from starting, without touching running ones, until the
-    /// guard is dropped. Also returns the VODs the stages are working on, so
-    /// the caller can check what's running with nothing new slipping in.
+    /// guard is dropped. Also returns the requests the stages are working on,
+    /// so the caller can check what's running with nothing new slipping in.
     pub fn hold_starts(&self) -> (Hold<'_>, Vec<i64>) {
         let mut queue = self.queue.lock().unwrap();
         queue.held = true;
-        let running = queue.jobs.iter().map(|j| j.vod_id).collect();
+        let running = queue.jobs.iter().map(|j| j.stretch_id).collect();
         (Hold(self), running)
     }
 
-    /// Applies `reason` to a VOD. If a stage is running it, the stage is told
-    /// to stop and finishes the stop itself; otherwise `idle` runs, with the
-    /// queue locked so no stage can start the VOD meanwhile. Returns whether a
-    /// stage was running it.
-    pub fn control(&self, vod_id: i64, reason: Stop, idle: impl FnOnce() -> Result<()>) -> Result<bool> {
+    /// Applies `reason` to request `stretch_id`. If a stage is running it,
+    /// the stage is told to stop and finishes the stop itself; otherwise
+    /// `idle` runs, with the queue locked so no stage can start it meanwhile.
+    /// Returns whether a stage was running it.
+    #[allow(dead_code)] // The transcript panel's Stop, to come.
+    pub fn control(&self, stretch_id: i64, reason: Stop, idle: impl FnOnce() -> Result<()>) -> Result<bool> {
         let queue = self.queue.lock().unwrap();
-        if let Some(job) = queue.jobs.iter().find(|j| j.vod_id == vod_id) {
+        if let Some(job) = queue.jobs.iter().find(|j| j.stretch_id == stretch_id) {
             job.stop(reason);
             return Ok(true);
         }
         idle()?;
         Ok(false)
+    }
+
+    /// Applies `reason` to every running request of VOD `vod_id` (the
+    /// stages finish those stops themselves), then runs `idle` with the
+    /// running ones' ids, with the queue locked so no stage can start
+    /// another of the VOD's meanwhile: it does to the rest what's wanted.
+    /// Returns whether a stage was running one.
+    pub fn control_vod(&self, vod_id: i64, reason: Stop, idle: impl FnOnce(&[i64]) -> Result<()>) -> Result<bool> {
+        let queue = self.queue.lock().unwrap();
+        let mut running = Vec::new();
+        for job in queue.jobs.iter().filter(|j| j.vod_id == vod_id) {
+            job.stop(reason);
+            running.push(job.stretch_id);
+        }
+        idle(&running)?;
+        Ok(!running.is_empty())
     }
 }
 
@@ -180,17 +201,18 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
                 eprintln!("queue: {e:#}");
                 None
             })
-            // The download stage marks a VOD Ready a moment before it lets go of
-            // it; the other stage's wake follows.
-            .filter(|vod| queue.jobs.iter().all(|j| j.vod_id != vod.id))
-            .map(|vod| {
+            // The download stage marks a request Ready a moment before it lets
+            // go of it; the other stage's wake follows.
+            .filter(|(_, stretch)| queue.jobs.iter().all(|j| j.stretch_id != stretch.id))
+            .map(|(vod, stretch)| {
                 let flag = Arc::new(AtomicBool::new(false));
                 let reason = Arc::new(Mutex::new(None));
-                queue.jobs.push(Job { vod_id: vod.id, flag: flag.clone(), reason: reason.clone() });
-                (vod, flag, reason)
+                let job = Job { stretch_id: stretch.id, vod_id: vod.id, flag: flag.clone(), reason: reason.clone() };
+                queue.jobs.push(job);
+                (vod, stretch, flag, reason)
             })
         };
-        let Some((vod, flag, reason)) = picked else {
+        let Some((vod, stretch, flag, reason)) = picked else {
             // Sleep until something is queued, a stage finishes, or setup completes.
             if rx.recv().is_err() {
                 return;
@@ -200,15 +222,15 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
 
         let mut progress = 0.0;
         let result = match stage {
-            Stage::Download => download(&mut ctx, &vod, &flag, &mut progress),
-            Stage::Transcribe => transcribe(&mut ctx, &vod, &flag, &mut progress),
+            Stage::Download => download(&mut ctx, &vod, &stretch, &flag, &mut progress),
+            Stage::Transcribe => transcribe(&mut ctx, &vod, &stretch, &flag, &mut progress),
         };
         // Finish and unregister under the queue lock, so a stop can't land
         // after its reason has been read.
         let finished = {
             let mut queue = ctx.queue.lock().unwrap();
             let stop = *reason.lock().unwrap();
-            let finished = finish(stage, &ctx.db, &ctx.paths.work(), vod.id, result, stop, progress);
+            let finished = finish(stage, &ctx.db, &ctx.paths.work(), stretch.id, result, stop, progress);
             queue.jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
             finished
         };
@@ -220,7 +242,7 @@ fn run(stage: Stage, mut ctx: Ctx, rx: Receiver<()>) {
     }
 }
 
-fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
+fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<(Vod, Stretch)>> {
     let bin = ctx.paths.bin();
     if tools::find_ffmpeg(&bin).is_none() {
         return Ok(None);
@@ -229,20 +251,16 @@ fn next_job(stage: Stage, ctx: &Ctx) -> Result<Option<Vod>> {
     let has_yt_dlp = tools::find_yt_dlp(&bin).is_some();
     match stage {
         Stage::Download => {
-            if ctx.db.count_with_status(Status::Ready)? >= MAX_READY {
+            if ctx.db.count_stretches(Status::Ready)? >= MAX_READY {
                 return Ok(None);
             }
-            if has_yt_dlp {
-                ctx.db.next_with_status(Status::Queued)
-            } else {
-                ctx.db.next_local_with_status(Status::Queued)
-            }
+            ctx.db.next_stretch(Status::Queued, !has_yt_dlp)
         }
         Stage::Transcribe => {
             if !model::is_installed(&ctx.paths.model_dir(), &model::CPU_MODEL) {
                 return Ok(None);
             }
-            ctx.db.next_with_status(Status::Ready)
+            ctx.db.next_stretch(Status::Ready, false)
         }
     }
 }
@@ -252,7 +270,7 @@ fn finish(
     stage: Stage,
     db: &Db,
     work: &std::path::Path,
-    vod_id: i64,
+    stretch_id: i64,
     result: Result<()>,
     stop: Option<Stop>,
     progress: f64,
@@ -260,14 +278,16 @@ fn finish(
     match (result, stop) {
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
-        (_, Some(Stop::Pause)) => db.set_status(vod_id, Status::Paused, progress, None)?,
-        (_, Some(Stop::Cancel)) => discard(db, work, vod_id)?,
+        (_, Some(Stop::Pause)) => db.set_stretch_status(stretch_id, Status::Paused, progress, None)?,
+        (_, Some(Stop::Cancel)) => discard(db, work, stretch_id)?,
         (Ok(()), None) => {}
         // Stopped without a recorded reason: keep the work, as a pause would.
-        (Err(e), None) if vodscribe_core::is_canceled(&e) => db.set_status(vod_id, Status::Paused, progress, None)?,
+        (Err(e), None) if vodscribe_core::is_canceled(&e) => {
+            db.set_stretch_status(stretch_id, Status::Paused, progress, None)?
+        }
         (Err(e), None) => {
             // The VOD may have been deleted while running; ignore that case.
-            let _ = db.set_status(vod_id, Status::Error, 0.0, Some(&format!("{e:#}")));
+            let _ = db.set_stretch_status(stretch_id, Status::Error, 0.0, Some(&format!("{e:#}")));
         }
     }
     Ok(())
@@ -277,10 +297,12 @@ fn finish(
 pub const STOPPED: &str = "Stopped";
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
 
-/// Throws away a VOD's partial work, leaving it in the library as canceled.
-/// Its video goes too where downloading it is part of transcribing; one
+/// Throws away the partial work of request `stretch_id` (a VOD's whole
+/// transcript, as requests are of all of it), leaving it as canceled. Its
+/// video goes too where downloading it is part of transcribing; one
 /// downloaded on request (videos.rs) stays.
-pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
+pub fn discard(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
+    let Some(vod_id) = db.stretch(stretch_id)?.map(|s| s.vod_id) else { return Ok(()) };
     let own_video = db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform));
     pipeline::remove_work_files(work_dir, vod_id);
     if own_video {
@@ -293,24 +315,36 @@ pub fn discard(db: &Db, work_dir: &std::path::Path, vod_id: i64) -> Result<()> {
             db.set_media_path(vod_id, None)?;
         }
         db.set_note(vod_id, None)?;
-        db.set_status(vod_id, Status::Error, 0.0, Some(STOPPED))
+        // Its lines are gone, so nothing of the VOD is transcribed.
+        for done in db.stretches(vod_id)?.into_iter().filter(|s| s.status == Status::Done) {
+            db.delete_stretch(done.id)?;
+        }
+        db.set_reached(stretch_id, None)?;
+        db.set_stretch_audio(stretch_id, None)?;
+        db.set_stretch_status(stretch_id, Status::Error, 0.0, Some(STOPPED))
     })
 }
 
 /// A progress reporter that throttles events and remembers the last value.
-fn reporter<'a>(app: &'a AppHandle, vod_id: i64, progress: &'a mut f64) -> impl FnMut(Status, f64) + 'a {
+/// The event says which request of which VOD, and its progress within it.
+fn reporter<'a>(
+    app: &'a AppHandle,
+    vod_id: i64,
+    stretch_id: i64,
+    progress: &'a mut f64,
+) -> impl FnMut(Status, f64) + 'a {
     let mut last = (Status::Queued, Instant::now());
     move |status, p| {
         *progress = p;
         let now = Instant::now();
         if status != last.0 || now - last.1 >= PROGRESS_INTERVAL {
             last = (status, now);
-            let _ = app.emit("vod-progress", (vod_id, status, p));
+            let _ = app.emit("vod-progress", (vod_id, stretch_id, status, p));
         }
     }
 }
 
-fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
+fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
     let bin = ctx.paths.bin();
     // Local files don't need the video downloader; pipeline::download asks for it otherwise.
     let yt_dlp = tools::find_yt_dlp(&bin);
@@ -323,11 +357,12 @@ fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> 
     let audio = pipeline::download(
         &mut ctx.db,
         vod,
+        stretch,
         &tools,
         &ctx.paths.work(),
         Some((&playable, height)),
         flag,
-        reporter(&app, vod.id, progress),
+        reporter(&app, vod.id, stretch.id, progress),
     )?;
     // The waveform, read while the audio is here: a VOD from a site with its
     // own player doesn't keep it once transcribed. Only a stop fails the stage.
@@ -344,16 +379,16 @@ fn download(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> 
         }
     }
     ctx.db.set_audio_path(vod.id, Some(&audio.to_string_lossy()))?;
-    ctx.db.set_status(vod.id, Status::Ready, 0.0, None)?;
+    ctx.db.set_stretch_status(stretch.id, Status::Ready, 0.0, None)?;
     Ok(())
 }
 
-fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
+fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
     let audio = ctx.db.audio_path(vod.id)?.map(std::path::PathBuf::from).filter(|p| p.is_file());
     let Some(audio) = audio else {
         // The download went missing (e.g. the work dir was cleared): fetch it again.
         ctx.db.set_audio_path(vod.id, None)?;
-        ctx.db.set_status(vod.id, Status::Queued, 0.0, None)?;
+        ctx.db.set_stretch_status(stretch.id, Status::Queued, 0.0, None)?;
         return Ok(());
     };
     let ffmpeg = tools::find_ffmpeg(&ctx.paths.bin()).context(NO_FFMPEG)?;
@@ -362,15 +397,19 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, flag: &AtomicBool, progress: &mut f64) -
     ctx.emit_vod(vod.id);
 
     let app = ctx.app.clone();
-    let mut report = reporter(&app, vod.id, progress);
+    let mut report = reporter(&app, vod.id, stretch.id, progress);
     // The pipeline holds the stage's connection, so notices go through a second one.
     let notes = Db::open(&ctx.paths.db())?;
-    pipeline::transcribe(&mut ctx.db, vod, &ffmpeg, &audio, &transcription, flag, &mut report, &mut |notice| {
+    let mut notice = |notice: String| {
         let _ = notes.set_note(vod.id, Some(&notice));
         let _ = crate::emit_vod(&app, &notes, vod.id);
-    })?;
-    pipeline::remove_work_files(&ctx.paths.work(), vod.id);
-    ctx.db.set_audio_path(vod.id, None)?;
+    };
+    pipeline::transcribe(&mut ctx.db, vod, stretch, &ffmpeg, &audio, &transcription, flag, &mut report, &mut notice)?;
+    // The audio stays while another request of the VOD may use it.
+    if ctx.db.requests(vod.id)?.is_empty() {
+        pipeline::remove_work_files(&ctx.paths.work(), vod.id);
+        ctx.db.set_audio_path(vod.id, None)?;
+    }
     Ok(())
 }
 
@@ -451,7 +490,8 @@ mod tests {
         }
     }
 
-    /// A library with one VOD in `status`, and a work dir holding its audio.
+    /// A library with one VOD and a request for all of it in `status`, and
+    /// a work dir holding its audio. Returns the request's id.
     fn setup(status: Status) -> (Db, Work, i64) {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let info = VodInfo {
@@ -465,14 +505,20 @@ mod tests {
             published: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
-        db.set_status(id, status, 0.5, None).unwrap();
+        let stretch = db.request(id, 0.0, None).unwrap().id;
+        db.set_stretch_status(stretch, status, 0.5, None).unwrap();
         // A folder of its own, so its media folder (beside it) is its own too.
         let work =
             std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id())).join("work");
         std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
         db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
-        (db, Work(work), id)
+        (db, Work(work), stretch)
+    }
+
+    /// The VOD of request `stretch`.
+    fn vod_of(db: &Db, stretch: i64) -> i64 {
+        db.stretch(stretch).unwrap().unwrap().vod_id
     }
 
     fn next_id() -> u64 {
@@ -481,8 +527,9 @@ mod tests {
         N.fetch_add(1, Ordering::Relaxed)
     }
 
-    fn status(db: &Db, id: i64) -> (Status, Option<String>) {
-        let vod = db.vod(id).unwrap().unwrap();
+    /// The status and error of request `stretch`'s VOD.
+    fn status(db: &Db, stretch: i64) -> (Status, Option<String>) {
+        let vod = db.vod(vod_of(db, stretch)).unwrap().unwrap();
         (vod.status, vod.error)
     }
 
@@ -491,18 +538,19 @@ mod tests {
         let (db, work, id) = setup(Status::Downloading);
         finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4).unwrap();
         assert_eq!(status(&db, id).0, Status::Paused);
-        assert_eq!(db.vod(id).unwrap().unwrap().progress, 0.4);
-        assert!(work.join(format!("{id}.m4a")).exists());
+        assert_eq!(db.stretch(id).unwrap().unwrap().progress, 0.4);
+        assert!(work.join(format!("{}.m4a", vod_of(&db, id))).exists());
     }
 
     #[test]
     fn a_cancel_discards_the_work_and_says_stopped() {
         let (db, work, id) = setup(Status::Transcribing);
+        let vod = vod_of(&db, id);
         finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
         assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
-        assert_eq!(db.audio_path(id).unwrap(), None);
-        assert!(!work.join(format!("{id}.m4a")).exists());
+        assert_eq!(db.audio_path(vod).unwrap(), None);
+        assert!(!work.join(format!("{vod}.m4a")).exists());
     }
 
     #[test]
@@ -510,20 +558,25 @@ mod tests {
         let (db, work, id) = setup(Status::Transcribing);
         let media = pipeline::media_dir(&work);
         std::fs::create_dir_all(&media).unwrap();
-        let video = pipeline::media_stem(&media, id, "t").with_extension("mp4");
+        let vod = vod_of(&db, id);
+        let video = pipeline::media_stem(&media, vod, "t").with_extension("mp4");
         std::fs::write(&video, b"").unwrap();
         let video = video.to_string_lossy().into_owned();
-        db.set_media_path(id, Some(&video)).unwrap();
+        db.set_media_path(vod, Some(&video)).unwrap();
         finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
         assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
         assert!(std::path::Path::new(&video).exists());
-        assert_eq!(db.media_path(id).unwrap(), Some(video));
+        assert_eq!(db.media_path(vod).unwrap(), Some(video));
     }
 
     #[test]
     fn a_transcript_that_finished_before_the_stop_is_kept() {
-        let (db, work, id) = setup(Status::Done);
+        let (db, work, id) = setup(Status::Transcribing);
+        let vod = vod_of(&db, id);
+        db.finish_stretch(id).unwrap();
+        // Written anew as it was merged with the others done.
+        let id = db.stretches(vod).unwrap()[0].id;
         for stop in [Stop::Pause, Stop::Cancel] {
             finish(Stage::Transcribe, &db, &work, id, Ok(()), Some(stop), 1.0).unwrap();
             assert_eq!(status(&db, id), (Status::Done, None));
@@ -542,14 +595,20 @@ mod tests {
     #[test]
     fn a_vod_deleted_while_running_is_no_error() {
         let (db, work, id) = setup(Status::Downloading);
-        db.delete_vod(id).unwrap();
+        let vod = vod_of(&db, id);
+        db.delete_vod(vod).unwrap();
         finish(Stage::Download, &db, &work, id, Err(anyhow::anyhow!("gone")), None, 0.3).unwrap();
-        assert!(db.vod(id).unwrap().is_none());
+        assert!(db.vod(vod).unwrap().is_none());
     }
 
     #[test]
     fn stops_never_become_less_final() {
-        let job = Job { vod_id: 1, flag: Arc::new(AtomicBool::new(false)), reason: Arc::new(Mutex::new(None)) };
+        let job = Job {
+            stretch_id: 1,
+            vod_id: 1,
+            flag: Arc::new(AtomicBool::new(false)),
+            reason: Arc::new(Mutex::new(None)),
+        };
         job.stop(Stop::Pause);
         assert_eq!(*job.reason.lock().unwrap(), Some(Stop::Pause));
         job.stop(Stop::Cancel);

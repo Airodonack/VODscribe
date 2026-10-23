@@ -44,17 +44,19 @@
     paused: "Paused",
     done: "",
     error: "Failed",
+    none: "Stopped",
   };
 
-  // Stopped by the user rather than failed.
-  const stopped = $derived(vod.status === "error" && vod.error === "Stopped");
+  // Stopped by the user rather than failed; or nothing asked of it, and not all of it transcribed.
+  const stopped = $derived((vod.status === "error" && vod.error === "Stopped") || vod.status === "none");
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(siteName(vod));
   // A kept video can be deleted unless it's about to be used: done, paused or
   // failed (a failed transcription still has its download).
   const keptVideo = $derived(
-    !!vod.media && (vod.status === "done" || vod.status === "paused" || vod.status === "error"),
+    !!vod.media &&
+      (vod.status === "done" || vod.status === "paused" || vod.status === "error" || vod.status === "none"),
   );
 
   // The whole video of a YouTube, Twitch or Kick VOD, downloaded on request to
@@ -283,7 +285,7 @@
 {/if}
 
 <div class="actions" class:removing inert={removing || clearing}>
-  {#if vod.status === "error"}
+  {#if vod.status === "error" || vod.status === "none"}
     <button class="row-act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
     </button>

@@ -75,6 +75,13 @@ impl Db {
                     ],
                 )?;
             }
+            // What of the stretch was transcribed, in the new source's time.
+            for done in db.stretches(vod_id)?.into_iter().filter(|s| s.status == crate::db::Status::Done) {
+                let (a, b) = (done.start.max(start), done.end.unwrap_or(f64::INFINITY).min(end));
+                if b > a {
+                    db.insert_done(id, a - start, Some(b - start), done.model.as_deref())?;
+                }
+            }
             db.conn.execute(
                 "INSERT INTO chat (vod_id, time, author, color, text, parts)
                  SELECT ?1, time - ?2, author, color, text, parts FROM chat

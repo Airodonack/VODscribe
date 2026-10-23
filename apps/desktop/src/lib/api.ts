@@ -1,7 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Status = "queued" | "downloading" | "ready" | "transcribing" | "paused" | "done" | "error";
+/** A request's status, or a VOD's (the request its row shows; with none,
+ *  "done" if all of it is transcribed, else "none"). */
+export type Status = "queued" | "downloading" | "ready" | "transcribing" | "paused" | "done" | "error" | "none";
+
+/** A stretch of a VOD (crates/core `stretches::Stretch`): transcribed if
+ *  "done", otherwise a request for it, `reached` how far it has written lines. */
+export interface Stretch {
+  id: number;
+  vod_id: number;
+  start: number;
+  /** null: to the VOD's end. */
+  end: number | null;
+  status: Exclude<Status, "none">;
+  progress: number;
+  reached: number | null;
+  error: string | null;
+  model: string | null;
+}
 
 export interface Vod {
   id: number;
@@ -22,8 +39,15 @@ export interface Vod {
   audio_only: boolean;
   published: string | null;
   status: Status;
+  /** 0..1 within the status, within the stretch the row shows. */
   progress: number;
   error: string | null;
+  /** The stretch the row shows (a request); null when there's none. */
+  stretch: number | null;
+  /** How much of it is transcribed. */
+  transcribed: "none" | "some" | "all";
+  /** How many requests there are besides the one shown. */
+  waiting: number;
   added_at: number;
   /** Not an error: e.g. which device transcribed it, or why the GPU wasn't used. */
   note: string | null;
@@ -535,6 +559,7 @@ export const api = {
   twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
   /** The transcript's lines; with `after`, only those starting after it. */
   transcript: (vodId: number, after?: number) => invoke<Line[]>("transcript", { vodId, after }),
+  transcriptStretches: (vodId: number) => invoke<Stretch[]>("transcript_stretches", { vodId }),
   /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its
    *  events; `events: false` leaves those out (`events` is then null). */
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>
@@ -584,8 +609,9 @@ export const events = {
   restored: (cb: (doc: Doc & { revision: number }) => void) =>
     listen<Doc & { revision: number }>("restored", (e) => cb(e.payload)),
   vod: (cb: (vod: Vod) => void) => listen<Vod>("vod", (e) => cb(e.payload)),
-  vodProgress: (cb: (id: number, status: Status, progress: number) => void) =>
-    listen<[number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
+  /** A request's progress: its VOD, itself, its status and how far within the stretch. */
+  vodProgress: (cb: (id: number, stretch: number, status: Status, progress: number) => void) =>
+    listen<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
   /** Which setup item ("yt-dlp", "ffmpeg", "model", "deno") and where its download is. */
   setupProgress: (cb: (item: string, progress: DownloadProgress) => void) =>

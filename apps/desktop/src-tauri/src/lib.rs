@@ -390,6 +390,7 @@ pub fn run() {
             vods::cancel_vod,
             vods::search,
             vods::transcript,
+            vods::transcript_stretches,
             chats::chat_overview,
             chats::chat_windows,
             chats::chat_emotes,

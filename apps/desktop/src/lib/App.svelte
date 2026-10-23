@@ -350,9 +350,11 @@
         }),
       ),
       await events.vodProgress(
-        afterLoad((id, status, progress) => {
+        afterLoad((id, stretch, status, progress) => {
           const vod = vods.find((v) => v.id === id);
-          if (vod) {
+          // The row shows a running request before any other.
+          if (vod && (vod.stretch === stretch || status === "downloading" || status === "transcribing")) {
+            vod.stretch = stretch;
             vod.status = status;
             vod.progress = progress;
           }

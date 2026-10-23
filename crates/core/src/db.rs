@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
+use crate::stretches::Transcribed;
 use crate::time::{Flicks, Rate};
 use crate::transcript::{Segment, Word, find_phrase, terms};
 
@@ -22,10 +23,13 @@ pub enum Status {
     Paused,
     Done,
     Error,
+    /// No request: nothing of the VOD waits or runs, and not all of it is
+    /// transcribed. Only a `Vod`'s status, never a stretch's.
+    None,
 }
 
 impl Status {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Status::Queued => "queued",
             Status::Downloading => "downloading",
@@ -34,10 +38,11 @@ impl Status {
             Status::Paused => "paused",
             Status::Done => "done",
             Status::Error => "error",
+            Status::None => "none",
         }
     }
 
-    fn parse(s: &str) -> Self {
+    pub(crate) fn parse(s: &str) -> Self {
         match s {
             "queued" => Status::Queued,
             "downloading" => Status::Downloading,
@@ -45,6 +50,7 @@ impl Status {
             "transcribing" => Status::Transcribing,
             "paused" => Status::Paused,
             "done" => Status::Done,
+            "none" => Status::None,
             _ => Status::Error,
         }
     }
@@ -55,10 +61,19 @@ pub struct Vod {
     pub id: i64,
     #[serde(flatten)]
     pub info: VodInfo,
+    /// The status of the stretch the row shows (`stretches::summarize`):
+    /// running first, then the first waiting, then paused, then the latest
+    /// failed; with no request, Done if all of it is transcribed, else None.
     pub status: Status,
-    /// 0..1 within the current status.
+    /// 0..1 within the current status, within that stretch.
     pub progress: f64,
     pub error: Option<String>,
+    /// That stretch's id; None when there's no request.
+    pub stretch: Option<i64>,
+    /// How much of it is transcribed: none, some or all.
+    pub transcribed: Transcribed,
+    /// How many requests there are besides the one shown.
+    pub waiting: usize,
     pub added_at: i64,
     pub note: Option<String>,
     /// File name of the local thumbnail copy in `Paths::thumbs` (the UI fetches it
@@ -74,8 +89,9 @@ pub struct Vod {
     /// file type: the player needs no picture.
     pub audio_only: bool,
     /// Has transcript segments from a model this version no longer uses (or
-    /// from before models were recorded). Finished VODs can be re-transcribed;
-    /// unfinished ones start over when they resume.
+    /// from before models were recorded): a stretch done, or begun, with one.
+    /// Finished VODs can be re-transcribed; unfinished ones start over when
+    /// they resume.
     pub outdated: bool,
     pub chat: ChatStatus,
     /// In the library's list. One taken out stays a source, unlisted, while
@@ -556,6 +572,42 @@ const MIGRATE_V25: &str = "ALTER TABLE vods ADD COLUMN gone INTEGER NOT NULL DEF
 /// they were (a highlight, a cut) doesn't leave it out of date.
 const MIGRATE_V26: &str = "ALTER TABLE renders ADD COLUMN made_of TEXT;";
 
+/// Version 27: transcription by stretches (`stretches.rs`). A `done` row is
+/// a transcribed range, any other a request, `reached` how far it has
+/// written lines; `audio` a section downloaded for it alone. Each VOD's
+/// transcription so far becomes stretches: a finished one, done from 0 to
+/// the end; one under way, waiting, paused or failed, a request for all of
+/// it in that state (queued ones were added when adding meant
+/// transcribing); a stopped one, done as far as its lines go, or nothing.
+/// The VOD's own status, progress, error and model stay, unread.
+const MIGRATE_V27: &str = "
+CREATE TABLE stretches (
+    id INTEGER PRIMARY KEY,
+    vod_id INTEGER NOT NULL REFERENCES vods (id) ON DELETE CASCADE,
+    start REAL NOT NULL,
+    end REAL,
+    status TEXT NOT NULL,
+    progress REAL NOT NULL DEFAULT 0,
+    reached REAL,
+    error TEXT,
+    model TEXT,
+    note TEXT,
+    audio TEXT
+);
+CREATE INDEX stretches_by_vod ON stretches (vod_id, start);
+INSERT INTO stretches (vod_id, start, end, status, progress, model)
+    SELECT id, 0, NULL, 'done', 1, model FROM vods WHERE status = 'done' ORDER BY id;
+INSERT INTO stretches (vod_id, start, end, status, progress, reached, error, model)
+    SELECT id, 0, NULL, status, progress, (SELECT max(end) FROM segments WHERE segments.vod_id = vods.id), error, model
+    FROM vods
+    WHERE status IN ('queued', 'downloading', 'ready', 'transcribing', 'paused')
+       OR (status = 'error' AND error IS NOT 'Stopped')
+    ORDER BY id;
+INSERT INTO stretches (vod_id, start, end, status, progress, model)
+    SELECT id, 0, (SELECT max(end) FROM segments WHERE segments.vod_id = vods.id), 'done', 1, model FROM vods
+    WHERE status = 'error' AND error IS 'Stopped' AND EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id)
+    ORDER BY id;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -575,12 +627,19 @@ CREATE TRIGGER items_recounted AFTER UPDATE OF vod_id ON items WHEN OLD.vod_id I
 END;";
 
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
-const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, progress, error, added_at,
-     note, model, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
-     EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed";
+/// Its stretches come as one JSON array (`stretches::STRETCH_JSON`), for its status.
+pub(crate) const VOD_COLUMNS: &str =
+    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, added_at,
+     note, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
+     EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
+     (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
+      FROM stretches s WHERE s.vod_id = vods.id) AS stretches";
 
-fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
+pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
+    let duration: Option<f64> = r.get("duration")?;
+    let stretches = crate::stretches::from_json(&r.get::<_, String>("stretches")?)
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, e.into()))?;
+    let shown = crate::stretches::summarize(&stretches, duration, r.get("has_segments")?);
     Ok(Vod {
         id: r.get("id")?,
         info: VodInfo {
@@ -589,13 +648,16 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             url: r.get("url")?,
             title: r.get("title")?,
             channel: r.get("channel")?,
-            duration: r.get("duration")?,
+            duration,
             thumbnail: r.get("thumbnail")?,
             published: r.get("published")?,
         },
-        status: Status::parse(&r.get::<_, String>("status")?),
-        progress: r.get("progress")?,
-        error: r.get("error")?,
+        status: shown.status,
+        progress: shown.progress,
+        error: shown.error,
+        stretch: shown.stretch,
+        transcribed: shown.transcribed,
+        waiting: shown.waiting,
         added_at: r.get("added_at")?,
         note: r.get("note")?,
         thumb: r.get("thumb")?,
@@ -607,11 +669,7 @@ fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             .next()
             .and_then(|p| crate::local::media_type(Path::new(&p)))
             .is_some_and(|mime| mime.starts_with("audio/")),
-        outdated: {
-            let model: Option<String> = r.get("model")?;
-            let has_segments: bool = r.get("has_segments")?;
-            has_segments && !model.is_some_and(|m| crate::model::is_current(&m))
-        },
+        outdated: shown.outdated,
         chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
         listed: r.get("listed")?,
     })
@@ -911,6 +969,7 @@ impl Db {
             MIGRATE_V24,
             MIGRATE_V25,
             MIGRATE_V26,
+            MIGRATE_V27,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1292,50 +1351,6 @@ impl Db {
         Ok(())
     }
 
-    /// The lowest VOD in the library with `status`, which is the next one for that stage.
-    /// New VODs go on top, so by default the queue runs oldest first.
-    pub fn next_with_status(&self, status: Status) -> Result<Option<Vod>> {
-        let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id WHERE status = ?1 ORDER BY o.position DESC, id LIMIT 1"
-        );
-        Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
-    }
-
-    /// Like `next_with_status`, but only VODs that are files on this computer.
-    pub fn next_local_with_status(&self, status: Status) -> Result<Option<Vod>> {
-        let sql = format!(
-            "SELECT {VOD_COLUMNS} FROM vods JOIN vod_order o ON o.vod_id = vods.id
-             WHERE status = ?1 AND source_path IS NOT NULL ORDER BY o.position DESC, id LIMIT 1"
-        );
-        Ok(self.conn.query_row(&sql, [status.as_str()], vod_from_row).optional()?)
-    }
-
-    pub fn count_with_status(&self, status: Status) -> Result<usize> {
-        let n: i64 =
-            self.conn.query_row("SELECT count(*) FROM vods WHERE status = ?1", [status.as_str()], |r| r.get(0))?;
-        Ok(n as usize)
-    }
-
-    /// Returns VODs left mid-stage by a crash or quit to that stage's queue.
-    /// Transcription resumes from its last indexed segment.
-    pub fn requeue_interrupted(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "UPDATE vods SET status = 'queued' WHERE status = 'downloading';
-             UPDATE vods SET status = 'ready' WHERE status = 'transcribing';",
-        )?;
-        Ok(())
-    }
-
-    /// Forgets every finished download, after the work dir has been cleared.
-    /// VODs waiting to transcribe go back to waiting to download.
-    pub fn forget_downloads(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "UPDATE vods SET audio_path = NULL;
-             UPDATE vods SET status = 'queued', progress = 0 WHERE status = 'ready';",
-        )?;
-        Ok(())
-    }
-
     /// VOD `id`'s frame rate, once its video has been read (`set_rate`).
     pub fn rate(&self, id: i64) -> Result<Option<Rate>> {
         let row = self
@@ -1392,23 +1407,6 @@ impl Db {
         Ok(self
             .conn
             .query_row("SELECT coalesce(max(end), 0) FROM segments WHERE vod_id = ?1", [vod_id], |r| r.get(0))?)
-    }
-
-    pub fn set_status(&self, id: i64, status: Status, progress: f64, error: Option<&str>) -> Result<()> {
-        self.conn.execute(
-            "UPDATE vods SET status = ?2, progress = ?3, error = ?4 WHERE id = ?1",
-            params![id, status.as_str(), progress, error],
-        )?;
-        Ok(())
-    }
-
-    pub fn model(&self, id: i64) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT model FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
-    }
-
-    pub fn set_model(&self, id: i64, model: Option<&str>) -> Result<()> {
-        self.conn.execute("UPDATE vods SET model = ?2 WHERE id = ?1", params![id, model])?;
-        Ok(())
     }
 
     pub fn set_thumb(&self, id: i64, thumb: &str) -> Result<()> {
@@ -2070,12 +2068,13 @@ mod tests {
         let path = dir.join("library.sqlite");
         let (adder, worker) = (Db::open(&path).unwrap(), Db::open(&path).unwrap());
         let (vod, _) = worker.add_vod(&info("a")).unwrap();
+        let stretch = worker.request(vod.id, 0.0, None).unwrap();
         let mut writing = None;
         adder
             .atomically(|db| {
                 db.vod(vod.id)?;
                 // The worker finishes a VOD between the read and the write.
-                writing = Some(std::thread::spawn(move || worker.set_status(vod.id, Status::Done, 1.0, None)));
+                writing = Some(std::thread::spawn(move || worker.finish_stretch(stretch.id)));
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 db.add_vod(&info("b"))
             })
@@ -2126,11 +2125,13 @@ mod tests {
         db.delete_vod(later.id).unwrap();
         assert_eq!(vod.note, None);
         assert!(!vod.outdated, "no transcript yet");
+        assert_eq!((vod.status, vod.transcribed), (Status::Done, Transcribed::All), "done from 0 to the end");
         db.insert_segments(vod.id, &[Segment { start: 0.0, end: 1.0, text: "hi".into(), words: Vec::new() }]).unwrap();
         assert!(db.vod(vod.id).unwrap().unwrap().outdated, "transcribed before models were recorded");
-        db.set_model(vod.id, Some(crate::model::CPU_MODEL.id)).unwrap();
+        let done = db.stretches(vod.id).unwrap()[0].id;
+        db.set_stretch_model(done, Some(crate::model::CPU_MODEL.id)).unwrap();
         assert!(!db.vod(vod.id).unwrap().unwrap().outdated);
-        db.set_model(vod.id, Some("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")).unwrap();
+        db.set_stretch_model(done, Some("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8")).unwrap();
         assert!(db.vod(vod.id).unwrap().unwrap().outdated, "older model");
         db.set_note(vod.id, Some("ran on CPU")).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().note.as_deref(), Some("ran on CPU"));
@@ -2312,6 +2313,77 @@ mod tests {
     }
 
     #[test]
+    fn transcriptions_so_far_become_stretches() {
+        let dir = crate::TempDir::new("migrate-v27");
+        let path = dir.join("library.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+                MIGRATE_V12,
+                MIGRATE_V13,
+                MIGRATE_V14,
+                MIGRATE_V15,
+                MIGRATE_V16,
+                MIGRATE_V17,
+                MIGRATE_V18,
+                MIGRATE_V19,
+                MIGRATE_V20,
+                MIGRATE_V21,
+                MIGRATE_V22,
+                MIGRATE_V23,
+                MIGRATE_V24,
+                MIGRATE_V25,
+                MIGRATE_V26,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 26;", before.join("\n").replace("FLICKS", FLICKS)))
+                .unwrap();
+            conn.execute_batch(&format!(
+                "INSERT INTO vods (id, platform, platform_id, url, title, duration, status, progress, error, model, added_at) VALUES
+                     (1, 'kick', 'done', 'u', 't', 600, 'done', 1, NULL, '{model}', 0),
+                     (2, 'kick', 'paused', 'u', 't', 600, 'paused', 0.2, NULL, '{model}', 0),
+                     (3, 'kick', 'queued', 'u', 't', 600, 'queued', 0, NULL, NULL, 0),
+                     (4, 'kick', 'stopped', 'u', 't', 600, 'error', 0, 'Stopped', NULL, 0),
+                     (5, 'kick', 'failed', 'u', 't', 600, 'error', 0, 'HTTP 404', NULL, 0),
+                     (6, 'kick', 'running', 'u', 't', 600, 'transcribing', 0.5, NULL, '{model}', 0),
+                     (7, 'kick', 'stopped-lines', 'u', 't', 600, 'error', 0, 'Stopped', '{model}', 0);
+                 INSERT INTO segments (vod_id, start, end, text, words) VALUES
+                     (1, 0, 5, 'a', '[]'), (2, 100, 120, 'b', '[]'), (6, 280, 300, 'c', '[]'), (7, 40, 50, 'd', '[]');",
+                model = crate::model::CPU_MODEL.id
+            ))
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let vod = |id| db.vod(id).unwrap().unwrap();
+        let stretches = |id| -> Vec<_> {
+            db.stretches(id).unwrap().into_iter().map(|s| (s.start, s.end, s.status, s.reached)).collect()
+        };
+        assert_eq!(stretches(1), [(0.0, None, Status::Done, None)]);
+        assert_eq!((vod(1).status, vod(1).transcribed, vod(1).outdated), (Status::Done, Transcribed::All, false));
+        assert_eq!(stretches(2), [(0.0, None, Status::Paused, Some(120.0))]);
+        assert_eq!((vod(2).status, vod(2).progress, vod(2).transcribed), (Status::Paused, 0.2, Transcribed::Some));
+        assert_eq!(stretches(3), [(0.0, None, Status::Queued, None)], "added when adding meant transcribing");
+        assert_eq!((vod(3).status, vod(3).transcribed), (Status::Queued, Transcribed::None));
+        assert_eq!(stretches(4), [], "stopped, with nothing to keep");
+        assert_eq!((vod(4).status, vod(4).error), (Status::None, None));
+        assert_eq!((vod(5).status, vod(5).error.as_deref()), (Status::Error, Some("HTTP 404")));
+        assert_eq!(stretches(6), [(0.0, None, Status::Transcribing, Some(300.0))]);
+        assert_eq!(stretches(7), [(0.0, Some(50.0), Status::Done, None)], "stopped, its lines kept");
+        assert_eq!((vod(7).status, vod(7).transcribed), (Status::None, Transcribed::Some));
+        assert_eq!(db.stretches(1).unwrap()[0].model.as_deref(), Some(crate::model::CPU_MODEL.id));
+    }
+
+    #[test]
     fn canceled_vods_say_stopped() {
         let dir = crate::TempDir::new("migrate-v12");
         let path = dir.join("library.sqlite");
@@ -2338,7 +2410,9 @@ mod tests {
             .unwrap();
         }
         let db = Db::open(&path).unwrap();
-        let errors: Vec<_> = db.vods().unwrap().into_iter().map(|v| v.error).collect();
+        // As v12 left them (since v27 the VOD's own error is unread).
+        let mut stmt = db.conn.prepare("SELECT error FROM vods").unwrap();
+        let errors: Vec<Option<String>> = stmt.query_map([], |r| r.get(0)).unwrap().map(|e| e.unwrap()).collect();
         assert!(errors.contains(&Some("Stopped".into())) && errors.contains(&Some("No audio".into())));
     }
 
@@ -2527,7 +2601,7 @@ mod tests {
     #[test]
     fn status_names_round_trip() {
         use Status::*;
-        for status in [Queued, Downloading, Ready, Transcribing, Paused, Done, Error] {
+        for status in [Queued, Downloading, Ready, Transcribing, Paused, Done, Error, Status::None] {
             assert_eq!(Status::parse(status.as_str()), status);
         }
     }
@@ -2543,19 +2617,20 @@ mod tests {
         assert_eq!(ids(&db), [a, b]);
         let c = db.add_vod(&info("c")).unwrap().0.id;
         assert_eq!(ids(&db), [c, a, b], "added on top");
-        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, b, "the queue runs from the bottom");
-        db.reorder(&[b, c, a]).unwrap();
-        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, a);
     }
 
     #[test]
     fn interrupted_jobs_return_to_their_queues() {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let [down, trans, ready, done] = ["d", "t", "r", "x"].map(|id| db.add_vod(&info(id)).unwrap().0.id);
-        db.set_status(down, Status::Downloading, 0.4, None).unwrap();
-        db.set_status(trans, Status::Transcribing, 0.6, None).unwrap();
-        db.set_status(ready, Status::Ready, 0.0, None).unwrap();
-        db.set_status(done, Status::Done, 1.0, None).unwrap();
+        let ask = |id, status, progress| {
+            let stretch = db.request(id, 0.0, None).unwrap().id;
+            db.set_stretch_status(stretch, status, progress, None).unwrap();
+        };
+        ask(down, Status::Downloading, 0.4);
+        ask(trans, Status::Transcribing, 0.6);
+        ask(ready, Status::Ready, 0.0);
+        db.finish_stretch(db.request(done, 0.0, None).unwrap().id).unwrap();
         let status = |id| db.vod(id).unwrap().unwrap().status;
 
         // A quit mid-stage: each VOD goes back to wait for the stage it was in.
@@ -2574,19 +2649,19 @@ mod tests {
 
     #[test]
     fn local_files_queue_separately() {
-        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
         let [link, file_a, file_b] = ["l", "a", "b"].map(|id| db.add_vod(&info(id)).unwrap().0.id);
         db.set_source_path(file_a, "/videos/a.mp4").unwrap();
         db.set_source_path(file_b, "/videos/b.mp4").unwrap();
-        // Bottom of the list first, as for links, but never a link.
-        db.reorder(&[file_a, file_b, link]).unwrap();
-        assert_eq!(db.next_with_status(Status::Queued).unwrap().unwrap().id, link);
-        assert_eq!(db.next_local_with_status(Status::Queued).unwrap().unwrap().id, file_b);
-        db.reorder(&[file_b, file_a, link]).unwrap();
-        assert_eq!(db.next_local_with_status(Status::Queued).unwrap().unwrap().id, file_a);
-        db.set_status(file_a, Status::Done, 1.0, None).unwrap();
-        db.set_status(file_b, Status::Done, 1.0, None).unwrap();
-        assert!(db.next_local_with_status(Status::Queued).unwrap().is_none());
+        let [_, a, b] = [link, file_a, file_b].map(|id| db.request(id, 0.0, None).unwrap().id);
+        let next = |local| db.next_stretch(Status::Queued, local).unwrap().map(|(v, _)| v.id);
+        // In the order asked, as for links, but never a link.
+        assert_eq!(next(false), Some(link));
+        assert_eq!(next(true), Some(file_a));
+        db.finish_stretch(a).unwrap();
+        assert_eq!(next(true), Some(file_b));
+        db.finish_stretch(b).unwrap();
+        assert_eq!(next(true), None);
     }
 
     #[test]

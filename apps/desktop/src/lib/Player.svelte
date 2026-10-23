@@ -551,7 +551,7 @@
     {/if}
   {:else}
     <p class="muted note">
-      {#if keepsVideo(vod) && vod.status !== "done" && vod.status !== "error"}
+      {#if keepsVideo(vod) && vod.status !== "done" && vod.status !== "error" && vod.status !== "none"}
         The video plays here once it's downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(from)}.
       {:else if keepsVideo(vod)}
         This video isn't kept on this computer. Use “Open on {site}” to watch from {formatTime(from)}.

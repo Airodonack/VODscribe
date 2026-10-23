@@ -958,7 +958,9 @@
             ? "Nothing is said in this edit."
             : vod.status === "done"
               ? "No speech was found in this VOD."
-              : "The transcript appears here as it is produced."}
+              : vod.status === "none"
+                ? "This VOD isn't transcribed."
+                : "The transcript appears here as it is produced."}
         </p>
       {/if}
       <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>

@@ -56,10 +56,20 @@ fn main() -> Result<()> {
             };
             let tools = pipeline::Tools { yt_dlp: yt_dlp.as_ref(), ffmpeg: &ffmpeg };
             let mut report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
-            let audio = pipeline::download(&mut db, &vod, &tools, &paths.work(), None, &cancel, &mut report)?;
-            pipeline::transcribe(&mut db, &vod, &ffmpeg, &audio, &transcription, &cancel, &mut report, &mut |n| {
-                eprintln!("\n{n}")
-            })?;
+            let stretch = db.request(vod.id, 0.0, None)?;
+            let audio = pipeline::download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &cancel, &mut report)?;
+            let stretch = db.stretch(stretch.id)?.context("just asked for")?;
+            pipeline::transcribe(
+                &mut db,
+                &vod,
+                &stretch,
+                &ffmpeg,
+                &audio,
+                &transcription,
+                &cancel,
+                &mut report,
+                &mut |n| eprintln!("\n{n}"),
+            )?;
             pipeline::remove_work_files(&paths.work(), vod.id);
             eprintln!();
         }

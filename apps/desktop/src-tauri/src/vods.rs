@@ -11,6 +11,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::settings::ClipFormat;
+use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
@@ -78,7 +79,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         let info = info?;
 
         let db = state.db.lock().unwrap();
-        let (mut vod, created) = db.add_vod(&info)?;
+        let (mut vod, created) = add_and_ask(&db, &info, None)?;
         if created {
             // Hand the resolved info to the worker so it doesn't probe again. Only a
             // shortcut: if the file can't be moved (a virus scanner holding it, say),
@@ -89,8 +90,8 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
             }
         } else {
             let _ = std::fs::remove_file(&probe_path);
-            if vod.status == Status::Error {
-                requeue(&db, vod.id)?;
+            if matches!(vod.status, Status::Error | Status::None) {
+                requeue(&db, vod.id, &[Status::Paused, Status::Error])?;
                 vod = db.vod(vod.id)?.unwrap_or(vod);
             }
         }
@@ -162,17 +163,27 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     }
     let db = state.db.lock().unwrap();
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    let (vod, created) = db.atomically(|db| {
-        let (vod, created) = db.add_vod(&info)?;
-        if created {
-            db.set_source_path(vod.id, &info.url)?;
-        }
-        Ok((vod, created))
-    })?;
-    if !created && vod.status == Status::Error {
-        requeue(&db, vod.id)?;
+    let (vod, created) = add_and_ask(&db, &info, Some(&info.url))?;
+    if !created && matches!(vod.status, Status::Error | Status::None) {
+        requeue(&db, vod.id, &[Status::Paused, Status::Error])?;
     }
     Ok((db.vod(vod.id)?.unwrap_or(vod), created))
+}
+
+/// Adds a VOD (a file at `source`, if given) and, if it's new, asks for all
+/// of it to be transcribed, in one transaction.
+fn add_and_ask(db: &Db, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
+    db.atomically(|db| {
+        let (vod, created) = db.add_vod(info)?;
+        if !created {
+            return Ok((vod, false));
+        }
+        if let Some(source) = source {
+            db.set_source_path(vod.id, source)?;
+        }
+        db.request(vod.id, 0.0, None)?;
+        Ok((db.vod(vod.id)?.unwrap_or(vod), true))
+    })
 }
 
 /// Opens a local VOD's file in the system's video player, for formats the
@@ -286,7 +297,7 @@ pub(crate) async fn delete_vod(
             crate::clips::remove(&app, &db, clip.id)?;
         }
         db.remove_entry(id)?;
-        state.worker.control(id, Stop::Pause, || Ok(()))?;
+        state.worker.control_vod(id, Stop::Pause, |_| Ok(()))?;
         anyhow::Ok(())
     })();
     state.clips.vod_removed(&state.db.lock().unwrap(), id);
@@ -296,7 +307,14 @@ pub(crate) async fn delete_vod(
         // work is still stopping goes when the app next quits or starts.
         erase_in_parts(&app, move |db| db.delete_some_of(id, ERASE_PART)).await?;
         let db = state.db.lock().unwrap();
-        state.worker.control(id, Stop::Pause, || erase_source(&app, &db, id)).map_err(err)?;
+        state
+            .worker
+            .control_vod(
+                id,
+                Stop::Pause,
+                |running| if running.is_empty() { erase_source(&app, &db, id) } else { Ok(()) },
+            )
+            .map_err(err)?;
     }
     let _ = app.emit("vod-removed", id);
     Ok(())
@@ -318,6 +336,7 @@ fn erase_source(app: &AppHandle, db: &Db, id: i64) -> anyhow::Result<()> {
     if db.uses(id)? > 0 {
         db.set_gone(id)?;
         db.clear_segments(id)?;
+        db.clear_stretches(id)?;
         return Ok(());
     }
     db.delete_vod(id)
@@ -427,11 +446,12 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
             }
             erase_source(app, db, id)
         };
+        let unless_running = |db: &Db, running: &[i64]| if running.is_empty() { erase(db) } else { Ok(()) };
         let erased = match db {
-            Some(db) => state.worker.control(id, Stop::Pause, || erase(db)),
+            Some(db) => state.worker.control_vod(id, Stop::Pause, |running| unless_running(db, running)),
             None => {
                 let db = state.db.lock().unwrap();
-                state.worker.control(id, Stop::Pause, || erase(&db))
+                state.worker.control_vod(id, Stop::Pause, |running| unless_running(&db, running))
             }
         };
         if let Err(e) = erased {
@@ -496,18 +516,33 @@ pub(crate) fn forget_video(db: &Db, work: &std::path::Path, id: i64) -> anyhow::
     Ok(())
 }
 
-/// Requeues a VOD at whichever stage it needs next.
-pub(crate) fn requeue(db: &Db, id: i64) -> anyhow::Result<()> {
-    let downloaded = db.audio_path(id)?.is_some_and(|p| std::path::Path::new(&p).is_file());
-    let progress = db.vod(id)?.map_or(0.0, |v| if v.status == Status::Paused { v.progress } else { 0.0 });
-    let status = if downloaded { Status::Ready } else { Status::Queued };
-    db.set_status(id, status, progress, None)
+/// Puts VOD `id`'s requests in one of `which` (paused, failed) back in their
+/// queues, at whichever stage each needs next. With no request at all and
+/// some of it not transcribed, asks for each part that isn't.
+pub(crate) fn requeue(db: &Db, id: i64, which: &[Status]) -> anyhow::Result<()> {
+    let requests = db.requests(id)?;
+    if requests.is_empty() {
+        let Some(vod) = db.vod(id)? else { return Ok(()) };
+        for (start, end) in stretches::gaps(&db.stretches(id)?, vod.info.duration) {
+            db.request(id, start, end)?;
+        }
+        return Ok(());
+    }
+    // The VOD's whole audio serves any request of it.
+    let whole = db.audio_path(id)?.is_some_and(|p| Path::new(&p).is_file());
+    for stretch in requests.into_iter().filter(|s| which.contains(&s.status)) {
+        let downloaded = whole || stretch.audio.as_ref().is_some_and(|p| Path::new(p).is_file());
+        let progress = if stretch.status == Status::Paused { stretch.progress } else { 0.0 };
+        let status = if downloaded { Status::Ready } else { Status::Queued };
+        db.set_stretch_status(stretch.id, status, progress, None)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub(crate) async fn retry_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    requeue(&db, id).map_err(err)?;
+    requeue(&db, id, &[Status::Paused, Status::Error]).map_err(err)?;
     emit_vod(&app, &db, id)?;
     state.worker.wake();
     Ok(())
@@ -520,12 +555,12 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     {
         let db = state.db.lock().unwrap();
         match db.vod(id).map_err(err)? {
-            Some(vod) if matches!(vod.status, Status::Done | Status::Error) => {}
+            Some(vod) if matches!(vod.status, Status::Done | Status::Error | Status::None) => {}
             _ => return Err("Only finished VODs can be transcribed again.".into()),
         }
         // First, so a quit while the old transcript is erased leaves it marked
         // outdated, and transcribing it next clears the rest.
-        db.set_model(id, None).map_err(err)?;
+        db.forget_models(id).map_err(err)?;
     }
     // The old transcript, a part at a time on a blocking thread: a long one
     // is thousands of rows, and the app shouldn't wait on the library meanwhile.
@@ -534,8 +569,10 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     db.atomically(|db| {
         // None left to delete; tidies the search index of the old transcript's words.
         db.clear_segments(id)?;
+        db.clear_stretches(id)?;
         db.set_note(id, None)?;
-        requeue(db, id)
+        db.request(id, 0.0, None)?;
+        anyhow::Ok(())
     })
     .map_err(err)?;
     emit_vod(&app, &db, id)?;
@@ -543,18 +580,18 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
     Ok(())
 }
 
-/// Stops a VOD, keeping its partial download and transcript.
+/// Stops a VOD's requests, keeping their partial downloads and transcripts.
 #[tauri::command]
 pub(crate) async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     // A running job is paused by its stage once its process has stopped.
     state
         .worker
-        .control(id, Stop::Pause, || {
+        .control_vod(id, Stop::Pause, |running| {
             let db = state.db.lock().unwrap();
-            if let Some(vod) = db.vod(id)?
-                && matches!(vod.status, Status::Queued | Status::Ready)
-            {
-                db.set_status(id, Status::Paused, vod.progress, None)?;
+            for stretch in db.requests(id)? {
+                if !running.contains(&stretch.id) && matches!(stretch.status, Status::Queued | Status::Ready) {
+                    db.set_stretch_status(stretch.id, Status::Paused, stretch.progress, None)?;
+                }
             }
             Ok(())
         })
@@ -565,22 +602,34 @@ pub(crate) async fn pause_vod(app: AppHandle, state: State<'_, AppState>, id: i6
 #[tauri::command]
 pub(crate) async fn resume_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    if db.vod(id).map_err(err)?.is_some_and(|v| v.status == Status::Paused) {
-        requeue(&db, id).map_err(err)?;
+    if db.requests(id).map_err(err)?.iter().any(|s| s.status == Status::Paused) {
+        requeue(&db, id, &[Status::Paused]).map_err(err)?;
         emit_vod(&app, &db, id)?;
         state.worker.wake();
     }
     Ok(())
 }
 
-/// Stops a VOD and discards its partial work; Retry then starts over.
+/// Stops a VOD's requests and discards their partial work; Retry then starts over.
 #[tauri::command]
 pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     state
         .worker
-        .control(id, Stop::Cancel, || worker::discard(&state.db.lock().unwrap(), &state.paths.work(), id))
+        .control_vod(id, Stop::Cancel, |running| {
+            let db = state.db.lock().unwrap();
+            for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id)) {
+                worker::discard(&db, &state.paths.work(), stretch.id)?;
+            }
+            Ok(())
+        })
         .map_err(err)?;
     emit_vod(&app, &state.db.lock().unwrap(), id)
+}
+
+/// VOD `vod_id`'s stretches, transcribed and asked for, in time order.
+#[tauri::command]
+pub(crate) async fn transcript_stretches(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Stretch>> {
+    crate::with_reads(app, move |db| db.stretches(vod_id)).await
 }
 
 #[derive(Serialize)]
