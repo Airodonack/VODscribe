@@ -57,7 +57,8 @@ fn main() -> Result<()> {
             let tools = pipeline::Tools { yt_dlp: yt_dlp.as_ref(), ffmpeg: &ffmpeg };
             let mut report = |s, f: f64| eprint!("\r{s:?} {:5.1}%  {:6.1}s   ", f * 100.0, t.elapsed().as_secs_f64());
             let stretch = db.request(vod.id, 0.0, None)?;
-            let audio = pipeline::download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &cancel, &mut report)?;
+            let path = pipeline::download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &cancel, &mut report)?;
+            let audio = pipeline::Audio { path, offset: 0.0 };
             let stretch = db.stretch(stretch.id)?.context("just asked for")?;
             pipeline::transcribe(
                 &mut db,

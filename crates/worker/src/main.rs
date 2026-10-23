@@ -3,7 +3,7 @@
 //! libraries without the app depending on them.
 //!
 //! Usage: vodscribe-worker --model <dir> --provider cpu|cuda --ffmpeg <path>
-//!                         [--batch <chunks per decode>] [--start <secs>] <audio>
+//!                         [--batch <chunks per decode>] [--start <secs>] [--end <secs>] <audio>
 //!
 //! Prints JSON lines to stdout: `{"ready":true}` once the model has loaded,
 //! then `{"end":<secs>,"words":[...]}` per batch of audio. Exits non-zero on error.
@@ -27,18 +27,21 @@ struct Args {
     audio: PathBuf,
     /// Resume point, in seconds.
     start: f64,
+    /// Where to stop, in seconds; None: the end of the audio.
+    end: Option<f64>,
     batch: usize,
 }
 
 fn parse_args() -> Result<Args> {
     let mut args = std::env::args().skip(1);
-    let (mut model, mut provider, mut ffmpeg, mut audio, mut start, mut batch) =
-        (None, Provider::Cpu, None, None, 0.0, 1);
+    let (mut model, mut provider, mut ffmpeg, mut audio, mut start, mut end, mut batch) =
+        (None, Provider::Cpu, None, None, 0.0, None, 1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--model" => model = args.next().map(PathBuf::from),
             "--ffmpeg" => ffmpeg = args.next().map(PathBuf::from),
             "--start" => start = args.next().context("--start needs a value")?.parse().context("--start")?,
+            "--end" => end = Some(args.next().context("--end needs a value")?.parse().context("--end")?),
             "--batch" => batch = args.next().context("--batch needs a value")?.parse().context("--batch")?,
             "--provider" => {
                 provider = match args.next().as_deref() {
@@ -57,6 +60,7 @@ fn parse_args() -> Result<Args> {
         ffmpeg: ffmpeg.context("--ffmpeg is required")?,
         audio: audio.context("an audio file is required")?,
         start,
+        end,
         batch,
     })
 }
@@ -117,12 +121,12 @@ fn run() -> Result<()> {
     // The audio is decoded and cut into chunks on a thread of its own, a few
     // chunks ahead of the transcription, so neither waits for the other.
     let (tx, rx) = std::sync::mpsc::sync_channel::<Chunk>(transcriber.queue_size());
-    let (ffmpeg, audio, start) = (args.ffmpeg.clone(), args.audio.clone(), args.start);
+    let (ffmpeg, audio, start, end) = (args.ffmpeg.clone(), args.audio.clone(), args.start, args.end);
     let decoder = std::thread::spawn(move || -> Result<()> {
         let never = AtomicBool::new(false);
         let mut chunker = Chunker::new(CHUNK_MIN_SECS, CHUNK_MAX_SECS, start);
         // A send fails only once the transcription has stopped, which has its own error.
-        audio::decode(&ffmpeg, &audio, start, &never, |samples| {
+        audio::decode(&ffmpeg, &audio, start, end, &never, |samples| {
             for chunk in chunker.push(samples) {
                 tx.send(chunk).map_err(|_| anyhow::anyhow!("transcription stopped"))?;
             }

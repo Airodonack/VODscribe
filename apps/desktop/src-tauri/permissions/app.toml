@@ -110,6 +110,7 @@ permissions = [
   "allow-search",
   "allow-transcript",
   "allow-transcript-stretches",
+  "allow-transcribe-stretch",
   "allow-chat-overview",
   "allow-chat-windows",
   "allow-chat-emotes",

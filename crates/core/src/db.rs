@@ -1455,7 +1455,7 @@ impl Db {
     /// the entries of rows deleted since, which otherwise stay in the file
     /// (secure_delete then zeroes the pages they were on). After a VOD's rows
     /// are deleted; a no-op when there's nothing to tidy.
-    fn tidy_index(&self, index: &str) -> Result<()> {
+    pub(crate) fn tidy_index(&self, index: &str) -> Result<()> {
         self.conn.execute(&format!("INSERT INTO {index} ({index}) VALUES ('optimize')"), [])?;
         Ok(())
     }

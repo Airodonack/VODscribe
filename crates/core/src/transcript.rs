@@ -77,6 +77,12 @@ impl Segmenter {
         self.flush()
     }
 
+    /// Where the words held back for the next segment start, if any: what's
+    /// before is all in the segments given out.
+    pub fn pending_start(&self) -> Option<f64> {
+        self.current.first().map(|w| w.start)
+    }
+
     fn flush(&mut self) -> Option<Segment> {
         if self.current.is_empty() {
             return None;

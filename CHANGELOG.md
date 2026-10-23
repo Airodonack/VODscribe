@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.5.2 (unreleased)
 
 - The window no longer sometimes stays empty for about two minutes when VODscribe starts.
+- Cancelling a transcription keeps the lines transcribed so far, instead of throwing them away.
 
 ## 0.5.1 — 2026-10-23
 

@@ -118,8 +118,7 @@
     action.catch((e) => onerror(String(e)));
   }
 
-  // Transcribing again first erases the old transcript, a moment for a long one.
-  let clearing = $state(false);
+  // The new transcript replaces the old one as it comes.
   async function retranscribe() {
     if (
       await ask(
@@ -127,15 +126,7 @@
         "Transcribe again",
       )
     ) {
-      clearing = true;
-      onerror(null);
-      api.retranscribeVod(vod.id).then(
-        () => (clearing = false),
-        (e) => {
-          clearing = false;
-          onerror(String(e));
-        },
-      );
+      act(api.retranscribeVod(vod.id));
     }
   }
 
@@ -155,8 +146,8 @@
   async function cancel() {
     if (
       await ask(
-        `Cancel “${vod.title}”? What's been downloaded and transcribed so far will be thrown away.`,
-        "Stop and discard",
+        `Stop transcribing “${vod.title}”? What's transcribed so far is kept; what's downloaded for the rest is deleted.`,
+        "Stop",
         "Keep going",
       )
     ) {
@@ -247,11 +238,11 @@
   </span>
 </button>
 
-{#if removing || clearing}
+{#if removing}
   <div class="status-area">
     <span class="status">
-      <Spinner label={removing ? "Removing" : "Clearing the old transcript"} />
-      {removing ? "Removing…" : "Clearing the old transcript…"}
+      <Spinner label="Removing" />
+      Removing…
     </span>
   </div>
 {:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
@@ -284,7 +275,7 @@
   </div>
 {/if}
 
-<div class="actions" class:removing inert={removing || clearing}>
+<div class="actions" class:removing inert={removing}>
   {#if vod.status === "error" || vod.status === "none"}
     <button class="row-act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />

@@ -64,7 +64,7 @@ pub fn read(ffmpeg: &Path, input: &Path, cancel: &AtomicBool) -> Result<Vec<u8>>
         return Ok(Vec::new());
     }
     let mut levels = Levels::default();
-    audio::decode(ffmpeg, input, 0.0, cancel, |samples| {
+    audio::decode(ffmpeg, input, 0.0, None, cancel, |samples| {
         levels.push(samples);
         Ok(())
     })?;

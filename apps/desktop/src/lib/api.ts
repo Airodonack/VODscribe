@@ -560,6 +560,9 @@ export const api = {
   /** The transcript's lines; with `after`, only those starting after it. */
   transcript: (vodId: number, after?: number) => invoke<Line[]>("transcript", { vodId, after }),
   transcriptStretches: (vodId: number) => invoke<Stretch[]>("transcript_stretches", { vodId }),
+  /** Asks for `start`..`end` (null: to the end) of a VOD to be transcribed. */
+  transcribeStretch: (vodId: number, start: number, end: number | null) =>
+    invoke<Stretch>("transcribe_stretch", { vodId, start, end }),
   /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its
    *  events; `events: false` leaves those out (`events` is then null). */
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>

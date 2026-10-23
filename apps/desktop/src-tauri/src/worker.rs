@@ -27,7 +27,7 @@ const MAX_READY: usize = 2;
 pub enum Stop {
     /// Keep the partial download and transcript; resume later.
     Pause,
-    /// Discard partial work; the VOD stays in the library as canceled.
+    /// End the request, keeping the lines it wrote; its audio goes.
     Cancel,
 }
 
@@ -279,7 +279,7 @@ fn finish(
         // The transcript finished before the stop took effect: keep it.
         (Ok(()), Some(_)) if stage == Stage::Transcribe => {}
         (_, Some(Stop::Pause)) => db.set_stretch_status(stretch_id, Status::Paused, progress, None)?,
-        (_, Some(Stop::Cancel)) => discard(db, work, stretch_id)?,
+        (_, Some(Stop::Cancel)) => cancel(db, work, stretch_id)?,
         (Ok(()), None) => {}
         // Stopped without a recorded reason: keep the work, as a pause would.
         (Err(e), None) if vodscribe_core::is_canceled(&e) => {
@@ -293,36 +293,26 @@ fn finish(
     Ok(())
 }
 
-/// The error note of a VOD the user stopped; the UI shows it as "Stopped", not "Failed".
-pub const STOPPED: &str = "Stopped";
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
 
-/// Throws away the partial work of request `stretch_id` (a VOD's whole
-/// transcript, as requests are of all of it), leaving it as canceled. Its
-/// video goes too where downloading it is part of transcribing; one
-/// downloaded on request (videos.rs) stays.
-pub fn discard(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
-    let Some(vod_id) = db.stretch(stretch_id)?.map(|s| s.vod_id) else { return Ok(()) };
-    let own_video = db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform));
+/// Ends request `stretch_id`, keeping the lines it wrote: it's done as far
+/// as it reached (`Db::end_request`). With no other request of its VOD
+/// left, the VOD's work files go, and a partly downloaded video where
+/// downloading it is part of transcribing (one kept whole, or downloaded on
+/// request (videos.rs), stays).
+pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
+    let Some(stretch) = db.stretch(stretch_id)? else { return Ok(()) };
+    let vod_id = stretch.vod_id;
+    db.end_request(stretch_id)?;
+    if !db.requests(vod_id)?.is_empty() {
+        return Ok(());
+    }
     pipeline::remove_work_files(work_dir, vod_id);
-    if own_video {
+    db.set_audio_path(vod_id, None)?;
+    if db.vod(vod_id)?.is_some_and(|v| pipeline::keeps_video(&v.info.platform) && !v.media) {
         pipeline::remove_media(work_dir, vod_id);
     }
-    db.atomically(|db| {
-        db.clear_segments(vod_id)?;
-        db.set_audio_path(vod_id, None)?;
-        if own_video {
-            db.set_media_path(vod_id, None)?;
-        }
-        db.set_note(vod_id, None)?;
-        // Its lines are gone, so nothing of the VOD is transcribed.
-        for done in db.stretches(vod_id)?.into_iter().filter(|s| s.status == Status::Done) {
-            db.delete_stretch(done.id)?;
-        }
-        db.set_reached(stretch_id, None)?;
-        db.set_stretch_audio(stretch_id, None)?;
-        db.set_stretch_status(stretch_id, Status::Error, 0.0, Some(STOPPED))
-    })
+    Ok(())
 }
 
 /// A progress reporter that throttles events and remembers the last value.
@@ -404,6 +394,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, pr
         let _ = notes.set_note(vod.id, Some(&notice));
         let _ = crate::emit_vod(&app, &notes, vod.id);
     };
+    let audio = pipeline::Audio { path: audio, offset: 0.0 };
     pipeline::transcribe(&mut ctx.db, vod, stretch, &ffmpeg, &audio, &transcription, flag, &mut report, &mut notice)?;
     // The audio stays while another request of the VOD may use it.
     if ctx.db.requests(vod.id)?.is_empty() {
@@ -473,6 +464,7 @@ fn plan_transcription(
 mod tests {
     use super::*;
     use vodscribe_core::fetch::VodInfo;
+    use vodscribe_core::stretches::Transcribed;
 
     /// A work dir, deleted when the test ends.
     struct Work(std::path::PathBuf);
@@ -533,24 +525,54 @@ mod tests {
         (vod.status, vod.error)
     }
 
-    #[test]
-    fn a_pause_keeps_the_work() {
-        let (db, work, id) = setup(Status::Downloading);
-        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4).unwrap();
-        assert_eq!(status(&db, id).0, Status::Paused);
-        assert_eq!(db.stretch(id).unwrap().unwrap().progress, 0.4);
-        assert!(work.join(format!("{}.m4a", vod_of(&db, id))).exists());
+    /// Request `stretch`'s VOD's lines, as (start, text).
+    fn lines(db: &Db, vod: i64) -> Vec<(f64, String)> {
+        db.lines(vod, None).unwrap().into_iter().map(|(start, _, text)| (start, text)).collect()
+    }
+
+    /// Writes a line from 0 to 10 s for request `id`, which reached its end.
+    fn write_a_line(db: &mut Db, id: i64) {
+        let vod = vod_of(db, id);
+        let line = vodscribe_core::transcript::Segment { start: 0.0, end: 10.0, text: "hi".into(), words: Vec::new() };
+        db.replace_segments(vod, id, (0.0, Some(10.0)), &[line], 10.0).unwrap();
     }
 
     #[test]
-    fn a_cancel_discards_the_work_and_says_stopped() {
-        let (db, work, id) = setup(Status::Transcribing);
+    fn a_pause_keeps_the_request_and_its_work() {
+        let (mut db, work, id) = setup(Status::Transcribing);
+        write_a_line(&mut db, id);
+        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Pause), 0.4)
+            .unwrap();
+        assert_eq!(status(&db, id).0, Status::Paused);
+        let stretch = db.stretch(id).unwrap().unwrap();
+        assert_eq!((stretch.status, stretch.progress, stretch.reached), (Status::Paused, 0.4, Some(10.0)));
+        assert!(work.join(format!("{}.m4a", vod_of(&db, id))).exists());
+        assert_eq!(lines(&db, vod_of(&db, id)), [(0.0, "hi".into())]);
+    }
+
+    #[test]
+    fn a_cancel_keeps_the_lines_so_far_and_lets_the_audio_go() {
+        let (mut db, work, id) = setup(Status::Transcribing);
         let vod = vod_of(&db, id);
+        write_a_line(&mut db, id);
         finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
-        assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
+        let shown = db.vod(vod).unwrap().unwrap();
+        assert_eq!((shown.status, shown.transcribed, shown.error), (Status::None, Transcribed::Some, None));
+        let stretches: Vec<_> = db.stretches(vod).unwrap().into_iter().map(|s| (s.start, s.end, s.status)).collect();
+        assert_eq!(stretches, [(0.0, Some(10.0), Status::Done)], "done as far as it reached");
+        assert_eq!(lines(&db, vod), [(0.0, "hi".into())]);
         assert_eq!(db.audio_path(vod).unwrap(), None);
         assert!(!work.join(format!("{vod}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_cancel_before_any_line_leaves_nothing_asked() {
+        let (db, work, id) = setup(Status::Downloading);
+        let vod = vod_of(&db, id);
+        finish(Stage::Download, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4).unwrap();
+        assert_eq!(db.stretches(vod).unwrap(), []);
+        assert_eq!(db.vod(vod).unwrap().unwrap().status, Status::None);
     }
 
     #[test]
@@ -565,7 +587,7 @@ mod tests {
         db.set_media_path(vod, Some(&video)).unwrap();
         finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
             .unwrap();
-        assert_eq!(status(&db, id), (Status::Error, Some(STOPPED.into())));
+        assert_eq!(db.vod(vod).unwrap().unwrap().status, Status::None);
         assert!(std::path::Path::new(&video).exists());
         assert_eq!(db.media_path(vod).unwrap(), Some(video));
     }

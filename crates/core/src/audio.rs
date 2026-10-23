@@ -9,12 +9,14 @@ use crate::tools;
 
 pub const SAMPLE_RATE: usize = 16_000;
 
-/// Decodes any media file to 16 kHz mono with ffmpeg, from `start` seconds,
-/// streaming samples to `on_samples` so a multi-hour VOD never has to fit in memory.
+/// Decodes any media file to 16 kHz mono with ffmpeg, from `start` seconds
+/// to `end` (None: its end), streaming samples to `on_samples` so a
+/// multi-hour VOD never has to fit in memory.
 pub fn decode(
     ffmpeg: &Path,
     input: &Path,
     start: f64,
+    end: Option<f64>,
     cancel: &AtomicBool,
     mut on_samples: impl FnMut(&[f32]) -> Result<()>,
 ) -> Result<()> {
@@ -24,6 +26,10 @@ pub fn decode(
     // first second or two of some files (FLV, before its first keyframe).
     if start > 0.0 {
         cmd.args(["-ss", &format!("{start:.3}")]);
+    }
+    // As long as the stretch asked for, read from the input.
+    if let Some(end) = end {
+        cmd.args(["-t", &format!("{:.3}", (end - start).max(0.0))]);
     }
     let mut child = cmd
         .arg("-i")
@@ -186,7 +192,7 @@ mod tests {
             // An ffmpeg without that encoder can't make the sample.
             let Some(path) = make(name, args) else { continue };
             let mut samples = 0;
-            decode(&ffmpeg, &path, 0.0, &never, |s| {
+            decode(&ffmpeg, &path, 0.0, None, &never, |s| {
                 samples += s.len();
                 Ok(())
             })
@@ -198,7 +204,33 @@ mod tests {
         assert!(tried >= 8, "only {tried} samples could be made");
         // NUT, a container ffmpeg reads but VODscribe doesn't take: refused.
         let nut = make("n.nut", &["-c:v", "mpeg4", "-c:a", "pcm_s16le"]).expect("ffmpeg can make NUT");
-        assert!(decode(&ffmpeg, &nut, 0.0, &never, |_| Ok(())).is_err());
+        assert!(decode(&ffmpeg, &nut, 0.0, None, &never, |_| Ok(())).is_err());
+    }
+
+    /// From a start to an end: that second of a three-second tone and no
+    /// more. Made with ffmpeg; skipped where ffmpeg isn't installed.
+    #[test]
+    fn decodes_a_stretch_only() {
+        let Ok(ffmpeg) = which::which("ffmpeg") else {
+            eprintln!("skipped: no ffmpeg on PATH");
+            return;
+        };
+        let dir = crate::TempDir::new("decode-end");
+        let path = dir.join("tone.m4a");
+        let made = std::process::Command::new(&ffmpeg)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:a", "aac"])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let mut samples = 0;
+        decode(&ffmpeg, &path, 1.0, Some(2.0), &AtomicBool::new(false), |s| {
+            samples += s.len();
+            Ok(())
+        })
+        .unwrap();
+        let secs = samples as f64 / SAMPLE_RATE as f64;
+        assert!((secs - 1.0).abs() < 0.05, "{secs} s");
     }
 
     #[test]

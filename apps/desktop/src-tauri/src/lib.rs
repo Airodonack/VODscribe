@@ -391,6 +391,7 @@ pub fn run() {
             vods::search,
             vods::transcript,
             vods::transcript_stretches,
+            vods::transcribe_stretch,
             chats::chat_overview,
             chats::chat_windows,
             chats::chat_emotes,

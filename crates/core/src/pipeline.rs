@@ -12,7 +12,7 @@ use crate::db::{Db, Status, Vod};
 use crate::fetch;
 use crate::stretches::Stretch;
 use crate::tools::{self, YtDlp};
-use crate::transcript::{Segmenter, Word};
+use crate::transcript::{Segment, Segmenter, Word};
 
 /// Stream URLs in a saved info JSON expire (YouTube's after about 6 hours, others
 /// sooner), so a download that starts later than this probes the VOD again.
@@ -65,6 +65,8 @@ pub fn download(
     cancel: &AtomicBool,
     mut report: impl FnMut(Status, f64),
 ) -> Result<PathBuf> {
+    // Lines it would cut through are transcribed again whole.
+    let stretch = &db.snap_stretch(stretch.id)?;
     // A local file is transcribed where it is: there's nothing to download.
     if let Some(source) = &vod.source_path {
         return crate::local::source(source);
@@ -181,16 +183,24 @@ pub fn remove_media(work_dir: &Path, vod_id: i64) {
     remove_work_files(&media_dir(work_dir), vod_id);
 }
 
-/// Transcribes downloaded audio for `stretch`, writing segments to the index
-/// as they are produced so partial results are searchable during a long run.
-/// Picks up where it reached, so a paused or interrupted job resumes.
+/// Audio to transcribe a stretch from: a file, and the VOD's time at its 0
+/// (a section's start; 0 for the VOD's whole audio).
+pub struct Audio {
+    pub path: PathBuf,
+    pub offset: f64,
+}
+
+/// Transcribes `stretch` of the audio, writing segments to the index as they
+/// are produced, in place of the lines it transcribes over, so partial
+/// results are searchable during a long run. Picks up where it reached, so
+/// a paused or interrupted job resumes.
 #[allow(clippy::too_many_arguments)]
 pub fn transcribe(
     db: &mut Db,
     vod: &Vod,
     stretch: &Stretch,
     ffmpeg: &Path,
-    audio_path: &Path,
+    audio: &Audio,
     transcription: &Transcription,
     cancel: &AtomicBool,
     report: &mut impl FnMut(Status, f64),
@@ -198,9 +208,9 @@ pub fn transcribe(
 ) -> Result<()> {
     // A video without sound has nothing to transcribe: done, with no lines.
     // Nothing found at all is a file ffmpeg couldn't read, not a silent one.
-    let streams = crate::local::codecs(ffmpeg, audio_path)?;
+    let streams = crate::local::codecs(ffmpeg, &audio.path)?;
     if streams.audio.is_none() && streams.video.is_none() {
-        bail!("{} couldn't be read.", tools::shown(audio_path));
+        bail!("{} couldn't be read.", tools::shown(&audio.path));
     }
     if streams.audio.is_none() {
         db.set_stretch_model(stretch.id, Some(transcription.worker.model_id))?;
@@ -209,28 +219,36 @@ pub fn transcribe(
         return Ok(());
     }
     let attempt = |spec: &WorkerSpec, db: &mut Db, report: &mut dyn FnMut(Status, f64)| {
-        run_worker(db, vod, stretch.id, spec, ffmpeg, audio_path, cancel, report)
+        run_worker(db, vod, stretch.id, spec, ffmpeg, audio, cancel, report)
     };
-    // A paused or interrupted job resumes where it reached, but never on top
-    // of segments from an older model (or from before models were recorded).
+    // A paused or interrupted job resumes where it reached, but never after
+    // lines from an older model (or from before models were recorded): it
+    // starts again from its start, over them.
     if stretch.from() > stretch.start && !stretch.model.as_deref().is_some_and(crate::model::is_current) {
-        db.clear_segments(vod.id)?;
         db.set_reached(stretch.id, None)?;
     }
     let mut used = &transcription.worker;
     db.set_stretch_model(stretch.id, Some(used.model_id))?;
-    if let Err(e) = attempt(used, db, report) {
-        let Some(fallback) = &transcription.fallback else { return Err(e) };
-        if cancel.load(Ordering::Relaxed) {
-            return Err(e);
+    let replaced = match attempt(used, db, report) {
+        Ok(replaced) => replaced,
+        Err(e) => {
+            let Some(fallback) = &transcription.fallback else { return Err(e) };
+            if cancel.load(Ordering::Relaxed) {
+                return Err(e);
+            }
+            eprintln!("GPU transcription failed: {e:#}");
+            notice("The graphics card ran into a problem, so the rest was transcribed with the processor.".into());
+            used = fallback;
+            db.set_stretch_model(stretch.id, Some(used.model_id))?;
+            // What the failed run replaced isn't known: counted as some.
+            attempt(used, db, report)?.max(1)
         }
-        eprintln!("GPU transcription failed: {e:#}");
-        notice("The graphics card ran into a problem, so the rest was transcribed with the processor.".into());
-        used = fallback;
-        db.set_stretch_model(stretch.id, Some(used.model_id))?;
-        attempt(used, db, report)?;
-    }
+    };
     db.finish_stretch(stretch.id)?;
+    // The lines transcribed over, out of the search index too.
+    if replaced > 0 {
+        db.tidy_segments()?;
+    }
     report(Status::Done, 1.0);
     Ok(())
 }
@@ -268,8 +286,9 @@ struct WorkerLine {
     words: Vec<Word>,
 }
 
-/// Runs one worker over the whole file, from where request `stretch_id`
-/// reached, indexing segments as they stream in.
+/// Runs one worker over request `stretch_id`'s stretch of `audio`, from
+/// where it reached, writing segments as they stream in over the lines
+/// there (`Db::replace_segments`). Returns how many lines it replaced.
 #[allow(clippy::too_many_arguments)]
 fn run_worker(
     db: &mut Db,
@@ -277,21 +296,27 @@ fn run_worker(
     stretch_id: i64,
     spec: &WorkerSpec,
     ffmpeg: &Path,
-    audio_path: &Path,
+    audio: &Audio,
     cancel: &AtomicBool,
     report: &mut dyn FnMut(Status, f64),
-) -> Result<()> {
-    let duration = vod.info.duration.filter(|d| *d > 0.0);
-    let fraction = |t: f64| duration.map_or(0.0, |d| (t / d).min(1.0));
+) -> Result<usize> {
     let stretch = db.stretch(stretch_id)?.context("That request is gone.")?;
-    let start = stretch.from();
+    let (start, end) = (stretch.from(), stretch.end);
+    // Progress within the stretch.
+    let length = end.or(vod.info.duration).map(|e| e - stretch.start).filter(|l| *l > 0.0);
+    let fraction = |t: f64| length.map_or(0.0, |l| ((t - stretch.start) / l).clamp(0.0, 1.0));
     db.set_stretch_status(stretch_id, Status::Transcribing, fraction(start), None)?;
     report(Status::Transcribing, fraction(start));
 
     let mut cmd = tools::command(&spec.program);
     cmd.arg("--model").arg(&spec.model_dir).args(["--provider", spec.provider]);
     cmd.args(["--batch", &spec.batch.to_string()]);
-    cmd.arg("--ffmpeg").arg(ffmpeg).args(["--start", &format!("{start:.3}")]).arg(audio_path);
+    // The worker's times are the file's: a section's 0 is its start.
+    cmd.arg("--ffmpeg").arg(ffmpeg).args(["--start", &format!("{:.3}", start - audio.offset)]);
+    if let Some(end) = end {
+        cmd.args(["--end", &format!("{:.3}", end - audio.offset)]);
+    }
+    cmd.arg(&audio.path);
     if !spec.lib_dirs.is_empty() {
         let var = if cfg!(windows) { "PATH" } else { "LD_LIBRARY_PATH" };
         let existing = std::env::var_os(var).unwrap_or_default();
@@ -317,6 +342,9 @@ fn run_worker(
     tools::send_lines(child.stdout.take().unwrap(), tx);
 
     let mut segmenter = Segmenter::new();
+    // The old lines from here on are still to be transcribed over.
+    let mut over = start;
+    let mut replaced = 0;
     let result = (|| -> Result<()> {
         loop {
             let line = match rx.recv_timeout(tools::STOP_POLL) {
@@ -329,21 +357,35 @@ fn run_worker(
             }
             let Some(line) = line else { continue };
             let line: WorkerLine = serde_json::from_str(&line).context("unreadable worker output")?;
-            if let Some(end) = line.end {
-                let segments = segmenter.push(line.words);
-                db.insert_segments(vod.id, &segments)?;
-                if let Some(last) = segments.last() {
-                    db.set_reached(stretch_id, Some(last.end))?;
-                }
-                report(Status::Transcribing, fraction(end));
+            if let Some(batch_end) = line.end {
+                let batch_end = batch_end + audio.offset;
+                let words = line
+                    .words
+                    .into_iter()
+                    .map(|w| Word { start: w.start + audio.offset, end: w.end + audio.offset, ..w })
+                    .collect();
+                let segments = segmenter.push(words);
+                // Everything before the words held back is written: a stop
+                // here resumes from them.
+                let reached = segmenter.pending_start().unwrap_or(batch_end).max(over);
+                replaced += db.replace_segments(vod.id, stretch_id, (over, Some(batch_end)), &segments, reached)?;
+                over = over.max(batch_end);
+                report(Status::Transcribing, fraction(batch_end));
             }
         }
     })();
     if result.is_err() {
         tools::kill_tree(&mut child);
+        // On a stop, the words held back are written too (the lines they
+        // replace already went), so it ends, or resumes, where the audio
+        // was transcribed to. Failing to (the app quitting) loses nothing:
+        // it resumes from them.
+        if let Some(held) = segmenter.finish().filter(|_| cancel.load(Ordering::Relaxed)) {
+            let _ = db.replace_segments(vod.id, stretch_id, (over, Some(over)), &[held], over);
+        }
         // Don't wait for the stderr reader: a process the worker started may
         // still hold the pipe open, and the error at hand is what matters.
-        return result;
+        return result.map(|()| replaced);
     }
     let status = child.wait()?;
     let stderr = stderr_thread.join().unwrap_or_default();
@@ -351,11 +393,10 @@ fn run_worker(
         let msg = tools::last_lines(&stderr, 3);
         bail!("{}", if msg.is_empty() { format!("worker exited with {status}") } else { msg });
     }
-    if let Some(last) = segmenter.finish() {
-        db.insert_segments(vod.id, std::slice::from_ref(&last))?;
-        db.set_reached(stretch_id, Some(last.end))?;
-    }
-    Ok(())
+    let last: Vec<Segment> = segmenter.finish().into_iter().collect();
+    let reached = end.unwrap_or_else(|| last.last().map_or(over, |s| s.end.max(over)));
+    replaced += db.replace_segments(vod.id, stretch_id, (over, end), &last, reached)?;
+    Ok(replaced)
 }
 
 #[cfg(all(test, unix))]
@@ -431,7 +472,9 @@ mod tests {
         let mut seen = Vec::new();
         let (cancel, mut notice) = (AtomicBool::new(false), |_: String| {});
         let mut report = |s, _| seen.push(s);
-        transcribe(&mut db, &vod, &stretch, &ffmpeg, &file, &transcription, &cancel, &mut report, &mut notice).unwrap();
+        let audio = Audio { path: file, offset: 0.0 };
+        transcribe(&mut db, &vod, &stretch, &ffmpeg, &audio, &transcription, &cancel, &mut report, &mut notice)
+            .unwrap();
         assert_eq!(seen, [Status::Done]);
         let vod = db.vod(vod.id).unwrap().unwrap();
         assert_eq!((vod.status, vod.transcribed), (Status::Done, crate::stretches::Transcribed::All));
@@ -609,11 +652,143 @@ mod tests {
             stretch.id,
             &spec,
             Path::new("ffmpeg"),
-            Path::new("audio"),
+            &Audio { path: "audio".into(), offset: 0.0 },
             &cancel,
             &mut |_, _| {},
         );
         assert!(result.is_err());
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "took {:?}", started.elapsed());
+    }
+
+    /// A "worker" that writes its arguments to `args` beside it, prints
+    /// `lines` (whatever it's asked), then waits `then` seconds.
+    fn fake_worker(dir: &Path, lines: &[String], then: u32) -> WorkerSpec {
+        let program = dir.join(format!("worker-{}.sh", lines.len()));
+        let mut script = format!("#!/bin/sh\necho \"$@\" > '{}'\n", dir.join("args").display());
+        for line in lines {
+            script += &format!("echo '{line}'\n");
+        }
+        script += &format!("sleep {then}\n");
+        fs::write(&program, script).unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        WorkerSpec {
+            program,
+            model_id: crate::model::CPU_MODEL.id,
+            model_dir: dir.to_path_buf(),
+            provider: "cpu",
+            batch: 1,
+            lib_dirs: Vec::new(),
+        }
+    }
+
+    /// A worker's batch: the audio transcribed up to `end`, and `words` as (text, start).
+    fn batch(end: f64, words: &[(&str, f64)]) -> String {
+        let words: Vec<Word> =
+            words.iter().map(|&(text, start)| Word { text: text.into(), start, end: start + 0.3 }).collect();
+        serde_json::json!({ "end": end, "words": words }).to_string()
+    }
+
+    fn texts(db: &Db, vod: i64) -> Vec<String> {
+        db.segments(vod).unwrap().into_iter().map(|s| s.text).collect()
+    }
+
+    fn line(text: &str, start: f64, end: f64) -> crate::transcript::Segment {
+        crate::transcript::Segment { start, end, text: text.into(), words: Vec::new() }
+    }
+
+    /// A stretch widens to the lines its edges cut through, and its lines
+    /// replace the old ones as they come: stopped part-way, the old lines
+    /// beyond where it got stay; ended, it's done as far as it got.
+    #[test]
+    fn a_stretch_snaps_to_lines_and_replaces_them_as_it_goes() {
+        let dir = crate::TempDir::new("replace");
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "u".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let (vod, _) = db.add_vod(&info).unwrap();
+        let old =
+            [line("old a", 0.0, 5.0), line("old b", 8.0, 12.0), line("old c", 20.0, 25.0), line("old d", 40.0, 45.0)];
+        db.insert_segments(vod.id, &old).unwrap();
+        let whole = db.request(vod.id, 0.0, None).unwrap().id;
+        db.set_stretch_model(whole, Some(crate::model::CPU_MODEL.id)).unwrap();
+        db.finish_stretch(whole).unwrap();
+
+        // 10-22 cuts through "old b" and "old c": it's 8-25.
+        let ask = db.request(vod.id, 10.0, Some(22.0)).unwrap().id;
+        let snapped = db.snap_stretch(ask).unwrap();
+        assert_eq!((snapped.start, snapped.end), (8.0, Some(25.0)));
+        db.set_stretch_model(ask, Some(crate::model::CPU_MODEL.id)).unwrap();
+        // One batch to 16 s, a line and two words held back; then it's stopped.
+        let first = batch(16.0, &[("New", 9.0), ("first", 9.3), ("line.", 9.6), ("And", 14.0), ("more", 14.5)]);
+        let spec = fake_worker(&dir, &[first], 30);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let audio = Audio { path: "audio".into(), offset: 0.0 };
+        let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, _| {});
+        assert!(stopped.is_err());
+        assert_eq!(
+            fs::read_to_string(dir.join("args")).unwrap().trim().split(' ').skip(8).collect::<Vec<_>>(),
+            ["--start", "8.000", "--end", "25.000", "audio"]
+        );
+        // "old b" went with the first batch; "old c", beyond it, stays; the
+        // words held back are written at the stop.
+        assert_eq!(texts(&db, vod.id), ["old a", "New first line.", "And more", "old c", "old d"]);
+        assert_eq!(db.stretch(ask).unwrap().unwrap().reached, Some(16.0));
+        // Ended there: done to 16 s, one with the rest by the same model.
+        db.end_request(ask).unwrap();
+        let done: Vec<_> = db.stretches(vod.id).unwrap().into_iter().map(|s| (s.start, s.end, s.status)).collect();
+        assert_eq!(done, [(0.0, None, Status::Done)]);
+
+        // Again, to the end of it: what it wrote before is replaced too.
+        let again = db.request(vod.id, 8.0, Some(25.0)).unwrap().id;
+        db.snap_stretch(again).unwrap();
+        let spec = fake_worker(&dir, &[batch(25.0, &[("Said", 10.0), ("over", 10.5), ("again.", 11.0)])], 0);
+        let no = AtomicBool::new(false);
+        let replaced =
+            run_worker(&mut db, &vod, again, &spec, Path::new("ffmpeg"), &audio, &no, &mut |_, _| {}).unwrap();
+        assert_eq!(replaced, 3);
+        assert_eq!(texts(&db, vod.id), ["old a", "Said over again.", "old d"]);
+    }
+
+    /// A section's words are in its own time, from 0: they're moved to the
+    /// VOD's, and the worker is asked for the stretch in the section's.
+    #[test]
+    fn a_sections_lines_are_in_the_vods_time() {
+        let dir = crate::TempDir::new("section-offset");
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "twitch".into(),
+            platform_id: "x".into(),
+            url: "u".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(600.0),
+            thumbnail: None,
+            published: None,
+        };
+        let (vod, _) = db.add_vod(&info).unwrap();
+        let ask = db.request(vod.id, 100.0, Some(130.0)).unwrap().id;
+        let spec = fake_worker(&dir, &[batch(30.0, &[("Hello", 1.0), ("there", 2.0), ("friend.", 3.0)])], 0);
+        let audio = Audio { path: "section.mka".into(), offset: 100.0 };
+        let mut seen = Vec::new();
+        let no = AtomicBool::new(false);
+        run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &no, &mut |_, p| seen.push(p)).unwrap();
+        let args = fs::read_to_string(dir.join("args")).unwrap();
+        assert!(args.contains("--start 0.000 --end 30.000 section.mka"), "{args}");
+        let segments = db.segments(vod.id).unwrap();
+        assert_eq!((segments[0].start, segments[0].words[2].start), (101.0, 103.0));
+        assert_eq!(seen, [0.0, 1.0], "progress within the stretch");
     }
 }

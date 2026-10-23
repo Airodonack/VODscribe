@@ -548,28 +548,20 @@ pub(crate) async fn retry_vod(app: AppHandle, state: State<'_, AppState>, id: i6
     Ok(())
 }
 
-/// Throws away a finished VOD's transcript and transcribes it again, e.g. with
-/// a better model.
+/// Transcribes a finished VOD again, e.g. with a better model: a request for
+/// all of it, whose lines replace the old ones as they come (a failed
+/// request it replaces goes).
 #[tauri::command]
 pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    {
-        let db = state.db.lock().unwrap();
-        match db.vod(id).map_err(err)? {
-            Some(vod) if matches!(vod.status, Status::Done | Status::Error | Status::None) => {}
-            _ => return Err("Only finished VODs can be transcribed again.".into()),
-        }
-        // First, so a quit while the old transcript is erased leaves it marked
-        // outdated, and transcribing it next clears the rest.
-        db.forget_models(id).map_err(err)?;
-    }
-    // The old transcript, a part at a time on a blocking thread: a long one
-    // is thousands of rows, and the app shouldn't wait on the library meanwhile.
-    erase_in_parts(&app, move |db| db.clear_some_segments(id, ERASE_PART / 3)).await?;
     let db = state.db.lock().unwrap();
+    match db.vod(id).map_err(err)? {
+        Some(vod) if matches!(vod.status, Status::Done | Status::Error | Status::None) => {}
+        _ => return Err("Only finished VODs can be transcribed again.".into()),
+    }
     db.atomically(|db| {
-        // None left to delete; tidies the search index of the old transcript's words.
-        db.clear_segments(id)?;
-        db.clear_stretches(id)?;
+        for failed in db.requests(id)?.into_iter().filter(|s| s.status == Status::Error) {
+            db.delete_stretch(failed.id)?;
+        }
         db.set_note(id, None)?;
         db.request(id, 0.0, None)?;
         anyhow::Ok(())
@@ -610,7 +602,8 @@ pub(crate) async fn resume_vod(app: AppHandle, state: State<'_, AppState>, id: i
     Ok(())
 }
 
-/// Stops a VOD's requests and discards their partial work; Retry then starts over.
+/// Ends a VOD's requests, keeping the lines they wrote (`worker::cancel`);
+/// Retry then asks for the rest.
 #[tauri::command]
 pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     state
@@ -618,12 +611,37 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
         .control_vod(id, Stop::Cancel, |running| {
             let db = state.db.lock().unwrap();
             for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id)) {
-                worker::discard(&db, &state.paths.work(), stretch.id)?;
+                worker::cancel(&db, &state.paths.work(), stretch.id)?;
             }
             Ok(())
         })
         .map_err(err)?;
     emit_vod(&app, &state.db.lock().unwrap(), id)
+}
+
+/// Asks for `start`..`end` seconds of VOD `vod_id` (`end` None: to its end)
+/// to be transcribed, after the requests already made. Its lines replace
+/// those there as they come.
+#[tauri::command]
+pub(crate) async fn transcribe_stretch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    vod_id: i64,
+    start: f64,
+    end: Option<f64>,
+) -> CmdResult<Stretch> {
+    if !start.is_finite() || start < 0.0 || end.is_some_and(|end| !end.is_finite() || end <= start) {
+        return Err("That stretch is empty.".into());
+    }
+    let db = state.db.lock().unwrap();
+    let vod = db.vod(vod_id).map_err(err)?.filter(|v| v.listed).ok_or("That VOD is gone.")?;
+    if vod.info.duration.is_some_and(|d| start >= d) {
+        return Err("That stretch is past the end of the VOD.".into());
+    }
+    let stretch = db.request(vod_id, start, end).map_err(err)?;
+    emit_vod(&app, &db, vod_id)?;
+    state.worker.wake();
+    Ok(stretch)
 }
 
 /// VOD `vod_id`'s stretches, transcribed and asked for, in time order.

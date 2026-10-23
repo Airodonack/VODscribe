@@ -4,11 +4,12 @@
 //! has written lines. The lines themselves stay in `segments`, by time, so
 //! search, captions and clips read them as before.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::Serialize;
 
 use crate::db::{Db, Status, VOD_COLUMNS, Vod, vod_from_row};
+use crate::transcript::Segment;
 
 /// Ranges this close count as touching, and a VOD transcribed this close to
 /// each end as transcribed to it: a VOD's length from its site and the end
@@ -121,9 +122,16 @@ pub(crate) fn summarize(stretches: &[Stretch], duration: Option<f64>, has_segmen
         .or_else(|| first(&|s| s == Status::Paused))
         .or_else(|| requests.iter().rev().find(|s| s.status == Status::Error).copied());
     let transcribed = transcribed(stretches, duration);
+    // A done stretch a request covers is being transcribed again.
+    let replaced = |d: &Stretch| {
+        requests.iter().any(|r| r.start <= d.start && r.end.is_none_or(|e| d.end.is_some_and(|de| de <= e)))
+    };
     let outdated = has_segments
         && stretches.iter().any(|s| {
-            let has_lines = s.status == Status::Done || s.reached.is_some_and(|r| r > s.start);
+            let has_lines = match s.status {
+                Status::Done => !replaced(s),
+                _ => s.reached.is_some_and(|r| r > s.start),
+            };
             has_lines && !s.model.as_deref().is_some_and(crate::model::is_current)
         });
     let waiting = requests.len() - usize::from(shown.is_some());
@@ -323,13 +331,6 @@ impl Db {
         Ok(())
     }
 
-    /// Marks VOD `vod_id`'s done stretches as made by no known model, so
-    /// they show as outdated (a transcript about to be replaced).
-    pub fn forget_models(&self, vod_id: i64) -> Result<()> {
-        self.conn.execute("UPDATE stretches SET model = NULL WHERE vod_id = ?1 AND status = 'done'", [vod_id])?;
-        Ok(())
-    }
-
     /// Records `start`..`end` of VOD `vod_id` as transcribed by `model`, as
     /// is (`merge_done` makes the done stretches apart again).
     pub(crate) fn insert_done(&self, vod_id: i64, start: f64, end: Option<f64>, model: Option<&str>) -> Result<i64> {
@@ -338,6 +339,85 @@ impl Db {
             params![vod_id, start, end, model],
         )?;
         Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Widens request `id` outwards to the edges of any line its start or
+    /// end cuts through, so a line is transcribed again whole or not at all;
+    /// before it starts only (later, its audio is already cut to it).
+    pub fn snap_stretch(&self, id: i64) -> Result<Stretch> {
+        self.atomically(|db| {
+            let stretch = db.stretch(id)?.context("That request is gone.")?;
+            if stretch.reached.is_some() {
+                return Ok(stretch);
+            }
+            let start: f64 = db.conn.query_row(
+                "SELECT coalesce(min(start), ?2) FROM segments WHERE vod_id = ?1 AND start < ?2 AND end > ?2",
+                params![stretch.vod_id, stretch.start],
+                |r| r.get(0),
+            )?;
+            let end: Option<f64> = match stretch.end {
+                Some(end) => Some(db.conn.query_row(
+                    "SELECT coalesce(max(end), ?2) FROM segments WHERE vod_id = ?1 AND start < ?2 AND end > ?2",
+                    params![stretch.vod_id, end],
+                    |r| r.get(0),
+                )?),
+                None => None,
+            };
+            let start = start.min(stretch.start);
+            db.conn.execute("UPDATE stretches SET start = ?2, end = ?3 WHERE id = ?1", params![id, start, end])?;
+            Ok(Stretch { start, end, ..stretch })
+        })
+    }
+
+    /// Writes `segments`, transcribed for request `stretch_id`, in place of
+    /// the lines that start from `from` to before `to` (None: on to the
+    /// end), which it has transcribed over, and records that it reached
+    /// `reached`: all in one transaction, so a stop never leaves both lines
+    /// or neither. Returns how many lines it replaced.
+    pub fn replace_segments(
+        &mut self,
+        vod_id: i64,
+        stretch_id: i64,
+        (from, to): (f64, Option<f64>),
+        segments: &[Segment],
+        reached: f64,
+    ) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let replaced = tx.execute(
+            "DELETE FROM segments WHERE vod_id = ?1 AND start >= ?2 AND (?3 IS NULL OR start < ?3)",
+            params![vod_id, from, to],
+        )?;
+        {
+            let mut stmt =
+                tx.prepare("INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            for s in segments {
+                stmt.execute(params![vod_id, s.start, s.end, s.text, serde_json::to_string(&s.words)?])?;
+            }
+        }
+        tx.execute("UPDATE stretches SET reached = ?2 WHERE id = ?1", params![stretch_id, reached])?;
+        tx.commit()?;
+        Ok(replaced)
+    }
+
+    /// Rewrites the transcript's search index without the entries of lines
+    /// replaced since (`Db::tidy_index`): after a stretch replaced some.
+    pub fn tidy_segments(&self) -> Result<()> {
+        self.tidy_index("segments_fts")
+    }
+
+    /// Ends request `id`, keeping what it transcribed: done from its start
+    /// to where it reached, or gone if it reached nothing.
+    pub fn end_request(&self, id: i64) -> Result<()> {
+        self.atomically(|db| {
+            let Some(stretch) = db.stretch(id)? else { return Ok(()) };
+            match stretch.reached.filter(|r| *r > stretch.start) {
+                Some(reached) => {
+                    db.conn.execute("UPDATE stretches SET end = ?2 WHERE id = ?1", params![id, reached])?;
+                    db.finish_stretch(id)
+                }
+                None => db.delete_stretch(id),
+            }
+        })
     }
 
     /// Request `id` is done: its range is transcribed, over whatever was there.
@@ -514,7 +594,11 @@ mod tests {
         old.status = Queued;
         assert!(!summarize(std::slice::from_ref(&old), Some(600.0), true).outdated, "not begun");
         old.reached = Some(5.0);
-        assert!(summarize(&[old], Some(600.0), true).outdated);
+        assert!(summarize(std::slice::from_ref(&old), Some(600.0), true).outdated);
+        // Done with an older one, and being transcribed again: not outdated meanwhile.
+        old.status = Done;
+        let again = stretch(9, 0.0, None, Queued, None);
+        assert!(!summarize(&[old, again], Some(600.0), true).outdated);
     }
 
     #[test]
