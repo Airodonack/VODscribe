@@ -2,7 +2,7 @@
 // stretches.rs, read with `transcript_stretches`): for the transcript's rows
 // where there are no lines yet (Transcript.svelte), and Transcribe the rest.
 
-import type { Stretch, Vod, api } from "./api";
+import type { Status, Stretch, Vod, api } from "./api";
 
 /** Ranges this close count as touching (crates/core stretches.rs `EDGE`):
  *  a VOD's length from its site and the end of its audio differ by a little. */
@@ -81,4 +81,15 @@ export async function transcribeRest(
   for (const gap of gaps(stretches, vod.duration)) {
     if (!gap.request) await calls.transcribeStretch(vod.id, gap.start, gap.end);
   }
+}
+
+/** Whether request `stretch`'s progress, now `status`, is for a VOD's row
+ *  that shows request `shown` at `shownStatus`: the one it shows, or a
+ *  running one while that one isn't running (crates/core `summarize` shows
+ *  the first one running). Two running at once (one downloading as another
+ *  transcribes) would otherwise take the row in turns at each event, and the
+ *  transcript would read all its lines again at each turn. */
+export function showsProgress(shown: number | null, shownStatus: Status, stretch: number, status: Status): boolean {
+  const running = (s: Status) => s === "downloading" || s === "transcribing";
+  return shown === stretch || (running(status) && !running(shownStatus));
 }

@@ -1,7 +1,7 @@
 // What of a VOD is transcribed (stretches.ts): node --test apps/desktop/src/lib/stretches.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { covered, gaps, transcribeRest } from "./stretches.ts";
+import { covered, gaps, showsProgress, transcribeRest } from "./stretches.ts";
 
 let ids = 0;
 /**
@@ -86,4 +86,32 @@ test("transcribing the rest asks for each gap not asked for, and nothing else", 
     [7, 180, 300],
     [7, 360, null],
   ]);
+});
+
+test("a VOD's row keeps the request it shows while another runs beside it", () => {
+  // Request 1 transcribing, request 2 of the same VOD downloading: each
+  // sends its progress every 250 ms.
+  const row = {
+    stretch: /** @type {number | null} */ (1),
+    status: /** @type {import("./api").Status} */ ("transcribing"),
+  };
+  let turns = 0;
+  for (let tick = 0; tick < 8; tick++) {
+    for (const [stretch, status] of /** @type {const} */ ([
+      [1, "transcribing"],
+      [2, "downloading"],
+    ])) {
+      if (!showsProgress(row.stretch, row.status, stretch, status)) continue;
+      turns += Number(row.stretch !== stretch || row.status !== status);
+      Object.assign(row, { stretch, status });
+    }
+  }
+  assert.deepEqual([row.stretch, row.status, turns], [1, "transcribing", 0]);
+  // Once the one shown isn't running (done, before the VOD's own event), a running one shows.
+  assert.equal(showsProgress(1, "done", 2, "downloading"), true);
+  assert.equal(showsProgress(1, "queued", 2, "transcribing"), true);
+  assert.equal(showsProgress(null, "none", 2, "downloading"), true);
+  // The one shown, whatever it now is.
+  assert.equal(showsProgress(1, "transcribing", 1, "done"), true);
+  assert.equal(showsProgress(1, "transcribing", 2, "ready"), false);
 });

@@ -39,6 +39,7 @@
   import Toast from "./Toast.svelte";
   import type { Doc } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
+  import { showsProgress } from "./stretches";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -362,8 +363,8 @@
       await events.vodProgress(
         afterLoad((id, stretch, status, progress) => {
           const vod = vods.find((v) => v.id === id);
-          // The row shows a running request before any other.
-          if (vod && (vod.stretch === stretch || status === "downloading" || status === "transcribing")) {
+          // The row shows a running request before any other (stretches.ts).
+          if (vod && showsProgress(vod.stretch, vod.status, stretch, status)) {
             vod.stretch = stretch;
             vod.status = status;
             vod.progress = progress;
