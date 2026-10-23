@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use vodscribe_core::db::Db;
 use vodscribe_core::tools;
 use vodscribe_player::clock::{Event, Player};
 use vodscribe_player::decode::{Frame, Layout};
@@ -119,7 +120,28 @@ pub(crate) async fn player_open(app: AppHandle, id: i64, at: f64, play: bool) ->
             None => streamed(app, &ffmpeg, id),
         }
     };
-    open_with(app, Doc::Vod(id), at, play, None, make).await
+    let opened = open_with(app.clone(), Doc::Vod(id), at, play, None, make).await?;
+    let state = app.state::<AppState>();
+    catch_up(&state.player, &state.db, id);
+    Ok(opened)
+}
+
+/// The player just opened for VOD `id`, if it plays the VOD as its video
+/// downloads (`streamed`), plays the video kept, if it was kept meanwhile:
+/// `refile` found no player open then (it was being probed), and the
+/// section it plays goes once the video is kept.
+fn catch_up(native: &Native, db: &Mutex<Db>, id: i64) {
+    // Read after the open is in place: a video recorded since the open read
+    // the library was, so its `refile` either found this player or comes
+    // before this.
+    let kept = {
+        let db = db.lock().unwrap();
+        let vod = db.vod(id).ok().flatten().filter(|v| v.media && v.source_path.is_none());
+        vod.and_then(|v| Some((crate::media::playable_file(&db, id)?, v.info.duration?)))
+    };
+    if let Some((path, duration)) = kept {
+        refile_open(native, id, std::path::Path::new(&path), duration);
+    }
 }
 
 /// A player for VOD `id`, from a site without its own player, on the
@@ -177,9 +199,15 @@ pub(crate) fn footage_grew(app: &AppHandle, vod_id: i64) {
 /// player open playing it as it downloaded plays that from here on, where
 /// it is, waiting for nothing.
 pub(crate) fn refile(app: &AppHandle, vod_id: i64, path: &std::path::Path, duration: f64) {
-    let state = app.state::<AppState>();
-    let open = state.player.open.lock().unwrap();
-    if let Some(o) = open.as_ref().filter(|o| o.doc == Doc::Vod(vod_id) && o.embed.is_none()) {
+    refile_open(&app.state::<AppState>().player, vod_id, path, duration);
+}
+
+/// `refile`'s work, on the player open in `native`: only one playing as the
+/// video downloads (a player opened on the video kept has it already).
+fn refile_open(native: &Native, vod_id: i64, path: &std::path::Path, duration: f64) {
+    let open = native.open.lock().unwrap();
+    let streaming = |o: &&Open| o.doc == Doc::Vod(vod_id) && o.embed.is_none() && o.player.waits_for_footage();
+    if let Some(o) = open.as_ref().filter(streaming) {
         o.player.set_timeline(Timeline::file(path, duration));
         o.player.set_waits_for_footage(false);
     }
@@ -604,6 +632,44 @@ pub(crate) fn player_set_volume(state: State<'_, AppState>, volume: f32) -> CmdR
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vodscribe_core::fetch::VodInfo;
+
+    /// A VOD from a site without its own player, its video downloading
+    /// (videos.rs `stream_then_keep`), opened while the download ends: the
+    /// open reads the library before the video is recorded, and the
+    /// recording's `refile` comes before the open is in place.
+    #[test]
+    fn a_vod_opened_as_its_video_is_kept_plays_the_video_kept() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "vimeo".into(),
+            platform_id: "x".into(),
+            url: "https://vimeo.com/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let id = db.add_vod(&info).unwrap().0.id;
+        let db = Mutex::new(db);
+        let native = Native::default();
+        // player_open's `streamed`: what's in of the section (none, here), waiting for the rest.
+        assert!(!db.lock().unwrap().vod(id).unwrap().unwrap().media, "no video kept yet");
+        let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::covering(60.0, Vec::new())).unwrap();
+        player.set_waits_for_footage(true);
+        // Meanwhile (the probe), the download ends: recorded, then refiled, with no player open yet.
+        let kept = std::env::temp_dir().join(format!("vodscribe-refile-{}.mp4", std::process::id()));
+        db.lock().unwrap().set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
+        refile_open(&native, id, &kept, 60.0);
+        // The open is in place (open_with), and catches up.
+        *native.open.lock().unwrap() = Some(Open { player, doc: Doc::Vod(id), embed: None });
+        catch_up(&native, &db, id);
+        let open = native.open.lock().unwrap();
+        let player = &open.as_ref().unwrap().player;
+        assert_eq!(player.timeline(), Timeline::file(&kept, 60.0), "the video kept, not the section it replaced");
+        assert!(!player.waits_for_footage());
+    }
 
     #[test]
     fn frames_scale_down_by_mixing_or_by_area() {

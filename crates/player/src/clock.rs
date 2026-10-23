@@ -586,6 +586,11 @@ impl Player {
         self.inner.wake.notify_all();
     }
 
+    /// Whether the time is to stand where the footage isn't here (`set_waits_for_footage`).
+    pub fn waits_for_footage(&self) -> bool {
+        self.inner.waits_for_footage.load(Ordering::Acquire)
+    }
+
     /// Whether the time stands where it is for footage not here yet.
     pub fn waiting_for_footage(&self) -> bool {
         if !self.inner.waits_for_footage.load(Ordering::Acquire) {
