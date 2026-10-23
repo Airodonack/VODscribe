@@ -336,7 +336,14 @@ pub(crate) fn ensure(
         .and_then(|m| m.modified())
         .is_ok_and(|at| at.elapsed().is_ok_and(|age| age < INFO_FOR));
     let selector = clips::selector(Settings::load(&paths.settings()).video_height());
-    let wanted = fetch::Wanted::Section { selector: &selector, ffmpeg: &ffmpeg, start: from, end: to, matroska: true };
+    let wanted = fetch::Wanted::Section {
+        selector: &selector,
+        ffmpeg: &ffmpeg,
+        start: from,
+        end: to,
+        matroska: true,
+        sound_only: false,
+    };
     // The download's guess of how far it is, as f64 bits; and when it ends.
     let guess = AtomicU64::new(0);
     let done = AtomicBool::new(false);

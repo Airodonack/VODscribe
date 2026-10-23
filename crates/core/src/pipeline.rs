@@ -52,10 +52,49 @@ pub fn info_path(work_dir: &Path, vod_id: i64) -> PathBuf {
     work_dir.join(format!("{vod_id}.info.json"))
 }
 
-/// Downloads a VOD's audio for `stretch`, resuming a partial download.
-/// Returns its path.
+/// Where `audio_for` found a stretch's audio.
+#[derive(Debug, PartialEq)]
+pub enum Source {
+    /// The VOD's whole audio: its file on this computer or its kept video
+    /// (`downloaded` false), or audio in the work dir, found there from
+    /// another request or downloaded now (`downloaded`).
+    Whole { path: PathBuf, downloaded: bool },
+    /// A section downloaded for the stretch alone, its 0 at `start`.
+    Section { path: PathBuf, start: f64 },
+}
+
+impl Source {
+    /// The audio to transcribe from.
+    pub fn audio(self) -> Audio {
+        match self {
+            Source::Whole { path, .. } => Audio { path, offset: 0.0 },
+            Source::Section { path, start } => Audio { path, offset: start },
+        }
+    }
+}
+
+/// Where a stretch's section of audio downloads to, before its extension.
+pub fn section_stem(work_dir: &Path, vod_id: i64, stretch_id: i64) -> PathBuf {
+    work_dir.join(format!("{vod_id}.s{stretch_id}"))
+}
+
+/// Gets the audio to transcribe `stretch` from, the first way that works:
+///
+/// 1. a file on this computer, or the VOD's kept video, read in place (the
+///    worker reads just the stretch of it);
+/// 2. the VOD's whole audio, already in the work dir for another request;
+/// 3. a section of the VOD for the stretch alone (yt-dlp's
+///    `--download-sections`): sites serve audio over https or HLS, which
+///    ffmpeg fetches only the needed parts of;
+/// 4. the VOD's whole audio, downloaded as for a request for all of it,
+///    when the section fails for any reason but a stop. A request for all
+///    of it goes straight here.
+///
+/// Footage already here (sections downloaded for edits, `footage::find`)
+/// could serve too, ahead of 3; it's left for when the takeover's footage
+/// registers in the same lookup.
 #[allow(clippy::too_many_arguments)]
-pub fn download(
+pub fn audio_for(
     db: &mut Db,
     vod: &Vod,
     stretch: &Stretch,
@@ -64,31 +103,96 @@ pub fn download(
     video: Option<(&crate::playable::Playable, u32)>,
     cancel: &AtomicBool,
     mut report: impl FnMut(Status, f64),
-) -> Result<PathBuf> {
+) -> Result<Source> {
     // Lines it would cut through are transcribed again whole.
     let stretch = &db.snap_stretch(stretch.id)?;
     // A local file is transcribed where it is: there's nothing to download.
     if let Some(source) = &vod.source_path {
-        return crate::local::source(source);
+        return Ok(Source::Whole { path: crate::local::source(source)?, downloaded: false });
     }
     // A VOD whose video is kept (always, for sites without their own player;
     // on request, for the others): transcribed from that video, once it's here.
     if let Some(kept) = db.media_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file()) {
-        return Ok(kept);
+        return Ok(Source::Whole { path: kept, downloaded: false });
     }
-    let keep = video.filter(|_| keeps_video(&vod.info.platform));
+    if let Some(whole) = db.audio_path(vod.id)?.map(PathBuf::from).filter(|p| p.is_file()) {
+        return Ok(Source::Whole { path: whole, downloaded: false });
+    }
+    db.set_stretch_status(stretch.id, Status::Downloading, 0.0, None)?;
+    report(Status::Downloading, 0.0);
+    let end = stretch.end.or(vod.info.duration.filter(|_| stretch.start > 0.0));
+    if let Some(end) = end.filter(|_| !stretch.is_whole()) {
+        match download_section(vod, stretch.id, (stretch.start, end), tools, work_dir, cancel, &mut report) {
+            Ok(path) => return Ok(Source::Section { path, start: stretch.start }),
+            Err(e) if crate::is_canceled(&e) => return Err(e),
+            Err(e) => {
+                eprintln!(
+                    "VOD {}: its section {}-{end} didn't download, so all of it does: {e:#}",
+                    vod.id, stretch.start
+                );
+                remove_work_prefix(work_dir, &format!("{}.s{}", vod.id, stretch.id));
+            }
+        }
+    }
+    let whole = stretch.is_whole();
+    let path = download(db, vod, tools, work_dir, video.filter(|_| whole), cancel, report)?;
+    Ok(Source::Whole { path, downloaded: true })
+}
+
+/// The stem of VOD `vod_id`'s info JSON in `work_dir`, probed again if
+/// it's older than its URLs last.
+fn fresh_info(yt_dlp: &YtDlp, vod: &Vod, work_dir: &Path, cancel: &AtomicBool) -> Result<PathBuf> {
     fs::create_dir_all(work_dir)?;
     let info = info_path(work_dir, vod.id);
     let fresh = fs::metadata(&info)
         .and_then(|m| m.modified())
         .is_ok_and(|t| SystemTime::now().duration_since(t).unwrap_or_default() < INFO_MAX_AGE);
-
-    db.set_stretch_status(stretch.id, Status::Downloading, 0.0, None)?;
-    report(Status::Downloading, 0.0);
-    let yt_dlp = tools.yt_dlp.context(fetch::NO_YT_DLP)?;
     if !fresh {
         fetch::probe(yt_dlp, &vod.info.url, &info, cancel)?;
     }
+    Ok(info)
+}
+
+/// Downloads `start`..`end` seconds of a VOD's audio alone, for request
+/// `stretch_id`, in Matroska, its 0 at `start`. Returns its path.
+fn download_section(
+    vod: &Vod,
+    stretch_id: i64,
+    (start, end): (f64, f64),
+    tools: &Tools,
+    work_dir: &Path,
+    cancel: &AtomicBool,
+    report: &mut impl FnMut(Status, f64),
+) -> Result<PathBuf> {
+    let yt_dlp = tools.yt_dlp.context(fetch::NO_YT_DLP)?;
+    let info = fresh_info(yt_dlp, vod, work_dir, cancel)?;
+    let selector = fetch::audio_selector();
+    let wanted = fetch::Wanted::Section {
+        selector: &selector,
+        ffmpeg: tools.ffmpeg,
+        start,
+        end,
+        matroska: true,
+        sound_only: true,
+    };
+    let out = section_stem(work_dir, vod.id, stretch_id);
+    fetch::download_or_reprobe(yt_dlp, &vod.info.url, &info, &out, wanted, cancel, |f| report(Status::Downloading, f))
+}
+
+/// Downloads a VOD's whole audio, resuming a partial download, or, with
+/// `video`, its video to keep (sites without their own player). Returns its path.
+fn download(
+    db: &mut Db,
+    vod: &Vod,
+    tools: &Tools,
+    work_dir: &Path,
+    video: Option<(&crate::playable::Playable, u32)>,
+    cancel: &AtomicBool,
+    mut report: impl FnMut(Status, f64),
+) -> Result<PathBuf> {
+    let keep = video.filter(|_| keeps_video(&vod.info.platform));
+    let yt_dlp = tools.yt_dlp.context(fetch::NO_YT_DLP)?;
+    let info = fresh_info(yt_dlp, vod, work_dir, cancel)?;
     let selector = keep.map(|(playable, height)| playable.selector(height));
     let (out, wanted) = match &selector {
         Some(selector) => {
@@ -560,9 +664,9 @@ mod tests {
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
         let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
         let no = AtomicBool::new(false);
-        let audio = download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap();
-        assert_eq!(audio, source, "transcribed in place, not copied");
-        db.set_audio_path(vod.id, Some(&audio.to_string_lossy())).unwrap();
+        let found = audio_for(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap();
+        assert_eq!(found, Source::Whole { path: source.clone(), downloaded: false }, "transcribed in place");
+        db.set_audio_path(vod.id, Some(&source.to_string_lossy())).unwrap();
 
         remove_work_files(&paths.work(), vod.id);
         paths.clear_cache().unwrap();
@@ -571,7 +675,7 @@ mod tests {
         assert_eq!(fs::read(&source).unwrap(), b"the user's video");
 
         fs::remove_file(&source).unwrap();
-        assert!(download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err());
+        assert!(audio_for(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err());
     }
 
     /// A VOD whose video is kept is transcribed from that file, with nothing
@@ -601,12 +705,125 @@ mod tests {
         let yt_dlp = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
         let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: Path::new("/nonexistent/ffmpeg") };
         let no = AtomicBool::new(false);
-        assert_eq!(download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap(), kept);
+        let found = audio_for(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).unwrap();
+        assert_eq!(found, Source::Whole { path: kept.clone(), downloaded: false });
         fs::remove_file(&kept).unwrap();
         assert!(
-            download(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err(),
+            audio_for(&mut db, &vod, &stretch, &tools, &paths.work(), None, &no, |_, _| {}).is_err(),
             "downloads again"
         );
+    }
+
+    /// A "yt-dlp" that writes its arguments to `args` beside it, and
+    /// downloads (a file saying so) unless asked for a section and `sections` is false.
+    fn fake_yt_dlp(dir: &Path, sections: bool) -> YtDlp {
+        let path = dir.join(if sections { "yt-dlp-sections" } else { "yt-dlp-whole" });
+        let refuse = if sections { "" } else { "--download-sections) echo 'ERROR: no' >&2; exit 1;;" };
+        let script = format!(
+            "#!/bin/sh\necho \"$@\" > '{args}'\nprev=\nfor a in \"$@\"; do\n  case \"$a\" in {refuse} esac\n  \
+             [ \"$prev\" = -o ] && out=$a\n  prev=$a\ndone\nfile=$(echo \"$out\" | sed 's/%(ext)s/m4a/')\n\
+             echo audio > \"$file\"\necho \"[vodscribe-file]$file\"\n",
+            args = dir.join("args").display()
+        );
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        YtDlp { path, js_runtime: None }
+    }
+
+    /// A stretch gets a section of its own, its 0 at its start; if that
+    /// fails, the whole audio, which then serves the VOD's other stretches;
+    /// a request for all of it gets the whole audio straight away.
+    #[test]
+    fn a_stretch_downloads_its_section_or_else_the_whole_audio() {
+        let root = crate::TempDir::new("sections");
+        let paths = crate::Paths::new(root.join("data"));
+        paths.ensure().unwrap();
+        let work = paths.work();
+        fs::create_dir_all(&work).unwrap();
+        let mut db = Db::open(&paths.db()).unwrap();
+        let info = VodInfo {
+            platform: "twitch".into(),
+            platform_id: "v1".into(),
+            url: "https://www.twitch.tv/videos/1".into(),
+            title: "x".into(),
+            channel: None,
+            duration: Some(600.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0;
+        // Probed a moment ago: not probed again.
+        fs::write(info_path(&work, vod.id), b"{}").unwrap();
+        let no = AtomicBool::new(false);
+        let ffmpeg = Path::new("/nonexistent/ffmpeg");
+        let args = || fs::read_to_string(root.join("args")).unwrap();
+
+        let sections = fake_yt_dlp(&root, true);
+        let tools = Tools { yt_dlp: Some(&sections), ffmpeg };
+        let part = db.request(vod.id, 100.0, Some(130.0)).unwrap();
+        let found = audio_for(&mut db, &vod, &part, &tools, &work, None, &no, |_, _| {}).unwrap();
+        let section = work.join(format!("{}.s{}.m4a", vod.id, part.id));
+        assert_eq!(found, Source::Section { path: section, start: 100.0 });
+        assert!(args().contains("--download-sections *100.000-130.000"), "{}", args());
+        assert!(args().contains("ffmpeg_o:-ss 0 -f matroska -vn"), "{}", args());
+
+        let whole = db.request(vod.id, 0.0, None).unwrap();
+        let found = audio_for(&mut db, &vod, &whole, &tools, &work, None, &no, |_, _| {}).unwrap();
+        assert_eq!(found, Source::Whole { path: work.join(format!("{}.m4a", vod.id)), downloaded: true });
+        assert!(!args().contains("--download-sections"), "all of it: {}", args());
+        fs::remove_file(work.join(format!("{}.m4a", vod.id))).unwrap();
+
+        let refused = fake_yt_dlp(&root, false);
+        let tools = Tools { yt_dlp: Some(&refused), ffmpeg };
+        let found = audio_for(&mut db, &vod, &part, &tools, &work, None, &no, |_, _| {}).unwrap();
+        let downloaded = work.join(format!("{}.m4a", vod.id));
+        assert_eq!(found, Source::Whole { path: downloaded.clone(), downloaded: true }, "the section failed");
+        db.set_audio_path(vod.id, Some(&downloaded.to_string_lossy())).unwrap();
+        let none = YtDlp { path: "/nonexistent/yt-dlp".into(), js_runtime: None };
+        let tools = Tools { yt_dlp: Some(&none), ffmpeg };
+        let other = db.request(vod.id, 300.0, Some(310.0)).unwrap();
+        let found = audio_for(&mut db, &vod, &other, &tools, &work, None, &no, |_, _| {}).unwrap();
+        assert_eq!(found, Source::Whole { path: downloaded, downloaded: false }, "already here");
+    }
+
+    /// A stretch of the Twitch test VOD (67 s long) downloads as a section
+    /// of its own, sound alone, its 0 at the stretch's start. `VODSCRIBE_BIN`
+    /// is a folder with yt-dlp (and ffmpeg, or one on PATH).
+    #[test]
+    #[ignore = "network"]
+    fn a_twitch_stretch_downloads_as_a_section_live() {
+        let bin = std::env::var("VODSCRIBE_BIN").expect("VODSCRIBE_BIN: the folder with yt-dlp");
+        let yt_dlp = tools::find_yt_dlp(Path::new(&bin)).expect("yt-dlp");
+        let ffmpeg = tools::find_ffmpeg(Path::new(&bin)).expect("ffmpeg");
+        let root = crate::TempDir::new("section-live");
+        let paths = crate::Paths::new(root.join("data"));
+        paths.ensure().unwrap();
+        let work = paths.work();
+        fs::create_dir_all(&work).unwrap();
+        let mut db = Db::open(&paths.db()).unwrap();
+        let no = AtomicBool::new(false);
+        let probe = root.join("probe.json");
+        let info = fetch::probe(&yt_dlp, "https://www.twitch.tv/videos/2901646294", &probe, &no).unwrap();
+        let vod = db.add_vod(&info).unwrap().0;
+        fs::rename(&probe, info_path(&work, vod.id)).unwrap();
+        let stretch = db.request(vod.id, 30.0, Some(50.0)).unwrap();
+        let tools = Tools { yt_dlp: Some(&yt_dlp), ffmpeg: &ffmpeg };
+        let started = Instant::now();
+        let found = audio_for(&mut db, &vod, &stretch, &tools, &work, None, &no, |_, _| {}).unwrap();
+        let Source::Section { path, start } = found else { panic!("not a section: {found:?}") };
+        eprintln!("{} in {:?}", path.display(), started.elapsed());
+        assert_eq!(start, 30.0);
+        let streams = crate::local::codecs(&ffmpeg, &path).unwrap();
+        assert!(streams.audio.is_some() && streams.video.is_none(), "{streams:?}");
+        let mut samples = 0;
+        crate::audio::decode(&ffmpeg, &path, 0.0, None, &no, |s| {
+            samples += s.len();
+            Ok(())
+        })
+        .unwrap();
+        let secs = samples as f64 / crate::audio::SAMPLE_RATE as f64;
+        eprintln!("{secs:.2} s of audio");
+        assert!((secs - 20.0).abs() < 1.5, "{secs} s");
     }
 
     #[test]

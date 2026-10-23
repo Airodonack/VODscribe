@@ -296,13 +296,14 @@ fn finish(
 pub const NO_FFMPEG: &str = "ffmpeg isn't installed. VODscribe needs it to read and cut audio and video.";
 
 /// Ends request `stretch_id`, keeping the lines it wrote: it's done as far
-/// as it reached (`Db::end_request`). With no other request of its VOD
-/// left, the VOD's work files go, and a partly downloaded video where
+/// as it reached (`Db::end_request`). Its section of audio goes; with no
+/// other request of its VOD left, the VOD's work files go, and a partly downloaded video where
 /// downloading it is part of transcribing (one kept whole, or downloaded on
 /// request (videos.rs), stays).
 pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()> {
     let Some(stretch) = db.stretch(stretch_id)? else { return Ok(()) };
     let vod_id = stretch.vod_id;
+    remove_section(work_dir, &stretch);
     db.end_request(stretch_id)?;
     if !db.requests(vod_id)?.is_empty() {
         return Ok(());
@@ -313,6 +314,12 @@ pub fn cancel(db: &Db, work_dir: &std::path::Path, stretch_id: i64) -> Result<()
         pipeline::remove_media(work_dir, vod_id);
     }
     Ok(())
+}
+
+/// Deletes request `stretch`'s section of audio, and any part of one.
+fn remove_section(work_dir: &std::path::Path, stretch: &Stretch) {
+    let stem = pipeline::section_stem(work_dir, stretch.vod_id, stretch.id);
+    pipeline::remove_work_prefix(work_dir, &stem.file_name().unwrap_or_default().to_string_lossy());
 }
 
 /// A progress reporter that throttles events and remembers the last value.
@@ -344,7 +351,7 @@ fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, prog
     // A kept video (sites without embeds) in a format this computer plays, as tall as the settings allow.
     let height = Settings::load(&ctx.paths.settings()).video_height();
     let playable = vodscribe_core::playable::Playable::load(&ctx.paths.playable());
-    let audio = pipeline::download(
+    let found = pipeline::audio_for(
         &mut ctx.db,
         vod,
         stretch,
@@ -355,12 +362,26 @@ fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, prog
         reporter(&app, vod.id, stretch.id, progress),
     )?;
     // The waveform, read while the audio is here: a VOD from a site with its
-    // own player doesn't keep it once transcribed. Only a stop fails the stage.
+    // own player doesn't keep it once transcribed. A section's levels go at
+    // their place; whole audio just downloaded is read anew over them; a
+    // file or kept video only if there's none (the page reads theirs).
+    // Only a stop fails the stage.
     let peaks = ctx.paths.peaks();
-    if !vodscribe_core::peaks::path(&peaks, vod.id).is_file() {
-        match vodscribe_core::peaks::read(&ffmpeg, &audio, flag) {
+    let (path, at) = match &found {
+        pipeline::Source::Section { path, start } => (path, Some(*start)),
+        pipeline::Source::Whole { path, downloaded } => {
+            let read = *downloaded || !vodscribe_core::peaks::path(&peaks, vod.id).is_file();
+            (path, read.then_some(0.0))
+        }
+    };
+    if let Some(at) = at {
+        match vodscribe_core::peaks::read(&ffmpeg, path, flag) {
             Ok(levels) => {
-                if let Err(e) = vodscribe_core::peaks::save(&peaks, vod.id, &levels) {
+                let saved = match found {
+                    pipeline::Source::Section { .. } => vodscribe_core::peaks::merge(&peaks, vod.id, at, &levels),
+                    pipeline::Source::Whole { .. } => vodscribe_core::peaks::save(&peaks, vod.id, &levels),
+                };
+                if let Err(e) = saved {
                     eprintln!("VOD {}: save its waveform: {e:#}", vod.id);
                 }
             }
@@ -368,16 +389,27 @@ fn download(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, prog
             Err(e) => eprintln!("VOD {}: read its waveform: {e:#}", vod.id),
         }
     }
-    ctx.db.set_audio_path(vod.id, Some(&audio.to_string_lossy()))?;
+    match &found {
+        pipeline::Source::Section { path, .. } => {
+            ctx.db.set_stretch_audio(stretch.id, Some(&path.to_string_lossy()))?
+        }
+        pipeline::Source::Whole { path, .. } => ctx.db.set_audio_path(vod.id, Some(&path.to_string_lossy()))?,
+    }
     ctx.db.set_stretch_status(stretch.id, Status::Ready, 0.0, None)?;
     Ok(())
 }
 
 fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, progress: &mut f64) -> Result<()> {
-    let audio = ctx.db.audio_path(vod.id)?.map(std::path::PathBuf::from).filter(|p| p.is_file());
+    // Its own section, its 0 at its start; or else the VOD's whole audio.
+    let file = |path: Option<String>| path.map(std::path::PathBuf::from).filter(|p| p.is_file());
+    let audio = match file(stretch.audio.clone()) {
+        Some(path) => Some(pipeline::Audio { path, offset: stretch.start }),
+        None => file(ctx.db.audio_path(vod.id)?).map(|path| pipeline::Audio { path, offset: 0.0 }),
+    };
     let Some(audio) = audio else {
         // The download went missing (e.g. the work dir was cleared): fetch it again.
         ctx.db.set_audio_path(vod.id, None)?;
+        ctx.db.set_stretch_audio(stretch.id, None)?;
         ctx.db.set_stretch_status(stretch.id, Status::Queued, 0.0, None)?;
         return Ok(());
     };
@@ -394,9 +426,9 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, pr
         let _ = notes.set_note(vod.id, Some(&notice));
         let _ = crate::emit_vod(&app, &notes, vod.id);
     };
-    let audio = pipeline::Audio { path: audio, offset: 0.0 };
     pipeline::transcribe(&mut ctx.db, vod, stretch, &ffmpeg, &audio, &transcription, flag, &mut report, &mut notice)?;
-    // The audio stays while another request of the VOD may use it.
+    remove_section(&ctx.paths.work(), stretch);
+    // The whole audio stays while another request of the VOD may use it.
     if ctx.db.requests(vod.id)?.is_empty() {
         pipeline::remove_work_files(&ctx.paths.work(), vod.id);
         ctx.db.set_audio_path(vod.id, None)?;
@@ -564,6 +596,26 @@ mod tests {
         assert_eq!(lines(&db, vod), [(0.0, "hi".into())]);
         assert_eq!(db.audio_path(vod).unwrap(), None);
         assert!(!work.join(format!("{vod}.m4a")).exists());
+    }
+
+    #[test]
+    fn a_cancel_lets_its_section_go_and_the_whole_audio_while_another_waits() {
+        let (db, work, id) = setup(Status::Transcribing);
+        let vod = vod_of(&db, id);
+        let section = work.join(format!("{vod}.s{id}.m4a"));
+        std::fs::write(&section, b"section").unwrap();
+        std::fs::write(work.join(format!("{vod}.s{id}.m4a.part")), b"part").unwrap();
+        db.set_stretch_audio(id, Some(&section.to_string_lossy())).unwrap();
+        let other = db.request(vod, 100.0, Some(110.0)).unwrap().id;
+        finish(Stage::Transcribe, &db, &work, id, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.4)
+            .unwrap();
+        let mut left: Vec<_> =
+            std::fs::read_dir(&*work).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        left.sort();
+        assert_eq!(left, [format!("{vod}.m4a")], "the whole audio, for the other request");
+        finish(Stage::Download, &db, &work, other, Err(vodscribe_core::Canceled.into()), Some(Stop::Cancel), 0.0)
+            .unwrap();
+        assert_eq!(std::fs::read_dir(&*work).unwrap().count(), 0);
     }
 
     #[test]

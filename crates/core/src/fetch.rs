@@ -151,13 +151,35 @@ pub enum Wanted<'a> {
     },
     /// Only `start`..`end` seconds of a video (a clip), in an MP4; or, if
     /// `matroska`, in Matroska, which can be read while it's written (`mkv`).
+    /// With `sound_only`, the picture isn't written (a stretch to transcribe,
+    /// from `audio_selector`).
     Section {
         selector: &'a str,
         ffmpeg: &'a Path,
         start: f64,
         end: f64,
         matroska: bool,
+        sound_only: bool,
     },
+}
+
+/// The smallest stream that carries audio: audio-only when offered (YouTube,
+/// Twitch), otherwise the lowest quality muxed stream. Web streams only.
+pub fn audio_selector() -> String {
+    format!("{}/{}", playable::with_web("ba"), playable::with_web("w"))
+}
+
+/// yt-dlp's arguments for the ffmpeg writing a section: dropping what's
+/// before its start (`drop_before`), in Matroska, without the picture.
+fn section_output(drop_before: bool, matroska: bool, sound_only: bool) -> Vec<String> {
+    let options: Vec<&str> = [(drop_before, "-ss 0"), (matroska, "-f matroska"), (sound_only, "-vn")]
+        .into_iter()
+        .filter_map(|(on, option)| on.then_some(option))
+        .collect();
+    if options.is_empty() {
+        return Vec::new();
+    }
+    vec!["--downloader-args".into(), format!("ffmpeg_o:{}", options.join(" "))]
 }
 
 /// ffmpeg's arguments for files it reads after a download (merging, fixing
@@ -214,7 +236,7 @@ pub fn download(
     );
     let mut cmd = yt_dlp.command();
     cmd.arg("--load-info-json").arg(info_path);
-    let audio = format!("{}/{}", playable::with_web("ba"), playable::with_web("w"));
+    let audio = audio_selector();
     match wanted {
         // Audio-only when offered (YouTube, Twitch); otherwise the lowest quality muxed stream.
         // HLS downloads aren't remuxed: only the audio is used, and ffmpeg reads the raw stream.
@@ -241,7 +263,7 @@ pub fn download(
         // Matroska keeps what ffmpeg's seek reads before `start` (from the
         // keyframe before it), where MP4 hides it, so the file's 0 wouldn't be
         // `start`: it's dropped (`-ss 0` on the output).
-        Wanted::Section { selector, ffmpeg, start, end, matroska } => cmd
+        Wanted::Section { selector, ffmpeg, start, end, matroska, sound_only } => cmd
             .args(["-f", selector, "--merge-output-format", "mp4"])
             .arg("--download-sections")
             .arg(format!("*{start:.3}-{end:.3}"))
@@ -255,11 +277,8 @@ pub fn download(
             // (From the VOD's start there's nothing before to drop, and the
             // copy, which can only start at a keyframe, would lose the first
             // one, a hair before 0, and the picture till the next.)
-            .args(match (matroska, start > 0.0) {
-                (true, true) => ["--downloader-args", "ffmpeg_o:-ss 0 -f matroska"].as_slice(),
-                (true, false) => ["--downloader-args", "ffmpeg_o:-f matroska"].as_slice(),
-                (false, _) => &[],
-            })
+            // Sound only: the picture isn't written.
+            .args(section_output(matroska && start > 0.0, matroska, sound_only))
             .arg("--postprocessor-args")
             .arg(ffmpeg_reading_files())
             .arg("--ffmpeg-location")

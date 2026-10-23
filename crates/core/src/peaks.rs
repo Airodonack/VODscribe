@@ -2,6 +2,8 @@
 //! once from the audio while it's on this computer (VODs from sites with
 //! their own players don't keep it after transcribing), and saved as
 //! `<vod id>.peaks`: one byte per tenth of a second, so ten hours is 360 KB.
+//! A stretch transcribed from a section of its own adds that section's
+//! levels at their place (`merge`), with zeros where nothing was read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -89,6 +91,24 @@ pub fn save(dir: &Path, vod_id: i64, levels: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// `existing` levels with `levels` written over them from `at` seconds,
+/// zeros filling any gap between.
+fn merged(mut existing: Vec<u8>, at: f64, levels: &[u8]) -> Vec<u8> {
+    let from = (at.max(0.0) * RATE as f64).round() as usize;
+    let to = from + levels.len();
+    if existing.len() < to {
+        existing.resize(to, 0);
+    }
+    existing[from..to].copy_from_slice(levels);
+    existing
+}
+
+/// Saves `levels`, read from a section of VOD `vod_id` from `at` seconds,
+/// at their place among its saved levels.
+pub fn merge(dir: &Path, vod_id: i64, at: f64, levels: &[u8]) -> Result<()> {
+    save(dir, vod_id, &merged(load(dir, vod_id).unwrap_or_default(), at, levels))
+}
+
 /// VOD `vod_id`'s saved levels, if any.
 pub fn load(dir: &Path, vod_id: i64) -> Option<Vec<u8>> {
     fs::read(path(dir, vod_id)).ok()
@@ -128,6 +148,17 @@ mod tests {
             levels.push(piece);
         }
         assert_eq!(levels.finish(), [0, 255, 0, 170], "-20 dB is two thirds of the way up");
+    }
+
+    #[test]
+    fn a_sections_levels_go_at_their_place() {
+        assert_eq!(merged(Vec::new(), 0.3, &[7, 8]), [0, 0, 0, 7, 8], "zeros before");
+        assert_eq!(merged(vec![1, 2, 3, 4, 5, 6], 0.2, &[7, 8]), [1, 2, 7, 8, 5, 6], "over what was there");
+        assert_eq!(merged(vec![1, 2, 3], 0.2, &[7, 8]), [1, 2, 7, 8], "on past its end");
+        let dir = crate::TempDir::new("peaks-merge");
+        merge(&dir, 3, 1.0, &[9]).unwrap();
+        merge(&dir, 3, 0.0, &[4]).unwrap();
+        assert_eq!(load(&dir, 3).unwrap(), [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9]);
     }
 
     #[test]
