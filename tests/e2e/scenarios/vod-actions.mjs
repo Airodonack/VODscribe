@@ -1,4 +1,5 @@
-// A VOD's own buttons: Transcribe (an added VOD isn't), Pause while it
+// A VOD's own buttons: Transcribe (an added VOD isn't), Cancel at once
+// (before a line, it's as if never asked), Transcribe, Pause while it
 // transcribes (it stands), Resume (it finishes), then Transcribe again,
 // after asking (it's transcribed anew).
 
@@ -18,7 +19,25 @@ export default {
     const shown = () => app.js(`return document.querySelector(".list .vod .status-area .status")?.textContent.trim()`);
     await until("the row to say Not transcribed", async () => (await shown()) === "Not transcribed", 10_000);
     if ((await status()) !== "none") throw new Error(`added, it's ${await status()}, not untranscribed`);
+
+    // Stopped before it wrote a line: no "Stopped" and Retry, but the row of
+    // a VOD never asked, Transcribe and all.
     await app.click(row("Transcribe"));
+    await app.answer("Stop");
+    await app.click(row("Cancel"));
+    await until("it stopped", async () => (await status()) === "none", MINUTE);
+    const [stopped] = await app.invoke("list_vods");
+    if (stopped.transcribed !== "none") {
+      ctx.log(`lines came before the stop (${stopped.transcribed}): the never-asked row isn't checked`);
+    } else {
+      await until("the row to say Not transcribed again", async () => (await shown()) === "Not transcribed", 10_000);
+      if (!(await app.js(`return !!document.querySelector(arguments[0])`, row("Transcribe")))) {
+        throw new Error("stopped before a line, its row has no Transcribe");
+      }
+      ctx.log("stopped before a line: Not transcribed");
+    }
+
+    await app.click(row(stopped.transcribed === "none" ? "Transcribe" : "Transcribe the rest"));
     await until("it to transcribe", async () => (await status()) === "transcribing", 5 * MINUTE);
 
     await app.click(row("Pause"));
@@ -33,7 +52,7 @@ export default {
     await app.click(row("Transcribe again"));
     await until("it to start again", async () => (await status()) !== "done", MINUTE);
     await until("it done again", async () => (await status()) === "done", 30 * MINUTE);
-    if ((await app.asked()) !== 1) throw new Error("Transcribe again didn't ask first");
+    if ((await app.asked()) !== 2) throw new Error("Transcribe again didn't ask first");
     const [vod] = await app.invoke("list_vods");
     const text = (await app.invoke("transcript", { vodId: vod.id })).map((l) => l.text).join(" ");
     if (!/landed/i.test(text)) throw new Error(`the new transcript doesn't have "landed": ${text.slice(0, 200)}`);

@@ -47,8 +47,6 @@
     none: "",
   };
 
-  // Stopped by the user rather than failed (as libraries from before 0.5.2 can have).
-  const stopped = $derived(vod.status === "error" && vod.error === "Stopped");
   // Nothing asked of it, and not all of it transcribed: how much is, for "some".
   const untouched = $derived(vod.status === "none");
   let covered = $state(0);
@@ -149,10 +147,14 @@
     }
   }
 
-  // A video kept from a site without an embed can be deleted to free up space.
+  // A kept video can be deleted to free up space. A site with its own player
+  // plays it from there instead; any other site's plays here only once downloaded again.
   async function deleteVideo() {
+    const after = hasSitePlayer(vod)
+      ? `the video plays on ${platform} instead`
+      : `the video plays here again once it's downloaded again (${platform} has no player VODscribe can show)`;
     const sure = await ask(
-      `Delete the video of “${vod.title}” to free up space? The transcript stays, and the video plays on ${siteName(vod)} instead.${inEdits(
+      `Delete the video of “${vod.title}” to free up space? The transcript stays, and ${after}.${inEdits(
         " Its clips in ",
         " stay as they are, but can't be made longer without downloading again.",
       )}`,
@@ -275,18 +277,16 @@
             : "Not transcribed"}
       </span>
     {:else if vod.status !== "done"}
-      <span class="status" class:active class:error-text={vod.status === "error" && !stopped}>
+      <span class="status" class:active class:error-text={vod.status === "error"}>
         {#if active}<span class="pulse" aria-hidden="true"></span>{/if}
-        {#if vod.status === "error" && !stopped}<Icon name="error" size={13} />{/if}
-        {stopped ? "Stopped" : statusLabel[vod.status]}{#if showBar}<span class="pct"
-            >{Math.round(vod.progress * 100)}%</span
-          >{/if}
+        {#if vod.status === "error"}<Icon name="error" size={13} />{/if}
+        {statusLabel[vod.status]}{#if showBar}<span class="pct">{Math.round(vod.progress * 100)}%</span>{/if}
       </span>
     {/if}
     {#if showBar}
       <Progress value={vod.progress} paused={vod.status === "paused"} thin />
     {/if}
-    {#if vod.status === "error" && vod.error && !stopped}
+    {#if vod.status === "error" && vod.error}
       <span class="note error-text" title={vod.error}>{vod.error}</span>
     {:else if vod.outdated}
       <span

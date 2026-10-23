@@ -602,6 +602,23 @@ mod tests {
     }
 
     #[test]
+    fn a_request_stopped_before_any_line_leaves_the_vod_untranscribed() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("a", Some(600.0))).unwrap().0.id;
+        for status in [Status::Queued, Status::Downloading, Status::Transcribing, Status::Paused, Status::Error] {
+            let asked = db.request(vod, 0.0, None).unwrap().id;
+            db.set_stretch_status(asked, status, 0.3, (status == Status::Error).then_some("HTTP 404")).unwrap();
+            db.end_request(asked).unwrap();
+            let v = db.vod(vod).unwrap().unwrap();
+            assert_eq!(
+                (v.status, v.error, v.stretch, v.transcribed, v.waiting),
+                (Status::None, None, None, Transcribed::None, 0),
+                "stopped while {status:?}: like a VOD never asked"
+            );
+        }
+    }
+
+    #[test]
     fn the_queue_runs_in_the_order_asked_and_waits_for_listing() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let [a, b] = ["a", "b"].map(|id| db.add_vod(&info(id, Some(60.0))).unwrap().0.id);
