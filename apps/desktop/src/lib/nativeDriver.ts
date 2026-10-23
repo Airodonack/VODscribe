@@ -11,6 +11,9 @@ import { api, events, type PlayerStatus, type UnlistenFn } from "./api";
 import { OwnStatus } from "./ownStatus";
 import { Clock } from "./playerClock";
 
+/** A status the page took (`seq` null: its own guess), as the tests see it. */
+type Taken = { seq: number | null; time: number; playing: boolean };
+
 export class NativeDriver {
   private clock: Clock;
   private isPlaying = false;
@@ -46,6 +49,13 @@ export class NativeDriver {
   private tell(status: PlayerStatus) {
     // A reply that arrives after a newer event is stale.
     if (!this.status.take(status)) return;
+    // For the tests (tests/e2e/scenarios/player-seek.mjs): each status
+    // taken, in order, where the test harness made its window.__e2e.
+    const e2e = (globalThis as { __e2e?: { taken?: Taken[] } }).__e2e;
+    if (e2e) {
+      (e2e.taken ??= []).push({ seq: status.seq ?? null, time: status.time, playing: status.playing });
+      if (e2e.taken.length > 500) e2e.taken.shift();
+    }
     this.clock.set(status.time);
     this.clock.playing = status.running;
     this.clock.speed = status.speed;

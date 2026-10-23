@@ -104,3 +104,27 @@ test("a refused seek lets the player's word in again", async () => {
   fakeApp.event(status(7));
   assert.ok(Math.abs(driver.time() - 7) < 0.05, `at ${driver.time()}`);
 });
+
+// As in CI: the reply and an event made just before the seek come in the
+// same millisecond, in one turn of microtasks, either way round.
+for (const order of ["the event first", "the reply first"]) {
+  test(`a reply and an older event in one turn, ${order}: the reply stands`, async () => {
+    const driver = playing();
+    driver.seek(51, false);
+    const before = status(6.57);
+    const reply = status(51);
+    const [seek] = fakeApp.asked;
+    if (order === "the event first") {
+      queueMicrotask(() => fakeApp.event(before));
+      seek.answer(reply);
+    } else {
+      seek.answer(reply);
+      queueMicrotask(() => fakeApp.event(before));
+    }
+    // The reply's own event, as player.rs sends it with the reply.
+    queueMicrotask(() => fakeApp.event(reply));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.ok(driver.time() >= 51, `at ${driver.time()}`);
+    assert.equal(driver.playing(), true);
+  });
+}

@@ -1,14 +1,14 @@
 // A far seek while the app's own player plays: the time shown goes there
 // and stays, never back to where it was, and the button goes on saying
 // Pause (a seek doesn't pause; nativeDriver.ts). The player tells the page its time
-// with every frame (`player-time` events) and in each command's reply, apart,
-// and the page keeps the newest by `seq` (nativeDriver.ts); an event made
-// just before the seek that arrived after the page had gone to the seek's
-// time, but before the seek's reply, would take the time back (and say
-// whether it plays as it was). Each seek is traced in the page: the events
-// and replies as they arrive, which of them the page's rule takes, and the
-// time on the bar every few milliseconds for a second after. (Not seen so
-// far: 40 seeks on Linux, the replies in 1 to 15 ms; a guard.)
+// with every frame (`player-time` events) and in each command's reply, apart;
+// the page keeps the reply while a command is out and the newest by `seq`
+// after (nativeDriver.ts). An event made just before the seek, taken after
+// the page had gone to the seek's time, would take the time back (and say
+// whether it plays as it was). What the page took is read from the page
+// itself (window.__e2e.taken); the events and replies as they arrive are
+// traced too, to say what came when; and the time on the bar is sampled
+// every few milliseconds for a second after each seek.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -108,12 +108,15 @@ export default {
          if (button() !== "Pause") return { error: "not playing before the seek: " + button() };
          const target = Number(bar.dataset.viewStart) + Number(bar.dataset.span) * to;
          const before = shown();
-         // What came before stays, for the rule's newest seq; a second's worth is plenty.
+         // A second's worth of what came before, to say what came when.
          const mark = Math.max(0, trace.arrived.length - 60);
          // Every change to the bar, as it's made (a frame's worth may never be painted).
          const changes = [];
          const watch = new MutationObserver(() => changes.push({ at: performance.now(), time: shown(), button: button() }));
          watch.observe(document.querySelector(".bar"), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["aria-label"] });
+         // What the page takes from here on (nativeDriver.ts, for the tests).
+         window.__e2e.taken ??= [];
+         const tookFrom = window.__e2e.taken.length;
          const start = performance.now();
          click(to);
          const samples = [];
@@ -123,32 +126,18 @@ export default {
          }
          await wait(0);
          watch.disconnect();
-         return { start, target, before, samples, changes, arrived: trace.arrived.slice(mark) };`,
+         const took = window.__e2e.taken.slice(tookFrom);
+         return { start, target, before, samples, changes, took, arrived: trace.arrived.slice(mark) };`,
         FROM,
         TO,
       );
       if (seen.error) throw new Error(`seek ${i + 1}: ${seen.error}`);
-      const { start, target, before, samples, changes, arrived } = seen;
-      // The page's rule (nativeDriver.ts, ownStatus.ts): what arrives is taken
-      // if its seq is the newest yet, but for events while a command is out.
-      const replies = arrived.filter((a) => a.kind !== "event");
-      const out = (a) => a.kind === "event" && replies.some((r) => r.sent <= a.at && a.at < r.at);
-      let newest = 0;
-      const taken = [];
-      for (const a of [...arrived].sort((x, y) => x.at - y.at)) {
-        if (a.seq <= newest || out(a)) continue;
-        newest = a.seq;
-        taken.push(a);
-      }
+      const { start, target, before, samples, changes, took, arrived } = seen;
       const reply = arrived.find((a) => a.kind === "player_seek" && a.sent >= start);
-      // Made before the seek, taken after the page went to the seek's time:
-      // back past it, or saying it doesn't play when it does.
-      const stale = taken.filter(
-        (a) =>
-          a.at >= start &&
-          (!reply || a.at <= reply.at) &&
-          (a.time < target - 1 || (reply?.playing && !a.playing && a.kind === "event")),
-      );
+      // What the page took after the seek (its guess first, which has no
+      // seq): none of the player's may be from before it, back past the
+      // seek's time or saying it doesn't play when it does.
+      const stale = took.filter((t) => t.seq !== null && (t.time < target - 1 || (reply?.playing && !t.playing)));
       const between = arrived.filter((a) => a.kind === "event" && reply && a.at > reply.sent && a.at < reply.at);
       inFlight += between.length;
       // The time on the bar, once it has shown the seek's time, never
