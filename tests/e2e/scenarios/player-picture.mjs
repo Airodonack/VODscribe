@@ -128,8 +128,8 @@ export default {
     ctx.log(`paused: stays ${named(still)}`);
     if (native) ctx.log(await app.timeIsPicture("paused"));
 
-    // A panel opened over the picture (Settings) shows there: the picture
-    // draws on a surface over the page, which mustn't cover the panel.
+    // A window opened over the picture (Settings) shows there: the picture
+    // draws on a surface over the page, which mustn't cover it.
     await app.click('button[aria-label="Settings"]');
     const panel = '[role=dialog][aria-label="Settings"]';
     await until("Settings open", () => app.js(`return !!document.querySelector(arguments[0])`, panel), 10_000);
@@ -158,19 +158,27 @@ export default {
       );
       ctx.log(`Settings shows over the picture (after ${Date.now() - waited} ms)`);
       // The rest of the picture keeps its frame (the page draws it while the
-      // surface is hidden), not black.
+      // surface is hidden), not black: dimmed with the rest of the window by
+      // Settings' backdrop.
       const free = { x: v.x, y: v.y, w: p.x - v.x, h: v.h };
       if (free.w >= 40) {
+        const [r, g, b, a = 1] = await app.js(
+          `return getComputedStyle(document.querySelector(arguments[0]).parentElement).backgroundColor.match(/[0-9.]+/g).map(Number)`,
+          panel,
+        );
+        const dimmed = still.map((c, i) => Math.round(c * (1 - a) + [r, g, b][i] * a));
         await until(
           "the frame kept beside the panel",
           () => {
             const there = os.colourIn(os.screenshot(), os.middle(free));
-            if (os.distance(there, still) <= NEAR) return true;
-            throw new Error(`beside the panel the picture shows ${named(there)}, not ${named(still)}`);
+            if (os.distance(there, dimmed) <= NEAR) return true;
+            throw new Error(
+              `beside the panel the picture shows ${there.join(", ")}, not ${named(still)} dimmed (${dimmed.join(", ")})`,
+            );
           },
           5_000,
         );
-        ctx.log(`beside the panel, the picture keeps its frame (${named(still)})`);
+        ctx.log(`beside the panel, the picture keeps its frame (${named(still)}, dimmed)`);
       }
     }
     await app.key("Escape");

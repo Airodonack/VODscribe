@@ -3,16 +3,24 @@
 
 import { MINUTE, until } from "../lib/app.mjs";
 
-/** The chosen option of each radio group named in `groups`, as Settings shows them. */
-const chosen = (app, groups) =>
-  app.js(
-    `return Object.fromEntries(arguments[0].map((g) => [g,
-       document.querySelector('[role="radiogroup"][aria-label="' + g + '"] [aria-checked="true"]')?.textContent.trim()]))`,
-    groups,
-  );
+/** The section of Settings each radio group is in. */
+const SECTION = { Theme: "Appearance", "Video quality": "Storage", "Clip format": "Storage" };
+
+/** The chosen option of each radio group named in `groups`, as Settings shows them, each in its section. */
+const chosen = async (app, groups) => {
+  const shown = {};
+  for (const g of groups) {
+    await app.openSettings(SECTION[g]);
+    shown[g] = await app.js(
+      `return document.querySelector('[role="radiogroup"][aria-label="' + arguments[0] + '"] [aria-checked="true"]')?.textContent.trim()`,
+      g,
+    );
+  }
+  return shown;
+};
 
 const openSettings = async (app) => {
-  await app.click('button[aria-label="Settings"]');
+  await app.openSettings("Appearance");
   await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
 };
 
@@ -28,6 +36,7 @@ export default {
     await ctx.checkpoint("settings");
     for (const [group, option] of Object.entries(CHOICES)) {
       if (before[group] === option) throw new Error(`${group} is ${option} already: pick another for the test`);
+      await app.openSettings(SECTION[group]);
       await app.js(
         `const b = [...document.querySelectorAll('[role="radiogroup"][aria-label="' + arguments[0] + '"] button')]
            .find((b) => b.textContent.trim() === arguments[1]);
@@ -67,6 +76,7 @@ export default {
 
     // Reset settings… (Help), answered Reset: every choice as it was at the start.
     await app.answer("Reset");
+    await app.openSettings("Help");
     await app.clickText("Reset settings…");
     await until(
       "the choices back as they started",

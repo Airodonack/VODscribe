@@ -1,3 +1,18 @@
+<script lang="ts" module>
+  // The sections, in the list's order, and the one last opened: open again
+  // there while VODscribe runs, back at the first after a restart.
+  const SECTIONS = [
+    { id: "transcription", label: "Transcription", icon: "audio-lines" },
+    { id: "appearance", label: "Appearance", icon: "palette" },
+    { id: "storage", label: "Storage", icon: "folder" },
+    { id: "updates", label: "Updates", icon: "download" },
+    { id: "privacy", label: "Privacy", icon: "lock" },
+    { id: "help", label: "Help", icon: "circle-help" },
+  ] as const;
+  type Section = (typeof SECTIONS)[number]["id"];
+  let lastSection: Section = SECTIONS[0].id;
+</script>
+
 <script lang="ts">
   import EmoteProviders from "./EmoteProviders.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
@@ -13,6 +28,11 @@
   import { updates } from "./updates.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
+
+  let section = $state<Section>(lastSection);
+  $effect(() => {
+    lastSection = section;
+  });
 
   let device = $derived<Device>(appSettings.value?.device ?? "cpu");
   let themeChoice = $derived(appSettings.value?.theme ?? "system");
@@ -125,7 +145,7 @@
     }
   }
 
-  // The popover can close before this async setup finishes; anything set up
+  // Settings can close before this async setup finishes; anything set up
   // after that is torn down straight away.
   let destroyed = false;
   const keep = (u: UnlistenFn) => (destroyed ? u() : unlisten.push(u));
@@ -206,232 +226,315 @@
 </script>
 
 <div class="settings">
-  <section>
-    <span class="eyebrow">Transcribe with</span>
-    <div class="options" role="radiogroup" aria-label="Transcribe with">
-      <label class="option" class:checked={device === "cpu"}>
-        <input type="radio" name="device" checked={device === "cpu"} onchange={() => choose("cpu")} />
-        <span class="option-text">
-          <span class="option-title">Processor <span class="muted">(CPU)</span></span>
-          <span class="muted">Works on any computer.</span>
-        </span>
-      </label>
-      <label class="option" class:checked={device === "gpu"} class:disabled={blocker !== null}>
-        <input
-          type="radio"
-          name="device"
-          checked={device === "gpu"}
-          disabled={blocker !== null}
-          onchange={() => choose("gpu")}
-        />
-        <span class="option-text">
-          <span class="option-title">
-            Graphics card <span class="muted">(GPU)</span>
-            {#if gpu?.gpu}<span class="muted detail">{gpu.gpu.name}</span>{/if}
-          </span>
-          <span class="muted">
-            {#if blocker}{blocker}{:else}NVIDIA only. Several times faster.{/if}
-          </span>
-        </span>
-      </label>
-    </div>
-    {#if busy && gpu}
-      <p class="hint warn-text">
-        <Icon name="warning" size={13} /> Your graphics card is busy with something else, so VODs use the processor for now.
-      </p>
-    {/if}
-
-    {#if offerPack}
-      <!-- Not while clearing: that holds the add-on's busy flag without downloading. -->
-      {#if (step || gpu?.installing) && !clearing}
-        <div class="progress">
-          <!-- The exact component, for the people who chose the GPU add-on. -->
-          <DownloadStep
-            progress={step}
-            waiting="Downloading the GPU add-on"
-            oncancel={() => api.cancelGpuInstall().catch((e) => (error = String(e)))}
-          />
-        </div>
-      {:else if !gpu?.installed}
-        <button onclick={install}
-          ><Icon name="download" size={14} /> Download GPU add-on (about {formatBytes(
-            gpu?.download_bytes ?? 0,
-          )})</button
-        >
-      {:else}
-        <p class="verified">
-          <Tip
-            text="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
-          >
-            <Icon name="shield" size={12} /> GPU add-on installed and checked
-          </Tip>
-        </p>
-        <button class="link" onclick={remove}>Remove GPU add-on</button>
-      {/if}
-    {/if}
-    {#if error}<p class="error-text hint">{error}</p>{/if}
-    <p class="muted hint">Changes apply from the next VOD.</p>
-  </section>
-
-  <section>
-    <span class="eyebrow">Appearance</span>
-    <p class="label">Theme</p>
-    <div class="segmented" role="radiogroup" aria-label="Theme">
-      {#each THEMES as t (t.id)}
-        <button
-          role="radio"
-          aria-checked={themeChoice === t.id}
-          class:on={themeChoice === t.id}
-          onclick={() => appSettings.update({ theme: t.id })}
-        >
-          <Icon name={t.icon} size={14} />
-          {t.label}
-        </button>
-      {/each}
-    </div>
-    <p class="label">Chat emotes</p>
-    <EmoteProviders />
-  </section>
-
-  <section>
-    <span class="eyebrow">Storage</span>
-    <p class="label">Downloaded videos</p>
-    <p class="muted hint">
-      Videos kept here to play and clip: those of VODs from sites other than Kick, Twitch and YouTube, and of those
-      three when downloaded with the button at the left of their row{mediaBytes
-        ? `. They use ${formatBytes(mediaBytes)}`
-        : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
-    </p>
-    <div class="segmented" role="radiogroup" aria-label="Video quality">
-      {#each HEIGHTS as h (h)}
-        <button
-          role="radio"
-          aria-checked={videoHeight === h}
-          class:on={videoHeight === h}
-          onclick={() => appSettings.update({ video_height: h })}
-        >
-          {h}p
-        </button>
-      {/each}
-    </div>
-    <p class="muted hint">
-      Up to {videoHeight}p, for kept videos and clips. An hour is about {videoSize(videoHeight)}. Applies to videos
-      downloaded from now on.
-    </p>
-    <div class="row-buttons">
-      <button onclick={() => api.openVideosDir().catch((e) => (error = String(e)))}>Open folder</button>
-      <button class="danger-outline" onclick={deleteAllVideos} disabled={deletingVideos || !mediaBytes}>
-        {deletingVideos ? "Deleting…" : "Delete all downloaded videos…"}
-      </button>
-    </div>
-    {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
-    <p class="label">Fetched video</p>
-    <p class="muted hint">
-      Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits use
-      is kept, as the site may not have it any more; the rest goes about an hour after its last use, and is fetched
-      again if needed.{footageBytes ? ` Fetched video takes ${formatBytes(footageBytes)} now.` : ""}
-    </p>
-    <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
-      {clearingFootage ? "Deleting…" : "Delete fetched video"}
-    </button>
-    <p class="label">Clips and edits are made as</p>
-    <div class="segmented" role="radiogroup" aria-label="Clip format">
-      {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
-        <button
-          role="radio"
-          aria-checked={clipFormat === format}
-          class:on={clipFormat === format}
-          onclick={() => appSettings.update({ clip_format: format })}
-        >
-          {name}
-        </button>
-      {/each}
-    </div>
-    <p class="muted hint">
-      {clipFormat === "mp4"
-        ? "H.264 and AAC: small, and read by nearly every video editor."
-        : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
-      Clips already made are made again when next dragged out.
-    </p>
-  </section>
-
-  <section>
-    <span class="eyebrow">Video downloader</span>
-    <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
-    <button onclick={updateYtDlp} disabled={updating}>{updating ? "Updating…" : "Update video downloader"}</button>
-    {#if updating && ytDlpStep}
-      <DownloadStep progress={ytDlpStep} bar={false} />
-    {:else if ytDlpStatus}
-      <p class="muted hint step">{ytDlpStatus}</p>
-    {/if}
-  </section>
-
-  <section>
-    <span class="eyebrow">Updates</span>
-    <p class="muted hint">VODscribe checks once a day, and asks before installing anything.</p>
-    {#if updates.available}
-      <button class="primary" onclick={() => updates.install()} disabled={updates.installing}>
-        {updates.installing ? "Updating…" : `Update to ${updates.available.version} and restart`}
-      </button>
-    {:else}
-      <button onclick={() => updates.check(true)} disabled={updates.checking}>
-        {updates.checking ? "Checking…" : "Check for updates"}
-      </button>
-    {/if}
-    {#if updates.error}
-      <p class="error-text hint">{updates.error}</p>
-    {:else if updates.status}
-      <p class="muted hint">{updates.status}</p>
-    {/if}
-  </section>
-
-  <section>
-    <span class="eyebrow">Privacy & security</span>
-    <p class="hint">
-      Your transcripts, audio and searches stay on this computer. There's no account, and VODscribe doesn't collect
-      anything about how you use it.
-    </p>
-    <p class="muted hint">
-      VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, and to
-      check for updates. Those parts and updates are checked before they're used, to make sure they haven't been
-      tampered with. Video files from your computer never leave it.
-    </p>
-    {#if dataDir}
-      <p class="muted hint">Your library is in:</p>
-      <code class="path">{dataDir}</code>
-    {/if}
-    <div class="row-buttons">
-      <button onclick={() => api.openDataDir().catch((e) => (error = String(e)))}>Open folder</button>
-    </div>
-    <div class="row-buttons">
-      <button class="link" onclick={() => openUrl(PRIVACY)}
-        >More about privacy <Icon name="external" size={12} /></button
+  <nav aria-label="Settings sections">
+    {#each SECTIONS as s (s.id)}
+      <button
+        class:on={section === s.id}
+        aria-current={section === s.id ? "true" : undefined}
+        data-autofocus={section === s.id ? "" : undefined}
+        onclick={() => (section = s.id)}><Icon name={s.icon} size={16} /><span class="name">{s.label}</span></button
       >
-      <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
-    </div>
-  </section>
+    {/each}
+  </nav>
+  <div class="pane">
+    {#if section === "transcription"}
+      <section>
+        <span class="eyebrow">Transcribe with</span>
+        <div class="options" role="radiogroup" aria-label="Transcribe with">
+          <label class="option" class:checked={device === "cpu"}>
+            <input type="radio" name="device" checked={device === "cpu"} onchange={() => choose("cpu")} />
+            <span class="option-text">
+              <span class="option-title">Processor <span class="muted">(CPU)</span></span>
+              <span class="muted">Works on any computer.</span>
+            </span>
+          </label>
+          <label class="option" class:checked={device === "gpu"} class:disabled={blocker !== null}>
+            <input
+              type="radio"
+              name="device"
+              checked={device === "gpu"}
+              disabled={blocker !== null}
+              onchange={() => choose("gpu")}
+            />
+            <span class="option-text">
+              <span class="option-title">
+                Graphics card <span class="muted">(GPU)</span>
+                {#if gpu?.gpu}<span class="muted detail">{gpu.gpu.name}</span>{/if}
+              </span>
+              <span class="muted">
+                {#if blocker}{blocker}{:else}NVIDIA only. Several times faster.{/if}
+              </span>
+            </span>
+          </label>
+        </div>
+        {#if busy && gpu}
+          <p class="hint warn-text">
+            <Icon name="warning" size={13} /> Your graphics card is busy with something else, so VODs use the processor for
+            now.
+          </p>
+        {/if}
 
-  <section>
-    <span class="eyebrow">Help</span>
-    <p class="muted hint">Something broken? Got an idea?</p>
-    <button class="link" onclick={() => openUrl(ISSUES)}
-      >Report a problem or suggest something <Icon name="external" size={12} /></button
-    >
-    <button class="link" onclick={resetSettings}>Reset settings…</button>
-    <button class="link" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
-      {clearing ? "Repairing VODscribe…" : "Repair VODscribe…"}
-    </button>
-    <p class="muted hint">
-      Repair deletes the speech model, tools and unfinished downloads{cacheBytes !== null
-        ? ` (${formatBytes(cacheBytes)} in all)`
-        : ""}, then sets VODscribe up again. Your library, transcripts, chats and videos stay.
-    </p>
-  </section>
+        {#if offerPack}
+          <!-- Not while clearing: that holds the add-on's busy flag without downloading. -->
+          {#if (step || gpu?.installing) && !clearing}
+            <div class="progress">
+              <!-- The exact component, for the people who chose the GPU add-on. -->
+              <DownloadStep
+                progress={step}
+                waiting="Downloading the GPU add-on"
+                oncancel={() => api.cancelGpuInstall().catch((e) => (error = String(e)))}
+              />
+            </div>
+          {:else if !gpu?.installed}
+            <button onclick={install}
+              ><Icon name="download" size={14} /> Download GPU add-on (about {formatBytes(
+                gpu?.download_bytes ?? 0,
+              )})</button
+            >
+          {:else}
+            <p class="verified">
+              <Tip
+                text="VODscribe checked that every file is exactly what was published, so nothing was damaged or tampered with."
+              >
+                <Icon name="shield" size={12} /> GPU add-on installed and checked
+              </Tip>
+            </p>
+            <button class="link" onclick={remove}>Remove GPU add-on</button>
+          {/if}
+        {/if}
+        {#if error}<p class="error-text hint">{error}</p>{/if}
+        <p class="muted hint">Changes apply from the next VOD.</p>
+      </section>
+    {:else if section === "appearance"}
+      <section>
+        <span class="eyebrow">Appearance</span>
+        <p class="label">Theme</p>
+        <div class="segmented" role="radiogroup" aria-label="Theme">
+          {#each THEMES as t (t.id)}
+            <button
+              role="radio"
+              aria-checked={themeChoice === t.id}
+              class:on={themeChoice === t.id}
+              onclick={() => appSettings.update({ theme: t.id })}
+            >
+              <Icon name={t.icon} size={14} />
+              {t.label}
+            </button>
+          {/each}
+        </div>
+        <p class="label">Chat emotes</p>
+        <EmoteProviders />
+      </section>
+    {:else if section === "storage"}
+      <section>
+        <span class="eyebrow">Storage</span>
+        <p class="label">Downloaded videos</p>
+        <p class="muted hint">
+          Videos kept here to play and clip: those of VODs from sites other than Kick, Twitch and YouTube, and of those
+          three when downloaded with the button at the left of their row{mediaBytes
+            ? `. They use ${formatBytes(mediaBytes)}`
+            : ""}. Delete one with the crossed-out camera in its row to free up space; its transcript stays.
+        </p>
+        <div class="segmented" role="radiogroup" aria-label="Video quality">
+          {#each HEIGHTS as h (h)}
+            <button
+              role="radio"
+              aria-checked={videoHeight === h}
+              class:on={videoHeight === h}
+              onclick={() => appSettings.update({ video_height: h })}
+            >
+              {h}p
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">
+          Up to {videoHeight}p, for kept videos and clips. An hour is about {videoSize(videoHeight)}. Applies to videos
+          downloaded from now on.
+        </p>
+        <div class="row-buttons">
+          <button onclick={() => api.openVideosDir().catch((e) => (error = String(e)))}>Open folder</button>
+          <button class="danger-outline" onclick={deleteAllVideos} disabled={deletingVideos || !mediaBytes}>
+            {deletingVideos ? "Deleting…" : "Delete all downloaded videos…"}
+          </button>
+        </div>
+        {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
+        <p class="label">Fetched video</p>
+        <p class="muted hint">
+          Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits
+          use is kept, as the site may not have it any more; the rest goes about an hour after its last use, and is
+          fetched again if needed.{footageBytes ? ` Fetched video takes ${formatBytes(footageBytes)} now.` : ""}
+        </p>
+        <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
+          {clearingFootage ? "Deleting…" : "Delete fetched video"}
+        </button>
+        <p class="label">Clips and edits are made as</p>
+        <div class="segmented" role="radiogroup" aria-label="Clip format">
+          {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
+            <button
+              role="radio"
+              aria-checked={clipFormat === format}
+              class:on={clipFormat === format}
+              onclick={() => appSettings.update({ clip_format: format })}
+            >
+              {name}
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">
+          {clipFormat === "mp4"
+            ? "H.264 and AAC: small, and read by nearly every video editor."
+            : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
+          Clips already made are made again when next dragged out.
+        </p>
+      </section>
+    {:else if section === "updates"}
+      <section>
+        <span class="eyebrow">Updates</span>
+        <p class="muted hint">VODscribe checks once a day, and asks before installing anything.</p>
+        {#if updates.available}
+          <button class="primary" onclick={() => updates.install()} disabled={updates.installing}>
+            {updates.installing ? "Updating…" : `Update to ${updates.available.version} and restart`}
+          </button>
+        {:else}
+          <button onclick={() => updates.check(true)} disabled={updates.checking}>
+            {updates.checking ? "Checking…" : "Check for updates"}
+          </button>
+        {/if}
+        {#if updates.error}
+          <p class="error-text hint">{updates.error}</p>
+        {:else if updates.status}
+          <p class="muted hint">{updates.status}</p>
+        {/if}
+      </section>
+      <section>
+        <span class="eyebrow">Video downloader</span>
+        <p class="muted hint">If VODs from a site stop downloading, updating usually fixes it.</p>
+        <button onclick={updateYtDlp} disabled={updating}>{updating ? "Updating…" : "Update video downloader"}</button>
+        {#if updating && ytDlpStep}
+          <DownloadStep progress={ytDlpStep} bar={false} />
+        {:else if ytDlpStatus}
+          <p class="muted hint step">{ytDlpStatus}</p>
+        {/if}
+      </section>
+    {:else if section === "privacy"}
+      <section>
+        <span class="eyebrow">Privacy & security</span>
+        <p class="hint">
+          Your transcripts, audio and searches stay on this computer. There's no account, and VODscribe doesn't collect
+          anything about how you use it.
+        </p>
+        <p class="muted hint">
+          VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, and
+          to check for updates. Those parts and updates are checked before they're used, to make sure they haven't been
+          tampered with. Video files from your computer never leave it.
+        </p>
+        {#if dataDir}
+          <p class="muted hint">Your library is in:</p>
+          <code class="path">{dataDir}</code>
+        {/if}
+        <div class="row-buttons">
+          <button onclick={() => api.openDataDir().catch((e) => (error = String(e)))}>Open folder</button>
+        </div>
+        <div class="row-buttons">
+          <button class="link" onclick={() => openUrl(PRIVACY)}
+            >More about privacy <Icon name="external" size={12} /></button
+          >
+          <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
+        </div>
+      </section>
+    {:else if section === "help"}
+      <section>
+        <span class="eyebrow">Help</span>
+        <p class="muted hint">Something broken? Got an idea?</p>
+        <button class="link" onclick={() => openUrl(ISSUES)}
+          >Report a problem or suggest something <Icon name="external" size={12} /></button
+        >
+        <button class="link" onclick={resetSettings}>Reset settings…</button>
+        <button class="link" onclick={clearCache} disabled={clearing || step !== null || gpu?.installing}>
+          {clearing ? "Repairing VODscribe…" : "Repair VODscribe…"}
+        </button>
+        <p class="muted hint">
+          Repair deletes the speech model, tools and unfinished downloads{cacheBytes !== null
+            ? ` (${formatBytes(cacheBytes)} in all)`
+            : ""}, then sets VODscribe up again. Your library, transcripts, chats and videos stay.
+        </p>
+      </section>
+    {/if}
+  </div>
 </div>
 
 <style>
+  /* The section list on the left, the chosen section beside it, each scrolling on its own. */
   .settings {
     display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    height: 100%;
+  }
+
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+  }
+
+  nav button {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 6px 8px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 13px;
+    text-align: left;
+  }
+
+  nav button:hover:not(.on) {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+
+  nav button.on {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+
+  .pane {
+    overflow-y: auto;
+  }
+
+  /* A narrow window: the list becomes a row of icons over the section. */
+  @media (max-width: 520px) {
+    .settings {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    nav {
+      flex-direction: row;
+      justify-content: space-around;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+
+    nav button {
+      justify-content: center;
+      padding: 6px 10px;
+    }
+
+    /* Out of sight, still the button's name. */
+    .name {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   }
 
   section {

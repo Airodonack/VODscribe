@@ -11,7 +11,7 @@ export default {
   name: "clip-format",
   async run(app, ctx) {
     await app.toLibrary();
-    await app.click('button[aria-label="Settings"]');
+    await app.openSettings("Storage");
     await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Clip format"]')`), MINUTE);
     await app.js(
       `[...document.querySelectorAll('[role="radiogroup"][aria-label="Clip format"] button')].find((b) => b.textContent.trim() === "MOV").click()`,

@@ -23,7 +23,7 @@
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { load, save } from "./stored";
-  import Popover from "./Popover.svelte";
+  import Modal from "./Modal.svelte";
   import { AUTHOR, SUPPORT } from "./links";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -81,7 +81,6 @@
   const showResults = $derived(!aside && (results !== null || searchError !== null));
 
   let showSettings = $state(false);
-  let settingsEl = $state<HTMLElement>();
 
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
@@ -186,6 +185,9 @@
   function onWindowKey(e: KeyboardEvent) {
     // Taken already by what has the focus (Alt+← moving an emote provider).
     if (!keysForApp() || e.defaultPrevented) return;
+    // A modal window (Settings) has the keys while it's open: undo, back and
+    // search mustn't reach the view behind it. Escape closes it (Modal.svelte).
+    if (document.querySelector('[aria-modal="true"]')) return;
     // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
     const target = e.target as HTMLElement | null;
     const typing = !!target?.closest("input, textarea, select, [contenteditable]");
@@ -594,27 +596,24 @@
           />
         </div>
         <SearchFilter bind:scopeAll bind:sources {selected} />
-        <div class="settings-anchor" bind:this={settingsEl}>
-          <button
-            class="icon"
-            class:on={showSettings}
-            onclick={() => (showSettings = !showSettings)}
-            {...demoOff(
-              "The web demo has no settings. In the app: GPU speed-up, video downloader updates and storage.",
-            )}
-            aria-label="Settings"
-            aria-expanded={showSettings}
-            title="Settings"><Icon name="settings" size={18} /></button
-          >
-          <Popover bind:open={showSettings} anchor={settingsEl} label="Settings" width={340} padding={0}>
-            <Settings
-              oncleared={() => {
-                showSettings = false;
-                refreshSetup();
-              }}
-            />
-          </Popover>
-        </div>
+        <button
+          class="icon"
+          class:on={showSettings}
+          onclick={() => (showSettings = !showSettings)}
+          {...demoOff("The web demo has no settings. In the app: GPU speed-up, video downloader updates and storage.")}
+          aria-label="Settings"
+          aria-haspopup="dialog"
+          aria-expanded={showSettings}
+          title="Settings"><Icon name="settings" size={18} /></button
+        >
+        <Modal bind:open={showSettings} label="Settings">
+          <Settings
+            oncleared={() => {
+              showSettings = false;
+              refreshSetup();
+            }}
+          />
+        </Modal>
       </div>
 
       {#if editOpen}
@@ -739,10 +738,6 @@
   .search input {
     padding-left: 34px;
     font-size: 15px;
-  }
-
-  .settings-anchor {
-    position: relative;
   }
 
   .body {

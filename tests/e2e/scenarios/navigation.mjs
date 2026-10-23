@@ -36,7 +36,7 @@ export default {
     // In Settings, Alt+← on an emote provider moves it, and only that: the
     // view behind doesn't go back too.
     if (!mac) {
-      await app.click('button[aria-label="Settings"]');
+      await app.openSettings("Appearance");
       const provider = '[aria-label="Chat emote providers, first one wins"] button.provider:last-child';
       await until(
         "the emote providers",

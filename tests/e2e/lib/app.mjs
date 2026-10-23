@@ -171,6 +171,39 @@ export class App {
     );
   }
 
+  /**
+   * Opens Settings at `section`, a name in its list ("Appearance", "Storage", "Help"…): the gear
+   * first if Settings isn't open, then the section, once it's the one shown.
+   */
+  async openSettings(section) {
+    const dialog = '[role="dialog"][aria-label="Settings"]';
+    if (!(await this.js(`return !!document.querySelector(arguments[0])`, dialog))) {
+      await this.click('button[aria-label="Settings"]');
+      await until(
+        "Settings",
+        () => this.js(`return !!document.querySelector(arguments[0] + " nav button")`, dialog),
+        MINUTE,
+      );
+    }
+    await this.js(
+      `const b = [...document.querySelectorAll(arguments[0] + " nav button")].find((b) => b.textContent.trim() === arguments[1]);
+       if (!b) throw new Error("no section " + arguments[1] + " in Settings");
+       b.click();`,
+      dialog,
+      section,
+    );
+    await until(
+      `Settings at ${section}`,
+      () =>
+        this.js(
+          `return document.querySelector(arguments[0] + ' nav button[aria-current="true"]')?.textContent.trim() === arguments[1]`,
+          dialog,
+          section,
+        ),
+      10_000,
+    );
+  }
+
   /** Clicks the button whose text is `text`. */
   clickText(text) {
     return this.js(

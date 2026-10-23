@@ -66,7 +66,7 @@ export default {
     // Readable on what's behind it, in each theme (a sound-only file's
     // caption sits on the panel, not on a video's dark stage).
     for (const theme of ["Light", "Dark"]) {
-      await app.click('button[aria-label="Settings"]');
+      await app.openSettings("Appearance");
       await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
       await app.js(
         `[...document.querySelectorAll('[role="radiogroup"][aria-label="Theme"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
