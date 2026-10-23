@@ -14,13 +14,8 @@ export default {
   async run(app, ctx) {
     await app.toLibrary();
     const first = await app.addAndTranscribe(ctx.fixtures.landed);
-    await app.pickFiles([videos(path.join(ctx.out, "fixtures")).video]);
-    await app.clickText("add video files…");
-    const second = await until(
-      "the second VOD, done",
-      async () => (await app.invoke("list_vods")).find((v) => v.id !== first.id && v.status === "done"),
-      300_000,
-    );
+    const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);
+    const second = await app.transcribe(added.id);
     const press = (key, mods) =>
       app.js(
         `document.body.dispatchEvent(new KeyboardEvent("keydown", Object.assign({ key: arguments[0], bubbles: true }, arguments[1])))`,

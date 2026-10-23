@@ -20,13 +20,8 @@ export default {
     await app.key("Escape");
 
     const audio = await app.addAndTranscribe(ctx.fixtures.landed);
-    await app.pickFiles([videos(path.join(ctx.out, "fixtures")).video]);
-    await app.clickText("add video files…");
-    const video = await until(
-      "the video, done",
-      async () => (await app.invoke("list_vods")).find((v) => v.id !== audio.id && v.status === "done"),
-      5 * MINUTE,
-    );
+    const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);
+    const video = await app.transcribe(added.id);
     for (const [vod, ext] of [
       [video, ".mov"],
       [audio, ".wav"],

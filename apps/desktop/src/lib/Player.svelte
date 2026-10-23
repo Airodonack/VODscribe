@@ -31,6 +31,8 @@
     watchUrl,
   } from "./platform";
   import { nav } from "./nav.svelte";
+  import { hideNote, noteHidden } from "./permission";
+  import { videoDownloads } from "./videos.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
   // result, a transcript line, a source link), a fresh object each time, so
@@ -43,6 +45,27 @@
   });
   // Where it opened, or was last jumped to: the moment the header links to.
   let from = $state(start);
+
+  // A site without a player the app can show plays its VODs only here, once
+  // their video is downloaded: Play asks first (the rights note), as Keep
+  // video does, then downloads it; it plays once it's in (`vod.media`).
+  videoDownloads.start();
+  const download = $derived(keepsVideo(vod) && !vod.media);
+  const downloading = $derived(videoDownloads.progress.get(vod.id));
+  const downloadError = $derived(videoDownloads.errors.get(vod.id));
+  let playButton = $state<HTMLElement>();
+  let askingDownload = $state(false);
+  function playByDownloading() {
+    if (downloading !== undefined) return;
+    if (noteHidden()) videoDownloads.keep(vod.id);
+    else askingDownload = true;
+  }
+  function answerDownload(yes: boolean, hide: boolean) {
+    askingDownload = false;
+    if (!yes) return;
+    if (hide) hideNote();
+    videoDownloads.keep(vod.id);
+  }
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
   let collapsed = $state(false);
@@ -461,6 +484,29 @@
         <PermissionNote action="Download clip" onanswer={(download, hide) => clips.answer(download, hide)} />
       </Popover>
     {/if}
+  {:else if download}
+    <div class="stage">
+      <div class="frame">
+        <button
+          class="poster"
+          bind:this={playButton}
+          onclick={playByDownloading}
+          aria-label="Play {vod.title}"
+          disabled={downloading !== undefined}
+        >
+          {#if vod.thumb}<Thumb name={vod.thumb} />{/if}
+          <span class="play"><Icon name={downloading !== undefined ? "download" : "play"} size={26} /></span>
+        </button>
+      </div>
+    </div>
+    <Popover bind:open={askingDownload} anchor={playButton} label="Before downloading the video" width={340}>
+      <PermissionNote action="Download video" onanswer={answerDownload}>
+        <p class="muted">
+          {site} has no player VODscribe can show, so its video can only be downloaded, and then plays here. It's kept until
+          you delete it.
+        </p>
+      </PermissionNote>
+    </Popover>
   {/if}
 {/snippet}
 
@@ -551,10 +597,15 @@
     {/if}
   {:else}
     <p class="muted note">
-      {#if keepsVideo(vod) && vod.status !== "done" && vod.status !== "error" && vod.status !== "none"}
-        The video plays here once it's downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(from)}.
+      {#if downloading !== undefined || (keepsVideo(vod) && vod.status === "downloading")}
+        Downloading the video{downloading ? ` (${Math.round(downloading * 100)}%)` : ""}: it plays here once it's
+        downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(from)}.
+      {:else if downloadError}
+        <span class="error-text">The video couldn't be downloaded: {downloadError}</span> Press Play to try again, or
+        use “Open on {site}”.
       {:else if keepsVideo(vod)}
-        This video isn't kept on this computer. Use “Open on {site}” to watch from {formatTime(from)}.
+        {site} has no player VODscribe can show: press Play to download the video and play it here, or use “Open on
+        {site}” to watch from {formatTime(from)}.
       {:else}
         {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(from)}.
       {/if}

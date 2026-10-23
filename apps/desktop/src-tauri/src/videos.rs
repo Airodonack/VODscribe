@@ -1,7 +1,8 @@
-//! Downloading a VOD's whole video to this computer, on request, for a VOD
-//! from YouTube, Twitch or Kick (those from other sites keep theirs anyway,
-//! `pipeline::keeps_video`). It then plays in the app's own player, where
-//! marks and clips are exact to the frame, and clips are cut from it at once.
+//! Downloading a VOD's whole video to this computer, on request. A VOD from
+//! YouTube, Twitch or Kick then plays in the app's own player, where marks
+//! and clips are exact to the frame, and clips are cut from it at once; one
+//! from another site (`pipeline::keeps_video`) plays only that way (or is
+//! kept once it's transcribed).
 //! Kept like other sites' videos, in `Paths::media`, at the Storage quality,
 //! in a format that plays here; "Delete video" removes it.
 //!
@@ -176,9 +177,8 @@ fn record(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64, file: &Path, st
     Ok(())
 }
 
-/// Queues the download of VOD `id`'s whole video (YouTube, Twitch and Kick;
-/// other sites keep theirs when transcribed), at most `height` tall, or as
-/// Settings → Storage says.
+/// Queues the download of VOD `id`'s whole video, at most `height` tall, or
+/// as Settings → Storage says.
 #[tauri::command]
 pub(crate) async fn keep_video(
     app: AppHandle,
@@ -195,8 +195,10 @@ pub(crate) async fn keep_video(
     if vod.source_path.is_some() || vod.media {
         return Ok(());
     }
-    if pipeline::keeps_video(&vod.info.platform) {
-        return Err("This VOD's video is kept once it's transcribed.".into());
+    // A site without its own player: transcribing all of it downloads the
+    // video already, into the same file.
+    if pipeline::keeps_video(&vod.info.platform) && vod.status == vodscribe_core::db::Status::Downloading {
+        return Err("Its video is already downloading, to transcribe it.".into());
     }
     let queued = |(v, _): &(i64, u32)| *v == id;
     if !state.videos.0.push_new((id, height), queued) {

@@ -89,17 +89,8 @@ export default {
     // Following along: the file's transcript is a line or two, so ten minutes
     // of the landing, over and over, gives one to scroll.
     await app.type('input[placeholder="Search for a phrase…"]', "");
-    await app.pickFiles([longSpeech(path.join(out, "fixtures"))]);
-    await app.clickText("add video files…");
-    const long = await until(
-      "the ten minutes transcribed",
-      async () => {
-        const v = (await app.invoke("list_vods")).find((v) => v.id !== done.id);
-        if (v?.status === "error") throw new Error(`transcription failed: ${v.error}`);
-        return v?.status === "done" && v;
-      },
-      10 * MINUTE,
-    );
+    const [added] = await app.addFiles([longSpeech(path.join(out, "fixtures"))]);
+    const long = await app.transcribe(added.id, { label: "the ten minutes" });
     await app.openVod(long.id);
     await until(
       "the long transcript",

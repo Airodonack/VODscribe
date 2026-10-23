@@ -17,16 +17,8 @@ export default {
     await app.toLibrary();
     const audio = await app.addAndTranscribe(ctx.fixtures.landed);
     const video = videos(path.join(ctx.out, "fixtures")).video;
-    await app.pickFiles([video]);
-    await app.clickText("add video files…");
-    await until(
-      "both transcribed",
-      async () => {
-        const vods = await app.invoke("list_vods");
-        return vods.length === 2 && vods.every((v) => v.status === "done");
-      },
-      5 * MINUTE,
-    );
+    const [added] = await app.addFiles([video]);
+    await app.transcribe(added.id);
     const results = () =>
       app.js(`return {
         sections: document.querySelectorAll(".results section").length,
@@ -34,6 +26,9 @@ export default {
         summary: document.querySelector(".results .summary")?.textContent.trim() ?? "",
         none: document.querySelector(".none")?.textContent.trim() ?? "" }`);
 
+    // An add opens what it added, and a search with a VOD open is of it
+    // alone: closed, to search them all.
+    await app.click(".list .vod.selected");
     await app.type(SEARCH, "landed");
     const all = await until(
       "results from both",

@@ -11,8 +11,8 @@ export default {
   async run(app, { out, log, checkpoint }) {
     const files = videos(path.join(out, "fixtures"));
     await app.toLibrary();
-    await app.pickFiles(Object.values(files));
-    await app.clickText("add video files…");
+    for (const vod of await app.addFiles(Object.values(files)))
+      await app.invoke("transcribe_stretch", { vodId: vod.id, start: 0, end: null });
     const byFile = await until(
       "every file in the library, finished",
       async () => {

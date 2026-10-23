@@ -1,5 +1,6 @@
-// A VOD's own buttons: Pause while it transcribes (it stands), Resume (it
-// finishes), then Transcribe again, after asking (it's transcribed anew).
+// A VOD's own buttons: Transcribe (an added VOD isn't), Pause while it
+// transcribes (it stands), Resume (it finishes), then Transcribe again,
+// after asking (it's transcribed anew).
 
 import path from "node:path";
 
@@ -10,16 +11,18 @@ export default {
   name: "vod-actions",
   async run(app, ctx) {
     await app.toLibrary();
-    await app.pickFiles([longSpeech(path.join(ctx.out, "fixtures"))]);
-    await app.clickText("add video files…");
+    await app.addFiles([longSpeech(path.join(ctx.out, "fixtures"))]);
     const status = async () => (await app.invoke("list_vods"))[0]?.status;
     // The row's buttons, not the player bar's Play/Pause.
     const row = (label) => `.list .vod .actions button[aria-label="${label}"]`;
+    const shown = () => app.js(`return document.querySelector(".list .vod .status-area .status")?.textContent.trim()`);
+    await until("the row to say Not transcribed", async () => (await shown()) === "Not transcribed", 10_000);
+    if ((await status()) !== "none") throw new Error(`added, it's ${await status()}, not untranscribed`);
+    await app.click(row("Transcribe"));
     await until("it to transcribe", async () => (await status()) === "transcribing", 5 * MINUTE);
 
     await app.click(row("Pause"));
     await until("it paused", async () => (await status()) === "paused", MINUTE);
-    const shown = () => app.js(`return document.querySelector(".list .vod .status-area .status")?.textContent.trim()`);
     await until("the row to say Paused", async () => (await shown()) === "Paused", 10_000);
     ctx.log("paused");
     await app.click(row("Resume"));

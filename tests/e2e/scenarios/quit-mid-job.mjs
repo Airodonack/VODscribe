@@ -13,8 +13,8 @@ export default {
   async run(app, ctx) {
     const file = longSpeech(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
-    await app.pickFiles([file]);
-    await app.clickText("add video files…");
+    const [added] = await app.addFiles([file]);
+    await app.click(`.vod[data-key="${added.id}"] .actions button[aria-label="Transcribe"]`);
     let seen = "";
     const vod = await until(
       "the transcription to be under way",

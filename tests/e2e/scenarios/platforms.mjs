@@ -1,6 +1,6 @@
 // The sites (needs the network, so only with E2E_NETWORK=1, and not in CI):
 // the test video on Twitch, Kick and YouTube (the project's own uploads,
-// 70 s), each added by its link, transcribed, its chat replay fetched where
+// 70 s), each added by its link, then transcribed, its chat replay fetched where
 // the site has one, and played in the app. YouTube may ask to confirm
 // "you're not a bot": that's YouTube's block on the computer's address, not
 // the app's fault, so it's said, not failed (the app never signs in).
@@ -27,17 +27,24 @@ export default {
       try {
         await app.type('input[aria-label="VOD link"]', url);
         await app.submit('input[aria-label="VOD link"]');
-        const vod = await until(
-          `the ${site} VOD, transcribed`,
-          async () => {
-            const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-            if (error) return { error };
-            const v = (await app.invoke("list_vods")).find((v) => v.platform === site);
-            if (v?.status === "error") return { error: v.error };
-            return v?.status === "done" && v;
-          },
-          15 * MINUTE,
-        );
+        const transcribed = async (label, asked) =>
+          until(
+            `the ${site} VOD, ${label}`,
+            async () => {
+              const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
+              if (error) return { error };
+              const v = (await app.invoke("list_vods")).find((v) => v.platform === site);
+              if (v?.status === "error") return { error: v.error };
+              return (asked ? v?.status === "done" : !!v) && v;
+            },
+            15 * MINUTE,
+          );
+        // Added, it isn't transcribed: that's asked for.
+        let vod = await transcribed("added", false);
+        if (!vod.error) {
+          await app.invoke("transcribe_stretch", { vodId: vod.id, start: 0, end: null });
+          vod = await transcribed("transcribed", true);
+        }
         if (vod.error) {
           if (site === "youtube" && /not a bot|sign in/i.test(vod.error)) {
             ctx.log(`youtube: blocked by YouTube's bot check (not the app's doing): ${vod.error.slice(0, 120)}`);

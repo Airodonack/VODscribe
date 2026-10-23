@@ -51,7 +51,8 @@
   let url = $state("");
   // Adding links and files, one after another (adder.svelte.ts). Its error is
   // also where a row's failed action shows, under the form.
-  const adder = new Adder();
+  // What's added is opened, paused, to watch, clip or transcribe.
+  const adder = new Adder((id) => onselect(id));
 
   async function add(event: SubmitEvent) {
     event.preventDefault();
@@ -335,7 +336,7 @@
       </div>
     {:else}
       {#if adder.pending.length === 0}
-        <p class="muted empty">No VODs yet. Paste a link above to transcribe one.</p>
+        <p class="muted empty">No VODs yet. Paste a link above to add one.</p>
       {/if}
     {/each}
   </div>

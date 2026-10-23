@@ -8,8 +8,10 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Cancelling a transcription keeps the lines transcribed so far, instead of throwing them away.
 - On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.
 - Pointing at the timeline of a video on this computer (a file, a kept video, an edit's pieces) shows a small picture of that moment beside the time, and so does dragging the playhead. Dragging a selection's edge shows the frame at that edge: for the end, the last frame inside it, which the player now shows too. The pictures are made in the background from when a video is added, so a long one takes a moment.
-
 - A file's picture in the library is now a frame an eighth of the way in (it was a tenth), taken from the small frames VODscribe now keeps of each video on this computer for the timeline.
+- Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 0:24:00 of 3:04:00"), and Transcribe the rest does what's left.
+- A VOD from a site whose player VODscribe can't show (anything but YouTube, Twitch and Kick) now shows its thumbnail: press Play to download its video, after the usual note about downloading, and it plays in VODscribe once it's in. Keep video on the row does the same.
+
 
 ## 0.5.1 — 2026-10-23
 

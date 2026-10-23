@@ -472,8 +472,10 @@ export class App {
 
   /** Opens VOD `id` from the library list and waits for its player's controls. */
   async openVod(id) {
-    // Rows are keyed by VOD id (edits by minus theirs: Library.svelte).
-    await this.click(`.vod[data-key="${id}"]`);
+    // Rows are keyed by VOD id (edits by minus theirs: Library.svelte). One
+    // open already (an add opens what it added) closes on a click.
+    if (!(await this.js(`return !!document.querySelector('.vod.selected[data-key="${id}"]')`)))
+      await this.click(`.vod[data-key="${id}"]`);
     await until("the player", () => this.js(`return !!document.querySelector("button.time")`), MINUTE);
   }
 
@@ -629,25 +631,36 @@ export class App {
     return clip;
   }
 
-  /** Adds `file` through the file picker and waits for it to be transcribed; returns the VOD. */
-  async addAndTranscribe(file) {
-    await this.pickFiles([file]);
+  /** Adds `files` through the file picker; returns their VODs once all are in the library (not transcribed). */
+  async addFiles(files) {
+    const before = new Set((await this.invoke("list_vods")).map((v) => v.id));
+    await this.pickFiles(files);
     await this.clickText("add video files…");
-    const [vod] = await until(
-      "the VOD in the library",
+    const added = await until(
+      "the files in the library",
       async () => {
-        const vods = await this.invoke("list_vods");
-        return vods.length === 1 && vods;
+        const added = (await this.invoke("list_vods")).filter((v) => !before.has(v.id));
+        return added.length >= files.length && added;
       },
       MINUTE,
     );
-    this.log(`added VOD ${vod.id}`);
-    // From added to done: reading its sound and transcribing it, the worker's time.
-    return this.timed(`transcribed (${path.basename(file)})`, () =>
+    this.log(`added VOD${added.length > 1 ? "s" : ""} ${added.map((v) => v.id).join(", ")}`);
+    return added;
+  }
+
+  /**
+   * Asks for all of VOD `id` to be transcribed, with its row's Transcribe
+   * button (`click`) or the command, and waits till it is; returns the VOD.
+   */
+  async transcribe(id, { click = false, label = String(id) } = {}) {
+    if (click) await this.click(`.vod[data-key="${id}"] .actions button[aria-label="Transcribe"]`);
+    else await this.invoke("transcribe_stretch", { vodId: id, start: 0, end: null });
+    // From asked to done: reading its sound and transcribing it, the worker's time.
+    return this.timed(`transcribed (${label})`, () =>
       until(
         "the transcription",
         async () => {
-          const v = (await this.invoke("list_vods")).find((v) => v.id === vod.id);
+          const v = (await this.invoke("list_vods")).find((v) => v.id === id);
           if (v.status === "error") throw new Error(`transcription failed: ${v.error}`);
           return v.status === "done" && v;
         },
@@ -655,5 +668,11 @@ export class App {
         { every: TIMED_POLL },
       ),
     );
+  }
+
+  /** Adds `file` through the file picker, then transcribes it with its row's button; returns the VOD. */
+  async addAndTranscribe(file) {
+    const [vod] = await this.addFiles([file]);
+    return this.transcribe(vod.id, { click: true, label: path.basename(file) });
   }
 }

@@ -21,16 +21,8 @@ export default {
       ctx.skip(`no screenshot here: ${e.message.split("\n")[0]}`);
     }
     await app.toLibrary();
-    await app.pickFiles([videos(path.join(ctx.out, "fixtures")).video]);
-    await app.clickText("add video files…");
-    const [vod] = await until(
-      "the video, transcribed",
-      async () => {
-        const vods = await app.invoke("list_vods");
-        return vods[0]?.status === "done" && vods;
-      },
-      5 * MINUTE,
-    );
+    const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);
+    const vod = await app.transcribe(added.id);
     await app.openVod(vod.id);
     await app.click('.bar button[aria-label="Play"]');
     await until(

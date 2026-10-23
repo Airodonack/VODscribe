@@ -2,7 +2,8 @@
 // as text, and files dropped or picked. Adds queue up, one after another, and
 // the errors of everything added together are shown together once the queue is
 // done. Links go through the app's check (yt-dlp's probe); files are probed
-// with ffmpeg.
+// with ffmpeg. Adding doesn't transcribe; the first VOD of each add is opened
+// (`onadded`), to watch, clip or transcribe.
 
 import { api } from "./api";
 import { labelOf } from "./platform";
@@ -30,6 +31,13 @@ export class Adder {
   #queue: Promise<void> = Promise.resolve();
   #queued = 0;
   #errors: string[] = [];
+
+  /** Told the id of the first VOD each add brings in. */
+  #onadded: (id: number) => void;
+
+  constructor(onadded: (id: number) => void = () => {}) {
+    this.#onadded = onadded;
+  }
 
   /** Runs `job` after what's queued, collecting its failures with `early` (found before it ran). */
   #enqueue(job: (errors: string[]) => Promise<void>, early: string[] = []): Promise<void> {
@@ -76,32 +84,33 @@ export class Adder {
     void api.cancelAdd(key).catch(() => {});
   }
 
-  /** Adds link `p.label` came from; false if it failed or was canceled. */
-  async #addLink(url: string, p: Pending, failed: string[]): Promise<boolean> {
+  /** Adds link `p.label` came from; its VOD's id, or null if it failed or was canceled. */
+  async #addLink(url: string, p: Pending, failed: string[]): Promise<number | null> {
     if (this.#canceled.has(p.key)) {
       this.#done(p);
-      return false;
+      return null;
     }
     this.#start(p);
-    const ok = await api.addVod(url, p.key).then(
-      () => true,
+    const id = await api.addVod(url, p.key).then(
+      (added) => added.vod.id,
       (e) => {
         if (!this.#canceled.has(p.key)) failed.push(String(e));
-        return false;
+        return null;
       },
     );
     this.#done(p);
-    return ok;
+    return id;
   }
 
-  /** Adds a pasted link; true if it was added. */
+  /** Adds a pasted link, and opens it; true if it was added. */
   async link(url: string): Promise<boolean> {
-    let ok = false;
+    let id: number | null = null;
     const p = this.#standIn(url);
     await this.#enqueue(async (errors) => {
-      ok = await this.#addLink(url, p, errors);
+      id = await this.#addLink(url, p, errors);
+      if (id !== null) this.#onadded(id);
     });
-    return ok;
+    return id !== null;
   }
 
   /**
@@ -122,14 +131,24 @@ export class Adder {
     const linkStandIns = links.map((link) => this.#standIn(link));
     const fileStandIns = files.map((file) => this.#standIn(file));
     void this.#enqueue(async (failed) => {
-      for (const [i, link] of links.entries()) await this.#addLink(link, linkStandIns[i], failed);
+      // The first one added is opened, as soon as it's in.
+      let opened = false;
+      const added = (id: number | null | undefined) => {
+        if (id == null || opened) return;
+        opened = true;
+        this.#onadded(id);
+      };
+      for (const [i, link] of links.entries()) added(await this.#addLink(link, linkStandIns[i], failed));
       // A file at a time, so one canceled before its turn is skipped.
       for (const [i, file] of files.entries()) {
         const p = fileStandIns[i];
         if (!this.#canceled.has(p.key)) {
           this.#start(p);
           await api.addFiles([file]).then(
-            (r) => failed.push(...r.errors),
+            (r) => {
+              failed.push(...r.errors);
+              added(r.vods[0]?.id);
+            },
             (e) => failed.push(String(e)),
           );
         }

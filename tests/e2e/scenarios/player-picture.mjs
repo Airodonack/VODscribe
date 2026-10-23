@@ -29,17 +29,7 @@ export default {
     }
     const file = colours(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
-    await app.pickFiles([file]);
-    await app.clickText("add video files…");
-    const [vod] = await until(
-      "the video, done",
-      async () => {
-        const vods = await app.invoke("list_vods");
-        if (vods[0]?.status === "error") throw new Error(vods[0].error);
-        return vods[0]?.status === "done" && vods;
-      },
-      5 * MINUTE,
-    );
+    const [vod] = await app.addFiles([file]);
     // Either player is made on the first play; paused once it plays (a pause
     // before then finds nothing to pause, and it plays on).
     const open = async () => {

@@ -44,11 +44,29 @@
     paused: "Paused",
     done: "",
     error: "Failed",
-    none: "Stopped",
+    none: "",
   };
 
-  // Stopped by the user rather than failed; or nothing asked of it, and not all of it transcribed.
-  const stopped = $derived((vod.status === "error" && vod.error === "Stopped") || vod.status === "none");
+  // Stopped by the user rather than failed (as libraries from before 0.5.2 can have).
+  const stopped = $derived(vod.status === "error" && vod.error === "Stopped");
+  // Nothing asked of it, and not all of it transcribed: how much is, for "some".
+  const untouched = $derived(vod.status === "none");
+  let covered = $state(0);
+  $effect(() => {
+    if (vod.transcribed !== "some" || vod.status !== "none") return;
+    let current = true;
+    api.transcriptStretches(vod.id).then(
+      (stretches) => {
+        if (!current) return;
+        const end = vod.duration ?? Infinity;
+        covered = stretches
+          .filter((s) => s.status === "done")
+          .reduce((sum, s) => sum + Math.max(0, Math.min(s.end ?? end, end) - s.start), 0);
+      },
+      (e) => console.error("stretches", e),
+    );
+    return () => (current = false);
+  });
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(siteName(vod));
@@ -62,7 +80,8 @@
   // The whole video of a YouTube, Twitch or Kick VOD, downloaded on request to
   // play and clip here (videos.svelte.ts); other sites keep theirs anyway.
   videoDownloads.start();
-  const canKeep = $derived(hasSitePlayer(vod));
+  // Sites without their own player only play here once it's downloaded.
+  const canKeep = $derived(vod.platform !== "local");
   const keeping = $derived(videoDownloads.progress.get(vod.id));
   const keepError = $derived(videoDownloads.errors.get(vod.id));
   const height = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
@@ -247,7 +266,15 @@
   </div>
 {:else if vod.status !== "done" || showBar || vod.error || vod.outdated || vod.note}
   <div class="status-area">
-    {#if vod.status !== "done"}
+    {#if untouched}
+      <span class="status muted">
+        {vod.transcribed === "some" && vod.duration
+          ? `Transcribed ${formatTime(covered)} of ${formatTime(vod.duration)}`
+          : vod.transcribed === "some"
+            ? "Partly transcribed"
+            : "Not transcribed"}
+      </span>
+    {:else if vod.status !== "done"}
       <span class="status" class:active class:error-text={vod.status === "error" && !stopped}>
         {#if active}<span class="pulse" aria-hidden="true"></span>{/if}
         {#if vod.status === "error" && !stopped}<Icon name="error" size={13} />{/if}
@@ -276,7 +303,19 @@
 {/if}
 
 <div class="actions" class:removing inert={removing}>
-  {#if vod.status === "error" || vod.status === "none"}
+  {#if untouched}
+    <!-- Clicking is the decision: no question. The rest is each part not transcribed. -->
+    {@const label = vod.transcribed === "some" ? "Transcribe the rest" : "Transcribe"}
+    <button
+      class="row-act"
+      onclick={() => act(vod.transcribed === "some" ? api.retryVod(vod.id) : api.transcribeStretch(vod.id, 0, null))}
+      title={label}
+      aria-label={label}
+      {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD.")}
+    >
+      <Icon name="captions" size={15} />
+    </button>
+  {:else if vod.status === "error"}
     <button class="row-act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />
     </button>
@@ -323,7 +362,9 @@
         ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
         : keepError
           ? `The video couldn't be downloaded: ${keepError} Click to try again.`
-          : `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`}
+          : hasSitePlayer(vod)
+            ? `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`
+            : `Download the video (up to ${height}p, ${keepSize}): ${platform} has no player VODscribe can show, so it plays here once it's downloaded.`}
       aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
       {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
     >

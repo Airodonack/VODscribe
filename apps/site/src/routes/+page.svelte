@@ -135,7 +135,7 @@
     <div>
       <Icon name="film" size={22} />
       <h2>Kick, Twitch, YouTube and more</h2>
-      <p class="muted">Paste a link or drop a video file. VODs queue up and transcribe one after another.</p>
+      <p class="muted">Paste a link or drop a video file, then transcribe it when you want its transcript.</p>
     </div>
     <div>
       <Icon name="shield" size={22} />

@@ -79,21 +79,17 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         let info = info?;
 
         let db = state.db.lock().unwrap();
-        let (mut vod, created) = add_and_ask(&db, &info, None)?;
+        let (vod, created) = add_to_library(&db, &info, None)?;
         if created {
-            // Hand the resolved info to the worker so it doesn't probe again. Only a
-            // shortcut: if the file can't be moved (a virus scanner holding it, say),
-            // the worker probes again, and the VOD, already saved, must still be
-            // shown and queued.
+            // Hand the resolved info to the worker so a transcription asked
+            // for soon doesn't probe again. Only a shortcut: if the file can't
+            // be moved (a virus scanner holding it, say), the worker probes
+            // again, and the VOD, already saved, must still be shown.
             if std::fs::rename(&probe_path, pipeline::info_path(&state.paths.work(), vod.id)).is_err() {
                 let _ = std::fs::remove_file(&probe_path);
             }
         } else {
             let _ = std::fs::remove_file(&probe_path);
-            if matches!(vod.status, Status::Error | Status::None) {
-                requeue(&db, vod.id, &[Status::Paused, Status::Error])?;
-                vod = db.vod(vod.id)?.unwrap_or(vod);
-            }
         }
         Ok(Added { vod, created })
     })
@@ -101,8 +97,8 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
     .map_err(err)?
     .map_err(err)?;
 
+    // Not transcribed: that's asked for (Transcribe), all of it or a stretch.
     let state = app.state::<AppState>();
-    state.worker.wake();
     let _ = app.emit("vod", &added.vod);
     if added.created {
         state.chat.push(added.vod.id);
@@ -120,7 +116,7 @@ pub(crate) struct AddedFiles {
 }
 
 /// Adds video or audio files on this computer, dropped on the window or picked
-/// with the file dialog. They're transcribed in place and never modified.
+/// with the file dialog. They're played and transcribed in place and never modified.
 #[tauri::command]
 pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<AddedFiles> {
     let task_app = app.clone();
@@ -140,7 +136,6 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     .map_err(err)?;
 
     let state = app.state::<AppState>();
-    state.worker.wake();
     for (vod, created) in &added {
         let _ = app.emit("vod", vod);
         if *created {
@@ -163,26 +158,18 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     }
     let db = state.db.lock().unwrap();
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    let (vod, created) = add_and_ask(&db, &info, Some(&info.url))?;
-    if !created && matches!(vod.status, Status::Error | Status::None) {
-        requeue(&db, vod.id, &[Status::Paused, Status::Error])?;
-    }
-    Ok((db.vod(vod.id)?.unwrap_or(vod), created))
+    add_to_library(&db, &info, Some(&info.url))
 }
 
-/// Adds a VOD (a file at `source`, if given) and, if it's new, asks for all
-/// of it to be transcribed, in one transaction.
-fn add_and_ask(db: &Db, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
+/// Adds a VOD (a file at `source`, if given), in one transaction; one
+/// already there is left as it is. Nothing is transcribed till asked for.
+fn add_to_library(db: &Db, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
     db.atomically(|db| {
         let (vod, created) = db.add_vod(info)?;
-        if !created {
-            return Ok((vod, false));
-        }
-        if let Some(source) = source {
+        if created && let Some(source) = source {
             db.set_source_path(vod.id, source)?;
         }
-        db.request(vod.id, 0.0, None)?;
-        Ok((db.vod(vod.id)?.unwrap_or(vod), true))
+        Ok((db.vod(vod.id)?.unwrap_or(vod), created))
     })
 }
 
