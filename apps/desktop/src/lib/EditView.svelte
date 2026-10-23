@@ -220,6 +220,10 @@
     const p = player;
     if (!p) return;
     reading.read(p);
+    // Still to seek to where it was left (no plan yet): the player's time is
+    // where it opened, not where the page has put the playhead meanwhile
+    // (`seekTo`), which reading it would put back, under Split and Delete.
+    if (bringTime !== null) reading.at(bringTime);
     // Only once it's this edit's playhead (after the seek to where it was left).
     if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: reading.now });
   });

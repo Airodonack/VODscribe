@@ -40,9 +40,15 @@ export default {
     await app.key("ArrowRight", { shift: true });
     await until("1 s in", async () => (await app.shownTime()) === 1, 10_000);
     await app.key("b");
+    // At 1 s: one at the start (the playhead read back to where the player
+    // was, before it had gone there) would leave Delete the whole piece.
     await until(
       "the cut",
-      async () => (await app.invoke("edit_marks", { id: clip.id })).some((m) => m.kind === "cut"),
+      async () => {
+        const cut = (await app.invoke("edit_marks", { id: clip.id })).find((m) => m.kind === "cut");
+        if (cut && Math.abs(cut.start - 1) > 0.05) throw new Error(`the cut is at ${cut.start} s, not 1 s`);
+        return !!cut;
+      },
       10_000,
     );
     // The page has it too, or Delete takes out the whole piece.
