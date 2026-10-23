@@ -15,6 +15,7 @@
   import { NativeDriver } from "./nativeDriver";
   import Screen from "./Screen.svelte";
   import { prefs } from "./playerPrefs.svelte";
+  import { os } from "./platform";
 
   let {
     vod,
@@ -35,16 +36,31 @@
   let time = $state(untrack(() => start));
   let cues = $state.raw<Cue[]>([]);
   let destroyed = false;
+  /** How long a file's open may take before it's taken as waiting on macOS's
+   *  question (milliseconds): one takes some 30 ms otherwise. */
+  const ASKING_AFTER = 1000;
 
   const cue = $derived(prefs.captions ? cueAt(cues, time) : null);
 
+  /** The folder of the file, if it's one macOS asks the person's leave to
+   *  read (Downloads, Desktop, Documents) the first time the app opens a file
+   *  there: the open waits on their answer, the picture black meanwhile. */
+  const guarded = $derived(
+    os === "mac" ? /^\/Users\/[^/]+\/(Downloads|Desktop|Documents)\//.exec(vod.source_path ?? "")?.[1] : undefined,
+  );
+  /** That folder, while the open has taken long enough to be waiting on
+   *  macOS's question. */
+  let asking = $state<string | null>(null);
+  let askingSoon: ReturnType<typeof setTimeout> | undefined;
+
   // The caption, over the picture: drawn again when it, the box's size or
-  // full screen changes.
+  // full screen changes. While the open waits on macOS's question, what it waits for.
   let boxSize = $state({ width: 0, height: 0, fullscreen: false });
   $effect(() => {
     const { width, height, fullscreen } = boxSize;
-    const text = width && height ? cue?.text : null;
-    overlay.show(text ? overlay.caption(text, width, height, fullscreen) : null);
+    if (!width || !height) overlay.show(null);
+    else if (asking) overlay.show(overlay.hint(`Waiting for permission to read your ${asking} folder…`, width, height));
+    else overlay.show(cue ? overlay.caption(cue.text, width, height, fullscreen) : null);
   });
   $effect(() => {
     const el = picture;
@@ -60,14 +76,24 @@
   onMount(() => {
     const saved = prefs.volume();
     if (saved !== null) driver.volume.set(saved);
+    const folder = guarded;
+    askingSoon = folder ? setTimeout(() => (asking = folder), ASKING_AFTER) : undefined;
+    const answered = () => {
+      clearTimeout(askingSoon);
+      asking = null;
+    };
     api.playerOpen(vod.id, start, autoplay).then(
       (opened) => {
+        answered();
         if (destroyed) return;
         driver.opened(opened);
         onerror?.(null);
       },
       // Closed before it opened (the page moved on): nothing to say.
-      (e) => !destroyed && onerror?.(String(e)),
+      (e) => {
+        answered();
+        if (!destroyed) onerror?.(String(e));
+      },
     );
     api.captions(vod.id).then(
       (c) => (cues = c),
@@ -86,6 +112,7 @@
 
   onDestroy(() => {
     destroyed = true;
+    clearTimeout(askingSoon);
     cancelAnimationFrame(frame);
     press.stop();
     api.setScreenOverlay(null).catch(() => {});
