@@ -83,10 +83,70 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 - `NATIVE_DRIVER`: the platform's WebDriver, passed to tauri-driver, if it isn't where tauri-driver looks.
 - `XDG_DATA_HOME`: on Linux, where the app keeps its library, and so what the tests empty.
 - `VODSCRIBE_NO_UPDATE_CHECK`: read by the app, not the harness: set, it doesn't look for updates.
+- `PROFILE_CG`: with `--profile`, how perf walks the stack: `fp` (frame pointers, the default) or `dwarf` (deeper through the system's libraries, about 60 times the disk).
+- `PROFILE_HZ`: with `--profile`, samples a second (default 999).
+- `PERF`: the perf command, if it isn't `perf` on `PATH`.
+- `E2E_COMMIT`: what `perf.json` names the build by (default `git describe` of the checkout).
 
 ## Results
 
 `run.mjs` writes `results.json` (each scenario, passed, failed or skipped, and why) to `E2E_OUT`. For a failure it adds the page's text and errors (`<scenario>.txt`) and a screenshot (`<scenario>.png`); checkpoints go in `checkpoints/`. `distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named for the distribution and what differs from the default (`debian-13-weston-dark`), with the whole log in `run.log`, and prints one line per cell at the end. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`. Two runs of the same cell from the same checkout wipe each other's folders.
+
+Every run also writes `perf.json` to `E2E_OUT`: the steps each scenario timed (below), the app's memory at each scenario's end, and what the run was on (CPU, kernel, WebKit, display). Each result in `results.json` has its `timings` (ms) and, on Linux, `memory`.
+
+## Timings and profiling
+
+A performance pass starts from measurements, not from reading the code: the scenarios time what a person waits on, and a profiled run says where the time went. Releases are compared by both.
+
+### Timings
+
+The scenarios time these steps (`ctx.time` and `ctx.timing` in a scenario; the `App` helpers time their own):
+
+| Step                                                            | Where                                                                                                                                                       |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| start to first screen                                           | every scenario: from asking for the app to its first screen (a start App.ready had to reload the page for is named "(reloaded)", apart)                     |
+| open to first frame                                             | `player-picture`: opening the VOD and Play, to the app's own player showing a frame (by its `player-time` status)                                           |
+| seek to frame shown                                             | `player-picture`: a seek to the frame there showing                                                                                                         |
+| search, many lines / one line a VOD / none                      | `search-large`: on 60 VODs of two hours' talk (`fixtures/large-library.mjs`), from the words typed to the results drawn                                     |
+| clip made (2 s) / whole video's clip made (5 s) / edit rendered | every scenario that cuts the 1 to 3 s clip (`App.clipOneToThree`: `clip`, `edits`, `drag-out`, …) / `export-whole` / `edits`: from the key to the file made |
+| transcribed (the file's name)                                   | every scenario that adds and transcribes a file (`App.addAndTranscribe`): the worker's time on it, 5 s of speech for `eagle-has-landed.mp3`                 |
+| memory at the end                                               | every scenario (Linux): the app's processes' proportional set size (Pss: shared pages counted once), in `lib/memory.mjs`                                    |
+
+`--repeat N` runs the chosen scenarios N times in turn, and `perf.json` keeps each step's median, least and most. Two runs compare with `node tests/e2e/perf-compare.mjs <before perf.json> <after perf.json>`: a step whose times moved clear of the other run's spread, by more than 10% (`--threshold`), is marked, and one that got worse makes it exit 1. Time the release build, unprofiled: perf slows what it watches, and `perf.json` says when a run was profiled.
+
+### Profiling (Linux)
+
+`run.mjs --profile <dir>` samples each scenario's app with perf, and every process it starts (the web view's, the worker, ffmpeg), for the whole scenario. The driver starts `lib/profile.sh` in the app's place, which starts perf in a session of its own attached to itself and then becomes the app, so WebKitWebDriver's kill at the end of a session reaches the app and perf finishes its file. Into `<dir>/<scenario>/`: perf's recordings (`<scenario>-<n>.data`, one for each start of the app; `perf report -i` reads them), `folded.txt` (every stack, `process;thread;outermost;…;innermost count`, for a flame graph) and `top.txt`; the page's own measures go in `page.json` (in `E2E_OUT/perf/` without `--profile`).
+
+What it needs:
+
+- **The profiling build**, for our own code's names: `scripts/build-profiling.sh` (after `scripts/prepare-sidecars.sh release`) builds the `profiling` cargo profile, release code with its symbols and line tables and frame pointers, and the page unminified; the binary is `target/profiling/vodscribe` (under `CARGO_TARGET_DIR`), with the worker beside it, and is run directly: `node tests/e2e/run.mjs <target>/profiling/vodscribe --only player-picture --profile out/profile`. A packaged build has no symbols of ours.
+- **perf and symbols**, where the run is: `tests/e2e/profile-setup.sh` (Debian, with sudo) installs perf, binutils (whose `c++filt` names Rust's symbols) and libc's debug symbols, and fetches WebKitGTK's and JavaScriptCore's debug symbols for exactly the version installed from snapshot.debian.org (about 200 MB), without which the engine's functions show as addresses. A profile is read where it was recorded (`perf script` finds the symbols there). `kernel.perf_event_paranoid` must be 1 or less.
+- In a distribution cell: `distros.mjs --profile` installs perf in the cell and lets it sample (`--security-opt seccomp=unconfined`: podman's default filter refuses perf), into the cell's `perf/`. Not Ubuntu's cells, whose perf must match the host's kernel.
+
+### Reading top.txt
+
+`top.txt` puts each sample down to an owner by its innermost frame: **ours** (our crates, `vodscribe_*`), **crates** (the Rust libraries the app links in), **engine** (WebKit, its JavaScript, and everything else in the web view's processes), **graphics** (wgpu, Mesa, software rendering), **media** (ffmpeg), **transcription** (the worker, its speech model's runtime included), **toolkit** (GTK, GLib, fonts), **system** (the kernel, libc). Its sections: the share by process and thread; by owner, and how much had our code anywhere on the stack; our functions by their own time, with who called them; everyone's functions; then, for each timed step, the samples taken during it, by owner and function; and the page's slow input events (16 ms or more, by the Event Timing API) and gaps between animation frames over 50 ms (WebKit has no long tasks API).
+
+A **finding** is one of: time in our code that needn't be spent; engine time our page causes (style, layout or script while nothing changed on screen); work done every frame that could be done when something changes; the same work done twice; work on the main thread that could be elsewhere; or a timing worse than the last release's beyond its spread. It names the scenario, the step, the stack and its share. It is **confirmed** by the change and a before-and-after on the same scenario, machine and build (`--repeat 3`, `perf-compare.mjs`), with a profile showing the samples gone; until then it's a note.
+
+### Every release
+
+On the computer and box the last release was measured on (`vodscribe-trixie`, the WebKit of the developer's desktop):
+
+1. `scripts/build-profiling.sh`, and the release build.
+2. Profiled once, the profiling build: `--only player-picture,player-seek,transcribe-search-play,search,search-large,clip,edits,export-whole --profile <dir>`.
+3. Timed three times, the release build: the same scenarios, `--repeat 3`.
+4. `perf-compare.mjs` against the last release's `perf.json`, and the results kept with the release's.
+
+The rest (video-files, recovery, upgrade, the site scenarios, a DWARF profile) on demand. Profiled at 999 samples a second with frame pointers, a scenario has run no slower so far, and its recordings take about a megabyte; with DWARF, about 40 MB for ten seconds of it.
+
+### What it doesn't measure
+
+- **The GPU.** Headless, wgpu draws with lavapipe and WebKit composites with llvmpipe, on the CPU: graphics time in these profiles is CPU time a GPU would take. Profile with `distros.mjs --gpu` before calling graphics time a finding.
+- **The Windows and macOS runners.** Timings and memory need nothing of Linux but `memory.mjs`; profiling there would wrap the bridge driver's start in the platform's profiler (`xctrace record --launch` on macOS, `wpr` on Windows).
+- **The sites' players.** Their frames are theirs; only the app around them is measured.
+- **Our page's JavaScript by function name.** perf sees JavaScriptCore's compiled code as `[JIT code]`. JavaScriptCore can describe it for perf (`JSC_useJITDump=1`), but WebKitGTK 2.54 (Debian) then aborts as the app starts; not looked into yet.
 
 ## Known limits
 
