@@ -23,6 +23,10 @@ export default defineConfig(() => ({
     }),
   ],
 
+  // The profiling build (scripts/build-profiling.sh) keeps the page's code
+  // readable, so a profile's JavaScript frames have their own names.
+  ...(process.env.VODSCRIBE_PROFILING === "1" && { build: { minify: false } }),
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

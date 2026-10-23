@@ -21,6 +21,15 @@ opt-level = 3
 panic = "abort"
 strip = true
 
+# The release build with what a profiler needs to name our code: its
+# symbols and line tables (frames by function and line; perf, in
+# tests/e2e). Built by scripts/build-profiling.sh, which also turns on frame
+# pointers. Never shipped.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
+
 # A copy of sherpa-onnx-sys that can link sherpa-onnx's builds without
 # text-to-speech (and its GPL-3.0 espeak-ng); see third_party/README.md.
 [patch.crates-io]
