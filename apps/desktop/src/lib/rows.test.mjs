@@ -1,7 +1,7 @@
 // The transcript view's rows (rows.ts): node --test apps/desktop/src/lib/rows.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FAR, buildRows, linesSpan, nearestLine } from "./rows.ts";
+import { FAR, buildRows, linesFrom, linesSpan, nearestLine } from "./rows.ts";
 
 /** @param {number} start @returns {import("./api").Line} */
 const line = (start) => ({ start, text: "hi" });
@@ -142,4 +142,20 @@ test("a gap has a row where it starts, among the lines", () => {
   ]);
   const rows = buildRows([line(10), line(300)], 400, true, [gap]);
   assert.equal(rows[3].gap, gap, "the gap's row holds the chat of its first minute");
+});
+
+test("a drag's lines, from its ends' times, stay put as lines arrive above them", () => {
+  /** @param {number} start */
+  const said = (start) => ({ start, end: start + 2, text: `at ${start}` });
+  // Pressed on the line at 40 and dragged to the one at 50, while a stretch
+  // above, 2 to 30 s, is being transcribed: its lines come in meanwhile.
+  const before = [said(0), said(30), said(40), said(50)];
+  const after = [said(0), said(10), said(20), said(30), said(40), said(50)];
+  assert.deepEqual(linesFrom(before, 50, 40), [2, 3]);
+  const [a, b] = linesFrom(after, 40, 50) ?? [-1, -1];
+  assert.deepEqual([after[a].start, after[b].start], [40, 50]);
+  // Lines sharing a start both count; none in the span, none.
+  assert.deepEqual(linesFrom([said(1), said(5), said(5), said(9)], 5, 5), [1, 2]);
+  assert.equal(linesFrom(after, 41, 49), null);
+  assert.equal(linesFrom([], 0, 10), null);
 });

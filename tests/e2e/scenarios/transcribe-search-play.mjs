@@ -161,6 +161,44 @@ export default {
     app.log(`scrolled away, then Follow along: the line at ${back.at} is in view again`);
     await checkpoint("transcript-following");
 
+    // Pressing on a line and dragging across two more selects the three.
+    await app.pause();
+    const dragged = await app.js(`
+      const body = document.querySelector(".body").getBoundingClientRect();
+      const rows = [...document.querySelectorAll("#transcript .line button.row")];
+      const i = rows.findIndex((b) => b.getBoundingClientRect().top > body.top + 120);
+      const [first, last] = [rows[i], rows[i + 2]];
+      if (!first || !last) return null;
+      const at = (el) => {
+        const r = el.getBoundingClientRect();
+        return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1 };
+      };
+      first.dispatchEvent(new PointerEvent("pointerdown", at(first)));
+      window.dispatchEvent(new PointerEvent("pointermove", at(last)));
+      window.dispatchEvent(new PointerEvent("pointerup", at(last)));
+      return [Number(first.dataset.time), Number(last.dataset.time)];`);
+    if (!dragged) throw new Error("no three lines in the transcript's view to drag across");
+    const picked = await until(
+      "the lines dragged across selected",
+      async () => {
+        const times = await app.js(
+          `return [...document.querySelectorAll("#transcript .line.picked button.row")].map((b) => Number(b.dataset.time))`,
+        );
+        return times.length >= 3 && times;
+      },
+      10_000,
+    );
+    if (picked.length !== 3 || picked[0] !== dragged[0] || picked[2] !== dragged[1])
+      throw new Error(`dragged across the lines at ${dragged.join(" to ")} s, selected those at ${picked.join(", ")}`);
+    app.log(`dragged across three lines: ${picked.join(", ")} s selected`);
+    // A click on a line lets go of the selection.
+    await app.click("#transcript .line button.row");
+    await until(
+      "the selection let go of",
+      () => app.js(`return !document.querySelector("#transcript .line.picked")`),
+      10_000,
+    );
+
     // The pointer over a line marks its time on the timeline, and over the
     // timeline, its moment on the transcript's minimap (moving the OS's
     // pointer is Linux-only, so far: hover needs a real pointer).

@@ -20,7 +20,7 @@
   import { Marks } from "./marks.svelte";
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
-  import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
+  import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, nearestLine, type Row } from "./rows";
   import { gaps as gapsOf, type Gap } from "./stretches";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
@@ -562,6 +562,7 @@
 
   // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
   // Split then cuts either side); a click without a drag still plays the line.
+  // Its ends are the lines' starts (rows.ts `linesFrom`), not their rows.
   let drag = $state<{ from: number; to: number } | null>(null);
   let pointer = { x: 0, y: 0 };
   let moved = false;
@@ -575,9 +576,9 @@
     return Number.isInteger(i) && rows[i]?.line ? i : null;
   }
 
-  function onRowDown(e: PointerEvent, index: number) {
+  function onRowDown(e: PointerEvent, line: Line) {
     if (e.button !== 0 || e.pointerType === "touch") return;
-    drag = { from: index, to: index };
+    drag = { from: line.start, to: line.start };
     moved = false;
     pointer = { x: e.clientX, y: e.clientY };
   }
@@ -593,8 +594,9 @@
   function follow() {
     if (!drag) return;
     const i = lineRowAt(pointer.x, pointer.y);
-    if (i !== null && i !== drag.to) {
-      drag.to = i;
+    const at = i === null ? null : rows[i].line!.start;
+    if (at !== null && at !== drag.to) {
+      drag.to = at;
       moved = true;
     }
   }
@@ -627,7 +629,8 @@
     // holds both ends, when they're on different lines, so it may never come.
     swallowClick = true;
     setTimeout(() => (swallowClick = false));
-    select(lines.indexOf(rows[from].line!), lines.indexOf(rows[to].line!));
+    const span = linesFrom(lines, from, to);
+    if (span) select(span[0], span[1]);
   }
 
   /** Selects lines `a` to `b` (either way round) and plays from the first. */
@@ -664,9 +667,12 @@
     play(time);
   }
 
-  /** Whether row `index` is in the lines being dragged across, or selected. */
-  function picked(index: number, row: Row): boolean {
-    if (drag) return index >= Math.min(drag.from, drag.to) && index <= Math.max(drag.from, drag.to);
+  /** Whether `row` is a line being dragged across, or selected. */
+  function picked(row: Row): boolean {
+    if (drag) {
+      const start = row.line?.start;
+      return start !== undefined && start >= Math.min(drag.from, drag.to) && start <= Math.max(drag.from, drag.to);
+    }
     const pick = !vod ? edits.selection : cuts.vodId === vod.id ? cuts.selection : null;
     return !!pick && !!row.line && row.line.start >= pick.start - 0.01 && row.line.start < pick.end - 0.01;
   }
@@ -1094,7 +1100,7 @@
           data-index={range[0] + k}
           use:measure
           class:empty={!row.line && !row.gap && !win?.total}
-          class:picked={row.line && picked(range[0] + k, row)}
+          class:picked={row.line && picked(row)}
           class:now={row.line && range[0] + k === nowRow}
         >
           {#each heads.get(key) ?? [] as chapter (chapter.id)}
@@ -1108,7 +1114,7 @@
             <button
               class="row"
               data-time={line.start}
-              onpointerdown={(e) => onRowDown(e, range[0] + k)}
+              onpointerdown={(e) => onRowDown(e, line)}
               onclick={(e) => onRowClick(e, line)}
             >
               <span class="time">{formatTime(line.start)}</span>

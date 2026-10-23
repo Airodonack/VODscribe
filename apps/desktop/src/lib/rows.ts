@@ -130,6 +130,19 @@ export function linesSpan(
   return { start, end: duration && start < duration ? Math.min(end, duration) : end };
 }
 
+/** The first and last of `lines` (in time order) starting from `a` to `b`
+ *  seconds, either way round, as indices; null if none does. A drag across
+ *  the transcript keeps its ends as times, not rows: a stretch being
+ *  transcribed puts lines in and takes rows out above them meanwhile. */
+export function linesFrom(lines: Line[], a: number, b: number): [number, number] | null {
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  const first = lines.findIndex((line) => line.start >= lo);
+  if (first < 0 || lines[first].start > hi) return null;
+  let last = first;
+  while (last + 1 < lines.length && lines[last + 1].start <= hi) last++;
+  return [first, last];
+}
+
 /** About how tall a chapter's heading over a line is, in pixels, for rows not yet measured. */
 export const HEAD_HEIGHT = 44;
 
