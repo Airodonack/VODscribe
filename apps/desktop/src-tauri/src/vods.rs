@@ -631,18 +631,26 @@ pub(crate) async fn transcribe_stretch(
     start: f64,
     end: Option<f64>,
 ) -> CmdResult<Stretch> {
-    if !start.is_finite() || start < 0.0 || end.is_some_and(|end| !end.is_finite() || end <= start) {
-        return Err("That stretch is empty.".into());
-    }
     let db = state.db.lock().unwrap();
     let vod = db.vod(vod_id).map_err(err)?.filter(|v| v.listed).ok_or("That VOD is gone.")?;
-    if vod.info.duration.is_some_and(|d| start >= d) {
-        return Err("That stretch is past the end of the VOD.".into());
-    }
+    check_stretch(vod.info.duration, start, end)?;
     let stretch = db.request(vod_id, start, end).map_err(err)?;
     emit_vod(&app, &db, vod_id)?;
     state.worker.wake();
     Ok(stretch)
+}
+
+/// Why `start`..`end` (None: to the end) of a VOD `duration` long can't be
+/// transcribed, if it can't.
+fn check_stretch(duration: Option<f64>, start: f64, end: Option<f64>) -> Result<(), &'static str> {
+    if !start.is_finite() || start < 0.0 || end.is_some_and(|end| !end.is_finite() || end <= start) {
+        return Err("That stretch is empty.");
+    }
+    // A length of 0 (as a site or ffmpeg may give one it doesn't know) isn't one.
+    if duration.is_some_and(|d| d > 0.0 && start >= d) {
+        return Err("That stretch is past the end of the VOD.");
+    }
+    Ok(())
 }
 
 /// VOD `vod_id`'s stretches, transcribed and asked for, in time order.
@@ -711,4 +719,21 @@ pub(crate) async fn twitch_clip_video(slug: String) -> CmdResult<String> {
 #[tauri::command]
 pub(crate) async fn kick_stream(url: String) -> CmdResult<Vec<vodscribe_core::kick::Variant>> {
     tauri::async_runtime::spawn_blocking(move || vodscribe_core::kick::variants(&url)).await.map_err(err)?.map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stretch_asked_for_is_within_the_vod() {
+        assert_eq!(check_stretch(Some(600.0), 100.0, Some(200.0)), Ok(()));
+        assert_eq!(check_stretch(Some(600.0), 100.0, None), Ok(()));
+        assert_eq!(check_stretch(None, 100.0, None), Ok(()), "a length not known");
+        assert!(check_stretch(Some(600.0), 600.0, None).is_err(), "past the end");
+        assert!(check_stretch(Some(600.0), 200.0, Some(100.0)).is_err(), "empty");
+        assert!(check_stretch(Some(600.0), f64::NAN, None).is_err());
+        // A length its site or ffmpeg gave as 0 isn't known: all of it can be asked for.
+        assert_eq!(check_stretch(Some(0.0), 0.0, None), Ok(()));
+    }
 }
