@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.5.2 (unreleased)
 
+- The window no longer sometimes stays empty for about two minutes when VODscribe starts.
+
 ## 0.5.1 — 2026-10-23
 
 - After a click on the timeline, the time by the play button no longer flicks back to where the video was while the picture catches up: it shows the new time at once and stays on it.

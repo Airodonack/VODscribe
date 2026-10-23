@@ -6,7 +6,7 @@ use std::io::ErrorKind;
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
 
 use anyhow::{Result, bail};
-use tiny_http::{Method, Request};
+use tiny_http::Request;
 
 /// One free port on both 127.0.0.1 and [::1]. Webviews resolve `localhost` to
 /// either (often ::1 first), so the app holds both: otherwise another account
@@ -33,10 +33,17 @@ pub(crate) fn bind_both() -> Result<(Vec<TcpListener>, u16)> {
 /// a page that reaches the server through DNS rebinding, with its own name in
 /// the Host header, gets nothing.
 pub(crate) fn check(request: &Request, host: &str) -> Result<(), u16> {
-    if !matches!(request.method(), Method::Get | Method::Head) {
+    let hosts = request.headers().iter().filter(|h| h.field.equiv("Host")).map(|h| h.value.as_str());
+    allowed(request.method().as_str(), hosts, host)
+}
+
+/// [`check`] on a request's method and Host headers, for a server that reads
+/// them itself (app_server.rs).
+pub(crate) fn allowed<'a>(method: &str, mut hosts: impl Iterator<Item = &'a str>, host: &str) -> Result<(), u16> {
+    if !matches!(method, "GET" | "HEAD") {
         return Err(405);
     }
-    if !request.headers().iter().any(|h| h.field.equiv("Host") && h.value.as_str() == host) {
+    if !hosts.any(|h| h == host) {
         return Err(403);
     }
     Ok(())
@@ -45,7 +52,7 @@ pub(crate) fn check(request: &Request, host: &str) -> Result<(), u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tiny_http::{Header, TestRequest};
+    use tiny_http::{Header, Method, TestRequest};
 
     fn request(method: Method, host: Option<&str>) -> Request {
         let mut r = TestRequest::new().with_method(method).with_path("/");

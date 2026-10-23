@@ -275,10 +275,11 @@ export class App {
   /** Waits for the page, then puts in the dialog answers. */
   async ready() {
     await this.loaded();
-    // On WebKitGTK (2.54 often, 2.50 once in a while on CI), a driven start
-    // can leave the page empty for a minute or two; undriven, it hasn't been
-    // seen (TODO.md). One reload, said in the log, gets past it without
-    // hiding it.
+    // A start once left the page empty for about two minutes (WebKitGTK and
+    // macOS's WebKit, 4 starts in 10 at worst): the app's page server, then
+    // tiny_http, left one of the page's script preloads unanswered
+    // (app_server.rs). Should a start stall again, one reload, said in the
+    // log, gets past it without hiding it.
     const shown = () => this.js(`return document.body.innerText.trim() !== ""`);
     const begun = Date.now();
     await until(
