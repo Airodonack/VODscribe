@@ -113,11 +113,14 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
       MINUTE,
     );
+    // Rested inside the frame that starts at 2.5 s, not on its first instant:
+    // the pointer's time comes back from its pixel, and a hair below 2.5 the
+    // frame before (2.4667) is the right answer.
     await app.pause();
     await pointer("pointermove", 2.4);
-    await pointer("pointermove", 2.5);
-    const rested = await shows("the exact frame at 2.5 s", "blue", { exact: true });
-    ctx.log(`rested at 2.5 s: ${named(rested.rgb)}, exact, at ${rested.time.toFixed(4)} s`);
+    await pointer("pointermove", 2.52);
+    const rested = await shows("the exact frame at 2.52 s", "blue", { exact: true });
+    ctx.log(`rested at 2.52 s: ${named(rested.rgb)}, exact, at ${rested.time.toFixed(4)} s`);
     if (Math.abs(rested.time - 2.5) > 1e-6) throw new Error(`the exact frame is at ${rested.time}, not 2.5`);
 
     // 3. A selection 2-4 s (I at 2, O at 4); its end dragged to 4 s shows the

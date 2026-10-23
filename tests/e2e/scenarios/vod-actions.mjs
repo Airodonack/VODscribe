@@ -24,6 +24,12 @@ export default {
     // a VOD never asked, Transcribe and all.
     await app.click(row("Transcribe"));
     await app.answer("Stop");
+    // The row offers Cancel once the request is made, a moment after the click.
+    await until(
+      "the row to offer Cancel",
+      () => app.js(`return !!document.querySelector(arguments[0])`, row("Cancel")),
+      10_000,
+    );
     await app.click(row("Cancel"));
     await until("it stopped", async () => (await status()) === "none", MINUTE);
     const [stopped] = await app.invoke("list_vods");

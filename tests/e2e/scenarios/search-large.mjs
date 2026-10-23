@@ -4,6 +4,7 @@
 // line a VOD, and a word in none. Each is timed from the words typed to
 // the results shown (or the "nothing found" line), as the page draws them.
 
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { COMMON, RARE, grow } from "../fixtures/large-library.mjs";
@@ -20,7 +21,13 @@ export default {
     await app.addAndTranscribe(ctx.fixtures.landed);
     await ctx.quit();
     const begun = Date.now();
-    const { lines } = grow(path.join(dataDirs().at(-1), "library.sqlite"), { vods: VODS, hours: 2 });
+    // The library's folder: on Windows the roaming one, not the local one the
+    // downloads go in (a path there would make an empty database, not grow it).
+    const library = dataDirs()
+      .map((d) => path.join(d, "library.sqlite"))
+      .find(existsSync);
+    if (!library) throw new Error("no library.sqlite to grow");
+    const { lines } = grow(library, { vods: VODS, hours: 2 });
     ctx.log(`the library grown by ${VODS} VODs, ${lines} lines, in ${((Date.now() - begun) / 1000).toFixed(1)} s`);
     app = await ctx.start();
     await app.toLibrary();
