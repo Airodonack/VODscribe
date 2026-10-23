@@ -39,15 +39,18 @@ class AppSettings {
     return this.#saving;
   }
 
-  /** Changes some settings and saves them all. */
-  async update(change: Partial<Settings>) {
+  /** Changes some settings and saves them all. A change can be worked out
+   *  from the settings as they are (`now`): it's then worked out again over
+   *  whatever came before it, so it never undoes another one made meanwhile. */
+  async update(change: Partial<Settings> | ((now: Settings) => Partial<Settings>)) {
+    const changed = (now: Settings) => ({ ...now, ...(typeof change === "function" ? change(now) : change) });
     await this.load();
     if (!this.value) return;
-    this.value = { ...this.value, ...change };
+    this.value = changed(this.value);
     // Applied again when its turn comes, over whatever came before it (a reset).
     this.#saving = this.#saving.then(() => {
       if (!this.value) return;
-      this.value = { ...this.value, ...change };
+      this.value = changed(this.value);
       return api.setSettings($state.snapshot(this.value)).then(
         () => void (this.error = null),
         (e) => void (this.error = String(e)),

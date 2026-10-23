@@ -4,6 +4,7 @@
   const SECTIONS = [
     { id: "transcription", label: "Transcription", icon: "audio-lines" },
     { id: "appearance", label: "Appearance", icon: "palette" },
+    { id: "controls", label: "Controls", icon: "keyboard" },
     { id: "storage", label: "Storage", icon: "folder" },
     { id: "updates", label: "Updates", icon: "download" },
     { id: "privacy", label: "Privacy", icon: "lock" },
@@ -14,6 +15,7 @@
 </script>
 
 <script lang="ts">
+  import Controls from "./Controls.svelte";
   import EmoteProviders from "./EmoteProviders.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
   import { onDestroy, onMount } from "svelte";
@@ -325,6 +327,8 @@
         <p class="label">Chat emotes</p>
         <EmoteProviders />
       </section>
+    {:else if section === "controls"}
+      <Controls />
     {:else if section === "storage"}
       <section>
         <span class="eyebrow">Storage</span>

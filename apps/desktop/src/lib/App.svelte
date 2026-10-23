@@ -29,6 +29,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
+  import type { ActionId } from "./keymap";
   import { updates } from "./updates.svelte";
   import { savePlayable } from "./playable";
   import { settings } from "./appSettings.svelte";
@@ -85,6 +86,17 @@
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
   const searchKey = $derived(labelOf("search.focus"));
+  // The empty library's tip: a VOD's main keys, as the map has them now; one
+  // whose actions have no key is left out.
+  const KEY_TIPS: { ids: ActionId[]; does: string }[] = [
+    { ids: ["play.toggle"], does: "play/pause" },
+    { ids: ["seek.back5", "seek.forward5"], does: "5 s" },
+    { ids: ["seek.back10", "seek.forward10"], does: "10 s" },
+    { ids: ["seek.back1", "seek.forward1"], does: "1 s" },
+  ];
+  const keyTips = $derived(
+    KEY_TIPS.map((t) => ({ does: t.does, keys: t.ids.map(labelOf).filter(Boolean) })).filter((t) => t.keys.length),
+  );
   // The document in view, whose history undo and redo go through: the edit
   // open, or else the VOD shown (its marks and clip bar). The backend's told,
   // as changes made now are made from it.
@@ -667,10 +679,9 @@
                   one on the left to read its transcript.
                 </p>
                 <p class="keys muted">
-                  <Icon name="keyboard" size={14} /> While a VOD is open: <kbd>Space</kbd> play/pause,
-                  <kbd>←</kbd><kbd>→</kbd>
-                  5 s,
-                  <kbd>J</kbd><kbd>L</kbd> 10 s, <kbd>Shift</kbd>+arrows 1 s.
+                  <Icon name="keyboard" size={14} /> While a VOD is open:
+                  {#each keyTips as tip, i (tip.does)}{i ? ", " : ""}{#each tip.keys as k, j (j)}<kbd>{k}</kbd>{/each}
+                    {tip.does}{/each}.
                 </p>
               {/if}
             </div>

@@ -16,7 +16,7 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
-  import { bindingsOf, is } from "./keys.svelte";
+  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, inOut, isEscape, playerKey, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
   import { playsFromFile } from "./platform";
@@ -783,10 +783,12 @@
           disabled={!segments.length}
           title="{again
             ? 'Render the edit again'
-            : 'Render the edit'} into one video, in Videos/VODscribe/Edits (E: export)"
+            : 'Render the edit'} into one video, in Videos/VODscribe/Edits{labelOf('edit.render')
+            ? ` (${labelOf('edit.render')}: export)`
+            : ''}"
         >
           <Icon name={again ? "redo" : "clapperboard"} size={14} />
-          Render <kbd>E</kbd>
+          Render {#if labelOf("edit.render")}<kbd>{labelOf("edit.render")}</kbd>{/if}
         </button>
       {/if}
     {/snippet}
@@ -863,9 +865,9 @@
         class="action split"
         onclick={split}
         disabled={!atNow}
-        title="Put a split here, or take away the one here; a delete beside it makes it real (B)"
+        title="Put a split here, or take away the one here; a delete beside it makes it real{keyHint('cut.here')}"
       >
-        <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
+        <Icon name="scissors" size={14} /> Split {#if labelOf("cut.here")}<kbd>{labelOf("cut.here")}</kbd>{/if}
       </button>
       <button
         class="action remove"
@@ -873,9 +875,12 @@
         onmouseenter={() => (removeHover = true)}
         onmouseleave={() => (removeHover = false)}
         disabled={!atNow}
-        title="Take the stretch at the playhead (between splits, or else its piece) out of the edit; its VOD and clips aren't touched (Delete)"
+        title="Take the stretch at the playhead (between splits, or else its piece) out of the edit; its VOD and clips aren't touched{keyHint(
+          'edit.remove',
+        )}"
       >
-        <Icon name="circle-minus" size={14} /> Remove <kbd>Del</kbd>
+        <Icon name="circle-minus" size={14} /> Remove {#if labelOf("edit.remove")}<kbd>{labelOf("edit.remove")}</kbd
+          >{/if}
       </button>
       {#if edits.error}
         <span class="context error-text" title={edits.error}>{edits.error}</span>

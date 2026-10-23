@@ -80,6 +80,7 @@
   }
   import { theme } from "./theme.svelte";
   import { nav } from "./nav.svelte";
+  import { keyHint } from "./keys.svelte";
   import type { Doc } from "./api";
 
   let {
@@ -825,7 +826,7 @@
         class="selection"
         style:left={pct(Math.max(picked.start, viewStart))}
         style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-        title="Selected: Split (B) cuts both ends"
+        title="Selected: Split{keyHint('cut.here')} cuts both ends"
       ></div>
       {#each ["start", "end"] as const as edge (edge)}
         {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}

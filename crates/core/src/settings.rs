@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -50,6 +51,11 @@ pub struct Settings {
     pub video_height: Option<u32>,
     /// What clips and rendered edits are made as.
     pub clip_format: ClipFormat,
+    /// The keyboard controls the user changed (Settings › Controls), by the
+    /// page's action id: each the whole list of that action's keys, an empty
+    /// one for none. Only the page reads them (keymap.ts); ids it no longer
+    /// has are kept as they are.
+    pub key_bindings: BTreeMap<String, Vec<String>>,
 }
 
 /// Every known emote provider, each once, in priority order.
@@ -148,5 +154,23 @@ mod tests {
         assert_eq!(saved.emote_providers.enabled(), ["ffz", "7tv"]);
         let order: Vec<_> = saved.emote_providers.0.iter().map(|p| p.id.as_str()).collect();
         assert_eq!(order, ["ffz", "7tv", "bttv"]);
+    }
+
+    #[test]
+    fn key_bindings_start_empty_and_keep_what_they_are_given() {
+        // A settings.json as 0.5.x wrote it: no key bindings.
+        let old: Settings = serde_json::from_str(
+            r#"{"device": "cpu", "theme": "dark", "emote_providers": [], "video_height": 720, "clip_format": "mov"}"#,
+        )
+        .unwrap();
+        assert!(old.key_bindings.is_empty());
+        assert_eq!(old.video_height, Some(720));
+        let saved: Settings =
+            serde_json::from_str(r#"{"key_bindings": {"play.toggle": ["p"], "mute.toggle": [], "gone.away": ["x"]}}"#)
+                .unwrap();
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+        assert_eq!(again.key_bindings["play.toggle"], ["p"]);
+        assert!(again.key_bindings["mute.toggle"].is_empty());
+        assert_eq!(again.key_bindings["gone.away"], ["x"]);
     }
 }

@@ -105,6 +105,9 @@ export interface Settings {
   video_height: number | null;
   /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
   clip_format: ClipFormat;
+  /** The keyboard controls changed in Settings, by action id (keymap.ts): each
+   *  action's whole list of bindings, an empty one for no key. */
+  key_bindings: Record<string, string[]>;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */

@@ -15,7 +15,7 @@ export async function resolve(specifier, context, next) {
 }`),
 );
 const { buildMap, matches } = await import("./keymap.ts");
-const { editShortcuts, inOut, seekOf, transportKey, vodShortcuts } = await import("./playerKeys.ts");
+const { editShortcuts, inOut, playerKey, seekOf, transportKey, vodShortcuts } = await import("./playerKeys.ts");
 
 /** The default map on `os`, as `is` and `bindings`, with `overrides` over it.
  *  @param {import("./keymap.ts").Os} os @param {Record<string, string[]>} overrides */
@@ -58,6 +58,33 @@ test("transport keys do what they say, and nothing else", () => {
   // screen, neither does Escape.
   assert.equal(transportKey(press(","), { ...t, step: undefined }, is), false);
   assert.equal(transportKey(press("Escape"), { ...t, fullscreen: false }, is), false);
+});
+
+test("a player has every key the app hasn't taken, Alt ones too, but none in a field or dialog", () => {
+  /** @param {object} e @param {string | null} inside */
+  const event = (e, inside = null) =>
+    /** @type {KeyboardEvent} */ (
+      /** @type {unknown} */ ({
+        ...press("p"),
+        defaultPrevented: false,
+        target: { closest: (/** @type {string} */ sel) => (inside && sel.includes(inside) ? {} : null) },
+        ...e,
+      })
+    );
+  assert.equal(playerKey(event({})), "p");
+  // Alt+P bound to a player action reaches it; Alt+← is back, taken first.
+  assert.equal(playerKey(event({ altKey: true })), "p");
+  assert.equal(playerKey(event({ key: "ArrowLeft", altKey: true, defaultPrevented: true })), null);
+  assert.equal(playerKey(event({}, "input")), null);
+  assert.equal(playerKey(event({}, "[role=dialog]")), null);
+  // A modal window open, the focus left on the page body: still not the player's.
+  const page = /** @type {{ document?: unknown }} */ (/** @type {unknown} */ (globalThis));
+  page.document = { querySelector: () => ({}) };
+  try {
+    assert.equal(playerKey(event({})), null);
+  } finally {
+    delete page.document;
+  }
 });
 
 test("each legend lists a key once for each thing it does", () => {

@@ -248,7 +248,6 @@ function newTransport(e, is, fullscreen) {
 
 /** @param {Press} e @param {Is} is @param {At} at */
 function newVod(e, is, { moving, fullscreen }) {
-  if (e.altKey) return null;
   if (is(e, "cut.here")) return "cut";
   if (is(e, "clip.make")) return "clip";
   if (is(e, "transcribe.here")) return "transcribe";
@@ -263,7 +262,6 @@ function newVod(e, is, { moving, fullscreen }) {
 
 /** @param {Press} e @param {Is} is @param {At} at */
 function newEdit(e, is, { moving, fullscreen }) {
-  if (e.altKey) return null;
   if (is(e, "captions.toggle")) return "captions";
   if (is(e, "mute.toggle")) return "mute";
   if (is(e, "cut.here")) return "cut";

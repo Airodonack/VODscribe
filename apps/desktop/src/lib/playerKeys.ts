@@ -43,18 +43,23 @@ export function markFramesOf(e: KeyLike, is: Is, fps: number): number | undefine
 export const keyOf = (e: KeyboardEvent) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
 
 /** `e`'s key for a player (as `keyOf` gives it), or null if it isn't for
- *  one: with Alt (the app's, back and forward), or typed into a field or a
- *  dialog. */
+ *  one: taken already (the app's keys, asked first in App.svelte
+ *  `onWindowKey`, as Alt+← for back; a row's Alt+↑), or typed into a field
+ *  or a dialog, or while a modal window (Settings) is open, whatever has the
+ *  focus: a press on its backdrop that isn't a click leaves the focus on the
+ *  page body. Alt held is no reason of its own: a player's action can be
+ *  given an Alt key in Settings. */
 export function playerKey(e: KeyboardEvent): string | null {
   const target = e.target as HTMLElement | null;
-  if (e.altKey || target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]")) return null;
+  if (e.defaultPrevented || target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]")) return null;
+  if (typeof document !== "undefined" && document.querySelector('[aria-modal="true"]')) return null;
   return keyOf(e);
 }
 
 /** Escape, which is no action of the table's: it always lets go (of full
- *  screen, a selection, a mark), Shift or not; with Ctrl or ⌘ it's the
- *  system's. */
-export const isEscape = (e: KeyLike) => e.key === "Escape" && !e.ctrlKey && !e.metaKey;
+ *  screen, a selection, a mark), Shift or not; with Ctrl, Alt or ⌘ it's the
+ *  system's (Alt+Esc goes to another window). */
+export const isEscape = (e: KeyLike) => e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey;
 
 /** What the shared keys act on. */
 export type Transport = {

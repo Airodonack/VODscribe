@@ -19,6 +19,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The window no longer sometimes stays empty for about two minutes when VODscribe starts.
 - The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
 - Settings opens as a window of its own, with a section list, instead of a dropdown.
+- Every keyboard control can be changed, in Settings › Controls: several keys per action, modifiers allowed, reset one or all.
 
 ## 0.5.1 — 2026-10-23
 

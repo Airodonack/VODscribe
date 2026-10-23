@@ -19,7 +19,7 @@
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { keysForApp } from "./demo";
-  import { bindingsOf, is } from "./keys.svelte";
+  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { inOut, isEscape, playerKey, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import {
@@ -590,10 +590,10 @@
           class:picking={!!cuts.selection}
           onclick={split}
           title={cuts.selection
-            ? "Cut both ends of the selection (B)"
-            : "Cut here, between this frame and the one before; each stretch between cuts can become a clip (B)"}
+            ? `Cut both ends of the selection${keyHint("cut.here")}`
+            : `Cut here, between this frame and the one before; each stretch between cuts can become a clip${keyHint("cut.here")}`}
         >
-          <Icon name="scissors" size={14} /> Split <kbd>B</kbd>
+          <Icon name="scissors" size={14} /> Split {#if labelOf("cut.here")}<kbd>{labelOf("cut.here")}</kbd>{/if}
         </button>
         <button
           class="action clip"
@@ -604,9 +604,11 @@
           onmouseenter={() => (clipHover = true)}
           onmouseleave={() => (clipHover = false)}
           disabled={!canClip}
-          title="Clip the lit-up stretch, to the clip bar (C): with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
+          title="Clip the lit-up stretch, to the clip bar{keyHint(
+            'clip.make',
+          )}: with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
         >
-          <Icon name="film" size={14} /> Clip <kbd>C</kbd>
+          <Icon name="film" size={14} /> Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}
         </button>
         {#if canTranscribe}
           <button
@@ -616,10 +618,12 @@
             onclick={transcribe}
             aria-expanded={cuts.selection ? undefined : transcribeMenu}
             title={cuts.selection
-              ? "Transcribe the selection, replacing any lines there (T)"
-              : "Transcribe from here: pick how much (T)"}
+              ? `Transcribe the selection, replacing any lines there${keyHint("transcribe.here")}`
+              : `Transcribe from here: pick how much${keyHint("transcribe.here")}`}
           >
-            <Icon name="audio-lines" size={14} /> Transcribe <kbd>T</kbd>
+            <Icon name="audio-lines" size={14} /> Transcribe {#if labelOf("transcribe.here")}<kbd
+                >{labelOf("transcribe.here")}</kbd
+              >{/if}
           </button>
           <TranscribeFrom
             bind:open={transcribeMenu}

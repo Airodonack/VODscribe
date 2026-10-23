@@ -16,6 +16,7 @@
   import Spinner from "./Spinner.svelte";
   import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
+  import { keyHint } from "./keys.svelte";
 
   let {
     vod,
@@ -96,7 +97,7 @@
 
   function describe(clip: Clip): string {
     if (clip.status === "error")
-      return `Couldn't make this clip: ${clip.error ?? "unknown error"}. Clip the stretch again (C) to retry.`;
+      return `Couldn't make this clip: ${clip.error ?? "unknown error"}. Clip the stretch again${keyHint("clip.make")} to retry.`;
     if (clip.status === "cutting") return "Making the clip…";
     if (clip.status === "waiting") return "Waiting to be made";
     return clip.title;
