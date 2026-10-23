@@ -1,7 +1,7 @@
 // End-to-end tests of a VODscribe build: scenarios (scenarios/*.mjs), each
 // on a fresh library, driving the app through its page.
 //
-//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--profile <dir>]
+//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--repeat N] [--profile <dir>]
 //
 // The webdriver driver (the default on Linux) runs the installed app through
 // tauri-driver, which must be on PATH (or TAURI_DRIVER), with the platform's
@@ -31,14 +31,24 @@
 // gets the recordings, folded.txt and top.txt (README, "Profiling").
 // Without it, E2E_OUT/perf/<scenario>/page.json still has what the page
 // measured (App.pageMeasures).
+//
+// Timings: a scenario times the steps a person waits on (ctx.time,
+// ctx.timing, and App's helpers), and the run its app's start; each
+// result in results.json has them (`timings`, ms), and E2E_OUT/perf.json
+// has them across runs (--repeat N runs the chosen scenarios N times, in
+// turn: the median and spread) with what the run was on, for comparing
+// releases (perf-compare.mjs). A profiled run's timings are marked so:
+// perf slows what it watches.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as nodeOs from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { isUnplayable } from "../../apps/desktop/src/lib/media.ts";
-import { App, watchWith } from "./lib/app.mjs";
+import { App, clock, watchWith } from "./lib/app.mjs";
 import { resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import * as os from "./lib/os.mjs";
@@ -48,12 +58,23 @@ import * as profile from "./lib/profile.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
-  options: { only: { type: "string" }, driver: { type: "string" }, profile: { type: "string" } },
+  options: {
+    only: { type: "string" },
+    driver: { type: "string" },
+    repeat: { type: "string", default: "1" },
+    profile: { type: "string" },
+  },
 });
 if (!positionals[0]) {
-  console.error("usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--profile <dir>]");
+  console.error(
+    "usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--repeat N] [--profile <dir>]",
+  );
   process.exit(2);
 }
+const repeat = Number(opts.repeat);
+if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`--repeat ${opts.repeat}: a whole number, 1 or more`);
+// Timings come from unprofiled runs; a profile is of one.
+if (repeat > 1 && opts.profile) throw new Error("--profile with --repeat: profile one run, time the others");
 const driverName = opts.driver ?? (process.platform === "linux" ? "webdriver" : "bridge");
 if (opts.profile && (process.platform !== "linux" || driverName !== "webdriver"))
   throw new Error("--profile is for Linux, through the webdriver driver");
@@ -94,9 +115,16 @@ const profiles = {};
 // How many checkpoints taken, numbering their files in order.
 let checkpoints = 0;
 rmSync(path.join(out, "checkpoints"), { recursive: true, force: true });
-for (const name of names.filter((n) => !only || only.includes(n))) {
+// Each run of each scenario, in turn (setup once: it's what the others start from).
+const chosen = names.filter((n) => !only || only.includes(n));
+const turns = Array.from({ length: repeat }, (_, i) =>
+  chosen.filter((n) => i === 0 || !order.includes(n)).map((name) => ({ name, run: i + 1 })),
+).flat();
+for (const { name, run } of turns) {
   const { default: scenario } = await import(pathToFileURL(path.join(here, "scenarios", `${name}.mjs`)));
   const begun = Date.now();
+  // This run's folder for its measures: <scenario>, then <scenario>-2, …
+  const measures = path.join(perfOut, run === 1 ? name : `${name}-${run}`);
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
   // The app as it is now: `ctx.restart()` (for what must survive one) replaces it.
   let current;
@@ -107,17 +135,41 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     const measured = await current?.app.pageMeasures().catch(() => null);
     if (measured) pages.push(measured);
   };
+  // The steps timed: { name, ms, from, to } (from and to on the monotonic
+  // clock, in seconds, as perf's samples are stamped: lib/profile.mjs).
+  const steps = [];
+  const timing = (step, ms, from, to = clock()) => steps.push({ name: step, ms, from, to });
+  const time = async (step, fn) => {
+    const from = clock();
+    const result = await fn();
+    const to = clock();
+    timing(step, Math.round((to - from) * 1000), from, to);
+    return result;
+  };
   const launch = async () => {
+    const from = clock();
     const driver = traced(await startDriver(app), log);
     current = { driver, app: new App(driver, log) };
+    Object.assign(current.app, { timed: time, timing });
     log("app started");
     await current.app.ready();
+    // From asking for the app to its first screen: the app's start, the
+    // page's load and its first call (WebDriver's session is part of it).
+    // The first start apart from later ones (ctx.restart): the library is
+    // new then; and one that took App.ready's reload apart from both, not
+    // to hide that stall in a median.
+    const first = !steps.some((s) => /^start to/.test(s.name));
+    const step = `${first ? "start" : "restart"} to first screen${current.app.reloaded ? " (reloaded)" : ""}`;
+    timing(step, Math.round((clock() - from) * 1000), from);
     return current.app;
   };
   const ctx = {
     fixtures,
     out,
     log,
+    time,
+    timing,
+    clock,
     quit: async () => {
       await measurePage();
       const closing = current;
@@ -177,23 +229,31 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     ? { pages, slowEvents: pages.flatMap((p) => p.slowEvents), frameGaps: pages.flatMap((p) => p.frameGaps) }
     : null;
   if (page) {
-    mkdirSync(path.join(perfOut, name), { recursive: true });
-    writeFileSync(path.join(perfOut, name, "page.json"), JSON.stringify(page, null, 2));
+    mkdirSync(measures, { recursive: true });
+    writeFileSync(path.join(measures, "page.json"), JSON.stringify(page, null, 2));
   }
   if (profileDir) {
-    const summary = await profile.finish(profileDir, name, [], page).catch((e) => {
+    const summary = await profile.finish(profileDir, name, steps, page).catch((e) => {
       console.error(`${name}: its profile couldn't be read: ${e.message}`);
       return null;
     });
     if (summary) profiles[name] = summary;
   }
-  results.push({ name, ok: !error, error, skipped, seconds: Math.round((Date.now() - begun) / 1000) });
+  results.push({
+    name,
+    ...(repeat > 1 && { run }),
+    ok: !error,
+    error,
+    skipped,
+    seconds: Math.round((Date.now() - begun) / 1000),
+    timings: byStep(steps),
+  });
   log(error ? "failed" : skipped ? `skipped: ${skipped}` : "passed");
 }
 
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
-if (profileDir) writeFileSync(path.join(profileDir, "profiles.json"), JSON.stringify(profiles, null, 2));
+writeFileSync(path.join(out, "perf.json"), JSON.stringify(perfSummary(), null, 2));
 const failed = results.filter((r) => !r.ok);
 console.log(`\ne2e: ${results.length - failed.length} of ${results.length} passed`);
 for (const r of results)
@@ -231,6 +291,70 @@ async function checkpoint(current, scenario, label) {
   const list = existsSync(index) ? JSON.parse(readFileSync(index, "utf8")) : [];
   list.push({ file, scenario, label, from, platform: process.platform });
   writeFileSync(index, JSON.stringify(list, null, 2));
+}
+
+/** A run's timings by step, in ms: a step timed more than once, its median. */
+function byStep(steps) {
+  const times = new Map();
+  for (const s of steps) times.set(s.name, [...(times.get(s.name) ?? []), s.ms]);
+  return Object.fromEntries([...times].map(([step, ms]) => [step, median(ms)]));
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length / 2;
+  return sorted.length % 2 ? sorted[Math.floor(mid)] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
+/**
+ * perf.json: what the run was on, and for each scenario its timings across
+ * runs (each step's median, least and most, and every run's) and, profiled,
+ * where its time went (lib/profile.mjs).
+ */
+function perfSummary() {
+  const quiet = (cmd, args) => {
+    try {
+      return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+    } catch {
+      return null;
+    }
+  };
+  const scenarios = {};
+  for (const r of results.filter((r) => !r.skipped)) {
+    const s = (scenarios[r.name] ??= { runs: 0, failed: 0, seconds: [], timings: {} });
+    s.runs += 1;
+    if (!r.ok) s.failed += 1;
+    s.seconds.push(r.seconds);
+    for (const [step, ms] of Object.entries(r.timings)) (s.timings[step] ??= []).push(ms);
+  }
+  for (const [name, s] of Object.entries(scenarios)) {
+    s.timings = Object.fromEntries(
+      Object.entries(s.timings).map(([step, runs]) => [
+        step,
+        { median: median(runs), least: Math.min(...runs), most: Math.max(...runs), runs },
+      ]),
+    );
+    if (profiles[name]) s.profile = profiles[name];
+  }
+  return {
+    date: new Date().toISOString(),
+    commit: process.env.E2E_COMMIT ?? quiet("git", ["-C", here, "rev-parse", "--short", "HEAD"]),
+    app: positionals[0],
+    profiled: !!profileDir,
+    repeat,
+    on: {
+      platform: `${process.platform} ${nodeOs.release()}`,
+      cpu: `${nodeOs.cpus()[0]?.model ?? "?"} (${nodeOs.cpus().length} threads)`,
+      memory: `${Math.round(nodeOs.totalmem() / 2 ** 30)} GiB`,
+      webkit:
+        process.platform === "linux"
+          ? (quiet("dpkg-query", ["-W", "-f", "${Version}", "libwebkit2gtk-4.1-0"]) ??
+            quiet("rpm", ["-q", "--qf", "%{VERSION}", "webkit2gtk4.1"]))
+          : null,
+      display: process.env.E2E_DISPLAY ?? (process.platform === "linux" ? "x11" : process.platform),
+    },
+    scenarios,
+  };
 }
 
 /** With E2E_TRACE=1, logs each call into the page and how long it took. */

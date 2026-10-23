@@ -10,14 +10,19 @@
 // (it's defined read-only), so the answers go in at the fetch that carries
 // each call.
 
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 
 export const MINUTE = 60_000;
 
-/** Polls `check` until it returns something truthy, or fails after `timeout` saying `what`. */
-export async function until(what, check, timeout) {
+/**
+ * Polls `check` until it returns something truthy, or fails after `timeout`
+ * saying `what`; every half second, or `every` ms (a timed step's wait, for
+ * a time not rounded up to the poll).
+ */
+export async function until(what, check, timeout, { every = 500 } = {}) {
   const start = Date.now();
   const end = start + timeout;
   let last;
@@ -43,7 +48,7 @@ export async function until(what, check, timeout) {
         `  … still waiting for ${what} (${Math.round((told - start) / 1000)} s; last: ${JSON.stringify(last)})`,
       );
     }
-    await sleep(500);
+    await sleep(every);
   }
   throw new Error(`timed out waiting for ${what} (last: ${JSON.stringify(last)})`);
 }
@@ -55,10 +60,59 @@ export function watchWith(check) {
   watch = check;
 }
 
+/** How often a timed step's wait looks (ms). */
+const TIMED_POLL = 50;
+
+/** The monotonic clock, in seconds: perf's samples are stamped by it (lib/profile.sh). */
+export const clock = () => Number(process.hrtime.bigint()) / 1e9;
+
 export class App {
   constructor(driver, log) {
     this.driver = driver;
     this.log = log;
+    // Times a step a helper takes (run.mjs sets it to ctx.time, which keeps
+    // it with the scenario's timings); untimed by default.
+    this.timed = (name, step) => step();
+    // Keeps a time measured another way (run.mjs: ctx.timing).
+    this.timing = () => {};
+  }
+
+  /**
+   * How long from `act` (a function doing something to the app) to the app's
+   * own player showing a frame (its `player-time` status says which:
+   * `shown`): the one at `near` seconds (within 20 ms), or with no `near`,
+   * any. Measured in the page, by when the status arrives; kept as the
+   * timing `name`. Returns the milliseconds.
+   */
+  async timeToFrame(name, act, near = null) {
+    await this.js(`
+      if (window.__e2eFrames) return;
+      const frames = (window.__e2eFrames = []);
+      const internals = window.__TAURI_INTERNALS__;
+      const handler = internals.transformCallback((e) => {
+        frames.push({ at: performance.now(), shown: e.payload.shown, time: e.payload.time });
+        if (frames.length > 2000) frames.splice(0, 1000);
+      });
+      await internals.invoke("plugin:event|listen", { event: "player-time", target: { kind: "Any" }, handler });`);
+    const from = clock();
+    const since = await this.js(`return performance.now()`);
+    await act();
+    const at = await until(
+      `${name}: the frame`,
+      () =>
+        this.js(
+          `const [since, near] = arguments;
+           const ok = (f) => f.shown !== null && (near === null || Math.abs(f.shown - near) <= 0.02);
+           return window.__e2eFrames.find((f) => f.at >= since && ok(f))?.at ?? null`,
+          since,
+          near,
+        ),
+      30_000,
+      { every: TIMED_POLL },
+    );
+    const ms = Math.round(at - since);
+    this.timing(name, ms, from, clock());
+    return ms;
   }
 
   /** Runs `body` (a function body, with `arguments`) in the page and returns its awaited result. */
@@ -556,16 +610,19 @@ export class App {
     if (Math.abs(at[0] - 1) > 0.05 || Math.abs(at[1] - 3) > 0.05) throw new Error(`cuts at ${at}, not 1 and 3`);
     await this.key("ArrowLeft", { shift: true });
     await to(2);
-    await this.click("button.action.clip");
-    const clip = await until(
-      "the clip's file",
-      async () => {
-        const [c] = await this.invoke("list_clips", { vodId });
-        if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
-        return c?.status === "ready" && c;
-      },
-      MINUTE,
-    );
+    const clip = await this.timed("clip made (2 s)", async () => {
+      await this.click("button.action.clip");
+      return until(
+        "the clip's file",
+        async () => {
+          const [c] = await this.invoke("list_clips", { vodId });
+          if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
+          return c?.status === "ready" && c;
+        },
+        MINUTE,
+        { every: TIMED_POLL },
+      );
+    });
     if (Math.abs(clip.start - 1) > 0.05 || Math.abs(clip.end - 3) > 0.05)
       throw new Error(`the clip runs ${clip.start} to ${clip.end}, not 1 to 3`);
     return clip;
@@ -584,14 +641,18 @@ export class App {
       MINUTE,
     );
     this.log(`added VOD ${vod.id}`);
-    return until(
-      "the transcription",
-      async () => {
-        const v = (await this.invoke("list_vods")).find((v) => v.id === vod.id);
-        if (v.status === "error") throw new Error(`transcription failed: ${v.error}`);
-        return v.status === "done" && v;
-      },
-      15 * MINUTE,
+    // From added to done: reading its sound and transcribing it, the worker's time.
+    return this.timed(`transcribed (${path.basename(file)})`, () =>
+      until(
+        "the transcription",
+        async () => {
+          const v = (await this.invoke("list_vods")).find((v) => v.id === vod.id);
+          if (v.status === "error") throw new Error(`transcription failed: ${v.error}`);
+          return v.status === "done" && v;
+        },
+        15 * MINUTE,
+        { every: TIMED_POLL },
+      ),
     );
   }
 }

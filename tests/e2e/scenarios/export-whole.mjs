@@ -39,16 +39,20 @@ export default {
     await app.key("Escape");
     await until("full screen left", () => app.js(`return !document.querySelector("section.fullscreen")`), 10_000);
     log(`full screen with sound alone: "${big}"`);
-    await app.key("c");
-    const clip = await until(
-      "the whole video's clip",
-      async () => {
-        const [c] = await app.invoke("list_clips", { vodId: vod.id });
-        if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
-        return c?.status === "ready" && c;
-      },
-      MINUTE,
-    );
+    // Timed: from C to the clip's file made.
+    const clip = await ctx.time("whole video's clip made (5 s)", async () => {
+      await app.key("c");
+      return until(
+        "the whole video's clip",
+        async () => {
+          const [c] = await app.invoke("list_clips", { vodId: vod.id });
+          if (c?.status === "error") throw new Error(`the clip failed: ${c.error}`);
+          return c?.status === "ready" && c;
+        },
+        MINUTE,
+        { every: 50 },
+      );
+    });
     if (clip.start > 0.05 || Math.abs(clip.end - vod.duration) > 0.1)
       throw new Error(`the clip runs ${clip.start} to ${clip.end}, not the whole ${vod.duration} s`);
     if (!existsSync(clip.file_path)) throw new Error(`no file at ${clip.file_path}`);

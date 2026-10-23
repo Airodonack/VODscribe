@@ -4,6 +4,8 @@
 // second is one flat colour (fixtures colours.mp4), the screen says which
 // frame is up: the frame a seek lands on, a picture that changes while it
 // plays, and one that stands while paused. A panel opened over it shows.
+// Timed, in the app's own player: from opening the VOD (and Play) to its
+// first frame, and from a seek to the frame there.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -38,10 +40,16 @@ export default {
       },
       5 * MINUTE,
     );
-    await app.openVod(vod.id);
     // Either player is made on the first play; paused once it plays (a pause
     // before then finds nothing to pause, and it plays on).
-    await app.click('.bar button[aria-label="Play"]');
+    const open = async () => {
+      await app.openVod(vod.id);
+      await app.click('.bar button[aria-label="Play"]');
+    };
+    // The app's own player, where there's a screen for it, says which frame it shows.
+    const own = await app.invoke("player_available");
+    if (own) await app.timeToFrame("open to first frame", open);
+    else await open();
     await until(
       "it to play",
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
@@ -81,10 +89,11 @@ export default {
 
     // Seeks, each landing on its frame: the first of each second.
     await app.pause();
-    await app.toStart();
+    const seek = (act, at) => (native ? app.timeToFrame("seek to frame shown", act, at) : act());
+    await seek(() => app.toStart(), 0);
     await to(0);
     await expect(0);
-    await app.key("ArrowRight", { shift: true });
+    await seek(() => app.key("ArrowRight", { shift: true }), 1);
     await to(1);
     await expect(1);
     await app.key("ArrowRight", { shift: true });

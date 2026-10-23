@@ -532,16 +532,20 @@ export default {
 
     // Rendered (E) with a chapter, which its file has.
     await app.invoke("add_edit_mark", { editId: made.id, time: 0.5, kind: "chapter", text: "Landing" });
-    await app.key("e");
-    const rendered = await until(
-      "the render",
-      async () => {
-        const [e] = await app.invoke("list_edits");
-        if (e?.status === "error") throw new Error(`the render failed: ${e.error}`);
-        return e?.status === "ready" && e;
-      },
-      2 * MINUTE,
-    );
+    // Timed: from E to the edit's file made.
+    const rendered = await ctx.time("edit rendered", async () => {
+      await app.key("e");
+      return until(
+        "the render",
+        async () => {
+          const [e] = await app.invoke("list_edits");
+          if (e?.status === "error") throw new Error(`the render failed: ${e.error}`);
+          return e?.status === "ready" && e;
+        },
+        2 * MINUTE,
+        { every: 50 },
+      );
+    });
     if (!rendered.file_path || !existsSync(rendered.file_path))
       throw new Error(`the render says ${rendered.file_path}, which isn't there`);
     // Sound only, made as MP4 (the default): an .m4a.
