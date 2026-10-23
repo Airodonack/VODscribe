@@ -19,6 +19,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
+use vodscribe_core::stretches::Stretch;
 use vodscribe_core::{fetch, local, pipeline, tools};
 
 use crate::jobs::Jobs;
@@ -264,9 +265,7 @@ pub(crate) async fn keep_video(
     if vod.source_path.is_some() || vod.media {
         return Ok(());
     }
-    // A site without its own player: transcribing all of it downloads the
-    // video already, into the same file.
-    if pipeline::keeps_video(&vod.info.platform) && vod.status == vodscribe_core::db::Status::Downloading {
+    if downloading_to_transcribe(&state.db.lock().unwrap(), &vod).map_err(err)? {
         return Err("Its video is already downloading, to transcribe it.".into());
     }
     let queued = |(v, _): &(i64, u32)| *v == id;
@@ -275,6 +274,15 @@ pub(crate) async fn keep_video(
     }
     let _ = app.emit("video-progress", VideoProgress { id, progress: Some(0.0), error: None });
     Ok(())
+}
+
+/// Whether VOD `vod`'s video is downloading already, into the same file: a
+/// site without its own player, transcribing all of it (`pipeline::audio_for`).
+fn downloading_to_transcribe(db: &Db, vod: &Vod) -> Result<bool> {
+    // Only a request for all of it downloads the video (a stretch, its sound
+    // alone), whichever of its requests the row shows.
+    let downloading = |s: &Stretch| s.is_whole() && s.status == vodscribe_core::db::Status::Downloading;
+    Ok(pipeline::keeps_video(&vod.info.platform) && db.requests(vod.id)?.iter().any(downloading))
 }
 
 /// Stops VOD `id`'s video download, discarding what's downloaded so far, or
@@ -504,6 +512,34 @@ mod tests {
         }
         assert!(!old.exists(), "the old video goes");
         assert!(s.file("mp4.part").exists(), "the new download's part stays");
+    }
+
+    /// A site without its own player: Play (or Keep video) is refused only
+    /// while transcribing all of it downloads the video already, not while a
+    /// stretch's sound downloads, nor because another request shows.
+    #[test]
+    fn keeping_a_video_waits_only_for_a_transcription_downloading_it() {
+        use vodscribe_core::db::Status;
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "rumble".into(),
+            platform_id: "r".into(),
+            url: "https://rumble.com/r".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(600.0),
+            thumbnail: None,
+            published: None,
+        };
+        let id = db.add_vod(&info).unwrap().0.id;
+        let busy = |db: &Db| downloading_to_transcribe(db, &db.vod(id).unwrap().unwrap()).unwrap();
+        let part = db.request(id, 100.0, Some(130.0)).unwrap().id;
+        db.set_stretch_status(part, Status::Downloading, 0.1, None).unwrap();
+        assert!(!busy(&db), "a stretch's sound alone");
+        db.set_stretch_status(part, Status::Transcribing, 0.1, None).unwrap();
+        let whole = db.request(id, 0.0, None).unwrap().id;
+        db.set_stretch_status(whole, Status::Downloading, 0.1, None).unwrap();
+        assert!(busy(&db), "all of it, though the row shows the other");
     }
 
     /// "Delete video" with a "Keep video" queued (it lands between the
