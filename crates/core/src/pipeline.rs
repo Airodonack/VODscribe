@@ -470,8 +470,10 @@ fn run_worker(
                     .collect();
                 let segments = segmenter.push(words);
                 // Everything before the words held back is written: a stop
-                // here resumes from them.
-                let reached = segmenter.pending_start().unwrap_or(batch_end).max(over);
+                // here resumes from them, even where they began batches ago
+                // (a batch of silence since) and the old lines after them are
+                // gone already.
+                let reached = segmenter.pending_start().map_or(batch_end, |held| held.max(start));
                 replaced += db.replace_segments(vod.id, stretch_id, (over, Some(batch_end)), &segments, reached)?;
                 over = over.max(batch_end);
                 report(Status::Transcribing, fraction(batch_end));
@@ -977,6 +979,44 @@ mod tests {
             run_worker(&mut db, &vod, again, &spec, Path::new("ffmpeg"), &audio, &no, &mut |_, _| {}).unwrap();
         assert_eq!(replaced, 3);
         assert_eq!(texts(&db, vod.id), ["old a", "Said over again.", "old d"]);
+    }
+
+    /// Words held back for the next line, then a batch with none (silence):
+    /// the old lines there went with it, so a run that fails then (the GPU
+    /// running out, say, before the processor takes over) carries on from
+    /// the held words, not past them, or they'd never be written.
+    #[test]
+    fn a_failed_run_resumes_from_the_words_it_held_back() {
+        let dir = crate::TempDir::new("held-back");
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let info = VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "u".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let (vod, _) = db.add_vod(&info).unwrap();
+        db.insert_segments(vod.id, &[line("old a", 0.0, 5.0), line("old b", 15.0, 17.0)]).unwrap();
+        let ask = db.request(vod.id, 0.0, None).unwrap().id;
+        db.set_stretch_model(ask, Some(crate::model::CPU_MODEL.id)).unwrap();
+        let program = dir.join("failing-worker.sh");
+        let script = format!(
+            "#!/bin/sh\necho '{}'\necho '{}'\necho 'out of memory' >&2\nexit 1\n",
+            batch(20.0, &[("A", 2.0), ("line.", 2.5), ("Held", 15.0), ("back", 15.5)]),
+            batch(30.0, &[])
+        );
+        fs::write(&program, script).unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        let spec = WorkerSpec { program, ..fake_worker(&dir, &[], 0) };
+        let audio = Audio { path: "audio".into(), offset: 0.0 };
+        let no = AtomicBool::new(false);
+        assert!(run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &no, &mut |_, _| {}).is_err());
+        assert_eq!(texts(&db, vod.id), ["A line."], "\"old b\" went with the first batch");
+        assert_eq!(db.stretch(ask).unwrap().unwrap().reached, Some(15.0), "from the words held back");
     }
 
     /// A section's words are in its own time, from 0: they're moved to the
