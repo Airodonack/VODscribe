@@ -10,7 +10,7 @@ import * as os from "../lib/os.mjs";
 
 const SITES = [
   ["twitch", "https://www.twitch.tv/videos/2901646294"],
-  ["kick", "https://kick.com/airodonack/videos/01a14106-89f0-7a9c-977f-aa0d3247c810"],
+  ["kick", "https://kick.com/airodonack/videos/01a169a1-9aa8-7653-8a9e-390e694cc11a"],
   ["youtube", "https://www.youtube.com/watch?v=IaIo3d6cUuo"],
 ];
 
