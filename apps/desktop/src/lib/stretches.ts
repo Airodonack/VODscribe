@@ -69,6 +69,40 @@ export function gaps(stretches: Stretch[], duration: number | null): Gap[] {
   return out;
 }
 
+/** The gaps the transcript shows as rows of their own (`gaps`), for a VOD
+ *  `transcribed` that much with `lines` lines so far: none before anything is
+ *  transcribed or asked for (the empty state offers that instead), but once
+ *  some is, even with no lines (silence, music), so the rest can be asked for. */
+export function shownGaps(
+  stretches: Stretch[],
+  duration: number | null,
+  transcribed: Vod["transcribed"],
+  lines: number,
+): Gap[] {
+  const found = gaps(stretches, duration);
+  return lines > 0 || transcribed !== "none" || found.some((g) => g.request) ? found : [];
+}
+
+/** What a VOD's row says after the state of the request it shows (`shown`,
+ *  of a VOD `duration` long): the stretch's range, its times put as `format`
+ *  says (platform.ts `formatTime`, passed in so node's tests load this module
+ *  alone), unless it's all of it; and how many more requests wait. Empty with
+ *  nothing to say. */
+export function requestDetail(
+  shown: Pick<Stretch, "start" | "end"> | null,
+  duration: number | null,
+  waiting: number,
+  format: (seconds: number) => string,
+): string {
+  let out = "";
+  const end = shown?.end ?? duration;
+  if (shown && !(shown.start <= 0 && shown.end === null)) {
+    out += end !== null ? ` · ${format(shown.start)}–${format(end)}` : ` · from ${format(shown.start)}`;
+  }
+  if (waiting > 0) out += ` · ${waiting} more waiting`;
+  return out;
+}
+
 /** Asks for every part of `vod` not transcribed, nor asked for yet, to be
  *  transcribed (Transcribe the rest): one request a gap, in time order. The
  *  page's `api` is passed in, so node's tests can load this module (and give

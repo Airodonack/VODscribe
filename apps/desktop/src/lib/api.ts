@@ -574,7 +574,8 @@ export const api = {
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
   /** Ends request `id` alone, keeping the lines it wrote. */
   cancelStretch: (id: number) => invoke<void>("cancel_stretch", { id }),
-  retranscribeVod: (id: number) => invoke<void>("retranscribe_vod", { id }),
+  /** Transcribes a VOD again: all of it, or with `outdated`, the parts made by an older version. */
+  retranscribeVod: (id: number, outdated = false) => invoke<void>("retranscribe_vod", { id, outdated }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
   search: (query: string, filter: SearchFilter) =>

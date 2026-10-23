@@ -21,7 +21,7 @@
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, nearestLine, type Row } from "./rows";
-  import { gaps as gapsOf, type Gap } from "./stretches";
+  import { shownGaps, type Gap } from "./stretches";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
@@ -152,13 +152,10 @@
   });
 
   // The parts not transcribed, each with the request that will transcribe it,
-  // if any: rows of their own among the lines. Before anything is transcribed
-  // or asked for, the empty state says so instead.
-  let gaps = $derived.by((): Gap[] => {
-    if (!vod) return [];
-    const found = gapsOf(stretches, vod.duration);
-    return lines.length > 0 || found.some((g) => g.request) ? found : [];
-  });
+  // if any: rows of their own among the lines, even with none yet (a part
+  // transcribed that was silence). Before anything is transcribed or asked
+  // for, the empty state says so instead (stretches.ts `shownGaps`).
+  let gaps = $derived(vod ? shownGaps(stretches, vod.duration, vod.transcribed, lines.length) : []);
 
   /** Asks for `start` to `end` (null: the end) to be transcribed. */
   function transcribe(start: number, end: number | null) {

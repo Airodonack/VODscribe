@@ -8,12 +8,13 @@
   // The contents of one library row: thumbnail, title, status and actions. The
   // row element itself (selection, dragging) belongs to Library, since
   // animate:flip has to sit directly inside its keyed list.
-  import { api, type Vod } from "./api";
+  import { api, type Stretch, type Vod } from "./api";
   import { demoOff } from "./demo";
   import { ask, choose } from "./ask";
   import Icon from "./Icon.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, os, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
+  import { requestDetail } from "./stretches";
   import Spinner from "./Spinner.svelte";
   import Thumb from "./Thumb.svelte";
 
@@ -47,24 +48,34 @@
     none: "",
   };
 
-  // Nothing asked of it, and not all of it transcribed: how much is, for "some".
+  // Nothing asked of it, and not all of it transcribed.
   const untouched = $derived(vod.status === "none");
-  let covered = $state(0);
+  // Its stretches, read when the row says something of them: how much is
+  // transcribed (for "some"), or the range of the request it shows. Read
+  // again when what's asked changes, not at each progress event.
+  let stretches = $state.raw<Stretch[]>([]);
+  const wanted = $derived(vod.stretch !== null || (untouched && vod.transcribed === "some"));
+  const asked = $derived(`${vod.stretch} ${vod.status === "none"} ${vod.transcribed} ${vod.waiting}`);
   $effect(() => {
-    if (vod.transcribed !== "some" || vod.status !== "none") return;
+    void asked;
+    if (!wanted) return;
     let current = true;
     api.transcriptStretches(vod.id).then(
-      (stretches) => {
-        if (!current) return;
-        const end = vod.duration ?? Infinity;
-        covered = stretches
-          .filter((s) => s.status === "done")
-          .reduce((sum, s) => sum + Math.max(0, Math.min(s.end ?? end, end) - s.start), 0);
-      },
+      (s) => current && (stretches = s),
       (e) => console.error("stretches", e),
     );
     return () => (current = false);
   });
+  const covered = $derived.by(() => {
+    const end = vod.duration ?? Infinity;
+    return stretches
+      .filter((s) => s.status === "done")
+      .reduce((sum, s) => sum + Math.max(0, Math.min(s.end ?? end, end) - s.start), 0);
+  });
+  // After the request's state: its range, unless it's all of it, and how many more wait.
+  const detail = $derived(
+    requestDetail(stretches.find((s) => s.id === vod.stretch) ?? null, vod.duration, vod.waiting, formatTime),
+  );
   const active = $derived(vod.status === "downloading" || vod.status === "transcribing");
   const showBar = $derived(active || (vod.status === "paused" && vod.progress > 0));
   const platform = $derived(siteName(vod));
@@ -133,6 +144,19 @@
   function act(action: Promise<unknown>) {
     onerror(null);
     action.catch((e) => onerror(String(e)));
+  }
+
+  // Only some of it transcribed, some of that by an older version: those
+  // parts again, each a request, their lines replaced as the new ones come.
+  async function retranscribeOutdated() {
+    if (
+      await ask(
+        `Transcribe the parts of “${vod.title}” made with an older version again? Their lines will be replaced, and the audio may need to download again.`,
+        "Transcribe again",
+      )
+    ) {
+      act(api.retranscribeVod(vod.id, true));
+    }
   }
 
   // The new transcript replaces the old one as it comes.
@@ -280,7 +304,7 @@
       <span class="status" class:active class:error-text={vod.status === "error"}>
         {#if active}<span class="pulse" aria-hidden="true"></span>{/if}
         {#if vod.status === "error"}<Icon name="error" size={13} />{/if}
-        {statusLabel[vod.status]}{#if showBar}<span class="pct">{Math.round(vod.progress * 100)}%</span>{/if}
+        {statusLabel[vod.status]}{#if showBar}<span class="pct">{Math.round(vod.progress * 100)}%</span>{/if}{detail}
       </span>
     {/if}
     {#if showBar}
@@ -294,7 +318,7 @@
         title="VODscribe's speech recognition has improved since this was made. Transcribe it again for a better transcript."
       >
         <Icon name="warning" size={13} />
-        {vod.status === "done" ? "Made with an older version" : "Will restart with the newer version"}
+        {vod.status === "done" || untouched ? "Made with an older version" : "Will restart with the newer version"}
       </span>
     {:else if vod.note}
       <span class="note muted" title={vod.note}>{vod.note}</span>
@@ -315,6 +339,17 @@
     >
       <Icon name="captions" size={15} />
     </button>
+    {#if vod.outdated}
+      <button
+        class="row-act warn"
+        onclick={retranscribeOutdated}
+        title="Transcribe again with the newer version: the parts made with an older one"
+        aria-label="Transcribe again"
+        {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD again.")}
+      >
+        <Icon name="redo" size={15} />
+      </button>
+    {/if}
   {:else if vod.status === "error"}
     <button class="row-act" onclick={() => act(api.retryVod(vod.id))} title="Retry" aria-label="Retry">
       <Icon name="redo" size={15} />

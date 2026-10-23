@@ -1,7 +1,8 @@
 // What of a VOD is transcribed (stretches.ts): node --test apps/desktop/src/lib/stretches.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { covered, gaps, showsProgress, transcribeRest } from "./stretches.ts";
+import { formatTime } from "./platform.ts";
+import { covered, gaps, requestDetail, showsProgress, shownGaps, transcribeRest } from "./stretches.ts";
 
 let ids = 0;
 /**
@@ -114,4 +115,26 @@ test("a VOD's row keeps the request it shows while another runs beside it", () =
   // The one shown, whatever it now is.
   assert.equal(showsProgress(1, "transcribing", 1, "done"), true);
   assert.equal(showsProgress(1, "transcribing", 2, "ready"), false);
+});
+
+test("once some is transcribed, its gaps show though it has no lines yet", () => {
+  // 2:00–3:00 transcribed, all silence: no lines, nothing asked.
+  const silent = [stretch(120, 180)];
+  assert.deepEqual(spans(shownGaps(silent, 600, "some", 0)), [
+    [0, 120, null],
+    [180, null, null],
+  ]);
+  // Before anything is transcribed or asked for, the empty state says so instead.
+  assert.deepEqual(shownGaps([], 600, "none", 0), []);
+  assert.equal(shownGaps([stretch(0, null, "queued")], 600, "none", 0).length, 1, "a request shows");
+  assert.deepEqual(shownGaps([stretch(0, null)], 600, "all", 0), [], "all of it: no speech found");
+});
+
+test("a row's request says its range and how many more wait", () => {
+  assert.equal(requestDetail({ start: 720, end: 1320 }, 3600, 0, formatTime), " · 12:00–22:00");
+  assert.equal(requestDetail({ start: 600, end: null }, 3600, 2, formatTime), " · 10:00–1:00:00 · 2 more waiting");
+  assert.equal(requestDetail({ start: 0, end: null }, 3600, 0, formatTime), "", "all of it needs no saying");
+  assert.equal(requestDetail({ start: 0, end: null }, 3600, 1, formatTime), " · 1 more waiting");
+  assert.equal(requestDetail({ start: 600, end: null }, null, 0, formatTime), " · from 10:00", "to an end not known");
+  assert.equal(requestDetail(null, 3600, 0, formatTime), "");
 });

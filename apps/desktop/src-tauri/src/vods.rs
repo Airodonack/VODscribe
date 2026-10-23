@@ -539,9 +539,15 @@ pub(crate) async fn retry_vod(app: AppHandle, state: State<'_, AppState>, id: i6
 
 /// Transcribes a finished VOD again, e.g. with a better model: a request for
 /// all of it, whose lines replace the old ones as they come (a failed
-/// request it replaces goes).
+/// request it replaces goes). With `outdated`, only the parts transcribed
+/// by a model this version no longer uses, each a request.
 #[tauri::command]
-pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+pub(crate) async fn retranscribe_vod(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: i64,
+    outdated: Option<bool>,
+) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
     match db.vod(id).map_err(err)? {
         Some(vod) if matches!(vod.status, Status::Done | Status::Error | Status::None) => {}
@@ -552,7 +558,13 @@ pub(crate) async fn retranscribe_vod(app: AppHandle, state: State<'_, AppState>,
             db.delete_stretch(failed.id)?;
         }
         db.set_note(id, None)?;
-        db.request(id, 0.0, None)?;
+        if outdated == Some(true) {
+            for (start, end) in db.outdated_ranges(id)? {
+                db.request(id, start, end)?;
+            }
+        } else {
+            db.request(id, 0.0, None)?;
+        }
         anyhow::Ok(())
     })
     .map_err(err)?;

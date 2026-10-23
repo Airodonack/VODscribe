@@ -243,6 +243,19 @@ impl Db {
         Ok(stmt.query_map([vod_id], stretch_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The ranges of VOD `vod_id` transcribed by a model this version no
+    /// longer uses (or before models were recorded), as (start, end), an end
+    /// of None being the VOD's end: what "Transcribe again" asks for when only
+    /// some of it is transcribed.
+    pub fn outdated_ranges(&self, vod_id: i64) -> Result<Vec<(f64, Option<f64>)>> {
+        Ok(self
+            .stretches(vod_id)?
+            .into_iter()
+            .filter(|s| s.status == Status::Done && !s.model.as_deref().is_some_and(crate::model::is_current))
+            .map(|s| (s.start, s.end))
+            .collect())
+    }
+
     /// VOD `vod_id`'s requests, in the order they were made.
     pub fn requests(&self, vod_id: i64) -> Result<Vec<Stretch>> {
         let sql = format!("SELECT {STRETCH_COLUMNS} FROM stretches WHERE vod_id = ?1 AND status != 'done' ORDER BY id");
@@ -537,6 +550,18 @@ mod tests {
         db.merge_done(vod, None).unwrap();
         assert_eq!(done(&db, vod), [(100.0, Some(150.0), m("a")), (150.0, Some(200.0), m("b")), (200.0, None, m("a"))]);
         assert_eq!(db.requests(vod).unwrap(), []);
+    }
+
+    #[test]
+    fn the_ranges_made_by_an_older_model_are_found() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("a", Some(600.0))).unwrap().0.id;
+        let old = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8";
+        db.insert_done(vod, 0.0, Some(100.0), Some(old)).unwrap();
+        db.insert_done(vod, 100.0, Some(200.0), Some(crate::model::CPU_MODEL.id)).unwrap();
+        db.insert_done(vod, 300.0, None, None).unwrap();
+        db.request(vod, 400.0, Some(450.0)).unwrap();
+        assert_eq!(db.outdated_ranges(vod).unwrap(), [(0.0, Some(100.0)), (300.0, None)]);
     }
 
     #[test]
