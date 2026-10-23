@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-storyboard-frame"
+description = "Enables the storyboard_frame command without any pre-configured scope."
+commands.allow = ["storyboard_frame"]
+
+[[permission]]
+identifier = "deny-storyboard-frame"
+description = "Denies the storyboard_frame command without any pre-configured scope."
+commands.deny = ["storyboard_frame"]

@@ -40,6 +40,14 @@ struct Open {
     embed: Option<u64>,
 }
 
+impl Native {
+    /// Whether a player is playing something other than `doc`: work in the
+    /// background for `doc` waits meanwhile, so playing stays smooth.
+    pub(crate) fn playing_other(&self, doc: Doc) -> bool {
+        self.open.lock().unwrap().as_ref().is_some_and(|o| o.doc != doc && o.player.playing())
+    }
+}
+
 /// What the page is told of the player: `running` once the time moves
 /// (playing, it stands until the picture and sound start), for the page's
 /// clock to run from then rather than from the play, and at `speed`; and

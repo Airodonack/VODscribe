@@ -396,6 +396,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
 #[tauri::command]
 pub(crate) fn set_view(app: AppHandle, view: Option<Doc>) {
     app.state::<AppState>().history.0.lock().unwrap().view = view;
+    crate::storyboards::opened(&app, view);
 }
 
 /// Undoes the newest change in `view`'s history; what it was, if there was one.

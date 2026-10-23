@@ -16,6 +16,7 @@ pub mod compose;
 pub mod decode;
 pub mod present;
 pub mod sound;
+pub mod storyboard;
 pub mod timeline;
 
 /// A box on the page, in CSS pixels from the window's top-left corner.

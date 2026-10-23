@@ -79,6 +79,7 @@ impl Videos {
             let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
             if error.is_none() {
                 let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
+                state.storyboards.push(id);
             }
         })
     }
@@ -269,6 +270,7 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
         if !state.videos.wanted(id) {
             pipeline::remove_media(&work, id);
         }
+        crate::storyboards::forget_gone(&app, id);
     }
     Ok(kept)
 }

@@ -1,7 +1,8 @@
 //! Work done one job at a time, in the order asked, on a thread of its own:
 //! clips cut (clips.rs), edits rendered (edits.rs), videos downloaded
-//! (videos.rs). A queue keeps what's waiting and what's running with its
-//! stop, so a job can be taken out before its turn, or stopped during it.
+//! (videos.rs), storyboards made (storyboards.rs). A queue keeps what's
+//! waiting and what's running with its stop, so a job can be taken out
+//! before its turn, or stopped during it.
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -52,6 +53,24 @@ impl<J: Clone + Send + 'static> Jobs<J> {
             return false;
         }
         queue.waiting.push_back(job);
+        wake.notify_one();
+        true
+    }
+
+    /// Puts `job` first: the one `same` finds waiting is moved there, or
+    /// `job` is added there unless one is running; whether it was added.
+    pub(crate) fn push_front(&self, job: J, same: impl Fn(&J) -> bool) -> bool {
+        let (queue, wake) = &*self.shared;
+        let mut queue = queue.lock().unwrap();
+        if let Some(at) = queue.waiting.iter().position(&same) {
+            let waiting = queue.waiting.remove(at).expect("found");
+            queue.waiting.push_front(waiting);
+            return false;
+        }
+        if queue.running.as_ref().is_some_and(|(j, _)| same(j)) {
+            return false;
+        }
+        queue.waiting.push_front(job);
         wake.notify_one();
         true
     }
@@ -175,6 +194,21 @@ mod tests {
         assert!(!jobs.push_new(1, |&j| j == 1), "running: push_new won't");
         assert!(jobs.push_once(1, |&j| j == 1), "running: push_once will, to run again after");
         assert_eq!(jobs.listed(), [1, 2, 1]);
+    }
+
+    /// As a storyboard is for the VOD opened: first, moved there if it's waiting.
+    #[test]
+    fn a_job_pushed_to_the_front_goes_next() {
+        let jobs = Jobs::new();
+        for n in [1, 2, 3] {
+            jobs.push(n);
+        }
+        assert!(!jobs.push_front(3, |&j| j == 3), "moved, not added");
+        assert!(jobs.push_front(4, |&j| j == 4));
+        assert_eq!(jobs.listed(), [4, 3, 1, 2]);
+        jobs.shared.0.lock().unwrap().running = Some((5, Arc::default()));
+        assert!(!jobs.push_front(5, |&j| j == 5), "running already");
+        assert_eq!(jobs.listed(), [5, 4, 3, 1, 2]);
     }
 
     #[test]

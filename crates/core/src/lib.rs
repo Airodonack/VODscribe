@@ -168,6 +168,13 @@ impl Paths {
         self.local.join("peaks")
     }
 
+    /// Small frames of each file here, for the timeline's thumbnail and a
+    /// file's picture (crates/player `storyboard`). Made again if gone, but
+    /// slowly, so not a cache either.
+    pub fn storyboards(&self) -> PathBuf {
+        self.local.join("storyboards")
+    }
+
     /// Chat emote images (see `emotes`).
     pub fn emotes(&self) -> PathBuf {
         self.local.join("emotes")

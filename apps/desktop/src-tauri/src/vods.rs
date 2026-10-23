@@ -332,6 +332,7 @@ fn erase_source(app: &AppHandle, db: &Db, id: i64) -> anyhow::Result<()> {
     pipeline::remove_media(&paths.work(), id);
     thumbs::remove(&paths.thumbs(), id);
     vodscribe_core::peaks::remove(&paths.peaks(), id);
+    crate::storyboards::remove(app, id);
     crate::footage::remove(app, id);
     if db.uses(id)? > 0 {
         db.set_gone(id)?;
@@ -465,6 +466,7 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, pipeline::remove_media)?;
+    crate::storyboards::forget_gone(&app, id);
     emit_vod(&app, &state.db.lock().unwrap(), id)
 }
 

@@ -196,7 +196,7 @@ pub fn section_of(path: &Path) -> Option<(i64, f64, f64)> {
 }
 
 /// VOD `vod_id`'s sections in `dir`: each file, and what it holds, from and to.
-fn sections(dir: &Path, vod_id: i64) -> Vec<(PathBuf, f64, f64)> {
+pub fn sections(dir: &Path, vod_id: i64) -> Vec<(PathBuf, f64, f64)> {
     let Ok(entries) = fs::read_dir(dir) else { return Vec::new() };
     entries
         .flatten()

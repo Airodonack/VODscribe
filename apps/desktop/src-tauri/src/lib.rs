@@ -22,6 +22,7 @@ mod player;
 mod recovery;
 mod screen;
 mod setup;
+mod storyboards;
 mod thumbnails;
 mod videos;
 mod vods;
@@ -56,6 +57,8 @@ struct AppState {
     footage: footage::Footage,
     /// Whole videos downloaded on request (`videos`).
     videos: videos::Videos,
+    /// Storyboards being made (`storyboards`).
+    storyboards: storyboards::Storyboards,
     /// What can be undone and redone (`history`).
     history: history::History,
     /// The app's own player, playing a VOD's file (player.rs).
@@ -153,6 +156,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         clips: clips::Cutter::new(),
         footage: footage::Footage::default(),
         videos: videos::Videos::new(),
+        storyboards: storyboards::Storyboards::new(),
         history: history::History::default(),
         player: player::Native::default(),
         embed: embed::Embed::default(),
@@ -161,8 +165,11 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     app.state::<AppState>().clips.run(app.handle().clone())?;
     app.state::<AppState>().videos.run(app.handle().clone())?;
     app.state::<AppState>().footage.run(app.handle().clone())?;
+    app.state::<AppState>().storyboards.run(app.handle().clone())?;
     let handle = app.handle().clone();
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
+    let handle = app.handle().clone();
+    std::thread::spawn(move || storyboards::sweep(&handle));
     // What quitting didn't get to of the VODs nothing uses any more.
     let handle = app.handle().clone();
     std::thread::spawn(move || vods::sweep(&handle, None));
@@ -338,6 +345,7 @@ pub fn run() {
             edits::add_to_edit,
             edits::add_range_to_edit,
             edits::edit_thumb,
+            storyboards::storyboard_frame,
             footage::vod_frame,
             footage::footage_bytes,
             footage::clear_footage,

@@ -1,10 +1,8 @@
 //! Local copies of VOD thumbnails: fetched when a VOD is added (or at startup,
 //! for VODs that don't have one yet) and handed to the UI over IPC.
 
-use std::path::Path;
-
 use tauri::{AppHandle, Manager, State};
-use vodscribe_core::{local, thumbs, tools};
+use vodscribe_core::thumbs;
 
 use crate::{AppState, CmdResult, emit_vod, err};
 
@@ -22,26 +20,25 @@ pub(crate) async fn thumbnail(state: State<'_, AppState>, name: String) -> CmdRe
 /// tried again, at each launch, before it's given up on.
 const RETRY_FOR_SECONDS: i64 = 7 * 24 * 3600;
 
-/// Saves a local copy of VOD `id`'s thumbnail: a frame of a local file, or the
-/// platform's image. A VOD with no usable image gets an empty `thumb` so it
+/// Saves a local copy of VOD `id`'s thumbnail: the platform's image, or for
+/// a local file a frame of its storyboard, which is asked for here
+/// (storyboards.rs). A VOD with no usable image gets an empty `thumb` so it
 /// isn't tried again; network failures are retried next launch, for a week
 /// after it was added (`RETRY_FOR_SECONDS`).
 pub(crate) fn cache_thumbnail(app: &AppHandle, id: i64) {
     let state = app.state::<AppState>();
     let Ok(Some(vod)) = state.db.lock().unwrap().vod(id) else { return };
-    let thumb = if let Some(source) = &vod.source_path {
-        let Some(ffmpeg) = tools::find_ffmpeg(&state.paths.bin()) else { return };
-        let frame = local::thumbnail(&ffmpeg, Path::new(source), &state.paths.thumbs(), id, vod.info.duration);
-        frame.ok().flatten().unwrap_or_default()
-    } else {
-        match vod.info.thumbnail.filter(|u| !u.is_empty()) {
-            None => String::new(),
-            Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
-                Ok(thumb) => thumb.unwrap_or_default(),
-                Err(_) if now() - vod.added_at > RETRY_FOR_SECONDS => String::new(),
-                Err(_) => return,
-            },
-        }
+    if vod.source_path.is_some() {
+        state.storyboards.push(id);
+        return;
+    }
+    let thumb = match vod.info.thumbnail.filter(|u| !u.is_empty()) {
+        None => String::new(),
+        Some(url) => match thumbs::fetch(&url, &state.paths.thumbs(), id) {
+            Ok(thumb) => thumb.unwrap_or_default(),
+            Err(_) if now() - vod.added_at > RETRY_FOR_SECONDS => String::new(),
+            Err(_) => return,
+        },
     };
     let db = state.db.lock().unwrap();
     if db.set_thumb(id, &thumb).is_ok() {

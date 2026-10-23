@@ -2,7 +2,6 @@
 //! They're transcribed where they are: the app reads them but never copies,
 //! moves or deletes them.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -275,28 +274,6 @@ pub fn frame(ffmpeg: &Path, path: &Path, time: f64, width: u32) -> Result<Vec<u8
     Ok(out.stdout)
 }
 
-/// Saves a frame from a tenth of the way in as VOD `id`'s thumbnail. `None` for
-/// audio-only files.
-pub fn thumbnail(ffmpeg: &Path, path: &Path, dir: &Path, id: i64, duration: Option<f64>) -> Result<Option<String>> {
-    fs::create_dir_all(dir)?;
-    crate::thumbs::remove(dir, id);
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-    let name = format!("{id}-{stamp}.jpg");
-    let at = duration.map_or(0.0, |d| d / 10.0);
-    let mut cmd = tools::command(ffmpeg);
-    let status = tools::ffmpeg_allow(&mut cmd, tools::FFMPEG_PICTURE)
-        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-ss", &format!("{at:.3}"), "-i"])
-        .arg(path)
-        .args(["-frames:v", "1", "-vf", "scale=480:-2", "-y"])
-        .arg(dir.join(&name))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .context("run ffmpeg")?;
-    Ok((status.success() && dir.join(&name).is_file()).then_some(name))
-}
-
 /// Whether `path` is inside `dir`, such as a file in the app's own data folder.
 pub fn is_inside(path: &Path, dir: &Path) -> bool {
     let (Ok(path), Ok(dir)) = (dunce::canonicalize(path), dunce::canonicalize(dir)) else { return false };
@@ -429,7 +406,7 @@ mod tests {
         assert!(jpeg.starts_with(&[0xff, 0xd8]), "a JPEG");
         // Real audio with a program's extension is still refused.
         let program = dir.join("clip.mp4.exe");
-        fs::copy(&video, &program).unwrap();
+        std::fs::copy(&video, &program).unwrap();
         assert!(probe(&ffmpeg, &program).unwrap_err().to_string().contains("isn't a video or audio file"));
 
         let info = probe(&ffmpeg, &video).unwrap();
@@ -437,10 +414,6 @@ mod tests {
         assert!((info.duration.unwrap() - 2.0).abs() < 0.2, "{:?}", info.duration);
         // A video without sound is taken (to play and edit; nothing to transcribe).
         assert!(probe(&ffmpeg, &silent).is_ok());
-
-        let thumbs = dir.join("thumbs");
-        let name = thumbnail(&ffmpeg, &video, &thumbs, 7, info.duration).unwrap().unwrap();
-        assert!(name.starts_with("7-") && crate::thumbs::mime(&name) == Some("image/jpeg"));
     }
 
     #[test]

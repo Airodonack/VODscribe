@@ -57,6 +57,7 @@ permissions = [
   "allow-add-to-edit",
   "allow-add-range-to-edit",
   "allow-edit-thumb",
+  "allow-storyboard-frame",
   "allow-vod-frame",
   "allow-footage-bytes",
   "allow-clear-footage",
