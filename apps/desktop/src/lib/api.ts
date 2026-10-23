@@ -557,6 +557,8 @@ export const api = {
     invoke<void>("delete_vod", { id, deleteVideo, anyway }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
+  /** Ends request `id` alone, keeping the lines it wrote. */
+  cancelStretch: (id: number) => invoke<void>("cancel_stretch", { id }),
   retranscribeVod: (id: number) => invoke<void>("retranscribe_vod", { id }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
@@ -566,6 +568,9 @@ export const api = {
   twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
   /** The transcript's lines; with `after`, only those starting after it. */
   transcript: (vodId: number, after?: number) => invoke<Line[]>("transcript", { vodId, after }),
+  /** The lines starting from `from` to before `to` (null: on to the end): a stretch's, as it's transcribed. */
+  transcriptRange: (vodId: number, from: number, to: number | null) =>
+    invoke<Line[]>("transcript", { vodId, from, to }),
   transcriptStretches: (vodId: number) => invoke<Stretch[]>("transcript_stretches", { vodId }),
   /** Asks for `start`..`end` (null: to the end) of a VOD to be transcribed. */
   transcribeStretch: (vodId: number, start: number, end: number | null) =>

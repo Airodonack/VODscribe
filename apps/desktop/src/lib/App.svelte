@@ -345,8 +345,18 @@
     unlisten.push(
       await events.vod(
         afterLoad((vod) => {
+          const was = vodsById.get(vod.id);
           upsert(vod);
-          if (vod.status === "done") runSearch();
+          // Search covers what's transcribed and the chat fetched: it's run
+          // again when more of a VOD is transcribed, a request ends (its lines
+          // in) or starts over lines, or its chat comes in.
+          const changed =
+            !was ||
+            vod.transcribed !== was.transcribed ||
+            vod.status !== was.status ||
+            vod.stretch !== was.stretch ||
+            vod.chat !== was.chat;
+          if (changed) runSearch();
         }),
       ),
       await events.vodProgress(

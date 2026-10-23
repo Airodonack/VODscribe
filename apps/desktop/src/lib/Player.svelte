@@ -178,6 +178,7 @@
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
   let captionsAvailable = $state(false);
+  let captionsNone = $state(false);
   let captionsOn = $state(false);
   let playerDuration = $state(0);
   let poll = 0;
@@ -190,6 +191,7 @@
     playerDuration = p.duration?.() ?? 0;
     cuts.fps = reading.fps;
     captionsAvailable = p.captions?.available() ?? false;
+    captionsNone = p.captions?.none?.() ?? false;
     captionsOn = p.captions?.on() ?? false;
   }
   const now = $derived(reading.now);
@@ -561,6 +563,7 @@
       rate={reading.rate}
       {fps}
       {captionsAvailable}
+      {captionsNone}
       {captionsOn}
       {fullscreen}
       canFullscreen

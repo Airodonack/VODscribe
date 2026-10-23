@@ -108,6 +108,7 @@ permissions = [
   "allow-retranscribe-vod",
   "allow-resume-vod",
   "allow-cancel-vod",
+  "allow-cancel-stretch",
   "allow-search",
   "allow-transcript",
   "allow-transcript-stretches",

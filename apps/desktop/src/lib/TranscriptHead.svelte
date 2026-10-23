@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Vod } from "./api";
+  import { api, type Stretch, type Vod } from "./api";
+  import { formatTime } from "./platform";
   import type { EventKind } from "./events";
   import Icon from "./Icon.svelte";
   import Spinner from "./Spinner.svelte";
@@ -11,6 +12,7 @@
   // its Chat button, and the Timeline button of the VOD with most time in it.
   let {
     vod,
+    stretch = null,
     timelineVod,
     lineCount,
     chatCount,
@@ -26,6 +28,8 @@
     height = $bindable(),
   }: {
     vod: Vod | null;
+    /** The stretch being transcribed, if any. */
+    stretch?: Stretch | null;
     /** Whose Timeline panel it shows: the VOD, or an edit's with most time in it. */
     timelineVod: Vod | null;
     lineCount: number;
@@ -46,6 +50,13 @@
     /** The header's height, for what's laid out below it. */
     height: number;
   } = $props();
+
+  // Which stretch is being transcribed; the whole VOD needs no saying.
+  const span = $derived(
+    stretch && !(stretch.start <= 0 && stretch.end === null)
+      ? `${formatTime(stretch.start)}–${formatTime(stretch.end ?? vod?.duration ?? 0)} · `
+      : "",
+  );
 </script>
 
 <div class="head" bind:offsetHeight={height}>
@@ -53,7 +64,7 @@
     <span class="eyebrow">Transcript</span>
     {#if vod?.status === "transcribing"}
       <span class="sep">·</span><Spinner label="Transcribing" />
-      Transcribing {Math.round(vod.progress * 100)}%
+      Transcribing {span}{Math.round(vod.progress * 100)}%
     {:else if lineCount > 0}
       <span class="sep">·</span>{lineCount} line{lineCount === 1 ? "" : "s"}
     {/if}

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { SearchHit, Vod } from "./api";
+  import { api, type SearchHit, type Vod } from "./api";
   import { DEMO_NAMES } from "./demo";
   import { formatTime } from "./platform";
+  import { gaps } from "./stretches";
   import Icon from "./Icon.svelte";
 
   let {
@@ -59,6 +60,23 @@
     return rows;
   }
   const key = (hit: SearchHit) => `${hit.source}-${hit.id}`;
+
+  // Search covers what's transcribed: where that isn't all, an empty search says so.
+  let untranscribed = $derived([...vods.values()].filter((v) => v.transcribed === "none").length);
+  let error = $state<string | null>(null);
+
+  /** Asks for every part of `vod` not transcribed, nor asked for yet, to be transcribed. */
+  async function transcribeRest(vod: Vod) {
+    try {
+      const stretches = await api.transcriptStretches(vod.id);
+      for (const gap of gaps(stretches, vod.duration)) {
+        if (!gap.request) await api.transcribeStretch(vod.id, gap.start, gap.end);
+      }
+      error = null;
+    } catch (e) {
+      error = String(e);
+    }
+  }
 </script>
 
 {#snippet match(hit: SearchHit)}
@@ -125,6 +143,24 @@
         No matches for <strong>“{query}”</strong>{#if scope}{" "}in <strong>{scope.title}</strong>{/if}.
       </p>
       <p class="muted">Search looks for these exact words, in this order. Try fewer words.</p>
+      {#if scope && scope.transcribed !== "all"}
+        <p class="muted">
+          Only chat and the transcribed parts are searched.
+          <!-- With a request waiting or under way, the rest is already asked for, or soon will be. -->
+          {#if scope.status === "none"}
+            {@const vod = scope}
+            <button class="link accent" onclick={() => transcribeRest(vod)}>Transcribe the rest</button>
+          {/if}
+        </p>
+        {#if error}<p class="error-text">{error}</p>{/if}
+      {:else if !scope && untranscribed > 0}
+        <p class="muted">
+          {untranscribed}
+          {untranscribed === 1
+            ? "VOD isn't transcribed: only its chat is searched."
+            : "VODs aren't transcribed: only their chat is searched."}
+        </p>
+      {/if}
       {#if scope}
         <button onclick={onclearscope}>Search all VODs</button>
       {/if}

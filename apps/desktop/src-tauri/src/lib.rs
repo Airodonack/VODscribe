@@ -396,6 +396,7 @@ pub fn run() {
             vods::retranscribe_vod,
             vods::resume_vod,
             vods::cancel_vod,
+            vods::cancel_stretch,
             vods::search,
             vods::transcript,
             vods::transcript_stretches,

@@ -138,7 +138,6 @@ impl Worker {
     /// the stage is told to stop and finishes the stop itself; otherwise
     /// `idle` runs, with the queue locked so no stage can start it meanwhile.
     /// Returns whether a stage was running it.
-    #[allow(dead_code)] // The transcript panel's Stop, to come.
     pub fn control(&self, stretch_id: i64, reason: Stop, idle: impl FnOnce() -> Result<()>) -> Result<bool> {
         let queue = self.queue.lock().unwrap();
         if let Some(job) = queue.jobs.iter().find(|j| j.stretch_id == stretch_id) {

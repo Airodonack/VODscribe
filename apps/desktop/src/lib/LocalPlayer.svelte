@@ -8,7 +8,7 @@
 
   import { landingSeeks } from "./mediaSeek";
   import { onDestroy, onMount } from "svelte";
-  import { api, type Cue, type Vod } from "./api";
+  import { api, events, type Cue, type Vod } from "./api";
   import { holdToCarry } from "./dragout";
   import { DEFAULT_FPS, cueAt, elementSound, stepTime, unplayable } from "./media";
   import { prefs } from "./playerPrefs.svelte";
@@ -50,10 +50,7 @@
     // Through seek: before its metadata is in, a video may drop where it's put.
     seek(start, false);
     if (autoplay) v.play().catch(() => {});
-    api.captions(vod.id).then(
-      (c) => (cues = c),
-      (e) => console.error("captions", e),
-    );
+    fetchCues();
     api.frameRate(vod.id).then(
       (f) => (fps = f),
       (e) => console.error("frame rate", e),
@@ -89,8 +86,18 @@
     }
   }
 
+  // Asked again as the VOD changes: a stretch transcribed brings its captions.
+  function fetchCues() {
+    api.captions(vod.id).then(
+      (c) => !destroyed && (cues = c),
+      (e) => console.error("captions", e),
+    );
+  }
+  const changed = events.vod((v) => v.id === vod.id && fetchCues());
+
   onDestroy(() => {
     destroyed = true;
+    void changed.then((u) => u());
     cancelAnimationFrame(frame);
     press.stop();
     // Stop the download too: a <video> removed while loading keeps fetching.
@@ -143,6 +150,7 @@
 
   export const captions = {
     available: () => cues.length > 0,
+    none: () => cues.length === 0,
     on: () => prefs.captions,
     toggle: () => prefs.toggleCaptions(),
   };

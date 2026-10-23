@@ -115,3 +115,31 @@ test("a chapter's heading goes over the line starting nearest it", () => {
   assert.equal(nearestLine(lines, 99), 3);
   assert.equal(nearestLine([line(5)], 0), 0);
 });
+
+test("a line arriving in the middle keeps the keys of the rows after it", () => {
+  const before = buildRows([line(10), line(500)], 600, false);
+  const after = buildRows([line(10), line(200), line(500)], 600, false);
+  assert.equal(after[2].key, before[1].key);
+});
+
+test("a gap has a row where it starts, among the lines", () => {
+  const gap = { start: 120, end: 300, request: null };
+  assert.deepEqual(
+    buildRows([line(10), line(300)], 600, false, [gap]).map((r) => [r.line ? "line" : r.gap ? "gap" : "chat", r.from]),
+    [
+      ["line", 10],
+      ["gap", 120],
+      ["line", 300],
+    ],
+  );
+  // With chat, its minutes follow it, as a line's would.
+  assert.deepEqual(spans(buildRows([line(10), line(300)], 400, true, [gap])).slice(1, 6), [
+    ["line", 10, 60],
+    ["chat", 60, 120],
+    ["chat", 120, 180],
+    ["chat", 180, 240],
+    ["chat", 240, 300],
+  ]);
+  const rows = buildRows([line(10), line(300)], 400, true, [gap]);
+  assert.equal(rows[3].gap, gap, "the gap's row holds the chat of its first minute");
+});

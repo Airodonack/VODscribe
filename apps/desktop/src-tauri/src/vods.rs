@@ -608,6 +608,18 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
     emit_vod(&app, &state.db.lock().unwrap(), id)
 }
 
+/// Ends request `id` alone (the transcript's Stop), keeping the lines it
+/// wrote, as `cancel_vod` does for all of a VOD's.
+#[tauri::command]
+pub(crate) async fn cancel_stretch(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
+    let Some(vod_id) = state.db.lock().unwrap().stretch(id).map_err(err)?.map(|s| s.vod_id) else { return Ok(()) };
+    state
+        .worker
+        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths.work(), id))
+        .map_err(err)?;
+    emit_vod(&app, &state.db.lock().unwrap(), vod_id)
+}
+
 /// Asks for `start`..`end` seconds of VOD `vod_id` (`end` None: to its end)
 /// to be transcribed, after the requests already made. Its lines replace
 /// those there as they come.
@@ -658,9 +670,22 @@ pub(crate) struct Line {
     pub(crate) text: String,
 }
 
+/// VOD `vod_id`'s lines: all of them, those starting after `after`, or with
+/// `from`, those starting from it to before `to` (None: on to the end), the
+/// range of a stretch being transcribed, whose lines replace those there.
 #[tauri::command]
-pub(crate) async fn transcript(app: AppHandle, vod_id: i64, after: Option<f64>) -> CmdResult<Vec<Line>> {
-    let lines = crate::with_reads(app, move |db| db.lines(vod_id, after)).await?;
+pub(crate) async fn transcript(
+    app: AppHandle,
+    vod_id: i64,
+    after: Option<f64>,
+    from: Option<f64>,
+    to: Option<f64>,
+) -> CmdResult<Vec<Line>> {
+    let lines = crate::with_reads(app, move |db| match from {
+        Some(from) => db.lines_between(vod_id, from, to),
+        None => db.lines(vod_id, after),
+    })
+    .await?;
     Ok(lines.into_iter().map(|(start, end, text)| Line { start, end, text }).collect())
 }
 

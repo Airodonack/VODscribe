@@ -1500,17 +1500,27 @@ impl Db {
         Ok(())
     }
 
-    /// Each segment's start time and text, without the per-word timings that
-    /// `segments` also parses. This is what the transcript view needs.
-    /// VOD `vod_id`'s transcript lines as (start, text), all of them or those
-    /// starting after `after` (a transcription only adds lines at the end).
-    /// VOD `vod_id`'s lines as (start, end, text), those starting after `after` if given.
+    /// VOD `vod_id`'s lines as (start, end, text), without the per-word
+    /// timings that `segments` also parses: what the transcript view needs.
+    /// Those starting after `after`, if given.
     pub fn lines(&self, vod_id: i64, after: Option<f64>) -> Result<Vec<(f64, f64, String)>> {
         let mut stmt = self
             .conn
             .prepare("SELECT start, end, text FROM segments WHERE vod_id = ?1 AND start > ?2 ORDER BY start")?;
         let rows =
             stmt.query_map(params![vod_id, after.unwrap_or(f64::MIN)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// VOD `vod_id`'s lines starting from `from` to before `to` (None: on to
+    /// the end), as `lines` gives them: the ones a stretch being transcribed
+    /// replaces (`replace_segments`), so the view can replace them in turn.
+    pub fn lines_between(&self, vod_id: i64, from: f64, to: Option<f64>) -> Result<Vec<(f64, f64, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT start, end, text FROM segments WHERE vod_id = ?1 AND start >= ?2 AND (?3 IS NULL OR start < ?3)
+             ORDER BY start",
+        )?;
+        let rows = stmt.query_map(params![vod_id, from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -2564,6 +2574,10 @@ mod tests {
         assert_eq!(texts(None), ["one", "two", "three"]);
         assert_eq!(texts(Some(2.5)), ["three"], "only those after the last one shown");
         assert!(texts(Some(4.0)).is_empty());
+        let between =
+            |from, to| db.lines_between(vod, from, to).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
+        assert_eq!(between(2.5, Some(4.0)), ["two"], "from its start, to before its end");
+        assert_eq!(between(1.0, None), ["two", "three"], "on to the end");
     }
 
     #[test]

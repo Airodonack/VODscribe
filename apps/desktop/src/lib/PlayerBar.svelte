@@ -33,6 +33,7 @@
     rate,
     fps,
     captionsAvailable,
+    captionsNone = false,
     captionsOn,
     fullscreen,
     canFullscreen,
@@ -51,6 +52,8 @@
     /** The player's frame rate, for the time by frame. */
     fps: number;
     captionsAvailable: boolean;
+    /** The player would show captions, but there are none: nothing is transcribed yet. */
+    captionsNone?: boolean;
     captionsOn: boolean;
     fullscreen: boolean;
     canFullscreen: boolean;
@@ -204,14 +207,19 @@
       </div>
     </Popover>
   {/if}
-  {#if captionsAvailable}
+  {#if captionsAvailable || captionsNone}
     <button
       class="control"
-      class:on={captionsOn}
+      class:on={captionsOn && captionsAvailable}
       onclick={() => player?.captions?.toggle()}
-      aria-pressed={captionsOn}
+      disabled={!captionsAvailable}
+      aria-pressed={captionsOn && captionsAvailable}
       aria-label="Captions"
-      title={captionsOn ? "Hide captions (Shift+C)" : "Show captions (Shift+C)"}
+      title={!captionsAvailable
+        ? "Transcribe to get captions"
+        : captionsOn
+          ? "Hide captions (Shift+C)"
+          : "Show captions (Shift+C)"}
     >
       <Icon name="captions" size={16} />
     </button>
@@ -251,7 +259,7 @@
     color: inherit;
   }
 
-  .control:hover {
+  .control:hover:not(:disabled) {
     background: var(--surface-2);
   }
 

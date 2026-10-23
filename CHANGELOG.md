@@ -14,6 +14,10 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Transcribe, beside Split and Clip under the player (or T), transcribes part of a VOD: the selection, if there is one, or else from the playhead for 5 minutes, 15 minutes, an hour, to the end, or the whole VOD. It remembers your last choice. With a selection, it also transcribes that stretch again, replacing its lines.
 - The timeline of a VOD from a site shows its waveform only over the parts transcribed so far; elsewhere it's a flat line.
 - Moving the playhead in an edit or a clip just opened in the editor, before it is ready to play, no longer puts it back where it was a moment later: a cut (B) goes where the time shows, and Delete after it takes out only the stretch at the playhead, not the whole piece.
+- Where part of a VOD isn't transcribed, its transcript says so in place, from when to when, with Transcribe for just that part; a part waiting or being transcribed says how far it is, with Stop. A VOD with nothing transcribed yet offers Transcribe the whole VOD or Transcribe from here, and while a part is transcribed, the top of the transcript says which.
+- With nothing transcribed, the captions button is grayed out and says to transcribe for captions. A video file's captions come as soon as a part of it is transcribed, without opening it again.
+- A search that finds nothing in a VOD transcribed only in part says that only chat and the transcribed parts were searched, with Transcribe the rest. Across all VODs, it says how many aren't transcribed, so only their chat was searched.
+
 
 ## 0.5.1 — 2026-10-23
 

@@ -9,6 +9,7 @@
     type Line,
     type Mark,
     type SearchHit,
+    type Stretch,
     type Vod,
   } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
@@ -20,6 +21,7 @@
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
   import { HEAD_HEIGHT, buildRows, linesSpan, nearestLine, type Row } from "./rows";
+  import { gaps as gapsOf, type Gap } from "./stretches";
   import { cuts } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
@@ -76,24 +78,33 @@
   }
 
   let lines = $state.raw<Line[]>([]);
+  // What of the VOD is transcribed, and asked to be (stretches.ts).
+  let stretches = $state.raw<Stretch[]>([]);
   let error = $state<string | null>(null);
 
-  // Reload when the VOD changes, and periodically while it is still transcribing
-  // (segments are indexed as they are produced).
+  // Everything is read again when the VOD changes, and when what's asked of it
+  // does (a request made, started, ended); while a stretch is transcribed,
+  // its lines are read again as they come (below).
   // What chat is of: the VOD, or the edit as it is (its pieces place it).
   let vodId = $derived(vod?.id ?? -1);
-  let step = $derived(vod?.status === "transcribing" ? Math.floor(vod.progress * 20) : vod?.status);
+  let asked = $derived(vod ? `${vod.status} ${vod.stretch} ${vod.transcribed} ${vod.waiting}` : null);
+  // The request running (App.svelte keeps the VOD's status and progress as
+  // its events come), and how far, in twentieths: each step reads its lines.
+  let running = $derived(vod?.status === "transcribing" ? vod.stretch : null);
+  let step = $derived(running !== null ? Math.floor(vod!.progress * 20) : null);
   // An edit's lines are asked for again at each change to it.
   let revision = $derived(edit !== null && edits.open?.id === edit ? edits.open.revision : null);
   let duration = $derived(edit !== null ? edits.length : (vod?.duration ?? 0));
-  // Only the latest request's answer counts, so a slow older reload can't win.
-  // While transcribing, lines are only added at the end: just those are asked for.
+  // Only the latest request's answer counts, so a slow older reload can't win;
+  // reading everything again makes any stretch's read under way stale too.
   let seq = 0;
+  let rangeSeq = 0;
   $effect(() => {
     const id = vodId;
-    void step;
+    void asked;
     void revision;
     const mine = ++seq;
+    rangeSeq++;
     if (edit !== null) {
       api.editLines(edit).then(
         (l) => mine === seq && ((lines = l), (error = null)),
@@ -101,19 +112,83 @@
       );
       return;
     }
-    const have = untrack(() => lines);
-    const after = vod?.status === "transcribing" && have.length ? have[have.length - 1].start : undefined;
-    api.transcript(id, after).then(
-      (l) => {
+    Promise.all([api.transcript(id), api.transcriptStretches(id)]).then(
+      ([l, s]) => {
         if (mine !== seq) return;
-        lines = after === undefined ? l : [...have, ...l];
+        lines = l;
+        stretches = s;
         error = null;
       },
-      (e) => {
-        if (mine === seq) error = String(e);
-      },
+      (e) => mine === seq && (error = String(e)),
     );
   });
+
+  // A stretch being transcribed replaces the lines in its range as it goes
+  // (crates/core `replace_segments`): those are read again, and put in place
+  // of what was there, so a stretch in the middle doesn't mean reading all;
+  // and the stretches, so its row of what's still to come moves on below them.
+  $effect(() => {
+    const id = running;
+    void step;
+    if (id === null) return;
+    untrack(() => {
+      const stretch = stretches.find((s) => s.id === id);
+      // Not read yet: everything is being read, it with it.
+      if (!stretch) return;
+      const mine = ++rangeSeq;
+      const { start, end } = stretch;
+      Promise.all([api.transcriptRange(vodId, start, end), api.transcriptStretches(vodId)]).then(
+        ([l, s]) => {
+          if (mine !== rangeSeq) return;
+          const before = lines.filter((line) => line.start < start);
+          const after = end === null ? [] : lines.filter((line) => line.start >= end);
+          lines = [...before, ...l, ...after];
+          stretches = s;
+        },
+        (e) => mine === rangeSeq && (error = String(e)),
+      );
+    });
+  });
+
+  // The parts not transcribed, each with the request that will transcribe it,
+  // if any: rows of their own among the lines. Before anything is transcribed
+  // or asked for, the empty state says so instead.
+  let gaps = $derived.by((): Gap[] => {
+    if (!vod) return [];
+    const found = gapsOf(stretches, vod.duration);
+    return lines.length > 0 || found.some((g) => g.request) ? found : [];
+  });
+
+  /** Asks for `start` to `end` (null: the end) to be transcribed. */
+  function transcribe(start: number, end: number | null) {
+    if (!vod) return;
+    api.transcribeStretch(vod.id, start, end).catch((e) => (error = String(e)));
+  }
+
+  /** Stops request `id`, keeping the lines it has written. */
+  function stop(id: number) {
+    api.cancelStretch(id).catch((e) => (error = String(e)));
+  }
+
+  // A request's state at its place, in the words of the VOD's row (VodRow.svelte).
+  const requestLabels: Record<Stretch["status"], string> = {
+    queued: "Waiting to download",
+    downloading: "Downloading",
+    ready: "Waiting to transcribe",
+    transcribing: "Transcribing",
+    paused: "Paused",
+    done: "",
+    error: "Failed",
+  };
+  /** Request `request`'s state, as far as it's got: the VOD's own events have the latest of the one it shows. */
+  function requestLabel(request: Stretch): string {
+    const live = vod?.stretch === request.id ? vod : request;
+    const label = live.status === "none" ? "" : requestLabels[live.status];
+    const busy = live.status === "downloading" || live.status === "transcribing";
+    return busy ? `${label} ${Math.round(live.progress * 100)}%` : label;
+  }
+  // The stretch being transcribed, for the header.
+  let runningStretch = $derived(stretches.find((s) => s.id === running) ?? null);
 
   // Chat, beside the transcript and collapsible (remembered across VODs and
   // launches). A busy VOD's is a hundred thousand messages and more, so the
@@ -159,20 +234,22 @@
   }
 
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
-  let rows = $derived(buildRows(lines, duration, showChat));
+  let rows = $derived(buildRows(lines, duration, showChat, gaps));
 
   // Whether the marks open (cuts.svelte.ts) are this VOD's or edit's: then
   // so are the playhead and the moment pointed at on the timeline there.
   const mine = $derived(vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit);
 
-  // Each chapter's title (cuts.svelte.ts) as a heading over the line that
-  // starts nearest its start.
+  // Each chapter's title (cuts.svelte.ts) as a heading over the row that
+  // starts nearest its start: a line's, or a part not transcribed.
   const heads = $derived.by(() => {
-    const out = new Map<Line, Mark[]>();
-    if (!mine || !lines.length) return out;
+    const out = new Map<string, Mark[]>();
+    if (!mine) return out;
+    const anchors = rows.filter((row) => row.line || row.gap).map((row) => ({ start: row.from, key: row.key }));
+    if (!anchors.length) return out;
     for (const chapter of cuts.chapters) {
-      const line = lines[nearestLine(lines, chapter.start)];
-      out.set(line, [...(out.get(line) ?? []), chapter]);
+      const key = anchors[nearestLine(anchors, chapter.start)].key;
+      out.set(key, [...(out.get(key) ?? []), chapter]);
     }
     return out;
   });
@@ -190,11 +267,13 @@
   let width = $state(0);
   function estimate(row: Row): number {
     const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
-    const head = row.line ? (heads.get(row.line)?.length ?? 0) * HEAD_HEIGHT : 0;
-    const text = row.line ? head + 10 + 22.5 * Math.max(1, Math.ceil((row.line.text.length * 7.8) / textWidth)) : 0;
+    const head = (heads.get(row.key)?.length ?? 0) * HEAD_HEIGHT;
+    // A gap's row says what it is in about this many characters.
+    const chars = row.line ? row.line.text.length : row.gap ? 60 : 0;
+    const text = chars ? head + 10 + 22.5 * Math.max(1, Math.ceil((chars * 7.8) / textWidth)) : 0;
     if (!showChat) return text;
     const win = windows.get(row.key);
-    if (!row.line && !win?.total) return 0;
+    if (!row.line && !row.gap && !win?.total) return 0;
     // Before its chat is fetched, a row is guessed to hold a couple of messages.
     const messages = win ? win.messages.length : 2;
     const chat = messages * 21 + (win && win.total > win.messages.length ? 22 : 0) + (messages ? 4 : 0);
@@ -918,11 +997,30 @@
   let pointed = $derived(mine && cuts.pointed?.on === "timeline" ? cuts.pointed.time : null);
 </script>
 
+<!-- A part not transcribed: where it is, whether it's asked for, and Transcribe or Stop. -->
+{#snippet gapRow(gap: Gap)}
+  {@const request = gap.request}
+  <div class="row gap" data-time={gap.start}>
+    <span class="time"></span>
+    <span class="muted" title={request?.status === "error" ? (request.error ?? undefined) : undefined}>
+      {formatTime(gap.start)} – {formatTime(gap.end ?? duration)} · {request
+        ? requestLabel(request)
+        : "not transcribed"} ·
+      {#if request}
+        <button class="link accent" onclick={() => stop(request.id)}>Stop</button>
+      {:else}
+        <button class="link accent" onclick={() => transcribe(gap.start, gap.end)}>Transcribe</button>
+      {/if}
+    </span>
+  </div>
+{/snippet}
+
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
 
 <div class="layout">
   <TranscriptHead
     {vod}
+    stretch={runningStretch}
     timelineVod={chatVods[0] ?? null}
     lineCount={lines.length}
     {chatCount}
@@ -952,15 +1050,23 @@
     >
       {#if error}
         <p class="error-text">{error}</p>
-      {:else if lines.length === 0}
+      {/if}
+      {#if lines.length === 0 && gaps.length === 0}
         <p class="muted">
-          {!vod
-            ? "Nothing is said in this edit."
-            : vod.status === "done"
-              ? "No speech was found in this VOD."
-              : vod.status === "none"
-                ? "This VOD isn't transcribed."
-                : "The transcript appears here as it is produced."}
+          {#if !vod}
+            Nothing is said in this edit.
+          {:else if vod.transcribed === "none" && vod.status === "none"}
+            Not transcribed yet.
+            <button class="link accent" onclick={() => transcribe(0, null)}>Transcribe the whole VOD</button> ·
+            <!-- For now to the end; the popover of how long from here (PlayerBar's Transcribe) is to take this over. -->
+            <button class="link accent" onclick={() => transcribe(mine ? cuts.now : 0, null)}
+              >Transcribe from here</button
+            >
+          {:else if vod.transcribed === "all"}
+            No speech was found in this VOD.
+          {:else}
+            The transcript appears here as it is produced.
+          {/if}
         </p>
       {/if}
       <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>
@@ -971,18 +1077,18 @@
           class="line"
           data-index={range[0] + k}
           use:measure
-          class:empty={!row.line && !win?.total}
+          class:empty={!row.line && !row.gap && !win?.total}
           class:picked={row.line && picked(range[0] + k, row)}
           class:now={row.line && range[0] + k === nowRow}
         >
+          {#each heads.get(key) ?? [] as chapter (chapter.id)}
+            <button class="row chapter-head" data-time={chapter.start} onclick={() => play(chapter.start)}>
+              <span class="time">{formatTime(chapter.start)}</span>
+              <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
+            </button>
+          {/each}
           {#if row.line}
             {@const line = row.line}
-            {#each heads.get(line) ?? [] as chapter (chapter.id)}
-              <button class="row chapter-head" data-time={chapter.start} onclick={() => play(chapter.start)}>
-                <span class="time">{formatTime(chapter.start)}</span>
-                <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
-              </button>
-            {/each}
             <button
               class="row"
               data-time={line.start}
@@ -992,6 +1098,8 @@
               <span class="time">{formatTime(line.start)}</span>
               <span>{line.text}</span>
             </button>
+          {:else if row.gap}
+            {@render gapRow(row.gap)}
           {:else}
             <span></span>
           {/if}
@@ -1117,6 +1225,11 @@
     margin-top: 10px;
     font-weight: 600;
     color: var(--text);
+  }
+
+  /* A part not transcribed: it says so, and isn't a line to click. */
+  .row.gap:hover {
+    background: none;
   }
 
   .chapter-head .time {

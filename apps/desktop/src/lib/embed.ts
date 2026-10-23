@@ -50,8 +50,9 @@ export interface EmbeddedPlayer {
   volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
   /** Its speed, where the app's controls set it. */
   rate?: { get(): number; set(rate: number): void };
-  /** Captions from the transcript, where it shows them (the app's own player, or its picture under a site's). */
-  captions?: { available(): boolean; on(): boolean; toggle(): void };
+  /** Captions from the transcript, where it shows them (the app's own player, or its picture under a site's);
+   *  `none`: it would, but there are none (nothing transcribed yet). */
+  captions?: { available(): boolean; on(): boolean; toggle(): void; none?(): boolean };
   /** Shows controls of its own that can't be hidden (Twitch's), so the app's leave out sound and speed. */
   ownControls?: boolean;
   destroy(): void;
@@ -866,6 +867,7 @@ function bridge(
     // None once it's stopped (their plain player, its own captions).
     captions: {
       available: () => !stopped && cues.length > 0,
+      none: () => !stopped && cues.length === 0,
       on: () => prefs.captions,
       toggle: () => prefs.toggleCaptions(),
     },
