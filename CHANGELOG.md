@@ -4,24 +4,20 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.5.2 (unreleased)
 
-- The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
-- The window no longer sometimes stays empty for about two minutes when VODscribe starts.
-- Cancelling a transcription keeps the lines transcribed so far, instead of throwing them away.
-- On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.
-- Pointing at the timeline of a video on this computer (a file, a kept video, an edit's pieces) shows a small picture of that moment beside the time, and so does dragging the playhead. Dragging a selection's edge shows the frame at that edge: for the end, the last frame inside it, which the player now shows too. The pictures are made in the background from when a video is added, so a long one takes a moment.
-- Rest the pointer on the timeline once the video has played and the small picture becomes exactly the frame there, the one Play would start on, not just the nearest of the pictures kept.
-- Click where you rested the pointer and play: the video starts there at once, without the wait while it finds the frame.
-
-- A file's picture in the library is now a frame an eighth of the way in (it was a tenth), taken from the small frames VODscribe now keeps of each video on this computer for the timeline.
-- Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 0:24:00 of 3:04:00"), and Transcribe the rest does what's left.
-- A VOD from a site whose player VODscribe can't show (anything but YouTube, Twitch and Kick) now shows its thumbnail: press Play to download its video, after the usual note about downloading, and it plays in VODscribe as it comes in (waiting where it hasn't yet), then stays on this computer. A site whose video can't come in parts plays it once it's all in. Keep video on the row does the same.
+- Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 24:00 of 3:04:00"), and Transcribe the rest does what's left.
 - Transcribe, beside Split and Clip under the player (or T), transcribes part of a VOD: the selection, if there is one, or else from the playhead for 5 minutes, 15 minutes, an hour, to the end, or the whole VOD. It remembers your last choice. With a selection, it also transcribes that stretch again, replacing its lines.
-- The timeline of a VOD from a site shows its waveform only over the parts transcribed so far; elsewhere it's a flat line.
-- Moving the playhead in an edit or a clip just opened in the editor, before it is ready to play, no longer puts it back where it was a moment later: a cut (B) goes where the time shows, and Delete after it takes out only the stretch at the playhead, not the whole piece.
 - Where part of a VOD isn't transcribed, its transcript says so in place, from when to when, with Transcribe for just that part; a part waiting or being transcribed says how far it is, with Stop. A VOD with nothing transcribed yet offers Transcribe the whole VOD or Transcribe from here, and while a part is transcribed, the top of the transcript says which.
-- With nothing transcribed, the captions button is grayed out and says to transcribe for captions. A video file's captions come as soon as a part of it is transcribed, without opening it again.
 - A search that finds nothing in a VOD transcribed only in part says that only chat and the transcribed parts were searched, with Transcribe the rest. Across all VODs, it says how many aren't transcribed, so only their chat was searched.
-
+- With nothing transcribed, the captions button is grayed out and says to transcribe for captions. A video file's captions come as soon as a part of it is transcribed, without opening it again.
+- The timeline of a VOD from a site shows its waveform only over the parts transcribed so far; elsewhere it's a flat line.
+- Stopping a transcription keeps the lines transcribed so far, instead of throwing them away.
+- A VOD from a site whose player VODscribe can't show (anything but YouTube, Twitch and Kick) now shows its thumbnail: press Play to download its video, after the usual note about downloading, and it plays in VODscribe as it comes in (waiting where it hasn't yet), then stays on this computer. A site whose video can't come in parts plays it once it's all in. Keep video on the row does the same.
+- Pointing at the timeline of a video on this computer (a file, a kept video, an edit's pieces) shows a small picture of that moment beside the time, and so does dragging the playhead. Dragging a selection's edge shows the frame at that edge: for the end, the last frame inside it, which the player now shows too. The pictures are made in the background from when a video is added, so a long one takes a moment. Once the video has played, rest the pointer and the picture becomes exactly the frame there, the one Play would start on; click there and play, and the video starts at once, without the wait while it finds the frame.
+- A file's picture in the library is now a frame an eighth of the way in (it was a tenth), taken from the small frames VODscribe now keeps of each video on this computer for the timeline.
+- Moving the playhead in an edit or a clip just opened in the editor, before it is ready to play, no longer puts it back where it was a moment later: a cut (B) goes where the time shows, and Delete after it takes out only the stretch at the playhead, not the whole piece.
+- On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.
+- The window no longer sometimes stays empty for about two minutes when VODscribe starts.
+- The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
 
 ## 0.5.1 — 2026-10-23
 

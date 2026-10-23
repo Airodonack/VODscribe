@@ -132,7 +132,7 @@ A **finding** is one of: time in our code that needn't be spent; engine time our
 
 ### Every release
 
-On the computer and box the last release was measured on (`vodscribe-trixie`, the WebKit of the developer's desktop):
+On the computer and box the last release was measured on (a Debian box whose WebKit matches the developer's desktop):
 
 1. `scripts/build-profiling.sh`, and the release build.
 2. Profiled once, the profiling build: `--only player-picture,player-seek,transcribe-search-play,search,search-large,clip,edits,export-whole --profile <dir>`.
