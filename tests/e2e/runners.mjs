@@ -139,7 +139,16 @@ async function windows() {
   const local = path.join(out, "run.cmd");
   writeFileSync(local, cmd);
   scp(local, `${runner.host}:${runner.dir}/run.cmd`);
-  ssh(`schtasks /create /tn vodscribe-e2e /sc once /st 23:59 /it /f /tr "${dir}\\run.cmd"`, { stdio: "ignore" });
+  // Started through a script host with no window of its own: run.cmd's
+  // console would otherwise open on the desktop, and on a computer whose
+  // console is Windows Terminal it opens large and in front, over the app's
+  // picture (the pixel checks then see the console, not the app).
+  const hidden = path.join(out, "run.vbs");
+  writeFileSync(hidden, `CreateObject("WScript.Shell").Run """${dir}\\run.cmd""", 0, False\r\n`);
+  scp(hidden, `${runner.host}:${runner.dir}/run.vbs`);
+  ssh(`schtasks /create /tn vodscribe-e2e /sc once /st 23:59 /it /f /tr "wscript.exe ${dir}\\run.vbs"`, {
+    stdio: "ignore",
+  });
   ssh(`schtasks /run /tn vodscribe-e2e`, { stdio: "ignore" });
   log("running");
   const begun = Date.now();
