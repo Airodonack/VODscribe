@@ -452,12 +452,23 @@ pub(crate) fn sweep(app: &AppHandle, db: Option<&Db>) {
 /// plays on its site instead.
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, pipeline::remove_media)?;
+    let remove = |work: &Path, id| remove_kept(&state.storyboards, work, id);
+    delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, remove)?;
     crate::storyboards::forget_gone(&app, id);
     emit_vod(&app, &state.db.lock().unwrap(), id)
 }
 
-/// `delete_video`'s work: `remove` deletes the files (`pipeline::remove_media`).
+/// Deletes VOD `id`'s kept video and what's left of downloading it
+/// (`pipeline::remove_media`), once its storyboard's ffmpeg has let go of
+/// them: a file another process has open can't be deleted on Windows, and
+/// would stay, its record gone. Called with the record forgotten already
+/// (no job starts on the file again) and the library let go of.
+pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, work: &Path, id: i64) {
+    storyboards.let_go(id);
+    pipeline::remove_media(work, id);
+}
+
+/// `delete_video`'s work: `remove` deletes the files (`remove_kept`).
 pub(crate) fn delete_kept_video(
     db: &std::sync::Mutex<Db>,
     videos: &crate::videos::Videos,

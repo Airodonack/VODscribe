@@ -22,6 +22,10 @@ use crate::history::Doc;
 use crate::jobs::Jobs;
 use crate::{AppState, emit_vod};
 
+/// How long a deletion waits for a storyboard's batch to end (`Storyboards::let_go`):
+/// a batch of a big file on a slow computer takes a few seconds.
+const LET_GO_WITHIN: Duration = Duration::from_secs(20);
+
 pub(crate) struct Storyboards {
     jobs: Jobs<i64>,
     /// Storyboards read, by their file: the timeline asks again at every move.
@@ -48,6 +52,17 @@ impl Storyboards {
     /// Makes VOD `id`'s storyboards next: it's open.
     pub(crate) fn push_front(&self, id: i64) {
         self.jobs.push_front(id, |&j| j == id);
+    }
+
+    /// Stops making VOD `id`'s storyboards, and waits (a while at most) for
+    /// the batch under way to end: its ffmpeg lets go of the VOD's files, which
+    /// can then be deleted. On Windows a file another process has open can't
+    /// be. Not under the library's lock: the job may wait for it.
+    pub(crate) fn let_go(&self, id: i64) {
+        self.jobs.take_waiting(|&j| j == id);
+        if !self.jobs.stop_and_wait(|&j| j == id, LET_GO_WITHIN) {
+            eprintln!("VOD {id}: its storyboard still reads its files");
+        }
     }
 
     /// Stops making VOD `id`'s storyboards, waiting or under way.
@@ -391,6 +406,74 @@ pub(crate) async fn storyboard_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// "Delete video" just after the video was kept, its storyboard being
+    /// made: the batch reading the file (ffmpeg holding it open) ends before
+    /// the file is deleted, so it is, rather than left behind untracked.
+    #[test]
+    fn a_video_deleted_while_its_storyboard_is_made_is_deleted() {
+        use std::sync::atomic::AtomicU64;
+        use std::sync::{Arc, mpsc};
+        use vodscribe_core::pipeline;
+        static N: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "vodscribe-sb-delete-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let work = root.join("work");
+        std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let id = db.add_vod(&info).unwrap().0.id;
+        let kept = pipeline::media_stem(&pipeline::media_dir(&work), id, "t").with_extension("mp4");
+        std::fs::write(&kept, b"video").unwrap();
+        db.set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
+        let db = std::sync::Mutex::new(db);
+        let videos = crate::videos::Videos::new();
+
+        // The storyboard's job: a batch reads the file till it's stopped,
+        // and says whether the file was deleted under it meanwhile.
+        let storyboards = Arc::new(Storyboards::new());
+        let (reading, is_reading) = mpsc::channel();
+        let (ended, has_ended) = mpsc::channel();
+        let file = kept.clone();
+        storyboards
+            .jobs
+            .run("storyboards-test", move |_, stop| {
+                let held = crate::open_as_ffmpeg(&file);
+                reading.send(()).unwrap();
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                let deleted_under_it = !file.exists();
+                drop(held);
+                ended.send(deleted_under_it).unwrap();
+            })
+            .unwrap();
+        storyboards.push(id);
+        is_reading.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let remove = |work: &Path, id| crate::vods::remove_kept(&storyboards, work, id);
+        crate::vods::delete_kept_video(&db, &videos, &work, id, remove).unwrap();
+        // Then `forget_gone`, as delete_video does.
+        storyboards.stop(id);
+        let deleted_under_it = has_ended.recv_timeout(Duration::from_secs(5)).unwrap();
+        let left = kept.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!deleted_under_it, "deleted while its storyboard's ffmpeg read it");
+        assert!(!left, "left behind, its record gone");
+        assert_eq!(db.lock().unwrap().media_path(id).unwrap(), None);
+    }
 
     #[test]
     fn a_files_storyboard_is_named_by_its_vod_and_path() {

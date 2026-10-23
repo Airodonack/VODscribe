@@ -217,7 +217,7 @@ fn stream_then_keep(
     record(&state.db, &state.videos, &paths.work(), vod.id, &out, stop)?;
     crate::player::refile(app, vod.id, &out, duration);
     // It's the kept video now.
-    let _ = std::fs::remove_file(&section.path);
+    crate::footage::drop_section(&section.path);
     Ok(())
 }
 
@@ -347,7 +347,7 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
     let _files = state.videos.files();
     for id in gone {
         if !state.videos.wanted(id) {
-            pipeline::remove_media(&work, id);
+            crate::vods::remove_kept(&state.storyboards, &work, id);
         }
         crate::storyboards::forget_gone(&app, id);
     }

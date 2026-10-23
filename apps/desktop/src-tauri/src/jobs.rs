@@ -108,6 +108,25 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
     }
 
+    /// Stops the job running if it's one `which` finds, and waits up to
+    /// `timeout` for it to end; whether none is running now. Not from a job.
+    pub(crate) fn stop_and_wait(&self, which: impl Fn(&J) -> bool, timeout: std::time::Duration) -> bool {
+        let (queue, wake) = &*self.shared;
+        let deadline = std::time::Instant::now() + timeout;
+        let mut queue = queue.lock().unwrap();
+        loop {
+            match &queue.running {
+                Some((job, stop)) if which(job) => stop.store(true, Ordering::Relaxed),
+                _ => return true,
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            queue = wake.wait_timeout(queue, left).unwrap().0;
+        }
+    }
+
     /// The job running, then those waiting, in order.
     pub(crate) fn listed(&self) -> Vec<J> {
         let queue = self.shared.0.lock().unwrap();
@@ -140,6 +159,8 @@ impl<J: Clone + Send + 'static> Jobs<J> {
                 };
                 work(job, &stop);
                 queue.lock().unwrap().running = None;
+                // For `stop_and_wait`.
+                wake.notify_all();
             }
         })?;
         Ok(())
@@ -194,6 +215,29 @@ mod tests {
         assert!(!jobs.push_new(1, |&j| j == 1), "running: push_new won't");
         assert!(jobs.push_once(1, |&j| j == 1), "running: push_once will, to run again after");
         assert_eq!(jobs.listed(), [1, 2, 1]);
+    }
+
+    /// As a storyboard's job lets go of a file about to be deleted.
+    #[test]
+    fn a_job_stopped_and_waited_for_has_ended() {
+        let jobs = Jobs::new();
+        let (began, has_begun) = mpsc::channel();
+        let ended = Arc::new(AtomicBool::new(false));
+        let mark = ended.clone();
+        jobs.run("jobs-test", move |_: i32, stop| {
+            began.send(()).unwrap();
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            mark.store(true, Ordering::Relaxed);
+        })
+        .unwrap();
+        jobs.push(1);
+        has_begun.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(jobs.stop_and_wait(|&j| j == 2, Duration::ZERO), "another one: nothing to wait for");
+        assert!(jobs.stop_and_wait(|&j| j == 1, Duration::from_secs(5)));
+        assert!(ended.load(Ordering::Relaxed), "returned before the job ended");
     }
 
     /// As a storyboard is for the VOD opened: first, moved there if it's waiting.

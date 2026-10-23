@@ -448,6 +448,20 @@ pub(crate) fn ensure_as(
     result
 }
 
+/// Deletes section `path`, no longer needed (its VOD's video is kept now).
+/// Something may still read it (on Windows, a file open can't be deleted):
+/// the player, for a moment after `player::refile` and in its preview's
+/// decoder, or a storyboard's batch. Then it's dated as unused for long, so
+/// the next tidying (within `TIDY_EVERY`) deletes it.
+pub(crate) fn drop_section(path: &std::path::Path) {
+    if std::fs::remove_file(path).is_ok() || !path.is_file() {
+        return;
+    }
+    if let Ok(file) = std::fs::File::options().write(true).open(path) {
+        let _ = file.set_modified(std::time::UNIX_EPOCH);
+    }
+}
+
 /// Removes footage sections' files from `work`: a section downloads there,
 /// and moves to the footage folder once done, so at startup any there are
 /// left by a quit or a crash mid-download (and are fetched again if needed).
@@ -466,4 +480,29 @@ fn part_file(work: &std::path::Path, prefix: &str) -> Option<PathBuf> {
         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
         name.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('.')) && name.ends_with(".part")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A section done with (its VOD's video kept from it) while the player
+    /// still reads it, as it does for a moment after `player::refile`, or the
+    /// preview's decoder longer: deleted, or else gone at the next tidying.
+    #[test]
+    fn a_section_still_read_goes_at_the_next_tidying_if_not_now() {
+        let dir = std::env::temp_dir().join(format!("vodscribe-drop-section-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{}.mkv", footage::section_stem(7, 0.0, 60.0)));
+        std::fs::write(&path, b"section").unwrap();
+        let held = crate::open_as_ffmpeg(&path);
+        drop_section(&path);
+        let left = path.is_file();
+        // The player lets go; then the next tidying, as `tidy` does it.
+        drop(held);
+        footage::tidy(&dir, UNUSED_FOR, u64::MAX, |_| false);
+        let still = path.is_file();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!still, "left after the next tidying (deleted now: {})", !left);
+    }
 }

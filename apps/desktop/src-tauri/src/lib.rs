@@ -459,6 +459,22 @@ fn quit(app: &AppHandle) {
     files::delete_leftovers();
 }
 
+/// Opens `path` as ffmpeg does, for tests: on Windows without sharing its
+/// deletion, so the file can't be deleted while it's open (as while the
+/// player or a storyboard reads it).
+#[cfg(test)]
+pub(crate) fn open_as_ffmpeg(path: &std::path::Path) -> std::fs::File {
+    let mut options = std::fs::File::options();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, not FILE_SHARE_DELETE (the C runtime's _wsopen).
+        options.share_mode(0x1 | 0x2);
+    }
+    options.open(path).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
