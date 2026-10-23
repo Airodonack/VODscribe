@@ -1,7 +1,7 @@
 // End-to-end tests of a VODscribe build: scenarios (scenarios/*.mjs), each
 // on a fresh library, driving the app through its page.
 //
-//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge]
+//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--profile <dir>]
 //
 // The webdriver driver (the default on Linux) runs the installed app through
 // tauri-driver, which must be on PATH (or TAURI_DRIVER), with the platform's
@@ -25,6 +25,10 @@
 // the new App, restart does both; skip ends the scenario as skipped (it
 // can't run here), not failed; checkpoint keeps a picture of the window
 // for looking at (out/checkpoints, contact-sheet.mjs).
+//
+// --profile <dir> (Linux, webdriver): each scenario's app sampled by perf,
+// with its children (lib/profile.sh, lib/profile.mjs): <dir>/<scenario>/
+// gets the recordings, folded.txt and top.txt (README, "Profiling").
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -37,18 +41,23 @@ import { resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
+import * as profile from "./lib/profile.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values: opts, positionals } = parseArgs({
   allowPositionals: true,
-  options: { only: { type: "string" }, driver: { type: "string" } },
+  options: { only: { type: "string" }, driver: { type: "string" }, profile: { type: "string" } },
 });
-const app = positionals[0];
-if (!app) {
-  console.error("usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge]");
+if (!positionals[0]) {
+  console.error("usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--profile <dir>]");
   process.exit(2);
 }
 const driverName = opts.driver ?? (process.platform === "linux" ? "webdriver" : "bridge");
+if (opts.profile && (process.platform !== "linux" || driverName !== "webdriver"))
+  throw new Error("--profile is for Linux, through the webdriver driver");
+// Profiled, the driver starts lib/profile.sh, which starts the app under perf.
+const profileDir = opts.profile && path.resolve(opts.profile);
+const app = profileDir ? profile.profiled(profileDir, positionals[0], process.env.PROFILE_CG) : positionals[0];
 const startDriver = drivers[driverName];
 if (!startDriver) throw new Error(`no driver ${driverName}`);
 
@@ -75,6 +84,8 @@ for (const warning of preflight()) console.log(`preflight: ${warning}`);
 
 const started = Date.now();
 const results = [];
+// Each profiled scenario's summary, for perf.json.
+const profiles = {};
 // How many checkpoints taken, numbering their files in order.
 let checkpoints = 0;
 rmSync(path.join(out, "checkpoints"), { recursive: true, force: true });
@@ -129,6 +140,7 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
     if (scenario.needs?.includes("network") && process.env.E2E_NETWORK !== "1")
       throw new Skip("needs the network: set E2E_NETWORK=1");
     resetData();
+    if (profileDir) profile.recordingFor(profileDir, name);
     // What a scenario sets up in the data folder before the app starts.
     await scenario.before?.(ctx);
     await scenario.run(await launch(), ctx);
@@ -147,12 +159,20 @@ for (const name of names.filter((n) => !only || only.includes(n))) {
   } finally {
     await current?.driver.close();
   }
+  if (profileDir) {
+    const summary = await profile.finish(profileDir, name).catch((e) => {
+      console.error(`${name}: its profile couldn't be read: ${e.message}`);
+      return null;
+    });
+    if (summary) profiles[name] = summary;
+  }
   results.push({ name, ok: !error, error, skipped, seconds: Math.round((Date.now() - begun) / 1000) });
   log(error ? "failed" : skipped ? `skipped: ${skipped}` : "passed");
 }
 
 mkdirSync(out, { recursive: true });
 writeFileSync(path.join(out, "results.json"), JSON.stringify(results, null, 2));
+if (profileDir) writeFileSync(path.join(profileDir, "profiles.json"), JSON.stringify(profiles, null, 2));
 const failed = results.filter((r) => !r.ok);
 console.log(`\ne2e: ${results.length - failed.length} of ${results.length} passed`);
 for (const r of results)

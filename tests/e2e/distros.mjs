@@ -24,6 +24,12 @@
 //                        container, drawing with the distribution's Mesa
 //                        (Intel and AMD GPUs; on a GPU Mesa has no driver
 //                        for, its software fallback)
+//   --profile            each scenario sampled by perf (run.mjs --profile),
+//                        into <the cell's results>/perf; perf installed in
+//                        the cell (Debian, Fedora and Arch: Ubuntu's perf
+//                        must match the host's kernel). The packaged app has
+//                        no symbols of ours: for our own code, profile the
+//                        profiling build instead (README, "Profiling").
 //
 // Portals, real desktops and window managers' own ways aren't here: that's
 // the QA VMs'.
@@ -53,6 +59,12 @@ const ENV_PACKAGES = {
   weston: { apt: ["weston"], dnf: ["weston"], pacman: ["weston"] },
   gnome: { apt: ["gnome-shell", "libglib2.0-bin"], dnf: ["gnome-shell"], pacman: ["gnome-shell"] },
 };
+
+/** perf, by package manager (with binutils, whose c++filt names Rust's symbols). */
+const PERF_PACKAGES = { apt: ["linux-perf", "binutils"], dnf: ["perf", "binutils"], pacman: ["perf", "binutils"] };
+
+/** What perf needs of podman: the kernel's sampling, which a container's defaults refuse. */
+const PERF_PODMAN = ["--security-opt", "seccomp=unconfined"];
 
 /** What each GPU needs installed, by package manager: NVIDIA's libraries come with its CDI device. */
 const GPU_PACKAGES = {
@@ -136,12 +148,13 @@ const { values: opts, positionals } = parseArgs({
     env: { type: "string", default: "x11" },
     scheme: { type: "string", default: "light" },
     gpu: { type: "string" },
+    profile: { type: "boolean" },
   },
 });
 const [packages, ...rest] = positionals;
 if (!packages) {
   console.error(
-    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia|dri] [-- run.mjs options]",
+    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia|dri] [--profile] [-- run.mjs options]",
   );
   process.exit(2);
 }
@@ -163,6 +176,11 @@ if (!Object.hasOwn(ENV_PACKAGES, opts.env))
 if (!["light", "dark"].includes(opts.scheme)) throw new Error(`no scheme ${opts.scheme} (light, dark)`);
 if (opts.gpu && !Object.hasOwn(GPU_PACKAGES, opts.gpu))
   throw new Error(`no GPU ${opts.gpu} (there are: ${Object.keys(GPU_PACKAGES).join(", ")})`);
+if (opts.profile) {
+  const ubuntu = names.filter((n) => /^(ubuntu|mint)/.test(n));
+  if (ubuntu.length)
+    throw new Error(`--profile: no perf for ${ubuntu.join(", ")} here (its perf must match the host's kernel)`);
+}
 /** The cell's name: the distribution, then what differs from the default. */
 const cell = (name) =>
   [name, opts.env !== "x11" && opts.env, opts.scheme !== "light" && opts.scheme, opts.gpu].filter(Boolean).join("-");
@@ -237,10 +255,14 @@ for (const name of names) {
     if (from && existsSync(from)) cpSync(from, path.join(data, kept), { recursive: true });
   }
   const quote = (a) => `'${a.replaceAll("'", "'\\''")}'`;
-  const args = rest.map(quote).join(" ");
+  const args = [...rest, ...(opts.profile ? ["--profile", "/out/perf"] : [])].map(quote).join(" ");
   const script = [
     "set -e",
-    `EXTRA="${[...ENV_PACKAGES[opts.env][distro.pm], ...(opts.gpu ? GPU_PACKAGES[opts.gpu][distro.pm] : [])].join(" ")}"`,
+    `EXTRA="${[
+      ...ENV_PACKAGES[opts.env][distro.pm],
+      ...(opts.gpu ? GPU_PACKAGES[opts.gpu][distro.pm] : []),
+      ...(opts.profile ? PERF_PACKAGES[distro.pm] : []),
+    ].join(" ")}"`,
     distro.install,
     "export XDG_DATA_HOME=/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
     // Passed on: scenarios that need the network, screenshots kept.
@@ -262,6 +284,7 @@ for (const name of names) {
       "--rm",
       ...(distro.podman ?? []),
       ...(opts.gpu ? GPU_DEVICES[opts.gpu]() : []),
+      ...(opts.profile ? PERF_PODMAN : []),
       "-v",
       `${repo}:/repo:ro`,
       "-v",
