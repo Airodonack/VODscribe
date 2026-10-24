@@ -16,7 +16,7 @@
 // and fro over the piece, never resting (the edit's player is open, and
 // rested, the player's exact frame would show instead).
 
-import { copyFileSync, mkdirSync, renameSync } from "node:fs";
+import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { DatabaseSync } from "node:sqlite";
@@ -69,7 +69,8 @@ export default {
   async run(app, ctx) {
     await app.toLibrary();
     const file = colours(path.join(ctx.out, "fixtures"));
-    // A copy of its own, moved into the footage folder below.
+    // A copy of its own, copied again into the footage folder below (a
+    // rename fails across drives, as on the Windows runner).
     const own = path.join(ctx.out, "edit-footage", "colours.mp4");
     mkdirSync(path.dirname(own), { recursive: true });
     copyFileSync(file, own);
@@ -97,7 +98,7 @@ export default {
     const footage = path.join(dataDirs().at(-1), "footage");
     mkdirSync(footage, { recursive: true });
     const section = path.join(footage, `${id}-0-${Math.round(vod.duration * 1000)}.mp4`);
-    renameSync(own, section);
+    copyFileSync(own, section);
     const db = new DatabaseSync(path.join(roaming, "library.sqlite"));
     db.prepare(
       `UPDATE vods SET platform = 'youtube', platform_id = 'IaIo3d6cUuo', url = 'https://www.youtube.com/watch?v=IaIo3d6cUuo',
