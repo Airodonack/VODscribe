@@ -53,8 +53,7 @@ export default {
 
     // Undone (history::restore_bar): the clip comes back as it was, 1 to 4 s
     // with its title, and is made again; undone once more, so is the resize.
-    const undo = () =>
-      app.js(`document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`);
+    const undo = () => app.key("z", { cmd: true });
     const madeAt = (start, end) =>
       until(
         `the clip back at ${start}-${end} s, made`,

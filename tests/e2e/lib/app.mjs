@@ -253,12 +253,18 @@ export class App {
     );
   }
 
-  /** Presses `key` (a KeyboardEvent key), with Shift if `shift`, as the window gets it. */
-  key(key, { shift = false } = {}) {
+  /** Presses `key` (a KeyboardEvent key), with Shift if `shift`, and with
+   *  `cmd` the command modifier of the computer the app runs on: ⌘ on a Mac,
+   *  Ctrl elsewhere (the app's undo is ⌘Z there, not Ctrl+Z), as the window
+   *  gets it. */
+  key(key, { shift = false, cmd = false } = {}) {
     return this.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], shiftKey: arguments[1], bubbles: true }))`,
+      `const mac = arguments[2] && /Mac/.test(navigator.platform);
+       document.body.dispatchEvent(new KeyboardEvent("keydown",
+         { key: arguments[0], shiftKey: arguments[1], ctrlKey: arguments[2] && !mac, metaKey: mac, bubbles: true }))`,
       key,
       shift,
+      cmd,
     );
   }
 

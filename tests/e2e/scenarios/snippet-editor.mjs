@@ -81,9 +81,7 @@ export default {
     const split = await made("shortened");
     log(`shortened in the editor: made again, ${before} → ${split.file_path}`);
 
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until("two seconds again", async () => Math.abs((await length()) - 2) < 0.05, 10_000);
     const back = await until(
       "the clip made again after the undo",

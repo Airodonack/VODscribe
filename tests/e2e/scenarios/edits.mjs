@@ -169,9 +169,7 @@ export default {
       10_000,
     );
     if (pieces(await edit()).length !== 1) throw new Error("Delete after a cut removed the piece");
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until(
       "the stretch and its cut back",
       async () => Math.abs((await lengthNow()) - 2) < 0.05 && (await editCuts()).length === 1,
@@ -396,9 +394,7 @@ export default {
       async () => (await spanNow()) < whole - 0.01 && spanNow(),
       10_000,
     );
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until(
       "the line back",
       async () => Math.abs((await lengthNow()) - played) < 0.01 && (await lineCount()) === lines,
@@ -456,9 +452,7 @@ export default {
     await ctx.checkpoint("edit-chapter");
     // Its title, then the chapter: two steps back.
     for (const step of ["its title undone", "the chapter undone"]) {
-      await app.js(
-        `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-      );
+      await app.key("z", { cmd: true });
       await until(
         step,
         async () => {
@@ -497,11 +491,7 @@ export default {
       10_000,
     );
     await ctx.checkpoint("edit-clip-bar");
-    const undoKey = (shift) =>
-      app.js(
-        `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: arguments[0], bubbles: true }))`,
-        shift,
-      );
+    const undoKey = (shift) => app.key("z", { cmd: true, shift });
     await undoKey(false);
     await until("the clip taken off", async () => (await barClips()).length === 0, 10_000);
     await undoKey(true);

@@ -92,9 +92,7 @@ export default {
     await app.key("Delete");
     await until("the chapter gone", async () => !(await marks()).some((m) => m.kind === "chapter"), 10_000);
     const toast = () => app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until(
       "the chapter back",
       async () => {
@@ -104,9 +102,7 @@ export default {
       10_000,
     );
     const undone = await until("the toast", async () => (await toast()).startsWith("Undone") && toast(), 10_000);
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true, shift: true });
     await until("the chapter gone again", async () => !(await marks()).some((m) => m.kind === "chapter"), 10_000);
     const redone = await until("the toast", async () => (await toast()).startsWith("Redone") && toast(), 10_000);
     log(`${undone}; ${redone}`);
@@ -132,9 +128,7 @@ export default {
       },
       10_000,
     );
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     const back = await until(
       "the removed chapter back",
       async () => {
@@ -165,13 +159,9 @@ export default {
     // What Ctrl+Z undid can still be redone: the chapters taken back with
     // Escape left the redo as it was.
     const chapters = async () => (await marks()).filter((m) => m.kind === "chapter").length;
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true, shift: true });
     await until("the chapter deleted again (redo)", async () => (await chapters()) === 0, 10_000);
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until("the chapter back again", async () => (await chapters()) === 1, 10_000);
     log("redo still there after chapters taken back with Escape");
 
@@ -180,9 +170,7 @@ export default {
     const at = await app.shownTime();
     await app.key("b");
     await until("the cut", async () => (await marks()).some((m) => m.kind === "cut"), 10_000);
-    await app.js(
-      `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }))`,
-    );
+    await app.key("z", { cmd: true });
     await until("the cut undone", async () => !(await marks()).some((m) => m.kind === "cut"), 10_000);
     await app.key("ArrowRight", { shift: true });
     await until(
