@@ -4,6 +4,10 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.6.1 (unreleased)
 
+- The keyboard button is now at the right of the player's controls, beside the captions and full screen buttons, just above the cheat sheet it opens.
+- A VOD from a site whose player VODscribe can't show says just "Press Play to download the video and watch it here." under its thumbnail; the note before downloading still explains why.
+- Ctrl+A (⌘A) with nothing to pick, such as over the library page's main side, no longer selects all the text on the page.
+
 ## 0.6.0 — 2026-10-24
 
 - Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 24:00 of 3:04:00"), and Transcribe the rest does what's left.

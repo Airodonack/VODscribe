@@ -274,9 +274,10 @@ function selectingIn(): "clips" | "library" | null {
 
 /**
  * The keys for a set selected, asked first (App.svelte `onWindowKey`, before
- * either player): true if `e` was one, done. `rows` is the library's list;
- * `onremove` is told of each VOD removed. A VOD's or an edit's own Delete
- * and C for the snippet set are theirs (Player.svelte, EditView.svelte).
+ * either player): true if `e` was one, done (Ctrl+A always is, outside a
+ * text field). `rows` is the library's list; `onremove` is told of each VOD
+ * removed. A VOD's or an edit's own Delete and C for the snippet set are
+ * theirs (Player.svelte, EditView.svelte).
  */
 export function selectionKey(e: KeyboardEvent, rows: Row[], onremove: (vodId: number) => void): boolean {
   if (isEscape(e)) {
@@ -294,7 +295,9 @@ export function selectionKey(e: KeyboardEvent, rows: Row[], onremove: (vodId: nu
       library.set(
         rows.map((r) => (r.kind === "vod" ? { kind: "vod", id: r.vod.id } : { kind: "edit", id: r.edit.id })),
       );
-    return into !== null;
+    // The key is the app's even with nothing to pick (the main side with no
+    // clip bar): the web view's own select-all would light up the page's text.
+    return true;
   }
   if (library.size && is(e, "library.remove")) {
     if (!e.repeat) void removeChosenEntries(rows, onremove);

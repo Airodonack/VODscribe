@@ -18,10 +18,12 @@
   // The row of controls under every player's timeline (the VOD's, Player.svelte;
   // an edit's, EditView.svelte): play, the time, the panel's own actions (Split
   // and Clip, or what an edit has instead) with a line of context, then
-  // sound, speed, the panel's own at the right (a VOD's Transcribe), captions
-  // and full screen, where the player has them.
+  // sound, speed, the panel's own at the right (a VOD's Transcribe), captions,
+  // the keyboard legend's button (the legend opens under this row:
+  // PlayerPanel.svelte) and full screen, where the player has them.
 
   import type { Snippet } from "svelte";
+  import { settings } from "./appSettings.svelte";
   import Icon from "./Icon.svelte";
   import { Hold } from "./hold.svelte";
   import { frameIndex } from "./media";
@@ -83,6 +85,12 @@
     save(BY_FRAME, byFrame ? "1" : "0");
   }
   const frame = (seconds: number) => String(frameIndex(seconds, fps));
+
+  // The keyboard legend open or closed, a setting (PlayerPanel.svelte shows it).
+  const showKeys = $derived(settings.value?.show_keys ?? false);
+  // As a value, not worked out from the settings: settings.update works a
+  // change out again when its save's turn comes, which would toggle it back.
+  const toggleKeys = () => settings.update({ show_keys: !showKeys });
 
   const SPEEDS = [1, 1.25, 1.5, 2, 0.5, 0.75];
   function nextSpeed() {
@@ -194,6 +202,19 @@
           : `Show captions${keyHint("captions.toggle")}`}
     >
       <Icon name="captions" size={16} />
+    </button>
+  {/if}
+  <!-- Full screen hides the legend, so its button goes too. -->
+  {#if !fullscreen}
+    <button
+      class="control"
+      class:on={showKeys}
+      onclick={toggleKeys}
+      aria-expanded={showKeys}
+      aria-label="Keyboard shortcuts"
+      title="Keyboard shortcuts"
+    >
+      <Icon name="keyboard" size={16} />
     </button>
   {/if}
   {#if canFullscreen}

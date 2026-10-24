@@ -1,15 +1,15 @@
 <script lang="ts">
   // The player's panel, the same for a VOD (Player.svelte) and an edit
-  // (EditView.svelte): a header (what's open, then the keyboard button), the
+  // (EditView.svelte): a header (what's open, and what's done with it), the
   // picture's stage, the timeline and controls, the keyboard legend under
-  // them (there so the picture never moves when it opens or closes), and what
-  // goes under that; full screen, which is the window's with the
+  // them (there so the picture never moves when it opens or closes; its
+  // button is at the controls' right, PlayerBar.svelte), and what goes under
+  // that; full screen, which is the window's with the
   // panel laid over the page (WebKitGTK ends the app on the page's own,
   // requestFullscreen). What fills each part is the view's.
 
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { onDestroy, type Snippet } from "svelte";
-  import Icon from "./Icon.svelte";
   import { settings } from "./appSettings.svelte";
   import type { ShortcutGroup } from "./playerKeys";
   import Shortcuts from "./Shortcuts.svelte";
@@ -26,26 +26,25 @@
   }: {
     /** The window full screen, the panel over all of it. */
     fullscreen?: boolean;
-    /** What the keyboard button's legend lists. */
+    /** What the keyboard legend lists. */
     shortcuts: ShortcutGroup[];
     /** Names the panel (an edit's is `edit-view`, for what looks for it). */
     label?: string;
     /** What's open: its name, and what's done with it. */
     head: Snippet;
-    /** After the keyboard button. */
+    /** At the header's right end. */
     headEnd?: Snippet;
     stage?: Snippet;
-    /** The timeline and the bar of controls. */
+    /** The timeline and the bar of controls (with the legend's button); none
+     *  while there's no bar, and then no legend either. */
     controls?: Snippet;
     below?: Snippet;
   } = $props();
 
-  // Open or closed is a setting: someone learning the keys keeps the legend
-  // open across VODs, edits and launches.
+  // Open or closed is a setting (toggled by the button in the bar):
+  // someone learning the keys keeps the legend open across VODs, edits and
+  // launches.
   const showKeys = $derived(settings.value?.show_keys ?? false);
-  // As a value, not worked out from the settings: settings.update works a
-  // change out again when its save's turn comes, which would toggle it back.
-  const toggleKeys = () => settings.update({ show_keys: !showKeys });
 
   // The window follows: full screen as asked, and not once the panel's gone.
   let windowFull = false;
@@ -67,14 +66,6 @@
 <section class={label} class:fullscreen>
   <div class="head">
     {@render head()}
-    <button
-      class="icon"
-      class:on={showKeys}
-      onclick={toggleKeys}
-      aria-expanded={showKeys}
-      aria-label="Keyboard shortcuts"
-      title="Keyboard shortcuts"><Icon name="keyboard" size={16} /></button
-    >
     {@render headEnd?.()}
   </div>
   {@render stage?.()}
@@ -82,7 +73,7 @@
     <!-- The timeline over the controls: the same for every player. -->
     <div class="controls">{@render controls()}</div>
   {/if}
-  {#if showKeys}
+  {#if controls && showKeys}
     <Shortcuts groups={shortcuts} />
   {/if}
   {@render below?.()}

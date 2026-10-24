@@ -578,7 +578,13 @@
 
 <svelte:window onkeydown={onKey} onpointermove={onClipMove} onpointerup={() => (clipPress = null)} />
 
-<PlayerPanel bind:fullscreen shortcuts={vodShortcuts(framed, os, bindingsOf)} controls={vodControls} {stage} {below}>
+<PlayerPanel
+  bind:fullscreen
+  shortcuts={vodShortcuts(framed, os, bindingsOf)}
+  controls={canEmbed(vod) && !collapsed ? vodControls : undefined}
+  {stage}
+  {below}
+>
   {#snippet head()}
     <div class="info">
       <strong title={vod.title}>{vod.title}</strong>
@@ -689,101 +695,99 @@
 {/snippet}
 
 {#snippet vodControls()}
-  {#if canEmbed(vod) && !collapsed}
-    {#if duration}
-      <Scrubber
-        {vod}
-        memo={{ kind: "vod", id: vod.id }}
-        {duration}
-        time={now}
-        shown={reading.shown}
-        {fps}
-        highlight={lit}
-        ranges={editRanges}
-        current={between ? stretch : null}
-        ownPlayer={playsFromFile(vod)}
-        onpause={() => player?.playing() && player.togglePlay()}
-        onseek={seekTo}
-      />
-    {/if}
-    <PlayerBar
-      player={controls}
-      {playing}
-      now={reading.actual}
+  {#if duration}
+    <Scrubber
+      {vod}
+      memo={{ kind: "vod", id: vod.id }}
       {duration}
-      volume={reading.volume}
-      muted={reading.muted}
-      rate={reading.rate}
+      time={now}
+      shown={reading.shown}
       {fps}
-      captionsAvailable={cues.length > 0}
-      captionsNone={cues.length === 0}
-      captionsOn={prefs.captions}
-      {fullscreen}
-      canFullscreen
-      ontoggleplay={togglePlay}
-      onfullscreen={setFullscreen}
-    >
-      {#snippet actions()}
-        <button
-          class="action split"
-          class:picking={!!cuts.selection}
-          onclick={split}
-          title={cuts.selection
-            ? `Cut both ends of the selection${keyHint("cut.here")}`
-            : `Cut here, between this frame and the one before; each stretch between cuts can become a clip${keyHint("cut.here")}`}
-        >
-          <Icon name="scissors" size={14} /> Split {#if labelOf("cut.here")}<kbd>{labelOf("cut.here")}</kbd>{/if}
-        </button>
-        <button
-          class="action clip"
-          class:picking={!!cuts.selection}
-          bind:this={clipButton}
-          onpointerdown={onClipDown}
-          onclick={onClipClick}
-          onmouseenter={() => (clipHover = true)}
-          onmouseleave={() => (clipHover = false)}
-          disabled={!canClip}
-          title="Clip the lit-up stretch (or each one selected), to the clip bar{keyHint(
-            'clip.make',
-          )}: with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
-        >
-          <Icon name="film" size={14} /> Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}
-        </button>
-        {#if cuts.error}
-          <span class="context error-text" title={cuts.error}>{cuts.error}</span>
-        {:else if transcribeError}
-          <span class="context error-text" title={transcribeError}>{transcribeError}</span>
-        {:else}
-          <span class="context muted" title={context}>{context}</span>
-        {/if}
-      {/snippet}
-      {#snippet beside()}
-        <button
-          class="action transcribe"
-          class:picking={!!cuts.selection}
-          bind:this={transcribeButton}
-          onpointerdown={transcribeHold.down}
-          onclick={onTranscribeClick}
-          onmouseenter={onTranscribeEnter}
-          onmouseleave={() => (transcribeHover = false)}
-          aria-expanded={transcribeHold.open}
-          title={transcribeTitle}
-        >
-          <Icon name="audio-lines" size={14} /> Transcribe {#if labelOf("transcribe.here")}<kbd
-              >{labelOf("transcribe.here")}</kbd
-            >{/if}
-        </button>
-        <TranscribeFrom
-          bind:open={transcribeHold.open}
-          anchor={transcribeButton}
-          {vod}
-          from={transcribeFrom}
-          above
-          onerror={(e) => (transcribeError = e)}
-        />
-      {/snippet}
-    </PlayerBar>
+      highlight={lit}
+      ranges={editRanges}
+      current={between ? stretch : null}
+      ownPlayer={playsFromFile(vod)}
+      onpause={() => player?.playing() && player.togglePlay()}
+      onseek={seekTo}
+    />
   {/if}
+  <PlayerBar
+    player={controls}
+    {playing}
+    now={reading.actual}
+    {duration}
+    volume={reading.volume}
+    muted={reading.muted}
+    rate={reading.rate}
+    {fps}
+    captionsAvailable={cues.length > 0}
+    captionsNone={cues.length === 0}
+    captionsOn={prefs.captions}
+    {fullscreen}
+    canFullscreen
+    ontoggleplay={togglePlay}
+    onfullscreen={setFullscreen}
+  >
+    {#snippet actions()}
+      <button
+        class="action split"
+        class:picking={!!cuts.selection}
+        onclick={split}
+        title={cuts.selection
+          ? `Cut both ends of the selection${keyHint("cut.here")}`
+          : `Cut here, between this frame and the one before; each stretch between cuts can become a clip${keyHint("cut.here")}`}
+      >
+        <Icon name="scissors" size={14} /> Split {#if labelOf("cut.here")}<kbd>{labelOf("cut.here")}</kbd>{/if}
+      </button>
+      <button
+        class="action clip"
+        class:picking={!!cuts.selection}
+        bind:this={clipButton}
+        onpointerdown={onClipDown}
+        onclick={onClipClick}
+        onmouseenter={() => (clipHover = true)}
+        onmouseleave={() => (clipHover = false)}
+        disabled={!canClip}
+        title="Clip the lit-up stretch (or each one selected), to the clip bar{keyHint(
+          'clip.make',
+        )}: with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
+      >
+        <Icon name="film" size={14} /> Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}
+      </button>
+      {#if cuts.error}
+        <span class="context error-text" title={cuts.error}>{cuts.error}</span>
+      {:else if transcribeError}
+        <span class="context error-text" title={transcribeError}>{transcribeError}</span>
+      {:else}
+        <span class="context muted" title={context}>{context}</span>
+      {/if}
+    {/snippet}
+    {#snippet beside()}
+      <button
+        class="action transcribe"
+        class:picking={!!cuts.selection}
+        bind:this={transcribeButton}
+        onpointerdown={transcribeHold.down}
+        onclick={onTranscribeClick}
+        onmouseenter={onTranscribeEnter}
+        onmouseleave={() => (transcribeHover = false)}
+        aria-expanded={transcribeHold.open}
+        title={transcribeTitle}
+      >
+        <Icon name="audio-lines" size={14} /> Transcribe {#if labelOf("transcribe.here")}<kbd
+            >{labelOf("transcribe.here")}</kbd
+          >{/if}
+      </button>
+      <TranscribeFrom
+        bind:open={transcribeHold.open}
+        anchor={transcribeButton}
+        {vod}
+        from={transcribeFrom}
+        above
+        onerror={(e) => (transcribeError = e)}
+      />
+    {/snippet}
+  </PlayerBar>
 {/snippet}
 
 {#snippet below()}
@@ -810,16 +814,15 @@
       </p>
     {/if}
   {:else}
+    <!-- One short line: the note before downloading says why it's a
+         download, and “Open on …” is in the header. -->
     <p class="muted note">
       {#if downloading !== undefined || (keepsVideo(vod) && vod.status === "downloading")}
-        Downloading the video{downloading ? ` (${Math.round(downloading * 100)}%)` : ""}: it plays here once it's
-        downloaded. Meanwhile, use “Open on {site}” to watch from {formatTime(from)}.
+        Downloading the video{downloading ? ` (${Math.round(downloading * 100)}%)` : ""}: it plays here once it's in.
       {:else if downloadError}
-        <span class="error-text">The video couldn't be downloaded: {downloadError}</span> Press Play to try again, or
-        use “Open on {site}”.
+        <span class="error-text">The video couldn't be downloaded: {downloadError}</span> Press Play to try again.
       {:else if keepsVideo(vod)}
-        {site} has no player VODscribe can show: press Play to download the video and play it here, or use “Open on
-        {site}” to watch from {formatTime(from)}.
+        Press Play to download the video and watch it here.
       {:else}
         {site} doesn't offer an embeddable VOD player. Use “Open on {site}” to watch from {formatTime(from)}.
       {/if}

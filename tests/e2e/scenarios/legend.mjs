@@ -1,13 +1,14 @@
-// The keyboard legend (the keyboard button in a player's header) is a cheat
-// sheet under the controls, in four short columns (keymap.ts LEGEND_GROUPS):
-// opening it leaves the picture where it was; its headings come in order,
-// the same in a VOD and an edit (whose own keys join Cutting); it fits in
-// the window under the controls; a key taken away in Settings goes from it;
-// All controls opens Settings on Controls; full screen hides it; and left
-// open, it's open again after a restart, in a VOD and in an edit. In a
-// window too short for all of it (a small screen's: CI's runners clamp the
-// window to 1024 by 768), the legend takes the room left and scrolls inside
-// itself, still within the window, and the picture still doesn't move.
+// The keyboard legend (the keyboard button at the right of a player's row
+// of controls, near where the legend opens) is a cheat sheet under the
+// controls, in four short columns (keymap.ts LEGEND_GROUPS): opening it
+// leaves the picture where it was; its headings come in order, the same in
+// a VOD and an edit (whose own keys join Cutting); it fits in the window
+// under the controls; a key taken away in Settings goes from it; All
+// controls opens Settings on Controls; full screen hides it; and left open,
+// it's open again after a restart, in a VOD and in an edit. In a window too
+// short for all of it (a small screen's: CI's runners clamp the window to
+// 1024 by 768), the legend takes the room left and scrolls inside itself,
+// still within the window, and the picture still doesn't move.
 
 import path from "node:path";
 
@@ -111,6 +112,35 @@ async function scrolls(app, label) {
   return `${got.client} of ${got.scroll} shown, ends at ${got.bottom} of ${got.height}`;
 }
 
+/** Checks the keyboard button sits in the controls row, under the stage,
+ *  near where its legend opens (not up in the panel's header). */
+async function nearLegend(app, label, scope = "") {
+  const { button, controls, stage } = await app.js(
+    `const box = (el) => { const r = el?.getBoundingClientRect(); return r && { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+     const scope = arguments[0] ? document.querySelector(arguments[0]) : document;
+     return {
+       button: box(scope.querySelector(arguments[1])),
+       controls: box(scope.querySelector(".controls .bar")),
+       stage: box(scope.querySelector(".stage")),
+     };`,
+    scope,
+    BUTTON,
+  );
+  if (!button || !controls)
+    throw new Error(`${label}: no keyboard button (${!!button}) or controls row (${!!controls})`);
+  const inside =
+    button.left >= controls.left - 1 &&
+    button.right <= controls.right + 1 &&
+    button.top >= controls.top - 1 &&
+    button.bottom <= controls.bottom + 1;
+  if (!inside)
+    throw new Error(
+      `${label}: the keyboard button at ${JSON.stringify(button)}, not in the controls row ${JSON.stringify(controls)}`,
+    );
+  if (stage && button.top < stage.bottom)
+    throw new Error(`${label}: the keyboard button (top ${button.top}) isn't below the stage (bottom ${stage.bottom})`);
+}
+
 const same = (label, got, want) => {
   if (JSON.stringify(got) !== JSON.stringify(want))
     throw new Error(`${label}: ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
@@ -136,6 +166,9 @@ export default {
     await app.openVod(added.id);
     if (await app.js(`return !!document.querySelector(".legend")`))
       throw new Error("the legend is open before it was ever opened");
+
+    // The button is in the row of controls, where the legend opens under.
+    await nearLegend(app, "the VOD");
 
     // Opened: the picture stays where it was.
     const before = await stageBox(app);
@@ -209,6 +242,7 @@ export default {
     const render = await keysFor(app, "render");
     if (render !== "E") throw new Error(`the edit's legend has "${render}" for render`);
     const editFit = await fits(app, "the edit");
+    await nearLegend(app, "the edit", "section.edit-view");
     ctx.log(`the edit's legend ${editFit}`);
     const { width: editWidth, height: editHeight } = await pageSize(app);
     for (const [w, h] of SHORT) {

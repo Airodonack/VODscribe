@@ -51,7 +51,7 @@ const playing = (app) => app.js(`return !!document.querySelector('.bar button[ar
 /** In the open VOD: the legend's keys for play/pause, then P plays and Space doesn't. */
 async function pPlays(app, ctx, label) {
   if (!(await app.js(`return !!document.querySelector(".legend")`)))
-    await app.click('button[aria-label="Keyboard shortcuts"]');
+    await app.click('.bar button[aria-label="Keyboard shortcuts"]');
   const legend = await until(
     "the legend",
     () =>

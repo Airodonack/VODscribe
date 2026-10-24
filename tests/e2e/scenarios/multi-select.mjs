@@ -15,7 +15,8 @@
 // are let go (the bar says nothing's picked) and Delete takes the cut only;
 // the same with a library row picked. Ctrl+A (⌘A) picks by the side of the
 // window the pointer is on, whatever has the focus: over the clip bar or the
-// timeline, all the clips; over the library's pane, all its rows.
+// timeline, all the clips; over the library's pane, all its rows; over the
+// main side with no clip bar, nothing, and not the page's text either.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -36,6 +37,48 @@ export default {
   },
   async run(app, ctx) {
     await app.toLibrary();
+
+    // Where the pointer is, for Ctrl+A: the OS's own pointer where it can be
+    // moved (X11), else a pointermove sent to the page.
+    const pointAt = async (selector) => {
+      if (process.platform === "linux" && os.unavailable() === null) {
+        const r = await os.rectOf(app, selector);
+        await os.gesture([
+          ["move", Math.round(r.x + r.w / 2), Math.round(r.y + r.h / 2)],
+          ["wait", 200],
+        ]);
+      } else
+        await app.js(
+          `const el = document.querySelector(arguments[0]);
+           const b = el.getBoundingClientRect();
+           el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, isPrimary: true, pointerId: 1 }));`,
+          selector,
+        );
+    };
+
+    // Ctrl+A over the main side with no clip bar (the library's page): nothing
+    // to pick, and the page's text isn't selected either. The OS's own keys
+    // where they can be pressed (a synthetic press has no default to run);
+    // anywhere, the press is the app's (its default prevented).
+    await pointAt("main.main");
+    await app.js(`document.activeElement?.blur()`);
+    await app.focused();
+    if (process.platform === "linux" && os.unavailable() === null) {
+      await os.gesture([
+        ["key", "ctrl+a"],
+        ["wait", 300],
+      ]);
+      const selected = await app.js(`return window.getSelection()?.toString() ?? ""`);
+      if (selected) throw new Error(`Ctrl+A with nothing to pick selected the page's text: "${selected.slice(0, 80)}"`);
+    }
+    const pressed = await app.js(
+      `const mac = /Mac/.test(navigator.platform);
+       const e = new KeyboardEvent("keydown", { key: "a", ctrlKey: !mac, metaKey: mac, bubbles: true, cancelable: true });
+       document.body.dispatchEvent(e);
+       return e.defaultPrevented;`,
+    );
+    if (!pressed) throw new Error("Ctrl+A with nothing to pick was left to the page (its select-all)");
+
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);
     await app.openPaused(vod.id);
     await app.pause();
@@ -221,26 +264,10 @@ export default {
       MINUTE,
     );
 
-    // Ctrl+A by where the pointer is, the focus elsewhere: the OS's own
-    // pointer where it can be moved (X11), else a pointermove sent to the page.
+    // Ctrl+A by where the pointer is, the focus elsewhere.
     // The first VOD open again (an add opened what it added), with its pills.
     await app.openVod(vod.id);
     await until("its two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), MINUTE);
-    const pointAt = async (selector) => {
-      if (process.platform === "linux" && os.unavailable() === null) {
-        const r = await os.rectOf(app, selector);
-        await os.gesture([
-          ["move", Math.round(r.x + r.w / 2), Math.round(r.y + r.h / 2)],
-          ["wait", 200],
-        ]);
-      } else
-        await app.js(
-          `const el = document.querySelector(arguments[0]);
-           const b = el.getBoundingClientRect();
-           el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, isPrimary: true, pointerId: 1 }));`,
-          selector,
-        );
-    };
     const focusOn = (selector) => app.js(`document.querySelector(arguments[0]).focus()`, selector);
     const listCount = () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() ?? ""`);
     for (const over of [".clip-bar", ".scrubber"]) {
