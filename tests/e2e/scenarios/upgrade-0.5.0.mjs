@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { checkFormat } from "../fixtures/upgrade-matrix.mjs";
 import { dataDirs, oldLibrary } from "../lib/data.mjs";
 import { LANDED, longSpeech } from "../lib/fixtures.mjs";
 
@@ -46,6 +47,12 @@ export default {
     if (paused.status !== "paused" || paused.transcribed !== "some")
       throw new Error(`the paused one is ${paused.status}, transcribed ${paused.transcribed}`);
     await ctx.checkpoint("upgraded-library");
+    checkFormat(VERSION, 26);
+    const settings = await app.invoke("get_settings");
+    if (settings.theme !== "dark" || settings.clip_format !== "mp4" || Object.keys(settings.key_bindings).length)
+      throw new Error(
+        `the settings are ${JSON.stringify(settings)}, not 0.5.0's dark theme and MP4 clips, with no key bindings`,
+      );
 
     const copy = path.join(dataDirs()[0], "library-v26.sqlite");
     if (!existsSync(copy)) throw new Error(`no copy of the ${VERSION} library at ${copy}`);

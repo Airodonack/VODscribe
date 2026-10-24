@@ -9,6 +9,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import { checkFormat } from "../fixtures/upgrade-matrix.mjs";
 import { dataDirs, oldLibrary } from "../lib/data.mjs";
 import { LANDED } from "../lib/fixtures.mjs";
 
@@ -35,8 +36,13 @@ export default {
     await ctx.checkpoint("upgraded-library");
     const text = (await app.invoke("transcript", { vodId: vod.id })).map((l) => l.text).join(" ");
     if (!/landed/i.test(text)) throw new Error(`the transcript doesn't have "landed": ${text}`);
-    const theme = (await app.invoke("get_settings")).theme;
-    if (theme !== "dark") throw new Error(`the theme is ${theme}, not the dark one chosen in ${VERSION}`);
+    const settings = await app.invoke("get_settings");
+    if (settings.theme !== "dark")
+      throw new Error(`the theme is ${settings.theme}, not the dark one chosen in ${VERSION}`);
+    // No key bindings were kept then: none now.
+    if (Object.keys(settings.key_bindings).length)
+      throw new Error(`key bindings ${JSON.stringify(settings.key_bindings)}`);
+    checkFormat(VERSION, 16);
 
     const copy = path.join(dataDirs()[0], "library-v16.sqlite");
     if (!existsSync(copy)) throw new Error(`no copy of the ${VERSION} library at ${copy}`);

@@ -73,7 +73,16 @@ export function oldLibrary(fixtures, version, places) {
   copyFileSync(path.join(fixtures, `library-${version}.sqlite`), library);
   copyFileSync(path.join(fixtures, `settings-${version}.json`), path.join(dir, "settings.json"));
   const db = new DatabaseSync(library);
+  // The paths a library holds: a file's, and (in the matrix's richer ones)
+  // the files of clips and rendered edits, in whichever table a version keeps them.
+  const paths = [
+    ["vods", "source_path"],
+    ["clips", "file_path"],
+    ["edits", "file_path"],
+    ["renders", "file_path"],
+  ].filter(([table, column]) => db.prepare(`SELECT 1 FROM pragma_table_info('${table}') WHERE name = ?`).get(column));
   for (const [from, to] of Object.entries(places))
-    db.prepare("UPDATE vods SET source_path = replace(source_path, ?, ?)").run(from, to);
+    for (const [table, column] of paths)
+      db.prepare(`UPDATE ${table} SET ${column} = replace(${column}, ?, ?)`).run(from, to);
   db.close();
 }

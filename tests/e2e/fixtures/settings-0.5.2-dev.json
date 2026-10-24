@@ -1,0 +1,20 @@
+{
+  "device": "cpu",
+  "theme": "light",
+  "emote_providers": [
+    {
+      "id": "ffz",
+      "on": false
+    },
+    {
+      "id": "7tv",
+      "on": false
+    },
+    {
+      "id": "bttv",
+      "on": false
+    }
+  ],
+  "video_height": 720,
+  "clip_format": "mov"
+}
