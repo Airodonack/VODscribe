@@ -63,6 +63,16 @@ export function longSpeech(dir) {
 }
 
 /**
+ * The landing said twice, made in `dir` once: two lines of transcript, one
+ * after the other, for a phrase that runs from one into the next. Copied,
+ * not encoded again, as longSpeech.
+ */
+export function landedTwice(dir) {
+  mkdirSync(dir, { recursive: true });
+  return make(dir, "landed-twice.mp3", ["-stream_loop", "1", "-i", LANDED, "-c", "copy"]);
+}
+
+/**
  * The colour of each second of colours.mp4, in order. Twelve seconds, far
  * apart in colour: a slow computer (a real laptop, screenshots taking
  * seconds each) must not reach the end while player-picture is still

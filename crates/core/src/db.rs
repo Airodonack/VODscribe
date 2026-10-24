@@ -143,11 +143,16 @@ pub struct SearchFilter {
     pub speech: bool,
     /// What chat wrote.
     pub chat: bool,
+    /// The window a match's pieces must fit in, in seconds, unless `within:`
+    /// is typed; None for the default.
+    pub within: Option<f64>,
+    /// Who, unless `from:` is typed in the alternative: as `from:` does.
+    pub from: Option<String>,
 }
 
 impl Default for SearchFilter {
     fn default() -> Self {
-        SearchFilter { vod_id: None, speech: true, chat: true }
+        SearchFilter { vod_id: None, speech: true, chat: true, within: None, from: None }
     }
 }
 
@@ -2741,7 +2746,7 @@ mod tests {
         db.add_chat(b, &[message(2.0, "v", "apple pie")], &[2.0]).unwrap();
         db.add_chat(a, &[message(3.0, "v", "apples again")], &[3.0]).unwrap();
         let chat = |query: &str, vod_id: Option<i64>| {
-            let filter = SearchFilter { vod_id, speech: false, chat: true };
+            let filter = SearchFilter { vod_id, speech: false, chat: true, ..Default::default() };
             db.search(query, &filter, 10).unwrap().hits.iter().map(|h| (h.vod_id, h.time)).collect::<Vec<_>>()
         };
         assert_eq!(chat("a", None), [(a, 1.0)], "one letter: the word, not every word starting with it");

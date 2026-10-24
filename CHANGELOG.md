@@ -20,6 +20,11 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
 - Settings opens as a window of its own, with a section list, instead of a dropdown.
 - Every keyboard control can be changed, in Settings › Controls: several keys per action, modifiers allowed, reset one or all.
+- Search finds a phrase even when it runs from one line of the transcript into the next. Words in quotes are found in any order, as long as they're all said within 20 seconds of each other: `"all" "words" "any" "order"`. Unquoted words are still a phrase, in order, and you can mix the two: `nice "clutch"` finds "nice" with "clutch" anywhere near it. A result that runs over several lines shows them all, each part found marked.
+- Put a minus before a word or a quoted phrase to leave out matches with it nearby: `i did it -frick`.
+- OR finds either side: `well that was OR damn`. AND binds more tightly than OR, and brackets group: `(from:alice "hi") OR (from:bob "gg")`. Under the search box, a search with more than one part shows how it was read, as chips: OR between the alternatives, brackets round groups, a crossed-out chip for a minus. A search VODscribe can't read, such as one with a quote left open, says what to fix there instead.
+- New words to type in a search: `from:name` for what a channel said and wrote or what a chatter wrote (`from:"Some One"` for a name with a space), `in:chat` or `in:audio`, `within:2m` for how close together the words must be (seconds, minutes or hours; 20 seconds unless you say), and `after:1:20:00` or `before:2h` for where in the VOD. Each one shows as a chip with an × to take it out of the search.
+- The search filter has Within and From whom too, with names suggested as you type: channels first, then the people in chat. For a YouTube channel, it says that their name in chat can differ from the channel's. What you type wins over the filter, and the filter then shows the typed value, grayed out, set by the search text.
 
 ## 0.5.1 — 2026-10-23
 

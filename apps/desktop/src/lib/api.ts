@@ -204,6 +204,10 @@ export interface SearchFilter {
   vodId?: number | null;
   speech?: boolean;
   chat?: boolean;
+  /** Seconds a match's pieces must fit in, unless `within:` is typed (else 20). */
+  within?: number | null;
+  /** Who, as `from:` does, unless it is typed. */
+  from?: string | null;
 }
 
 export interface SetupStatus {

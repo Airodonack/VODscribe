@@ -85,7 +85,8 @@ impl Found {
 
 impl Db {
     /// Searches the library for `query` in the language of `query.rs`. The
-    /// filter's VOD and sources are defaults the typed text overrides (`in:`).
+    /// filter's VOD, sources, window and who are defaults the typed text
+    /// overrides (`in:`, `within:`, `from:`).
     /// Hits are ordered by VOD, in library order, then by time within the
     /// VOD; at most `limit`, and `truncated` if there were more.
     pub fn search(&self, query: &str, filter: &SearchFilter, limit: usize) -> Result<SearchResults> {
@@ -99,10 +100,19 @@ impl Db {
             Ok(c) => c,
             Err(e) => return Ok(none(QueryInfo { error: Some(e), ..info })),
         };
-        let within = parsed.within.unwrap_or(DEFAULT_WITHIN);
+        let within = parsed.within.or(filter.within.filter(|&w| w > 0.0)).unwrap_or(DEFAULT_WITHIN);
+        let from = filter.from.as_deref().map(str::trim).filter(|n| !n.is_empty());
         let mut found: Vec<Found> = Vec::new();
         let mut ran = false;
         for c in &conjunctions {
+            // The filter's who, for an alternative that doesn't name its own.
+            let mut c = c.clone();
+            if let Some(name) = from
+                && c.from.is_empty()
+            {
+                c.from.push(name.to_string());
+            }
+            let c = &c;
             // Exclusions alone have nothing to leave things out of.
             if c.pieces.is_empty() && !c.filtered() {
                 continue;
@@ -1129,6 +1139,10 @@ mod tests {
         assert_eq!(find(&db, &format!("{q} within:1m")).hits.len(), 3, "200 s to 225 s is in a minute");
         assert_eq!(r.query.within, None);
         assert_eq!(find(&db, &format!("{q} within:1m")).query.within, Some(60.0));
+        // The filter's window is the default the typed one overrides.
+        let filter = |within| SearchFilter { within: Some(within), ..Default::default() };
+        assert_eq!(db.search(q, &filter(60.0), 500).unwrap().hits.len(), 3);
+        assert_eq!(db.search(&format!("{q} within:10"), &filter(60.0), 500).unwrap().hits.len(), 1);
     }
 
     #[test]
@@ -1221,11 +1235,21 @@ mod tests {
         assert_eq!(hits("hello in:audio"), [(theirs, s, 5.0), (mine, s, 5.0)]);
         assert_eq!(hits("from:bob from:alice -hello"), [(theirs, c, 10.0), (mine, c, 8.0)], "either name");
         // The typed in: wins over the filter's sources.
-        let filter = SearchFilter { speech: true, chat: false, vod_id: Some(mine) };
+        let filter = SearchFilter { speech: true, chat: false, vod_id: Some(mine), ..Default::default() };
         let r = db.search("hello in:chat", &filter, 10).unwrap();
         assert_eq!(r.hits.iter().map(|h| h.time).collect::<Vec<_>>(), [6.0, 7.0]);
         assert_eq!(r.query.sources, Some(crate::query::Sources { audio: false, chat: true }));
         assert_eq!(find(&db, "from:bob in:chat").query.from.as_deref(), Some("bob"));
+        // The filter's who, for alternatives that don't type their own.
+        let from = |name: &str| SearchFilter { from: Some(name.into()), ..Default::default() };
+        let by = |q: &str, f: &SearchFilter| {
+            db.search(q, f, 10).unwrap().hits.iter().map(|h| (h.vod_id, h.source, h.time)).collect::<Vec<_>>()
+        };
+        assert_eq!(by("hello", &from("bob")), [(theirs, c, 9.0), (mine, c, 7.0)]);
+        assert_eq!(by("hello", &from("streamer")), [(mine, s, 5.0), (mine, c, 6.0)]);
+        assert_eq!(by("hello from:streamer", &from("bob")), [(mine, s, 5.0), (mine, c, 6.0)], "typed wins");
+        assert_eq!(by("-hello", &from("bob")), [(mine, c, 8.0)], "a filter, so a minus alone lists");
+        assert_eq!(by("(from:alice \"hi\") OR \"gg\"", &from("bob")), [(theirs, c, 10.0), (mine, c, 8.0)]);
         let names = |prefix: &str, vod_id| {
             let s = db.author_suggestions(prefix, vod_id).unwrap();
             s.into_iter().map(|s| (s.name.to_lowercase(), s.streamer, s.messages)).collect::<Vec<_>>()

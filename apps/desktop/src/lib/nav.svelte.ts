@@ -28,6 +28,9 @@ export interface Search {
   all: boolean;
   audio: boolean;
   chat: boolean;
+  /** The filter's window, in seconds, and who (empty for anyone). */
+  within: number;
+  from: string;
   /** Its results set aside for the view under them (a match double-clicked),
    *  the words kept in the box. */
   aside: boolean;
@@ -57,7 +60,7 @@ class Nav {
   forward = $state.raw<Step[]>([]);
   /** The view open now, and the search over it. */
   #here: Doc | null = null;
-  #search: Search = { query: "", all: false, audio: true, chat: true, aside: false };
+  #search: Search = { query: "", all: false, audio: true, chat: true, within: 20, from: "", aside: false };
   /** Set while a step is being taken, so arriving there isn't one of its own. */
   #moving = false;
   /** What each view says of itself now. */

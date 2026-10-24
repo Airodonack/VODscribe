@@ -7,6 +7,7 @@
     events,
     type LibraryItem,
     type SearchHit,
+    type SearchResponse,
     type SetupStatus,
     type UnlistenFn,
     type Vod,
@@ -14,7 +15,9 @@
   import Library, { type LibraryRow } from "./Library.svelte";
   import Player from "./Player.svelte";
   import Results from "./Results.svelte";
-  import SearchFilter, { type Sources } from "./SearchFilter.svelte";
+  import SearchFilter, { DEFAULT_WITHIN, type Sources } from "./SearchFilter.svelte";
+  import SearchGrouping from "./SearchGrouping.svelte";
+  import { removeFilter } from "./queryChips";
   import Settings from "./Settings.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
@@ -73,7 +76,13 @@
   $effect(() => {
     save(SOURCES, JSON.stringify({ audio: sources.audio, chat: sources.chat }));
   });
-  let results = $state<{ hits: SearchHit[]; truncated: boolean } | null>(null);
+  // The filter's window and who, for this run of the app: defaults the typed
+  // within: and from: override.
+  let within = $state(DEFAULT_WITHIN);
+  let from = $state("");
+  let results = $state<SearchResponse | null>(null);
+  // The sources the results are from: typed in: over the filter's.
+  const lookingThrough = $derived(results?.query.sources ?? sources);
   let searchError = $state<string | null>(null);
   // The results set aside for the VOD under them (a match double-clicked),
   // the words kept in the box: back again when the box is focused or
@@ -113,7 +122,15 @@
 
   // Back and forward (nav.svelte.ts): a step each time what's open changes,
   // or a search's results come up in its place or go.
-  const search = $derived<Search>({ query, all: scopeAll, audio: sources.audio, chat: sources.chat, aside });
+  const search = $derived<Search>({
+    query,
+    all: scopeAll,
+    audio: sources.audio,
+    chat: sources.chat,
+    within,
+    from,
+    aside,
+  });
   $effect(() => {
     const doc = view;
     const now = search;
@@ -139,6 +156,8 @@
     aside = step.search.aside;
     scopeAll = step.search.all;
     sources = { audio: step.search.audio, chat: step.search.chat };
+    within = step.search.within;
+    from = step.search.from;
     const top = searching(step.search) ? step.left.results : step.left.scroll;
     const doc = step.doc;
     if (doc?.kind === "edit") {
@@ -415,7 +434,13 @@
       return;
     }
     try {
-      const r = await api.search(q, { vodId: scopeId, speech: sources.audio, chat: sources.chat });
+      const r = await api.search(q, {
+        vodId: scopeId,
+        speech: sources.audio,
+        chat: sources.chat,
+        within,
+        from: from.trim() || null,
+      });
       if (mine === seq) {
         results = r;
         searchError = null;
@@ -430,6 +455,8 @@
     void scopeId;
     void sources.audio;
     void sources.chat;
+    void within;
+    void from;
     clearTimeout(timer);
     timer = setTimeout(runSearch, 120);
     return () => clearTimeout(timer);
@@ -603,7 +630,15 @@
             title="Search{keyHint('search.focus')}"
           />
         </div>
-        <SearchFilter bind:scopeAll bind:sources {selected} />
+        <SearchFilter
+          bind:scopeAll
+          bind:sources
+          bind:within
+          bind:from
+          {selected}
+          vods={vodsById}
+          typed={results?.query ?? null}
+        />
         <button
           class="icon"
           class:on={showSettings}
@@ -624,6 +659,10 @@
         </Modal>
       </div>
 
+      {#if showResults && results}
+        <SearchGrouping query={results.query} onremove={(text) => (query = removeFilter(query, text))} />
+      {/if}
+
       {#if editOpen}
         <EditView vods={vodsById} onopenvod={openVodAt} />
       {:else if playing && playingVod}
@@ -635,6 +674,8 @@
       <div class="body" bind:this={body} onscroll={noteScroll}>
         {#if showResults && searchError}
           <p class="error-text pad">{searchError}</p>
+        {:else if showResults && results?.query.error}
+          <!-- What's wrong with the text shows under the box, in the grouping's place. -->
         {:else if showResults && results}
           <Results
             hits={results.hits}
@@ -642,7 +683,7 @@
             vods={vodsById}
             query={query.trim()}
             scope={scopeAll ? undefined : selected}
-            columns={sources.audio && sources.chat}
+            columns={lookingThrough.audio && lookingThrough.chat}
             onplay={play}
             onreveal={reveal}
             onclearscope={() => (scopeAll = true)}

@@ -136,7 +136,10 @@
       <p>
         No matches for <strong>“{query}”</strong>{#if scope}{" "}in <strong>{scope.title}</strong>{/if}.
       </p>
-      <p class="muted">Search looks for these exact words, in this order. Try fewer words.</p>
+      <p class="muted">
+        Words typed together are looked for one after another, as they were said. Try fewer words, or put each word in
+        quotes to find them in any order, near each other.
+      </p>
       {#if scope && scope.transcribed !== "all"}
         <p class="muted">
           Only chat and the transcribed parts are searched.
