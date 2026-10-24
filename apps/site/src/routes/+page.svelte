@@ -111,7 +111,10 @@
         width="1132"
         height="623"
       />
-      <p class="muted small">The live demo needs a bigger screen. Open this page on a computer to try it.</p>
+      <p class="caption">
+        <strong>The live demo needs a bigger screen.</strong>
+        <span class="muted">Open this page on a computer to try it.</span>
+      </p>
     </div>
   </section>
 
@@ -278,11 +281,44 @@
     display: none;
   }
 
-  .narrow img {
-    width: 100%;
-    height: auto;
+  /* The screenshot keeps its aspect box; the caption sits over it. */
+  .narrow {
+    position: relative;
+    aspect-ratio: 1132 / 623;
     border: 1px solid var(--border);
     border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .narrow img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* Blurred and darkened so it reads as a picture of the app, not a demo to
+       tap. The scale hides the blur's soft edges. */
+    filter: blur(3px) brightness(0.5);
+    transform: scale(1.04);
+  }
+
+  .caption {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: max-content;
+    max-width: calc(100% - 32px);
+    margin: 0;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    line-height: 1.4;
+  }
+
+  .caption strong,
+  .caption span {
+    display: block;
   }
 
   @media (max-width: 820px) {
