@@ -97,6 +97,19 @@ test("Twitch saying it plays, at the old place, after a seek: playing from the t
   assert.ok(shown > 20849.45 && shown < 20849.7, `${shown}`);
 });
 
+test("a site's player opened at a time, saying 0 as it loads: the time stays where it was opened", () => {
+  // As embed.ts opens Twitch's: at 26.8 s, paused, as a click on the timeline does.
+  const clock = new Clock(26.8, false, { waitsForPlayer: true });
+  clock.asked(26.8, false);
+  clock.heardAt(0, false);
+  assert.ok(Math.abs(clock.now() - 26.8) < 1e-9, `the page's clock at 26.8, not ${clock.now()}`);
+  // There (its time takes whole seconds): through, and taken as it comes.
+  clock.heardAt(26, false);
+  assert.equal(clock.now(), 26);
+  clock.heardAt(30, false);
+  assert.equal(clock.now(), 30);
+});
+
 test("a seek while paused is through once the player says it's there", () => {
   const clock = new Clock(0, false);
   clock.heardAt(30, false);

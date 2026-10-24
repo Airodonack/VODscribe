@@ -11,6 +11,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A video on this computer (a file or a kept video) shows its picture as soon as it opens: the first frame, or the one where you left it, instead of its library picture. Play then starts at once, without the moment of black while the video got going.
 - Fixes:
   - A VOD from a site whose player VODscribe can't show, played while its video downloads, no longer loses its picture when the download finishes and refuses to play on: it carries on from the video kept, where it was.
+  - On a Twitch VOD, pressing I (or O) right after clicking the timeline starts the selection where you clicked. It started at 0:00 if Twitch's player was still loading there, so the whole VOD was selected.
 
 ## 0.6.0 — 2026-10-24
 

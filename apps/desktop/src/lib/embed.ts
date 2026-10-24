@@ -342,6 +342,10 @@ async function twitch(
       )
     : null;
   const clock = new Clock(time, play, { waitsForPlayer: true });
+  // Opened at `time`, as if sought there: as it loads, it says it's at the
+  // start (0) for a second or so, set aside till it's seen at `time`, so the
+  // playhead and I and O stay where the page put it.
+  clock.asked(time, play);
   // Its sound as it last said (their own controls set it too); it has no speed to set.
   const sound = { volume: 1, muted: false };
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
