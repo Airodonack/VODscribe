@@ -4,11 +4,14 @@
 // the same in a VOD and an edit (whose own keys join Cutting); it fits in
 // the window under the controls; a key taken away in Settings goes from it;
 // All controls opens Settings on Controls; full screen hides it; and left
-// open, it's open again after a restart, in a VOD and in an edit.
+// open, it's open again after a restart, in a VOD and in an edit. In a
+// window too short for all of it (a small screen's: CI's runners clamp the
+// window to 1024 by 768), the legend takes the room left and scrolls inside
+// itself, still within the window, and the picture still doesn't move.
 
 import path from "node:path";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { videos } from "../lib/fixtures.mjs";
 
 const DIALOG = '[role="dialog"][aria-label="Settings"]';
@@ -39,17 +42,61 @@ const keysFor = (app, does) =>
 /** Checks the legend fits in the window under the controls, the page
  *  scrolled to the top, and that no column is longer than MOST lines. */
 async function fits(app, label) {
-  const { bottom, height, lines } = await app.js(`
+  const { bottom, height, lines, shown } = await app.js(`
     for (let el = document.querySelector(".legend"); el; el = el.parentElement) el.scrollTop = 0;
     const legend = document.querySelector(".legend");
     return {
       bottom: Math.round(legend.getBoundingClientRect().bottom),
       height: window.innerHeight,
       lines: [...legend.querySelectorAll(".group")].map((g) => g.querySelectorAll(".row").length),
+      shown: legend.clientHeight + " of " + legend.scrollHeight,
     };`);
   if (bottom > height) throw new Error(`${label}: the legend ends at ${bottom}, below the window's ${height}`);
   if (Math.max(...lines) > MOST) throw new Error(`${label}: a column has ${Math.max(...lines)} lines (${lines})`);
-  return `ends at ${bottom} of ${height}, lines ${lines}`;
+  return `ends at ${bottom} of ${height}, lines ${lines}, ${shown} shown`;
+}
+
+/** The window's page sizes the legend is checked at besides the window's
+ *  own: those CI's Windows and macOS runners gave the 1200 by 800 window. */
+const SHORT = [
+  [1024, 749],
+  [1024, 645],
+];
+
+/** The page's size now, as resizeInner gives it. */
+const pageSize = (app) => app.js(`return { width: innerWidth, height: innerHeight }`);
+
+/** Sizes the window's page to `width` by `height`, asking once more for what
+ *  the window manager added or took (macOS counts the title bar in). */
+async function resize(app, width, height) {
+  let got = await resizeInner(app, width, height);
+  if (got.width !== width || got.height !== height)
+    got = await resizeInner(app, 2 * width - got.width, 2 * height - got.height);
+  if (Math.abs(got.width - width) > 1 || Math.abs(got.height - height) > 1)
+    throw new Error(`the window's page is ${got.width}x${got.height}, not ${width}x${height}`);
+}
+
+/** Checks the legend, in a window too short for all of it, is a box that
+ *  ends within the window and scrolls, its first line in view. */
+async function scrolls(app, label) {
+  const got = await app.js(`
+    for (let el = document.querySelector(".legend"); el; el = el.parentElement) el.scrollTop = 0;
+    const legend = document.querySelector(".legend");
+    const box = legend.getBoundingClientRect();
+    const first = legend.querySelector(".row .does").getBoundingClientRect();
+    return {
+      bottom: Math.round(box.bottom),
+      height: innerHeight,
+      scroll: legend.scrollHeight,
+      client: legend.clientHeight,
+      first: first.top >= box.top && first.bottom <= box.bottom,
+    };`);
+  if (got.bottom > got.height)
+    throw new Error(`${label}: the legend ends at ${got.bottom}, below the window's ${got.height}`);
+  if (!(got.scroll > got.client))
+    throw new Error(`${label}: the legend doesn't scroll (${got.scroll} high, ${got.client} shown)`);
+  if (!got.first) throw new Error(`${label}: the legend's first line isn't in view`);
+  return `${got.client} of ${got.scroll} shown, ends at ${got.bottom} of ${got.height}`;
 }
 
 const same = (label, got, want) => {
@@ -90,6 +137,24 @@ export default {
     await ctx.checkpoint("legend-vod");
     await until("the legend's being open saved", async () => (await app.invoke("get_settings")).show_keys, 10_000);
     ctx.log(`open: the stage stayed at ${before}; groups ${GROUPS.join(", ")}; ${vodFit}`);
+
+    // Shorter windows: the legend scrolls within what's left, and opening or
+    // closing it still leaves the picture where it was.
+    const { width, height } = await pageSize(app);
+    for (const [w, h] of SHORT) {
+      await resize(app, w, h);
+      const fit = await scrolls(app, `the VOD at ${w}x${h}`);
+      const open = await stageBox(app);
+      await app.click(BUTTON);
+      await until("the legend closed", () => app.js(`return !document.querySelector(".legend")`), 10_000);
+      same(`the stage at ${w}x${h} with the legend closed`, await stageBox(app), open);
+      await app.click(BUTTON);
+      await until("the legend", () => app.js(`return !!document.querySelector(".legend")`), 10_000);
+      same(`the stage at ${w}x${h} with the legend open again`, await stageBox(app), open);
+      ctx.log(`at ${w}x${h}: the legend ${fit}; the stage stayed at ${open}`);
+    }
+    await resize(app, width, height);
+    await until("the legend's being open saved", async () => (await app.invoke("get_settings")).show_keys, 10_000);
 
     // All controls › opens Settings on Controls; B taken from Cut here, the
     // legend shows the key left (Ctrl+B, ⌘B).
@@ -133,6 +198,12 @@ export default {
     if (render !== "E") throw new Error(`the edit's legend has "${render}" for render`);
     const editFit = await fits(app, "the edit");
     ctx.log(`the edit's legend ${editFit}`);
+    const { width: editWidth, height: editHeight } = await pageSize(app);
+    for (const [w, h] of SHORT) {
+      await resize(app, w, h);
+      ctx.log(`at ${w}x${h}: the edit's legend ${await scrolls(app, `the edit at ${w}x${h}`)}`);
+    }
+    await resize(app, editWidth, editHeight);
     await ctx.checkpoint("legend-edit");
 
     // Closed, it's saved closed.

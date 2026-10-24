@@ -89,9 +89,27 @@
 </section>
 
 <style>
+  /* A column within the window's (App.svelte's .main): each part as tall as
+     it is, but where the window is too short for everything, the legend
+     gives up room and scrolls inside itself, rather than the panel running
+     past the window's bottom. */
   section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+  }
+
+  section > :global(*) {
+    flex: none;
+  }
+
+  /* At least its headings and a couple of lines, so it never shrinks away. */
+  section > :global(.legend) {
+    flex: 0 1 auto;
+    min-height: 64px;
+    overflow-y: auto;
   }
 
   /* Full screen: the panel over the whole window, the picture as large as fits. */
