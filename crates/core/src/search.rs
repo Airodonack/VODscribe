@@ -9,6 +9,11 @@
 //! index's own counts) is looked up alone: any match holds it, so the lines
 //! around each line it's in are read, and matched here. A chat message is a
 //! unit of its own: all the pieces in one message, no window.
+//!
+//! The website's demo searches its fixtures the same way in TypeScript
+//! (apps/site/src/lib/tauri/search.ts `searchLibrary`), and its
+//! search.test.mjs runs these tests against it: a change to what matches is
+//! made there too.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;

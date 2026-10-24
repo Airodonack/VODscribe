@@ -46,6 +46,8 @@ const commands: Record<string, (args: Args) => unknown> = {
   reorder_library: ({ items }) =>
     backend.reorder((items as { kind: string; id: number }[]).filter((i) => i.kind === "vod").map((i) => i.id)),
   search: ({ query, filter }) => backend.search(query as string, (filter ?? {}) as SearchFilter),
+  author_suggestions: ({ prefix, vodId }) =>
+    backend.authorSuggestions(prefix as string, (vodId as number | null) ?? null),
   transcript: ({ vodId, from, to }) =>
     backend.transcript(vodId as number, from as number | undefined, to as number | null | undefined),
   transcript_stretches: ({ vodId }) => backend.transcriptStretches(vodId as number),

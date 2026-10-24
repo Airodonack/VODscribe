@@ -109,7 +109,7 @@ pub fn terms(text: &str) -> Vec<String> {
 
 /// Whether a search's last term matches as a prefix (so results update while
 /// typing): only once it's two characters or more, since one begins too many
-/// words to look through. The website demo's search does the same (search.ts).
+/// words to look through. The website demo's search does the same (query.ts).
 pub fn last_is_prefix(terms: &[String]) -> bool {
     terms.last().is_some_and(|t| t.chars().count() >= 2)
 }

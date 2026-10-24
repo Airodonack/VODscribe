@@ -10,6 +10,10 @@
 //!
 //! Parsing is pure: `parse` gives the tree the page shows, and
 //! `Query::conjunctions` the alternatives `Db::search` runs, one by one.
+//!
+//! The website's demo has a TypeScript port of this parser
+//! (apps/site/src/lib/tauri/query.ts), and its query.test.mjs runs these
+//! tests against it, case for case: a change here is made there too.
 
 use std::fmt;
 

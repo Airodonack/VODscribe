@@ -1,20 +1,19 @@
 // The demo's backend: the app's commands answered from the transcripts in
-// static/demo (made by scripts/export-demo.py), with the same phrase search as
-// the app (crates/core: db.rs `search`, transcript.rs `terms` and `find_phrase`).
+// static/demo (made by scripts/export-demo.py), searched as the app searches
+// (search.ts, ported from crates/core search.rs and query.rs).
 
 import type {
+  AuthorSuggestion,
   ChatLine,
   ChatOverview,
   ChatWindow,
   Line,
   SearchFilter,
-  SearchHit,
-  SearchQuery,
   SearchResponse,
   Stretch,
   Vod,
 } from "desktop/lib/api.ts";
-import { findPhrase, highlight, lastIsPrefix, terms } from "./search";
+import { authorSuggestions as suggest, searchLibrary, terms, type LibraryVod } from "./search";
 
 /** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
 type Segment = [text: string, start: number, wordStarts: number[]];
@@ -22,12 +21,15 @@ type Segment = [text: string, start: number, wordStarts: number[]];
 interface Word {
   text: string;
   start: number;
+  /** The demo's words have no ends: each ends where it starts. */
+  end: number;
   terms: string[];
 }
 
 interface Indexed {
   id: number;
   start: number;
+  end: number;
   text: string;
   words: Word[];
 }
@@ -92,13 +94,14 @@ export async function reorder(ids: number[]) {
 function segments(vodId: number): Promise<Indexed[]> {
   return cached(transcripts, vodId, () =>
     json<Segment[]>(`/demo/${vodId}.json`).then((segs) =>
-      segs.map(([text, start, starts], i) => ({
+      segs.map(([text, start, starts], i) => {
+        const words = text.split(" ").map((w, j) => {
+          const at = starts[j] ?? start;
+          return { text: w, start: at, end: at, terms: terms(w) };
+        });
         // Segment ids only need to be unique and stable within a visit.
-        id: vodId * 100_000 + i,
-        start,
-        text,
-        words: text.split(" ").map((w, j) => ({ text: w, start: starts[j] ?? start, terms: terms(w) })),
-      })),
+        return { id: vodId * 100_000 + i, start, end: words.at(-1)?.start ?? start, text, words };
+      }),
     ),
   );
 }
@@ -187,64 +190,25 @@ export async function chatMatches(vodId: number, lists: string[][]): Promise<[nu
   });
 }
 
+/** As many hits as the app shows (desktop vods.rs `search`). */
 const LIMIT = 500;
 
-// The demo searches for one phrase, as the app did before its search
-// language: nothing typed sets a filter, and it shows no grouping.
-const PLAIN: SearchQuery = {
-  tree: null,
-  within: null,
-  from: null,
-  sources: null,
-  after: null,
-  before: null,
-  error: null,
-};
+const searchables = new Map<string, Promise<LibraryVod[]>>();
+
+/** The library as the search reads it, in its order: every VOD's speech and chat. */
+async function searchable(): Promise<LibraryVod[]> {
+  const vods = await listVods();
+  return cached(searchables, vods.map((v) => v.id).join(" "), () =>
+    Promise.all(
+      vods.map(async (v) => ({ id: v.id, channel: v.channel, lines: await segments(v.id), chat: await chat(v.id) })),
+    ),
+  );
+}
 
 export async function search(query: string, filter: SearchFilter): Promise<SearchResponse> {
-  const q = terms(query);
-  const prefix = lastIsPrefix(q);
-  const hits: SearchHit[] = [];
-  if (q.length === 0) return { hits, truncated: false, query: PLAIN };
-  for (const vod of await listVods()) {
-    if (filter.vodId != null && vod.id !== filter.vodId) continue;
-    const found: SearchHit[] = [];
-    if (filter.speech !== false)
-      for (const seg of await segments(vod.id)) {
-        const ranges = findPhrase(seg.words, q, prefix);
-        if (ranges.length === 0) continue;
-        found.push({
-          vod_id: vod.id,
-          source: "speech",
-          id: seg.id,
-          time: seg.words[ranges[0][0]].start,
-          // The demo's words have no ends: the last matched word's start.
-          end: seg.words[ranges[ranges.length - 1][1]].start,
-          lines: 1,
-          parts: highlight(seg.words, ranges),
-          author: null,
-          color: null,
-        });
-      }
-    if (filter.chat !== false)
-      for (const { line, words } of await chat(vod.id)) {
-        const ranges = findPhrase(words, q, prefix);
-        if (ranges.length === 0) continue;
-        found.push({
-          vod_id: vod.id,
-          source: "chat",
-          id: line.id,
-          time: line.time,
-          end: line.time,
-          lines: 1,
-          parts: highlight(words, ranges),
-          author: line.author,
-          color: line.color,
-        });
-      }
-    // As the app has them: by VOD, then time.
-    hits.push(...found.sort((a, b) => a.time - b.time));
-    if (hits.length > LIMIT) return { hits: hits.slice(0, LIMIT), truncated: true, query: PLAIN };
-  }
-  return { hits, truncated: false, query: PLAIN };
+  return searchLibrary(await searchable(), query, filter, LIMIT);
+}
+
+export async function authorSuggestions(prefix: string, vodId: number | null): Promise<AuthorSuggestion[]> {
+  return suggest(await searchable(), prefix, vodId);
 }
