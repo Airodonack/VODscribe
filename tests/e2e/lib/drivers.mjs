@@ -51,6 +51,10 @@ export async function webdriver(app) {
   const base = `http://127.0.0.1:${port}`;
   if (!tauriDriver) {
     const native = process.env.NATIVE_DRIVER ? ["--native-driver", process.env.NATIVE_DRIVER] : [];
+    // The native driver's port too (tauri-driver's default is 4445 for
+    // every run): two runs side by side would otherwise share one
+    // WebKitWebDriver, each sending its sessions to the other's.
+    native.push("--native-port", String(await freePort()));
     tauriDriver = spawn(process.env.TAURI_DRIVER ?? "tauri-driver", ["--port", String(port), ...native], {
       stdio: ["ignore", "inherit", "inherit"],
     });

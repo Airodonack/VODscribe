@@ -63,6 +63,22 @@ The private runtime dir matters: with the shared one, the test bus's gnome-keyri
 
 On another computer: `node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] --only edits`.
 
+### Several at once, and shards
+
+`--parallel N` (Linux) runs N apps at once, each in a worker of its own: `run.mjs` again, with its own data folders (`XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` with `-1`, `-2`, … added, and a private `XDG_RUNTIME_DIR`), its own driver port (`E2E_DRIVER_PORT` + 1, + 2, …), its own D-Bus session and its own X display (Xvfb, with openbox if it's installed: the OS layer's screenshots and clicks are of the whole screen, so two windows on one display would see and click each other). Each worker starts with the tools and model of the configured data folder, hard-linked (so a run of setup there first saves each worker the download). Its output comes marked `[w1]`, `[w2]`, …, and its results are merged into `E2E_OUT` at the end in scenario order (`results.json`, `checkpoints/`, `perf.json`, the failures' pages and screenshots), as one run would have left them. It needs `XDG_DATA_HOME` set, and can't be used with `--profile`.
+
+With the environment above (each worker makes its own bus and display, so the run needs neither around it):
+
+```sh
+node tests/e2e/run.mjs /usr/bin/vodscribe --parallel 3
+```
+
+Scenarios are dealt longest first, each to the worker with the least to do so far, by the seconds each took when it last passed: `durations.json`, refreshed from runs' results with `node tests/e2e/durations.mjs <out dir>...` (a scenario that's new to it goes last). `--shard i/N` runs the i-th of N such deals, the same on every computer for the same file, for CI's machines to split the suite between them; it combines with `--parallel`. `distros.mjs --parallel N` runs a cell's suite that way; `runners.mjs` passes `run.mjs`'s options on as they are (`--shard` works there; `--parallel` is Linux's only).
+
+### The flake ledger
+
+`flaky.json` names the scenarios known to fail now and then for reasons outside what they check, each with the reason and the date it was seen: `{ "<scenario>": "<what happened, where, when>" }`. A listed scenario that fails runs once more; if it passes then, it's reported `flaky`, on a line of its own and counted apart from the passes (`e2e: 31 of 33 passed, 1 flaky`), never as passed, and its entry in `results.json` has `attempts: 2`, `flaky: true` and the first attempt's error (`firstError`). The first attempt's page and screenshot are kept as `<scenario>.first.txt` and `.png`, its checkpoints labelled "(first attempt)". A scenario goes in the ledger with its reason once the failure has been looked into and found to be the computer's or the runner's, not the app's; it comes out when the cause is fixed or a few rounds pass without it. Every summary says how many the ledger holds.
+
 The `setup` scenario always runs first when it's chosen, and downloads the tools and the speech model the others keep. Without them, whichever scenario runs first goes through setup and downloads them; with it, they're copied in and the run starts at once. Quit any VODscribe you have open first: the run refuses to start beside one.
 
 ## Environment
@@ -73,7 +89,8 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 - `E2E_SITE`: which site's VOD the site scenarios play (`twitch`, the default, or `youtube`).
 - `E2E_SHOTS`: set, `site-embed` keeps a screenshot of the whole screen at each step.
 - `E2E_TRACE`: `1` logs each call into the page and how long it took.
-- `E2E_DRIVER_PORT`: tauri-driver's port (default 4444), for two runs side by side on one computer.
+- `E2E_DRIVER_PORT`: tauri-driver's port (default 4444), for two runs side by side on one computer; with `--parallel`, the workers take the ports after it. The native driver under it (WebKitWebDriver) gets a free port of its own each run: tauri-driver's default, 4445 for every run, had a second run drive the first one's app.
+- `E2E_WORKER`: set by `--parallel` in each worker (its number); not for setting by hand.
 - `E2E_SCHEME`: the colour scheme the run is in (`light` or `dark`), which the site scenarios check; `distros.mjs` sets it from `--scheme`.
 - `E2E_DISPLAY`: the Wayland compositor the run is under (`weston` or `gnome`), so screenshots know how to be taken; `distros.mjs` sets it from `--env`.
 - `E2E_SEED`: for `distros.mjs`, a data folder whose `bin/` and `models/` each cell starts with (default none, so setup downloads them).
@@ -90,7 +107,7 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 
 ## Results
 
-`run.mjs` writes `results.json` (each scenario, passed, failed or skipped, and why) to `E2E_OUT`. For a failure it adds the page's text and errors (`<scenario>.txt`) and a screenshot (`<scenario>.png`); checkpoints go in `checkpoints/`. `distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named for the distribution and what differs from the default (`debian-13-weston-dark`), with the whole log in `run.log`, and prints one line per cell at the end. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`. Two runs of the same cell from the same checkout wipe each other's folders.
+`run.mjs` writes `results.json` (each scenario, passed, failed, skipped or flaky, and why) to `E2E_OUT`, and ends with a summary: how many passed, a line for each scenario, the flake ledger's size, and the wall time on how many workers. For a failure it adds the page's text and errors (`<scenario>.txt`) and a screenshot (`<scenario>.png`); checkpoints go in `checkpoints/`. `distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named for the distribution and what differs from the default (`debian-13-weston-dark`), with the whole log in `run.log`, and prints one line per cell at the end. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`. Two runs of the same cell from the same checkout wipe each other's folders.
 
 Every run also writes `perf.json` to `E2E_OUT`: the steps each scenario timed (below), the app's memory at each scenario's end, and what the run was on (CPU, kernel, WebKit, display). Each result in `results.json` has its `timings` (ms) and, on Linux, `memory`.
 

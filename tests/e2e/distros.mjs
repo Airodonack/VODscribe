@@ -30,6 +30,8 @@
 //                        must match the host's kernel). The packaged app has
 //                        no symbols of ours: for our own code, profile the
 //                        profiling build instead (README, "Profiling").
+//   --parallel N         N apps at once in the cell (run.mjs --parallel),
+//                        for a host with the cores and memory (default 1)
 //
 // Portals, real desktops and window managers' own ways aren't here: that's
 // the QA VMs'.
@@ -149,12 +151,13 @@ const { values: opts, positionals } = parseArgs({
     scheme: { type: "string", default: "light" },
     gpu: { type: "string" },
     profile: { type: "boolean" },
+    parallel: { type: "string", default: "1" },
   },
 });
 const [packages, ...rest] = positionals;
 if (!packages) {
   console.error(
-    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia|dri] [--profile] [-- run.mjs options]",
+    "usage: node tests/e2e/distros.mjs <folder with the .deb and .rpm> [--only a,b] [--env x11|weston|gnome] [--scheme light|dark] [--gpu nvidia|dri] [--profile] [--parallel N] [-- run.mjs options]",
   );
   process.exit(2);
 }
@@ -245,9 +248,13 @@ for (const name of names) {
   const pkg = pkgs[distro.kind];
   if (!pkg) throw new Error(`no .${distro.kind} in ${packages}`);
   const out = path.join(here, "out", "distros", cell(name));
-  const data = path.join(work, `${cell(name)}-data`, "app.vodscribe");
+  // The cell's scratch folder, its data folder in it: with --parallel, the
+  // workers' data folders go beside that one, where their tools and model
+  // can be hard links to its.
+  const scratch = path.join(work, `${cell(name)}-data`);
+  const data = path.join(scratch, "data", "app.vodscribe");
   rmSync(out, { recursive: true, force: true });
-  rmSync(path.dirname(data), { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
   mkdirSync(data, { recursive: true });
   for (const kept of ["bin", "models"]) {
@@ -255,7 +262,13 @@ for (const name of names) {
     if (from && existsSync(from)) cpSync(from, path.join(data, kept), { recursive: true });
   }
   const quote = (a) => `'${a.replaceAll("'", "'\\''")}'`;
-  const args = [...rest, ...(opts.profile ? ["--profile", "/out/perf"] : [])].map(quote).join(" ");
+  const args = [
+    ...rest,
+    ...(opts.profile ? ["--profile", "/out/perf"] : []),
+    ...(opts.parallel !== "1" ? ["--parallel", opts.parallel] : []),
+  ]
+    .map(quote)
+    .join(" ");
   const script = [
     "set -e",
     `EXTRA="${[
@@ -264,7 +277,7 @@ for (const name of names) {
       ...(opts.profile ? PERF_PACKAGES[distro.pm] : []),
     ].join(" ")}"`,
     distro.install,
-    "export XDG_DATA_HOME=/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
+    "export XDG_DATA_HOME=/work/data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1 E2E_OUT=/out TAURI_DRIVER=/opt/tools/tauri-driver",
     // Passed on: scenarios that need the network, screenshots kept.
     ...["E2E_NETWORK", "E2E_SHOTS", "E2E_SITE"]
       .filter((k) => process.env[k])
@@ -294,7 +307,7 @@ for (const name of names) {
       "-v",
       `${tauriDriver}:/opt/tools/tauri-driver:ro`,
       "-v",
-      `${path.dirname(data)}:/data`,
+      `${scratch}:/work`,
       "-v",
       `${out}:/out`,
       distro.image,
@@ -309,14 +322,17 @@ for (const name of names) {
     : [];
   const failed = results.filter((r) => !r.ok);
   const skipped = results.filter((r) => r.ok && r.skipped);
+  // Passed on a retry, by the flake ledger (run.mjs): counted apart.
+  const flaky = results.filter((r) => r.flaky);
   const line =
     results.length === 0
       ? `no results (exit ${run.status}): see ${path.join(out, "run.log")}`
-      : `${results.length - failed.length - skipped.length} of ${results.length} passed` +
+      : `${results.length - failed.length - skipped.length - flaky.length} of ${results.length} passed` +
         (skipped.length ? `; skipped: ${skipped.map((r) => r.name).join(", ")}` : "") +
+        (flaky.length ? `; flaky: ${flaky.map((r) => r.name).join(", ")}` : "") +
         (failed.length ? `; failed: ${failed.map((r) => r.name).join(", ")}` : "");
   console.log(`   ${line}`);
   summary.push(`${cell(name)}: ${line}`);
-  rmSync(path.dirname(data), { recursive: true, force: true });
+  rmSync(scratch, { recursive: true, force: true });
 }
 console.log(`\n${summary.join("\n")}`);

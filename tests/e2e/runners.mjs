@@ -23,6 +23,9 @@
 //
 // The runner's app data is emptied before each scenario: runners are for
 // testing only. E2E_NETWORK=1 here is passed on (scenarios that reach the sites).
+// run.mjs's options pass through as they are: --shard splits the suite
+// between runners; --parallel is Linux's only, so 1 here (the app's data
+// folder on Windows and macOS can't be moved per worker).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -209,7 +212,7 @@ async function windows() {
       if (lost === 1) log(`lost the connection (${e.message.split("\n").at(-2) ?? e.message}); still waiting`);
       continue;
     }
-    const lines = text.split(/\r?\n/).filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL)|FAILED/.test(l));
+    const lines = text.split(/\r?\n/).filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL|flaky|wall)|FAILED/.test(l));
     for (const l of lines.slice(shown)) console.log(`  ${l}`);
     shown = lines.length;
     if (ps(`Test-Path '${dir}\\out\\exit.txt'`) === "True") break;
@@ -285,7 +288,7 @@ function mac() {
     ],
     { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1 << 28 },
   );
-  for (const l of run.stdout.split("\n").filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL)|FAILED/.test(l)))
+  for (const l of run.stdout.split("\n").filter((l) => /^\[\d+ s\]|^e2e:|^  (ok|FAIL|flaky|wall)|FAILED/.test(l)))
     console.log(`  ${l}`);
   spawnSync("scp", ["-q", ...shared, "-r", `${runner.host}:${runner.dir}/out/*`, out], { stdio: "inherit" });
   return run.status;
