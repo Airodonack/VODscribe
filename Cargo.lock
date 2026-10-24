@@ -11793,6 +11793,7 @@ dependencies = [
  "gtk",
  "http",
  "ipc-channel",
+ "khronos-egl",
  "log",
  "parking_lot",
  "raw-window-handle",
