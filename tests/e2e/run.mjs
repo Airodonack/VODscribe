@@ -1,7 +1,7 @@
 // End-to-end tests of a VODscribe build: scenarios (scenarios/*.mjs), each
 // on a fresh library, driving the app through its page.
 //
-//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--repeat N] [--profile <dir>]
+//   node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge|servo] [--repeat N] [--profile <dir>]
 //                          [--parallel N] [--shard i/N]
 //
 // The webdriver driver (the default on Linux) runs the installed app through
@@ -103,7 +103,7 @@ const { values: opts, positionals } = parseArgs({
 });
 if (!positionals[0]) {
   console.error(
-    "usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge] [--repeat N] [--profile <dir>] [--parallel N] [--shard i/N]",
+    "usage: node tests/e2e/run.mjs <the app> [--only a,b] [--driver webdriver|bridge|servo] [--repeat N] [--profile <dir>] [--parallel N] [--shard i/N]",
   );
   process.exit(2);
 }
@@ -111,7 +111,10 @@ const repeat = Number(opts.repeat);
 if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`--repeat ${opts.repeat}: a whole number, 1 or more`);
 // Timings come from unprofiled runs; a profile is of one.
 if (repeat > 1 && opts.profile) throw new Error("--profile with --repeat: profile one run, time the others");
-const driverName = opts.driver ?? (process.platform === "linux" ? "webdriver" : "bridge");
+// E2E_ENGINE=servo: the app on Servo (a build with the `servo` and `e2e`
+// features), through Servo's WebDriver server (lib/drivers.mjs).
+const driverName =
+  opts.driver ?? (process.env.E2E_ENGINE === "servo" ? "servo" : process.platform === "linux" ? "webdriver" : "bridge");
 if (opts.profile && (process.platform !== "linux" || driverName !== "webdriver"))
   throw new Error("--profile is for Linux, through the webdriver driver");
 // Profiled, the driver starts lib/profile.sh, which starts the app under perf.
