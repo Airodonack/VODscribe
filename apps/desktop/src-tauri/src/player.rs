@@ -49,6 +49,44 @@ impl Native {
     }
 }
 
+/// What the app's player is at, for the end-to-end tests' page dump
+/// (tests/e2e/lib/dump.mjs, through `e2e::e2e_player_state`): whether one
+/// is open, for what, and what its threads are at, so a stall carries its
+/// cause. `open` is None if the lock on it couldn't be had in a moment (a
+/// thread holds it: stuck, or a slow open).
+#[cfg(any(feature = "e2e", test))]
+#[derive(Serialize)]
+pub(crate) struct Seen {
+    open: Option<bool>,
+    doc: Option<Doc>,
+    embed: Option<u64>,
+    player: Option<vodscribe_player::clock::Diagnosis>,
+}
+
+#[cfg(any(feature = "e2e", test))]
+impl Native {
+    pub(crate) fn seen(&self) -> Seen {
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let open = loop {
+            match self.open.try_lock() {
+                Ok(open) => break Some(open),
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break Some(poisoned.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() < end => {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(std::sync::TryLockError::WouldBlock) => break None,
+            }
+        };
+        let Some(open) = open else { return Seen { open: None, doc: None, embed: None, player: None } };
+        Seen {
+            open: Some(open.is_some()),
+            doc: open.as_ref().map(|o| o.doc),
+            embed: open.as_ref().and_then(|o| o.embed),
+            player: open.as_ref().map(|o| o.player.diagnosis()),
+        }
+    }
+}
+
 /// What the page is told of the player: `running` once the time moves
 /// (playing, it stands until the picture and sound start), for the page's
 /// clock to run from then rather than from the play, and at `speed`; and
@@ -633,6 +671,30 @@ pub(crate) fn player_set_volume(state: State<'_, AppState>, volume: f32) -> CmdR
 mod tests {
     use super::*;
     use vodscribe_core::fetch::VodInfo;
+
+    /// The tests' account of the player: none open, then one, as JSON the dump reads.
+    #[test]
+    fn the_player_seen_says_whether_one_is_open_and_what_its_threads_are_at() {
+        let native = Native::default();
+        let none = serde_json::to_value(native.seen()).unwrap();
+        assert_eq!(none["open"], false);
+        assert!(none["player"].is_null());
+        let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::default()).unwrap();
+        *native.open.lock().unwrap() = Some(Open { player, doc: Doc::Vod(7), embed: None });
+        let seen = serde_json::to_value(native.seen()).unwrap();
+        assert_eq!(seen["open"], true);
+        assert_eq!(seen["doc"], serde_json::json!({ "kind": "vod", "id": 7 }));
+        assert_eq!(seen["player"]["thread_alive"], true);
+        assert_eq!(seen["player"]["decoding"], false);
+        assert_eq!(seen["player"]["state"]["playing"], false);
+        // Held by a stuck thread: said so, not waited on.
+        let held = native.open.lock().unwrap();
+        let begun = std::time::Instant::now();
+        let stuck = std::thread::scope(|s| s.spawn(|| serde_json::to_value(native.seen()).unwrap()).join().unwrap());
+        assert!(stuck["open"].is_null());
+        assert!(begun.elapsed() < std::time::Duration::from_secs(2));
+        drop(held);
+    }
 
     /// A VOD from a site without its own player, its video downloading
     /// (videos.rs `stream_then_keep`), opened while the download ends: the

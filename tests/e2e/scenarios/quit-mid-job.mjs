@@ -1,10 +1,12 @@
 // Quitting while a file transcribes: nothing the app started goes on after
-// it, and at the next start the transcription carries on to the end.
+// it, nor the app itself, and at the next start the transcription carries
+// on to the end.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import { appLine } from "../lib/dump.mjs";
 import { longSpeech } from "../lib/fixtures.mjs";
 import { leftovers } from "../lib/procs.mjs";
 
@@ -35,13 +37,19 @@ export default {
     const [still] = await app.invoke("list_vods");
     if (still.status !== "transcribing") throw new Error(`3 s in, it's ${still.status}: make the file longer`);
     ctx.log("quitting while it transcribes");
-    if (!leftovers().length)
+    // The app's own process too (its binary): a quit that hangs is told
+    // apart from a worker left behind, and when it ended is in the log.
+    const proc = app.driver.proc;
+    if (!leftovers(proc.exe).length)
       throw new Error("no process of the app's found while it transcribes: the check can't work");
 
     await ctx.quit();
-    await until("what the app started to end", () => leftovers().length === 0 || null, 10_000).catch(() => {
-      throw new Error(`still running after quitting:\n  ${leftovers().join("\n  ")}`);
+    await until("what the app started to end", () => leftovers(proc.exe).length === 0 || null, 10_000).catch(() => {
+      throw new Error(`still running after quitting (${appLine(proc)}):\n  ${leftovers(proc.exe).join("\n  ")}`);
     });
+    // Its end is noted a tenth of a second at most after it (lib/procs.mjs watchExit).
+    await until("the app's end noted", () => proc.exitedAt || !proc.pid, 1000).catch(() => {});
+    ctx.log(appLine(proc));
     app = await ctx.start();
     await app.toLibrary();
     const done = await until(

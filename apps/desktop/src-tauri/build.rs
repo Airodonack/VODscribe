@@ -39,18 +39,40 @@ fn main() {
 }
 
 /// The command names (each path's last segment) in `generate_handler![...]`.
+/// An entry may have a `#[cfg(feature = "...")]` before it (the tests' own
+/// commands, in an `e2e` build only); its permission is written whatever the
+/// features, so the files kept in the repository don't change with the build.
 fn commands(lib_rs: &str) -> Vec<String> {
     let start =
         lib_rs.find("generate_handler![").expect("generate_handler! in src/lib.rs") + "generate_handler![".len();
-    let end = start + lib_rs[start..].find(']').expect("end of generate_handler!");
+    // The list's own `]`, past any attribute's brackets.
+    let mut depth = 1;
+    let end = start
+        + lib_rs[start..]
+            .find(|c| {
+                depth += match c {
+                    '[' => 1,
+                    ']' => -1,
+                    _ => 0,
+                };
+                depth == 0
+            })
+            .expect("end of generate_handler!");
     let commands: Vec<String> = lib_rs[start..end]
         .split(',')
-        .map(|path| path.trim().rsplit("::").next().unwrap_or("").to_string())
+        .map(|entry| {
+            let mut entry = entry.trim();
+            if let Some(rest) = entry.strip_prefix("#[cfg(feature = \"") {
+                let (_, after) = rest.split_once("\")]").expect("a cfg attribute: #[cfg(feature = \"name\")]");
+                entry = after.trim();
+            }
+            entry.rsplit("::").next().unwrap_or("").to_string()
+        })
         .filter(|name| !name.is_empty())
         .collect();
     assert!(!commands.is_empty(), "no commands found in generate_handler!");
-    // A cfg attribute or comment in the list would be misread: fail rather than
-    // silently drop permissions.
+    // Any other attribute, or a comment, in the list would be misread: fail
+    // rather than silently drop permissions.
     for name in &commands {
         assert!(
             name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),

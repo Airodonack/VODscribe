@@ -83,6 +83,7 @@ permissions = [
   "allow-player-frame",
   "allow-player-preview",
   "allow-player-decoders-started",
+  "allow-e2e-player-state",
   "allow-screen-under",
   "allow-player-play",
   "allow-player-pause",

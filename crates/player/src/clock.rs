@@ -20,10 +20,11 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 use vodscribe_core::local::Picture;
 
 use crate::decode::{self, Audio, Frame, Info, Stream, Video};
@@ -267,6 +268,10 @@ struct Inner {
     /// Where the footage isn't here, the time stands until it is (a VOD from
     /// a site, fetched as it plays), rather than passing it in black (an edit).
     waits_for_footage: AtomicBool,
+    /// The playing decoder is in place (its ffmpeg started), and when a
+    /// frame last showed: for telling a stall's cause (`Player::diagnosis`).
+    decoding: AtomicBool,
+    last_shown: Mutex<Option<Instant>>,
 }
 
 impl Inner {
@@ -326,6 +331,9 @@ impl Inner {
 /// A timeline, playing or paused at a time.
 pub struct Player {
     inner: Arc<Inner>,
+    /// The thread that decodes and shows frames (`run`): it ends only when
+    /// the player closes, or if it panics.
+    thread: std::thread::JoinHandle<()>,
 }
 
 /// Where no file's rate is known: a seek lands on a step of this.
@@ -370,14 +378,16 @@ impl Player {
             shown_count: AtomicU64::new(0),
             dropped: AtomicU64::new(0),
             waits_for_footage: AtomicBool::new(false),
+            decoding: AtomicBool::new(false),
+            last_shown: Mutex::new(None),
         });
         let shared = inner.clone();
-        std::thread::Builder::new().name("player".into()).spawn(move || run(&shared))?;
+        let thread = std::thread::Builder::new().name("player".into()).spawn(move || run(&shared))?;
         let shared = inner.clone();
         std::thread::Builder::new().name("sound".into()).spawn(move || run_sound(&shared))?;
         let shared = inner.clone();
         std::thread::Builder::new().name("preview".into()).spawn(move || run_preview(&shared))?;
-        Ok(Player { inner })
+        Ok(Player { inner, thread })
     }
 
     /// Plays `timeline` instead, from the same time: without a break where
@@ -605,6 +615,89 @@ impl Player {
 
     pub fn set_volume(&self, volume: f32) {
         self.inner.volume.lock().unwrap().store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
+    }
+
+    /// What the player's threads are at, for telling why it stalls (the
+    /// end-to-end tests' page dump). Never waits long on a lock: one held
+    /// by a stuck thread is reported as such (`state` None).
+    pub fn diagnosis(&self) -> Diagnosis {
+        let inner = &self.inner;
+        let duration = within(&inner.timeline).map(|t| t.duration());
+        let state = within(&inner.state).map(|s| StateSeen {
+            epoch: s.epoch,
+            playing: s.playing,
+            ready: s.ready,
+            ended: s.ended,
+            time: duration.map(|d| s.time(d)),
+            speed: s.speed,
+            sound_output: s.output,
+        });
+        let frame = within(&inner.frame);
+        Diagnosis {
+            state,
+            duration,
+            shown: within(&inner.shown).and_then(|s| *s),
+            frame_pts: frame.as_ref().and_then(|f| f.as_ref().map(|f| f.pts)),
+            frame_known: frame.is_some(),
+            last_frame_ms_ago: within(&inner.last_shown).and_then(|at| at.map(|at| at.elapsed().as_millis() as u64)),
+            decoding: inner.decoding.load(Ordering::Acquire),
+            thread_alive: !self.thread.is_finished(),
+            shown_count: inner.shown_count.load(Ordering::Relaxed),
+            dropped: inner.dropped.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// What `Player::diagnosis` reports.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Diagnosis {
+    /// The clock's state; None if its lock couldn't be had (a thread holds it).
+    pub state: Option<StateSeen>,
+    /// The timeline's length; None if its lock couldn't be had.
+    pub duration: Option<f64>,
+    /// Where in the timeline the frame showing is.
+    pub shown: Option<f64>,
+    /// The pts (in its file) of the frame showing, if one is.
+    pub frame_pts: Option<f64>,
+    /// Whether `frame_pts` could be read (its lock had).
+    pub frame_known: bool,
+    /// How long since a frame last showed, if one has.
+    pub last_frame_ms_ago: Option<u64>,
+    /// The playing decoder is in place: its ffmpeg started and not run out.
+    pub decoding: bool,
+    /// The player's thread runs (it ends with the player, or a panic).
+    pub thread_alive: bool,
+    /// Frames shown, and dropped for being late, since it opened.
+    pub shown_count: u64,
+    pub dropped: u64,
+}
+
+/// The clock's state, as `Player::diagnosis` saw it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct StateSeen {
+    /// Counted up at every seek and play from the end (`State::epoch`).
+    pub epoch: u64,
+    pub playing: bool,
+    /// The picture has its first frame of this epoch (until then the time stands).
+    pub ready: bool,
+    pub ended: bool,
+    pub time: Option<f64>,
+    pub speed: f64,
+    /// There's a sound output, so the time follows the sound.
+    pub sound_output: bool,
+}
+
+/// `mutex`'s guard, if it's had within a moment (a poisoned one too): for
+/// looking without waiting on a thread that's stuck holding it.
+fn within<T>(mutex: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
+    let end = Instant::now() + Duration::from_millis(200);
+    loop {
+        match mutex.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(TryLockError::Poisoned(poisoned)) => return Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) if Instant::now() < end => std::thread::sleep(Duration::from_millis(5)),
+            Err(TryLockError::WouldBlock) => return None,
+        }
     }
 }
 
@@ -852,6 +945,7 @@ fn run(inner: &Inner) {
                 },
             };
             let old = std::mem::replace(&mut current, decoder);
+            inner.decoding.store(current.is_some(), Ordering::Release);
             if let Some(old) = old.filter(|_| adopted) {
                 inner.keep_for_preview(old);
             }
@@ -890,6 +984,7 @@ fn run(inner: &Inner) {
                 first = false;
             }
             current = None;
+            inner.decoding.store(false, Ordering::Release);
             mark_ready(inner, epoch);
             // The file ran out before the stretch's end: the time passes the rest.
             if !wait_until(inner, epoch, stretch.end()) {
@@ -951,6 +1046,7 @@ fn moment(inner: &Inner, epoch: u64, time: f64, first: bool) -> Moment {
 /// Shows `frame`, the one at `time`.
 fn show(inner: &Inner, frame: Arc<Frame>, time: f64) {
     inner.shown_count.fetch_add(1, Ordering::Relaxed);
+    *inner.last_shown.lock().unwrap() = Some(Instant::now());
     *inner.frame.lock().unwrap() = Some(frame);
     *inner.shown.lock().unwrap() = Some(time);
     if let Some(f) = inner.on_frame.lock().unwrap().as_ref() {

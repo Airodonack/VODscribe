@@ -83,6 +83,7 @@ import { App, clock, watchWith } from "./lib/app.mjs";
 import { dataDirs, resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import { deal, parseShard, readDurations } from "./lib/durations.mjs";
+import { pageDump } from "./lib/dump.mjs";
 import { memoryOf } from "./lib/memory.mjs";
 import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
@@ -510,22 +511,10 @@ async function diagnose(driver, name) {
     .run(`return [...document.querySelectorAll(".error-text")].map((e) => e.textContent.trim()).filter(Boolean)`)
     .catch((e) => [`(couldn't read the page: ${e.message})`]);
   if (errors.length) console.error(`  the page shows: ${errors.join(" | ")}`);
-  // What it showed, as text: where there's no screenshot (macOS over SSH), it's all there is.
-  const shown = await driver
-    .run(
-      `const media = document.querySelector("video, audio");
-       return [
-         "player: " + (media ? JSON.stringify({ src: media.currentSrc, readyState: media.readyState,
-           networkState: media.networkState, paused: media.paused, currentTime: media.currentTime,
-           error: media.error && (media.error.code + " " + media.error.message) }) : "no <video> or <audio>"),
-         "time shown: " + (document.querySelector("button.time")?.textContent.trim() ?? "none"),
-         "page: " + document.visibilityState + (document.hasFocus() ? ", focused" : ", not focused"),
-         "console errors: " + JSON.stringify(window.__e2e?.console ?? []),
-         "",
-         document.body.innerText,
-       ].join("\\n")`,
-    )
-    .catch((e) => `(couldn't read the page: ${e.message})`);
+  // What it showed, as text, with the media's, the app's player's and the
+  // app's state (lib/dump.mjs): where there's no screenshot (macOS over
+  // SSH), it's all there is.
+  const shown = await pageDump(driver);
   mkdirSync(out, { recursive: true });
   writeFileSync(path.join(out, `${name}.txt`), shown);
   console.error(`  page: ${path.join(out, `${name}.txt`)}`);

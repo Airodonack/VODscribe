@@ -80,6 +80,14 @@ pub(crate) fn start(app: &AppHandle) {
     std::thread::spawn(move || loopback::serve(listener, "e2e", usize::MAX, loopback::MAX_BODY, Arc::new(answer)));
 }
 
+/// What the app's player is at (`player::Seen`), for the tests' page dump
+/// (tests/e2e/lib/dump.mjs). Async, so it runs off the main thread: a
+/// stuck player can't hold the window up while it's asked.
+#[tauri::command]
+pub(crate) async fn e2e_player_state(app: AppHandle) -> crate::player::Seen {
+    app.state::<crate::AppState>().player.seen()
+}
+
 /// Runs `body` (a `Run`) in the main window and waits for its answer:
 /// `{"id", "ok", "value"}`, `value` being what it returned or the error.
 fn run(app: &AppHandle, waiting: &Waiting, id: u64, body: &str) -> (u16, String) {

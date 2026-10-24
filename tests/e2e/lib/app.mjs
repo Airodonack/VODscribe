@@ -14,8 +14,13 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
+import { pageDump } from "./dump.mjs";
+import * as os from "./os.mjs";
 
 export const MINUTE = 60_000;
+
+/** How long a click waits for what it clicks to be on the page. */
+export const CLICK_WAIT = 10_000;
 
 /**
  * Polls `check` until it returns something truthy, or fails after `timeout`
@@ -134,21 +139,48 @@ export class App {
     );
   }
 
-  click(selector) {
-    return this.js(
-      `const el = document.querySelector(arguments[0]);
-       if (!el) throw new Error("no " + arguments[0]);
-       el.click();`,
-      selector,
+  /** The page dump (lib/dump.mjs): what the page, its media and the app's player are at. */
+  dump(options) {
+    return pageDump(this.driver, options);
+  }
+
+  /**
+   * Finds what `find` (a function body: the element or null) gives, waiting
+   * up to CLICK_WAIT for it in the page, then does `act` (a function body
+   * with `el`) to it. A step a moment early (the page still drawing what the
+   * last one did) waits rather than fails; one that never comes fails
+   * saying what the page was at (the dump, without its text, in the log).
+   */
+  async onElement(what, find, act, ...args) {
+    const done = await this.js(
+      `const find = () => { ${find} };
+       const end = performance.now() + arguments[0];
+       let el;
+       while (!(el = find()) && performance.now() < end) await new Promise((r) => setTimeout(r, 50));
+       if (!el) return false;
+       ${act}
+       return true;`,
+      CLICK_WAIT,
+      ...args,
     );
+    if (done) return;
+    this.log(
+      `no ${what} after ${CLICK_WAIT / 1000} s; the page:\n    ${(await this.dump({ text: false })).replaceAll("\n", "\n    ")}`,
+    );
+    throw new Error(`no ${what} on the page after ${CLICK_WAIT / 1000} s`);
+  }
+
+  /** Clicks `selector`, once it's on the page (onElement). */
+  click(selector) {
+    return this.onElement(selector, `return document.querySelector(arguments[1])`, `el.click();`, selector);
   }
 
   /** Double-clicks `selector`, as the page gets one: two clicks, then the double-click. */
   doubleClick(selector) {
-    return this.js(
-      `const el = document.querySelector(arguments[0]);
-       if (!el) throw new Error("no " + arguments[0]);
-       el.click();
+    return this.onElement(
+      selector,
+      `return document.querySelector(arguments[1])`,
+      `el.click();
        el.click();
        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
       selector,
@@ -156,10 +188,47 @@ export class App {
   }
 
   /**
+   * Makes sure the page has the keyboard before keys or typing go to it.
+   * Where it hasn't (a runner's window lost it to another: the hosted macOS
+   * runner, once), the window is asked back: by the page, by the driver,
+   * and by the OS (os.activate); failing that, the step fails at once,
+   * "page not focused", rather than as a timeout further on. Not under
+   * weston, where the window never has the keyboard (no seat) and focus and
+   * blur are sent by hand.
+   */
+  async focused() {
+    if (process.env.E2E_DISPLAY === "weston") return;
+    if (await this.js(`return document.hasFocus()`)) return;
+    const has = () => this.js(`return document.hasFocus()`);
+    const ways = [
+      ["the page", () => this.js(`window.focus()`)],
+      ["the driver", () => this.driver.focus()],
+      ["the OS", () => os.activate(this.driver.proc)],
+    ];
+    const tried = [];
+    for (const [by, ask] of ways) {
+      try {
+        await ask();
+      } catch (e) {
+        tried.push(`${by}: ${e.message}`);
+        continue;
+      }
+      if (await until(`the page focused by ${by}`, has, 1000, { every: 100 }).catch(() => false)) {
+        this.log(`the page wasn't focused: ${by} focused it`);
+        return;
+      }
+      tried.push(`${by}: no`);
+    }
+    this.log(`the page isn't focused; the page:\n    ${(await this.dump({ text: false })).replaceAll("\n", "\n    ")}`);
+    throw new Error(`page not focused (asked ${tried.join("; ")})`);
+  }
+
+  /**
    * Focuses the input `selector`, with its focus event. As with `blur`, a window without the
    * keyboard (weston) gets no focus event from it: there it's sent by hand.
    */
-  focus(selector) {
+  async focus(selector) {
+    await this.focused();
     return this.js(
       `const input = document.querySelector(arguments[0]);
        if (!input) throw new Error("no " + arguments[0]);
@@ -204,18 +273,19 @@ export class App {
     );
   }
 
-  /** Clicks the button whose text is `text`. */
+  /** Clicks the button whose text is `text`, once it's on the page (onElement). */
   clickText(text) {
-    return this.js(
-      `const el = [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === arguments[0]);
-       if (!el) throw new Error("no button " + arguments[0]);
-       el.click();`,
+    return this.onElement(
+      `button ${text}`,
+      `return [...document.querySelectorAll("button")].find((b) => b.textContent.trim() === arguments[1])`,
+      `el.click();`,
       text,
     );
   }
 
   /** Types `value` into the input `selector`, as a person would (an input event). */
-  type(selector, value) {
+  async type(selector, value) {
+    await this.focused();
     return this.js(
       `const input = document.querySelector(arguments[0]);
        if (!input) throw new Error("no " + arguments[0]);
@@ -257,7 +327,8 @@ export class App {
    *  `cmd` the command modifier of the computer the app runs on: ⌘ on a Mac,
    *  Ctrl elsewhere (the app's undo is ⌘Z there, not Ctrl+Z), as the window
    *  gets it. */
-  key(key, { shift = false, cmd = false } = {}) {
+  async key(key, { shift = false, cmd = false } = {}) {
+    await this.focused();
     return this.js(
       `const mac = arguments[2] && /Mac/.test(navigator.platform);
        document.body.dispatchEvent(new KeyboardEvent("keydown",

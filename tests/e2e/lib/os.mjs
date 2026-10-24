@@ -156,9 +156,23 @@ export function colourIn(png, rect) {
 
 /**
  * Brings the app to the front, as a person's first click would: on macOS a
- * click on an app that isn't in front only brings it there.
+ * click on an app that isn't in front only brings it there. On X11, given
+ * the app's process (a driver's `proc`), its windows are activated, which
+ * gives the page the keyboard back (App.focused; the page's window.focus()
+ * and WebDriver's Switch To Window don't, under openbox, 2026-10-23).
  */
-export function activate() {
+export function activate(proc = null) {
+  if (process.platform === "linux") {
+    if (wayland() !== null || !proc?.pid) return;
+    const windows = execFileSync("xdotool", ["search", "--pid", String(proc.pid)], { encoding: "utf8" });
+    // Each window of its process (there's more than the one shown); one that can't be activated is passed over.
+    for (const id of windows.split("\n").filter(Boolean)) {
+      try {
+        execFileSync("xdotool", ["windowactivate", id], { stdio: "ignore" });
+      } catch {}
+    }
+    return;
+  }
   if (process.platform !== "darwin") return;
   execFileSync("osascript", [
     "-l",

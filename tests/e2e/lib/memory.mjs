@@ -23,45 +23,9 @@ function proc(pid, file) {
  * MiB, or null where it can't be read (not Linux, or the app isn't running).
  */
 export function memoryOf(exe) {
-  if (process.platform !== "linux") return null;
-  let binary;
-  try {
-    binary = realpathSync(exe);
-  } catch {
-    return null;
-  }
-  const pids = readdirSync("/proc").filter((d) => /^\d+$/.test(d));
-  const parent = new Map();
-  for (const pid of pids) {
-    // The parent is the 4th field, after the name in parentheses (which may hold spaces).
-    const stat = proc(pid, "stat");
-    if (stat) parent.set(pid, stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-  }
-  const exeOf = (pid) => {
-    try {
-      return readlinkSync(`/proc/${pid}/exe`);
-    } catch {
-      return null;
-    }
-  };
-  /** `top` and every process under it. */
-  const tree = (top) => {
-    const under = new Set([top]);
-    for (let grew = true; grew;) {
-      grew = false;
-      for (const [pid, ppid] of parent)
-        if (under.has(ppid) && !under.has(pid)) {
-          under.add(pid);
-          grew = true;
-        }
-    }
-    return under;
-  };
-  // The app this run started (under its driver, under this process): another
-  // of the same binary, such as a developer's own, isn't this run's.
-  const app = [...tree(String(process.pid))].find((pid) => exeOf(pid) === binary);
+  const app = appPid(exe);
   if (!app) return null;
-  const under = tree(app);
+  const under = tree(parents(), app);
   const processes = [];
   for (const pid of under) {
     const rollup = proc(pid, "smaps_rollup");
@@ -76,4 +40,52 @@ export function memoryOf(exe) {
   }
   processes.sort((a, b) => b.pss - a.pss);
   return { processes, pss: processes.reduce((sum, p) => sum + p.pss, 0) };
+}
+
+/** Each process's parent, by pid (as strings). */
+function parents() {
+  const parent = new Map();
+  for (const pid of readdirSync("/proc").filter((d) => /^\d+$/.test(d))) {
+    // The parent is the 4th field, after the name in parentheses (which may hold spaces).
+    const stat = proc(pid, "stat");
+    if (stat) parent.set(pid, stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+  }
+  return parent;
+}
+
+/** `top` and every process under it, by `parent` (parents()). */
+function tree(parent, top) {
+  const under = new Set([top]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [pid, ppid] of parent)
+      if (under.has(ppid) && !under.has(pid)) {
+        under.add(pid);
+        grew = true;
+      }
+  }
+  return under;
+}
+
+/**
+ * The pid (a string) of the app this run started, whose binary is `exe`
+ * (Linux), or null: the one under this process (under its driver), as
+ * another of the same binary, such as a developer's own, isn't this run's.
+ */
+export function appPid(exe) {
+  if (process.platform !== "linux") return null;
+  let binary;
+  try {
+    binary = realpathSync(exe);
+  } catch {
+    return null;
+  }
+  const exeOf = (pid) => {
+    try {
+      return readlinkSync(`/proc/${pid}/exe`);
+    } catch {
+      return null;
+    }
+  };
+  return [...tree(parents(), String(process.pid))].find((pid) => exeOf(pid) === binary) ?? null;
 }

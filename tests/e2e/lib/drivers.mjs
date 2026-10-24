@@ -1,7 +1,10 @@
 // The two ways into the app's page, behind one interface: each starts the app
-// and returns { run(body, args, waitMs), screenshot(), close() }, where `run`
-// does what WebDriver's "execute script" does (a function body, its
-// `arguments`, the awaited result).
+// and returns { run(body, args, waitMs), screenshot(), focus(), close(), proc },
+// where `run` does what WebDriver's "execute script" does (a function body,
+// its `arguments`, the awaited result), `focus` asks for the window to be
+// given the keyboard, and `proc` is the app's process as far as it's known:
+// { exe, pid, closedAt, exitedAt, exit } (times in ms since the epoch; null
+// where not known or not yet), for the page dump (lib/dump.mjs).
 //
 // - webdriver: tauri-driver and the platform's driver (WebKitWebDriver on
 //   Linux, msedgedriver on Windows: NATIVE_DRIVER), for the installed app
@@ -18,6 +21,9 @@ import { Script } from "node:vm";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+
+import { appPid } from "./memory.mjs";
+import { watchExit } from "./procs.mjs";
 
 const MINUTE = 60_000;
 
@@ -74,11 +80,27 @@ export async function webdriver(app) {
   const session = (
     await wd("POST", "/session", { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } })
   ).sessionId;
+  // The app runs under the native driver, which doesn't say when it ends:
+  // found by its binary under this process (Linux), and watched.
+  const pid = appPid(app);
+  const proc = { exe: app, pid: pid && Number(pid), closedAt: null, exitedAt: null, exit: null };
+  if (proc.pid) watchExit(proc);
   return {
     run: (body, args = []) =>
       wd("POST", `/session/${session}/execute/sync`, { script: `return (async () => { ${body} })()`, args }),
     screenshot: async () => Buffer.from(await wd("GET", `/session/${session}/screenshot`), "base64"),
-    close: () => wd("DELETE", `/session/${session}`).catch(() => {}),
+    // WebDriver's Switch To Window, to the window it's on. WebKitWebDriver
+    // doesn't give the window the keyboard with it (openbox, 2026-10-23:
+    // the OS does, os.activate); msedgedriver's not tried yet.
+    focus: async () => {
+      const handle = await wd("GET", `/session/${session}/window`);
+      await wd("POST", `/session/${session}/window`, { handle });
+    },
+    close: () => {
+      proc.closedAt = Date.now();
+      return wd("DELETE", `/session/${session}`).catch(() => {});
+    },
+    proc,
   };
 }
 
@@ -93,7 +115,12 @@ export async function bridge(app) {
     stdio: ["ignore", "inherit", "inherit"],
   });
   let exited = null;
-  child.on("exit", (code, signal) => (exited = signal ?? code));
+  const proc = { exe, pid: child.pid, closedAt: null, exitedAt: null, exit: null };
+  child.on("exit", (code, signal) => {
+    exited = signal ?? code;
+    proc.exitedAt = Date.now();
+    proc.exit = signal ? `signal ${signal}` : `code ${code}`;
+  });
   const post = (url, body) =>
     fetch(base + url, {
       method: "POST",
@@ -129,10 +156,15 @@ export async function bridge(app) {
       return answer.value;
     },
     screenshot: async () => screen(),
+    // Nothing of its own: the hook runs scripts in the page, and the OS
+    // brings the app to the front (App.focused).
+    focus: async () => {},
     close: async () => {
+      proc.closedAt = Date.now();
       await post("/quit").catch(() => {});
       await waitFor("the app to quit", async () => exited !== null, 20_000).catch(() => child.kill("SIGKILL"));
     },
+    proc,
   };
 }
 
