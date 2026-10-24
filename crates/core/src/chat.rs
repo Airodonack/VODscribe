@@ -772,12 +772,18 @@ fn twitch_into(
             return Ok(());
         }
         let (lo, hi) = bounds(slice);
+        // Twitch answers "service error" for the comments from more than a
+        // second past a VOD's end, and a page can say there's more there: the
+        // chat runs on a little past the end. So a slice stops at the VOD's
+        // end, whatever the page says.
+        let vod_end = duration.map_or(f64::INFINITY, |d| start + d);
         let mut offset = from as i64;
         let mut seen = HashSet::new();
         // The newest second's messages, held until the page after brings the rest of that second.
         let mut held: Vec<ChatMessage> = Vec::new();
         loop {
             let (messages, more) = retrying(stop, || page(offset, stop))?;
+            let empty = messages.is_empty();
             let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
             // A page that ends in the second it started from may not have held all
             // of that second's messages; that's rare, and moving on keeps this finite.
@@ -788,7 +794,8 @@ fn twitch_into(
                 }
             }
             let progress = duration.map_or(0.0, |d| ((last as f64 - lo) / (hi.min(start + d) - lo)).clamp(0.0, 1.0));
-            if !more || next as f64 >= hi {
+            // A page with nothing on it has nothing after it either.
+            if !more || empty || next as f64 >= hi || next as f64 > vod_end {
                 send(Fetched { slice, messages: held, position: DONE_FORWARD, progress: 1.0 });
                 return Ok(());
             }
@@ -1570,12 +1577,23 @@ mod tests {
         assert_eq!(saved(&store), expected, "every message");
     }
 
+    /// What Twitch answers for a comments page it won't give, as it did on
+    /// 2026-10-24 for the test VOD (67 s long) from 69 s on.
+    fn service_error() -> Value {
+        json!({ "errors": [{ "message": "service error", "path": ["video", "comments"] }],
+            "data": { "video": { "comments": null } },
+            "extensions": { "durationMilliseconds": 41, "requestID": "01M5Q9JGMYCF91S411PH3FN0ES" } })
+    }
+
     /// Twitch's GraphQL API serving `all` in pages of 100 from an offset, as
-    /// it does, with `fail(n)` saying whether its nth comments page (from 0)
-    /// is answered with an error instead, as Twitch answers now and then.
-    /// Counts the comments pages asked for in `asked`.
+    /// it does, for a VOD `length` seconds long, with `fail(n)` saying whether
+    /// its nth comments page (from 0) is answered with an error instead, as
+    /// Twitch answers now and then. Pages from more than a second past the
+    /// end are always refused, as Twitch's are. Counts the comments pages
+    /// asked for in `asked`.
     fn twitch_answering<'a>(
         all: &'a [(String, ChatMessage)],
+        length: f64,
         asked: &'a AtomicUsize,
         fail: impl Fn(usize) -> bool + Sync + 'a,
     ) -> impl Fn(&Value, &AtomicBool) -> Result<Value> + Sync + 'a {
@@ -1584,9 +1602,8 @@ mod tests {
             let Some(offset) = body.pointer("/variables/offset").and_then(Value::as_i64) else {
                 return Ok(json!({ "data": {} }));
             };
-            if fail(asked.fetch_add(1, Ordering::Relaxed)) {
-                return Ok(json!({ "errors": [{ "message": "service error", "path": ["video", "comments"] }],
-                    "data": { "video": { "comments": null } } }));
+            if fail(asked.fetch_add(1, Ordering::Relaxed)) || offset as f64 > length + 1.0 {
+                return Ok(service_error());
             }
             let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).collect();
             let edges: Vec<Value> = from
@@ -1621,7 +1638,7 @@ mod tests {
         // Page, "service error", page: the error is asked again, and the fetch ends whole.
         let mut store = MemoryChat::default();
         let asked = AtomicUsize::new(0);
-        let ask = twitch_answering(&all, &asked, |n| n == 1);
+        let ask = twitch_answering(&all, 430.0, &asked, |n| n == 1);
         assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
         assert_eq!(saved(&store), expected);
         assert!(asked.load(Ordering::Relaxed) > 30, "paged through");
@@ -1630,15 +1647,76 @@ mod tests {
         // fetch stops with what it had, and carries on from there once Twitch answers.
         let mut store = MemoryChat::default();
         let asked = AtomicUsize::new(0);
-        let ask = twitch_answering(&all, &asked, |n| n >= 10);
+        let ask = twitch_answering(&all, 430.0, &asked, |n| n >= 10);
         let e = fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap_err();
         assert_eq!(format!("{e:#}"), "Twitch wouldn't give the chat: service error");
         assert_eq!(asked.load(Ordering::Relaxed), 10 + PAGE_RETRIES.len() + 1, "asked five times");
         let partial = store.messages.len();
         assert!((900..3000).contains(&partial), "saved {partial} before it stopped");
-        let ask = twitch_answering(&all, &asked, |_| false);
+        let ask = twitch_answering(&all, 430.0, &asked, |_| false);
         assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
         assert_eq!(saved(&store), expected, "every message, once");
+    }
+
+    #[test]
+    fn a_twitch_fetch_stops_at_the_vods_end() {
+        // 3,024 messages, 7 a second, to 431 s: the chat runs on past the
+        // VOD's end, at 418 s.
+        let all: Vec<_> = (0..3024).map(|n| fake(n, 7)).collect();
+        let info = VodInfo {
+            platform: "twitch".into(),
+            platform_id: "2901646294".into(),
+            url: String::new(),
+            title: String::new(),
+            channel: None,
+            duration: Some(418.0),
+            thumbnail: None,
+            published: None,
+        };
+        let no = AtomicBool::new(false);
+        // The messages before `end` saved, and all of them.
+        let before = |store: &MemoryChat, end: f64| {
+            let of = |m: &[ChatMessage]| {
+                saved(&MemoryChat { messages: m.iter().filter(|m| m.time < end).cloned().collect(), positions: None })
+            };
+            (of(&store.messages), of(&all.iter().map(|(_, m)| m.clone()).collect::<Vec<_>>()))
+        };
+
+        // The page from 406 s ends at 420 s and says there's more, which
+        // Twitch refuses to give.
+        let mut store = MemoryChat::default();
+        let asked = AtomicUsize::new(0);
+        let ask = twitch_answering(&all, 418.0, &asked, |_| false);
+        assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
+        let (got, all_before) = before(&store, 418.0);
+        assert_eq!(got, all_before, "every message before the end");
+
+        // Every page saying there's more, even the empty ones after the chat's
+        // last message: still the end.
+        for length in [418.0, 440.0] {
+            let mut store = MemoryChat::default();
+            let asked = AtomicUsize::new(0);
+            let honest = twitch_answering(&all, length, &asked, |_| false);
+            let ask = |body: &Value, stop: &AtomicBool| {
+                let mut page = honest(body, stop)?;
+                if let Some(more) = page.pointer_mut("/data/video/comments/pageInfo/hasNextPage") {
+                    *more = json!(true);
+                }
+                Ok(page)
+            };
+            let info = VodInfo { duration: Some(length), ..info.clone() };
+            assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap(), "{length} s");
+            let (got, all_before) = before(&store, length);
+            assert_eq!(got, all_before, "{length} s");
+            // Of unknown length, with the chat ending before the VOD: up to the first empty page.
+            if length > 431.0 {
+                let info = VodInfo { duration: None, ..info.clone() };
+                let mut store = MemoryChat::default();
+                assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap(), "unknown length");
+                let (got, all_before) = before(&store, length);
+                assert_eq!(got, all_before, "unknown length");
+            }
+        }
     }
 
     #[test]
