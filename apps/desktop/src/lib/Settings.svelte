@@ -453,8 +453,10 @@
         <button class="link" onclick={() => openUrl(ISSUES)}
           >Report a problem or suggest something <Icon name="external" size={12} /></button
         >
-        <!-- What can't be taken back, apart from the rest and marked so. -->
-        <p class="label start-over">Start over</p>
+      </section>
+      <!-- What can't be taken back: its own subsection, marked so. -->
+      <section>
+        <span class="eyebrow">Reset and repair</span>
         <button class="danger-outline" onclick={resetSettings}>Reset settings…</button>
         <p class="muted hint">
           Puts every setting back as it was when VODscribe was new. Your library, transcripts, clips and videos stay.
@@ -638,11 +640,6 @@
   .label {
     margin: 0 0 6px;
     font-size: 13px;
-  }
-
-  /* Help's Start over, set apart from Report a problem. */
-  .start-over {
-    margin-top: 14px;
   }
 
   /* A row of choices, the chosen one filled (theme, video quality, clip format). */

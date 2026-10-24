@@ -34,7 +34,7 @@ export default {
     settings:
       "A Settings dialog over the library: down its left a list of sections (Transcription, Appearance, Controls, Storage, Updates, Privacy, Help) with one of them highlighted, and to the right that section's heading and its options, each with a line of explanation.",
     "settings-help":
-      'Settings, in a dark theme, shows its Help section: a link to report a problem at the top, then, set apart under a "Start over" heading, two red-outlined buttons, Reset settings… and Repair VODscribe…, each with a line of explanation under it.',
+      'Settings, in a dark theme, shows its Help section: a link to report a problem at the top, then, set apart under a "Reset and repair" heading like the other subsections, two red-outlined buttons, Reset settings… and Repair VODscribe…, each with a line of explanation under it.',
   },
   async run(app, ctx) {
     await app.toLibrary();
