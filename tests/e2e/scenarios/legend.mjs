@@ -70,8 +70,9 @@ const pageSize = (app) => app.js(`return { width: innerWidth, height: innerHeigh
  *  the window manager added or took (macOS counts the title bar in); returns
  *  the size it got, as "WxH". A screen too small for the size asked gives
  *  less (a 1024 by 768 runner's has no 749 px page under the menu bar and
- *  title bar): that's the size tested, and said. Only a page that didn't
- *  change at all, asked for another size, fails. */
+ *  title bar): that's the size tested, and said. A page already at the
+ *  screen's most stays as it is when asked for more; only a page that didn't
+ *  shrink when asked for less fails, since a window can always shrink. */
 async function resize(app, log, width, height) {
   const was = await pageSize(app);
   let got = await resizeInner(app, width, height);
@@ -80,7 +81,8 @@ async function resize(app, log, width, height) {
   const asked = `${width}x${height}`;
   const size = `${got.width}x${got.height}`;
   if (Math.abs(got.width - width) <= 1 && Math.abs(got.height - height) <= 1) return asked;
-  if (got.width === was.width && got.height === was.height)
+  const stayed = got.width === was.width && got.height === was.height;
+  if (stayed && (width < was.width || height < was.height))
     throw new Error(`the window's page stayed ${size}, asked for ${asked}`);
   log(`asked ${asked}, got ${size}`);
   return size;
