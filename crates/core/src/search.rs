@@ -18,7 +18,7 @@ use rusqlite::{OptionalExtension, ToSql, params};
 use serde::Serialize;
 
 use crate::db::{Db, SearchFilter, SearchHit, SearchResults, Source, TextPart};
-use crate::query::{Conjunction, DEFAULT_WITHIN, Piece, QueryInfo};
+use crate::query::{Conjunction, DEFAULT_WITHIN, MOST_WITHIN, Piece, QueryInfo, TOO_WIDE};
 use crate::transcript::{Word, find_phrase, terms};
 
 /// Bounds for a time filter that isn't set (finite, so SQLite compares them).
@@ -91,6 +91,10 @@ impl Db {
     /// VOD; at most `limit`, and `truncated` if there were more.
     pub fn search(&self, query: &str, filter: &SearchFilter, limit: usize) -> Result<SearchResults> {
         let none = |info: QueryInfo| SearchResults { hits: Vec::new(), truncated: false, query: info };
+        // The filter's window as typed ones are (`query::parse`): the page keeps it in bounds.
+        if filter.within.is_some_and(|w| w > MOST_WITHIN) {
+            return Ok(none(QueryInfo::error(TOO_WIDE.into())));
+        }
         let parsed = match crate::query::parse(query) {
             Ok(q) => q,
             Err(e) => return Ok(none(QueryInfo::error(e))),
@@ -1298,6 +1302,22 @@ mod tests {
         assert!(find(&db, "zyzzyva clutch").hits.is_empty(), "a word in no line");
     }
 
+    /// A window of hours, typed or the filter's, took minutes over long VODs.
+    #[test]
+    fn the_filters_window_is_at_most_an_hour_too() {
+        let mut db = library();
+        let v = vod(&db, "a", "s");
+        say(&mut db, v, 0.0, "a clutch play");
+        say(&mut db, v, 3000.0, "and another play");
+        let filter = |within| SearchFilter { within: Some(within), ..Default::default() };
+        let r = db.search("\"clutch\" \"another\"", &filter(MOST_WITHIN), 500).unwrap();
+        assert_eq!((r.hits.len(), r.query.error), (1, None));
+        let r = db.search("clutch", &filter(MOST_WITHIN + 1.0), 500).unwrap();
+        assert!(r.hits.is_empty());
+        assert_eq!(r.query.error.as_deref(), Some(TOO_WIDE));
+        assert_eq!(find(&db, "clutch within:2h").query.error.as_deref(), Some(TOO_WIDE));
+    }
+
     #[test]
     fn the_rarest_word_is_looked_up() {
         let mut db = library();
@@ -1372,7 +1392,7 @@ mod tests {
     /// The cases timed, as (what, query): the e2e perf pass's three, and
     /// what this search adds. The library has no "i" or "mean", so the
     /// all-common phrase is one of its own common words.
-    pub(crate) const BENCHMARK: [(&str, &str); 13] = [
+    pub(crate) const BENCHMARK: [(&str, &str); 14] = [
         ("one line a VOD", "tranquility base relay"),
         ("many lines", "chat"),
         ("none", "zyzzyva"),
@@ -1386,6 +1406,10 @@ mod tests {
         ("from: a chatter, a word", "from:viewer7 good"),
         ("from: a streamer, a phrase", "from:streamer_a tranquility base"),
         ("-word", "chat -the"),
+        // The widest window (MOST_WITHIN) over common words, the slowest a
+        // search can be: about 1.4 s on 10 VODs of 10 hours (grown with
+        // `hours: 10`), where within:3h took 15 s and within:10h over a minute.
+        ("widest window, common words", "\"the\" \"a\" \"game\" within:1h"),
     ];
 
     /// Times `BENCHMARK` on a large synthetic library, never a real one: a

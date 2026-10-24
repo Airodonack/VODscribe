@@ -21,9 +21,24 @@ use crate::transcript::{last_is_prefix, terms};
 /// the first matched word's start to the last one's end, in seconds.
 pub const DEFAULT_WITHIN: f64 = 20.0;
 
+/// The widest window, typed or the filter's: an hour. Each match through a
+/// common word looks at every word a window either side of it, so a window
+/// of hours took minutes over a long VOD (`search_benchmark`), holding up
+/// everything else the app reads meanwhile. The page's MOST_WITHIN
+/// (queryChips.ts) is the same.
+pub const MOST_WITHIN: f64 = 3600.0;
+
+/// What's said of a window over `MOST_WITHIN`.
+pub const TOO_WIDE: &str = "within: is at most 1h.";
+
 /// More alternatives than this (as `(a OR b) (c OR d) …` multiplies them) is
 /// refused rather than run one by one.
 const MOST_ALTERNATIVES: usize = 64;
+
+/// Brackets inside each other deeper than this are refused: the parser goes
+/// down one level of recursion per bracket, and thousands of them would run
+/// out of stack, which aborts the app.
+const MOST_BRACKETS: usize = 32;
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -311,7 +326,7 @@ pub fn seconds(text: &str) -> Option<f64> {
         if parts.len() > 3 {
             return None;
         }
-        return Some(parts.iter().fold(0.0, |acc, p| acc * 60.0 + p));
+        return Some(parts.iter().fold(0.0, |acc, p| acc * 60.0 + p)).filter(|s| s.is_finite());
     }
     if let Some(n) = number(&text) {
         return Some(n);
@@ -338,7 +353,7 @@ pub fn seconds(text: &str) -> Option<f64> {
         total += n * size;
         rest = &rest[1..];
     }
-    Some(total)
+    Some(total).filter(|s| s.is_finite())
 }
 
 fn number(text: &str) -> Option<f64> {
@@ -447,6 +462,8 @@ fn tokens(text: &str) -> Result<Vec<Token>, String> {
 struct Parser {
     tokens: Vec<Token>,
     at: usize,
+    /// How many brackets are open where it's reading.
+    depth: usize,
 }
 
 impl Parser {
@@ -527,7 +544,12 @@ impl Parser {
             }),
             Token::Filter(key, value) => Some(Node::Filter { key, value }),
             Token::Open => {
+                if self.depth == MOST_BRACKETS {
+                    return Err(format!("More than {MOST_BRACKETS} brackets inside each other: take some out."));
+                }
+                self.depth += 1;
                 let inside = self.sequence()?;
+                self.depth -= 1;
                 if self.peek() != Some(&Token::Close) {
                     return Err("A bracket isn't closed: add a ).".into());
                 }
@@ -572,7 +594,7 @@ fn group(items: Vec<Node>, same: impl Fn(Node) -> Result<Vec<Node>, Node>) -> Op
 /// The query typed into the search box, parsed; an unbalanced quote or
 /// bracket, or a filter's value that isn't one, is the message to show.
 pub fn parse(text: &str) -> Result<Query, String> {
-    let mut parser = Parser { tokens: tokens(text)?, at: 0 };
+    let mut parser = Parser { tokens: tokens(text)?, at: 0, depth: 0 };
     let tree = parser.sequence()?;
     if parser.peek() == Some(&Token::Close) {
         return Err("A bracket is closed that wasn't opened: take out a ).".into());
@@ -587,6 +609,7 @@ pub fn parse(text: &str) -> Result<Query, String> {
             {
                 if *key == Key::Within {
                     match seconds(value).filter(|&s| s > 0.0) {
+                        Some(s) if s > MOST_WITHIN => error = Some(TOO_WIDE.into()),
                         Some(s) => query.within = Some(s),
                         None => error = Some("within: takes a length of time, such as within:20s, 2m or 1h.".into()),
                     }
@@ -785,6 +808,17 @@ mod tests {
         assert!(parse(&many).unwrap().conjunctions().unwrap_err().contains("alternatives"));
     }
 
+    /// Brackets pasted thousands deep were parsed by recursion until the
+    /// stack ran out, which aborts the whole app (3,000 did in a release build).
+    #[test]
+    fn brackets_deep_inside_each_other_are_refused() {
+        let nested = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
+        assert_eq!(parse(&nested(MOST_BRACKETS)).unwrap().conjunctions().unwrap().len(), 1);
+        assert!(error(&nested(MOST_BRACKETS + 1)).contains("brackets"));
+        assert!(error(&nested(100_000)).contains("brackets"));
+        assert!(error(&"(".repeat(100_000)).contains("brackets"));
+    }
+
     #[test]
     fn alternatives_carry_their_own_filters() {
         let c = parse("(from:a \"x\") OR (from:b \"y\")").unwrap().conjunctions().unwrap();
@@ -819,6 +853,21 @@ mod tests {
         assert_eq!(seconds("2x"), None);
         assert_eq!(seconds("h"), None);
         assert_eq!(seconds("1:2:3:4"), None);
+        // Each part finite, the total too large to be a time.
+        let huge = format!("1{}", "0".repeat(305));
+        assert_eq!(seconds(&format!("{huge}h")), None);
+        assert_eq!(seconds(&format!("{huge}:00:00")), None);
+        assert!(error(&format!("within:{huge}h")).contains("within:"));
+    }
+
+    /// A window of hours took minutes to search over long VODs.
+    #[test]
+    fn the_window_is_at_most_an_hour() {
+        assert_eq!(parse("chat within:1h").unwrap().within, Some(MOST_WITHIN));
+        assert_eq!(parse("chat within:60m").unwrap().within, Some(MOST_WITHIN));
+        assert_eq!(error("chat within:1h0m1s"), TOO_WIDE);
+        assert_eq!(error("chat within:3h"), TOO_WIDE);
+        assert_eq!(error("(a within:2h) OR b"), TOO_WIDE);
     }
 
     #[test]

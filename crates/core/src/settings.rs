@@ -55,6 +55,7 @@ pub struct Settings {
     /// page's action id: each the whole list of that action's keys, an empty
     /// one for none. Only the page reads them (keymap.ts); ids it no longer
     /// has are kept as they are.
+    #[serde(deserialize_with = "bindings")]
     pub key_bindings: BTreeMap<String, Vec<String>>,
 }
 
@@ -103,6 +104,14 @@ impl EmoteProviders {
 
 fn providers<'de, D: serde::Deserializer<'de>>(d: D) -> Result<EmoteProviders, D::Error> {
     Ok(EmoteProviders::from(Vec::<EmoteProvider>::deserialize(d)?))
+}
+
+/// The key bindings that are lists of keys; any other (the file edited by
+/// hand) is left out, so that action has its defaults, rather than making
+/// the whole file unreadable and every setting its default.
+fn bindings<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<String, Vec<String>>, D::Error> {
+    let serde_json::Value::Object(all) = serde_json::Value::deserialize(d)? else { return Ok(BTreeMap::new()) };
+    Ok(all.into_iter().filter_map(|(id, keys)| Some((id, serde_json::from_value(keys).ok()?))).collect())
 }
 
 /// The tallest video downloaded unless chosen otherwise: 1080p, the most
@@ -172,5 +181,24 @@ mod tests {
         assert_eq!(again.key_bindings["play.toggle"], ["p"]);
         assert!(again.key_bindings["mute.toggle"].is_empty());
         assert_eq!(again.key_bindings["gone.away"], ["x"]);
+    }
+
+    /// A key binding written by hand in the wrong shape (a string for a
+    /// list, a number in one) made the whole file unreadable, so every
+    /// setting fell back to its default, and the next change saved those
+    /// over the file. Only the bindings that aren't lists of keys go.
+    #[test]
+    fn a_misshapen_key_binding_loses_only_itself() {
+        let loaded: Settings = serde_json::from_str(
+            r#"{"theme": "dark", "video_height": 720, "key_bindings":
+                {"undo": "Ctrl+q", "redo": ["Ctrl+y", 5], "mute.toggle": [], "play.toggle": ["p", "k"], "x": null}}"#,
+        )
+        .unwrap();
+        assert_eq!((loaded.theme, loaded.video_height), (Theme::Dark, Some(720)));
+        assert_eq!(loaded.key_bindings.keys().collect::<Vec<_>>(), ["mute.toggle", "play.toggle"]);
+        assert_eq!(loaded.key_bindings["play.toggle"], ["p", "k"]);
+        let loaded: Settings = serde_json::from_str(r#"{"theme": "light", "key_bindings": ["undo"]}"#).unwrap();
+        assert_eq!(loaded.theme, Theme::Light);
+        assert!(loaded.key_bindings.is_empty());
     }
 }

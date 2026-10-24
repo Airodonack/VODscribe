@@ -2,17 +2,38 @@
 // answer read, the model picked from OpenRouter's list, the summary line.
 
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { checkpointsOf } from "./contact-sheet.mjs";
 import { RUBRIC, messages, pair, parseVerdict, pickModel, summary } from "./verify.mjs";
 
 const run = (name, list) => ({
   name,
   dir: `/out/${name}`,
   list: list.map(([scenario, label], i) => ({ file: `${i + 1}-${scenario}-${label}.png`, scenario, label })),
+});
+
+test("a run's index names only pictures in its own checkpoints folder", () => {
+  // An out dir can come back from a runner: a name in its index that leads
+  // elsewhere would have put any picture on this computer in the sheet,
+  // and sent it to the model.
+  const dir = mkdtempSync(path.join(os.tmpdir(), "verify-index-"));
+  try {
+    mkdirSync(path.join(dir, "checkpoints"));
+    const entry = (file) => ({ file, scenario: "s", label: "l" });
+    const files = ["01-s-l.png", "../../secret.png", "/etc/secret.png", "sub/02-s-l.png", "..", ".", "", 3];
+    writeFileSync(path.join(dir, "checkpoints", "index.json"), JSON.stringify(files.map(entry)));
+    assert.deepEqual(
+      checkpointsOf(dir).map((c) => c.file),
+      ["01-s-l.png"],
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("checkpoints with an expectation are judged, the rest listed", () => {

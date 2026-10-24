@@ -14,7 +14,7 @@
   import { api, type AuthorSuggestion, type SearchQuery, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
-  import { lengthText, splitLength, UNITS, type Unit } from "./queryChips";
+  import { lengthText, MOST_WITHIN, splitLength, UNITS, type Unit } from "./queryChips";
 
   // A button that sums up the search's filters, opening a panel to change them.
   // New kinds of filter get a section of the panel and a part of the summary.
@@ -82,7 +82,7 @@
   });
   function setLength(n: number, u: Unit) {
     unit = u;
-    if (Number.isFinite(n) && n > 0) within = n * UNITS[u];
+    if (Number.isFinite(n) && n > 0) within = Math.min(n * UNITS[u], MOST_WITHIN);
   }
 
   // Names for From whom as they're typed: channels first, then chatters, as
@@ -178,6 +178,7 @@
         <input
           type="number"
           min="1"
+          max={MOST_WITHIN / UNITS[shownLength.unit]}
           step="1"
           aria-label="Within"
           value={shownLength.n}

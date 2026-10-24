@@ -153,6 +153,12 @@ impl History {
         self.0.lock().unwrap().take_back(doc, &now)
     }
 
+    /// How many changes to `doc` undo can take back.
+    #[cfg(test)]
+    pub(crate) fn steps(&self, doc: Doc) -> usize {
+        self.0.lock().unwrap().undo.get(&doc).map_or(0, Vec::len)
+    }
+
     /// Forgets `doc`'s history (it's deleted).
     pub(crate) fn forget(&self, doc: Doc) {
         let mut s = self.0.lock().unwrap();

@@ -13,10 +13,16 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-/** The checkpoints a run took (its out dir's checkpoints/index.json), none if it took none. */
+/** The checkpoints a run took (its out dir's checkpoints/index.json), none if it took none.
+ *  Only those whose file is a plain name in that folder: an out dir can come
+ *  back from a runner, and a name leading elsewhere would put another
+ *  picture in the sheet (and, for verify.mjs, send it to the model). */
 export function checkpointsOf(dir) {
   const index = path.join(dir, "checkpoints", "index.json");
-  return existsSync(index) ? JSON.parse(readFileSync(index, "utf8")) : [];
+  const list = existsSync(index) ? JSON.parse(readFileSync(index, "utf8")) : [];
+  const plain = (file) =>
+    typeof file === "string" && file !== "" && file === path.basename(file) && ![".", ".."].includes(file);
+  return list.filter((c) => plain(c?.file));
 }
 
 /** A picture scaled to at most 960 wide, as a base64 JPEG. */

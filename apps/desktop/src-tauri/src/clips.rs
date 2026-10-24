@@ -529,33 +529,53 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
 }
 
 /// Deletes clips `ids` (several selected), as one change in each clip bar's
-/// history: undone, they all come back. Each goes as `delete_clip` takes one.
+/// history: undone, they all come back. All of them go, or none do.
 #[tauri::command]
 pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
-    let mut gone = Vec::new();
-    for id in ids {
-        if let Some(clip) = db.clip(id).map_err(err)? {
-            gone.push(clip);
+    let gone = delete_clips_in(&db, &state.history, &ids, |id| state.clips.stop(id)).map_err(err)?;
+    // Their files once they're gone from the library, as `remove` does for one.
+    for (clip, handed_out) in gone {
+        if let Some(path) = clip.file_path.filter(|_| !handed_out) {
+            delete_file(path);
         }
+        let _ = std::fs::remove_file(thumb_path(&app, clip.id));
+        let _ = app.emit("clip-removed", clip.id);
+    }
+    Ok(())
+}
+
+/// What `delete_clips` does in the library: clips `ids` deleted in one
+/// transaction, each clip bar's change recorded in `history`. One that's
+/// gone, or one that can't be deleted, leaves all of them as they were and
+/// records nothing. `stop` is given each one's id before it goes (its file
+/// being made is stopped). Returns those deleted, each with whether its file
+/// was dragged out of the app (not the app's to delete then).
+fn delete_clips_in(db: &Db, history: &history::History, ids: &[i64], stop: impl Fn(i64)) -> Result<Vec<(Clip, bool)>> {
+    let mut gone = Vec::new();
+    for &id in ids {
+        let clip = db.clip(id)?.context("That clip is gone.")?;
+        let handed_out = db.clip_handed_out(id)?;
+        gone.push((clip, handed_out));
     }
     // Each clip bar as it was before any of them went.
     let mut docs: Vec<(Doc, Option<history::Snapshot>)> = Vec::new();
-    for clip in &gone {
+    for (clip, _) in &gone {
         let doc = bar_doc(clip);
         if !docs.iter().any(|(d, _)| *d == doc) {
-            docs.push((doc, history::snapshot(&db, doc).ok().flatten()));
+            docs.push((doc, history::snapshot(db, doc).ok().flatten()));
         }
     }
-    for clip in &gone {
-        remove(&app, &db, clip.id).map_err(err)?;
+    for (clip, _) in &gone {
+        stop(clip.id);
     }
+    db.atomically(|db| gone.iter().try_for_each(|(clip, _)| db.delete_clip(clip.id)))?;
     for (doc, before) in docs {
         let label =
-            if gone.iter().filter(|c| bar_doc(c) == doc).count() == 1 { "Clip deleted" } else { "Clips deleted" };
-        state.history.record(&db, doc, label, before);
+            if gone.iter().filter(|(c, _)| bar_doc(c) == doc).count() == 1 { "Clip deleted" } else { "Clips deleted" };
+        history.record(db, doc, label, before);
     }
-    Ok(())
+    Ok(gone)
 }
 
 /// Takes off a clip bar (VOD `vod_id`'s, or edit `edit_id`'s) the clips
@@ -1097,6 +1117,39 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Several clips deleted at once went one by one, a clip that was gone
+    /// skipped: one that couldn't go, in the middle, left those before it
+    /// deleted with no step to undo them.
+    #[test]
+    fn deleting_several_clips_is_all_or_none() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0.id;
+        let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
+        let b = db.add_clip(vod, 3.0, 4.0, "b", true).unwrap().id;
+        let history = history::History::default();
+        let stopped = std::cell::RefCell::new(Vec::new());
+        let stop = |id| stopped.borrow_mut().push(id);
+        assert!(delete_clips_in(&db, &history, &[a, 9999, b], stop).is_err());
+        assert_eq!(db.clips(vod).unwrap().len(), 2, "every clip in place");
+        assert_eq!(history.steps(Doc::Vod(vod)), 0, "no step recorded");
+        assert!(stopped.borrow().is_empty(), "none stopped");
+
+        let gone = delete_clips_in(&db, &history, &[b, a], stop).unwrap();
+        assert_eq!(gone.iter().map(|(c, _)| c.id).collect::<Vec<_>>(), [b, a]);
+        assert!(db.clips(vod).unwrap().is_empty());
+        assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
+    }
 
     #[test]
     fn ranges_must_be_clips() {

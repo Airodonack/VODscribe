@@ -79,6 +79,11 @@ export function removeFilter(query: string, text: string): string {
   return query;
 }
 
+/** The widest window a search takes, in seconds: an hour (the core's
+ *  `MOST_WITHIN`, query.rs). Wider ones made a search over common words take
+ *  minutes, holding up everything else the app reads meanwhile. */
+export const MOST_WITHIN = 3600;
+
 /** The Within control's units, and how many seconds each is. */
 export const UNITS = { s: 1, m: 60, h: 3600 } as const;
 export type Unit = keyof typeof UNITS;

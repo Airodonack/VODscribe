@@ -1557,6 +1557,27 @@ impl Db {
         })
     }
 
+    /// Takes several things out of edit `edit` at once, as one change: the
+    /// stretches `stretches` of its timeline (as `remove_edit_stretch`, from
+    /// the last back, so each one's times are still where they were when it
+    /// was picked), then its pieces `pieces` (as `remove_piece`). A piece of
+    /// another edit, or one that's gone, is left alone.
+    pub fn remove_from_edit(&self, edit: i64, stretches: &[(f64, f64)], pieces: &[i64]) -> Result<()> {
+        let mut stretches = stretches.to_vec();
+        stretches.sort_by(|a, b| b.0.total_cmp(&a.0));
+        self.atomically(|db| {
+            for (from, to) in stretches {
+                db.remove_edit_stretch(edit, from, to)?;
+            }
+            for &piece in pieces {
+                if db.piece_edit(piece)? == Some(edit) {
+                    db.remove_piece(piece)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Edit `id`'s video was dragged out of the app, so another app may use it.
     pub fn hand_out_edit(&self, id: i64) -> Result<()> {
         self.conn.execute("UPDATE renders SET handed_out = 1 WHERE clip_id = ?1", [id])?;
@@ -2256,6 +2277,26 @@ pub(crate) mod tests {
         assert_eq!(db.library_order().unwrap(), [Vod(a), Vod(b), Edit(e)]);
         assert_eq!(db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>(), [a, b]);
         assert_eq!(serde_json::to_string(&Edit(e)).unwrap(), format!(r#"{{"kind":"edit","id":{e}}}"#));
+    }
+
+    /// Several things taken out of an edit at once (remove_from_edit) took
+    /// any piece named, of any edit: one of another edit's went from it
+    /// with no undo there, recorded in this edit's history instead.
+    #[test]
+    fn taking_pieces_out_of_an_edit_leaves_other_edits_alone() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let (mine, other) = (db.add_edit("mine").unwrap().id, db.add_edit("other").unwrap().id);
+        for edit in [mine, other] {
+            db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+            db.add_piece(edit, vod, (30.0, 40.0), "b", None).unwrap();
+        }
+        let ids = |edit| db.edit_pieces(edit).unwrap().iter().map(|p| p.id).collect::<Vec<_>>();
+        let (a, theirs) = (ids(mine)[0], ids(other)[0]);
+        db.remove_from_edit(mine, &[(18.0, 20.0)], &[a, theirs, 9999]).unwrap();
+        assert_eq!(ids(other).len(), 2, "another edit's piece stays");
+        let left = db.edit_pieces(mine).unwrap();
+        assert_eq!(left.iter().map(|p| (p.start, p.end)).collect::<Vec<_>>(), [(30.0, 38.0)]);
     }
 
     #[test]
