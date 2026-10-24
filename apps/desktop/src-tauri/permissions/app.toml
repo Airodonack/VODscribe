@@ -112,6 +112,7 @@ permissions = [
   "allow-cancel-vod",
   "allow-cancel-stretch",
   "allow-search",
+  "allow-author-suggestions",
   "allow-transcript",
   "allow-transcript-stretches",
   "allow-transcribe-stretch",

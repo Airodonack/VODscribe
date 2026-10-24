@@ -9,7 +9,7 @@ use crate::chat::{ChatMessage, ChatPart, Kind};
 use crate::fetch::VodInfo;
 use crate::stretches::Transcribed;
 use crate::time::{Flicks, Rate};
-use crate::transcript::{Segment, Word, find_phrase, terms};
+use crate::transcript::{Segment, Word};
 
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -151,7 +151,7 @@ impl Default for SearchFilter {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Speech,
@@ -219,9 +219,14 @@ pub struct SearchHit {
     pub source: Source,
     /// The segment's or chat message's id; unique within its source.
     pub id: i64,
-    /// Start of the matched phrase itself, or of the segment if it couldn't be
-    /// located. For chat, when the message was sent.
+    /// Where the match starts: its first matched word. For chat, when the
+    /// message was sent.
     pub time: f64,
+    /// Where the match ends: its last matched word's end (for chat, `time`).
+    pub end: f64,
+    /// How many lines the match runs over, from the first matched word's to
+    /// the last's: `parts` is their words, one after another.
+    pub lines: usize,
     pub parts: Vec<TextPart>,
     /// For chat, who wrote it, and their name color.
     pub author: Option<String>,
@@ -231,6 +236,8 @@ pub struct SearchHit {
 pub struct SearchResults {
     pub hits: Vec<SearchHit>,
     pub truncated: bool,
+    /// What the typed text set (`query.rs`), for the page to show.
+    pub query: crate::query::QueryInfo,
 }
 
 pub struct Db {
@@ -608,6 +615,15 @@ INSERT INTO stretches (vod_id, start, end, status, progress, model)
     WHERE status = 'error' AND error IS 'Stopped' AND EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id)
     ORDER BY id;";
 
+/// Version 28: search by who and by the rarest word (`search.rs`). Chat's
+/// authors indexed, any case, for `from:` and its suggestions; the search
+/// indexes' word counts readable as tables, to pick the word a search looks
+/// up first. Nothing to fill: the counts are read from the indexes as asked.
+const MIGRATE_V28: &str = "
+CREATE INDEX chat_by_author ON chat (author COLLATE NOCASE, vod_id);
+CREATE VIRTUAL TABLE segments_vocab USING fts5vocab (segments_fts, 'row');
+CREATE VIRTUAL TABLE chat_vocab USING fts5vocab (chat_fts, 'row');";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -970,6 +986,7 @@ impl Db {
             MIGRATE_V25,
             MIGRATE_V26,
             MIGRATE_V27,
+            MIGRATE_V28,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1786,87 +1803,12 @@ impl Db {
     /// from; a range of ids lets a search for one VOD look at its rows only,
     /// rather than every match in the library before keeping its own (a
     /// 2.7M-message library: 161 ms for "a" in one VOD, 33 ms with this).
-    fn id_range(&self, table: &str, vod_id: Option<i64>) -> Result<(i64, i64)> {
+    pub(crate) fn id_range(&self, table: &str, vod_id: Option<i64>) -> Result<(i64, i64)> {
         let Some(vod_id) = vod_id else { return Ok((i64::MIN, i64::MAX)) };
         let sql = format!("SELECT min(id), max(id) FROM {table} WHERE vod_id = ?1");
         let (lo, hi): (Option<i64>, Option<i64>) =
             self.conn.query_row(&sql, [vod_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok((lo.unwrap_or(1), hi.unwrap_or(0)))
-    }
-
-    /// Phrase search. The last term matches as a prefix so results update
-    /// while typing, once it's two letters or more: one letter begins too many
-    /// words to look through as a prefix, so it matches as a word.
-    /// Hits are ordered by VOD, in library order, then by time within the VOD.
-    pub fn search(&self, query: &str, filter: &SearchFilter, limit: usize) -> Result<SearchResults> {
-        let q = terms(query);
-        if q.is_empty() || !(filter.speech || filter.chat) {
-            return Ok(SearchResults { hits: Vec::new(), truncated: false });
-        }
-        // Terms are alphanumeric only, so quoting them can't inject FTS syntax.
-        let prefix = crate::transcript::last_is_prefix(&q);
-        let fts = format!("\"{}\"{}", q.join(" "), if prefix { "*" } else { "" });
-        // (library position, VOD id, hit), to merge the sources in order.
-        let mut found: Vec<(i64, i64, SearchHit)> = Vec::new();
-        if filter.speech {
-            let mut stmt = self.conn.prepare(
-                "SELECT s.id, s.vod_id, s.start, s.words, v.position FROM segments_fts f
-                 JOIN segments s ON s.id = f.rowid
-                 JOIN vod_order v ON v.vod_id = s.vod_id
-                 WHERE segments_fts MATCH ?1 AND f.rowid BETWEEN ?4 AND ?5 AND (?2 IS NULL OR s.vod_id = ?2)
-                 ORDER BY v.position, v.vod_id DESC, s.start
-                 LIMIT ?3",
-            )?;
-            let (lo, hi) = self.id_range("segments", filter.vod_id)?;
-            let rows = stmt.query_map(params![fts, filter.vod_id, limit as i64 + 1, lo, hi], |r| {
-                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, f64>(2)?, r.get::<_, String>(3)?, r.get(4)?))
-            })?;
-            for row in rows {
-                let (id, vod_id, start, words, position) = row?;
-                let words: Vec<Word> = serde_json::from_str(&words)?;
-                let ranges = find_phrase(&words, &q, prefix);
-                let time = ranges.first().map_or(start, |&(i, _)| words[i].start);
-                let parts = highlight(&words, &ranges);
-                let hit = SearchHit { vod_id, source: Source::Speech, id, time, parts, author: None, color: None };
-                found.push((position, vod_id, hit));
-            }
-        }
-        if filter.chat {
-            let mut stmt = self.conn.prepare(
-                "SELECT c.id, c.vod_id, c.time, c.text, c.author, c.color, v.position FROM chat_fts f
-                 JOIN chat c ON c.id = f.rowid
-                 JOIN vod_order v ON v.vod_id = c.vod_id
-                 WHERE chat_fts MATCH ?1 AND f.rowid BETWEEN ?4 AND ?5 AND (?2 IS NULL OR c.vod_id = ?2)
-                 ORDER BY v.position, v.vod_id DESC, c.time
-                 LIMIT ?3",
-            )?;
-            let (lo, hi) = self.id_range("chat", filter.vod_id)?;
-            let rows = stmt.query_map(params![fts, filter.vod_id, limit as i64 + 1, lo, hi], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, f64>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, Option<String>>(5)?,
-                    r.get(6)?,
-                ))
-            })?;
-            for row in rows {
-                let (id, vod_id, time, text, author, color, position) = row?;
-                // Chat has no word timings; every word is at the message's time.
-                let words: Vec<Word> =
-                    text.split_whitespace().map(|w| Word { text: w.to_string(), start: time, end: time }).collect();
-                let parts = highlight(&words, &find_phrase(&words, &q, prefix));
-                let hit = SearchHit { vod_id, source: Source::Chat, id, time, parts, author: Some(author), color };
-                found.push((position, vod_id, hit));
-            }
-        }
-        // The same order as each query: library position, newest VOD first, then time.
-        found.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.time.total_cmp(&b.2.time)));
-        let truncated = found.len() > limit;
-        let hits = found.into_iter().take(limit).map(|(_, _, hit)| hit).collect();
-        Ok(SearchResults { hits, truncated })
     }
 }
 
@@ -1916,28 +1858,6 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
     }
 }
 
-/// Renders words as text runs, marking the matched ranges.
-fn highlight(words: &[Word], ranges: &[(usize, usize)]) -> Vec<TextPart> {
-    let mut parts: Vec<TextPart> = Vec::new();
-    for (i, w) in words.iter().enumerate() {
-        let hit = ranges.iter().any(|&(a, b)| i >= a && i <= b);
-        let sep = if i == 0 { "" } else { " " };
-        match parts.last_mut() {
-            Some(p) if p.hit == hit => {
-                p.text.push_str(sep);
-                p.text.push_str(&w.text);
-            }
-            // Keep spaces out of highlighted runs so the marks hug the words.
-            Some(p) if hit => {
-                p.text.push_str(sep);
-                parts.push(TextPart { text: w.text.clone(), hit });
-            }
-            _ => parts.push(TextPart { text: format!("{sep}{}", w.text), hit }),
-        }
-    }
-    parts
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1973,7 +1893,7 @@ mod tests {
         let cases: Vec<Case> = serde_json::from_str(include_str!("../tests/phrase-search.json")).unwrap();
         for c in cases {
             let words: Vec<Word> = c.words.into_iter().map(|text| Word { text, start: 0.0, end: 0.0 }).collect();
-            let marked: String = highlight(&words, &c.ranges)
+            let marked: String = crate::search::highlight(&words, &c.ranges)
                 .into_iter()
                 .map(|p| if p.hit { format!("[{}]", p.text) } else { p.text })
                 .collect();
@@ -2385,6 +2305,78 @@ mod tests {
         assert_eq!(stretches(7), [(0.0, Some(50.0), Status::Done, None)], "stopped, its lines kept");
         assert_eq!((vod(7).status, vod(7).transcribed), (Status::None, Transcribed::Some));
         assert_eq!(db.stretches(1).unwrap()[0].model.as_deref(), Some(crate::model::CPU_MODEL.id));
+    }
+
+    #[test]
+    fn search_reads_word_counts_and_chat_authors_after_upgrading() {
+        let dir = crate::TempDir::new("migrate-v28");
+        let path = dir.join("library.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            let before = [
+                SCHEMA,
+                MIGRATE_V2,
+                MIGRATE_V3,
+                MIGRATE_V4,
+                MIGRATE_V5,
+                MIGRATE_V6,
+                MIGRATE_V7,
+                MIGRATE_V8,
+                MIGRATE_V9,
+                MIGRATE_V10,
+                MIGRATE_V11,
+                MIGRATE_V12,
+                MIGRATE_V13,
+                MIGRATE_V14,
+                MIGRATE_V15,
+                MIGRATE_V16,
+                MIGRATE_V17,
+                MIGRATE_V18,
+                MIGRATE_V19,
+                MIGRATE_V20,
+                MIGRATE_V21,
+                MIGRATE_V22,
+                MIGRATE_V23,
+                MIGRATE_V24,
+                MIGRATE_V25,
+                MIGRATE_V26,
+                MIGRATE_V27,
+            ];
+            conn.execute_batch(&format!("{} PRAGMA user_version = 27;", before.join("\n").replace("FLICKS", FLICKS)))
+                .unwrap();
+            conn.execute_batch(
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, status, added_at) VALUES
+                     (1, 'twitch', '1', 'u', 't', 'Streamer', 600, 'done', 0);
+                 INSERT INTO segments (vod_id, start, end, text, words) VALUES
+                     (1, 0, 1, 'Clutch play', '[]'), (1, 5, 6, 'what a play', '[]');
+                 INSERT INTO chat (vod_id, time, author, text, parts) VALUES
+                     (1, 1, 'Bob', 'PLAY', '[]'), (1, 2, 'bobby', 'hi', '[]'), (1, 3, 'alice', 'hi', '[]');",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 28);
+        // The counts are the indexes' own, words already there included: nothing to fill.
+        let lines = |table: &str, term: &str| -> i64 {
+            let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
+            db.conn.query_row(&sql, [term], |r| r.get(0)).optional().unwrap().unwrap_or(0)
+        };
+        assert_eq!((lines("segments_vocab", "play"), lines("segments_vocab", "clutch")), (2, 1));
+        assert_eq!((lines("chat_vocab", "hi"), lines("chat_vocab", "play"), lines("chat_vocab", "nope")), (2, 1, 0));
+        // `from:` and its suggestions go by the author index.
+        let plan = |sql: &str| -> String {
+            let mut stmt = db.conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let rows = stmt.query_map([], |r| r.get::<_, String>(3)).unwrap();
+            rows.map(|r| r.unwrap()).collect::<Vec<_>>().join("; ")
+        };
+        assert!(plan("SELECT id FROM chat WHERE author COLLATE NOCASE IN ('bob')").contains("chat_by_author"));
+        assert!(
+            plan("SELECT author FROM chat WHERE author COLLATE NOCASE >= 'b' AND author COLLATE NOCASE < 'c'")
+                .contains("chat_by_author")
+        );
+        let names: Vec<String> = db.author_suggestions("BO", None).unwrap().into_iter().map(|s| s.name).collect();
+        assert_eq!(names, ["Bob", "bobby"]);
     }
 
     #[test]

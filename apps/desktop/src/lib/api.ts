@@ -144,11 +144,58 @@ export interface SearchHit {
   source: "speech" | "chat";
   /** The segment's or chat message's id; unique within its source. */
   id: number;
+  /** Where the match starts: its first matched word (chat: when it was sent). */
   time: number;
+  /** Where it ends: its last matched word's end (chat: `time`). */
+  end: number;
+  /** How many lines the match runs over; `parts` is their words, one after another. */
+  lines: number;
   parts: { text: string; hit: boolean }[];
   /** For chat, who wrote it, and their name color. */
   author: string | null;
   color: string | null;
+}
+
+/** A search query as parsed (crates/core query.rs `Node`): its grouping, to show. */
+export type QueryNode =
+  | { kind: "or"; items: QueryNode[] }
+  | { kind: "and"; items: QueryNode[] }
+  /** `text` as typed; strict: quoted, whole words; prefix: its last word is being typed. */
+  | { kind: "phrase"; text: string; strict: boolean; prefix: boolean }
+  | { kind: "not"; item: QueryNode }
+  /** `value` as typed; empty while it's being typed. */
+  | { kind: "filter"; key: "from" | "in" | "within" | "after" | "before"; value: string };
+
+/** What the typed text set (crates/core `QueryInfo`): the filters that apply
+ *  to the whole query, which the filter's controls show as set by the text. */
+export interface SearchQuery {
+  /** Null for an empty query, or one with an error. */
+  tree: QueryNode | null;
+  /** Seconds: the window the pieces must fit in, if typed (else 20). */
+  within: number | null;
+  from: string | null;
+  /** If `in:` was typed: the sources it asked for, in place of the filter's. */
+  sources: { audio: boolean; chat: boolean } | null;
+  /** Seconds into the VOD. */
+  after: number | null;
+  before: number | null;
+  /** An unbalanced quote or bracket, a value that isn't one: what to fix. No hits come with it. */
+  error: string | null;
+}
+
+export interface SearchResponse {
+  hits: SearchHit[];
+  truncated: boolean;
+  query: SearchQuery;
+}
+
+/** A name `from:` can take (crates/core search.rs). */
+export interface AuthorSuggestion {
+  name: string;
+  /** A VOD's channel: their speech and their own chat. */
+  streamer: boolean;
+  /** Chat messages under the name. */
+  messages: number;
 }
 
 /** What a search looks through (crates/core `SearchFilter`). Fields left out don't filter. */
@@ -581,8 +628,10 @@ export const api = {
   retranscribeVod: (id: number, outdated = false) => invoke<void>("retranscribe_vod", { id, outdated }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
-  search: (query: string, filter: SearchFilter) =>
-    invoke<{ hits: SearchHit[]; truncated: boolean }>("search", { query, filter }),
+  search: (query: string, filter: SearchFilter) => invoke<SearchResponse>("search", { query, filter }),
+  /** Names starting with `prefix` (any case) for `from:`: channels first, then chatters by messages. */
+  authorSuggestions: (prefix: string, vodId: number | null = null) =>
+    invoke<AuthorSuggestion[]>("author_suggestions", { prefix, vodId }),
   /** A URL that plays Twitch clip `slug`'s video, signed for a while. */
   twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
   /** The transcript's lines. */

@@ -403,6 +403,7 @@ pub fn run() {
             vods::cancel_vod,
             vods::cancel_stretch,
             vods::search,
+            vods::author_suggestions,
             vods::transcript,
             vods::transcript_stretches,
             vods::transcribe_stretch,

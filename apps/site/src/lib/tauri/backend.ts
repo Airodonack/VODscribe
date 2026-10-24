@@ -9,6 +9,8 @@ import type {
   Line,
   SearchFilter,
   SearchHit,
+  SearchQuery,
+  SearchResponse,
   Stretch,
   Vod,
 } from "desktop/lib/api.ts";
@@ -187,11 +189,23 @@ export async function chatMatches(vodId: number, lists: string[][]): Promise<[nu
 
 const LIMIT = 500;
 
-export async function search(query: string, filter: SearchFilter) {
+// The demo searches for one phrase, as the app did before its search
+// language: nothing typed sets a filter, and it shows no grouping.
+const PLAIN: SearchQuery = {
+  tree: null,
+  within: null,
+  from: null,
+  sources: null,
+  after: null,
+  before: null,
+  error: null,
+};
+
+export async function search(query: string, filter: SearchFilter): Promise<SearchResponse> {
   const q = terms(query);
   const prefix = lastIsPrefix(q);
   const hits: SearchHit[] = [];
-  if (q.length === 0) return { hits, truncated: false };
+  if (q.length === 0) return { hits, truncated: false, query: PLAIN };
   for (const vod of await listVods()) {
     if (filter.vodId != null && vod.id !== filter.vodId) continue;
     const found: SearchHit[] = [];
@@ -204,6 +218,9 @@ export async function search(query: string, filter: SearchFilter) {
           source: "speech",
           id: seg.id,
           time: seg.words[ranges[0][0]].start,
+          // The demo's words have no ends: the last matched word's start.
+          end: seg.words[ranges[ranges.length - 1][1]].start,
+          lines: 1,
           parts: highlight(seg.words, ranges),
           author: null,
           color: null,
@@ -218,6 +235,8 @@ export async function search(query: string, filter: SearchFilter) {
           source: "chat",
           id: line.id,
           time: line.time,
+          end: line.time,
+          lines: 1,
           parts: highlight(words, ranges),
           author: line.author,
           color: line.color,
@@ -225,7 +244,7 @@ export async function search(query: string, filter: SearchFilter) {
       }
     // As the app has them: by VOD, then time.
     hits.push(...found.sort((a, b) => a.time - b.time));
-    if (hits.length > LIMIT) return { hits: hits.slice(0, LIMIT), truncated: true };
+    if (hits.length > LIMIT) return { hits: hits.slice(0, LIMIT), truncated: true, query: PLAIN };
   }
-  return { hits, truncated: false };
+  return { hits, truncated: false, query: PLAIN };
 }

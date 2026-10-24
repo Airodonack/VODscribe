@@ -10,6 +10,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::edits::LibraryItem;
+use vodscribe_core::query::QueryInfo;
+use vodscribe_core::search::AuthorSuggestion;
 use vodscribe_core::settings::ClipFormat;
 use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
@@ -686,12 +688,24 @@ pub(crate) async fn transcript_stretches(app: AppHandle, vod_id: i64) -> CmdResu
 pub(crate) struct SearchResponse {
     hits: Vec<SearchHit>,
     truncated: bool,
+    /// What the typed text set: its grouping, filters, or what's wrong with it.
+    query: QueryInfo,
 }
 
 #[tauri::command]
 pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) -> CmdResult<SearchResponse> {
     let r = crate::with_reads(app, move |db| db.search(&query, &filter, 500)).await?;
-    Ok(SearchResponse { hits: r.hits, truncated: r.truncated })
+    Ok(SearchResponse { hits: r.hits, truncated: r.truncated, query: r.query })
+}
+
+/// Names `from:` could mean, for the box to suggest as they're typed.
+#[tauri::command]
+pub(crate) async fn author_suggestions(
+    app: AppHandle,
+    prefix: String,
+    vod_id: Option<i64>,
+) -> CmdResult<Vec<AuthorSuggestion>> {
+    crate::with_reads(app, move |db| db.author_suggestions(&prefix, vod_id)).await
 }
 
 #[derive(Serialize)]
