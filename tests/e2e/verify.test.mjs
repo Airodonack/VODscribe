@@ -1,15 +1,16 @@
 // verify.mjs's own parts: checkpoints paired with expectations, the model's
 // answer read, the model picked from OpenRouter's list, the summary line.
 
+import { spawnSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { checkpointsOf } from "./contact-sheet.mjs";
-import { RUBRIC, messages, pair, parseVerdict, pickModel, summary } from "./verify.mjs";
+import { ANSWER_FORMAT, RUBRIC, messages, pair, parseVerdict, pickModel, summary } from "./verify.mjs";
 
 const run = (name, list) => ({
   name,
@@ -174,3 +175,98 @@ test("every scenario's expectations are one or two sentences, keyed by a label",
   }
   assert.ok(count >= 10, `${count} expectations`);
 });
+
+// The agent path, through the command line: a real out dir with two pictures of
+// the legend scenario (whose expectations are real), judged without a key.
+const VERIFY = path.join(path.dirname(fileURLToPath(import.meta.url)), "verify.mjs");
+
+function withOutDir(body) {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "verify-agent-"));
+  try {
+    mkdirSync(path.join(dir, "checkpoints"));
+    const labels = ["legend-vod", "legend-edit", "legend-other"];
+    for (const label of labels) {
+      const made = spawnSync(
+        "ffmpeg",
+        ["-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x48", "-frames:v", "1", "-y"].concat(
+          path.join(dir, "checkpoints", `${label}.png`),
+        ),
+      );
+      assert.equal(made.status, 0, "ffmpeg makes a picture");
+    }
+    writeFileSync(
+      path.join(dir, "checkpoints", "index.json"),
+      JSON.stringify(labels.map((label) => ({ file: `${label}.png`, scenario: "legend", label }))),
+    );
+    return body(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const verify = (...args) =>
+  spawnSync(process.execPath, [VERIFY, ...args], { encoding: "utf8", env: { ...process.env, OPENROUTER_API_KEY: "" } });
+
+test("--manifest writes the rubric, the answer format and the pairs, and judges nothing", () =>
+  withOutDir((dir) => {
+    const file = path.join(dir, "manifest.json");
+    const r = verify(dir, "--manifest", file);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /2 to judge, 1 without expectation/);
+    const manifest = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(manifest.rubric, RUBRIC);
+    assert.equal(manifest.answer, ANSWER_FORMAT);
+    assert.deepEqual(
+      manifest.pairs.map((p) => [p.scenario, p.label, p.file, p.outDir]),
+      ["legend-vod", "legend-edit"].map((l) => ["legend", l, path.join(dir, "checkpoints", `${l}.png`), dir]),
+    );
+    for (const p of manifest.pairs) assert.ok(path.isAbsolute(p.file) && p.expectation.length > 20);
+    // --only narrows it as it does the other paths.
+    const none = path.join(dir, "none.json");
+    assert.equal(verify(dir, "--manifest", none, "--only", "settings").status, 0);
+    assert.deepEqual(JSON.parse(readFileSync(none, "utf8")).pairs, []);
+  }));
+
+test("--verdicts: a fail exits 1, an unmatched pair is unsure, the sheet lists the concerns", () =>
+  withOutDir((dir) => {
+    const lines = [
+      { file: "legend-vod.png", verdict: "fail", reason: "The columns are missing.", concerns: ["text cut off"] },
+      { file: "elsewhere.png", verdict: "pass", reason: "Not a picture here.", concerns: [] },
+    ];
+    const verdicts = path.join(dir, "verdicts.jsonl");
+    writeFileSync(verdicts, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    const r = verify(dir, "--verdicts", verdicts);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /verdict for no picture to judge: elsewhere.png/);
+    assert.match(r.stdout, /verify: 0 pass, 1 fail, 1 unsure, 1 without expectation; ~0 tokens/);
+    const json = JSON.parse(readFileSync(path.join(dir, "verify.json"), "utf8"));
+    assert.deepEqual(
+      json.map((v) => [v.label, v.verdict, v.reason]),
+      [
+        ["legend-vod", "fail", "The columns are missing."],
+        ["legend-edit", "unsure", "no verdict"],
+      ],
+    );
+    const html = readFileSync(path.join(dir, "verify.html"), "utf8");
+    assert.match(html, /text cut off/);
+    assert.ok(html.indexOf("legend-vod") < html.indexOf("legend-edit"), "fails first");
+  }));
+
+test("--verdicts matches an absolute path, passes exit 0, and refuses a line that isn't a verdict", () =>
+  withOutDir((dir) => {
+    const verdicts = path.join(dir, "verdicts.jsonl");
+    const both = ["legend-vod", "legend-edit"].map((l, i) => ({
+      file: i ? `${l}.png` : path.join(dir, "checkpoints", `${l}.png`),
+      verdict: "pass",
+      reason: "Fine.",
+      concerns: [],
+    }));
+    writeFileSync(verdicts, both.map((l) => JSON.stringify(l)).join("\n"));
+    const ok = verify(dir, "--verdicts", verdicts);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.match(ok.stdout, /verify: 2 pass, 0 fail, 0 unsure/);
+    writeFileSync(verdicts, '{"file":"legend-vod.png","verdict":"maybe","reason":"x"}\n');
+    const bad = verify(dir, "--verdicts", verdicts);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /line 1/);
+  }));

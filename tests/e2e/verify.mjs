@@ -6,6 +6,7 @@
 //
 //   node tests/e2e/verify.mjs <out dir>... [--model <id>] [--out verify.html]
 //     [--only a,b] [--concurrency N] [--dry-run]
+//     [--manifest <file> | --verdicts <file>]
 //
 // Each checkpoint with an expectation is one request to OpenRouter's chat
 // completions (OPENROUTER_API_KEY), with its picture, the expectation and a
@@ -17,8 +18,21 @@
 // verify.json (each verdict) goes beside the verdict sheet (--out, default
 // the first out dir's verify.html), fails first. Exit 1 on a fail; unsure
 // doesn't fail. --dry-run prints the pairs and the prompt, calling nothing.
+//
+// Without a key, an agent (a person, or a model with a file-reading tool)
+// judges the pictures instead:
+//   --manifest <file>  writes the rubric, the pairs (absolute picture path,
+//                      scenario, label, out dir, expectation) and the shape
+//                      of one answer line, and exits 0, calling nothing.
+//   --verdicts <file>  reads the agent's answers, one JSON object per line
+//                      ({file, verdict, reason, concerns}; `file` is a
+//                      picture's basename or absolute path), and does all
+//                      that the OpenRouter path does with its answers: the
+//                      sheet, verify.json, the summary, exit 1 on a fail. A
+//                      picture with no answer is unsure, "no verdict".
+// Both take --only.
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -125,6 +139,73 @@ export function pickModel(wanted, models) {
     .sort((a, b) => a.prompt - b.prompt || a.id.localeCompare(b.id));
   if (!fits.length) throw new Error(`no model on OpenRouter starts with ${prefix} and takes pictures`);
   return fits[0];
+}
+
+/** The answer format an agent is asked for, one JSON object per line of the verdicts file. */
+export const ANSWER_FORMAT = `One line of JSON per picture, no other text: {"file": "<the picture's file name or absolute path>", "verdict": "pass" | "fail" | "unsure", "reason": "<one sentence>", "concerns": ["<a short phrase each>"]}`;
+
+/** The manifest an agent judges from: the rubric, the answer format and the pairs, the picture paths absolute. */
+export function manifestOf(judged) {
+  return {
+    rubric: RUBRIC,
+    answer: ANSWER_FORMAT,
+    pairs: judged.map((j) => ({
+      file: path.resolve(j.file),
+      scenario: j.scenario,
+      label: j.label,
+      outDir: path.dirname(path.dirname(path.resolve(j.file))),
+      expectation: j.expectation,
+    })),
+  };
+}
+
+/**
+ * An agent's verdicts (JSON Lines text) joined to the pairs: each pair's
+ * verdict as the model path would have made it. `file` matches a pair by
+ * absolute path or by basename (the first pair with it not yet answered).
+ * A pair with no answer is unsure, "no verdict". Returns { verdicts,
+ * stray }: stray are the answers that matched no pair. Throws on a line
+ * that isn't a verdict, naming the line.
+ */
+export function joinVerdicts(text, judged) {
+  const answers = [];
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    try {
+      const a = JSON.parse(line);
+      if (typeof a?.file !== "string" || !a.file) throw new Error("no file");
+      answers.push({ file: a.file, ...parseVerdict(JSON.stringify(a)) });
+    } catch (e) {
+      throw new Error(`verdicts line ${i + 1}: ${e.message}`);
+    }
+  });
+  const taken = new Map();
+  const stray = [];
+  for (const a of answers) {
+    const abs = path.isAbsolute(a.file);
+    const index = judged.findIndex(
+      (j, i) =>
+        !taken.has(i) && (abs ? path.resolve(j.file) === path.resolve(a.file) : path.basename(j.file) === a.file),
+    );
+    if (index < 0) stray.push(a.file);
+    else taken.set(index, a);
+  }
+  const verdicts = judged.map((j, i) => {
+    const base = {
+      scenario: j.scenario,
+      label: j.label,
+      run: j.run,
+      expectation: j.expectation,
+      file: j.file,
+      model: "agent",
+      tokens: null,
+    };
+    const a = taken.get(i);
+    return a
+      ? { ...base, verdict: a.verdict, reason: a.reason, concerns: a.concerns }
+      : { ...base, verdict: "unsure", reason: "no verdict", concerns: [] };
+  });
+  return { verdicts, stray };
 }
 
 /** The line a run ends with. */
@@ -274,6 +355,26 @@ function verdictSheet(verdicts, unpaired, title) {
   return sheet(title, [...sorted, ...unpaired].map(row).join("\n"), style);
 }
 
+/** What both paths do with the verdicts: verify.json, the sheet, the summary line, exit 1 on a fail. */
+function finish(verdicts, unpaired, dirs, opts) {
+  const sheetFile = opts.out ?? path.join(dirs[0], "verify.html");
+  const jsonFile = path.join(path.dirname(sheetFile), "verify.json");
+  mkdirSync(path.dirname(sheetFile), { recursive: true });
+  writeFileSync(
+    jsonFile,
+    JSON.stringify(
+      verdicts.map(({ picture, file, ...r }) => r),
+      null,
+      2,
+    ),
+  );
+  writeFileSync(sheetFile, verdictSheet(verdicts, unpaired, "End-to-end checkpoints, judged"));
+  const cost = verdicts.reduce((sum, r) => sum + (r.cost ?? 0), 0);
+  console.log(`${jsonFile}, ${sheetFile}${cost ? `; OpenRouter's cost: $${cost.toFixed(4)}` : ""}`);
+  console.log(summary(verdicts, unpaired.length));
+  if (verdicts.some((r) => r.verdict === "fail")) process.exit(1);
+}
+
 async function main() {
   const { values: opts, positionals: dirs } = parseArgs({
     allowPositionals: true,
@@ -283,11 +384,13 @@ async function main() {
       only: { type: "string" },
       concurrency: { type: "string", default: "4" },
       "dry-run": { type: "boolean", default: false },
+      manifest: { type: "string" },
+      verdicts: { type: "string" },
     },
   });
   if (!dirs.length) {
     console.error(
-      "usage: node tests/e2e/verify.mjs <out dir>... [--model <id>] [--out verify.html] [--only a,b] [--concurrency N] [--dry-run]",
+      "usage: node tests/e2e/verify.mjs <out dir>... [--model <id>] [--out verify.html] [--only a,b] [--concurrency N] [--dry-run] [--manifest <file> | --verdicts <file>]",
     );
     process.exit(2);
   }
@@ -303,6 +406,32 @@ async function main() {
     console.log(`model: ${wanted ?? "(none set: --model or E2E_VERIFY_MODEL)"}\n\nThe rubric:\n${RUBRIC}\n`);
     for (const j of judged) console.log(`${j.scenario}/${j.label} (${j.run}): ${j.expectation}`);
     console.log(`\n${judged.length} to judge, ${unpaired.length} without expectation`);
+    return;
+  }
+  if (opts.manifest && opts.verdicts) {
+    console.error("verify: --manifest and --verdicts are two steps; give one");
+    process.exit(2);
+  }
+  if (opts.manifest) {
+    mkdirSync(path.dirname(path.resolve(opts.manifest)), { recursive: true });
+    writeFileSync(opts.manifest, JSON.stringify(manifestOf(judged), null, 2));
+    console.log(`${opts.manifest}\n${judged.length} to judge, ${unpaired.length} without expectation`);
+    return;
+  }
+  if (opts.verdicts) {
+    let joined;
+    try {
+      joined = joinVerdicts(readFileSync(opts.verdicts, "utf8"), judged);
+    } catch (e) {
+      console.error(`verify: ${e.message}`);
+      process.exit(2);
+    }
+    for (const f of joined.stray) console.log(`  verdict for no picture to judge: ${f}`);
+    for (const r of joined.verdicts) {
+      console.log(`  ${r.verdict}: ${r.scenario}/${r.label} (${r.run}): ${r.reason}`);
+      for (const c of r.concerns) console.log(`      concern: ${c}`);
+    }
+    finish(joined.verdicts, unpaired, dirs, opts);
     return;
   }
   const key = process.env.OPENROUTER_API_KEY;
@@ -338,22 +467,7 @@ async function main() {
     process.exit(2);
   }
 
-  const sheetFile = opts.out ?? path.join(dirs[0], "verify.html");
-  const jsonFile = path.join(path.dirname(sheetFile), "verify.json");
-  mkdirSync(path.dirname(sheetFile), { recursive: true });
-  writeFileSync(
-    jsonFile,
-    JSON.stringify(
-      verdicts.map(({ picture, ...r }) => r),
-      null,
-      2,
-    ),
-  );
-  writeFileSync(sheetFile, verdictSheet(verdicts, unpaired, "End-to-end checkpoints, judged"));
-  const cost = verdicts.reduce((sum, r) => sum + (r.cost ?? 0), 0);
-  console.log(`${jsonFile}, ${sheetFile}${cost ? `; OpenRouter's cost: $${cost.toFixed(4)}` : ""}`);
-  console.log(summary(verdicts, unpaired.length));
-  if (verdicts.some((r) => r.verdict === "fail")) process.exit(1);
+  finish(verdicts, unpaired, dirs, opts);
 }
 
 if (import.meta.main) await main();

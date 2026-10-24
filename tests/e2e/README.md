@@ -143,6 +143,18 @@ OPENROUTER_API_KEY=... E2E_VERIFY_MODEL='vendor/family*' node tests/e2e/verify.m
 
 Each checkpoint with an expectation goes to OpenRouter's chat completions with its picture (scaled as the contact sheet does), the expectation and a fixed rubric; the answer is pass, fail or unsure, with a reason and, as concerns, anything that looks broken even if not asked. Checkpoints without an expectation are listed, not judged, and an expectation whose checkpoint a scenario that ran didn't take is named (a label renamed). `--model` or `E2E_VERIFY_MODEL` is a model id, or a prefix ending in `*` for the cheapest model with that prefix that takes pictures, looked up at run time (variants such as `:batch` left out); the line it prints says which, and its price. `--only a,b` keeps those scenarios, `--concurrency N` (default 4) caps the requests at once (each retried on 429 and 5xx, 60 s at most), `--out` names the verdict sheet (default `verify.html` in the first out dir), with `verify.json` beside it: each checkpoint's scenario, label, expectation, verdict, reason, concerns, model and tokens. `--dry-run` prints the pairs and the prompt and calls nothing. The last line is `verify: P pass, F fail, U unsure, N without expectation; ~T tokens`; the exit status is 1 on any fail, not on unsure.
 
+Without a key, an agent judges the pictures instead: a person, or a model with a tool that reads image files. Write the manifest, have the agent read each picture and answer, feed the answers back:
+
+```sh
+node tests/e2e/verify.mjs tests/e2e/out --manifest verify-manifest.json   # [--only a,b]
+# the agent reads verify-manifest.json (the rubric, the answer format, and for each pair the
+# absolute picture path and the expectation), looks at each picture, and writes verdicts.jsonl:
+# one line each, {"file": "05-legend-legend-vod.png", "verdict": "pass", "reason": "...", "concerns": []}
+node tests/e2e/verify.mjs tests/e2e/out --verdicts verdicts.jsonl         # [--only a,b]
+```
+
+`file` is a picture's file name or its absolute path. `--verdicts` then does all the OpenRouter path does with its answers: `verify.json`, the `verify.html` sheet (fails first, concerns listed), the summary line, exit 1 on a fail. A picture with no line counts as unsure, "no verdict"; a line for a picture that isn't being judged is named and ignored; a line that isn't a verdict stops the run (exit 2).
+
 It belongs in the full lane only (nightly, by hand, on tags), never per push: `e2e.yml` has its step, commented out until `OPENROUTER_API_KEY` is a repository secret.
 
 ## Fixtures
