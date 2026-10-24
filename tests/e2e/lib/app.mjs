@@ -323,6 +323,15 @@ export class App {
     );
   }
 
+  /** Whether the app was built with the e2e feature (the test-only commands
+   *  and fixtures): CI's Linux job tests the release package, which wasn't. */
+  hasE2e() {
+    return this.invoke("e2e_player_state").then(
+      () => true,
+      () => false,
+    );
+  }
+
   /** Presses `key` (a KeyboardEvent key), with Shift if `shift`, and with
    *  `cmd` the command modifier of the computer the app runs on: ⌘ on a Mac,
    *  Ctrl elsewhere (the app's undo is ⌘Z there, not Ctrl+Z), as the window

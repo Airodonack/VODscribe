@@ -42,6 +42,8 @@ export default {
       'The transcript header reads "Chat stopped partway" with "service error" after it and a "Try again" link; beside the empty transcript, a chat column shows messages like "viewer22 message 207", and the strip at the right edge draws how busy chat was over the VOD.',
   },
   async run(app, ctx) {
+    // The chat fixture is served by the app's e2e build only.
+    if (!(await app.hasE2e())) return ctx.skip("this build has no e2e feature, so the chat fixture isn't served");
     await app.toLibrary();
     const { vods } = await app.invoke("add_files", { paths: [ctx.fixtures.landed] });
     const id = vods[0]?.id;
