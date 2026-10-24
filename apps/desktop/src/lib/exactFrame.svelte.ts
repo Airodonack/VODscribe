@@ -1,6 +1,6 @@
 // The exact frame of the moment the timeline's pointer rests on, from the
 // app's own player (player_preview), for the thumbnail (ScrubFrame.svelte's
-// `exact`) to show over the storyboard's nearest frame. Asked for once the
+// `exact`) to show over the storyboard's keyframe. Asked for once the
 // pointer has stood still a moment, one request at a time, the newest
 // moment winning; the moment moving on lets the one shown go.
 

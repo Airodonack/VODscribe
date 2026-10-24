@@ -702,7 +702,14 @@
     untrack(() => exact.want(doc, at));
   });
   $effect(() => () => exact.clear());
+  // The thumbnail's width, kept from one hover to the next (an empty box
+  // until its frame comes), so the tip goes beside it from the first move;
+  // another VOD or edit starts with none.
   let frameWidth = $state(0);
+  $effect(() => {
+    void memoKey;
+    untrack(() => (frameWidth = 0));
+  });
   let tipWidth = $state(0);
   const beside = $derived(
     place(hover ?? 0, width, tipWidth, framed && hoverTime !== null && hover !== null ? frameWidth : 0),
@@ -991,32 +998,31 @@
     {#if pointedAt !== null && pointedAt >= viewStart && pointedAt <= viewStart + span}
       <span class="pointed" style:left={pct(pointedAt)}></span>
     {/if}
-  </div>
-  {#if hoverTime !== null && hover !== null}
-    {#if framed && memo && tipTime !== null}
-      <ScrubFrame
-        doc={memo}
-        time={tipTime}
-        within={nearWithin(span, width)}
-        left={beside.frame ?? 0}
-        dragging={!!drag}
-        exact={exact.frame}
-        bind:shown={frameWidth}
-      />
+    {#if hoverTime !== null && hover !== null}
+      {#if framed && memo && tipTime !== null}
+        <ScrubFrame
+          doc={memo}
+          time={tipTime}
+          within={nearWithin(span, width)}
+          left={beside.frame ?? 0}
+          exact={exact.frame}
+          bind:shown={frameWidth}
+        />
+      {/if}
+      <span
+        class="tip"
+        class:wide={!!hoverMark}
+        class:beside={beside.frame !== null}
+        bind:offsetWidth={tipWidth}
+        style:left={beside.frame !== null
+          ? `${beside.tip}px`
+          : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
+        >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
+            tipTime ?? hoverTime,
+          )}{/if}</span
+      >
     {/if}
-    <span
-      class="tip"
-      class:wide={!!hoverMark}
-      class:beside={beside.frame !== null}
-      bind:offsetWidth={tipWidth}
-      style:left={beside.frame !== null
-        ? `${beside.tip}px`
-        : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
-      >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
-          tipTime ?? hoverTime,
-        )}{/if}</span
-    >
-  {/if}
+  </div>
 </div>
 
 <MarkEditor {root} fallback={bar} />
@@ -1505,8 +1511,10 @@
     pointer-events: none;
   }
 
-  /* Inside the timeline's top edge rather than above it: above, it would
-     rise into the picture's box, where the app's own player draws over it. */
+  /* Inside the bar's top edge, as the thumbnail beside it, rather than above
+     it: above, it would rise into the picture's box, where the app's own
+     player draws over the page. In the bar, not over a lane above it, so
+     it's where the hover line and the waveform it points at are. */
   .tip {
     position: absolute;
     top: 2px;

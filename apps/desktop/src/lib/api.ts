@@ -563,8 +563,9 @@ export const api = {
   /** VOD `vodId`'s frame at `at` seconds, a JPEG `width` wide, from its footage here; empty if none of that moment is. */
   vodFrame: (vodId: number, at: number, width: number) =>
     invoke<ArrayBuffer>("vod_frame", { vodId, at, width }).then((b) => new Uint8Array(b)),
-  /** The storyboard frame of `doc` nearest `time` (within `within` seconds, or its storyboard's spacing): where it
-   *  shows in `doc`, and its JPEG; null if there's none (no footage here, its storyboard not made yet). */
+  /** The storyboard frame to show for `time` of `doc`: the keyframe at or before it, or while the storyboard is made,
+   *  the nearest within `within` seconds (or its spacing). Where it shows in `doc`, and its JPEG; null if there's none
+   *  (no footage here, its storyboard not made yet). */
   storyboardFrame: (doc: Doc, time: number, within: number) =>
     invoke<ArrayBuffer>("storyboard_frame", { doc, time, within }).then((b) => {
       if (b.byteLength < 8) return null;

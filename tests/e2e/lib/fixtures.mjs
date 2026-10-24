@@ -119,6 +119,34 @@ export function colours(dir) {
   ]);
 }
 
+/** Seconds between longGop.mp4's keyframes. */
+export const GOP = 5;
+
+/**
+ * Twenty seconds as colours.mp4 (each second one flat colour, COLOURS over
+ * again from the thirteenth), at 60 fps with a keyframe only every `GOP`
+ * seconds, as a screen recording has: its storyboard has a frame only every
+ * five seconds, though its slots are two apart. No sound. Made in `dir` once.
+ */
+export function longGop(dir) {
+  mkdirSync(dir, { recursive: true });
+  const seconds = 20;
+  const names = Array.from({ length: seconds }, (_, i) => COLOURS[i % COLOURS.length][0]);
+  const inputs = names.flatMap((name) => ["-f", "lavfi", "-i", `color=c=${name}:s=640x360:r=60:d=1`]);
+  const joined = `${names.map((_, i) => `[${i}:v]`).join("")}concat=n=${seconds}:v=1:a=0[v]`;
+  const keyint = GOP * 60;
+  return make(dir, "long-gop.mp4", [
+    ...inputs,
+    "-filter_complex",
+    joined,
+    "-map",
+    "[v]",
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+    // No keyframe where the colour changes, either.
+    ...["-x264-params", `keyint=${keyint}:min-keyint=${keyint}:scenecut=0`],
+  ]);
+}
+
 /** A minute of picture and sound (a tone), made in `dir` once: long enough to seek far in. */
 export function minute(dir) {
   mkdirSync(dir, { recursive: true });

@@ -1,11 +1,16 @@
 <script lang="ts">
   // The timeline's thumbnail: a small picture of the moment under the
   // pointer (or the selection's edge being dragged), from the storyboard
-  // the app keeps of each file here (storyboards.rs), the stored frame
-  // nearest it. Drawn into a canvas, which says the moment it shows
-  // (`data-time`) and whether that's its exact frame (`data-exact`). One
+  // the app keeps of each file here (storyboards.rs): the keyframe at or
+  // before it, however far back. Drawn into a canvas, which says the
+  // moment it shows (`data-time`) and whether that's its exact frame
+  // (`data-exact`). One
   // request at a time, the newest moment winning. Nothing shows until a
-  // frame does: no empty box.
+  // frame has (`shown`, kept from one hover to the next); after that, a
+  // moment with none (footage not here, the storyboard still being made
+  // there) leaves the box empty in its place, so the tip beside it stays
+  // put rather than jumping back over the line. See-through, so the
+  // waveform under it shows: the timeline's other picture of the video.
   //
   // `exact`, when given, is shown instead of the storyboard's: the player's
   // own frame of the moment, once it has it.
@@ -19,7 +24,6 @@
     time,
     within,
     left,
-    dragging = false,
     exact = null,
     shown = $bindable(0),
   }: {
@@ -30,11 +34,9 @@
     within: number;
     /** Where it goes, in pixels from the timeline's left. */
     left: number;
-    /** A drag: see-through, so the waveform under it shows. */
-    dragging?: boolean;
     /** The exact frame of the moment, preferred to the storyboard's while given. */
     exact?: { time: number; image: ImageBitmap } | null;
-    /** Its width in CSS pixels as drawn; 0 while it shows nothing. */
+    /** Its width in CSS pixels as drawn, kept while it's empty; 0 until a frame has shown. */
     shown?: number;
   } = $props();
 
@@ -55,9 +57,11 @@
     shown = width;
   }
 
+  /** None for this moment: the box stays, empty. */
   function clear() {
+    if (canvas) canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
     at = null;
-    shown = 0;
+    isExact = false;
   }
 
   let wanted: { doc: Doc; time: number; within: number } | null = null;
@@ -96,15 +100,14 @@
 
   onDestroy(() => {
     gone = true;
-    shown = 0;
   });
 </script>
 
 <canvas
   bind:this={canvas}
   class="scrub-frame"
-  class:dragging
   class:empty={at === null}
+  class:none={!shown}
   data-time={at}
   data-exact={isExact}
   style:left="{left}px"
@@ -113,23 +116,25 @@
 ></canvas>
 
 <style>
-  /* Inside the timeline, beside the hover line, as the tip is: above it
-     would be the picture's box, where the app's own player draws over it. */
+  /* Inside the timeline's bar, beside the hover line, as the tip is: above
+     it would be the picture's box, where the app's own player draws over
+     the page. Its see-through lets the waveform under it show. */
   .scrub-frame {
     position: absolute;
     top: 2px;
     border-radius: var(--radius-sm);
     outline: 1px solid color-mix(in srgb, var(--text) 35%, transparent);
+    opacity: 0.7;
     pointer-events: none;
     z-index: 2;
   }
 
-  /* Dragging: the waveform shows through, to see where the pointer is. */
-  .scrub-frame.dragging {
-    opacity: 0.8;
+  /* No frame for this moment: the box, faintly, where the frame was. */
+  .scrub-frame.empty {
+    background: color-mix(in srgb, var(--text) 10%, transparent);
   }
 
-  .scrub-frame.empty {
+  .scrub-frame.none {
     display: none;
   }
 </style>

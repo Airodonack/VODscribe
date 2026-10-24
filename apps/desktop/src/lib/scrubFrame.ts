@@ -1,13 +1,14 @@
 // Where the timeline's thumbnail (ScrubFrame.svelte) and its time tip go,
 // and which moment they show: the arithmetic, apart, to test.
 
-/** The thumbnail's height in CSS pixels: inside the timeline's 48. */
+/** The thumbnail's height in CSS pixels: inside the timeline's 48 px bar. */
 export const FRAME_HEIGHT = 44;
 /** Between the hover line and the thumbnail, and between it and the tip. */
 export const GAP = 4;
 /** How far in from the timeline's ends the tip's middle stays, alone. */
 export const TIP_INSET = 28;
-/** A stored frame shows if it's within this many pixels of the pointer's time (or its storyboard's interval). */
+/** While a storyboard is still being made, a stored frame stands in for the one at or before the pointer if it's
+ *  within this many pixels of the pointer's time (or the storyboard's interval). */
 export const NEAR_PX = 30;
 
 /**

@@ -15,12 +15,17 @@
 // playhead shows it; a finger doesn't. Rested at a moment and played from
 // there, the player takes the decoder that previewed it over: no new one
 // starts, and the screen shows the colour from there on.
+//
+// A file with a keyframe only every few seconds (as a screen recording
+// has) shows, anywhere between two, the keyframe at or before the pointer,
+// however far back: never nothing, the tip beside it never moving back
+// over the line. A file with no picture shows the tip alone.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { COLOURS, colours } from "../lib/fixtures.mjs";
+import { COLOURS, GOP, LANDED, colours, longGop } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** How far a colour may be from the one meant: JPEG and YUV rounding, scaling. */
@@ -58,8 +63,15 @@ const THUMBNAIL = `
   const canvas = document.querySelector(".timeline .scrub-frame:not(.empty)");
   if (!canvas || !canvas.width) return null;
   const [r, g, b] = canvas.getContext("2d").getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data;
+  const tip = document.querySelector(".timeline .tip");
   return { time: Number(canvas.dataset.time), exact: canvas.dataset.exact === "true", rgb: [r, g, b],
-           tip: document.querySelector(".timeline .tip")?.textContent.trim() ?? null };`;
+           tip: tip?.textContent.trim() ?? null, beside: !!tip?.classList.contains("beside") };`;
+
+/** In the page: where the tip is, and whether it's beside a thumbnail (or its box). */
+const TIP = `
+  const tip = document.querySelector(".timeline .tip");
+  return tip && { text: tip.textContent.trim(), beside: tip.classList.contains("beside"),
+                  box: !!document.querySelector(".timeline .scrub-frame:not(.none)") };`;
 
 export default {
   name: "scrub-thumbnail",
@@ -226,5 +238,90 @@ export default {
         if (seen !== want) throw new Error(`the screen shows ${seen}, not ${want}`);
       }
     }
+
+    // 7. A keyframe only every five seconds: before the player is open,
+    //    hovering anywhere shows the keyframe at or before the pointer (the
+    //    one its picture there is made from), however far back, and the tip
+    //    stays beside it. First each keyframe's own moment, so the
+    //    storyboard is all made; then across the whole timeline.
+    const gop = longGop(path.join(ctx.out, "fixtures"));
+    await app.pickFiles([gop]);
+    await app.clickText("add video files…");
+    const long = await until(
+      "the long-GOP video, with its picture",
+      async () => {
+        const v = (await app.invoke("list_vods")).find((v) => v.source_path === gop);
+        if (v?.status === "error") throw new Error(v.error);
+        return v?.thumb && v;
+      },
+      5 * MINUTE,
+    );
+    await app.openVod(long.id);
+    const keyframeOf = (t) => Math.floor(t / GOP) * GOP;
+    const colourAt = (t) => COLOURS[Math.round(t) % COLOURS.length][0];
+    for (let k = 0; k < 20; k += GOP) {
+      await pointer("pointermove", k + 0.25);
+      await shows(`the keyframe at ${k} s`, colourAt(k));
+    }
+    const missed = [];
+    for (let t = 0.25; t < 20; t += 0.25) {
+      await pointer("pointermove", t);
+      const want = keyframeOf(t);
+      const seen = await until(
+        `the keyframe at ${want} s for ${t} s`,
+        async () => {
+          const shown = await thumbnail();
+          if (shown && Math.abs(shown.time - want) < 1e-3) return shown;
+          throw new Error(shown ? `the frame at ${shown.time} s` : "no thumbnail");
+        },
+        2_000,
+        { every: 50 },
+      ).catch((e) => e);
+      if (seen instanceof Error) missed.push(`${t} s (${seen.message.match(/last: "?(.*?)"?\)$/)?.[1]})`);
+      else if (named(seen.rgb) !== colourAt(want) || !seen.beside)
+        missed.push(`${t} s (${named(seen.rgb)}, the tip ${seen.beside ? "beside" : "centred"})`);
+    }
+    if (missed.length) throw new Error(`hovering, no keyframe at or before the pointer at ${missed.join(", ")}`);
+    ctx.log(`hovering 0.25-19.75 s every 0.25 s: each shows the keyframe at or before it, ${GOP} s apart`);
+    // The hover elements at the start, the middle and the end, in each theme.
+    for (const theme of ["Light", "Dark"]) {
+      await app.openSettings("Appearance");
+      await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
+      await app.js(
+        `[...document.querySelectorAll('[role="radiogroup"][aria-label="Theme"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
+        theme,
+      );
+      await app.key("Escape");
+      await until(
+        `the ${theme.toLowerCase()} theme`,
+        async () => (await app.invoke("get_settings")).theme === theme.toLowerCase(),
+        10_000,
+      );
+      for (const [where, t] of [
+        ["start", 0.3],
+        ["middle", 10.3],
+        ["end", 19.7],
+      ]) {
+        await pointer("pointermove", t);
+        await shows(`the keyframe at ${keyframeOf(t)} s`, colourAt(keyframeOf(t)));
+        await ctx.checkpoint(`${theme.toLowerCase()}-${where}`);
+      }
+    }
+
+    // 8. A file with no picture: the tip alone, centred on the line.
+    await app.pickFiles([LANDED]);
+    await app.clickText("add video files…");
+    const sound = await until(
+      "the sound file",
+      async () => (await app.invoke("list_vods")).find((v) => v.source_path === LANDED),
+      MINUTE,
+    );
+    await app.openVod(sound.id);
+    await pointer("pointermove", 2.5);
+    await sleep(500);
+    const alone = await app.js(TIP);
+    ctx.log(`a sound file: the tip ${alone?.text}, ${alone?.beside ? "beside a box" : "alone"}`);
+    if (!alone || alone.beside || alone.box) throw new Error(`a sound file's tip: ${JSON.stringify(alone)}`);
+    await ctx.checkpoint("no-picture");
   },
 };

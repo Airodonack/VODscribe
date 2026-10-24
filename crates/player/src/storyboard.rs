@@ -251,6 +251,24 @@ impl Storyboard {
         }
     }
 
+    /// The pts of the frame to show for `time` (seconds into the file): the
+    /// keyframe stored at or before it, however far back, as the picture
+    /// there is decoded from it (the first one, for a time before it). That
+    /// keyframe is known once the slots either side of `time` are made;
+    /// before then, while it's being made, the frame stored nearest within
+    /// `near` seconds (or the interval) stands in, if there is one.
+    pub fn shown_at(&self, time: f64, near: f64) -> Option<f64> {
+        let slots = self.layout.slots as usize;
+        let slot = ((time / self.layout.interval).floor().max(0.0) as usize).min(slots - 1);
+        let made = |s: usize| s >= slots || self.slots[s].is_some();
+        if made(slot) && made(slot + 1) {
+            let at = self.frames.partition_point(|f| f.pts <= time);
+            return self.frames.get(at.saturating_sub(1)).map(|f| f.pts);
+        }
+        let pts = self.nearest(time)?;
+        ((pts - time).abs() <= self.layout.interval.max(near)).then_some(pts)
+    }
+
     /// The pts of slot `slot`'s frame, once it's made and has one.
     pub fn slot(&self, slot: u32) -> Option<f64> {
         self.slots.get(slot as usize).copied().flatten().filter(|p| !p.is_nan())
@@ -638,11 +656,45 @@ mod tests {
         assert_eq!(board.nearest(3.1), Some(4.0));
         assert_eq!(board.nearest(99.0), Some(4.0));
         assert_eq!(std::fs::metadata(&path).unwrap().len(), board.end);
+        // Slots 1 to 3 made: anywhere from 2 s on shows the keyframe at or
+        // before it, however far; before slot 1's, slot 0 isn't made yet, so
+        // only a frame within the interval (or `near`) stands in.
+        assert_eq!(board.shown_at(3.9, 0.0), Some(2.0));
+        assert_eq!(board.shown_at(7.9, 0.0), Some(4.0));
+        assert_eq!(board.shown_at(99.0, 0.0), Some(4.0));
+        assert_eq!(board.shown_at(1.0, 0.0), Some(2.0));
+        assert_eq!(board.shown_at(-1.0, 0.0), None);
+        assert_eq!(board.shown_at(-1.0, 5.0), Some(2.0));
         // A slot with no frame at all is made, with none.
         writer.add(0, None).unwrap();
         let board = Storyboard::open(&path).unwrap();
         assert!(board.complete());
         assert_eq!(board.slot(0), None);
+        // Made, before the first keyframe: the first.
+        assert_eq!(board.shown_at(0.5, 0.0), Some(2.0));
+    }
+
+    #[test]
+    fn a_long_gop_shows_the_keyframe_at_or_before_however_far() {
+        // A keyframe every 5 s (a screen recording), slots every 2: slots
+        // 0-2 take the one at 0, 3-4 the one at 5, 5-7 at 10, 8-9 at 15.
+        let dir = TempDir::new("gop");
+        let path = dir.0.join("a.sb");
+        let mut writer = Writer::open(&path, &fingerprint(), layout(10)).unwrap();
+        for slot in order(10) {
+            let key = (slot as f64 * 2.0 / 5.0).floor() * 5.0;
+            writer.add(slot, Some((key, &jpeg(key as u8)))).unwrap();
+        }
+        let board = Storyboard::open(&path).unwrap();
+        assert_eq!(board.frames.len(), 4);
+        for (time, key) in
+            [(0.0, 0.0), (2.6, 0.0), (4.99, 0.0), (5.0, 5.0), (7.6, 5.0), (12.6, 10.0), (17.6, 15.0), (19.9, 15.0)]
+        {
+            assert_eq!(board.shown_at(time, 0.0), Some(key), "at {time} s");
+        }
+        // Not the nearest, which is the next keyframe: a frame from after
+        // the pointer, which Play there wouldn't reach for seconds.
+        assert_eq!(board.nearest(4.0), Some(5.0));
     }
 
     #[test]

@@ -338,10 +338,12 @@ fn find(app: &AppHandle, doc: Doc, time: f64) -> Option<Found> {
     }
 }
 
-/// The storyboard frame nearest `time` of `doc`, within the storyboard's
-/// interval or `within` seconds (the timeline's few pixels), whichever is
-/// more: where it shows in `doc`, and its JPEG. A storyboard missing or
-/// unfinished is asked for first.
+/// The storyboard frame to show for `time` of `doc`: the keyframe at or
+/// before it in its footage, however far back (`Storyboard::shown_at`; for
+/// an edit, that can be just before its piece starts), or while the
+/// storyboard is still being made, the nearest one within its interval or
+/// `within` seconds (the timeline's few pixels). Where it shows in `doc`,
+/// and its JPEG. A storyboard missing or unfinished is asked for first.
 fn frame_at(app: &AppHandle, doc: Doc, time: f64, within: f64) -> Option<(f64, Vec<u8>)> {
     let state = app.state::<AppState>();
     let found = find(app, doc, time)?;
@@ -373,18 +375,16 @@ fn frame_at(app: &AppHandle, doc: Doc, time: f64, within: f64) -> Option<(f64, V
     if !board.complete() {
         state.storyboards.push_front(found.vod_id);
     }
-    let pts = board.nearest(found.file_time)?;
-    if (pts - found.file_time).abs() > board.layout.interval.max(within) {
-        return None;
-    }
+    let pts = board.shown_at(found.file_time, within)?;
     Some((pts + found.offset, board.frame(pts).ok()?))
 }
 
-/// The storyboard frame nearest `time` of `doc` (a VOD or an edit, in its
-/// own time), within `within` seconds or its storyboard's interval: the
-/// time it shows at (8 bytes, a little-endian f64), then its JPEG. Empty
-/// if there's none: no footage here, its storyboard not made yet, or
-/// nothing near.
+/// The storyboard frame to show for `time` of `doc` (a VOD or an edit, in
+/// its own time): the keyframe at or before it, or while its storyboard is
+/// made, the nearest within `within` seconds or the storyboard's interval.
+/// The time it shows at (8 bytes, a little-endian f64), then its JPEG.
+/// Empty if there's none: no footage here, its storyboard not made yet, or
+/// nothing near yet.
 #[tauri::command]
 pub(crate) async fn storyboard_frame(
     app: AppHandle,
