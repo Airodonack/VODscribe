@@ -71,6 +71,7 @@ export default {
       );
     const head = () =>
       app.js(`return document.querySelector(".head .status")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
+    const notTranscribing = async () => !/Transcribing/.test(await head());
     const captionsButton = () =>
       app.js(
         `const b = document.querySelector('.bar button[aria-label="Captions"]'); return b && { disabled: b.disabled, title: b.title }`,
@@ -303,7 +304,14 @@ export default {
       );
     };
     await until("rows for 0:00–2:00 and 4:00 on", afterLines, MINUTE);
-    if (/Transcribing/.test(await head())) throw new Error(`the header says "${await head()}", with nothing asked`);
+    // The last lines and the job's end reach the page as separate events (the
+    // lines with the last progress step, the end with the job's own status
+    // once it has tidied up), so for a moment the rows are in place and the
+    // header still says "Transcribing … 100%". A slow runner stretched it to
+    // a check's length; it is a moment, so wait it out.
+    await until("the header to stop saying Transcribing", notTranscribing, 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: the header says "${await head()}", with nothing asked`);
+    });
 
     // A row's Transcribe asks for just its part, shown there while it waits or runs, with Stop.
     const clickInRow = (from, label) =>
@@ -385,7 +393,9 @@ export default {
       },
       MINUTE,
     );
-    if (/Transcribing/.test(await head())) throw new Error(`stopped, the header still says "${await head()}"`);
+    await until("the header to stop saying Transcribing", notTranscribing, 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: stopped, the header still says "${await head()}"`);
+    });
     ctx.log(`the rest: "${working[0]}", "${working[1].at(-1)}"; stopped, "${left}"`);
 
     // The bar's Transcribe, clicked: the rest, all of it now transcribed.
