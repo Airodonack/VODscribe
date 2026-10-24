@@ -985,7 +985,7 @@
     </div>
   {/if}
   {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error || snippets.size || clips.carryingAny)}
-    <ClipStrip onremove={removeChosen} />
+    <ClipStrip />
   {/if}
 {/snippet}
 

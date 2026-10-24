@@ -12,10 +12,11 @@
   // has its clips of stretches of the edit: they drag out as files.
   //
   // Ctrl-click (⌘ on a Mac) or Shift-click pills to pick several, or drag a
-  // box over them from empty space in the bar (selection.svelte.ts); what's
-  // picked, with the stretches picked on the timeline, shows first, with
-  // what can be done with it all ("Add to edit…" among it). A pill picked
-  // with others dragged carries them all (bulk.ts `carryChosen`).
+  // box over them from empty space in the bar (selection.svelte.ts). The
+  // keys and buttons are the same for several as for one: C or Clip makes a
+  // clip of each stretch picked, Delete takes what's picked, and a pill
+  // picked with others carries them all when dragged (bulk.ts `carryChosen`)
+  // and puts them all in an edit by its "Add to an edit" button.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -25,20 +26,17 @@
   import Spinner from "./Spinner.svelte";
   import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
-  import { keyHint, labelOf } from "./keys.svelte";
+  import { keyHint } from "./keys.svelte";
   import AddToEdit from "./AddToEdit.svelte";
-  import { carryChosen, chosenClips, chosenPuts, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
-  import { count, dragBox, overlaps, snippets, toggles, type Snippet } from "./selection.svelte";
+  import { carryChosen, chosenPuts } from "./bulk";
+  import { dragBox, overlaps, snippets, toggles, type Snippet } from "./selection.svelte";
 
   let {
     vod,
     ownPlayer = false,
-    onremove = removeChosenClips,
   }: {
     vod?: Vod;
     ownPlayer?: boolean;
-    /** Removes what's picked (an edit's own clip bar takes its pieces too). */
-    onremove?: () => void;
   } = $props();
 
   const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
@@ -72,17 +70,6 @@
     snippets.keep((i) => i.kind !== "clip" || ids.has(i.id));
   });
 
-  // What's picked: how much, and what can be done with it.
-  const segmentsPicked = $derived(chosenSegments().length);
-  const clipsPicked = $derived(chosenClips().length);
-  /** One clip picked alone (a plain click): its pill's own buttons do what the
-   *  row would, and the row, first in the bar, would push the pills along
-   *  under the pointer as the click picks it (a double-click's second click
-   *  would land on another). */
-  const loneClip = $derived(snippets.size === 1 && clipsPicked === 1);
-  /** Remove: the clips picked, and in an edit the stretches too (a VOD's are its splits). */
-  const removable = $derived(clipsPicked > 0 || (!vod && segmentsPicked > 0));
-
   let renaming = $state<number | null>(null);
   let draft = $state("");
 
@@ -102,7 +89,8 @@
     el.select();
   }
 
-  /** Picked with others (more clips, or stretches on the timeline): a drag of it carries them all. */
+  /** Picked with others (more clips, or stretches on the timeline): a drag of
+   *  it carries them all, and its "Add to an edit" puts them all in one. */
   const withOthers = (clip: Clip) => snippets.size > 1 && snippets.has(itemOf(clip));
 
   // A made clip's chip drags out once the pointer moves with the button down
@@ -173,9 +161,15 @@
     }
   }
 
-  // "Add to edit…" for what's picked: the edits, then where in one.
+  // "Add to an edit" on a pill picked with others: the edits, then where in one.
   let addingAll = $state(false);
   let addAllButton = $state<HTMLElement>();
+  function onAdd(e: MouseEvent, clip: Clip) {
+    const anchor = e.currentTarget as HTMLElement;
+    if (!withOthers(clip)) return void (adding = { clip, anchor });
+    addAllButton = anchor;
+    addingAll = true;
+  }
 
   // "Add to edit": the edits to pick from, by the clip's button.
   let adding = $state<{ clip: Clip; anchor: HTMLElement } | null>(null);
@@ -228,46 +222,6 @@
   onwheel={onWheel}
   use:dragBox={{ set: snippets, hits: boxed, onempty: () => snippets.clear() }}
 >
-  {#if snippets.size && !loneClip}
-    <!-- What's picked here and on the timeline, and what can be done with it. -->
-    <div class="picked" role="status">
-      <span class="count"
-        >{count([
-          [segmentsPicked, "stretch", "stretches"],
-          [clipsPicked, "clip", "clips"],
-        ])}</span
-      >
-      {#if segmentsPicked}
-        <button
-          class="link"
-          onclick={clipSegments}
-          title="A clip of each stretch picked, in their order{keyHint('clip.make')}"
-          >Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}</button
-        >
-      {/if}
-      <button
-        class="link"
-        bind:this={addAllButton}
-        onclick={() => (addingAll = !addingAll)}
-        title="Put them in an edit, in the order picked: on its timeline or its clip bar">Add to edit…</button
-      >
-      {#if removable}
-        <button
-          class="link"
-          onclick={onremove}
-          title="Remove what's picked{keyHint(vod ? 'clips.remove' : 'edit.remove')}">Remove</button
-        >
-      {/if}
-      <button
-        class="act"
-        onclick={() => snippets.clear()}
-        title="Let go of them (Esc)"
-        aria-label="Clear the selection"
-      >
-        <Icon name="x" size={13} />
-      </button>
-    </div>
-  {/if}
   {#each linked as edit (edit.id)}
     <button
       class="chip edit-link"
@@ -354,8 +308,8 @@
       {/if}
       <button
         class="act"
-        onclick={(e) => (adding = { clip, anchor: e.currentTarget as HTMLElement })}
-        title="Add to an edit"
+        onclick={(e) => onAdd(e, clip)}
+        title={withOthers(clip) ? "Add them all to an edit, in the order picked" : "Add to an edit"}
         aria-label="Add to an edit"
       >
         <Icon name="plus" size={13} />
@@ -483,26 +437,6 @@
 
   .time .order {
     margin-right: 5px;
-  }
-
-  /* What's picked, first in the bar. */
-  .picked {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 4px 0 2px;
-    font-size: 12px;
-    white-space: nowrap;
-  }
-
-  .picked .count {
-    font-weight: 600;
-  }
-
-  .picked .link {
-    color: var(--accent);
-    font-size: 12px;
   }
 
   .chip.error {

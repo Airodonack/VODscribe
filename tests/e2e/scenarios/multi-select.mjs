@@ -2,10 +2,11 @@
 // file: cuts at 1, 2 and 3 s (B), then Ctrl-click (⌘ on a Mac) on the
 // stretch 2-3 s and then on 1-2 s: each shows its number in that order, the
 // playhead stays where it was, and C makes a clip of each, in that order, as
-// one change. A plain click on a pill picks it alone, one on another picks
-// that instead, and one on the pill picked alone lets it go. The two pills
-// Ctrl-clicked: Delete takes both off the clip
-// bar, and one undo brings both back. A box dragged from empty space in the
+// one change. The clip bar has no row of its own about what's picked: the
+// keys and the pills' own buttons are the same for several as for one. A
+// plain click on a pill picks it alone, one on another picks that instead,
+// and one on the pill picked alone lets it go. The two pills Ctrl-clicked:
+// Delete takes both off the clip bar, and one undo brings both back. A box dragged from empty space in the
 // clip bar over both pills picks them; Escape lets them go. In the library:
 // three more files, Ctrl-click on one and Shift-click on another picks the
 // run of three; the first of them removed with its own row's Remove leaves
@@ -18,7 +19,9 @@
 // the same with a library row picked. Ctrl+A (⌘A) picks by the side of the
 // window the pointer is on, whatever has the focus: over the clip bar or the
 // timeline, all the clips; over the library's pane, all its rows; over the
-// main side with no clip bar, nothing, and not the page's text either.
+// main side with no clip bar, nothing, and not the page's text either. Last,
+// the two pills picked: the + on one of them (Add to an edit) puts both in an
+// edit, asking where, in the order picked.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -35,7 +38,7 @@ export default {
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "stretches-numbered":
-      'On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one; under the bar a row reads "2 stretches" with Clip and Add to edit….',
+      "On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there).",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -126,8 +129,19 @@ export default {
     if (order["2 3"] !== "1" || order["1 2"] !== "2")
       throw new Error(`the stretches' numbers: ${JSON.stringify(numbers)}`);
     if ((await app.shownTime()) !== 3) throw new Error(`picking moved the playhead to ${await app.shownTime()} s`);
-    const head = () => app.js(`return document.querySelector(".clip-bar .picked .count")?.textContent.trim() ?? ""`);
-    if ((await head()) !== "2 stretches") throw new Error(`the clip bar says "${await head()}"`);
+    // The clip bar says nothing of what's picked: no row there with a count
+    // or buttons of its own (C, Clip under the player, and the pills' own
+    // buttons do it).
+    const barRow = () =>
+      app.js(`
+        const bar = document.querySelector(".clip-bar");
+        const own = [...bar.children].filter((el) => !el.matches(".chip, .drop, .error-text, .added"));
+        return own.map((el) => el.textContent.trim()).join(" | ");`);
+    const noRow = async (when) => {
+      const text = await barRow();
+      if (text) throw new Error(`the clip bar has a row "${text}" ${when}`);
+    };
+    await noRow("with two stretches picked");
     await ctx.checkpoint("stretches-numbered");
 
     // C: a clip of each, in the order picked.
@@ -164,15 +178,14 @@ export default {
       });
     await plainClick(made[0].id);
     await pickedAlone(made[0].id, "a plain click picked the pill alone");
-    // Its own buttons do what the row of what's picked would: no row, pushing the pills along.
-    if (await head()) throw new Error(`the clip bar says "${await head()}" for the one pill picked`);
+    await noRow("with one pill picked");
     await plainClick(made[1].id);
     await pickedAlone(made[1].id, "a plain click on another picked it instead");
     await plainClick(made[1].id);
     await until("a plain click on the pill picked alone let it go", async () => !(await chosen()).length, 10_000);
     ctx.log("a plain click picks a pill alone, another instead, and lets go of the one picked alone");
 
-    // The two pills Ctrl-clicked: the bar says so, with Remove.
+    // The two pills Ctrl-clicked: both picked, still no row.
     for (const clip of made)
       await app.js(
         `${TOGGLE}
@@ -185,13 +198,7 @@ export default {
       () => app.js(`return document.querySelectorAll(".chip.chosen").length === 2`),
       10_000,
     );
-    if ((await head()) !== "2 clips") throw new Error(`the clip bar says "${await head()}"`);
-    if (
-      !(await app.js(
-        `return [...document.querySelectorAll(".clip-bar .picked button")].some((b) => b.textContent.trim() === "Remove")`,
-      ))
-    )
-      throw new Error("no Remove for the clips picked");
+    await noRow("with two pills picked");
     await ctx.checkpoint("clips-picked");
 
     // Delete: both go; one undo, both are back.
@@ -248,7 +255,7 @@ export default {
              .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
           clip.id,
         );
-      await until("two pills picked", async () => (await head()) === "2 clips", 10_000);
+      await until("two pills picked", async () => (await chosen()).length === 2, 10_000);
     };
     const marks = async () => (await app.invoke("list_marks", { vodId: vod.id })).length;
     const clickCut = () =>
@@ -261,13 +268,11 @@ export default {
     await pickPills();
     await clickCut();
     await until("the cut selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
-    await until(
-      "the pills let go",
-      () => app.js(`return !document.querySelector(".chip.chosen, .clip-bar .picked")`),
-      10_000,
-    ).catch(async (e) => {
-      throw new Error(`${e.message}: the clip bar says "${await head()}"`);
-    });
+    await until("the pills let go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}`);
+      },
+    );
     await app.key("Delete");
     await until("the cut gone", async () => (await marks()) === 2, 10_000);
     if ((await shown()).length !== 2)
@@ -300,9 +305,9 @@ export default {
       await focusOn(row(a));
       await pointAt(over);
       await app.key("a", { cmd: true });
-      await until(`Ctrl+A over ${over}: the clips`, async () => (await head()) === "2 clips", 10_000).catch(
+      await until(`Ctrl+A over ${over}: the clips`, async () => (await chosen()).length === 2, 10_000).catch(
         async (e) => {
-          throw new Error(`${e.message}: the clip bar says "${await head()}", the list "${await listCount()}"`);
+          throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}, the list "${await listCount()}"`);
         },
       );
       if (await listCount()) throw new Error(`Ctrl+A over ${over} picked rows too: "${await listCount()}"`);
@@ -314,10 +319,10 @@ export default {
     await app.key("a", { cmd: true });
     await until("Ctrl+A over the library: its rows", async () => (await listCount()) === "4 VODs", 10_000).catch(
       async (e) => {
-        throw new Error(`${e.message}: the list says "${await listCount()}", the clip bar "${await head()}"`);
+        throw new Error(`${e.message}: the list says "${await listCount()}", picked ${JSON.stringify(await chosen())}`);
       },
     );
-    if (await head()) throw new Error(`Ctrl+A over the library picked clips too: "${await head()}"`);
+    if ((await chosen()).length) throw new Error(`Ctrl+A over the library picked clips too: ${await chosen()}`);
     await app.key("Escape");
     await until("Escape let them go", () => app.js(`return !document.querySelector(".list .vod.chosen")`), 10_000);
 
@@ -408,5 +413,55 @@ export default {
     if (askedNow.length) throw new Error(`Delete on the cut asked ${JSON.stringify(askedNow)}`);
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id))
       throw new Error("Delete on the cut removed the VOD");
+
+    // The two pills picked, 2-3 s first: the + on the second (Add to an
+    // edit) asks for an edit (a new one here), then where in it, and puts
+    // both there, in the order picked.
+    const editsBefore = new Set((await app.invoke("list_edits")).map((e) => e.id));
+    const plainCount = (await shown()).length;
+    // Made first, so picked first: 2-3 s, then 1-2 s.
+    const inOrder = [...made].sort((x, y) => x.id - y.id);
+    for (const clip of inOrder)
+      await app.js(
+        `${TOGGLE}
+         document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
+           .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
+        clip.id,
+      );
+    await until("two pills picked", async () => (await chosen()).length === 2, 10_000);
+    await app.click(`.chip[data-clip="${inOrder[1].id}"] button[aria-label="Add to an edit"]`);
+    const inMenu = (text) =>
+      app.js(
+        `const el = [...document.querySelectorAll("[role=dialog] .pick button")].find((b) => b.textContent.trim() === arguments[0]);
+         if (!el) throw new Error("no " + arguments[0] + " in the menu");
+         el.click();`,
+        text,
+      );
+    await until(
+      "the edits to pick from",
+      () => app.js(`return !!document.querySelector("[role=dialog] .pick")`),
+      10_000,
+    );
+    await inMenu("New edit");
+    await until(
+      "where in a new edit",
+      () =>
+        app.js(`return document.querySelector("[role=dialog] .pick .head")?.textContent.trim() === "Into a new edit:"`),
+      10_000,
+    );
+    await inMenu("Timeline, at the end");
+    const edit = await until(
+      "the new edit",
+      async () => (await app.invoke("list_edits")).find((e) => !editsBefore.has(e.id)),
+      15_000,
+    );
+    const pieces = async () => (await app.invoke("get_edit", { id: edit.id })).pieces.map((p) => Math.round(p.start));
+    await until("both in the edit, in the order picked", async () => (await pieces()).join() === "2,1", 15_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}: the edit has ${JSON.stringify(await pieces())}`);
+      },
+    );
+    if ((await shown()).length !== plainCount) throw new Error("Add to an edit changed the clip bar");
+    ctx.log("the + on a pill picked with another put both in an edit, 2-3 then 1-2");
   },
 };
