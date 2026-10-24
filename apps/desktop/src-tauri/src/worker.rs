@@ -10,12 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{Emitter, Manager};
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
 use vodscribe_core::stretches::Stretch;
 use vodscribe_core::{Paths, gpu, model, pipeline, tools};
+
+use crate::AppHandle;
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(250);
 /// How many downloaded requests may wait for the transcriber before the

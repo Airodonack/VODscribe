@@ -4,15 +4,17 @@
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_player::Rect;
+
+use crate::{AppHandle, WebviewWindow};
 
 /// The native screen, once the window has one.
 #[derive(Default)]
 pub(crate) struct Screen(Mutex<Option<vodscribe_player::present::Screen>>);
 
 /// Puts the screen in `window`.
-pub(crate) fn attach(app: &AppHandle, window: &tauri::WebviewWindow) -> anyhow::Result<()> {
+pub(crate) fn attach(app: &AppHandle, window: &WebviewWindow) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         // Over the page's view: the box the page reports is in its coordinates.

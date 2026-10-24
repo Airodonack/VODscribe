@@ -14,6 +14,14 @@ name = "vodscribe_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
+default = ["webkit"]
+# The page in each system's own web view (WebKitGTK, WebView2, WKWebView),
+# through Tauri's wry runtime: what releases ship.
+webkit = ["tauri/wry"]
+# The page in Servo instead, through tauri-runtime-servo: Linux on X11 only,
+# for now. Built without the default features (`--no-default-features
+# --features servo`), so neither engine's crates come with the other's.
+servo = ["dep:tauri-runtime-servo", "dep:env_logger"]
 # The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs).
 # Test builds only: never in a release.
 e2e = []
@@ -28,7 +36,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 vodscribe-core = { path = "../../../crates/core" }
 vodscribe-player = { path = "../../../crates/player" }
-tauri = { version = "2", features = [] }
+# Tauri's default features but its wry runtime, which comes with `webkit`.
+tauri = { version = "2", default-features = false, features = [
+  "compression",
+  "common-controls-v6",
+  "dynamic-acl",
+  "x11",
+  "dbus",
+] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -52,3 +67,9 @@ glib = "0.18"
 # The drag's picture decoded here, not by gdk-pixbuf, whose loaders a system
 # may run in a sandbox that isn't there (clips.rs drag_picture).
 png = "0.18"
+# The Servo runtime (the `servo` feature). A path for now: the repository has
+# no published home yet.
+tauri-runtime-servo = { path = "/mnt/data/servo-spike/tauri-servo/tauri-runtime-servo", optional = true }
+# Servo and its runtime report through `log`, the page's console among them
+# (the `console` target); the wry runtime's web views have an inspector instead.
+env_logger = { version = "0.11", optional = true }

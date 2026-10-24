@@ -17,10 +17,11 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{Emitter, Manager};
 use vodscribe_core::db::{Db, MarkState};
 use vodscribe_core::edits::EditState;
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, err};
 
 /// The most changes kept for each document.

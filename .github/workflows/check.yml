@@ -46,7 +46,9 @@ jobs:
           toolchain: "1.99.0"
           components: rustfmt
 
-      - run: cargo fmt --all --check
+      # The members by name: --all would also check path dependencies, and the
+      # Servo runtime reaches Servo's tree, which has its own style.
+      - run: cargo fmt -p vodscribe -p vodscribe-core -p vodscribe-player -p vodscribe-worker --check
       # The version being worked on has a CHANGELOG.md entry, and the parsing works.
       - run: python3 -I scripts/release.py --check
       - run: python3 -I scripts/test_release.py

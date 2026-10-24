@@ -32,11 +32,20 @@ mod worker;
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{Emitter, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::{Paths, model};
 
 use worker::Worker;
+
+/// The Tauri runtime the window's page runs on: the system's web view through
+/// wry, or Servo with the `servo` feature.
+#[cfg(not(feature = "servo"))]
+pub(crate) type Engine = tauri::Wry;
+#[cfg(feature = "servo")]
+pub(crate) type Engine = tauri_runtime_servo::ServoRuntime<tauri::EventLoopMessage>;
+pub(crate) type AppHandle = tauri::AppHandle<Engine>;
+pub(crate) type WebviewWindow = tauri::WebviewWindow<Engine>;
 
 struct AppState {
     paths: Paths,
@@ -123,7 +132,7 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 
 /// Everything that runs on the library: the state the commands use, the
 /// queues and the background jobs.
-fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
+fn start_library(app: &mut tauri::App<Engine>, paths: Paths, db: Db) -> anyhow::Result<()> {
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
     let _ = std::fs::remove_dir_all(paths.local.join("preview"));
@@ -185,7 +194,11 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // Servo's warnings and the page's console (the `console` target), or what
+    // RUST_LOG asks for; Servo itself sets no logger.
+    #[cfg(feature = "servo")]
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn,console=info")).init();
+    tauri::Builder::<Engine>::new()
         // One copy at a time: two would share the library and the queue, and on Linux
         // a second copy's window stays blank. Launching again focuses the open window.
         // (First, so a second copy exits before setting anything up.)

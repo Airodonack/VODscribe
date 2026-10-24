@@ -6,12 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{Progress, deps, model, tools};
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, err};
 
 #[derive(Serialize)]

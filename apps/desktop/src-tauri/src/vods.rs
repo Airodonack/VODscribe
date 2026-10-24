@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
@@ -16,6 +16,7 @@ use vodscribe_core::settings::ClipFormat;
 use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
 
+use crate::AppHandle;
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
 
