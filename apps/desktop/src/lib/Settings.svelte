@@ -1,20 +1,6 @@
-<script lang="ts" module>
-  // The sections, in the list's order, and the one last opened: open again
-  // there while VODscribe runs, back at the first after a restart.
-  const SECTIONS = [
-    { id: "transcription", label: "Transcription", icon: "audio-lines" },
-    { id: "appearance", label: "Appearance", icon: "palette" },
-    { id: "controls", label: "Controls", icon: "keyboard" },
-    { id: "storage", label: "Storage", icon: "folder" },
-    { id: "updates", label: "Updates", icon: "download" },
-    { id: "privacy", label: "Privacy", icon: "lock" },
-    { id: "help", label: "Help", icon: "circle-help" },
-  ] as const;
-  type Section = (typeof SECTIONS)[number]["id"];
-  let lastSection: Section = SECTIONS[0].id;
-</script>
-
 <script lang="ts">
+  // Settings, a section at a time; which one is shown, and the list of them,
+  // are settingsWindow.svelte.ts's, so a section can be opened from elsewhere.
   import Controls from "./Controls.svelte";
   import EmoteProviders from "./EmoteProviders.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
@@ -28,13 +14,9 @@
   import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, videoSize } from "./platform";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
+  import { SECTIONS, settingsWindow } from "./settingsWindow.svelte";
 
   let { oncleared }: { oncleared: () => void } = $props();
-
-  let section = $state<Section>(lastSection);
-  $effect(() => {
-    lastSection = section;
-  });
 
   let device = $derived<Device>(appSettings.value?.device ?? "cpu");
   let themeChoice = $derived(appSettings.value?.theme ?? "system");
@@ -231,15 +213,16 @@
   <nav aria-label="Settings sections">
     {#each SECTIONS as s (s.id)}
       <button
-        class:on={section === s.id}
-        aria-current={section === s.id ? "true" : undefined}
-        data-autofocus={section === s.id ? "" : undefined}
-        onclick={() => (section = s.id)}><Icon name={s.icon} size={16} /><span class="name">{s.label}</span></button
+        class:on={settingsWindow.section === s.id}
+        aria-current={settingsWindow.section === s.id ? "true" : undefined}
+        data-autofocus={settingsWindow.section === s.id ? "" : undefined}
+        onclick={() => (settingsWindow.section = s.id)}
+        ><Icon name={s.icon} size={16} /><span class="name">{s.label}</span></button
       >
     {/each}
   </nav>
   <div class="pane">
-    {#if section === "transcription"}
+    {#if settingsWindow.section === "transcription"}
       <section>
         <span class="eyebrow">Transcribe with</span>
         <div class="options" role="radiogroup" aria-label="Transcribe with">
@@ -307,7 +290,7 @@
         {#if error}<p class="error-text hint">{error}</p>{/if}
         <p class="muted hint">Changes apply from the next VOD.</p>
       </section>
-    {:else if section === "appearance"}
+    {:else if settingsWindow.section === "appearance"}
       <section>
         <span class="eyebrow">Appearance</span>
         <p class="label">Theme</p>
@@ -327,9 +310,9 @@
         <p class="label">Chat emotes</p>
         <EmoteProviders />
       </section>
-    {:else if section === "controls"}
+    {:else if settingsWindow.section === "controls"}
       <Controls />
-    {:else if section === "storage"}
+    {:else if settingsWindow.section === "storage"}
       <section>
         <span class="eyebrow">Storage</span>
         <p class="label">Downloaded videos</p>
@@ -391,7 +374,7 @@
           Clips already made are made again when next dragged out.
         </p>
       </section>
-    {:else if section === "updates"}
+    {:else if settingsWindow.section === "updates"}
       <section>
         <span class="eyebrow">Updates</span>
         <p class="muted hint">VODscribe checks once a day, and asks before installing anything.</p>
@@ -420,7 +403,7 @@
           <p class="muted hint step">{ytDlpStatus}</p>
         {/if}
       </section>
-    {:else if section === "privacy"}
+    {:else if settingsWindow.section === "privacy"}
       <section>
         <span class="eyebrow">Privacy & security</span>
         <p class="hint">
@@ -446,7 +429,7 @@
           <button class="link" onclick={() => openUrl(LICENSES)}>Licenses <Icon name="external" size={12} /></button>
         </div>
       </section>
-    {:else if section === "help"}
+    {:else if settingsWindow.section === "help"}
       <section>
         <span class="eyebrow">Help</span>
         <p class="muted hint">Something broken? Got an idea?</p>

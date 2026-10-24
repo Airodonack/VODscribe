@@ -54,7 +54,11 @@ async function pPlays(app, ctx, label) {
     await app.click('button[aria-label="Keyboard shortcuts"]');
   const legend = await until(
     "the legend",
-    () => app.js(`return document.querySelector(".legend .keys")?.textContent.trim() ?? false`),
+    () =>
+      app.js(
+        `const row = [...document.querySelectorAll(".legend .row")].find((r) => r.querySelector(".does").textContent.trim() === "play/pause");
+         return row?.querySelector(".keys").textContent.trim() ?? false`,
+      ),
     10_000,
   );
   if (legend !== "K or P") throw new Error(`${label}: the legend's play/pause keys are "${legend}", not "K or P"`);

@@ -14,7 +14,7 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }`),
 );
-const { buildMap, matches } = await import("./keymap.ts");
+const { LEGEND_GROUPS, buildMap, matches } = await import("./keymap.ts");
 const { editShortcuts, forPlayer, inOut, seekOf, transportKey, vodShortcuts } = await import("./playerKeys.ts");
 
 /** The default map on `os`, as `is` and `bindings`, with `overrides` over it.
@@ -87,90 +87,124 @@ test("a player has every key the app hasn't taken, Alt ones too, but none in a f
   }
 });
 
+/** A legend's groups as headings and lines, and its lines all together.
+ *  @param {import("./playerKeys.ts").ShortcutGroup[]} groups */
+const flat = (groups) => groups.flatMap((g) => g.shortcuts);
+/** @param {import("./playerKeys.ts").ShortcutGroup[]} groups @param {string} does */
+const keysOf = (groups, does) => flat(groups).find((s) => s.does === does)?.keys;
+
 test("each legend lists a key once for each thing it does", () => {
-  for (const list of [
+  for (const groups of [
     vodShortcuts(true, "linux", bindings),
     editShortcuts(true, "linux", bindings),
     vodShortcuts(true, "mac", keysOn("mac").bindings),
   ]) {
-    const does = list.map((s) => s.does);
+    const does = flat(groups).map((s) => s.does);
     assert.equal(new Set(does).size, does.length, does.join(" | "));
-    assert.ok(does.includes("undo or redo"));
+    assert.ok(does.includes("undo"));
   }
-  assert.ok(
-    !vodShortcuts(false, "linux", bindings).some((s) => s.does === "a frame back or on"),
-    "no frame steps on a site's player",
-  );
+  assert.ok(!keysOf(vodShortcuts(false, "linux", bindings), "a frame"), "no frame steps on a site's player");
 });
 
-// The legends as they were written by hand before the action table, on
-// Linux and Windows; a Mac's wrote ⌘Z and ⇧⌘Z for undo and "Option" for Alt.
+test("a legend's columns are its own groups, in order, none long", () => {
+  const vod = vodShortcuts(true, "linux", bindings);
+  const edit = editShortcuts(true, "linux", bindings);
+  for (const groups of [vod, edit]) {
+    assert.deepEqual(
+      groups.map((g) => g.heading),
+      LEGEND_GROUPS.map((g) => g.heading),
+    );
+    assert.deepEqual(
+      groups.map((g) => g.heading),
+      ["Playing", "Cutting", "Marks", "More"],
+    );
+    // Short enough to fit under the controls.
+    for (const g of groups) assert.ok(g.shortcuts.length <= 8, `${g.heading} has ${g.shortcuts.length} lines`);
+  }
+  // An edit's own keys join Cutting; B is there once, as what it does in an edit.
+  assert.deepEqual(edit[1].shortcuts, [
+    { keys: ["B"], does: "cut here, or selection ends" },
+    { keys: ["I", "O"], does: "selection start, end" },
+    { keys: ["C"], does: "clip the stretch" },
+    { keys: ["Ctrl", "+", "←", "→"], does: "move the piece" },
+    { keys: ["Delete"], does: "remove the stretch or piece" },
+    { keys: ["E"], does: "render" },
+  ]);
+  assert.ok(!keysOf(edit, "cut here"));
+  assert.ok(!keysOf(edit, "transcribe"));
+  assert.ok(!keysOf(edit, "drag a clip out"));
+  assert.ok(!keysOf(vod, "render"));
+});
+
+// The default legends, on Linux and Windows; a Mac's writes ⌘Z and ⇧⌘Z for
+// undo and redo, and "Option" for Alt.
 const playing = [
   { keys: ["Space", "or", "K"], does: "play/pause" },
   { keys: ["←", "→"], does: "5 s" },
   { keys: ["Shift", "+", "←", "→"], does: "1 s" },
   { keys: ["J", "L"], does: "10 s" },
-  { keys: [",", "."], does: "a frame back or on" },
+  { keys: [",", "."], does: "a frame" },
 ];
-const undo = { keys: ["Ctrl", "+", "Z", "or", "Ctrl", "+", "Shift", "+", "Z"], does: "undo or redo" };
-const VOD = [
-  ...playing,
+const cutting = [
   { keys: ["B"], does: "cut here" },
-  { keys: ["I", "O"], does: "start or end the selection here" },
+  { keys: ["I", "O"], does: "selection start, end" },
   { keys: ["C"], does: "clip the stretch" },
-  { keys: ["T"], does: "transcribe the selection, or the whole VOD" },
-  { keys: ["M"], does: "highlight here" },
-  { keys: ["N"], does: "new chapter here" },
-  { keys: ["Enter"], does: "rename the selected chapter or highlight" },
-  { keys: [",", ".", "or", "←", "→", "or", "J", "L"], does: "move the selected cut (Shift with , . ten frames)" },
-  { keys: ["Delete"], does: "remove the selected cut" },
-  { keys: ["Esc"], does: "deselect, or take back a new chapter or highlight" },
-  { keys: ["Shift", "+", "C"], does: "captions" },
-  { keys: ["Shift", "+", "M"], does: "mute" },
-  { keys: ["F"], does: "full screen" },
-  undo,
-  { keys: ["Alt", "+", "drag"], does: "on the timeline, or drag Clip: the stretch out as a clip" },
+  { keys: ["T"], does: "transcribe" },
+  { keys: ["Alt", "+", "drag"], does: "drag a clip out" },
 ];
-const EDIT = [
-  ...playing,
-  { keys: ["B"], does: "cut here (or at both ends of the selection)" },
-  { keys: ["I", "O"], does: "start or end the selection here" },
+const marks = [
   { keys: ["M"], does: "highlight here" },
-  { keys: ["N"], does: "new chapter here" },
-  { keys: ["Enter"], does: "rename the selected chapter or highlight" },
-  {
-    keys: [",", ".", "or", "←", "→", "or", "J", "L"],
-    does: "move the selected cut or mark (Shift with , . ten frames)",
-  },
-  {
-    keys: ["Delete"],
-    does: "remove the selected lines or mark; else the stretch between cuts here (a real split then), or the piece",
-  },
-  { keys: ["Ctrl", "+", "←", "→"], does: "move the piece here earlier or later" },
-  { keys: ["C"], does: "clip the selection, or the stretch here" },
-  { keys: ["E"], does: "export: render the edit" },
-  { keys: ["Shift", "+", "C"], does: "captions" },
+  { keys: ["N"], does: "chapter here" },
+  { keys: ["Enter"], does: "rename" },
+  { keys: ["Delete"], does: "remove" },
+  { keys: [",", "."], does: "move a frame" },
+  { keys: ["Shift", "+", "<", ">"], does: "move ten frames" },
+  { keys: ["←", "→", "or", "J", "L"], does: "move 5 s or 10 s" },
+];
+const more = [
   { keys: ["Shift", "+", "M"], does: "mute" },
+  { keys: ["Shift", "+", "C"], does: "captions" },
   { keys: ["F"], does: "full screen" },
-  undo,
+  { keys: ["Ctrl", "+", "Z"], does: "undo" },
+  { keys: ["Ctrl", "+", "Shift", "+", "Z"], does: "redo" },
+  { keys: ["Esc"], does: "deselect" },
 ];
 
-test("the default legends read as the hand-written ones did", () => {
+test("the default legends", () => {
   for (const os of /** @type {const} */ (["linux", "windows"])) {
-    assert.deepEqual(vodShortcuts(true, os, keysOn(os).bindings), VOD);
-    assert.deepEqual(editShortcuts(true, os, keysOn(os).bindings), EDIT);
+    assert.deepEqual(
+      vodShortcuts(true, os, keysOn(os).bindings).map((g) => g.shortcuts),
+      [playing, cutting, marks, more],
+    );
+    const edit = editShortcuts(true, os, keysOn(os).bindings);
+    assert.deepEqual(
+      [edit[0], edit[2], edit[3]].map((g) => g.shortcuts),
+      [playing, marks, more],
+    );
   }
   const mac = vodShortcuts(true, "mac", keysOn("mac").bindings);
-  assert.deepEqual(mac.find((s) => s.does === "undo or redo")?.keys, ["⌘", "Z", "or", "⇧", "⌘", "Z"]);
-  assert.deepEqual(mac.at(-1)?.keys, ["Option", "+", "drag"]);
+  assert.deepEqual(keysOf(mac, "undo"), ["⌘", "Z"]);
+  assert.deepEqual(keysOf(mac, "redo"), ["⇧", "⌘", "Z"]);
+  assert.deepEqual(keysOf(mac, "drag a clip out"), ["Option", "+", "drag"]);
 });
 
 test("a rebound key shows in the legend; an action with none drops out", () => {
   const { bindings } = keysOn("linux", { "play.toggle": ["p"], "cut.here": [], "seek.back5": ["Shift+h"] });
-  const list = vodShortcuts(true, "linux", bindings);
-  assert.deepEqual(list.find((s) => s.does === "play/pause")?.keys, ["P"]);
-  assert.ok(!list.some((s) => s.does === "cut here"));
-  assert.deepEqual(list.find((s) => s.does === "5 s")?.keys, ["Shift", "+", "H", "or", "→"]);
+  const groups = vodShortcuts(true, "linux", bindings);
+  assert.deepEqual(keysOf(groups, "play/pause"), ["P"]);
+  assert.ok(!keysOf(groups, "cut here"));
+  assert.deepEqual(keysOf(groups, "5 s"), ["Shift", "+", "H", "or", "→"]);
+  // Those keys taken away, More keeps only Escape, which is no action's.
+  const none = keysOn("linux", {
+    "mute.toggle": [],
+    "captions.toggle": [],
+    "fullscreen.toggle": [],
+    undo: [],
+    redo: [],
+  }).bindings;
+  assert.deepEqual(vodShortcuts(true, "linux", none).find((g) => g.group === "more")?.shortcuts, [
+    { keys: ["Esc"], does: "deselect" },
+  ]);
 });
 
 test("I and O move the selection's ends, swapping past the other end", () => {

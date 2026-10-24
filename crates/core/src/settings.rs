@@ -57,6 +57,9 @@ pub struct Settings {
     /// has are kept as they are.
     #[serde(deserialize_with = "bindings")]
     pub key_bindings: BTreeMap<String, Vec<String>>,
+    /// Whether the players' keyboard legend is open: left open, it stays open
+    /// across VODs, edits and launches. Only the page reads it.
+    pub show_keys: bool,
 }
 
 /// Every known emote provider, each once, in priority order.
@@ -181,6 +184,17 @@ mod tests {
         assert_eq!(again.key_bindings["play.toggle"], ["p"]);
         assert!(again.key_bindings["mute.toggle"].is_empty());
         assert_eq!(again.key_bindings["gone.away"], ["x"]);
+    }
+
+    #[test]
+    fn the_keyboard_legend_starts_closed_and_stays_as_left() {
+        // A settings.json as 0.5.x wrote it: no word of the legend.
+        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "video_height": 720}"#).unwrap();
+        assert!(!old.show_keys);
+        let open = Settings { show_keys: true, ..old };
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
+        assert!(again.show_keys);
+        assert_eq!(again.video_height, Some(720));
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

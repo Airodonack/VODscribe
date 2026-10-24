@@ -20,6 +20,7 @@
   import SearchGrouping from "./SearchGrouping.svelte";
   import { DEFAULT_WITHIN, removeFilter } from "./queryChips";
   import Settings from "./Settings.svelte";
+  import { settingsWindow } from "./settingsWindow.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
   import { ownPlayer } from "./ownPlayer.svelte";
@@ -92,8 +93,6 @@
   // edited, a VOD is picked from the list, or Back takes them there.
   let aside = $state(false);
   const showResults = $derived(!aside && (results !== null || searchError !== null));
-
-  let showSettings = $state(false);
 
   let searchInput = $state<HTMLInputElement>();
   // The search shortcut, as this computer writes it.
@@ -665,18 +664,18 @@
         />
         <button
           class="icon"
-          class:on={showSettings}
-          onclick={() => (showSettings = !showSettings)}
+          class:on={settingsWindow.open}
+          onclick={() => (settingsWindow.open = !settingsWindow.open)}
           {...demoOff("The web demo has no settings. In the app: GPU speed-up, video downloader updates and storage.")}
           aria-label="Settings"
           aria-haspopup="dialog"
-          aria-expanded={showSettings}
+          aria-expanded={settingsWindow.open}
           title="Settings"><Icon name="settings" size={18} /></button
         >
-        <Modal bind:open={showSettings} label="Settings">
+        <Modal bind:open={settingsWindow.open} label="Settings">
           <Settings
             oncleared={() => {
-              showSettings = false;
+              settingsWindow.open = false;
               refreshSetup();
             }}
           />

@@ -39,10 +39,34 @@ export type Os = "linux" | "mac" | "windows";
  */
 export type Scope = "app" | "player" | "edit" | "mark";
 
+/** The scopes as the user knows them, in the order Settings › Controls
+ *  groups the keys by. */
+export const SCOPES: readonly { scope: Scope; heading: string }[] = [
+  { scope: "app", heading: "Everywhere" },
+  { scope: "player", heading: "Playing" },
+  { scope: "edit", heading: "In an edit" },
+  { scope: "mark", heading: "With a cut or mark selected" },
+];
+
+/**
+ * The players' legend's columns (Shortcuts.svelte), in order: not the
+ * scopes, whose sizes are far apart (most keys are a player's), but a few
+ * kinds of thing done, each a short column under the controls.
+ */
+export type LegendGroup = "playing" | "cutting" | "marks" | "more";
+export const LEGEND_GROUPS: readonly { group: LegendGroup; heading: string }[] = [
+  { group: "playing", heading: "Playing" },
+  { group: "cutting", heading: "Cutting" },
+  { group: "marks", heading: "Marks" },
+  { group: "more", heading: "More" },
+];
+
 export type Action = {
   id: string;
   label: string;
   scope: Scope;
+  /** The column of the players' legend it's in (playerKeys.ts), if any. */
+  legend?: LegendGroup;
   /** Bindings, the first the one shown; Windows has Linux's unless it says. */
   defaults: { linux: string[]; mac: string[]; windows?: string[] };
 };
@@ -109,8 +133,14 @@ const all = (...bindings: string[]) => ({ linux: bindings, mac: bindings });
 
 export const ACTIONS = [
   // Anywhere.
-  { id: "undo", label: "Undo", scope: "app", defaults: { linux: ["Ctrl+z"], mac: ["Meta+z"] } },
-  { id: "redo", label: "Redo", scope: "app", defaults: { linux: ["Ctrl+Shift+z", "Ctrl+y"], mac: ["Shift+Meta+z"] } },
+  { id: "undo", label: "Undo", scope: "app", legend: "more", defaults: { linux: ["Ctrl+z"], mac: ["Meta+z"] } },
+  {
+    id: "redo",
+    label: "Redo",
+    scope: "app",
+    legend: "more",
+    defaults: { linux: ["Ctrl+Shift+z", "Ctrl+y"], mac: ["Shift+Meta+z"] },
+  },
   { id: "nav.back", label: "Back", scope: "app", defaults: { linux: ["Alt+ArrowLeft"], mac: ["Meta+["] } },
   { id: "nav.forward", label: "Forward", scope: "app", defaults: { linux: ["Alt+ArrowRight"], mac: ["Meta+]"] } },
   { id: "search.focus", label: "Search", scope: "app", defaults: { linux: ["Ctrl+f"], mac: ["Meta+f"] } },
@@ -128,57 +158,85 @@ export const ACTIONS = [
     defaults: all("Delete", "Backspace"),
   },
   // Either player.
-  { id: "play.toggle", label: "Play or pause", scope: "player", defaults: all(" ", "k") },
-  { id: "seek.back5", label: "Back 5 s", scope: "player", defaults: all("ArrowLeft") },
-  { id: "seek.forward5", label: "Forward 5 s", scope: "player", defaults: all("ArrowRight") },
-  { id: "seek.back1", label: "Back 1 s", scope: "player", defaults: all("Shift+ArrowLeft") },
-  { id: "seek.forward1", label: "Forward 1 s", scope: "player", defaults: all("Shift+ArrowRight") },
-  { id: "seek.back10", label: "Back 10 s", scope: "player", defaults: all("j") },
-  { id: "seek.forward10", label: "Forward 10 s", scope: "player", defaults: all("l") },
-  { id: "frame.back", label: "A frame back", scope: "player", defaults: all(",") },
-  { id: "frame.forward", label: "A frame on", scope: "player", defaults: all(".") },
+  { id: "play.toggle", label: "Play or pause", scope: "player", legend: "playing", defaults: all(" ", "k") },
+  { id: "seek.back5", label: "Back 5 s", scope: "player", legend: "playing", defaults: all("ArrowLeft") },
+  { id: "seek.forward5", label: "Forward 5 s", scope: "player", legend: "playing", defaults: all("ArrowRight") },
+  { id: "seek.back1", label: "Back 1 s", scope: "player", legend: "playing", defaults: all("Shift+ArrowLeft") },
+  { id: "seek.forward1", label: "Forward 1 s", scope: "player", legend: "playing", defaults: all("Shift+ArrowRight") },
+  { id: "seek.back10", label: "Back 10 s", scope: "player", legend: "playing", defaults: all("j") },
+  { id: "seek.forward10", label: "Forward 10 s", scope: "player", legend: "playing", defaults: all("l") },
+  { id: "frame.back", label: "A frame back", scope: "player", legend: "playing", defaults: all(",") },
+  { id: "frame.forward", label: "A frame on", scope: "player", legend: "playing", defaults: all(".") },
   // B cuts with Ctrl (⌘) held too, on purpose: as in video editors.
-  { id: "cut.here", label: "Cut here", scope: "player", defaults: { linux: ["b", "Ctrl+b"], mac: ["b", "Meta+b"] } },
-  { id: "selection.in", label: "Start the selection here", scope: "player", defaults: all("i") },
-  { id: "selection.out", label: "End the selection here", scope: "player", defaults: all("o") },
-  { id: "clip.make", label: "Clip the stretch, or each one selected", scope: "player", defaults: all("c") },
+  {
+    id: "cut.here",
+    label: "Cut here",
+    scope: "player",
+    legend: "cutting",
+    defaults: { linux: ["b", "Ctrl+b"], mac: ["b", "Meta+b"] },
+  },
+  { id: "selection.in", label: "Start the selection here", scope: "player", legend: "cutting", defaults: all("i") },
+  { id: "selection.out", label: "End the selection here", scope: "player", legend: "cutting", defaults: all("o") },
+  {
+    id: "clip.make",
+    label: "Clip the stretch, or each one selected",
+    scope: "player",
+    legend: "cutting",
+    defaults: all("c"),
+  },
   { id: "clips.remove", label: "Remove the selected clips", scope: "player", defaults: all("Delete", "Backspace") },
   {
     id: "transcribe.here",
     label: "Transcribe the selection, or the whole VOD",
     scope: "player",
+    legend: "cutting",
     defaults: all("t"),
   },
-  { id: "mark.highlight", label: "Highlight here", scope: "player", defaults: all("m") },
-  { id: "mark.chapter", label: "New chapter here", scope: "player", defaults: all("n") },
-  { id: "captions.toggle", label: "Captions", scope: "player", defaults: all("Shift+c") },
-  { id: "mute.toggle", label: "Mute", scope: "player", defaults: all("Shift+m") },
-  { id: "fullscreen.toggle", label: "Full screen", scope: "player", defaults: all("f") },
+  { id: "mark.highlight", label: "Highlight here", scope: "player", legend: "marks", defaults: all("m") },
+  { id: "mark.chapter", label: "New chapter here", scope: "player", legend: "marks", defaults: all("n") },
+  { id: "captions.toggle", label: "Captions", scope: "player", legend: "more", defaults: all("Shift+c") },
+  { id: "mute.toggle", label: "Mute", scope: "player", legend: "more", defaults: all("Shift+m") },
+  { id: "fullscreen.toggle", label: "Full screen", scope: "player", legend: "more", defaults: all("f") },
   // An edit's player only.
-  { id: "edit.render", label: "Export: render the edit", scope: "edit", defaults: all("e") },
+  { id: "edit.render", label: "Export: render the edit", scope: "edit", legend: "cutting", defaults: all("e") },
   {
     id: "edit.pieceEarlier",
     label: "Move the piece here earlier",
     scope: "edit",
+    legend: "cutting",
     defaults: { linux: ["Ctrl+ArrowLeft"], mac: ["Meta+ArrowLeft"] },
   },
   {
     id: "edit.pieceLater",
     label: "Move the piece here later",
     scope: "edit",
+    legend: "cutting",
     defaults: { linux: ["Ctrl+ArrowRight"], mac: ["Meta+ArrowRight"] },
   },
   {
     id: "edit.remove",
     label: "Remove the selected lines, pieces and clips, the stretch here or the piece",
     scope: "edit",
+    legend: "cutting",
     defaults: all("Delete", "Backspace"),
   },
   // A selected mark (or end of the selection).
-  { id: "mark.rename", label: "Rename the selected chapter or highlight", scope: "mark", defaults: all("Enter") },
-  { id: "mark.remove", label: "Remove the selected mark", scope: "mark", defaults: all("Delete", "Backspace") },
-  { id: "frame.back10", label: "Ten frames back", scope: "mark", defaults: all("Shift+<") },
-  { id: "frame.forward10", label: "Ten frames on", scope: "mark", defaults: all("Shift+>") },
+  {
+    id: "mark.rename",
+    label: "Rename the selected chapter or highlight",
+    scope: "mark",
+    legend: "marks",
+    defaults: all("Enter"),
+  },
+  {
+    id: "mark.remove",
+    label: "Remove the selected mark",
+    scope: "mark",
+    legend: "marks",
+    defaults: all("Delete", "Backspace"),
+  },
+  { id: "frame.back10", label: "Ten frames back", scope: "mark", legend: "marks", defaults: all("Shift+<") },
+  { id: "frame.forward10", label: "Ten frames on", scope: "mark", legend: "marks", defaults: all("Shift+>") },
 ] as const satisfies readonly Action[];
 
 export type ActionId = (typeof ACTIONS)[number]["id"];

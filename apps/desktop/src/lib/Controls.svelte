@@ -6,17 +6,9 @@
   import { tick } from "svelte";
   import { ask } from "./ask";
   import Icon from "./Icon.svelte";
-  import { ACTIONS, bindingOf, label, type Action, type ActionId, type Scope } from "./keymap";
+  import { ACTIONS, SCOPES, bindingOf, label, type Action, type ActionId } from "./keymap";
   import { keys } from "./keys.svelte";
   import { listed, os } from "./platform";
-
-  // The scopes as the user knows them, in the table's order.
-  const GROUPS: { scope: Scope; heading: string }[] = [
-    { scope: "app", heading: "Everywhere" },
-    { scope: "player", heading: "Playing" },
-    { scope: "edit", heading: "In an edit" },
-    { scope: "mark", heading: "With a cut or mark selected" },
-  ];
 
   let filter = $state("");
   const groups = $derived.by(() => {
@@ -25,7 +17,7 @@
       !words ||
       a.label.toLowerCase().includes(words) ||
       keys.bindingsOf(a.id).some((b) => label(b, os).toLowerCase().includes(words));
-    return GROUPS.map((g) => ({ ...g, actions: ACTIONS.filter((a) => a.scope === g.scope && shown(a)) })).filter(
+    return SCOPES.map((g) => ({ ...g, actions: ACTIONS.filter((a) => a.scope === g.scope && shown(a)) })).filter(
       (g) => g.actions.length,
     );
   });

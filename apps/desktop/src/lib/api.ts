@@ -110,6 +110,8 @@ export interface Settings {
   /** The keyboard controls changed in Settings, by action id (keymap.ts): each
    *  action's whole list of bindings, an empty one for no key. */
   key_bindings: Record<string, string[]>;
+  /** Whether the players' keyboard legend is open (PlayerPanel.svelte). */
+  show_keys: boolean;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */

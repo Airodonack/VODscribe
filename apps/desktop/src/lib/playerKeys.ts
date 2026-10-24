@@ -1,10 +1,22 @@
 // The keys a VOD's player and an edit's share (play, seek, step a frame,
 // full screen, a selection's in and out points; the selected mark's are
-// cuts.svelte.ts `markKey`), and the shortcuts each lists in its legend
-// (Shortcuts.svelte). Which key does what is the action table's
-// (keymap.ts); the live map is passed in as `is` and `bindings`.
+// cuts.svelte.ts `markKey`), and the legend each shows under its controls
+// (Shortcuts.svelte), in a few short columns of its own. Which key does what
+// is the action table's (keymap.ts); the live map is passed in as `is` and
+// `bindings`.
 
-import { caps, plainest, type ActionId, type Is, type KeyLike, type Os } from "./keymap";
+import {
+  ACTIONS,
+  LEGEND_GROUPS,
+  caps,
+  plainest,
+  type Action,
+  type ActionId,
+  type Is,
+  type KeyLike,
+  type LegendGroup,
+  type Os,
+} from "./keymap";
 
 /** Seconds each seek action moves the playhead. */
 export const SEEKS = {
@@ -102,8 +114,11 @@ export function inOut(key: "i" | "o", at: number, picked: Span | null, stops: nu
 }
 
 /** A line of a legend: the keys (each its own key cap; "+" and "or" are
- *  written between them) and what they do. */
+ *  written between them) and what they do, in a few words. */
 export type Shortcut = { keys: string[]; does: string };
+
+/** A column of a legend (keymap.ts LEGEND_GROUPS): its heading and lines. */
+export type ShortcutGroup = { group: LegendGroup; heading: string; shortcuts: Shortcut[] };
 
 /** The live map's bindings for an action (keys.svelte.ts `bindingsOf`). */
 export type Bindings = (id: ActionId) => readonly string[];
@@ -133,73 +148,71 @@ function legend(os: Os, bindings: Bindings) {
   };
 }
 
-function playing(framed: boolean, os: Os, bindings: Bindings): Shortcut[] {
+/** The legend column action `id` is in (keymap.ts `legend`). */
+const columnOf = (id: ActionId): LegendGroup | undefined =>
+  (ACTIONS as readonly Action[]).find((a) => a.id === id)?.legend;
+
+/**
+ * A player's legend in columns (keymap.ts LEGEND_GROUPS), each line's
+ * wording shorter than Settings › Controls'. A line is in the column of its
+ * first action; the selected mark's moves, made with the player's keys, are
+ * in Marks. A VOD's leaves out what only an edit does, an edit's what only a
+ * VOD does (Transcribe; Alt+drag a clip out); B is once in each, as what it
+ * does there. `framed` if the player can step frames.
+ */
+function shortcuts(edit: boolean, framed: boolean, os: Os, bindings: Bindings): ShortcutGroup[] {
   const { first, line } = legend(os, bindings);
-  return [
+  const by = (id: ActionId, does: string, ...groups: string[][]) =>
+    line(does, ...(groups.length ? groups : [first(id)])).map((s) => [columnOf(id), s] as const);
+  const as = (group: LegendGroup, lines: Shortcut[]) => lines.map((s) => [group, s] as const);
+  const lines = [
     // Space or K: each of play's keys, less Shift+Space and the like.
-    ...line("play/pause", ...plainest(bindings("play.toggle")).map((b) => [b])),
-    ...line("5 s", first("seek.back5", "seek.forward5")),
-    ...line("1 s", first("seek.back1", "seek.forward1")),
-    ...line("10 s", first("seek.back10", "seek.forward10")),
-    ...(framed ? line("a frame back or on", first("frame.back", "frame.forward")) : []),
-  ];
-}
-
-/** The selected cut's or mark's moves: a frame, or a seek key's distance. */
-const moves = (first: (...ids: ActionId[]) => string[]) => [
-  first("frame.back", "frame.forward"),
-  first("seek.back5", "seek.forward5"),
-  first("seek.back10", "seek.forward10"),
-];
-
-/** A VOD's player: `framed` if it can step frames; this OS's wording. */
-export function vodShortcuts(framed: boolean, os: Os, bindings: Bindings): Shortcut[] {
-  const { first, line } = legend(os, bindings);
-  return [
-    ...playing(framed, os, bindings),
-    ...line("cut here", first("cut.here")),
-    ...line("start or end the selection here", first("selection.in", "selection.out")),
-    ...line("clip the stretch", first("clip.make")),
-    ...line("transcribe the selection, or the whole VOD", first("transcribe.here")),
-    ...line("highlight here", first("mark.highlight")),
-    ...line("new chapter here", first("mark.chapter")),
-    ...line("rename the selected chapter or highlight", first("mark.rename")),
-    ...line("move the selected cut (Shift with , . ten frames)", ...moves(first)),
-    ...line("remove the selected cut", first("mark.remove")),
-    { keys: ["Esc"], does: "deselect, or take back a new chapter or highlight" },
-    ...line("captions", first("captions.toggle")),
-    ...line("mute", first("mute.toggle")),
-    ...line("full screen", first("fullscreen.toggle")),
-    ...line("undo or redo", first("undo"), first("redo")),
-    {
-      keys: [os === "mac" ? "Option" : "Alt", "+", "drag"],
-      does: "on the timeline, or drag Clip: the stretch out as a clip",
-    },
-  ];
-}
-
-/** An edit's player. */
-export function editShortcuts(framed: boolean, os: Os, bindings: Bindings): Shortcut[] {
-  const { first, line } = legend(os, bindings);
-  return [
-    ...playing(framed, os, bindings),
-    ...line("cut here (or at both ends of the selection)", first("cut.here")),
-    ...line("start or end the selection here", first("selection.in", "selection.out")),
-    ...line("highlight here", first("mark.highlight")),
-    ...line("new chapter here", first("mark.chapter")),
-    ...line("rename the selected chapter or highlight", first("mark.rename")),
-    ...line("move the selected cut or mark (Shift with , . ten frames)", ...moves(first)),
-    ...line(
-      "remove the selected lines or mark; else the stretch between cuts here (a real split then), or the piece",
-      first("mark.remove"),
-      first("edit.remove"),
+    ...by("play.toggle", "play/pause", ...plainest(bindings("play.toggle")).map((b) => [b])),
+    ...by("seek.back5", "5 s", first("seek.back5", "seek.forward5")),
+    ...by("seek.back1", "1 s", first("seek.back1", "seek.forward1")),
+    ...by("seek.back10", "10 s", first("seek.back10", "seek.forward10")),
+    ...(framed ? by("frame.back", "a frame", first("frame.back", "frame.forward")) : []),
+    // B in an edit also cuts at both ends of the selection.
+    ...by("cut.here", edit ? "cut here, or selection ends" : "cut here"),
+    ...by("selection.in", "selection start, end", first("selection.in", "selection.out")),
+    ...by("clip.make", "clip the stretch"),
+    ...(edit
+      ? [
+          ...by("edit.pieceEarlier", "move the piece", first("edit.pieceEarlier", "edit.pieceLater")),
+          ...by("edit.remove", "remove the stretch or piece"),
+          ...by("edit.render", "render"),
+        ]
+      : [
+          ...by("transcribe.here", "transcribe"),
+          ...as("cutting", [{ keys: [os === "mac" ? "Option" : "Alt", "+", "drag"], does: "drag a clip out" }]),
+        ]),
+    ...by("mark.highlight", "highlight here"),
+    ...by("mark.chapter", "chapter here"),
+    ...by("mark.rename", "rename"),
+    ...by("mark.remove", "remove"),
+    ...as("marks", line("move a frame", first("frame.back", "frame.forward"))),
+    ...by("frame.back10", "move ten frames", first("frame.back10", "frame.forward10")),
+    ...as(
+      "marks",
+      line("move 5 s or 10 s", first("seek.back5", "seek.forward5"), first("seek.back10", "seek.forward10")),
     ),
-    ...line("move the piece here earlier or later", first("edit.pieceEarlier", "edit.pieceLater")),
-    ...line("clip the selection, or the stretch here", first("clip.make")),
-    ...line("export: render the edit", first("edit.render")),
-    ...line("captions", first("captions.toggle")),
-    ...line("mute", first("mute.toggle")),
-    ...line("full screen", first("fullscreen.toggle")),
-    ...line("undo or redo", first("undo"), first("redo")),
+    ...by("mute.toggle", "mute"),
+    ...by("captions.toggle", "captions"),
+    ...by("fullscreen.toggle", "full screen"),
+    ...by("undo", "undo"),
+    ...by("redo", "redo"),
+    // Escape lets go of whatever is selected (a mark, a stretch, clips), so
+    // it's with the keys that work anywhere; Marks stays short too.
+    ...as("more", [{ keys: ["Esc"], does: "deselect" }]),
   ];
+  return LEGEND_GROUPS.map((g) => ({
+    ...g,
+    shortcuts: lines.filter(([group]) => group === g.group).map(([, s]) => s),
+  })).filter((g) => g.shortcuts.length);
 }
+
+/** A VOD's player's legend: `framed` if it can step frames; this OS's wording. */
+export const vodShortcuts = (framed: boolean, os: Os, bindings: Bindings) => shortcuts(false, framed, os, bindings);
+
+/** An edit's player's legend. */
+export const editShortcuts = (framed: boolean, os: Os, bindings: Bindings) => shortcuts(true, framed, os, bindings);
