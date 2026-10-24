@@ -28,7 +28,17 @@ class Cuts {
   list = $derived(this.all.filter((m) => m.kind === "cut"));
   chapters = $derived(this.all.filter((m) => m.kind === "chapter"));
   highlights = $derived(this.all.filter((m) => m.kind === "highlight"));
-  selected = $state<number | null>(null);
+  /** The mark or cut selected: one thing of its own kind, so selecting it
+   *  lets go of a set picked (selection.svelte.ts), as a stretch made does,
+   *  and Delete is then the mark's. */
+  #selected = $state<number | null>(null);
+  get selected() {
+    return this.#selected;
+  }
+  set selected(id: number | null) {
+    this.#selected = id;
+    if (id !== null) stretchMade();
+  }
   /** A chapter or highlight whose title or note is being written. */
   editing = $state<number | null>(null);
   /** The mark just added whose title or note is being written: Escape takes it away. */

@@ -10,11 +10,18 @@
 // the set (the other two numbered 1 and 2, the list saying 2 VODs);
 // Remove… asks once, naming them, and both go (the first VOD stays); Escape
 // lets go of a row picked.
+//
+// One kind picked at a time: two pills picked, then a cut clicked, the pills
+// are let go (the bar says nothing's picked) and Delete takes the cut only;
+// the same with a library row picked. Ctrl+A (⌘A) picks by the side of the
+// window the pointer is on, whatever has the focus: over the clip bar or the
+// timeline, all the clips; over the library's pane, all its rows.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import * as os from "../lib/os.mjs";
 
 /** A click's modifier that picks one: ⌘ on a Mac, Ctrl elsewhere (in the page). */
 const TOGGLE = `const mac = /Mac/.test(navigator.platform);
@@ -162,6 +169,41 @@ export default {
     await app.key("Escape");
     await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
 
+    // Two pills picked, then a cut clicked: the cut is selected and the
+    // pills are let go, so Delete takes the cut and only it.
+    const pickPills = async () => {
+      for (const clip of made)
+        await app.js(
+          `${TOGGLE}
+           document.querySelector('.chip[data-clip="' + arguments[0] + '"] .play')
+             .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
+          clip.id,
+        );
+      await until("two pills picked", async () => (await head()) === "2 clips", 10_000);
+    };
+    const marks = async () => (await app.invoke("list_marks", { vodId: vod.id })).length;
+    const clickCut = () =>
+      app.js(`
+        const flag = document.querySelector(".scrubber .cut[data-mark]");
+        const box = flag.getBoundingClientRect();
+        const at = { bubbles: true, cancelable: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0, isPrimary: true, pointerId: 1 };
+        flag.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`);
+    await pickPills();
+    await clickCut();
+    await until("the cut selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
+    await until(
+      "the pills let go",
+      () => app.js(`return !document.querySelector(".chip.chosen, .clip-bar .picked")`),
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: the clip bar says "${await head()}"`);
+    });
+    await app.key("Delete");
+    await until("the cut gone", async () => (await marks()) === 2, 10_000);
+    if ((await shown()).length !== 2)
+      throw new Error(`Delete on the cut took clips too: ${(await shown()).length} left`);
+
     // The library: three more files, the run of them picked.
     const dir = path.join(ctx.out, "multi-select");
     mkdirSync(dir, { recursive: true });
@@ -178,6 +220,54 @@ export default {
       () => app.js(`return arguments[0].every((r) => !!document.querySelector(r))`, [row(a), row(b), row(c)]),
       MINUTE,
     );
+
+    // Ctrl+A by where the pointer is, the focus elsewhere: the OS's own
+    // pointer where it can be moved (X11), else a pointermove sent to the page.
+    // The first VOD open again (an add opened what it added), with its pills.
+    await app.openVod(vod.id);
+    await until("its two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), MINUTE);
+    const pointAt = async (selector) => {
+      if (process.platform === "linux" && os.unavailable() === null) {
+        const r = await os.rectOf(app, selector);
+        await os.gesture([
+          ["move", Math.round(r.x + r.w / 2), Math.round(r.y + r.h / 2)],
+          ["wait", 200],
+        ]);
+      } else
+        await app.js(
+          `const el = document.querySelector(arguments[0]);
+           const b = el.getBoundingClientRect();
+           el.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: b.left + b.width / 2, clientY: b.top + b.height / 2, isPrimary: true, pointerId: 1 }));`,
+          selector,
+        );
+    };
+    const focusOn = (selector) => app.js(`document.querySelector(arguments[0]).focus()`, selector);
+    const listCount = () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() ?? ""`);
+    for (const over of [".clip-bar", ".scrubber"]) {
+      await focusOn(row(a));
+      await pointAt(over);
+      await app.key("a", { cmd: true });
+      await until(`Ctrl+A over ${over}: the clips`, async () => (await head()) === "2 clips", 10_000).catch(
+        async (e) => {
+          throw new Error(`${e.message}: the clip bar says "${await head()}", the list "${await listCount()}"`);
+        },
+      );
+      if (await listCount()) throw new Error(`Ctrl+A over ${over} picked rows too: "${await listCount()}"`);
+      await app.key("Escape");
+      await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
+    }
+    await focusOn(`.chip[data-clip="${made[0].id}"] .play`);
+    await pointAt("aside .brand");
+    await app.key("a", { cmd: true });
+    await until("Ctrl+A over the library: its rows", async () => (await listCount()) === "4 VODs", 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}: the list says "${await listCount()}", the clip bar "${await head()}"`);
+      },
+    );
+    if (await head()) throw new Error(`Ctrl+A over the library picked clips too: "${await head()}"`);
+    await app.key("Escape");
+    await until("Escape let them go", () => app.js(`return !document.querySelector(".list .vod.chosen")`), 10_000);
+
     const click = (id, mods) =>
       app.js(
         `${TOGGLE}
@@ -244,5 +334,26 @@ export default {
       () => app.js(`return !document.querySelector(".list .vod.chosen, aside .picked")`),
       10_000,
     );
+
+    // A row picked, then a cut clicked: the row is let go, and Delete takes
+    // the cut, asking nothing.
+    await click(vod.id, "toggle");
+    await until("the row picked", () => app.js(`return !!document.querySelector(".list .vod.chosen")`), 10_000);
+    await clickCut();
+    await until("the cut selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
+    await until(
+      "the row let go",
+      () => app.js(`return !document.querySelector(".list .vod.chosen, aside .picked")`),
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: the list says "${await listHead()}"`);
+    });
+    const askedBefore = await app.asked();
+    await app.key("Delete");
+    await until("the cut gone", async () => (await marks()) === 1, 10_000);
+    const askedNow = await app.js(`return window.__e2e.asked.slice(arguments[0])`, askedBefore);
+    if (askedNow.length) throw new Error(`Delete on the cut asked ${JSON.stringify(askedNow)}`);
+    if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id))
+      throw new Error("Delete on the cut removed the VOD");
   },
 };

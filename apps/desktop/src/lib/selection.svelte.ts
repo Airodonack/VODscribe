@@ -10,9 +10,12 @@
 // or edit's timeline between its cuts, and clips of its clip bar, together)
 // and the library set (VODs and edits in the library's list). Neither is
 // there with a stretch selection (I and O, lines picked in the transcript,
-// cuts.svelte.ts and edits.svelte.ts `selection`): starting a set lets the
-// stretch go, and making a stretch lets the sets go. That rule is here, and
-// only here: the stretches' owners hand over how they're let go
+// cuts.svelte.ts and edits.svelte.ts `selection`), nor with a mark or cut
+// selected (cuts.svelte.ts `selected`; marks are picked one at a time):
+// starting a set lets the stretch or the mark go, and making a stretch or
+// selecting a mark lets the sets go. One kind of thing is selected at a
+// time, so Delete and Escape are never in doubt. That rule is here, and
+// only here: the stretches' and marks' owners hand over how they're let go
 // (`clearsStretch`) and say when one is made (`stretchMade`).
 //
 // The order things were picked in is kept (a run is in on-screen order): it's
@@ -143,7 +146,7 @@ export function clearsStretch(letGo: () => void) {
   stretches.push(letGo);
 }
 
-/** A stretch selection was made: the sets go. */
+/** A stretch selection was made, or a mark selected: the sets go. */
 export function stretchMade() {
   snippets.clear();
   library.clear();

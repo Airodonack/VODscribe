@@ -8,7 +8,8 @@
 // one without a mouse (`addTo`). Transcribe on a VOD picked with others
 // transcribes them all (`transcribeChosen`). Each is one change, so undo
 // takes it back whole. Escape lets go of a set, Ctrl+A (⌘A) selects all of
-// the clip bar or the library's list, whichever the pointer or the focus is in.
+// the clip bar or the library's list, by which side of the window the
+// pointer is on (the focus's, before the pointer has moved).
 
 import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
 import { ask, choose } from "./ask";
@@ -240,11 +241,35 @@ export async function removeChosenEntries(rows: Row[], onremove: (vodId: number)
   }
 }
 
-/** Where a press of Ctrl+A is: the clip bar or the library's list (the pointer's, or else the focus's). */
+/** Where the pointer last was in the window, across (null before it has moved). */
+let pointerX: number | null = null;
+
+/** The pointer moved to `x` (App.svelte tells, for Ctrl+A). */
+export function pointerAt(x: number) {
+  pointerX = x;
+}
+
+/**
+ * What a press of Ctrl+A selects: the library's list with the pointer on
+ * the library pane's side of the window (it's on the left: App.svelte),
+ * the clip bar with it on the main view's side, anywhere there (the player,
+ * the timeline, the transcript), not only over the bar itself. Before the
+ * pointer has moved, where the focus is.
+ */
 function selectingIn(): "clips" | "library" | null {
-  const where = (el: Element | null) =>
-    el?.closest(".clip-bar") ? ("clips" as const) : el?.closest(".library-list") ? ("library" as const) : null;
-  return where(document.querySelector(".clip-bar:hover, .library-list:hover")) ?? where(document.activeElement);
+  const pane = document.querySelector(".library-pane");
+  const side =
+    pointerX !== null && pane
+      ? pointerX < pane.getBoundingClientRect().right
+        ? "library"
+        : "clips"
+      : document.activeElement?.closest(".library-list")
+        ? "library"
+        : document.activeElement?.closest(".clip-bar")
+          ? "clips"
+          : null;
+  // No clip bar shown (the library's page), nothing to select there.
+  return side === "clips" && !document.querySelector(".clip-bar") ? null : side;
 }
 
 /**

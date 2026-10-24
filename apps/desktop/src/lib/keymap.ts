@@ -114,10 +114,10 @@ export const ACTIONS = [
   { id: "nav.back", label: "Back", scope: "app", defaults: { linux: ["Alt+ArrowLeft"], mac: ["Meta+["] } },
   { id: "nav.forward", label: "Forward", scope: "app", defaults: { linux: ["Alt+ArrowRight"], mac: ["Meta+]"] } },
   { id: "search.focus", label: "Search", scope: "app", defaults: { linux: ["Ctrl+f"], mac: ["Meta+f"] } },
-  // Where the pointer or the focus is: the clip bar or the library's list.
+  // By the side of the window the pointer is on: the clip bar or the library's list.
   {
     id: "select.all",
-    label: "Select all the clips, or all the library",
+    label: "Select all the clips, or all the library (by the pointer's side)",
     scope: "app",
     defaults: { linux: ["Ctrl+a"], mac: ["Meta+a"] },
   },

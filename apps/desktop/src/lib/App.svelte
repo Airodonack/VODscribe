@@ -46,7 +46,7 @@
   import { nav, searching, type Search, type Step } from "./nav.svelte";
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
-  import { selectionKey } from "./bulk";
+  import { pointerAt, selectionKey } from "./bulk";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -240,7 +240,8 @@
       return;
     }
     // A set selected: Escape lets it go, Delete removes the library's;
-    // Ctrl+A (⌘A) selects all of the clip bar or the list (bulk.ts).
+    // Ctrl+A (⌘A) selects all of the clip bar or the list, by the side the
+    // pointer is on (bulk.ts).
     if (!typing && selectionKey(e, rows, (id) => selectedId === id && pick(null))) {
       e.preventDefault();
       return;
@@ -596,6 +597,7 @@
 
 <svelte:window
   onkeydown={onWindowKey}
+  onpointermove={(e) => pointerAt(e.clientX)}
   ondragover={keepDropsInApp}
   ondrop={keepDropsInApp}
   onmousedown={onMouseNav}

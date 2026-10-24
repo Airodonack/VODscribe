@@ -286,7 +286,7 @@
   <div class="drop">{linksDrop ? "Drop video files or VOD links to add them" : "Drop video files to add them"}</div>
 {/if}
 
-<aside>
+<aside class="library-pane">
   <!-- Sibling buttons, since buttons can't nest: the site link fills the
        header, the credit sits on top of it under the name, and the version
        number at the right, linking to what's new in it. -->
