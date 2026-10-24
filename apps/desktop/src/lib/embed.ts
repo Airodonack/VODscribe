@@ -910,5 +910,14 @@ export function createPlayer(
 
 export const canEmbed = (vod: Vod) => playerFor(vod) !== undefined;
 
+/** Whether `vod`'s player will draw the transcript's captions itself
+ *  (`EmbeddedPlayer.drawsCaptions`), known before it opens: a file here, or
+ *  a YouTube or Twitch VOD whose picture is the app's (bridge). */
+export async function drawsOwnCaptions(vod: Vod): Promise<boolean> {
+  const player = playerFor(vod);
+  if (player === local) return true;
+  return (player === youtube || (player === twitch && !isTwitchClip(vod))) && (await bridgeable(vod));
+}
+
 /** Whether `vod` plays in the app's own player alone: a file here. */
 export const playsHere = (vod: Vod) => playerFor(vod) === local;

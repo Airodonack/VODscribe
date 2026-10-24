@@ -24,7 +24,7 @@
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, inOut, isEscape, transportKey, vodShortcuts } from "./playerKeys";
-  import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
+  import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
   import {
     formatFraction,
     formatTime,
@@ -236,7 +236,11 @@
 
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
-  let drawsCaptions = $state(false);
+  // Whether the player draws the captions itself, over its picture: known
+  // before it opens (and then read from it), so under a site's player the
+  // strip's room is kept from the start, and nothing below moves on Play.
+  let drawsCaptions = $state(untrack(() => playsHere(vod)));
+  drawsOwnCaptions(untrack(() => vod)).then((draws) => !player && !destroyed && (drawsCaptions = draws));
   let playerDuration = $state(0);
   let poll = 0;
   function read() {
@@ -252,9 +256,10 @@
     cuts.fps = reading.fps;
     drawsCaptions = p.drawsCaptions?.() ?? false;
   }
-  // The caption in the strip under a site's player (never over it).
+  // The caption in the strip under a site's player (never over it); the
+  // strip, empty, before the player opens.
   const stripCue = $derived(
-    player && !drawsCaptions && prefs.captions && cues.length ? (cueAt(cues, reading.now)?.text ?? "") : null,
+    !drawsCaptions && prefs.captions && cues.length ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null,
   );
   const now = $derived(reading.now);
   const playing = $derived(reading.playing);
