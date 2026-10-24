@@ -2,10 +2,6 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.6.1 (unreleased)
-
-- Pointing at an edit's timeline now shows the small picture of the moment over pieces of a VOD from a site too, once that part of its video is downloaded, not only over pieces of video files.
-
 ## 0.6.0 — 2026-10-24
 
 - Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 24:00 of 3:04:00"), and Transcribe the rest does what's left.
@@ -43,6 +39,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A clip bar with more clips than fit, so that it scrolls sideways, takes clicks on its clips again: on some Linux systems, a click on the lower half of a clip, its name or its buttons did nothing.
 - A chat that stops downloading partway, as a long Twitch VOD's sometimes does when Twitch answers "service error", keeps what came in: the chat column and the strip beside the transcript show it, and the header says the chat stopped partway and why, with Try again, which fetches the rest from where it stopped. Before, the chat that had come in disappeared, and came back only while Try again ran. A part of the chat that Twitch or Kick refuses for a moment is now asked for again, for about half a minute, before the download stops.
 - In an MPEG-TS video file (.ts), moving the playhead or stepping a frame now shows the frame at that time. It showed one from up to a few seconds later, the next keyframe, and stepping there stood still on it.
+- Pointing at an edit's timeline now shows the small picture of the moment over pieces of a VOD from a site too, once that part of its video is downloaded, not only over pieces of video files.
 
 ## 0.5.1 — 2026-10-23
 
