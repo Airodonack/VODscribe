@@ -39,6 +39,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Without a mouse: Add to edit… above the clip bar's picked clips, or above the library's picked rows, lists your edits, then puts them on the edit's timeline (at the end) or on its clip bar.
 - With several VODs picked in the library, pointing at Transcribe on one of them lights up all the picked ones it would transcribe, and a click asks for them all, in the order you picked them; they're transcribed one after another.
 - Dragging several picked clips out of the window, into a video editor or a folder, takes all their files in one drag, once each is made.
+- In an MPEG-TS video file (.ts), moving the playhead or stepping a frame now shows the frame at that time. It showed one from up to a few seconds later, the next keyframe, and stepping there stood still on it.
 
 ## 0.5.1 — 2026-10-23
 

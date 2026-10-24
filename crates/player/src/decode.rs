@@ -244,6 +244,24 @@ pub fn within(width: u32, height: u32, max: u32) -> (u32, u32) {
     (side(width), side(height))
 }
 
+/// How far before the time asked an MPEG-TS file's picture is read from.
+/// ffmpeg seeks in one (it has no index) to the packet nearest the time,
+/// keyframe or not, and its decoder then waits for the next keyframe: the
+/// first frame out was the next keyframe's, up to a GOP after the time (a
+/// paused seek showed a frame from later, and steps within the GOP stood
+/// still on it). Read from here, a keyframe before the time is reached
+/// where keyframes are this close or closer: two seconds for Twitch's and
+/// most streams', a little over four for OBS's default at 60 fps. It costs
+/// up to this much more decoding at each seek, in those files only.
+pub(crate) const SEEK_BACK: f64 = 5.0;
+
+/// Whether ffmpeg's seek in `path` can land after a keyframe it should
+/// have started from: MPEG-TS, the one format the app takes without an
+/// index of its keyframes (`SEEK_BACK`).
+pub(crate) fn seeks_late(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("ts"))
+}
+
 /// A file's frames, decoded by `ffmpeg`.
 pub struct Video {
     ffmpeg: PathBuf,
@@ -280,9 +298,18 @@ impl Video {
         // for RGB ffmpeg's BT.601, which is what `Colour` reads either as.
         let range = if colour.full_range { "pc" } else { "tv" };
         let scale = format!("scale={width}:{height}:out_range={range}");
-        let output = ["-vf", &scale, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "yuv420p"];
+        // An MPEG-TS file is read from further back and the frames before
+        // `from` dropped (half a frame's leeway, for a time on a frame's
+        // own): see `SEEK_BACK`.
+        let seek = if seeks_late(&self.path) { (from - SEEK_BACK).max(0.0) } else { from };
+        let filters = if seek < from {
+            format!("trim=start={:.6},setpts=PTS-STARTPTS,{scale}", (from - seek - 0.5 / fps).max(0.0))
+        } else {
+            scale
+        };
+        let output = ["-vf", &filters, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "yuv420p"];
         VIDEO_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        start(&self.ffmpeg, &self.path, from, "0:v:0", &output, move |mut out, tx| {
+        start(&self.ffmpeg, &self.path, seek, "0:v:0", &output, move |mut out, tx| {
             let (cw, ch) = chroma(width, height);
             let size = width as usize * height as usize + 2 * cw as usize * ch as usize;
             let mut n = 0u64;

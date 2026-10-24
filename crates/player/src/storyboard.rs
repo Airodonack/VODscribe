@@ -28,6 +28,8 @@ use anyhow::{Context, Result, bail};
 use vodscribe_core::local::Picture;
 use vodscribe_core::tools;
 
+use crate::decode;
+
 /// A frame's height in pixels: the timeline's thumbnail is 44 CSS pixels
 /// tall (88 at twice the density), the library row's 45.
 const HEIGHT: u32 = 90;
@@ -390,7 +392,7 @@ pub fn make(
     {
         return Ok(Some(board));
     }
-    let info = crate::decode::probe(ffmpeg, source)?;
+    let info = decode::probe(ffmpeg, source)?;
     let (Some(picture), Some(duration)) = (info.picture, info.duration.filter(|d| *d > 0.0)) else {
         return Ok(None);
     };
@@ -433,17 +435,24 @@ type Grabbed = (f64, Vec<u8>);
 /// The keyframe at or before each of `times` (seconds into `source`),
 /// `layout`'s size, as a JPEG with its pts: one ffmpeg, an input sought to
 /// each time, each input's first frame passed through `showinfo` (which
-/// says its pts) and the frames put in order of input.
+/// says its pts) and the frames put in order of input. In MPEG-TS, where a
+/// seek lands on the keyframe after the time (`decode::SEEK_BACK`), each
+/// input is sought that much earlier and its last keyframe up to the time
+/// taken; none there (keyframes further apart), the slot has none.
 fn grab(ffmpeg: &Path, source: &Path, layout: Layout, times: &[f64]) -> Result<Vec<Option<Grabbed>>> {
+    let late = decode::seeks_late(source);
+    let seeks: Vec<f64> =
+        times.iter().map(|t| if late { (t - decode::SEEK_BACK).max(0.0) } else { t.max(0.0) }).collect();
     let mut cmd = tools::command(ffmpeg);
     cmd.args(["-hide_banner", "-nostdin", "-loglevel", "info"]);
-    for t in times {
+    for seek in &seeks {
         tools::ffmpeg_allow_for(&mut cmd, tools::FFMPEG_PICTURE, source)
             .args(["-threads", "1", "-skip_frame", "nokey", "-noautorotate", "-noaccurate_seek"])
-            .args(["-ss", &format!("{:.6}", t.max(0.0)), "-i"])
+            .args(["-ss", &format!("{seek:.6}"), "-i"])
             .arg(source);
     }
-    cmd.args(["-filter_complex", &graph(layout, times.len())])
+    let until: Option<Vec<f64>> = late.then(|| times.iter().zip(&seeks).map(|(t, seek)| t.max(0.0) - seek).collect());
+    cmd.args(["-filter_complex", &graph(layout, times.len(), until.as_deref())])
         .args(["-map", "[out]", "-fps_mode", "passthrough", "-filter_complex_threads", "1", "-threads", "1"])
         .args(["-c:v", "mjpeg", "-q:v", JPEG_QUALITY, "-f", "image2pipe", "pipe:1"])
         .stdin(Stdio::null())
@@ -457,7 +466,7 @@ fn grab(ffmpeg: &Path, source: &Path, layout: Layout, times: &[f64]) -> Result<V
         let last = said.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
         bail!("ffmpeg couldn't read its frames: {last}");
     }
-    let shown = showinfo(&String::from_utf8_lossy(&out.stderr), times);
+    let shown = showinfo(&String::from_utf8_lossy(&out.stderr), &seeks, filters(late));
     let jpegs = split_jpegs(&out.stdout);
     let found: Vec<usize> = (0..times.len()).filter(|&i| shown[i].is_some()).collect();
     if found.len() != jpegs.len() {
@@ -470,17 +479,27 @@ fn grab(ffmpeg: &Path, source: &Path, layout: Layout, times: &[f64]) -> Result<V
     Ok(frames)
 }
 
-/// The filter graph for `inputs` inputs: each one's first frame, shown
+/// How many filters `graph` gives each input: its showinfo is the second.
+fn filters(late: bool) -> usize {
+    if late { 6 } else { 4 }
+}
+
+/// The filter graph for `inputs` inputs: each one's first frame shown
 /// (`showinfo`), scaled, and stamped with its input's number so
-/// `interleave` puts them out in that order. Four filters to each, so
-/// the showinfo of input `k` is the graph's filter `4k + 1`.
-fn graph(layout: Layout, inputs: usize) -> String {
+/// `interleave` puts them out in that order. With `until`, each input's
+/// frames up to `until[k]` seconds from where it was sought are shown
+/// instead and the last taken (`reverse` gives it the first one's pts:
+/// shown before). `filters` to each, so the showinfo of input `k` is the
+/// graph's filter `filters * k + 1`.
+fn graph(layout: Layout, inputs: usize, until: Option<&[f64]>) -> String {
     let mut graph = String::new();
     for k in 0..inputs {
-        graph += &format!(
-            "[{k}:v:0]trim=end_frame=1,showinfo,scale={}:{},setpts={k}/TB[v{k}];",
-            layout.width, layout.height
-        );
+        // Up to a millisecond past, so a keyframe at the time itself is taken.
+        let pick = match until {
+            Some(until) => format!("trim=end={:.6},showinfo,reverse,trim=end_frame=1", until[k] + 1e-3),
+            None => "trim=end_frame=1,showinfo".to_string(),
+        };
+        graph += &format!("[{k}:v:0]{pick},scale={}:{},setpts={k}/TB[v{k}];", layout.width, layout.height);
     }
     for k in 0..inputs {
         graph += &format!("[v{k}]");
@@ -489,10 +508,11 @@ fn graph(layout: Layout, inputs: usize) -> String {
 }
 
 /// Each input's frame's pts in the file, from what `showinfo` said: its
-/// time from where it was sought to (`times`), as ffmpeg keeps a sought
-/// input's times from there.
-fn showinfo(said: &str, times: &[f64]) -> Vec<Option<f64>> {
-    let mut out = vec![None; times.len()];
+/// time from where it was sought to (`seeks`), as ffmpeg keeps a sought
+/// input's times from there, with `filters` filters to each input. Where
+/// an input's showinfo tells of more than one, the last (`graph`'s `until`).
+fn showinfo(said: &str, seeks: &[f64], filters: usize) -> Vec<Option<f64>> {
+    let mut out = vec![None; seeks.len()];
     for line in said.lines() {
         let Some(rest) = line.split("Parsed_showinfo_").nth(1) else { continue };
         let Some(n) = rest.split(|c: char| !c.is_ascii_digit()).next().and_then(|n| n.parse::<usize>().ok()) else {
@@ -502,13 +522,14 @@ fn showinfo(said: &str, times: &[f64]) -> Vec<Option<f64>> {
         else {
             continue;
         };
-        if !rest.contains(" n:") || n % 4 != 1 {
+        if !rest.contains(" n:") || n % filters != 1 {
             continue;
         }
-        let k = n / 4;
-        if k < times.len() && out[k].is_none() {
+        let k = n / filters;
+        if k < seeks.len() {
             // Kept to the microsecond: the same keyframe from two seeks is the same pts.
-            out[k] = Some(((times[k].max(0.0) + pts) * 1e6).round() / 1e6);
+            let pts = ((seeks[k].max(0.0) + pts) * 1e6).round() / 1e6;
+            out[k] = Some(out[k].map_or(pts, |p: f64| p.max(pts)));
         }
     }
     out
@@ -747,7 +768,14 @@ mod tests {
 [Parsed_showinfo_5 @ 0x7f] n:   0 pts: 153600 pts_time:-1      duration:    512
 [Parsed_showinfo_5 @ 0x7f] color_range:unknown
 [Parsed_showinfo_1 @ 0x7f] n:   0 pts:      0 pts_time:0       duration:    512";
-        assert_eq!(showinfo(said, &[0.0, 19.0, 30.0]), [Some(0.0), Some(18.0), None]);
+        assert_eq!(showinfo(said, &[0.0, 19.0, 30.0], 4), [Some(0.0), Some(18.0), None]);
+        // MPEG-TS's: each input's keyframes up to its time, the last kept.
+        let said = "\
+[Parsed_showinfo_1 @ 0x7f] n:   0 pts:      0 pts_time:0       duration:    512
+[Parsed_showinfo_7 @ 0x7f] n:   0 pts:  45000 pts_time:0.5     duration:    512
+[Parsed_showinfo_1 @ 0x7f] n:   1 pts:  90000 pts_time:1       duration:    512
+[Parsed_showinfo_7 @ 0x7f] n:   1 pts: 135000 pts_time:1.5     duration:    512";
+        assert_eq!(showinfo(said, &[0.0, 3.0], 6), [Some(1.0), Some(4.5)]);
     }
 
     /// A 40 s file with a keyframe each second, if there's an ffmpeg to make one.
