@@ -10,9 +10,10 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{Emitter, Manager};
 use vodscribe_core::db::Db;
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult};
 
 /// What a job makes.

@@ -12,13 +12,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{ClipStatus, Db};
 use vodscribe_core::edits::{self, Edit, EditPiece};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, render, tools};
 
 use crate::history::{self, Doc};
+use crate::{AppHandle, WebviewWindow};
 use crate::{AppState, CmdResult, err};
 
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -538,7 +539,7 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 /// Starts dragging edit `id`'s video out of the window, as for a clip
 /// (`clips::drag_clip`): false if it didn't begin, the button up first.
 #[tauri::command]
-pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
+pub(crate) async fn drag_edit(app: AppHandle, window: WebviewWindow, id: i64) -> CmdResult<bool> {
     let path = rendered(&app, id)?;
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);

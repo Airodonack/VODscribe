@@ -8,12 +8,13 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
 use vodscribe_core::word_emotes::{self, WordEmote};
 use vodscribe_core::{chat, emotes, tools};
 
+use crate::AppHandle;
 use crate::{AppState, CmdResult, emit_vod, err};
 
 pub(crate) struct ChatQueue {

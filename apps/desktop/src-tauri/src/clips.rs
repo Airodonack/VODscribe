@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
@@ -29,6 +29,7 @@ use crate::file_drag::{Ending, ReleasedEarly};
 use crate::files::{delete_file, delete_leftovers, writing};
 use crate::history::{self, Doc};
 use crate::jobs::Jobs;
+use crate::{AppHandle, WebviewWindow};
 use crate::{AppState, CmdResult, err};
 
 /// How often a cut's progress is sent.
@@ -1035,7 +1036,7 @@ fn made_in(db: &Db, id: i64) -> Made {
 #[tauri::command]
 pub(crate) async fn drag_clip(
     app: AppHandle,
-    window: tauri::WebviewWindow,
+    window: WebviewWindow,
     request: tauri::ipc::Request<'_>,
 ) -> CmdResult<bool> {
     // The clips in a header, the picture as the request's bytes (a PNG is
@@ -1199,7 +1200,7 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// if none began, the button up before it could (`ReleasedEarly`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn drag_file(
-    window: tauri::WebviewWindow,
+    window: WebviewWindow,
     number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -1487,7 +1488,7 @@ fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
 #[cfg(target_os = "linux")]
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
-    window: &tauri::WebviewWindow,
+    window: &WebviewWindow,
     number: Option<u64>,
     _names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -1998,6 +1999,9 @@ fn drag_picture(png: &[u8]) -> Option<gtk::cairo::ImageSurface> {
 }
 
 /// Sends `page` the release of the first mouse button, where the pointer is.
+/// Under Servo (the `servo` feature) `page` is the window's box, which has no
+/// surface of its own: the release goes to the GTK window, whose runtime
+/// passes it on to the page as it does any other.
 #[cfg(target_os = "linux")]
 fn release_button(page: &gtk::Widget) {
     use gtk::glib::translate::{ToGlibPtr, ToGlibPtrMut};
@@ -2038,7 +2042,7 @@ fn release_button(page: &gtk::Widget) {
 #[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
-    window: &tauri::WebviewWindow,
+    window: &WebviewWindow,
     number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -2118,7 +2122,7 @@ fn start_drag(
 #[cfg(target_os = "macos")]
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
-    window: &tauri::WebviewWindow,
+    window: &WebviewWindow,
     number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
@@ -2218,7 +2222,7 @@ impl crate::file_drag::Item for DragFile {
 /// save dialog (opened here, so the interface can't name a place to write).
 /// False if they canceled.
 #[tauri::command]
-pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
+pub(crate) async fn save_clip(app: AppHandle, window: WebviewWindow, id: i64) -> CmdResult<bool> {
     use tauri_plugin_dialog::DialogExt;
     let from = ready_file(&app, id)?;
     let name = from.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();

@@ -1,12 +1,15 @@
 #!/bin/sh
 # Refuses a commit whose Rust or frontend code isn't formatted.
 # Enable once per clone: git config core.hooksPath .githooks
-# Fix with: cargo fmt --all && pnpm format
+# Fix with: cargo fmt -p vodscribe -p vodscribe-core -p vodscribe-player -p vodscribe-worker && pnpm format
+# The workspace members are named: --all would also format path dependencies,
+# and the Servo runtime (the `servo` feature) reaches Servo's tree, which has
+# its own style.
 root=$(git rev-parse --show-toplevel)
 cd "$root" || exit 1
 ok=0
 if git diff --cached --name-only | grep -q '\.rs$'; then
-  cargo fmt --all --check >/dev/null 2>&1 || { echo "Rust isn't formatted: run cargo fmt --all" >&2; ok=1; }
+  cargo fmt -p vodscribe -p vodscribe-core -p vodscribe-player -p vodscribe-worker --check >/dev/null 2>&1 || { echo "Rust isn't formatted: run cargo fmt -p vodscribe -p vodscribe-core -p vodscribe-player -p vodscribe-worker" >&2; ok=1; }
 fi
 if git diff --cached --name-only | grep -q '^apps/[^/]*/src/'; then
   pnpm --recursive lint >/dev/null 2>&1 || { echo "Frontend isn't formatted: run pnpm format" >&2; ok=1; }

@@ -12,12 +12,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use vodscribe_core::db::Db;
 use vodscribe_core::{thumbs, tools};
 use vodscribe_player::storyboard::{self, Fingerprint, Storyboard};
 use vodscribe_player::timeline::Timeline;
 
+use crate::AppHandle;
 use crate::history::Doc;
 use crate::jobs::Jobs;
 use crate::{AppState, emit_vod};

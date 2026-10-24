@@ -6,8 +6,10 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::State;
 use tauri_plugin_opener::OpenerExt;
+
+use crate::AppHandle;
 
 /// Why the library didn't open, if it didn't, and where it is: set as the
 /// app starts, and not changed after.

@@ -24,7 +24,10 @@ dunce = "1"
 idna = "1.1.0"
 lzma-rs = "0.3"
 pgp = "0.21"
-rusqlite = { version = "0.40.2", features = ["bundled", "hooks"] }
+# 0.38, as Servo's (the desktop app's `servo` feature): only one SQLite
+# (libsqlite3-sys, links = "sqlite3") can be in the build, even with the
+# feature off, since Cargo resolves optional dependencies too.
+rusqlite = { version = "0.38", features = ["bundled", "hooks"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.0"

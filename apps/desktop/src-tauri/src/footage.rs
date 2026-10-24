@@ -13,13 +13,14 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{Emitter, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, fetch, mkv, tools};
 use vodscribe_player::timeline::Timeline;
 
+use crate::AppHandle;
 use crate::AppState;
 
 /// Sections no edit uses go once unused this long: the sites' terms don't
