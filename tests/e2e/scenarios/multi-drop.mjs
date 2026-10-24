@@ -395,6 +395,59 @@ export default {
     );
     ctx.log("Add to edit… put both VODs picked on the edit's clip bar, whole");
 
+    // New edit › Clip bar puts what was picked when it was chosen, though
+    // the edit is made after (held up here a second and a half) and the
+    // picking changes meanwhile.
+    const editIds = new Set((await app.invoke("list_edits")).map((e) => e.id));
+    await app.js(`
+      const real = window.fetch;
+      window.__e2eSlowEdit = real;
+      window.fetch = (url, init) =>
+        decodeURIComponent(String(url)).split("/").pop() === "create_edit"
+          ? new Promise((r) => setTimeout(r, 1500)).then(() => real(url, init))
+          : real(url, init);`);
+    await app.js(
+      `[...document.querySelectorAll("aside .picked button")].find((b) => b.textContent.trim() === "Add to edit…").click()`,
+    );
+    await until(
+      "the edits to pick from",
+      () => app.js(`return !!document.querySelector("[role=dialog] .pick")`),
+      10_000,
+    );
+    await inPopover("New edit");
+    await until(
+      "where in a new edit",
+      () =>
+        app.js(
+          `return [...document.querySelectorAll("[role=dialog] .pick button")].some((b) => b.textContent.trim() === "Clip bar")`,
+        ),
+      10_000,
+    );
+    await inPopover("Clip bar");
+    await click(b, "toggle");
+    await until(
+      "the list says one VOD",
+      () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() !== "2 VODs"`),
+      10_000,
+    );
+    const newEdit = await until(
+      "the new edit",
+      async () => (await app.invoke("list_edits")).find((e) => !editIds.has(e.id)),
+      15_000,
+    );
+    await app.js(`window.fetch = window.__e2eSlowEdit;`);
+    await sleep(1000);
+    const onNew = (await app.invoke("edit_clips", { id: newEdit.id })).map((c) => c.title);
+    if (onNew.join() !== [titles[a], titles[b]].join())
+      throw new Error(`New edit › Clip bar put what was picked once the edit was made: ${JSON.stringify(onNew)}`);
+    ctx.log("New edit › Clip bar put both VODs picked when it was chosen, the picking changed while the edit was made");
+    await click(b, "toggle");
+    await until(
+      "both picked again",
+      () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() === "2 VODs"`),
+      10_000,
+    );
+
     // Transcribe on one of them: pointed at, both light up; clicked, both are asked for.
     const transcribe = `${row(a)} .actions button[aria-label^="Transcribe all"]`;
     await until(

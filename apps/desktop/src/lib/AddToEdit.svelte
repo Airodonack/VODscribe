@@ -36,8 +36,10 @@
   async function put(bar: boolean) {
     const picked = into;
     open = false;
+    // What's picked now, at the choice: it may change while a new edit is made.
+    const what = items();
     const edit = picked === "new" ? await edits.create() : picked;
-    if (edit) void addTo(edit.id, edit.title, bar, items());
+    if (edit) void addTo(edit.id, edit.title, bar, what);
   }
 </script>
 

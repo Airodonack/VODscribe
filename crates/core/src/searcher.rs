@@ -95,6 +95,21 @@ mod tests {
         let (r, took) = first.join().unwrap();
         assert_eq!(r, None, "the one overtaken has no answer");
         assert!(took < Duration::from_secs(2), "it stopped when overtaken, not after {took:?}");
+        // The cut leaves the connection as it was: no statement or
+        // transaction left open, and no handler to cut the next one short
+        // (one left would, with a newer typed search numbered meanwhile).
+        s.newest.fetch_add(1, Ordering::SeqCst);
+        let after = s.run(false, |db| Ok((db.conn.is_autocommit(), db.conn.is_busy(), long_enough(db)?))).unwrap();
+        assert_eq!(after, Some((true, false, 2_000_000)));
+    }
+
+    /// SQL of a few million steps, more than `STEPS`: a handler left behind would interrupt it.
+    fn long_enough(db: &Db) -> Result<i64> {
+        Ok(db.conn.query_row(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 2000000) SELECT count(*) FROM n",
+            [],
+            |r| r.get(0),
+        )?)
     }
 
     /// Three typed while the connection is busy: the middle one, overtaken
