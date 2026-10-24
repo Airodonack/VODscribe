@@ -263,8 +263,8 @@
   }
 
   // The waveform of the stretch shown: played (left of the playhead) in the
-  // accent, the rest muted; a plain track where there's no waveform, or a
-  // gap in it.
+  // accent, the rest muted; a thin line where there's no waveform, or a gap
+  // in it.
   let canvas = $state<HTMLCanvasElement>();
   const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
   $effect(() => {
@@ -282,12 +282,19 @@
     const rest = style.getPropertyValue("--unplayed").trim();
     const at = x(actual) * ratio;
     const mid = h / 2 + 6 * ratio;
-    // The plain track from `from` to `to` (in pixels).
+    // The tallest a column of the waveform is (in pixels).
+    const tall = h - 16 * ratio;
+    // A stretch with no waveform, from `from` to `to` (in pixels): a thin line
+    // along the middle, in the accent left of the playhead and muted right of
+    // it, so it reads as "nothing here yet" rather than as quiet audio.
     const flat = (from: number, to: number) => {
-      ctx.fillStyle = rest;
-      ctx.fillRect(from, mid - 2 * ratio, to - from, 4 * ratio);
+      const hair = Math.max(1, Math.round(ratio));
+      const split = Math.max(from, Math.min(to, at));
+      const y = Math.round(mid - hair / 2);
       ctx.fillStyle = played;
-      ctx.fillRect(from, mid - 2 * ratio, Math.max(0, Math.min(to, at) - from), 4 * ratio);
+      ctx.fillRect(from, y, split - from, hair);
+      ctx.fillStyle = rest;
+      ctx.fillRect(split, y, to - split, hair);
     };
     if (!levels.length) return flat(0, w);
     // Only the stretch shown: the levels from its start, as many as it holds.
@@ -300,7 +307,7 @@
       const t = viewStart + ((i + 0.5) / bars.length) * span;
       if (seen.some((g) => t >= g.start && t < g.end)) continue;
       const px = i * 2 * ratio;
-      const b = Math.max(ratio, bars[i] * (h - 16 * ratio));
+      const b = Math.max(ratio, bars[i] * tall);
       ctx.fillStyle = px < at ? played : rest;
       ctx.fillRect(px, mid - b / 2, ratio, b);
     }
