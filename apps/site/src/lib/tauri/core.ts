@@ -3,6 +3,7 @@
 // their controls are grayed out (apps/desktop/src/lib/demo.ts).
 
 import * as backend from "./backend";
+import { annotated } from "./annotations";
 import type { SearchFilter } from "desktop/lib/api.ts";
 
 type Args = Record<string, unknown>;
@@ -24,8 +25,43 @@ let timeline = {
   events: [] as string[],
 };
 
-let marks: { id: number; vod_id: number; kind: string; start: number; text: string | null }[] = [];
+type Mark = {
+  id: number;
+  vod_id: number;
+  kind: string;
+  start: number;
+  text: string | null;
+  end?: number | null;
+  category?: string | null;
+  note?: string | null;
+  source?: string;
+};
+let marks: Mark[] = [];
 let lastMark = 0;
+
+// A VOD page's chapters and highlights are its marks, as an import of its
+// annotations makes them in the app (list_marks): there from the first time
+// they're asked for, and changed for this visit only, as the visitor's own are.
+const seeded = new Set<number>();
+function seedMarks(vodId: number) {
+  const open = annotated();
+  if (open?.vod.id !== vodId || seeded.has(vodId)) return;
+  seeded.add(vodId);
+  const from = { vod_id: vodId, source: "annotations" };
+  for (const c of open.chapters)
+    marks.push({ ...from, id: ++lastMark, kind: "chapter", start: c.start, text: c.title });
+  for (const h of open.highlights)
+    marks.push({
+      ...from,
+      id: ++lastMark,
+      kind: "highlight",
+      start: h.start,
+      text: h.title,
+      end: h.end,
+      category: h.kind,
+      note: h.why,
+    });
+}
 
 const commands: Record<string, (args: Args) => unknown> = {
   setup_status: () => ({
@@ -67,7 +103,15 @@ const commands: Record<string, (args: Args) => unknown> = {
   set_timeline: ({ timeline: next }) => void (timeline = next as typeof timeline),
   // Clips are made in the app only; marks on the timeline last this visit.
   list_clips: () => [],
-  list_marks: ({ vodId }) => marks.filter((m) => m.vod_id === vodId),
+  list_marks: ({ vodId }) => {
+    seedMarks(vodId as number);
+    return marks.filter((m) => m.vod_id === vodId);
+  },
+  // A VOD page's cast and activity, as the app keeps them from an import; none in the demo.
+  vod_annotations: ({ vodId }) => {
+    const open = annotated();
+    return open && open.vod.id === vodId ? { cast: open.cast, activity: open.activity } : null;
+  },
   add_mark: ({ vodId, time, kind, text }) => {
     const mark = {
       id: ++lastMark,
@@ -93,7 +137,9 @@ const commands: Record<string, (args: Args) => unknown> = {
   list_edits: () => [],
   // Waveforms made from each VOD's audio (scripts/export-demo.py --peaks);
   // none where there's no file.
+  // A VOD's page has none: its timeline is flat.
   peaks: async ({ id }) => {
+    if (annotated()) return new ArrayBuffer(0);
     const res = await fetch(`/demo/${id}.peaks`);
     // (A missing file can come back as the site's page.)
     const html = res.headers.get("content-type")?.startsWith("text/html");

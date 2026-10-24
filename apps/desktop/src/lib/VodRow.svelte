@@ -398,7 +398,7 @@
     onclick={remove}
     title="Remove"
     aria-label="Remove"
-    {...demoOff("The web demo keeps its two VODs. In the app, this removes a VOD and its transcript.")}
+    {...demoOff("The web demo keeps its VODs. In the app, this removes a VOD and its transcript.")}
   >
     <Icon name="trash" size={15} />
   </button>

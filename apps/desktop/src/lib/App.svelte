@@ -49,6 +49,9 @@
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
 
+  // The website's VOD pages open straight onto their one VOD.
+  let { openVod = null }: { openVod?: number | null } = $props();
+
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
 
@@ -426,6 +429,7 @@
     try {
       await refreshSetup();
       await reload();
+      if (openVod !== null) select(openVod);
     } finally {
       // The busy cursor (app.css `html.starting`) goes once the library is in.
       document.documentElement.classList.remove("starting");

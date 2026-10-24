@@ -1,6 +1,7 @@
 // The demo's backend: the app's commands answered from the transcripts in
-// static/demo (made by scripts/export-demo.py), searched as the app searches
-// (search.ts, ported from crates/core search.rs and query.rs).
+// static/demo (made by scripts/export-demo.py), or on a VOD's page from its
+// annotations (annotations.ts), searched as the app searches (search.ts,
+// ported from crates/core search.rs and query.rs).
 
 import type {
   AuthorSuggestion,
@@ -13,10 +14,9 @@ import type {
   Stretch,
   Vod,
 } from "desktop/lib/api.ts";
+import type { Segment } from "./annotated";
+import { annotated } from "./annotations";
 import { authorSuggestions as suggest, searchLibrary, terms, type LibraryVod } from "./search";
-
-/** A segment as exported: its text, start and each word's start (words are the text split on spaces). */
-type Segment = [text: string, start: number, wordStarts: number[]];
 
 interface Word {
   text: string;
@@ -32,6 +32,7 @@ interface Indexed {
   end: number;
   text: string;
   words: Word[];
+  speaker?: string;
 }
 
 const library = new Map<"vods", Promise<Vod[]>>();
@@ -57,6 +58,8 @@ async function json<T>(path: string): Promise<T> {
 // The demo's VODs are transcribed whole, as the export made them (it
 // predates stretches, so their fields are filled in here).
 export function listVods(): Promise<Vod[]> {
+  const open = annotated();
+  if (open) return Promise.resolve([open.vod]);
   return cached(library, "vods", async () =>
     (await json<Vod[]>("/demo/vods.json")).map((v) => ({
       ...v,
@@ -87,30 +90,42 @@ export function transcriptStretches(vodId: number): Stretch[] {
 
 /** Library order, changed by dragging; kept for this visit only. */
 export async function reorder(ids: number[]) {
+  if (annotated()) return;
   const all = await listVods();
   library.set("vods", Promise.resolve(ids.map((id) => all.find((v) => v.id === id)).filter((v) => v !== undefined)));
 }
 
+/** The segments of VOD `vodId`: its page's, or the demo's file of them. */
+function exported(vodId: number): Promise<Segment[]> {
+  const open = annotated();
+  return open?.vod.id === vodId ? Promise.resolve(open.segments) : json<Segment[]>(`/demo/${vodId}.json`);
+}
+
 function segments(vodId: number): Promise<Indexed[]> {
   return cached(transcripts, vodId, () =>
-    json<Segment[]>(`/demo/${vodId}.json`).then((segs) =>
-      segs.map(([text, start, starts], i) => {
+    exported(vodId).then((segs) =>
+      segs.map(([text, start, starts, end, speaker], i) => {
         const words = text.split(" ").map((w, j) => {
           const at = starts[j] ?? start;
           return { text: w, start: at, end: at, terms: terms(w) };
         });
         // Segment ids only need to be unique and stable within a visit.
-        return { id: vodId * 100_000 + i, start, end: words.at(-1)?.start ?? start, text, words };
+        return { id: vodId * 100_000 + i, start, end: end ?? words.at(-1)?.start ?? start, text, words, speaker };
       }),
     ),
   );
 }
 
-/** A demo VOD's lines: all, or from `from` to before `to` (null: on to the end). */
+/** A demo VOD's lines: all, or from `from` to before `to` (null: on to the end). The
+ *  demo's end where the next begins; an annotated VOD's where the file says,
+ *  with their speakers where it names them. */
 export async function transcript(vodId: number, from?: number, to?: number | null): Promise<Line[]> {
+  const ends = annotated()?.vod.id === vodId;
   return (await segments(vodId))
     .filter(({ start }) => from === undefined || (start >= from && (to == null || start < to)))
-    .map(({ start, text }) => ({ start, text }));
+    .map(({ start, end, text, speaker }) =>
+      ends ? { start, end, text, ...(speaker ? { speaker } : {}) } : { start, text },
+    );
 }
 
 // Chat, for the demo VODs that have it (static/demo/<id>.chat.json, made by
@@ -125,15 +140,28 @@ interface IndexedChat {
 
 const chats = new Map<number, Promise<IndexedChat[]>>();
 
+// A page's VOD's chat can arrive after it opens (annotations.ts
+// `chatArrived`): it's indexed as each list of it comes.
+const indexedPage = new WeakMap<ChatLine[], IndexedChat[]>();
+
 function chat(vodId: number): Promise<IndexedChat[]> {
+  const open = annotated();
+  if (open?.vod.id === vodId) {
+    let indexed = indexedPage.get(open.chat);
+    if (!indexed) indexedPage.set(open.chat, (indexed = index(open.chat)));
+    return Promise.resolve(indexed);
+  }
   return cached(chats, vodId, async () => {
     const res = await fetch(`/demo/${vodId}.chat.json`);
-    const lines: ChatLine[] = res.ok ? await res.json() : [];
-    return lines.map((line) => {
-      const text = line.parts.map((p) => (p.type === "text" ? p.text : ` ${p.name} `)).join("");
-      const words = text.split(/\s+/).filter(Boolean);
-      return { line, words: words.map((w) => ({ text: w, terms: terms(w) })) };
-    });
+    return index(res.ok ? await res.json() : []);
+  });
+}
+
+function index(lines: ChatLine[]): IndexedChat[] {
+  return lines.map((line) => {
+    const text = line.parts.map((p) => (p.type === "text" ? p.text : ` ${p.name} `)).join("");
+    const words = text.split(/\s+/).filter(Boolean);
+    return { line, words: words.map((w) => ({ text: w, terms: terms(w) })) };
   });
 }
 
@@ -198,7 +226,8 @@ const searchables = new Map<string, Promise<LibraryVod[]>>();
 /** The library as the search reads it, in its order: every VOD's speech and chat. */
 async function searchable(): Promise<LibraryVod[]> {
   const vods = await listVods();
-  return cached(searchables, vods.map((v) => v.id).join(" "), () =>
+  // By chat too: a page's VOD's chat can arrive after it's first searched.
+  return cached(searchables, vods.map((v) => `${v.id}:${v.chat}`).join(" "), () =>
     Promise.all(
       vods.map(async (v) => ({ id: v.id, channel: v.channel, lines: await segments(v.id), chat: await chat(v.id) })),
     ),

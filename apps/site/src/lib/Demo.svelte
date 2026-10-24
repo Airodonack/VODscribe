@@ -2,17 +2,22 @@
   // The live demo: the app's own interface (apps/desktop/src/lib/App.svelte),
   // answering from two VODs transcribed ahead of time. Controls that only work
   // in the app carry data-demo (see demo.ts there): they're grayed out, explain
-  // themselves on hover or focus, and ignore clicks.
+  // themselves on hover or focus, and ignore clicks. A VOD's page
+  // (routes/v) shows the same, opened onto its VOD (`openVod`), filling the
+  // window's height (`fill`).
   import { onMount, type Component } from "svelte";
 
-  let App = $state<Component | null>(null);
+  let { openVod = null, fill = false }: { openVod?: number | null; fill?: boolean } = $props();
+
+  let App = $state<Component<{ openVod?: number | null }> | null>(null);
   let root = $state<HTMLElement>();
   // Phones get a screenshot instead (+page.svelte), so the app's code and the
-  // demo's data only load once the window is wide enough to show it.
+  // demo's data only load once the window is wide enough to show it. A VOD's
+  // page has nothing else to show, so it loads anyway.
   onMount(() => {
     const wide = matchMedia("(min-width: 821px)");
     const load = async () => {
-      if (wide.matches && !App) App = (await import("desktop/lib/App.svelte")).default;
+      if ((wide.matches || openVod !== null) && !App) App = (await import("desktop/lib/App.svelte")).default;
     };
     load();
     wide.addEventListener("change", load);
@@ -59,17 +64,20 @@
   }
 </script>
 
-<div class="examples">
-  <span class="muted">Suggested searches</span>
-  {#each EXAMPLES as phrase (phrase)}
-    <button class="chip" onclick={() => tryPhrase(phrase)} disabled={!App}>{phrase}</button>
-  {/each}
-</div>
+{#if openVod === null}
+  <div class="examples">
+    <span class="muted">Suggested searches</span>
+    {#each EXAMPLES as phrase (phrase)}
+      <button class="chip" onclick={() => tryPhrase(phrase)} disabled={!App}>{phrase}</button>
+    {/each}
+  </div>
+{/if}
 
 <svelte:window onpointerdown={onWindowPointerDown} />
 
 <div
   class="window"
+  class:fill
   data-demo-root
   data-active={active ? "" : undefined}
   bind:this={root}
@@ -83,7 +91,7 @@
   aria-label="VODscribe demo"
 >
   {#if App}
-    <App />
+    <App {openVod} />
   {:else}
     <div class="loading muted">Loading the demo…</div>
   {/if}
@@ -122,6 +130,10 @@
     background: var(--bg);
     box-shadow: var(--shadow);
     text-align: left;
+  }
+
+  .window.fill {
+    --app-height: max(480px, calc(100vh - 150px));
   }
 
   .loading {

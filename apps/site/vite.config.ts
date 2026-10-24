@@ -31,7 +31,10 @@ export default defineConfig({
           "script-src": ["self"],
           "style-src": ["self", "unsafe-inline"],
           "img-src": ["self", "data:", "blob:"],
-          "connect-src": ["self"],
+          // The download host: a VOD page's annotations (routes/v).
+          "connect-src": ["self", "https://dl.vodscribe.com"],
+          // The platforms' players, driven over postMessage (the app's embed.ts):
+          // no script of theirs runs in the page.
           "frame-src": ["https://www.youtube-nocookie.com", "https://player.twitch.tv"],
           "object-src": ["none"],
           "base-uri": ["none"],

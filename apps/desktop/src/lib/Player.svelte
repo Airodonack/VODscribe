@@ -21,7 +21,7 @@
   import { Hold } from "./hold.svelte";
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
-  import { keysForApp } from "./demo";
+  import { demoOff, keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, inOut, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
@@ -750,6 +750,9 @@
         onmouseenter={() => (clipHover = true)}
         onmouseleave={() => (clipHover = false)}
         disabled={!canClip}
+        {...demoOff(
+          "The web demo can't make clips. In the app, this cuts the lit-up stretch into a video file of its own.",
+        )}
         title="Clip the lit-up stretch (or each one selected), to the clip bar{keyHint(
           'clip.make',
         )}: with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
@@ -774,6 +777,7 @@
         onmouseenter={onTranscribeEnter}
         onmouseleave={() => (transcribeHover = false)}
         aria-expanded={transcribeHold.open}
+        {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD, or the part selected.")}
         title={transcribeTitle}
       >
         <Icon name="audio-lines" size={14} /> Transcribe {#if labelOf("transcribe.here")}<kbd

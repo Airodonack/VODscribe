@@ -1,0 +1,258 @@
+{
+  "format": "vodscribe-annotations",
+  "version": 1,
+  "source": {
+    "platform": "twitch",
+    "id": "v2901646294",
+    "channel": "airodonack",
+    "title": "Speedrunning the old tutorial",
+    "duration": 75,
+    "recorded_at": "2026-10-14T18:00:00Z"
+  },
+  "produced": {
+    "at": "2026-10-24T12:00:00Z",
+    "build": "fixture"
+  },
+  "transcript": {
+    "segments": [
+      {
+        "id": 0,
+        "start": 0,
+        "end": 6.5,
+        "text": "chat asked for a speedrun of the old tutorial",
+        "words": [
+          {
+            "text": "chat",
+            "start": 0.0,
+            "end": 0.72
+          },
+          {
+            "text": "asked",
+            "start": 0.72,
+            "end": 1.44
+          },
+          {
+            "text": "for",
+            "start": 1.44,
+            "end": 2.17
+          },
+          {
+            "text": "a",
+            "start": 2.17,
+            "end": 2.89
+          },
+          {
+            "text": "speedrun",
+            "start": 2.89,
+            "end": 3.61
+          },
+          {
+            "text": "of",
+            "start": 3.61,
+            "end": 4.33
+          },
+          {
+            "text": "the",
+            "start": 4.33,
+            "end": 5.06
+          },
+          {
+            "text": "old",
+            "start": 5.06,
+            "end": 5.78
+          },
+          {
+            "text": "tutorial",
+            "start": 5.78,
+            "end": 6.5
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "start": 7,
+        "end": 14,
+        "text": "the pelican skip saves us eight seconds",
+        "words": [
+          {
+            "text": "the",
+            "start": 7.0,
+            "end": 8.0
+          },
+          {
+            "text": "pelican",
+            "start": 8.0,
+            "end": 9.0
+          },
+          {
+            "text": "skip",
+            "start": 9.0,
+            "end": 10.0
+          },
+          {
+            "text": "saves",
+            "start": 10.0,
+            "end": 11.0
+          },
+          {
+            "text": "us",
+            "start": 11.0,
+            "end": 12.0
+          },
+          {
+            "text": "eight",
+            "start": 12.0,
+            "end": 13.0
+          },
+          {
+            "text": "seconds",
+            "start": 13.0,
+            "end": 14.0
+          }
+        ],
+        "speaker": "airodonack"
+      },
+      {
+        "id": 2,
+        "start": 15,
+        "end": 22,
+        "text": "do not blink here because the door closes fast",
+        "words": [
+          {
+            "text": "do",
+            "start": 15.0,
+            "end": 15.78
+          },
+          {
+            "text": "not",
+            "start": 15.78,
+            "end": 16.56
+          },
+          {
+            "text": "blink",
+            "start": 16.56,
+            "end": 17.33
+          },
+          {
+            "text": "here",
+            "start": 17.33,
+            "end": 18.11
+          },
+          {
+            "text": "because",
+            "start": 18.11,
+            "end": 18.89
+          },
+          {
+            "text": "the",
+            "start": 18.89,
+            "end": 19.67
+          },
+          {
+            "text": "door",
+            "start": 19.67,
+            "end": 20.44
+          },
+          {
+            "text": "closes",
+            "start": 20.44,
+            "end": 21.22
+          },
+          {
+            "text": "fast",
+            "start": 21.22,
+            "end": 22.0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "start": 23,
+        "end": 30,
+        "text": "and that is the whole tutorial in one minute",
+        "words": [
+          {
+            "text": "and",
+            "start": 23.0,
+            "end": 23.78
+          },
+          {
+            "text": "that",
+            "start": 23.78,
+            "end": 24.56
+          },
+          {
+            "text": "is",
+            "start": 24.56,
+            "end": 25.33
+          },
+          {
+            "text": "the",
+            "start": 25.33,
+            "end": 26.11
+          },
+          {
+            "text": "whole",
+            "start": 26.11,
+            "end": 26.89
+          },
+          {
+            "text": "tutorial",
+            "start": 26.89,
+            "end": 27.67
+          },
+          {
+            "text": "in",
+            "start": 27.67,
+            "end": 28.44
+          },
+          {
+            "text": "one",
+            "start": 28.44,
+            "end": 29.22
+          },
+          {
+            "text": "minute",
+            "start": 29.22,
+            "end": 30.0
+          }
+        ]
+      }
+    ],
+    "corrected": 0
+  },
+  "chapters": [
+    {
+      "start": 0,
+      "title": "The old tutorial"
+    },
+    {
+      "start": 15,
+      "title": "The door"
+    }
+  ],
+  "highlights": [
+    {
+      "start": 7,
+      "end": 14,
+      "title": "The pelican skip",
+      "kind": "hype",
+      "why": "Saves eight seconds on the run."
+    }
+  ],
+  "cast": [
+    {
+      "name": "airodonack",
+      "aliases": [],
+      "role": "streamer"
+    }
+  ],
+  "activity": [
+    {
+      "start": 0,
+      "end": 30,
+      "kind": "game",
+      "name": "The old tutorial"
+    }
+  ]
+}

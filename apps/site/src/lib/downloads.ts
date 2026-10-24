@@ -5,7 +5,10 @@
 // The latest/ copies are served with the versioned file name, so the saved
 // file says which version it is.
 
-const BASE = "https://dl.vodscribe.com/releases/latest";
+/** The download host: the installers, and the VOD pages' annotations (/v/<platform>/<id>). */
+export const DOWNLOAD_HOST = "https://dl.vodscribe.com";
+
+const BASE = `${DOWNLOAD_HOST}/releases/latest`;
 
 export type Os = "windows" | "mac" | "linux";
 
