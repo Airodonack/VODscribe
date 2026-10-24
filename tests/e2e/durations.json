@@ -36,5 +36,7 @@
   "upgrade-0.5.1": 3,
   "upgrade-0.5.2-dev": 3,
   "video-files": 25,
-  "vod-actions": 45
+  "vod-actions": 45,
+  "chat-search": 6,
+  "chat-view": 8
 }

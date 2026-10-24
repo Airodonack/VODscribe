@@ -3,10 +3,12 @@
 // no video files.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
+import { MINUTE, until } from "./app.mjs";
 import { dataDirs } from "./data.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -155,4 +157,183 @@ export function minute(dir) {
     ...["-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-c:a", "aac", "-shortest"],
     ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
   ]);
+}
+
+/** The test Twitch VOD's id: a VOD made from a file is given it, and chat() as its chat. */
+export const TWITCH_VOD = "2901646294";
+
+// A tiny seeded generator, so a chat is the same on every run and machine.
+function random(seed) {
+  let a = seed;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The chat's streamer: the VOD's channel, whose chat messages `from:` finds with their speech. */
+export const CHANNEL = "Marlowe";
+/** Chatters by name, most messages first; "Some One" has a space, as `from:"Some One"` is for. */
+export const CHATTERS = ["Ada", "Brigid", "Cormac", "Some One", "Dara"];
+
+/**
+ * A synthetic Twitch chat for a VOD of `duration` seconds (two hours), the
+ * same on every run: about 3,000 messages, in the shape src-tauri/src/e2e.rs
+ * serves (time, author, text; nothing more, so no emote images: Twitch's emote
+ * fragments aren't part of it, and 7TV and the others need the network).
+ *
+ * - Named chatters (CHATTERS) and the streamer (CHANNEL) among thirty
+ *   "viewerN"s, each named one under 500 messages so `from:` finds all of
+ *   theirs (a search shows 500 at most).
+ * - Bursts at known times (BURSTS): a crowd all writing one emote's name
+ *   within seconds, which the minimap's histogram shows as spikes. KEKW in
+ *   the first, PogChamp in the second, both in the third.
+ * - Events as Twitch's chat posts them: subs, gifts and tips (bits, as
+ *   "Cheer500"), which the app reads from the author's name and the text.
+ * - Mentions ("@Ada ..."), the streamer saying "landed" (as the transcribed
+ *   fixture does), and "gg" in some messages for a `-gg`.
+ *
+ * Returns the messages, sorted by time, with the facts the tests check.
+ */
+export function chat(duration = 2 * 3600) {
+  const rand = random(20261023);
+  const pick = (list) => list[Math.floor(rand() * list.length)];
+  const viewers = Array.from({ length: 30 }, (_, i) => `viewer${i + 1}`);
+  // Who writes a background message: weights, then the viewers share the rest.
+  const weights = [
+    [CHANNEL, 0.04],
+    ["Ada", 0.12],
+    ["Brigid", 0.09],
+    ["Cormac", 0.07],
+    ["Some One", 0.03],
+    ["Dara", 0.02],
+  ];
+  const author = () => {
+    let r = rand();
+    for (const [name, w] of weights) if ((r -= w) < 0) return name;
+    return pick(viewers);
+  };
+  const lines = [
+    "that was close",
+    "nice one",
+    "no way",
+    "let's go",
+    "clean",
+    "oof",
+    "chat is moving fast",
+    "what game is this",
+    "how long have you been streaming",
+    "same here",
+    "I missed the start",
+    "play the other map",
+    "this part is hard",
+    "good luck",
+    "wait what happened",
+  ];
+  const messages = [];
+  const background = 2600;
+  for (let i = 0; i < background; i++) {
+    const time = Math.round(((i + rand()) * duration * 10) / background) / 10;
+    const who = author();
+    let text = pick(lines);
+    const r = rand();
+    if (r < 0.08) text = `gg ${text}`;
+    else if (r < 0.2) text = `@${pick(CHATTERS.filter((c) => !c.includes(" ")))} ${text}`;
+    if (who === CHANNEL && rand() < 0.1) text = "we landed it";
+    messages.push({ time, author: who, text });
+  }
+  // The streamer says it three times at fixed moments, whatever the dice gave.
+  for (const time of [600, 2400, 4800]) messages.push({ time, author: CHANNEL, text: "the eagle has landed" });
+
+  const bursts = [
+    { at: 1200, seconds: 30, count: 120, words: ["KEKW"] },
+    { at: 3600, seconds: 20, count: 150, words: ["PogChamp"] },
+    { at: 5400, seconds: 40, count: 200, words: ["KEKW", "PogChamp"] },
+  ];
+  for (const burst of bursts) {
+    for (let i = 0; i < burst.count; i++) {
+      // At most a few to a second, so Twitch's pages (which end on a second) lose none.
+      const time = Math.round((burst.at + (i / burst.count) * burst.seconds) * 10) / 10;
+      messages.push({ time, author: pick(viewers), text: `${pick(burst.words)} ${pick(burst.words)}` });
+    }
+  }
+
+  const events = [];
+  for (const time of [300, 1500, 2700, 4100, 5000, 6900]) {
+    const who = pick(viewers);
+    events.push({
+      time,
+      author: who,
+      text: `${who} subscribed at Tier 1. They've subscribed for ${1 + Math.floor(rand() * 20)} months!`,
+    });
+  }
+  for (const time of [900, 3300, 6000]) {
+    const who = pick(viewers);
+    events.push({ time, author: who, text: `${who} is gifting 5 Tier 1 Subs to ${CHANNEL}'s community!` });
+  }
+  for (const time of [1800, 3900, 5700, 7000]) {
+    const who = pick(viewers);
+    events.push({ time, author: who, text: `${who} Cheer500 keep it up` });
+  }
+  messages.push(...events);
+
+  messages.sort((a, b) => a.time - b.time);
+  const count = (name) => messages.filter((m) => m.author.toLowerCase() === name.toLowerCase()).length;
+  for (const name of [...CHATTERS, CHANNEL]) {
+    if (count(name) > 450) throw new Error(`${name} has ${count(name)} messages: a search would cut them off`);
+  }
+  const hasWord = (m, word) => new RegExp(`(^|\\s)${word}(\\s|$)`, "i").test(m.text);
+  return {
+    duration,
+    channel: CHANNEL,
+    messages,
+    bursts,
+    // Subs, gifts and tips, as the app counts them: 6, 3 and 4.
+    events: { sub: 6, gift: 3, tip: 4 },
+    /** Messages by `author` (any case). */
+    by: (name) => messages.filter((m) => m.author.toLowerCase() === name.toLowerCase()),
+    /** Messages with `word` as a whole word (any case). */
+    withWord: (word) => messages.filter((m) => hasWord(m, word)),
+    /** Messages from `from` seconds to before `to`. */
+    between: (from, to) => messages.filter((m) => m.time >= from && m.time < to),
+  };
+}
+
+/** Leaves `fixture` (chat()) in the data folder for the e2e build to serve as Twitch's chat; `failAfter` refuses Twitch's pages from that one on. */
+export function serveChat(fixture, failAfter = null) {
+  writeFileSync(
+    path.join(dataDirs()[0], "e2e-chat.json"),
+    JSON.stringify({ messages: fixture.messages, fail_after: failAfter }),
+  );
+}
+
+/**
+ * Makes VOD `id` (added from a file, transcribed or not) the test Twitch VOD
+ * of `fixture`'s channel and duration, with its chat not fetched yet, serves
+ * `fixture` as Twitch's chat and starts the app again, which fetches it:
+ * returns the new app and the VOD once its chat is whole. Its speech stays.
+ */
+export async function fetchChat(app, ctx, id, fixture) {
+  await ctx.quit();
+  serveChat(fixture);
+  const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
+  db.prepare(
+    `UPDATE vods SET platform = 'twitch', platform_id = ?, url = ?, title = 'A stream with chat', channel = ?,
+       duration = ?, source_path = NULL, chat = NULL, chat_error = NULL WHERE id = ?`,
+  ).run(TWITCH_VOD, `https://www.twitch.tv/videos/${TWITCH_VOD}`, fixture.channel, fixture.duration, id);
+  db.close();
+  app = await ctx.start();
+  await app.toLibrary();
+  const vod = await until(
+    "the chat to be fetched",
+    async () => {
+      const v = (await app.invoke("list_vods")).find((v) => v.id === id);
+      if (v?.chat === "failed") throw new Error(`the chat fetch failed: ${v.chat_error}`);
+      return v?.chat === "done" && v;
+    },
+    2 * MINUTE,
+  );
+  return { app, vod };
 }

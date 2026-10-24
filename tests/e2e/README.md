@@ -148,6 +148,18 @@ Each checkpoint with an expectation goes to OpenRouter's chat completions with i
 
 It runs in the full lane only (nightly, by hand, on tags), never per push.
 
+## Fixtures
+
+`lib/fixtures.mjs` makes the test files at test time (`videos()`, `longSpeech()`, `colours()` and others, from ffmpeg and the recorded landing), so the repository holds no video. It makes a chat too.
+
+### A chat without Twitch
+
+`chat()` is a synthetic Twitch chat of two hours and about 3,000 messages, the same on every run: a streamer (`CHANNEL`, "Marlowe") and named chatters (`CHATTERS`, one with a space in the name) among thirty "viewerN"s; three bursts at known times (`bursts`: 1200, 3600 and 5400 s, one crowd writing KEKW, one PogChamp, one both) for the minimap's histogram; subs, gifts and tips written as Twitch posts them (the app reads their kind from the text); `@name` mentions; and the streamer saying "landed", as the transcribed landing does. It returns the messages with the facts to check them against (`by(name)`, `withWord(word)`, `between(from, to)`, `events`).
+
+The e2e build serves `<data>/e2e-chat.json` as Twitch's comment pages through the app's own fetch (`src-tauri/src/e2e.rs`). `serveChat(fixture, failAfter)` writes the file, and `fetchChat(app, ctx, id, fixture)` makes VOD `id` (added from a file, transcribed or not) the test Twitch VOD of the chat's channel, restarts the app, which fetches the chat, and returns the new app once it's whole. `chat-search` and `chat-view` use them; `chat-partial` serves a plainer chat that fails partway.
+
+What the seam can't carry: only a message's time, author and text. There are no emote images (Twitch's emote fragments, and 7TV, BTTV and FFZ lists from the network, are not part of it; emote names are plain words), no colours, and no kind or amount other than what the app reads from the text (a sub's "X subscribed at Tier 1.", a gift's "X is gifting 5 Tier 1 Subs", bits as "Cheer500"). And a Twitch VOD has no player offline, so "the part in view" is where the minimap scrolled the transcript.
+
 ## Timings and profiling
 
 A performance pass starts from measurements, not from reading the code: the scenarios time what a person waits on, and a profiled run says where the time went. Releases are compared by both.
