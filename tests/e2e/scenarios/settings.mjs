@@ -77,6 +77,7 @@ export default {
     // Reset settings… (Help), answered Reset: every choice as it was at the start.
     await app.answer("Reset");
     await app.openSettings("Help");
+    await ctx.checkpoint("settings-help");
     await app.clickText("Reset settings…");
     await until(
       "the choices back as they started",

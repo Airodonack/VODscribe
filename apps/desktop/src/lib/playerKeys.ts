@@ -164,7 +164,7 @@ export function vodShortcuts(framed: boolean, os: Os, bindings: Bindings): Short
     ...line("cut here", first("cut.here")),
     ...line("start or end the selection here", first("selection.in", "selection.out")),
     ...line("clip the stretch", first("clip.make")),
-    ...line("transcribe the selection, or from here", first("transcribe.here")),
+    ...line("transcribe the selection, or the whole VOD", first("transcribe.here")),
     ...line("highlight here", first("mark.highlight")),
     ...line("new chapter here", first("mark.chapter")),
     ...line("rename the selected chapter or highlight", first("mark.rename")),

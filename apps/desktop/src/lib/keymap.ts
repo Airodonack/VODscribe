@@ -139,7 +139,7 @@ export const ACTIONS = [
   { id: "clips.remove", label: "Remove the selected clips", scope: "player", defaults: all("Delete", "Backspace") },
   {
     id: "transcribe.here",
-    label: "Transcribe the selection, or from here",
+    label: "Transcribe the selection, or the whole VOD",
     scope: "player",
     defaults: all("t"),
   },

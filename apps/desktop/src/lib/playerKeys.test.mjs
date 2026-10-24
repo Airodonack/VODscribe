@@ -118,7 +118,7 @@ const VOD = [
   { keys: ["B"], does: "cut here" },
   { keys: ["I", "O"], does: "start or end the selection here" },
   { keys: ["C"], does: "clip the stretch" },
-  { keys: ["T"], does: "transcribe the selection, or from here" },
+  { keys: ["T"], does: "transcribe the selection, or the whole VOD" },
   { keys: ["M"], does: "highlight here" },
   { keys: ["N"], does: "new chapter here" },
   { keys: ["Enter"], does: "rename the selected chapter or highlight" },

@@ -98,7 +98,7 @@
     time,
     shown = null,
     fps,
-    highlight = null,
+    highlight = [],
     removing = null,
     picked = null,
     marks = false,
@@ -143,8 +143,8 @@
     shown?: number | null;
     /** The video's frame rate, for marks (assumed, for players that don't say). */
     fps: number;
-    /** A stretch to light up: the one the Clip button would make a clip of, while it's hovered. */
-    highlight?: { start: number; end: number } | null;
+    /** Stretches to light up: what the Clip or Transcribe button would act on, while it's hovered. */
+    highlight?: { start: number; end: number }[];
     /** A stretch to light up as going: the piece Remove would take out, while it's hovered. */
     removing?: { start: number; end: number } | null;
     /** An edit's lines selected in its transcript: the stretch Delete takes out. */
@@ -451,10 +451,11 @@
       cuts.selected = mark.id;
       cuts.clearSelection();
     } else {
-      // Anywhere else lets go of the cut and the selection.
+      // Anywhere else lets go of the cut (and the selection's edge), but
+      // not of the selection: I, a click to move the playhead, then O.
       drag = { kind: "scrub" };
       cuts.selected = null;
-      cuts.clearSelection();
+      cuts.selectedEdge = null;
       follow = true;
       onseek(timeAt(e.clientX));
     }
@@ -917,11 +918,11 @@
         ></div>
       {/if}
     {/each}
-    {#each [highlight, taking, removing] as lit, i (i)}
+    {#each [...highlight, taking, removing] as lit, i (i)}
       {#if lit && lit.end > viewStart && lit.start < viewStart + span}
         <div
           class="lit"
-          class:removing={i === 2}
+          class:removing={i === highlight.length + 1}
           style:left={pct(Math.max(lit.start, viewStart))}
           style:width={widthPct(Math.max(lit.start, viewStart), Math.min(lit.end, viewStart + span))}
         ></div>

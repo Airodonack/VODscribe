@@ -7,6 +7,10 @@
 // each part without lines, whose Transcribe transcribes just that part, and
 // which shows the request at work, with Stop. The captions button waits for
 // captions, and a search with no match says what it didn't look through.
+// The bar's Transcribe sits at its right before the captions button and,
+// hovered, lights up what it would do: the whole VOD, then the rest; held,
+// it opens the menu of how much; clicked, it does the rest, and once all is
+// transcribed it asks before doing all of it again.
 
 import path from "node:path";
 
@@ -65,6 +69,45 @@ export default {
         `const b = document.querySelector('.bar button[aria-label="Captions"]'); return b && { disabled: b.disabled, title: b.title }`,
       );
 
+    // The stretches lit up on the timeline (to the second), not counting an
+    // edit's (.used) or what Remove would take out.
+    const lit = () =>
+      app.js(
+        `const bar = document.querySelector(".scrubber");
+         const box = bar.getBoundingClientRect();
+         const time = (x) => Number(bar.dataset.viewStart) + ((x - box.left) / box.width) * Number(bar.dataset.span);
+         return [...bar.querySelectorAll(".lit:not(.used):not(.removing)")].map((l) => {
+           const r = l.getBoundingClientRect();
+           return [Math.round(time(r.left)), Math.round(time(r.right))];
+         });`,
+      );
+    const hover = (on) =>
+      app.js(
+        `document.querySelector(".bar button.transcribe").dispatchEvent(new MouseEvent(arguments[0]))`,
+        on ? "mouseenter" : "mouseleave",
+      );
+    /** The bar's Transcribe hovered: its title starts `title`, and `want` ([start, end], ±2 s) lights up (a checkpoint); then not hovered, nothing. */
+    const litWhileHovered = async (what, title, want) => {
+      const said = await app.js(`return document.querySelector(".bar button.transcribe")?.title ?? null`);
+      if (!said?.startsWith(title)) throw new Error(`for ${what}, the bar's Transcribe says "${said}"`);
+      await hover(true);
+      await until(
+        `${what} lit up`,
+        async () => {
+          const seen = await lit();
+          const near =
+            seen.length === want.length &&
+            seen.every(([a, b], i) => Math.abs(a - want[i][0]) <= 2 && Math.abs(b - want[i][1]) <= 2);
+          if (near) return true;
+          throw new Error(`lit up: ${JSON.stringify(seen)}, for ${JSON.stringify(want)}`);
+        },
+        10_000,
+      );
+      await ctx.checkpoint(`transcribe-lit-${what.replace(/ /g, "-")}`);
+      await hover(false);
+      await until("nothing lit up", async () => (await lit()).length === 0, 10_000);
+    };
+
     // Nothing transcribed: said, with the two ways to start.
     await until(
       "the transcript to say it's not transcribed",
@@ -103,6 +146,38 @@ export default {
     if (!before?.disabled || before.title !== "Transcribe to get captions")
       throw new Error(`with nothing transcribed, the captions button is ${JSON.stringify(before)}`);
     ctx.log("the empty transcript offers both ways; from here opens the menu; captions grayed out");
+
+    // The bar's Transcribe, at its right just before the captions button:
+    // with nothing transcribed it would do the whole VOD, lit up on the
+    // timeline while it's hovered; pressed and held, the menu of how much
+    // from the playhead, which let go elsewhere closes, asking nothing.
+    const place = await app.js(
+      `const buttons = [...document.querySelectorAll(".bar button")];
+       const at = buttons.findIndex((b) => b.matches(".transcribe"));
+       const context = document.querySelector(".bar .context");
+       return { at, next: buttons[at + 1]?.getAttribute("aria-label") ?? null,
+                right: !!context && !!(context.compareDocumentPosition(buttons[at]) & Node.DOCUMENT_POSITION_FOLLOWING) };`,
+    );
+    if (place.at < 0 || place.next !== "Captions" || !place.right)
+      throw new Error(`the bar's Transcribe is at ${JSON.stringify(place)}, not at the right before Captions`);
+    const length = Math.round(added.duration);
+    await litWhileHovered("the whole VOD", "Transcribe the whole VOD", [[0, length]]);
+    await app.js(
+      `document.querySelector(".bar button.transcribe").dispatchEvent(new PointerEvent("pointerdown", { button: 0, bubbles: true, pointerId: 1, isPrimary: true }))`,
+    );
+    const held = await until("the menu, held open", menu, 10_000);
+    if (!/^From \d+:\d\d for:$/.test(held)) throw new Error(`Transcribe held opened "${held}"`);
+    await app.js(
+      `const r = document.querySelector("button.time").getBoundingClientRect();
+       const at = { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1, isPrimary: true };
+       document.elementFromPoint(at.clientX, at.clientY).dispatchEvent(new PointerEvent("pointerup", at));`,
+    );
+    await until("the menu to close", async () => (await menu()) === null, 10_000);
+    const stillNone = await app.invoke("transcript_stretches", { vodId: vod.id });
+    if (stillNone.length) throw new Error(`the held menu, let go elsewhere, asked for ${JSON.stringify(stillNone)}`);
+    ctx.log(
+      `the bar's Transcribe: before Captions; hovered, 0-${length} s lit; held, "${held}", let go elsewhere, closed`,
+    );
 
     /** Asks for `start`..`end` and waits till it's done: no request left. */
     const transcribe = (start, end) =>
@@ -167,6 +242,12 @@ export default {
     if (shownTimes.length !== first.length || shownTimes.some((t) => t < 120 - EDGE || t > 180 + EDGE))
       throw new Error(`the transcript shows lines at ${shownTimes}, for ${first.length} in 2:00–3:00`);
     await until("the captions button to work", async () => (await captionsButton())?.disabled === false, MINUTE);
+    // The bar's Transcribe would now do the rest: before 2:00 and after 3:00, lit up.
+    await litWhileHovered("the rest", "Transcribe the rest", [
+      [0, 120],
+      [180, Math.round(added.duration)],
+    ]);
+    ctx.log("the bar's Transcribe, hovered: 0:00-2:00 and 3:00 on lit up, the rest");
     // A search of it alone finding nothing: only chat and those lines were looked through.
     await app.type(SEARCH, "zebra crossing");
     const none = await until(
@@ -299,5 +380,44 @@ export default {
     );
     if (/Transcribing/.test(await head())) throw new Error(`stopped, the header still says "${await head()}"`);
     ctx.log(`the rest: "${working[0]}", "${working[1].at(-1)}"; stopped, "${left}"`);
+
+    // The bar's Transcribe, clicked: the rest, all of it now transcribed.
+    // Then it would transcribe the whole VOD again, which replaces it all:
+    // it asks first, as the library row's Transcribe again does; answered
+    // Cancel, nothing is asked for; answered Transcribe again, all of it is.
+    await app.click(".bar button.transcribe");
+    await app.timed("the rest transcribed", () =>
+      until(
+        "all of it transcribed",
+        async () => {
+          const v = await now();
+          if (v.status === "error") throw new Error(`transcription failed: ${v.error}`);
+          return v.status === "done" && v.transcribed === "all" && v;
+        },
+        10 * MINUTE,
+      ),
+    );
+    await litWhileHovered("all of it again", "Transcribe again…", [[0, Math.round(added.duration)]]);
+    const pending = async () =>
+      (await app.invoke("transcript_stretches", { vodId: vod.id })).filter((s) => s.status !== "done");
+    const questions = await app.asked();
+    await app.answer("Cancel");
+    await app.click(".bar button.transcribe");
+    await until("the question", async () => (await app.asked()) === questions + 1, 10_000);
+    await new Promise((r) => setTimeout(r, 500));
+    if ((await pending()).length) throw new Error(`answered Cancel, it asked for ${JSON.stringify(await pending())}`);
+    await app.answer("Transcribe again");
+    await app.click(".bar button.transcribe");
+    await until("the second question", async () => (await app.asked()) === questions + 2, 10_000);
+    const again = await until(
+      "all of it asked for again",
+      async () => {
+        const asked = await pending();
+        if (asked.length === 1 && asked[0].start === 0 && asked[0].end === null) return asked[0];
+        throw new Error(`asked for: ${JSON.stringify(asked)}`);
+      },
+      10_000,
+    );
+    ctx.log(`the bar's Transcribe: the rest, then all of it again only once asked (request ${again.id}, 0 to the end)`);
   },
 };

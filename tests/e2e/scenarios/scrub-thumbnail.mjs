@@ -9,8 +9,9 @@
 // The file's storyboard is made on adding it, and its library picture
 // comes from it (red: the frame an eighth in, the keyframe at 0). Hovering
 // shows the storyboard's nearest frame, then, the player open and the
-// pointer resting, the exact frame. A selection's edges show their frames:
-// its start the frame there, its end the frame before. Dragging the
+// pointer resting, the exact frame. A selection begun with I keeps through
+// a click on the timeline, for O there; its edges show their frames: its
+// start the frame there, its end the frame before. Dragging the
 // playhead shows it; a finger doesn't. Rested at a moment and played from
 // there, the player takes the decoder that previewed it over: no new one
 // starts, and the screen shows the colour from there on.
@@ -41,6 +42,16 @@ const POINTER = `
   const at = { clientX: x, clientY: box.top + box.height / 2, button: 0, bubbles: true, pointerId: 1, pointerType: type ?? "mouse", isPrimary: true };
   const on = target ? document.querySelector(target) : kind === "pointerdown" ? document.elementFromPoint(at.clientX, at.clientY) : window;
   on.dispatchEvent(new PointerEvent(kind, at));`;
+
+/** In the page: where the timeline's selection starts and ends, in seconds (null: none). */
+const SELECTION = `
+  const bar = document.querySelector(".scrubber");
+  const picked = bar.querySelector(".selection");
+  if (!picked) return null;
+  const box = bar.getBoundingClientRect();
+  const { left, right } = picked.getBoundingClientRect();
+  const time = (x) => Number(bar.dataset.viewStart) + ((x - box.left) / box.width) * Number(bar.dataset.span);
+  return [time(left), time(right)];`;
 
 /** In the page: what the thumbnail shows (null: none), its colour read at its middle. */
 const THUMBNAIL = `
@@ -123,16 +134,28 @@ export default {
     ctx.log(`rested at 2.52 s: ${named(rested.rgb)}, exact, at ${rested.time.toFixed(4)} s`);
     if (Math.abs(rested.time - 2.5) > 1e-6) throw new Error(`the exact frame is at ${rested.time}, not 2.5`);
 
-    // 3. A selection 2-4 s (I at 2, O at 4); its end dragged to 4 s shows the
-    //    frame before it, yellow, at 3.967 and "0:03"; its start at 2 s, blue, "0:02".
+    // 3. A selection 2-4 s (I at 2, a click on the timeline at 4, O there:
+    //    the click moves the playhead and keeps the selection begun); its end
+    //    dragged to 4 s shows the frame before it, yellow, at 3.967 and
+    //    "0:03"; its start at 2 s, blue, "0:02".
     await app.toStart();
     for (let i = 0; i < 2; i++) await app.key("ArrowRight", { shift: true });
     await until("the player at 2 s", async () => (await app.shownTime()) === 2, 10_000);
     await app.key("i");
-    for (let i = 0; i < 2; i++) await app.key("ArrowRight", { shift: true });
+    await pointer("pointerdown", 4 + 0.5 / FPS);
+    await pointer("pointerup", 4 + 0.5 / FPS);
     await until("the player at 4 s", async () => (await app.shownTime()) === 4, 10_000);
     await app.key("o");
-    await until("the selection", () => app.js(`return !!document.querySelector('[data-edge="end"]')`), 10_000);
+    const selected = await until(
+      "the selection 2-4 s",
+      async () => {
+        const at = await app.js(SELECTION);
+        if (at && Math.abs(at[0] - 2) < 0.05 && Math.abs(at[1] - 4) < 0.05) return at;
+        throw new Error(`the selection is ${at ? at.map((t) => t.toFixed(2)).join("-") + " s" : "not there"}`);
+      },
+      10_000,
+    );
+    ctx.log(`I at 2 s, a click at 4 s, O: the selection ${selected.map((t) => t.toFixed(2)).join("-")} s`);
     const half = 0.5 / FPS;
     await pointer("pointerdown", 4 + half, "mouse", '[data-edge="end"]');
     await pointer("pointermove", 4.4);

@@ -12,12 +12,13 @@
   // The row of controls under every player's timeline (the VOD's, Player.svelte;
   // an edit's, EditView.svelte): play, the time, the panel's own actions (Split
   // and Clip, or what an edit has instead) with a line of context, then
-  // sound, speed, captions and full screen, where the player has them.
+  // sound, speed, the panel's own at the right (a VOD's Transcribe), captions
+  // and full screen, where the player has them.
 
   import type { Snippet } from "svelte";
-  import { DRAG_SLOP } from "./dragout";
   import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
+  import { Hold } from "./hold.svelte";
   import { frameIndex } from "./media";
   import { keyHint } from "./keys.svelte";
   import { formatTime } from "./platform";
@@ -41,6 +42,7 @@
     ontoggleplay,
     onfullscreen,
     actions,
+    beside,
   }: {
     player: EmbeddedPlayer | null;
     playing: boolean;
@@ -62,6 +64,8 @@
     onfullscreen: (on: boolean) => void;
     /** The panel's own buttons and line of context, after the time. */
     actions?: Snippet;
+    /** The panel's own controls at the right, before the captions button (a VOD's Transcribe). */
+    beside?: Snippet;
   } = $props();
 
   // The time by frame (the clock small under it), or as a clock: clicking it
@@ -79,54 +83,14 @@
     player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
   }
 
-  // The speed button pressed and held opens a menu of the speeds above it;
-  // let go over one, it's picked, and elsewhere the menu just closes. A
-  // plain click still steps to the next speed. A press that moves first is
-  // a drag, not a hold.
-  const HOLD_MS = 400;
+  // The speed button pressed and held opens a menu of the speeds above it
+  // (hold.svelte.ts); a plain click still steps to the next speed.
   let speedButton = $state<HTMLElement>();
-  let speedMenu = $state(false);
-  let speedPress: { x: number; y: number; timer: ReturnType<typeof setTimeout> } | null = null;
-  // The menu was opened by this press: its let-go isn't a click on the button.
-  let held = false;
-  function onSpeedDown(e: PointerEvent) {
-    if (e.button !== 0) return;
-    held = false;
-    const timer = setTimeout(() => {
-      // Let go (or moved away) meanwhile: speedPress is gone, no menu.
-      if (!speedPress) return;
-      speedPress = null;
-      held = true;
-      speedMenu = true;
-    }, HOLD_MS);
-    speedPress = { x: e.clientX, y: e.clientY, timer };
-  }
-  function letGoOfPress() {
-    if (speedPress) clearTimeout(speedPress.timer);
-    speedPress = null;
-  }
-  function onWindowPointerMove(e: PointerEvent) {
-    if (speedPress && (!(e.buttons & 1) || Math.hypot(e.clientX - speedPress.x, e.clientY - speedPress.y) >= DRAG_SLOP))
-      letGoOfPress();
-    // Its let-go missed (it happened outside the window): closed.
-    else if (speedMenu && held && !(e.buttons & 1)) speedMenu = false;
-  }
-  function onWindowPointerUp(e: PointerEvent) {
-    letGoOfPress();
-    if (!speedMenu || !held) return;
-    speedMenu = false;
-    // By where it's let go: the press began on the button, so the button may be the event's target.
-    const item = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-speed]");
-    if (item) player?.rate?.set(Number(item.dataset.speed));
-    // The click that may follow (let go on the button) comes before this.
-    setTimeout(() => (held = false));
-  }
+  const speedHold = new Hold("[data-speed]", (item) => player?.rate?.set(Number(item.dataset.speed)));
   function onSpeedClick() {
-    if (!held) nextSpeed();
+    if (!speedHold.held) nextSpeed();
   }
 </script>
-
-<svelte:window onpointermove={onWindowPointerMove} onpointerup={onWindowPointerUp} onpointercancel={letGoOfPress} />
 
 <!-- Not "row": that's the transcript's lines, styled app-wide. -->
 <div class="bar">
@@ -190,11 +154,11 @@
     <button
       class="control speed"
       bind:this={speedButton}
-      onpointerdown={onSpeedDown}
+      onpointerdown={speedHold.down}
       onclick={onSpeedClick}
       title="Playback speed (hold for a list)">{rate}×</button
     >
-    <Popover bind:open={speedMenu} anchor={speedButton} label="Playback speed" width={84} padding={4} above>
+    <Popover bind:open={speedHold.open} anchor={speedButton} label="Playback speed" width={84} padding={4} above>
       <div class="speeds">
         {#each [...SPEEDS].sort((a, b) => b - a) as s (s)}
           <button
@@ -208,6 +172,7 @@
       </div>
     </Popover>
   {/if}
+  {@render beside?.()}
   {#if captionsAvailable || captionsNone}
     <button
       class="control"

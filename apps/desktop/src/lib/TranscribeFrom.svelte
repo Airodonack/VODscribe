@@ -1,7 +1,8 @@
 <script lang="ts">
   // Transcribing a stretch of a VOD from a moment, chosen from a menu: the
-  // player bar's Transcribe with nothing selected (from the playhead), and the
-  // transcript's "Transcribe from here" (from a line, or the start of a gap).
+  // player bar's Transcribe pressed and held (from the playhead; let go over
+  // a choice, hold.svelte.ts, picks it), and the transcript's "Transcribe
+  // from here" (from a line, or the start of a gap).
   // The choice is asked for at once (`transcribe_stretch`), after the requests
   // already made, and kept for next time, ticked.
 
@@ -69,7 +70,7 @@
   <p class="muted head">From {formatTime(from)} for:</p>
   <div class="choices">
     {#each CHOICES as choice (choice.key)}
-      <button class:current={choice.key === last} onclick={() => pick(choice)}>
+      <button data-choice={choice.key} class:current={choice.key === last} onclick={() => pick(choice)}>
         {#if choice.key === last}<Icon name="check" size={12} />{/if}<span>{choice.label}</span><span
           class="muted range">{describe(choice)}</span
         >
