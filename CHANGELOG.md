@@ -8,6 +8,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A VOD from a site whose player VODscribe can't show says just "Press Play to download the video and watch it here." under its thumbnail; the note before downloading still explains why.
 - Ctrl+A (⌘A) with nothing to pick, such as over the library page's main side, no longer selects all the text on the page.
 - Where the timeline has no waveform (a VOD not transcribed there yet, a stretch of an edit without one), it shows a thin line instead of a thick bar, so the waveform stands out from what isn't there yet.
+- A video on this computer (a file or a kept video) shows its picture as soon as it opens: the first frame, or the one where you left it, instead of its library picture. Play then starts at once, without the moment of black while the video got going.
 
 ## 0.6.0 — 2026-10-24
 

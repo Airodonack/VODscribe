@@ -28,7 +28,9 @@
   import { api } from "./api";
   import * as overlay from "./screenOverlay";
 
-  let { under = false }: { under?: boolean } = $props();
+  // `hidden`: no surface yet (the player has no frame to show), so the
+  // page shows what's in the box rather than the surface's black.
+  let { under = false, hidden = false }: { under?: boolean; hidden?: boolean } = $props();
 
   let box: HTMLDivElement;
   let still: HTMLCanvasElement;
@@ -165,7 +167,7 @@
       const covered = [...document.querySelectorAll("[role=dialog], [data-over-screen]")].some((el) =>
         overlaps(el.getBoundingClientRect(), r),
       );
-      const rect = covered ? null : here;
+      const rect = covered || hidden ? null : here;
       const now = JSON.stringify(rect);
       if (now === last) return;
       const mine = ++seq;

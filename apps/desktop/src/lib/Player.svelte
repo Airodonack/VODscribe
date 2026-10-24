@@ -25,6 +25,7 @@
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, inOut, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
+  import { ownPlayer } from "./ownPlayer.svelte";
   import {
     formatFraction,
     formatTime,
@@ -148,6 +149,15 @@
   // Later jumps arrive as a new `at` object.
   let handled = untrack(() => at);
   if (handled?.play && untrack(() => canEmbed(vod))) activate(handled.time);
+  // A file or a kept video opens in the app's own player at once, paused:
+  // the stage shows the frame at the playhead, and Play starts from the
+  // frames already decoded, with no wait. One VOD is open at a time, so
+  // one decoder; closing the VOD lets it go. A site's VOD still waits for
+  // Play (nothing of the site's loads before), and so does sound alone.
+  if (untrack(() => playsFromFile(vod) && playsHere(vod) && !vod.audio_only))
+    void ownPlayer.ask().then((own) => {
+      if (own && !destroyed) activate(from, false);
+    });
   $effect(() => {
     if (at === handled) return;
     handled = at;
@@ -197,9 +207,9 @@
   });
 
   // A VOD played in the app's own player shows its sound and speed on the
-  // bar from the moment it opens, though the player is made only on the
-  // first Play (`activate`: a decoder for each VOD opened would be wasted):
-  // what's set meanwhile is what it starts with. The volume and speed are
+  // bar from the moment it opens, though the player is made a moment
+  // after (a file's as it opens; one played in the web view on the first
+  // Play): what's set meanwhile is what it starts with. The volume and speed are
   // every player's (playerPrefs.svelte.ts); muted is kept till it's made
   // (and from one player to the next, as a download switches it). A
   // site's player has none of this till it's made: nothing of the site's

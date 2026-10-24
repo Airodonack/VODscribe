@@ -14,6 +14,7 @@
   import { cueAt } from "./media";
   import { NativeDriver } from "./nativeDriver";
   import Screen from "./Screen.svelte";
+  import Thumb from "./Thumb.svelte";
   import { prefs } from "./playerPrefs.svelte";
   import { os } from "./platform";
 
@@ -36,6 +37,10 @@
   let time = $state(untrack(() => start));
   let cues = $state.raw<Cue[]>([]);
   let destroyed = false;
+  /** Whether it's open and has shown a frame: till then the VOD's library
+   *  picture stands in the box, rather than the screen's black. */
+  let isOpen = false;
+  let pictured = $state(false);
   /** How long a file's open may take before it's taken as waiting on macOS's
    *  question (milliseconds): one takes some 30 ms otherwise. */
   const ASKING_AFTER = 1000;
@@ -89,6 +94,7 @@
       (opened) => {
         answered();
         if (destroyed) return;
+        isOpen = true;
         driver.opened(opened);
         onerror?.(null);
       },
@@ -116,6 +122,8 @@
   function follow() {
     if (destroyed) return;
     time = now();
+    // Its first frame is on the screen (the player shows it before it says so).
+    if (!pictured && isOpen && driver.shown() !== null) pictured = true;
     frame = requestAnimationFrame(follow);
   }
 
@@ -184,7 +192,9 @@
     onpointerup={press.up}
     onpointercancel={press.up}
   >
-    <Screen />
+    <!-- While macOS asks, the screen shows what it waits for (`asking`). -->
+    <Screen hidden={!pictured && !asking} />
+    {#if !pictured && vod.thumb}<Thumb name={vod.thumb} />{/if}
   </div>
 </div>
 

@@ -35,8 +35,9 @@ export default {
     const file = colours(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
     const [vod] = await app.addFiles([file]);
-    // Either player is made on the first play; paused once it plays (a pause
-    // before then finds nothing to pause, and it plays on).
+    // The web view's player is made on the first play (the app's own opens
+    // with the file, paused); paused once it plays (a pause before then
+    // finds nothing to pause, and it plays on).
     const open = async () => {
       await app.openVod(vod.id);
       await app.click('.bar button[aria-label="Play"]');
