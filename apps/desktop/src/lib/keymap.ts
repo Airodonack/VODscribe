@@ -2,10 +2,9 @@
 // where it can fire, and the keys it has by default on each OS. Bindings are
 // written as text, "Ctrl+Shift+ArrowLeft", "Meta+[", "Shift+<", " " for
 // Space: the modifiers in the order Ctrl, Alt, Shift, Meta, then the key as
-// `e.key` names it, a letter or sign lower-cased (so Shift or Caps Lock don't
-// change it, as `keyOf` in playerKeys.ts). A press matches a binding when
-// its key and all four modifiers are the same, so "b" and "Ctrl+b" are
-// different bindings. The key is `e.key`, not `e.code`: what the user pressed
+// `e.key` names it, a letter or sign lower-cased (`keyName`, so Shift or Caps
+// Lock don't change it). A press matches a binding when its key and all four
+// modifiers are the same, so "b" and "Ctrl+b" are different bindings. The key is `e.key`, not `e.code`: what the user pressed
 // is what the binding shows, on any layout; the price is that a binding
 // moves with the layout (Shift+, is "<" on a US keyboard, ";" on a German
 // one). The live map, with the user's own bindings over these defaults, is

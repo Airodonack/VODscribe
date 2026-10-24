@@ -16,9 +16,9 @@
   import Library, { type LibraryRow } from "./Library.svelte";
   import Player from "./Player.svelte";
   import Results from "./Results.svelte";
-  import SearchFilter, { DEFAULT_WITHIN, type Sources } from "./SearchFilter.svelte";
+  import SearchFilter, { type Sources } from "./SearchFilter.svelte";
   import SearchGrouping from "./SearchGrouping.svelte";
-  import { removeFilter } from "./queryChips";
+  import { DEFAULT_WITHIN, removeFilter } from "./queryChips";
   import Settings from "./Settings.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";

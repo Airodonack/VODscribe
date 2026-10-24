@@ -88,6 +88,10 @@ export function removeFilter(query: string, text: string): string {
   return before + space + after;
 }
 
+/** The window when neither the filter nor the text sets another, in
+ *  seconds (the core's `DEFAULT_WITHIN`, query.rs). */
+export const DEFAULT_WITHIN = 20;
+
 /** The widest window a search takes, in seconds: an hour (the core's
  *  `MOST_WITHIN`, query.rs). Wider ones made a search over common words take
  *  minutes, holding up everything else the app reads meanwhile. */

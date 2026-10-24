@@ -257,14 +257,42 @@ export function dropsInEdit(node: HTMLElement, at: (x: number) => Insertion) {
 /** What's under (`px`, `py`) to drop on: an edit's row, "Make new edit", the open edit's timeline, or the clip bar. */
 type Target = { edit: number | "new" | null; timeline: Insertion | null; bar: boolean };
 
+/** Nowhere to drop. */
+const NOWHERE: Target = { edit: null, timeline: null, bar: false };
+
 function targetAt(px: number, py: number): Target {
   const el = document.elementFromPoint(px, py);
-  const none = { edit: null, timeline: null, bar: false };
   const edit = el?.closest<HTMLElement>("[data-edit-drop]");
-  if (edit) return { ...none, edit: Number(edit.dataset.editDrop) };
-  if (el?.closest("[data-new-edit]")) return { ...none, edit: "new" };
-  if (el && timeline?.el.contains(el) && edits.openId !== null) return { ...none, timeline: timeline.at(px) };
-  return { ...none, bar: !!el?.closest(".clip-bar") };
+  if (edit) return { ...NOWHERE, edit: Number(edit.dataset.editDrop) };
+  if (el?.closest("[data-new-edit]")) return { ...NOWHERE, edit: "new" };
+  if (el && timeline?.el.contains(el) && edits.openId !== null) return { ...NOWHERE, timeline: timeline.at(px) };
+  return { ...NOWHERE, bar: !!el?.closest(".clip-bar") };
+}
+
+/** Whether the pointer is at the window's edge, where a carry goes out as the system's drag. */
+const atEdge = (e: PointerEvent) =>
+  e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
+
+/** Puts a carry's `ghost` on the page beside the pointer at (`x`, `y`),
+ *  flying there from `from`; returns what moves it with the pointer. */
+function showGhost(ghost: HTMLElement, from: DOMRect, x: number, y: number) {
+  const place = (px: number, py: number) => {
+    ghost.style.left = `${px + 14}px`;
+    ghost.style.top = `${py + 14}px`;
+  };
+  document.body.appendChild(ghost);
+  place(x, y);
+  ghost.animate(
+    [
+      {
+        transform: `translate(${from.left + from.width / 2 - x - 14}px, ${from.top - y - 14}px) scale(0.6)`,
+        opacity: 0.5,
+      },
+      { transform: "translate(0, 0) scale(1)", opacity: 1 },
+    ],
+    { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+  );
+  return place;
 }
 
 /** Shows what's under the pointer, `target`, as where it would drop (EditRow, the
@@ -307,7 +335,7 @@ export function backOver(x: number, y: number) {
 export function backLeft() {
   clips.carrying = null;
   clips.carried = 0;
-  showTarget({ edit: null, timeline: null, bar: false });
+  showTarget(NOWHERE);
 }
 
 /** It was dropped on the window, at (`x`, `y`): put where it was dropped. */
@@ -386,7 +414,6 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
   const caption = document.createElement("span");
   caption.textContent = label;
   ghost.append(img, wave, caption);
-  document.body.appendChild(ghost);
   let pictureUrl: string | null = null;
   const picture = pictureOf(vod, start, ownPlayer).then((p) => {
     if (p?.own) pictureUrl = p.url;
@@ -407,21 +434,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
   const image = Promise.all([picture, drawn]).then(([img]) => snapshot(img, wave, label));
   let early: Promise<Clip | null> | null = ownPlayer ? make(false) : null;
 
-  const place = (px: number, py: number) => {
-    ghost.style.left = `${px + 14}px`;
-    ghost.style.top = `${py + 14}px`;
-  };
-  place(x, y);
-  ghost.animate(
-    [
-      {
-        transform: `translate(${from.left + from.width / 2 - x - 14}px, ${from.top - y - 14}px) scale(0.6)`,
-        opacity: 0.5,
-      },
-      { transform: "translate(0, 0) scale(1)", opacity: 1 },
-    ],
-    { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-  );
+  const place = showGhost(ghost, from, x, y);
   clips.carrying = { start, end };
   document.body.classList.add("timeline-drag");
   // Text the press began selecting (a pill's name) isn't carried along.
@@ -438,7 +451,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("keydown", onKey, true);
       clips.carrying = null;
-      showTarget({ edit: null, timeline: null, bar: false });
+      showTarget(NOWHERE);
       document.body.classList.remove("timeline-drag");
       ghost.remove();
       if (pictureUrl) URL.revokeObjectURL(pictureUrl);
@@ -461,8 +474,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
       }
       place(e.clientX, e.clientY);
       showTarget(targetAt(e.clientX, e.clientY));
-      const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
-      if (outside) takeOut();
+      if (atEdge(e)) takeOut();
     };
     const onUp = (e: PointerEvent) => {
       down = false;
@@ -556,9 +568,7 @@ function takes(set: CarrySet, target: Target): Put[] {
 function setTargetAt(set: CarrySet, px: number, py: number): Target {
   const target = targetAt(px, py);
   const vodBar = target.bar && clips.doc?.kind === "vod";
-  return (vodBar ? set.stretches.length : takes(set, target).length)
-    ? target
-    : { edit: null, timeline: null, bar: false };
+  return (vodBar ? set.stretches.length : takes(set, target).length) ? target : NOWHERE;
 }
 
 /** Puts `set` where it was dropped, at (`px`, `py`), as one change; false if nothing took it. */
@@ -588,22 +598,7 @@ export function carrySet(set: CarrySet): Promise<void> {
   const caption = document.createElement("span");
   caption.textContent = set.label;
   ghost.append(caption);
-  document.body.appendChild(ghost);
-  const place = (px: number, py: number) => {
-    ghost.style.left = `${px + 14}px`;
-    ghost.style.top = `${py + 14}px`;
-  };
-  place(set.x, set.y);
-  ghost.animate(
-    [
-      {
-        transform: `translate(${set.from.left + set.from.width / 2 - set.x - 14}px, ${set.from.top - set.y - 14}px) scale(0.6)`,
-        opacity: 0.5,
-      },
-      { transform: "translate(0, 0) scale(1)", opacity: 1 },
-    ],
-    { duration: FLY_MS, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-  );
+  const place = showGhost(ghost, set.from, set.x, set.y);
   clips.carried = set.items.length;
   document.body.classList.add("timeline-drag");
   window.getSelection()?.removeAllRanges();
@@ -616,7 +611,7 @@ export function carrySet(set: CarrySet): Promise<void> {
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("keydown", onKey, true);
       clips.carried = 0;
-      showTarget({ edit: null, timeline: null, bar: false });
+      showTarget(NOWHERE);
       document.body.classList.remove("timeline-drag");
       ghost.remove();
       resolve();
@@ -625,8 +620,7 @@ export function carrySet(set: CarrySet): Promise<void> {
       if (leaving) return;
       place(e.clientX, e.clientY);
       showTarget(setTargetAt(set, e.clientX, e.clientY));
-      const outside = e.clientX <= 0 || e.clientY <= 0 || e.clientX >= innerWidth - 1 || e.clientY >= innerHeight - 1;
-      if (outside) takeOut();
+      if (atEdge(e)) takeOut();
     };
     const onUp = (e: PointerEvent) => {
       down = false;

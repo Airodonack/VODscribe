@@ -23,7 +23,7 @@
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
-  import { inOut, isEscape, playerKey, transportKey, vodShortcuts } from "./playerKeys";
+  import { forPlayer, inOut, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, playsHere, type EmbeddedPlayer } from "./embed";
   import {
     formatFraction,
@@ -485,7 +485,7 @@
   // player's own iframe has focus go to that player instead. Which key does
   // what is the map's (keys.svelte.ts); Escape is always Escape.
   function onKey(e: KeyboardEvent) {
-    if (playerKey(e) === null || !canEmbed(vod) || !keysForApp()) return;
+    if (!forPlayer(e) || !canEmbed(vod) || !keysForApp()) return;
     // B cuts, as in video editors (also with Ctrl, or ⌘ on a Mac), C
     // makes a clip (bare: Ctrl+C is copy), and T transcribes, as the
     // button does.

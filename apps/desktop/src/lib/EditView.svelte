@@ -17,7 +17,7 @@
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
-  import { editShortcuts, inOut, isEscape, playerKey, transportKey } from "./playerKeys";
+  import { editShortcuts, forPlayer, inOut, isEscape, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -432,7 +432,7 @@
   // B splits, E exports (renders). Which key does what is the map's
   // (keys.svelte.ts); Escape is always Escape.
   function onKey(e: KeyboardEvent) {
-    if (playerKey(e) === null || !keysForApp()) return;
+    if (!forPlayer(e) || !keysForApp()) return;
     const render = is(e, "edit.render");
     // E renders even where edits can't play here: then it's the way to watch one.
     if (render && !player) {

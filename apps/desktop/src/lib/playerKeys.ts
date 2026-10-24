@@ -39,21 +39,17 @@ export function markFramesOf(e: KeyLike, is: Is, fps: number): number | undefine
   return frames ?? (seconds === undefined ? undefined : Math.round(seconds * fps));
 }
 
-/** `e.key`, lower-cased if it's a letter or sign, so Shift or Caps Lock don't change it. */
-export const keyOf = (e: KeyboardEvent) => (e.key.length === 1 ? e.key.toLowerCase() : e.key);
-
-/** `e`'s key for a player (as `keyOf` gives it), or null if it isn't for
- *  one: taken already (the app's keys, asked first in App.svelte
- *  `onWindowKey`, as Alt+← for back; a row's Alt+↑), or typed into a field
- *  or a dialog, or while a modal window (Settings) is open, whatever has the
- *  focus: a press on its backdrop that isn't a click leaves the focus on the
- *  page body. Alt held is no reason of its own: a player's action can be
- *  given an Alt key in Settings. */
-export function playerKey(e: KeyboardEvent): string | null {
+/** Whether `e` is for a player at all: not taken already (the app's keys,
+ *  asked first in App.svelte `onWindowKey`, as Alt+← for back; a row's
+ *  Alt+↑), nor typed into a field or a dialog, nor pressed while a modal
+ *  window (Settings) is open, whatever has the focus: a press on its backdrop
+ *  that isn't a click leaves the focus on the page body. Alt held is no
+ *  reason of its own: a player's action can be given an Alt key in Settings. */
+export function forPlayer(e: KeyboardEvent): boolean {
   const target = e.target as HTMLElement | null;
-  if (e.defaultPrevented || target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]")) return null;
-  if (typeof document !== "undefined" && document.querySelector('[aria-modal="true"]')) return null;
-  return keyOf(e);
+  if (e.defaultPrevented || target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]"))
+    return false;
+  return typeof document === "undefined" || !document.querySelector('[aria-modal="true"]');
 }
 
 /** Escape, which is no action of the table's: it always lets go (of full

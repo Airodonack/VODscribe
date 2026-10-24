@@ -25,6 +25,13 @@ use crate::transcript::{Word, find_phrase, terms};
 const EARLIEST: f64 = f64::MIN;
 const LATEST: f64 = f64::MAX;
 
+/// How many names `from:` suggests at most.
+const MOST_SUGGESTIONS: usize = 8;
+
+/// How many occurrences `Stream::tightest` tries at most for one first word,
+/// where pieces could share words: past it, the tightest set found so far.
+const MOST_TRIES: usize = 10_000;
+
 /// A name `from:` can take, as the box suggests it.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct AuthorSuggestion {
@@ -163,9 +170,8 @@ impl Db {
 
     /// Names `from:` could mean, starting with `prefix` in any case: the
     /// channels of the library's VODs first, then chatters with the most
-    /// messages (in VOD `vod_id`, if given). At most eight.
+    /// messages (in VOD `vod_id`, if given). At most `MOST_SUGGESTIONS`.
     pub fn author_suggestions(&self, prefix: &str, vod_id: Option<i64>) -> Result<Vec<AuthorSuggestion>> {
-        const MOST: usize = 8;
         let prefix = prefix.trim();
         // Every name from `prefix` on that still starts with it, as NOCASE
         // compares (ASCII folded, then bytes): the highest character ends it.
@@ -176,7 +182,7 @@ impl Db {
              WHERE channel COLLATE NOCASE >= ?1 AND channel COLLATE NOCASE < ?2 AND (?3 IS NULL OR vods.id = ?3)
              ORDER BY channel COLLATE NOCASE LIMIT ?4",
         )?;
-        for name in stmt.query_map(params![prefix, upto, vod_id, MOST as i64], |r| r.get::<_, String>(0))? {
+        for name in stmt.query_map(params![prefix, upto, vod_id, MOST_SUGGESTIONS as i64], |r| r.get::<_, String>(0))? {
             let name = name?;
             if !out.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
                 out.push(AuthorSuggestion { name, streamer: true, messages: 0 });
@@ -187,14 +193,14 @@ impl Db {
              WHERE author COLLATE NOCASE >= ?1 AND author COLLATE NOCASE < ?2 AND (?3 IS NULL OR vod_id = ?3)
              GROUP BY author COLLATE NOCASE ORDER BY n DESC, author COLLATE NOCASE LIMIT ?4",
         )?;
-        let rows = stmt.query_map(params![prefix, upto, vod_id, MOST as i64], |r| {
+        let rows = stmt.query_map(params![prefix, upto, vod_id, MOST_SUGGESTIONS as i64], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
         })?;
         for row in rows {
             let (name, messages) = row?;
             match out.iter().position(|s| s.name.eq_ignore_ascii_case(&name)) {
                 Some(i) => out[i].messages = messages,
-                None if out.len() < MOST => out.push(AuthorSuggestion { name, streamer: false, messages }),
+                None if out.len() < MOST_SUGGESTIONS => out.push(AuthorSuggestion { name, streamer: false, messages }),
                 None => {}
             }
         }
@@ -585,10 +591,6 @@ fn whole(p: &Piece) -> &[String] {
     &p.terms[..p.terms.len() - usize::from(p.prefix)]
 }
 
-/// How many occurrences `Stream::tightest` tries at most for one first word,
-/// where pieces could share words: past it, the tightest set found so far.
-const MOST_TRIES: usize = 10_000;
-
 /// An occurrence of a piece (a range of places) and its first word's start
 /// and last word's end.
 struct Timed {
@@ -597,12 +599,12 @@ struct Timed {
     range: Range<usize>,
 }
 
-/// Where a match's occurrences can be: from its first word's start to the
-/// window's end.
+/// The time a match's occurrences must lie in: from its first word's start
+/// to the window's end.
 #[derive(Clone, Copy)]
-struct Fit {
-    first: f64,
-    last: f64,
+struct Window {
+    start: f64,
+    end: f64,
 }
 
 /// A match in what was said, and its words as (line id, word index).
@@ -944,8 +946,8 @@ impl Stream {
             let mut soonest = None;
             let mut budget = MOST_TRIES;
             // Times are seconds as floats: a hair over the window is in it.
-            let fits = Fit { first, last: first + within + 1e-9 };
-            self.assign(places, &by_end, &mut chosen, 0, fixed_end, fits, &mut soonest, &mut budget);
+            let window = Window { start: first, end: first + within + 1e-9 };
+            self.assign(places, &by_end, &mut chosen, 0, fixed_end, window, &mut soonest, &mut budget);
             if let Some((end, set)) = soonest {
                 let span = end - first;
                 if best.as_ref().is_none_or(|(s, _)| span < *s) {
@@ -956,7 +958,7 @@ impl Stream {
         best
     }
 
-    /// Gives pieces `j` on, those not `chosen` yet, the occurrences in `fits`
+    /// Gives pieces `j` on, those not `chosen` yet, the occurrences in `window`
     /// that end soonest with none sharing a word with another chosen; the set
     /// ending soonest (and its end) into `best`. Each piece's occurrences
     /// (`by_end`) are tried soonest-ending first, so with no words shared the
@@ -970,7 +972,7 @@ impl Stream {
         chosen: &mut Vec<Option<Range<usize>>>,
         j: usize,
         end: f64,
-        fits: Fit,
+        window: Window,
         best: &mut Option<(f64, Vec<Range<usize>>)>,
         budget: &mut usize,
     ) {
@@ -981,12 +983,12 @@ impl Stream {
             return;
         }
         if chosen[j].is_some() {
-            return self.assign(places, by_end, chosen, j + 1, end, fits, best, budget);
+            return self.assign(places, by_end, chosen, j + 1, end, window, best, budget);
         }
-        for t in by_end[j].iter().filter(|t| t.start >= fits.first) {
+        for t in by_end[j].iter().filter(|t| t.start >= window.start) {
             let e = end.max(t.end);
             // Sorted by their ends: none after this one ends any sooner, nor fits.
-            if t.end > fits.last || best.as_ref().is_some_and(|(b, _)| e >= *b) || *budget == 0 {
+            if t.end > window.end || best.as_ref().is_some_and(|(b, _)| e >= *b) || *budget == 0 {
                 break;
             }
             *budget -= 1;
@@ -994,7 +996,7 @@ impl Stream {
                 continue;
             }
             chosen[j] = Some(t.range.clone());
-            self.assign(places, by_end, chosen, j + 1, e, fits, best, budget);
+            self.assign(places, by_end, chosen, j + 1, e, window, best, budget);
             chosen[j] = None;
         }
     }
@@ -1058,15 +1060,15 @@ pub(crate) fn highlight(words: &[Word], ranges: &[(usize, usize)]) -> Vec<TextPa
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chat::{ChatMessage, ChatPart, Kind};
+    use crate::fetch::VodInfo;
+    use crate::transcript::Segment;
+    use std::path::Path;
 
     thread_local! {
         /// Every window read, none passed over: what `may_match` must agree with.
         pub(super) static NO_SHORTCUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
-    use crate::chat::{ChatMessage, ChatPart, Kind};
-    use crate::fetch::VodInfo;
-    use crate::transcript::Segment;
-    use std::path::Path;
 
     fn library() -> Db {
         Db::open(Path::new(":memory:")).unwrap()
@@ -1487,7 +1489,7 @@ mod tests {
     /// The cases timed, as (what, query): the e2e perf pass's three, and
     /// what this search adds. The library has no "i" or "mean", so the
     /// all-common phrase is one of its own common words.
-    pub(crate) const BENCHMARK: [(&str, &str); 14] = [
+    const BENCHMARK: [(&str, &str); 14] = [
         ("one line a VOD", "tranquility base relay"),
         ("many lines", "chat"),
         ("none", "zyzzyva"),

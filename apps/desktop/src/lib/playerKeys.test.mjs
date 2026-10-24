@@ -15,7 +15,7 @@ export async function resolve(specifier, context, next) {
 }`),
 );
 const { buildMap, matches } = await import("./keymap.ts");
-const { editShortcuts, inOut, playerKey, seekOf, transportKey, vodShortcuts } = await import("./playerKeys.ts");
+const { editShortcuts, forPlayer, inOut, seekOf, transportKey, vodShortcuts } = await import("./playerKeys.ts");
 
 /** The default map on `os`, as `is` and `bindings`, with `overrides` over it.
  *  @param {import("./keymap.ts").Os} os @param {Record<string, string[]>} overrides */
@@ -71,17 +71,17 @@ test("a player has every key the app hasn't taken, Alt ones too, but none in a f
         ...e,
       })
     );
-  assert.equal(playerKey(event({})), "p");
+  assert.equal(forPlayer(event({})), true);
   // Alt+P bound to a player action reaches it; Alt+← is back, taken first.
-  assert.equal(playerKey(event({ altKey: true })), "p");
-  assert.equal(playerKey(event({ key: "ArrowLeft", altKey: true, defaultPrevented: true })), null);
-  assert.equal(playerKey(event({}, "input")), null);
-  assert.equal(playerKey(event({}, "[role=dialog]")), null);
+  assert.equal(forPlayer(event({ altKey: true })), true);
+  assert.equal(forPlayer(event({ key: "ArrowLeft", altKey: true, defaultPrevented: true })), false);
+  assert.equal(forPlayer(event({}, "input")), false);
+  assert.equal(forPlayer(event({}, "[role=dialog]")), false);
   // A modal window open, the focus left on the page body: still not the player's.
   const page = /** @type {{ document?: unknown }} */ (/** @type {unknown} */ (globalThis));
   page.document = { querySelector: () => ({}) };
   try {
-    assert.equal(playerKey(event({})), null);
+    assert.equal(forPlayer(event({})), false);
   } finally {
     delete page.document;
   }

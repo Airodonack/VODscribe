@@ -19,7 +19,7 @@
 // the order a bulk action takes them in, and with two or more picked each
 // shows its number in it. Picking never moves the playhead.
 
-import { os } from "./platform";
+import { listed, os } from "./platform";
 
 /** In the snippet set: a stretch between cuts of the open timeline (its time), or a clip of its clip bar. */
 export type Snippet = { kind: "segment"; start: number; end: number } | { kind: "clip"; id: number };
@@ -156,8 +156,7 @@ export const picks = (e: MouseEvent | PointerEvent) => toggles(e) || e.shiftKey;
 
 /** What to say a set holds: "3 clips", "2 VODs and 1 edit". */
 export function count(parts: [number, string, string][]): string {
-  const said = parts.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`);
-  return said.length > 1 ? `${said.slice(0, -1).join(", ")} and ${said.at(-1)}` : (said[0] ?? "");
+  return listed(parts.filter(([n]) => n > 0).map(([n, one, many]) => `${n} ${n === 1 ? one : many}`));
 }
 
 /**

@@ -9,11 +9,11 @@ import { settings } from "./appSettings.svelte";
 import {
   ACTIONS,
   buildMap,
-  bindingOf,
   canonical,
   conflicts as conflictsIn,
   defaultsOf,
   label,
+  matches,
   type Action,
   type ActionId,
   type KeyLike,
@@ -41,8 +41,7 @@ class Keys {
 
   /** Whether the key press `e` fires action `id`. */
   is(e: KeyLike, id: ActionId): boolean {
-    const pressed = bindingOf(e);
-    return pressed !== null && this.bindingsOf(id).includes(pressed);
+    return matches(e, this.bindingsOf(id));
   }
 
   /** `id`'s first key as this OS writes it ("⌘F", "Ctrl+F"), or "" if it has none. */

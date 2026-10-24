@@ -1113,7 +1113,7 @@ impl Db {
 
     /// The name for `from`..`to` of clip `clip`'s timeline made a clip: what's
     /// said at its start.
-    fn span_title(&self, clip: i64, from: f64, to: f64) -> Result<String> {
+    pub fn span_title(&self, clip: i64, from: f64, to: f64) -> Result<String> {
         let parts = stretch_pieces(&self.edit_pieces(clip)?, from, to);
         let first = parts.first().context("Nothing of the edit plays there.")?;
         Ok(crate::clips::title(&self.words_between(first.vod_id, first.start, first.end)?, first.start))

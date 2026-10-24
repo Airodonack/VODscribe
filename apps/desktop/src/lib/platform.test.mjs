@@ -11,8 +11,16 @@ import {
   formatFraction,
   isTwitchClip,
   labelOf,
+  listed,
   siteName,
 } from "./platform.ts";
+
+test("a list is written with commas and a last and", () => {
+  assert.equal(listed([]), "");
+  assert.equal(listed(["Undo"]), "Undo");
+  assert.equal(listed(["Undo", "Redo"]), "Undo and Redo");
+  assert.equal(listed(["Undo", "Redo", "Search"]), "Undo, Redo and Search");
+});
 
 test("a video's size is a range, in MB under a GB and GB above", () => {
   assert.equal(videoSize(1080), "3 to 5 GB");

@@ -4,9 +4,6 @@
     audio: boolean;
     chat: boolean;
   }
-
-  /** The window when neither the filter nor the text sets another (crates/core query.rs). */
-  export const DEFAULT_WITHIN = 20;
 </script>
 
 <script lang="ts">
@@ -14,7 +11,7 @@
   import { api, type AuthorSuggestion, type SearchQuery, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
-  import { lengthText, MOST_WITHIN, splitLength, UNITS, type Unit } from "./queryChips";
+  import { DEFAULT_WITHIN, lengthText, MOST_WITHIN, splitLength, UNITS, type Unit } from "./queryChips";
 
   // A button that sums up the search's filters, opening a panel to change them.
   // New kinds of filter get a section of the panel and a part of the summary.

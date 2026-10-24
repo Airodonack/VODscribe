@@ -8,7 +8,7 @@
   import Icon from "./Icon.svelte";
   import { ACTIONS, bindingOf, label, type Action, type ActionId, type Scope } from "./keymap";
   import { keys } from "./keys.svelte";
-  import { os } from "./platform";
+  import { listed, os } from "./platform";
 
   // The scopes as the user knows them, in the table's order.
   const GROUPS: { scope: Scope; heading: string }[] = [
@@ -84,10 +84,7 @@
   }
 
   /** "Undo", "Undo and Redo", "Undo, Redo and Search". */
-  const named = (actions: Action[]) => {
-    const labels = actions.map((a) => a.label);
-    return labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : (labels[0] ?? "");
-  };
+  const named = (actions: Action[]) => listed(actions.map((a) => a.label));
 
   const remove = (id: ActionId, binding: string) =>
     keys.set({ [id]: keys.bindingsOf(id).filter((b) => b !== binding) });

@@ -6,6 +6,7 @@ import { SvelteSet } from "svelte/reactivity";
 import { api, type Vod } from "./api";
 import { choose } from "./ask";
 import { edits } from "./edits.svelte";
+import { listed } from "./platform";
 
 /** The VODs being removed: their rows say so meanwhile (a long transcript
  *  takes a few seconds to erase), until the news that each is gone
@@ -20,8 +21,7 @@ export const DELETE = "Remove and delete the video";
 export function inEdits(vodId: number, before: string, after: string): string {
   const names = edits.forVod(vodId).map((e) => `“${e.title}”`);
   if (!names.length) return "";
-  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-  return `${before}${names.length === 1 ? "the edit" : "the edits"} ${list}${after}`;
+  return `${before}${names.length === 1 ? "the edit" : "the edits"} ${listed(names)}${after}`;
 }
 
 /**

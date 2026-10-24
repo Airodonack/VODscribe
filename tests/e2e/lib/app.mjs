@@ -145,6 +145,11 @@ export class App {
     return pageDump(this.driver, options);
   }
 
+  /** Logs `what` went wrong, with the dump (without the page's text) under it. */
+  async logPage(what) {
+    this.log(`${what}; the page:\n    ${(await this.dump({ text: false })).replaceAll("\n", "\n    ")}`);
+  }
+
   /**
    * Finds what `find` (a function body: the element or null) gives, waiting
    * up to CLICK_WAIT for it in the page, then does `act` (a function body
@@ -165,9 +170,7 @@ export class App {
       ...args,
     );
     if (done) return;
-    this.log(
-      `no ${what} after ${CLICK_WAIT / 1000} s; the page:\n    ${(await this.dump({ text: false })).replaceAll("\n", "\n    ")}`,
-    );
+    await this.logPage(`no ${what} after ${CLICK_WAIT / 1000} s`);
     throw new Error(`no ${what} on the page after ${CLICK_WAIT / 1000} s`);
   }
 
@@ -220,7 +223,7 @@ export class App {
       }
       tried.push(`${by}: no`);
     }
-    this.log(`the page isn't focused; the page:\n    ${(await this.dump({ text: false })).replaceAll("\n", "\n    ")}`);
+    await this.logPage("the page isn't focused");
     throw new Error(`page not focused (asked ${tried.join("; ")})`);
   }
 

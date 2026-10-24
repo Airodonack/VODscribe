@@ -17,6 +17,7 @@ import { cuts } from "./cuts.svelte";
 import { carrySet, exportStretch, exportStretches } from "./dragout";
 import { edits } from "./edits.svelte";
 import { is } from "./keys.svelte";
+import { listed } from "./platform";
 import { isEscape } from "./playerKeys";
 import { DELETE, REMOVE, removeVod } from "./removal.svelte";
 import { count, library, snippets, type Entry, type Snippet } from "./selection.svelte";
@@ -222,9 +223,8 @@ export async function removeChosenEntries(rows: Row[], onremove: (vodId: number)
     : "";
   let deleteVideo = false;
   if (using.length) {
-    const list = using.length === 1 ? using[0] : `${using.slice(0, -1).join(", ")} and ${using.at(-1)}`;
     const answer = await choose(
-      `Remove ${what}?${vodText}${editText} ${theirs} pieces in ${using.length === 1 ? "the edit" : "the edits"} ${list} stay: removed from the library, the video stays on this computer for them; deleted, only the stretches they use are kept.`,
+      `Remove ${what}?${vodText}${editText} ${theirs} pieces in ${using.length === 1 ? "the edit" : "the edits"} ${listed(using)} stay: removed from the library, the video stays on this computer for them; deleted, only the stretches they use are kept.`,
       REMOVE,
       DELETE,
       "Keep",

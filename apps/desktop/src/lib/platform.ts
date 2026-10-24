@@ -8,6 +8,11 @@ export const os: "windows" | "mac" | "linux" =
       ? "windows"
       : "mac";
 
+/** ["a", "b", "c"] -> "a, b and c"; one alone as it is, none "". */
+export function listed(items: string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} and ${items.at(-1)}` : (items[0] ?? "");
+}
+
 /** 3.4e9 -> "3.4 GB", 9.5e8 -> "950 MB" */
 export function formatBytes(bytes: number): string {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;

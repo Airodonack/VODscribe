@@ -347,25 +347,8 @@ pub(crate) async fn add_edit_clip(
     to: f64,
     shown: Option<bool>,
 ) -> CmdResult<Clip> {
-    if !(from.is_finite() && to.is_finite() && to > from && from >= 0.0) {
-        return Err("That's not a stretch of the edit.".into());
-    }
-    let state = app.state::<AppState>();
-    let clip = {
-        let db = state.db.lock().unwrap();
-        let pieces = db.edit_pieces(edit_id).map_err(err)?;
-        let first = vodscribe_core::edits::stretch_pieces(&pieces, from, to);
-        let first = first.first().ok_or("Nothing of the edit plays there.")?;
-        let words = db.words_between(first.vod_id, first.start, first.end).map_err(err)?;
-        let doc = Doc::Edit(edit_id);
-        let before = history::snapshot(&db, doc).ok().flatten();
-        let title = clips::title(&words, first.start);
-        let clip = db.add_edit_clip(edit_id, from, to, &title, shown.unwrap_or(true)).map_err(err)?;
-        state.history.record(&db, doc, "Clip added", before);
-        clip
-    };
-    state.clips.queue(clip.id);
-    Ok(clip)
+    let made = make_edit_clips(&app, edit_id, vec![(from, to)], shown.unwrap_or(true))?;
+    Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
 /// Makes each of `ranges` (`from`..`to` seconds of edit `edit_id`'s
@@ -373,26 +356,29 @@ pub(crate) async fn add_edit_clip(
 /// undo takes back whole (several stretches selected, clipped at once).
 #[tauri::command]
 pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_edit_clips(&app, edit_id, ranges, true)
+}
+
+/// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
+/// titled with what's said at its start, as one change; then each is queued
+/// to be made.
+fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     if ranges.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from && from >= 0.0)) {
         return Err("That's not a stretch of the edit.".into());
     }
     let state = app.state::<AppState>();
     let made = {
         let db = state.db.lock().unwrap();
-        let pieces = db.edit_pieces(edit_id).map_err(err)?;
         let doc = Doc::Edit(edit_id);
         let before = history::snapshot(&db, doc).ok().flatten();
         // Each one's title first: one that plays nothing makes none of them.
         let mut titled = Vec::new();
         for (from, to) in ranges {
-            let first = vodscribe_core::edits::stretch_pieces(&pieces, from, to);
-            let first = first.first().ok_or("Nothing of the edit plays there.")?;
-            let words = db.words_between(first.vod_id, first.start, first.end).map_err(err)?;
-            titled.push((from, to, clips::title(&words, first.start)));
+            titled.push((from, to, db.span_title(edit_id, from, to).map_err(err)?));
         }
         let mut made = Vec::new();
         for (from, to, title) in titled {
-            made.push(db.add_edit_clip(edit_id, from, to, &title, true).map_err(err)?);
+            made.push(db.add_edit_clip(edit_id, from, to, &title, shown).map_err(err)?);
         }
         state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
         made
@@ -408,8 +394,8 @@ pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Cli
     crate::with_reads(app, move |db| db.clips(vod_id)).await
 }
 
-/// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled with
-/// what's said in it; in the clip bar unless `shown` is false (one only
+/// Makes a clip of VOD `vod_id` from `start` to `end` seconds, titled
+/// with what's said in it; in the clip bar unless `shown` is false (one only
 /// dragged out of the window).
 #[tauri::command]
 pub(crate) async fn add_clip(
@@ -419,21 +405,8 @@ pub(crate) async fn add_clip(
     end: f64,
     shown: Option<bool>,
 ) -> CmdResult<Clip> {
-    let state = app.state::<AppState>();
-    let clip = {
-        let db = state.db.lock().unwrap();
-        let vod = db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-        let end = vod.info.duration.map_or(end, |d| end.min(d));
-        check_range(start, end, vod.info.duration)?;
-        let words = db.words_between(vod_id, start, end).map_err(err)?;
-        let doc = Doc::Vod(vod_id);
-        let before = history::snapshot(&db, doc).ok().flatten();
-        let clip = db.add_clip(vod_id, start, end, &clips::title(&words, start), shown.unwrap_or(true)).map_err(err)?;
-        state.history.record(&db, doc, "Clip added", before);
-        clip
-    };
-    state.clips.queue(clip.id);
-    Ok(clip)
+    let made = make_clips(&app, vod_id, vec![(start, end)], shown.unwrap_or(true))?;
+    Ok(made.into_iter().next().expect("a clip for its one range"))
 }
 
 /// Makes each of `ranges` (`start`..`end` seconds of VOD `vod_id`) a clip in
@@ -441,6 +414,13 @@ pub(crate) async fn add_clip(
 /// stretches selected, clipped at once).
 #[tauri::command]
 pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    make_clips(&app, vod_id, ranges, true)
+}
+
+/// What `add_clip` and `add_clips` do: a clip of each range (its end kept
+/// within the VOD), each titled with what's said in it, as one change; then
+/// each is queued to be made.
+fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
     let made = {
         let db = state.db.lock().unwrap();
@@ -456,7 +436,7 @@ pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64
         let mut made = Vec::new();
         for (start, end) in ranges {
             let words = db.words_between(vod_id, start, end).map_err(err)?;
-            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), true).map_err(err)?);
+            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown).map_err(err)?);
         }
         state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
         made
@@ -536,11 +516,7 @@ pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids
     let gone = delete_clips_in(&db, &state.history, &ids, |id| state.clips.stop(id)).map_err(err)?;
     // Their files once they're gone from the library, as `remove` does for one.
     for (clip, handed_out) in gone {
-        if let Some(path) = clip.file_path.filter(|_| !handed_out) {
-            delete_file(path);
-        }
-        let _ = std::fs::remove_file(thumb_path(&app, clip.id));
-        let _ = app.emit("clip-removed", clip.id);
+        after_delete(&app, clip.id, clip.file_path, handed_out);
     }
     Ok(())
 }
@@ -645,12 +621,19 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     let clip = db.clip(id)?;
     let handed_out = db.clip_handed_out(id)?;
     db.delete_clip(id)?;
-    if let Some(path) = clip.and_then(|c| c.file_path).filter(|_| !handed_out) {
+    after_delete(app, id, clip.and_then(|c| c.file_path), handed_out);
+    Ok(())
+}
+
+/// What's left of clip `id` once it's gone from the library: its file
+/// (unless it was dragged out of the app, `handed_out`: another app's then)
+/// and its thumbnail deleted, and the page told.
+fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
+    if let Some(path) = file.filter(|_| !handed_out) {
         delete_file(path);
     }
     let _ = std::fs::remove_file(thumb_path(app, id));
     let _ = app.emit("clip-removed", id);
-    Ok(())
 }
 
 /// Shows clip `id`'s file in the system file manager.
