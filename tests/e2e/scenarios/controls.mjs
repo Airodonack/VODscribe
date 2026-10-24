@@ -3,7 +3,10 @@
 // the legend under the player says so; still so after a restart. While a row
 // waits for its key, Escape cancels it and leaves Settings open; a key that
 // another action has is named ("Used by …") and stays where it was on
-// Cancel. Reset all controls… gives Space back.
+// Cancel; Delete, four actions' key, names them all, and Replace takes it
+// from each. Search on "/" goes to the box from the page, and in the box "/"
+// is typed; with no key at all, the home page names none. Reset all
+// controls… gives Space back.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -55,6 +58,10 @@ async function pPlays(app, ctx, label) {
     10_000,
   );
   if (legend !== "K or P") throw new Error(`${label}: the legend's play/pause keys are "${legend}", not "K or P"`);
+  // Paused at the start: the 5 s file may have played to its end while the
+  // keys were changed (a slow runner), and a press there isn't shown playing.
+  await app.pause();
+  await app.toStart();
   await app.key("p");
   await until(`${label}: P to play`, () => playing(app), MINUTE);
   await app.pause();
@@ -114,6 +121,33 @@ export default {
     if ((await chips(app, "cut.here")).includes("K")) throw new Error("Cancel gave K to Cut here");
     if ((await chips(app, PLAY)).join() !== "K,P")
       throw new Error(`after Cancel, Play or pause has ${await chips(app, PLAY)}`);
+
+    // Delete is four actions' (the library's, the clips', the edit's, the
+    // mark's): given to Play or pause, all four are named, and Replace takes
+    // it from each of them. Then taken from Play or pause, it's nobody's.
+    const REMOVERS = ["library.remove", "clips.remove", "edit.remove", "mark.remove"];
+    await record(app, PLAY);
+    await press(app, "Delete");
+    const named = await until(
+      "Delete's clash named",
+      () => app.js(`return document.querySelector(".clash")?.textContent.replace(/\\s+/g, " ").trim() ?? false`),
+      10_000,
+    );
+    for (const what of ["VODs and edits", "selected clips", "or the piece", "selected mark"])
+      if (!named.includes(what)) throw new Error(`Delete's clash says "${named}", without "${what}"`);
+    await app.click(".clash button:first-of-type");
+    await until("Delete on Play or pause", async () => (await chips(app, PLAY)).join() === "K,P,Delete", 10_000);
+    for (const id of REMOVERS)
+      if ((await chips(app, id)).includes("Delete")) throw new Error(`after Replace, ${id} still has Delete`);
+    await app.click('button[aria-label="Remove Delete from Play or pause"]');
+    await until("Delete gone again", async () => (await chips(app, PLAY)).join() === "K,P", 10_000);
+
+    // Search given "/" in place of Ctrl+F (⌘F).
+    await record(app, "search.focus");
+    await press(app, "/");
+    await until("/ on Search", async () => (await chips(app, "search.focus")).includes("/"), 10_000);
+    await app.click('[data-action="search.focus"] .chip:first-child button.remove');
+    await until("only / on Search", async () => (await chips(app, "search.focus")).join() === "/", 10_000);
     // The end of the list: Reset all controls… and the keys that are always the same.
     await app.js(
       `const pane = document.querySelector(arguments[0] + " .pane"); pane.scrollTop = pane.scrollHeight;`,
@@ -121,6 +155,32 @@ export default {
     );
     await ctx.checkpoint("controls-end");
     await closeSettings(app);
+    // "/" from the page goes to the search box; in the box, it's typed.
+    const SEARCH = 'input[aria-label="Search"]';
+    await app.key("/");
+    await until("/ to search", () => app.js(`return document.activeElement?.matches(arguments[0])`, SEARCH), 10_000);
+    const typed = await app.js(
+      `return document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }))`,
+    );
+    if (!typed) throw new Error("/ in the search box was taken for Search, not typed");
+    await app.blur(SEARCH);
+
+    // Search with no key at all: the home page names none.
+    await app.openSettings("Controls");
+    await app.click('[data-action="search.focus"] button.remove');
+    await until("Search keyless", async () => (await chips(app, "search.focus")).length === 0, 10_000);
+    await closeSettings(app);
+    if (!(await app.js(`return !!document.querySelector(".home")`))) await app.click(".list .vod.selected .main");
+    const home = await until(
+      "the home page",
+      () => app.js(`return document.querySelector(".home .empty")?.textContent.replace(/\\s+/g, " ").trim() ?? false`),
+      10_000,
+    );
+    if (
+      !home.includes("Search all 1 VOD") ||
+      (await app.js(`return !!document.querySelector(".home .empty p:not(.keys) kbd")`))
+    )
+      throw new Error(`with Search keyless, the home page says "${home}"`);
 
     await app.openVod(added.id);
     await pPlays(app, ctx, "changed");
@@ -141,6 +201,8 @@ export default {
       10_000,
     );
     await closeSettings(app);
+    await app.pause();
+    await app.toStart();
     await app.key(" ");
     await until("Space to play", () => playing(app), MINUTE);
     await app.pause();

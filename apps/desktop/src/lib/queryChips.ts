@@ -61,22 +61,31 @@ export function chipsOf(tree: QueryNode): Chip[] {
 
 /**
  * `query` with the filter `text` taken out (the first time it's there, as a
- * whole word, any case) and the spaces round it tidied; as it was if it
- * isn't there.
+ * whole word, any case, its value quoted or not: `from:"bob"` is the core's
+ * from:bob) and the spaces round it tidied; as it was if it isn't there.
  */
 export function removeFilter(query: string, text: string): string {
   const lower = query.toLowerCase();
-  const want = text.toLowerCase();
+  const colon = text.indexOf(":");
+  const spellings = [
+    text,
+    ...(colon > 0 && !text.includes('"') ? [`${text.slice(0, colon + 1)}"${text.slice(colon + 1)}"`] : []),
+  ];
   const edge = (c: string | undefined) => c === undefined || /[\s()]/.test(c);
-  for (let at = lower.indexOf(want); at !== -1; at = lower.indexOf(want, at + 1)) {
-    const end = at + want.length;
-    if (!edge(query[at - 1]) || !edge(query[end])) continue;
-    const before = query.slice(0, at).replace(/\s+$/, "");
-    const after = query.slice(end).replace(/^\s+/, "");
-    const space = before && after && !before.endsWith("(") && !after.startsWith(")") ? " " : "";
-    return before + space + after;
+  let found: { at: number; end: number } | null = null;
+  for (const want of spellings.map((t) => t.toLowerCase())) {
+    for (let at = lower.indexOf(want); at !== -1; at = lower.indexOf(want, at + 1)) {
+      const end = at + want.length;
+      if (!edge(query[at - 1]) || !edge(query[end])) continue;
+      if (!found || at < found.at) found = { at, end };
+      break;
+    }
   }
-  return query;
+  if (!found) return query;
+  const before = query.slice(0, found.at).replace(/\s+$/, "");
+  const after = query.slice(found.end).replace(/^\s+/, "");
+  const space = before && after && !before.endsWith("(") && !after.startsWith(")") ? " " : "";
+  return before + space + after;
 }
 
 /** The widest window a search takes, in seconds: an hour (the core's

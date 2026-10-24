@@ -11,7 +11,7 @@ import {
   buildMap,
   bindingOf,
   canonical,
-  conflict as conflictIn,
+  conflicts as conflictsIn,
   defaultsOf,
   label,
   type Action,
@@ -51,9 +51,9 @@ class Keys {
     return first === undefined ? "" : label(first, os);
   }
 
-  /** The action live with `id` that already has `binding`, or null. */
-  conflict(binding: string, id: ActionId): Action | null {
-    return conflictIn(this.#map, binding, id, os);
+  /** The actions live with `id` that already have `binding`; empty if none. */
+  conflicts(binding: string, id: ActionId): Action[] {
+    return conflictsIn(this.#map, binding, id, os);
   }
 
   /** Whether `id`'s bindings are other than its defaults. */

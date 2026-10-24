@@ -16,7 +16,7 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }`),
 );
-const { ACTIONS, bindingOf, buildMap, canonical, caps, conflict, label, matches, parse, plainest } =
+const { ACTIONS, bindingOf, buildMap, canonical, caps, conflicts, label, matches, parse, plainest, typesText } =
   await import("./keymap.ts");
 const { isEscape, markFramesOf, transportKey } = await import("./playerKeys.ts");
 
@@ -113,21 +113,36 @@ test("ids are unique, and the defaults clash nowhere they could both be live", (
   for (const os of OSES) {
     const map = buildMap(os, {});
     for (const [id, bindings] of map)
-      for (const b of bindings) assert.equal(conflict(map, b, id, os), null, `${os}: ${id} ${b}`);
+      for (const b of bindings) assert.deepEqual(conflicts(map, b, id, os), [], `${os}: ${id} ${b}`);
   }
 });
 
 test("a key taken by an action live at the same time is named", () => {
   const map = buildMap("linux", {});
-  assert.equal(conflict(map, "k", "frame.back10", "linux")?.id, "play.toggle");
-  assert.equal(conflict(map, "Ctrl+z", "cut.here", "linux")?.id, "undo");
-  assert.equal(conflict(map, "j", "edit.render", "linux")?.id, "seek.back10");
-  assert.equal(conflict(map, "q", "play.toggle", "linux"), null);
+  /** @param {string} binding @param {ActionId} id @param {Map<ActionId, string[]>} m */
+  const ids = (binding, id, m = map) => conflicts(m, binding, id, "linux").map((a) => a.id);
+  assert.deepEqual(ids("k", "frame.back10"), ["play.toggle"]);
+  assert.deepEqual(ids("Ctrl+z", "cut.here"), ["undo"]);
+  assert.deepEqual(ids("j", "edit.render"), ["seek.back10"]);
+  assert.deepEqual(ids("q", "play.toggle"), []);
   // Delete is the selected mark's, or else the edit's: on purpose.
-  assert.equal(conflict(map, "Delete", "edit.remove", "linux"), null);
+  assert.deepEqual(ids("Delete", "edit.remove"), []);
   // Given away, it's free again.
-  const moved = buildMap("linux", { "play.toggle": [" "] });
-  assert.equal(conflict(moved, "k", "frame.back10", "linux"), null);
+  assert.deepEqual(ids("k", "frame.back10", buildMap("linux", { "play.toggle": [" "] })), []);
+});
+
+test("a key several actions have is named for each, so Replace takes it from them all", () => {
+  // Delete removes four things by default; given to Play, it must leave each,
+  // or Delete would go on removing as well as playing.
+  const map = buildMap("linux", {});
+  const others = conflicts(map, "Delete", "play.toggle", "linux").map((a) => a.id);
+  assert.deepEqual(others, ["library.remove", "clips.remove", "edit.remove", "mark.remove"]);
+  /** @type {Record<string, string[]>} */
+  const replaced = { "play.toggle": [...(map.get("play.toggle") ?? []), "Delete"] };
+  for (const id of others) replaced[id] = (map.get(/** @type {ActionId} */ (id)) ?? []).filter((b) => b !== "Delete");
+  const after = buildMap("linux", replaced);
+  for (const id of others) assert.ok(!after.get(/** @type {ActionId} */ (id))?.includes("Delete"), id);
+  assert.deepEqual(conflicts(after, "Delete", "play.toggle", "linux"), []);
 });
 
 // What the handlers did before the action table, transcribed from them
@@ -289,7 +304,7 @@ function newApp(e, is, { typing }) {
   if (!typing && is(e, "redo")) return "redo";
   if (!typing && is(e, "nav.back")) return "back";
   if (!typing && is(e, "nav.forward")) return "forward";
-  if (is(e, "search.focus")) return "search";
+  if (is(e, "search.focus") && !(typing && typesText(e))) return "search";
   // New, with something to select or selected (App.svelte `onWindowKey`,
   // bulk.ts `selectionKey`): all of the clip bar or the library, and the
   // VODs and edits selected removed.
@@ -409,6 +424,20 @@ test("on every OS, the app's keys do what they did, in a text field or not, or n
       for (const e of PRESSES)
         check(os, "app", e, newApp(e, is, { typing }), oldApp(e, { os, typing }), ` typing=${typing}`);
   }
+});
+
+test("an app key that types a character leaves it to the text field being typed in", () => {
+  // Search given "/": it jumps to the box from anywhere but a text field,
+  // where "/" is typed as ever (the box itself, a clip's name, a mark's note).
+  const is = isOn("linux", { "search.focus": ["/", "Ctrl+f"] });
+  assert.equal(newApp(press("/"), is, { typing: false }), "search");
+  assert.equal(newApp(press("/"), is, { typing: true }), null);
+  assert.equal(newApp(press("f", "ctrl"), is, { typing: true }), "search", "a chord still reaches it");
+  assert.equal(typesText(press(" ")), true);
+  assert.equal(typesText(press("A", "shift")), true);
+  assert.equal(typesText(press("a", "ctrl")), false);
+  assert.equal(typesText(press("a", "meta")), false);
+  assert.equal(typesText(press("ArrowLeft")), false);
 });
 
 test("the presses let through by accident before are the ones listed", () => {

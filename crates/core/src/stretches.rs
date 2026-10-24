@@ -222,8 +222,23 @@ fn without(ranges: Vec<(f64, f64, Option<String>)>, cut: (f64, f64)) -> Vec<(f64
 
 impl Db {
     /// Asks for `start`..`end` of VOD `vod_id` (None: to its end) to be
-    /// transcribed: a request at the back of the queue.
+    /// transcribed: a request at the back of the queue. The same stretch
+    /// asked for again while it waits or runs is that request (Transcribe
+    /// pressed twice mustn't transcribe it twice); one paused or failed is
+    /// asked for anew.
     pub fn request(&self, vod_id: i64, start: f64, end: Option<f64>) -> Result<Stretch> {
+        let waiting: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM stretches WHERE vod_id = ?1 AND start = ?2 AND end IS ?3
+                 AND status IN ('queued', 'downloading', 'ready', 'transcribing') ORDER BY id LIMIT 1",
+                params![vod_id, start, end],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(id) = waiting {
+            return Ok(self.stretch(id)?.expect("just found"));
+        }
         self.conn.execute(
             "INSERT INTO stretches (vod_id, start, end, status) VALUES (?1, ?2, ?3, 'queued')",
             params![vod_id, start, end],
@@ -520,6 +535,25 @@ mod tests {
             .filter(|s| s.status == Status::Done)
             .map(|s| (s.start, s.end, s.model))
             .collect()
+    }
+
+    /// Transcribe pressed twice (T, or the bar's button) on a VOD nothing of
+    /// which is transcribed yet: the whole VOD was queued twice, and
+    /// transcribed twice over.
+    #[test]
+    fn the_same_stretch_asked_for_again_while_it_waits_is_one_request() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("a", Some(600.0))).unwrap().0.id;
+        let first = db.request(vod, 0.0, None).unwrap();
+        let again = db.request(vod, 0.0, None).unwrap();
+        assert_eq!(again.id, first.id);
+        assert_eq!(db.requests(vod).unwrap().len(), 1);
+        // Another stretch is a request of its own; one stopped (paused, or
+        // failed) is asked for anew, as a retry would.
+        db.request(vod, 10.0, Some(20.0)).unwrap();
+        assert_eq!(db.requests(vod).unwrap().len(), 2);
+        db.conn.execute("UPDATE stretches SET status = 'error' WHERE id = ?1", [first.id]).unwrap();
+        assert_ne!(db.request(vod, 0.0, None).unwrap().id, first.id);
     }
 
     #[test]

@@ -10,12 +10,14 @@
 // The bar's Transcribe sits at its right before the captions button and,
 // hovered, lights up what it would do: the whole VOD, then the rest; held,
 // it opens the menu of how much; clicked, it does the rest, and once all is
-// transcribed it asks before doing all of it again.
+// transcribed it asks before doing all of it again. On another file with
+// nothing transcribed, T pressed twice asks for the whole VOD once, and
+// hovered meanwhile, the bar's Transcribe lights nothing: nothing's left to ask.
 
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { longSpeech } from "../lib/fixtures.mjs";
+import { landedTwice, longSpeech } from "../lib/fixtures.mjs";
 
 /** `seconds` as the page writes a time (platform.ts formatTime). */
 function formatTime(seconds) {
@@ -424,5 +426,32 @@ export default {
       10_000,
     );
     ctx.log(`the bar's Transcribe: the rest, then all of it again only once asked (request ${again.id}, 0 to the end)`);
+
+    // Another file, nothing of it transcribed: T, then T again while the
+    // whole VOD waits (behind the one above), is one request, not two.
+    const [other] = await app.addFiles([landedTwice(path.join(ctx.out, "fixtures"))]);
+    await until(
+      "the other open",
+      () =>
+        app.js(
+          `return !!document.querySelector('.list .vod.selected[data-key="${other.id}"]') && !!document.querySelector(".bar button.transcribe")`,
+        ),
+      MINUTE,
+    );
+    const asks = async () =>
+      (await app.invoke("transcript_stretches", { vodId: other.id })).filter((s) => s.status !== "done");
+    await app.key("t");
+    await until("the whole of it asked for", async () => (await asks()).length === 1, 10_000);
+    await app.key("t");
+    await new Promise((r) => setTimeout(r, 1000));
+    const twiceT = await asks();
+    if (twiceT.length !== 1 || twiceT[0].start !== 0 || twiceT[0].end !== null)
+      throw new Error(`T pressed twice asked for ${JSON.stringify(twiceT)}`);
+    await hover(true);
+    await new Promise((r) => setTimeout(r, 1000));
+    const litNow = await lit();
+    await hover(false);
+    if (litNow.length) throw new Error(`with all of it asked for, Transcribe lights ${JSON.stringify(litNow)}`);
+    ctx.log(`T twice on a file with nothing transcribed: one request (${twiceT[0].id}), nothing lit`);
   },
 };

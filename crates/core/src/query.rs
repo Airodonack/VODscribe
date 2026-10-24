@@ -219,7 +219,9 @@ pub struct QueryInfo {
 impl QueryInfo {
     pub fn of(query: &Query) -> QueryInfo {
         let mut info = QueryInfo { tree: query.tree.clone(), within: query.within, ..Default::default() };
-        // Values were checked by `parse`; where one is typed twice the last shows.
+        // Values were checked by `parse`. A `from:` typed twice shows the last;
+        // times typed twice all hold (`Conjunction::and`), so the latest start
+        // and the earliest end show, as the search applies them.
         for (key, value) in query.top_filters() {
             match key {
                 Key::From => info.from = Some(value.to_string()),
@@ -229,8 +231,8 @@ impl QueryInfo {
                     info.sources = Some(Sources { audio: was.audio || s.audio, chat: was.chat || s.chat });
                 }
                 Key::Within => {}
-                Key::After => info.after = seconds(value),
-                Key::Before => info.before = seconds(value),
+                Key::After => info.after = max_of(info.after, seconds(value)),
+                Key::Before => info.before = min_of(info.before, seconds(value)),
             }
         }
         info
@@ -898,6 +900,17 @@ mod tests {
             Node::And { items } => Node::And { items: items.into_iter().map(strip_prefix).collect() },
             n => n,
         }
+    }
+
+    /// The filter's controls show what the search applies: two `after:`s
+    /// both hold, so the later one is what a match starts after.
+    #[test]
+    fn the_filters_shown_are_the_ones_applied() {
+        let query = parse("gg after:20 after:10 before:40 before:50").unwrap();
+        let info = QueryInfo::of(&query);
+        let c = &query.conjunctions().unwrap()[0];
+        assert_eq!((info.after, info.before), (c.after, c.before));
+        assert_eq!((info.after, info.before), (Some(20.0), Some(40.0)));
     }
 
     #[test]

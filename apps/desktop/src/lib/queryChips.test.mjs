@@ -73,6 +73,9 @@ test("removing a filter takes its text out of the box", () => {
   assert.equal(removeFilter('hi from:"Some One"', 'from:"Some One"'), "hi");
   assert.equal(removeFilter('(from:a "x") OR "y"', "from:a"), '("x") OR "y"');
   assert.equal(removeFilter("landed", "in:chat"), "landed", "not there: as it was");
+  // Quoted though it has no space: the core reads it as from:bob, and writes it so.
+  assert.equal(removeFilter('hi from:"bob"', "from:bob"), "hi");
+  assert.equal(removeFilter('from:"bob" hi from:bob', "from:bob"), "hi from:bob", "the first, either way");
 });
 
 test("Within's lengths", () => {

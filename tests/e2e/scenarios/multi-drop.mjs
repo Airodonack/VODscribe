@@ -9,7 +9,8 @@
 // they go in there, before the rest, as one step one undo takes back. Then
 // (Linux) the two pills dragged out of the window with the system's mouse:
 // one drag, both files. In the library: two more files picked, Add to edit…
-// above the list puts each whole on the edit's clip bar; pointing at
+// above the list (after New edit let go of before saying where, which makes
+// no edit) puts each whole on the edit's clip bar; pointing at
 // Transcribe on one lights up both, and its click asks for both.
 
 import { copyFileSync, mkdirSync } from "node:fs";
@@ -342,6 +343,28 @@ export default {
     );
     await until(
       "the edits to pick from",
+      () => app.js(`return !!document.querySelector("[role=dialog] .pick")`),
+      10_000,
+    );
+    // New edit, then let go before saying where: no edit is made.
+    const editsBefore = (await app.invoke("list_edits")).length;
+    await inPopover("New edit");
+    await until(
+      "where in a new edit",
+      () =>
+        app.js(`return document.querySelector("[role=dialog] .pick .head")?.textContent.trim() === "Into a new edit:"`),
+      10_000,
+    );
+    await app.key("Escape");
+    await until("the menu closed", () => app.js(`return !document.querySelector("[role=dialog] .pick")`), 10_000);
+    await sleep(500);
+    const editsAfter = (await app.invoke("list_edits")).length;
+    if (editsAfter !== editsBefore) throw new Error(`New edit let go made an edit: ${editsBefore} then ${editsAfter}`);
+    await app.js(
+      `[...document.querySelectorAll("aside .picked button")].find((b) => b.textContent.trim() === "Add to edit…").click()`,
+    );
+    await until(
+      "the edits to pick from again",
       () => app.js(`return !!document.querySelector("[role=dialog] .pick")`),
       10_000,
     );

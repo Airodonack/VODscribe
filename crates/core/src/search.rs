@@ -585,6 +585,26 @@ fn whole(p: &Piece) -> &[String] {
     &p.terms[..p.terms.len() - usize::from(p.prefix)]
 }
 
+/// How many occurrences `Stream::tightest` tries at most for one first word,
+/// where pieces could share words: past it, the tightest set found so far.
+const MOST_TRIES: usize = 10_000;
+
+/// An occurrence of a piece (a range of places) and its first word's start
+/// and last word's end.
+struct Timed {
+    start: f64,
+    end: f64,
+    range: Range<usize>,
+}
+
+/// Where a match's occurrences can be: from its first word's start to the
+/// window's end.
+#[derive(Clone, Copy)]
+struct Fit {
+    first: f64,
+    last: f64,
+}
+
 /// A match in what was said, and its words as (line id, word index).
 struct Candidate {
     start: f64,
@@ -883,8 +903,9 @@ impl Stream {
     /// The occurrences, one per piece, with piece `k`'s `fixed`, spanning the
     /// least time; None if no such set fits in the window. Each start of an
     /// occurrence before the fixed one's (and its own) is tried as the
-    /// match's first word; for it, each other piece takes the occurrence
-    /// from there on that ends soonest.
+    /// match's first word; for it, the pieces take the occurrences from there
+    /// on that end soonest, no two sharing a word (`"nice" "nice"` is two of
+    /// them).
     fn tightest(
         &self,
         places: &[Place],
@@ -901,34 +922,90 @@ impl Stream {
             .filter(|&s| s < fixed_start && s >= fixed_end - within)
             .collect();
         firsts.push(fixed_start);
+        // Each piece's occurrences with their times, soonest-ending first.
+        let by_end: Vec<Vec<Timed>> = found
+            .iter()
+            .map(|occurrences| {
+                let mut timed: Vec<Timed> = occurrences
+                    .iter()
+                    .map(|r| {
+                        let (start, end) = self.span(places, r);
+                        Timed { start, end, range: r.clone() }
+                    })
+                    .collect();
+                timed.sort_by(|a, b| a.end.total_cmp(&b.end));
+                timed
+            })
+            .collect();
         let mut best: Option<(f64, Vec<Range<usize>>)> = None;
         for first in firsts {
-            let mut set = Vec::with_capacity(found.len());
-            let mut end = fixed_end;
-            for (j, occurrences) in found.iter().enumerate() {
-                if j == k {
-                    set.push(fixed.clone());
-                    continue;
-                }
-                let soonest = occurrences
-                    .iter()
-                    .filter(|r| self.span(places, r).0 >= first)
-                    .min_by(|a, b| self.span(places, a).1.total_cmp(&self.span(places, b).1));
-                match soonest {
-                    Some(r) => {
-                        end = end.max(self.span(places, r).1);
-                        set.push(r.clone());
-                    }
-                    None => break,
-                }
-            }
-            let span = end - first;
+            let mut chosen: Vec<Option<Range<usize>>> = vec![None; found.len()];
+            chosen[k] = Some(fixed.clone());
+            let mut soonest = None;
+            let mut budget = MOST_TRIES;
             // Times are seconds as floats: a hair over the window is in it.
-            if set.len() == found.len() && span <= within + 1e-9 && best.as_ref().is_none_or(|(s, _)| span < *s) {
-                best = Some((span, set));
+            let fits = Fit { first, last: first + within + 1e-9 };
+            self.assign(places, &by_end, &mut chosen, 0, fixed_end, fits, &mut soonest, &mut budget);
+            if let Some((end, set)) = soonest {
+                let span = end - first;
+                if best.as_ref().is_none_or(|(s, _)| span < *s) {
+                    best = Some((span, set));
+                }
             }
         }
         best
+    }
+
+    /// Gives pieces `j` on, those not `chosen` yet, the occurrences in `fits`
+    /// that end soonest with none sharing a word with another chosen; the set
+    /// ending soonest (and its end) into `best`. Each piece's occurrences
+    /// (`by_end`) are tried soonest-ending first, so with no words shared the
+    /// first set found is the answer and the rest are passed over at once;
+    /// where they are shared, at most `budget` occurrences are tried in all.
+    #[allow(clippy::too_many_arguments)]
+    fn assign(
+        &self,
+        places: &[Place],
+        by_end: &[Vec<Timed>],
+        chosen: &mut Vec<Option<Range<usize>>>,
+        j: usize,
+        end: f64,
+        fits: Fit,
+        best: &mut Option<(f64, Vec<Range<usize>>)>,
+        budget: &mut usize,
+    ) {
+        if j == by_end.len() {
+            if best.as_ref().is_none_or(|(e, _)| end < *e) {
+                *best = Some((end, chosen.iter().map(|c| c.clone().expect("every piece chosen")).collect()));
+            }
+            return;
+        }
+        if chosen[j].is_some() {
+            return self.assign(places, by_end, chosen, j + 1, end, fits, best, budget);
+        }
+        for t in by_end[j].iter().filter(|t| t.start >= fits.first) {
+            let e = end.max(t.end);
+            // Sorted by their ends: none after this one ends any sooner, nor fits.
+            if t.end > fits.last || best.as_ref().is_some_and(|(b, _)| e >= *b) || *budget == 0 {
+                break;
+            }
+            *budget -= 1;
+            if chosen.iter().flatten().any(|c| self.share(places, c, &t.range)) {
+                continue;
+            }
+            chosen[j] = Some(t.range.clone());
+            self.assign(places, by_end, chosen, j + 1, e, fits, best, budget);
+            chosen[j] = None;
+        }
+    }
+
+    /// Whether occurrences `a` and `b` have a word in common.
+    fn share(&self, places: &[Place], a: &Range<usize>, b: &Range<usize>) -> bool {
+        let word = |i: usize| {
+            let (l, t) = places[i];
+            (l, self.lines[l].terms[t].1)
+        };
+        a.clone().any(|i| b.clone().any(|j| word(i) == word(j)))
     }
 
     /// The hit for a set of occurrences: the lines from its first word's to
@@ -1179,6 +1256,24 @@ mod tests {
         let x = vod(&db, "c", "s");
         say(&mut db, x, 0.0, "clutch play and another clutch play");
         assert_eq!(marked(&find(&db, "clutch play")), ["[clutch play] and another [clutch play]"]);
+    }
+
+    /// A word given as two pieces is two occurrences of it: pieces never
+    /// share a matched word.
+    #[test]
+    fn pieces_never_share_a_word() {
+        let mut db = library();
+        let v = vod(&db, "a", "s");
+        say(&mut db, v, 0.0, "nice shot");
+        say(&mut db, v, 100.0, "nice");
+        say(&mut db, v, 105.0, "very nice");
+        say(&mut db, v, 200.0, "good shot");
+        let times = |q: &str| find(&db, q).hits.iter().map(|h| (h.time, h.lines)).collect::<Vec<_>>();
+        assert_eq!(times("\"nice\" \"nice\""), [(100.0, 2)], "not the nice at 0 s, alone");
+        assert_eq!(marked(&find(&db, "\"nice\" \"nice\"")), ["[nice] very [nice]"]);
+        assert!(find(&db, "\"nice\" \"nice\" within:3").hits.is_empty(), "the two are 5 s apart");
+        assert!(find(&db, "\"good shot\" \"shot\"").hits.is_empty(), "one shot can't be both");
+        assert_eq!(times("\"good\" \"shot\""), [(200.0, 1)], "two pieces, two words");
     }
 
     #[test]

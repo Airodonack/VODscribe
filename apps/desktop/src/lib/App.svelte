@@ -33,7 +33,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
-  import type { ActionId } from "./keymap";
+  import { typesText, type ActionId } from "./keymap";
   import { updates } from "./updates.svelte";
   import { savePlayable } from "./playable";
   import { settings } from "./appSettings.svelte";
@@ -245,8 +245,9 @@
       e.preventDefault();
       return;
     }
-    // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
-    if (is(e, "search.focus")) {
+    // Ctrl/Cmd+F jumps to search from anywhere, even another text field;
+    // a key of Search's that types a character there (Search on "/") is the field's.
+    if (is(e, "search.focus") && !(typing && typesText(e))) {
       e.preventDefault();
       aside = false;
       searchInput?.focus();
@@ -735,14 +736,21 @@
               {:else}
                 <h2>Search every VOD</h2>
                 <p class="muted">
-                  Press <kbd>{searchKey}</kbd> to search all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick
-                  one on the left to read its transcript.
+                  <!-- Search's key can be taken away (Settings › Controls): then the box is to click. -->
+                  {#if searchKey}
+                    Press <kbd>{searchKey}</kbd> to search
+                  {:else}
+                    Search
+                  {/if}
+                  all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to read its transcript.
                 </p>
-                <p class="keys muted">
-                  <Icon name="keyboard" size={14} /> While a VOD is open:
-                  {#each keyTips as tip, i (tip.does)}{i ? ", " : ""}{#each tip.keys as k, j (j)}<kbd>{k}</kbd>{/each}
-                    {tip.does}{/each}.
-                </p>
+                {#if keyTips.length}
+                  <p class="keys muted">
+                    <Icon name="keyboard" size={14} /> While a VOD is open:
+                    {#each keyTips as tip, i (tip.does)}{i ? ", " : ""}{#each tip.keys as k, j (j)}<kbd>{k}</kbd>{/each}
+                      {tip.does}{/each}.
+                  </p>
+                {/if}
               {/if}
             </div>
             <button class="credit" onclick={() => openUrl(SUPPORT)}>

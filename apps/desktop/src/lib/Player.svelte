@@ -358,9 +358,11 @@
   let transcribeHover = $state(false);
   // The parts not transcribed nor asked for yet: read as the button's hovered, for the rest to light up.
   let untranscribed = $state.raw<{ start: number; end: number }[]>([]);
+  // Read for none transcribed too: the whole VOD asked for already (T pressed
+  // once) leaves nothing to light, as nothing's left to ask.
   function onTranscribeEnter() {
     transcribeHover = true;
-    if (vod.transcribed !== "some") return;
+    if (vod.transcribed === "all") return;
     const id = vod.id;
     api.transcriptStretches(id).then(
       (s) => {
@@ -375,7 +377,7 @@
   }
   const transcribes = $derived.by(() => {
     if (cuts.selection) return [cuts.selection];
-    if (vod.transcribed === "some") return untranscribed;
+    if (vod.transcribed !== "all") return untranscribed;
     return duration ? [{ start: 0, end: duration }] : [];
   });
   // On the timeline, while Clip or Transcribe is hovered: what it would act on.
@@ -405,8 +407,9 @@
     const picked = cuts.selection;
     try {
       if (picked) await api.transcribeStretch(vod.id, picked.start, picked.end);
-      else if (vod.transcribed === "some") await transcribeRest(vod, api);
-      else if (vod.transcribed === "none") await api.transcribeStretch(vod.id, 0, null);
+      // The rest: of a VOD with none transcribed, all of it, unless that's
+      // asked for already (pressed again while it waits).
+      else if (vod.transcribed !== "all") await transcribeRest(vod, api);
       else if (
         await ask(
           `Transcribe “${vod.title}” again? Its current transcript will be replaced, and the audio may need to download again.`,

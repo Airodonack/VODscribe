@@ -89,6 +89,31 @@ test("transcribing the rest asks for each gap not asked for, and nothing else", 
   ]);
 });
 
+test("the rest of a VOD with nothing transcribed is all of it, once: not again while that's asked for", async () => {
+  /** @type {[number, number, number | null][]} */
+  const asked = [];
+  /** @type {import("./api").Stretch[]} */
+  let have = [];
+  const calls = {
+    transcriptStretches: async () => have,
+    transcribeStretch: async (
+      /** @type {number} */ id,
+      /** @type {number} */ start,
+      /** @type {number | null} */ end,
+    ) => {
+      asked.push([id, start, end]);
+      const s = stretch(start, end, "queued");
+      have = [...have, s];
+      return s;
+    },
+  };
+  // @ts-ignore: a VOD with only what's read of it.
+  await transcribeRest({ id: 7, duration: 600 }, calls);
+  // @ts-ignore: pressed again while it waits.
+  await transcribeRest({ id: 7, duration: 600 }, calls);
+  assert.deepEqual(asked, [[7, 0, null]]);
+});
+
 test("a VOD's row keeps the request it shows while another runs beside it", () => {
   // Request 1 transcribing, request 2 of the same VOD downloading: each
   // sends its progress every 250 ms.

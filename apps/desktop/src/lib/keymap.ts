@@ -98,6 +98,13 @@ export function bindingOf(e: KeyLike): string | null {
   return format({ mods: new Set(MODS.filter((_, i) => flags[i])), key: keyName(e.key) });
 }
 
+/**
+ * Whether `e` types into a text field: a character, with neither Ctrl nor ⌘
+ * held. An action of the app's that's given such a key (Search on "/")
+ * leaves it to the field the user is typing in, as the field's own keys are.
+ */
+export const typesText = (e: KeyLike) => e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+
 /** The same keys on every OS. */
 const all = (...bindings: string[]) => ({ linux: bindings, mac: bindings });
 
@@ -275,21 +282,24 @@ function together(a: Scope, b: Scope): boolean {
 }
 
 /**
- * The action other than `id` that `binding` would take from it: one live
+ * The actions other than `id` that `binding` would be taken from: those live
  * at the same time with the binding in `map`. Keys two actions have by
  * default are shared on purpose (Delete removes the selected mark, or else
- * the piece; the handlers' order decides), so they don't count. Null if
- * none.
+ * the piece; the handlers' order decides), so they don't count. All of them,
+ * not just the first: Delete is four actions' by default, and a key given to
+ * another action must leave each of them (Settings › Controls' Replace).
+ * Empty if none.
  */
-export function conflict(map: Map<ActionId, readonly string[]>, binding: string, id: ActionId, os: Os): Action | null {
+export function conflicts(map: Map<ActionId, readonly string[]>, binding: string, id: ActionId, os: Os): Action[] {
   const b = canonical(binding);
   const mine = ACTIONS.find((a) => a.id === id);
-  if (b === null || !mine) return null;
+  if (b === null || !mine) return [];
   const byDefault = (a: Action) => defaultsOf(a, os).some((d) => canonical(d) === b);
-  for (const other of ACTIONS) {
-    if (other.id === id || !together(mine.scope, other.scope) || !map.get(other.id)?.includes(b)) continue;
-    if (byDefault(mine) && byDefault(other)) continue;
-    return other;
-  }
-  return null;
+  return ACTIONS.filter(
+    (other) =>
+      other.id !== id &&
+      together(mine.scope, other.scope) &&
+      !!map.get(other.id)?.includes(b) &&
+      !(byDefault(mine) && byDefault(other)),
+  );
 }

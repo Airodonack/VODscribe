@@ -34,7 +34,7 @@
   // The action waiting for its new key, and a key pressed for one that
   // another action live with it already has: asked about before it's taken.
   let recording = $state<ActionId | null>(null);
-  let clash = $state<{ id: ActionId; binding: string; other: Action } | null>(null);
+  let clash = $state<{ id: ActionId; binding: string; others: Action[] } | null>(null);
 
   function startRecording(id: ActionId) {
     clash = null;
@@ -67,21 +67,27 @@
     void stopRecording(id);
     const mine = keys.bindingsOf(id);
     if (mine.includes(binding)) return;
-    const other = keys.conflict(binding, id);
-    if (other) clash = { id, binding, other };
+    const others = keys.conflicts(binding, id);
+    if (others.length) clash = { id, binding, others };
     else void keys.set({ [id]: [...mine, binding] });
   }
 
-  // Replace: the key goes from the other action to this one.
+  // Replace: the key goes from each other action that has it to this one.
   function replace() {
     if (!clash) return;
-    const { id, binding, other } = clash;
+    const { id, binding, others } = clash;
     clash = null;
-    void keys.set({
-      [id]: [...keys.bindingsOf(id), binding],
-      [other.id]: keys.bindingsOf(other.id as ActionId).filter((b) => b !== binding),
-    });
+    const lists: Partial<Record<ActionId, string[]>> = { [id]: [...keys.bindingsOf(id), binding] };
+    for (const other of others)
+      lists[other.id as ActionId] = keys.bindingsOf(other.id as ActionId).filter((b) => b !== binding);
+    void keys.set(lists);
   }
+
+  /** "Undo", "Undo and Redo", "Undo, Redo and Search". */
+  const named = (actions: Action[]) => {
+    const labels = actions.map((a) => a.label);
+    return labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : (labels[0] ?? "");
+  };
 
   const remove = (id: ActionId, binding: string) =>
     keys.set({ [id]: keys.bindingsOf(id).filter((b) => b !== binding) });
@@ -144,7 +150,7 @@
         </div>
         {#if clash?.id === a.id}
           <div class="clash" role="alert">
-            <span><kbd>{label(clash.binding, os)}</kbd> Used by {clash.other.label}.</span>
+            <span><kbd>{label(clash.binding, os)}</kbd> Used by {named(clash.others)}.</span>
             <button onclick={replace}>Replace</button>
             <button onclick={() => (clash = null)}>Cancel</button>
           </div>

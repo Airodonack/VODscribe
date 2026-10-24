@@ -5,9 +5,11 @@
 // one change. The two pills Ctrl-clicked: Delete takes both off the clip
 // bar, and one undo brings both back. A box dragged from empty space in the
 // clip bar over both pills picks them; Escape lets them go. In the library:
-// two more files, Ctrl-click on one and Shift-click on the other picks the
-// run, Remove… asks once, naming them, and both go (the first VOD stays);
-// Escape lets go of a row picked.
+// three more files, Ctrl-click on one and Shift-click on another picks the
+// run of three; the first of them removed with its own row's Remove leaves
+// the set (the other two numbered 1 and 2, the list saying 2 VODs);
+// Remove… asks once, naming them, and both go (the first VOD stays); Escape
+// lets go of a row picked.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -160,25 +162,20 @@ export default {
     await app.key("Escape");
     await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
 
-    // The library: two more files, the run of them picked, removed after one question.
+    // The library: three more files, the run of them picked.
     const dir = path.join(ctx.out, "multi-select");
     mkdirSync(dir, { recursive: true });
-    const files = ["first.mp3", "second.mp3"].map((name) => {
+    const files = ["first.mp3", "second.mp3", "third.mp3"].map((name) => {
       const file = path.join(dir, name);
       copyFileSync(ctx.fixtures.landed, file);
       return file;
     });
     const added = await app.addFiles(files);
-    const [a, b] = added.map((v) => v.id);
+    const [a, b, c] = added.map((v) => v.id);
     const row = (id) => `.list .vod[data-key="${id}"] .main`;
     await until(
-      "both rows",
-      () =>
-        app.js(
-          `return !!document.querySelector(arguments[0]) && !!document.querySelector(arguments[1])`,
-          row(a),
-          row(b),
-        ),
+      "the three rows",
+      () => app.js(`return arguments[0].every((r) => !!document.querySelector(r))`, [row(a), row(b), row(c)]),
       MINUTE,
     );
     const click = (id, mods) =>
@@ -190,13 +187,37 @@ export default {
         mods,
       );
     await click(a, "toggle");
-    await click(b, "shift");
+    await click(c, "shift");
     const listHead = () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() ?? ""`);
+    await until("the list says three VODs", async () => (await listHead()) === "3 VODs", 10_000);
+    // The rows picked, by key, with their numbers.
+    const numbered = () =>
+      app.js(
+        `return Object.fromEntries([...document.querySelectorAll(".list .vod.chosen")].map((r) => [r.dataset.key, r.querySelector(".row-order")?.textContent ?? null]))`,
+      );
+    const three = await numbered();
+    if (Object.keys(three).sort().join() !== [a, b, c].sort().join())
+      throw new Error(`picked rows ${JSON.stringify(three)}, not ${a}, ${b} and ${c}`);
+
+    // The one numbered 1 removed with its row's own Remove: it leaves the set.
+    const gone = Number(Object.keys(three).find((key) => three[key] === "1"));
+    const [one, two] = [a, b, c].filter((id) => id !== gone);
+    await app.answer("Remove");
+    await app.click(`.list .vod[data-key="${gone}"] button[aria-label="Remove"]`);
+    await until("its row gone", () => app.js(`return !document.querySelector(arguments[0])`, row(gone)), MINUTE);
     await until("the list says two VODs", async () => (await listHead()) === "2 VODs", 10_000);
-    const picked = await app.js(
-      `return [...document.querySelectorAll(".list .vod.chosen")].map((r) => Number(r.dataset.key))`,
-    );
-    if (picked.sort().join() !== [a, b].sort().join()) throw new Error(`picked rows ${picked}, not ${a} and ${b}`);
+    const left = await until(
+      "the two left numbered 1 and 2",
+      async () => {
+        const n = await numbered();
+        return Object.values(n).sort().join() === "1,2" && n;
+      },
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: ${JSON.stringify(await numbered())}`);
+    });
+    if (Object.keys(left).sort().join() !== [one, two].sort().join())
+      throw new Error(`picked rows ${JSON.stringify(left)}, not ${one} and ${two}`);
     await ctx.checkpoint("library-picked");
 
     const before = await app.asked();
@@ -206,7 +227,7 @@ export default {
       "both removed",
       async () => {
         const ids = (await app.invoke("list_vods")).map((v) => v.id);
-        return !ids.includes(a) && !ids.includes(b) && ids.includes(vod.id);
+        return !ids.includes(one) && !ids.includes(two) && ids.includes(vod.id);
       },
       MINUTE,
     );

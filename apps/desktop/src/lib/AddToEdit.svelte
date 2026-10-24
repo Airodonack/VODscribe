@@ -21,20 +21,22 @@
     items: () => Put[];
   } = $props();
 
-  /** The edit picked: where in it is asked next. */
-  let into = $state<{ id: number; title: string } | null>(null);
+  /** The edit picked (`new`: one to make), where in it is asked next. A
+   *  new one is made only once that's answered: let go before, nothing is. */
+  let into = $state<{ id: number; title: string } | "new" | null>(null);
   $effect(() => {
     if (!open) into = null;
   });
 
-  async function pick(editId: number | null) {
-    const edit = editId === null ? await edits.create() : edits.list.find((e) => e.id === editId);
-    if (edit) into = { id: edit.id, title: edit.title };
+  function pick(editId: number | null) {
+    const edit = editId === null ? null : edits.list.find((e) => e.id === editId);
+    into = edit ? { id: edit.id, title: edit.title } : editId === null ? "new" : null;
   }
 
-  function put(bar: boolean) {
-    const edit = into;
+  async function put(bar: boolean) {
+    const picked = into;
     open = false;
+    const edit = picked === "new" ? await edits.create() : picked;
     if (edit) void addTo(edit.id, edit.title, bar, items());
   }
 </script>
@@ -42,7 +44,7 @@
 <Popover bind:open {anchor} label="Add to an edit" width={240} padding={6}>
   <div class="pick">
     {#if into}
-      <span class="muted head">Into “{into.title}”:</span>
+      <span class="muted head">{into === "new" ? "Into a new edit:" : `Into “${into.title}”:`}</span>
       <button onclick={() => put(false)}><Icon name="film" size={13} /> Timeline, at the end</button>
       <button onclick={() => put(true)}><Icon name="plus" size={13} /> Clip bar</button>
     {:else}

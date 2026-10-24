@@ -213,6 +213,13 @@
         return el && overlaps(box, el.getBoundingClientRect());
       })
       .map(entryOf);
+  // A row picked that's gone another way (its own Remove, an edit deleted
+  // from its view) goes from the set too: else it would still count in the
+  // numbers shown, and go along in a drag or Add to edit… as a VOD that's gone.
+  $effect(() => {
+    const here = new Set(rows.map(rowKey));
+    library.keep((e) => here.has(e.kind === "vod" ? e.id : -e.id));
+  });
   const vodsPicked = $derived(rows.filter((r) => r.kind === "vod" && library.has(entryOf(r))).length);
   const editsPicked = $derived(rows.filter((r) => r.kind === "edit" && library.has(entryOf(r))).length);
   const removePicked = () => removeChosenEntries(rows, (id) => id === selectedId && onselect(null));
