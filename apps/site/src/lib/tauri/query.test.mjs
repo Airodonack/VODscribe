@@ -9,6 +9,7 @@ import {
   filtered,
   MOST_BRACKETS,
   MOST_WITHIN,
+  names,
   parse,
   queryInfo,
   seconds,
@@ -135,6 +136,35 @@ test("negation and filters", () => {
   assert.equal(topFilters(q).length, 6);
 });
 
+// `from:a,b` is either name, as `from:a from:b` is; a name with a space or a
+// comma (a YouTube display name can have one) goes in quotes.
+test("several names separated by commas", () => {
+  /** @param {string} text */
+  const from = (text) => conjunctions(parse(text))[0].from;
+  assert.deepEqual(tree("from:a,b"), filter("from", "a,b"));
+  assert.deepEqual(from("from:a,b"), ["a", "b"]);
+  assert.deepEqual(from('from:a,"Some One",c'), ["a", "Some One", "c"]);
+  assert.deepEqual(tree('from:a,"Some One" hi'), and([filter("from", 'a,"Some One"'), typing("hi")]));
+  assert.deepEqual(from('from:"Some One",a'), ["Some One", "a"]);
+  assert.deepEqual(from('from:"Last, First"'), ["Last, First"], "quoted, a comma is the name's");
+  assert.deepEqual(from('from:"Last, First",bob'), ["Last, First", "bob"]);
+  assert.deepEqual(from("from:a, hi"), ["a"], "a comma left at the end, while typing");
+  assert.deepEqual(from("from:a from:b,c"), ["a", "b", "c"]);
+  assert.equal(conjunctions(parse("from:,"))[0].from.length, 0);
+  assert.match(error('from:a,"Some'), /quote/);
+  // The filter shows them all, each once.
+  /** @param {string} text */
+  const shown = (text) => queryInfo(parse(text)).from;
+  assert.equal(shown('from:a,"Some One" hi'), "a, Some One");
+  assert.equal(shown("from:Ada from:bob,ada"), "Ada, bob");
+  assert.equal(shown('from:"Some One"'), "Some One");
+  assert.equal(shown('from:"Last, First",b'), '"Last, First", b');
+  // The control's text, read back, is the same names.
+  assert.deepEqual(names('"Last, First", b'), ["Last, First", "b"]);
+  assert.deepEqual(names(" Ada ,  Some One,"), ["Ada", "Some One"]);
+  assert.equal(shown("hi"), null);
+});
+
 test("errors say what to fix", () => {
   assert.match(error('"unclosed'), /quote/);
   assert.match(error('-"unclosed'), /quote/);
@@ -232,6 +262,9 @@ test("shown as text, it parses the same", () => {
     "a b AND c",
     'nice "clutch" OR "play" good',
     'from:"Some One" -"a phrase" within:2m',
+    'from:a,"Some One" hi',
+    'from:"Last, First" hi',
+    'from:"Last, First",b hi',
   ]) {
     const parsed = tree(text);
     const shown = show(parsed);

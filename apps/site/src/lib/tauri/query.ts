@@ -66,6 +66,8 @@ export interface Query {
 export interface QueryInfo {
   tree: Node | null;
   within: number | null;
+  /** Every name `from:` gives, each once, separated by ", " (one with a
+   *  comma in quotes), as the From whom control takes them. */
   from: string | null;
   sources: Sources | null;
   after: number | null;
@@ -138,17 +140,32 @@ export function conjunctions(query: Query): Conjunction[] {
 
 export function queryInfo(query: Query): QueryInfo {
   const info: QueryInfo = { ...noInfo(), tree: query.tree, within: query.within };
+  // Every name `from:` gives shows, as any of them is searched for; times
+  // typed twice all hold, so the latest start and the earliest end show.
+  const from: string[] = [];
   for (const [key, value] of topFilters(query)) {
-    if (key === "from") info.from = value;
-    else if (key === "in") {
+    if (key === "from") {
+      for (const name of names(value)) {
+        if (!from.some((n) => sameAscii(n, name))) from.push(name);
+      }
+    } else if (key === "in") {
       const s = sources(value);
       const was = info.sources ?? { audio: false, chat: false };
       info.sources = { audio: was.audio || s.audio, chat: was.chat || s.chat };
     } else if (key === "after") info.after = maxOf(info.after, seconds(value));
     else if (key === "before") info.before = minOf(info.before, seconds(value));
   }
+  // As the From whom control takes them: a name with a comma in quotes.
+  const shown = (n: string) => (n.includes(",") ? `"${n}"` : n);
+  info.from = from.length > 0 ? from.map(shown).join(", ") : null;
   return info;
 }
+
+/** Rust's `eq_ignore_ascii_case`: only A-Z and a-z fold. */
+const sameAscii = (a: string, b: string) => {
+  const fold = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+  return fold(a) === fold(b);
+};
 
 export function noInfo(error: string | null = null): QueryInfo {
   return { tree: null, within: null, from: null, sources: null, after: null, before: null, error };
@@ -200,12 +217,30 @@ function filter(key: Key, value: string): Conjunction {
       throw new QueryError(`${key}: takes a time into the VOD, such as ${key}:1:20:00, ${key}:90m or ${key}:2h.`);
     return s;
   };
-  if (key === "from") c.from.push(value);
+  if (key === "from") c.from.push(...names(value));
   else if (key === "in") c.sources = sources(value);
   else if (key === "after") c.after = time();
   else if (key === "before") c.before = time();
   // within: is global, read by `parse`.
   return c;
+}
+
+/** The names in a `from:` value (`tokens`), or in the filter's From whom:
+ *  one, or several separated by commas, any of them in quotes; a comma
+ *  inside quotes is the name's. */
+export function names(value: string): string[] {
+  const out: string[] = [];
+  let name = "";
+  let quoted = false;
+  for (const c of [...value, ","]) {
+    if (c === '"') quoted = !quoted;
+    else if (c === "," && !quoted) {
+      const n = name.trim();
+      if (n !== "") out.push(n);
+      name = "";
+    } else name += c;
+  }
+  return out;
 }
 
 function sources(value: string): Sources {
@@ -266,17 +301,49 @@ const isSpace = (c: string) => /\s/u.test(c);
 /** Characters that end a word: brackets and quotes stand on their own. */
 const endsWord = (c: string) => isSpace(c) || c === "(" || c === ")" || c === '"';
 
+/** The text up to the closing quote, from `at.i` just past the opening one;
+ *  `at.i` ends past the closing one. */
+function quotedAt(chars: string[], at: { i: number }): string {
+  const start = at.i;
+  while (at.i < chars.length && chars[at.i] !== '"') at.i++;
+  if (at.i === chars.length) throw new QueryError("A quote isn't closed: add the other \".");
+  const s = chars.slice(start, at.i).join("");
+  at.i++;
+  return s;
+}
+
+/** A `from:` value, from `at.i` just past the colon: one name, or several
+ *  separated by commas (`from:a,b`), each bare or in quotes for one with a
+ *  space or a comma (`from:a,"Some One"`). The value is a name alone as
+ *  itself; several, or one with a comma, as typed, quotes and all, which
+ *  `names` reads. */
+function fromValue(chars: string[], at: { i: number }): string {
+  const start = at.i;
+  const found: string[] = [];
+  for (;;) {
+    if (chars[at.i] === '"') {
+      at.i++;
+      found.push(quotedAt(chars, at));
+    } else {
+      const from = at.i;
+      while (at.i < chars.length && !endsWord(chars[at.i]) && chars[at.i] !== ",") at.i++;
+      found.push(chars.slice(from, at.i).join(""));
+    }
+    if (chars[at.i] !== ",") break;
+    at.i++;
+  }
+  return found.length === 1 && !found[0].includes(",") ? found[0] : chars.slice(start, at.i).join("");
+}
+
 function tokens(text: string): Token[] {
   const chars = Array.from(text);
   const out: Token[] = [];
   let i = 0;
   // `i` is just past the opening quote.
   const quoted = () => {
-    const start = i;
-    while (i < chars.length && chars[i] !== '"') i++;
-    if (i === chars.length) throw new QueryError("A quote isn't closed: add the other \".");
-    const s = chars.slice(start, i).join("");
-    i++;
+    const at = { i };
+    const s = quotedAt(chars, at);
+    i = at.i;
     return s;
   };
   const word = () => {
@@ -320,8 +387,13 @@ function tokens(text: string): Token[] {
       else if (w === "AND") out.push({ t: "and" });
       else if (key !== null) {
         let value = w.slice(colon + 1);
-        // A quoted value, for a name with spaces: from:"Some One".
-        if (value === "" && chars[i] === '"') {
+        if (key === "from") {
+          // Read again from the colon, as the names it lists.
+          const at = { i: i - Array.from(value).length };
+          value = fromValue(chars, at);
+          i = at.i;
+        } else if (value === "" && chars[i] === '"') {
+          // A quoted value: within:"2m".
           i++;
           value = quoted();
         }
@@ -499,6 +571,9 @@ export function show(node: Node): string {
     case "not":
       return `-${show(node.item)}`;
     case "filter":
-      return /\s/u.test(node.value) ? `${node.key}:"${node.value}"` : `${node.key}:${node.value}`;
+      // A list of names (`fromValue`) has its own quotes.
+      return /\s/u.test(node.value) && !node.value.includes('"')
+        ? `${node.key}:"${node.value}"`
+        : `${node.key}:${node.value}`;
   }
 }

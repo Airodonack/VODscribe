@@ -9,9 +9,11 @@
 import {
   conjunctions,
   DEFAULT_WITHIN,
+  emptyConjunction,
   filtered,
   lastIsPrefix,
   MOST_WITHIN,
+  names,
   noInfo,
   parse,
   QueryError,
@@ -568,14 +570,17 @@ export function searchLibrary(vods: LibraryVod[], query: string, filter: Filter,
     throw e;
   }
   const within = parsed.within ?? (filter.within != null && filter.within > 0 ? filter.within : null) ?? DEFAULT_WITHIN;
-  const from = filter.from?.trim() || null;
+  // The filter's names, as `from:` takes them: "a, b" is either.
+  const from = names(filter.from ?? "");
+  // Nothing typed but a name in the filter: what `from:` typed alone lists.
+  if (parsed.tree === null && from.length > 0) alternatives.push(emptyConjunction());
   const lib = libraryOf(vods);
   const vodId = filter.vodId ?? null;
   const found: Found[] = [];
   let ran = false;
   for (const typed of alternatives) {
     // The filter's who, for an alternative that doesn't name its own.
-    const c = from && typed.from.length === 0 ? { ...typed, from: [from] } : typed;
+    const c = typed.from.length === 0 ? { ...typed, from } : typed;
     // Exclusions alone have nothing to leave things out of.
     if (c.pieces.length === 0 && !filtered(c)) continue;
     ran = true;

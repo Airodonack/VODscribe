@@ -360,6 +360,89 @@ test("who said it", () => {
   assert.deepEqual(names("zz"), []);
 });
 
+// A name alone lists everything it passes: a channel's speech (every line of
+// its VODs) and its own chat, a chatter's chat; `in:` narrows it, and several
+// names mean any of them.
+test("a name alone lists what they said and wrote", () => {
+  const db = library();
+  const mine = db.vod("Streamer");
+  const theirs = db.vod("other");
+  db.say(mine, 5, "hello chat");
+  db.say(mine, 30, "what a play");
+  db.say(theirs, 5, "hello chat");
+  db.chat(mine, 6, "streamer", "hello everyone");
+  db.chat(mine, 7, "Bob", "hello streamer");
+  db.chat(theirs, 9, "alice", "hi bob");
+  const hits = (/** @type {string} */ q) => {
+    const r = db.find(q);
+    assert.equal(r.query.error, null, q);
+    return r.hits.map((h) => [h.vod_id, h.source, h.time]);
+  };
+  const [s, c] = ["speech", "chat"];
+  assert.deepEqual(hits("from:streamer"), [
+    [mine, s, 5],
+    [mine, c, 6],
+    [mine, s, 30],
+  ]);
+  assert.deepEqual(hits("from:streamer in:audio"), [
+    [mine, s, 5],
+    [mine, s, 30],
+  ]);
+  assert.deepEqual(hits("from:streamer in:chat"), [[mine, c, 6]]);
+  assert.deepEqual(hits("from:streamer after:10"), [[mine, s, 30]]);
+  assert.deepEqual(hits("from:streamer -play"), [
+    [mine, s, 5],
+    [mine, c, 6],
+  ]);
+  assert.deepEqual(
+    hits("from:streamer within:1m -hello"),
+    [],
+    "the window, centred on each line, that the minus clears",
+  );
+  assert.deepEqual(hits("from:streamer -hello"), [[mine, s, 30]]);
+  const either = [
+    [theirs, c, 9],
+    [mine, s, 5],
+    [mine, c, 6],
+    [mine, s, 30],
+  ];
+  assert.deepEqual(hits("from:streamer,alice"), either);
+  assert.deepEqual(hits("from:alice from:streamer"), either);
+  assert.deepEqual(hits('from:Bob,"alice" in:chat'), [
+    [theirs, c, 9],
+    [mine, c, 7],
+  ]);
+  // The filter's From whom takes the same list, spaces round the commas allowed.
+  /** @param {string} names @returns {import("./search.ts").Filter} */
+  const from = (names) => ({ from: names });
+  const by = (/** @type {string} */ q, /** @type {import("./search.ts").Filter} */ f) =>
+    db.find(q, f, 10).hits.map((h) => [h.vod_id, h.source, h.time]);
+  assert.deepEqual(by("in:chat", from('Bob, "alice"')), [
+    [theirs, c, 9],
+    [mine, c, 7],
+  ]);
+  assert.deepEqual(by("hello in:audio", from("streamer,alice")), [[mine, s, 5]]);
+  assert.deepEqual(by("in:chat from:alice", from("Bob")), [[theirs, c, 9]], "typed wins");
+  // With nothing typed, the filter's names alone list as typed ones do.
+  assert.deepEqual(by("", from("streamer")), hits("from:streamer"));
+  assert.deepEqual(by(" ", from("Bob, alice")), [
+    [theirs, c, 9],
+    [mine, c, 7],
+  ]);
+  const chatOnly = { ...from("streamer"), speech: false };
+  assert.deepEqual(by("", chatOnly), [[mine, c, 6]]);
+  assert.equal(db.find("").hits.length, 0, "nothing typed, nothing set: no search");
+  assert.deepEqual(by("", from(" , ")), []);
+  // Capped as every search is, VOD by VOD.
+  for (let i = 0; i < 20; i++) db.say(theirs, 100 + i, "more talk");
+  const r = db.find("from:other,streamer", {}, 10);
+  assert.deepEqual([r.hits.length, r.truncated], [10, true]);
+  assert.ok(
+    r.hits.every((h) => h.vod_id === theirs && h.source === s),
+    "the first VOD's lines first",
+  );
+});
+
 test("times into the VOD", () => {
   const db = library();
   const v = db.vod("s");
