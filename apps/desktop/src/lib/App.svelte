@@ -5,6 +5,7 @@
     docKey,
     docOfKey,
     events,
+    OVERTAKEN,
     type LibraryItem,
     type SearchHit,
     type SearchResponse,
@@ -431,7 +432,10 @@
   });
   onDestroy(() => unlisten.forEach((u) => u()));
 
-  // Searches run as you type; a sequence number drops responses that arrive out of order.
+  // Searches run as you type; a sequence number drops responses that arrive
+  // out of order. Each is one typed: one overtaken by a newer one stops, and
+  // if the page's newest was overtaken (two sent close together arriving the
+  // other way round), it's asked again.
   let seq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   async function runSearch() {
@@ -443,19 +447,25 @@
       return;
     }
     try {
-      const r = await api.search(q, {
-        vodId: scopeId,
-        speech: sources.audio,
-        chat: sources.chat,
-        within,
-        from: from.trim() || null,
-      });
+      const r = await api.search(
+        q,
+        {
+          vodId: scopeId,
+          speech: sources.audio,
+          chat: sources.chat,
+          within,
+          from: from.trim() || null,
+        },
+        true,
+      );
       if (mine === seq) {
         results = r;
         searchError = null;
       }
     } catch (e) {
-      if (mine === seq) searchError = String(e);
+      if (mine !== seq) return;
+      if (String(e) === OVERTAKEN) void runSearch();
+      else searchError = String(e);
     }
   }
 

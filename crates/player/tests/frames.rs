@@ -127,8 +127,13 @@ fn a_replanned_next_stretch_plays_its_own_footage() {
         number(&image)
     };
     // Paused within a second of the cut: the next stretch is readied.
+    // The opening frame (at 0) can show, and say so, after the handler is in
+    // and before the seek: the first frame told isn't necessarily the one
+    // sought, so it waits for the frame at 0.5 s.
     player.seek(0.5);
-    while rx.recv_timeout(Duration::from_secs(10)).is_ok_and(|e| e != Event::Frame) {}
+    while player.shown().is_none_or(|t| (t - 0.5).abs() > 1e-6) {
+        rx.recv_timeout(Duration::from_secs(10)).expect("the frame at 0.5 s");
+    }
     assert_eq!(frame_number(&player.frame().unwrap()), 15);
     // The second piece now plays from 1 s, not 2 s.
     player.set_timeline(Timeline::from_stretches(vec![piece(0.0, 0.0), piece(1.0, 1.0)]));

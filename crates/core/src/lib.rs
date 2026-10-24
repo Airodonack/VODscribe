@@ -26,6 +26,7 @@ pub mod playable;
 pub mod query;
 pub mod render;
 pub mod search;
+pub mod searcher;
 pub mod settings;
 pub mod sources;
 pub mod stretches;

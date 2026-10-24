@@ -446,6 +446,9 @@ export interface Fetched {
   error: string | null;
 }
 
+/** A typed search's error when a newer one typed came first (vods.rs `OVERTAKEN`): its answer isn't wanted. */
+export const OVERTAKEN = "overtaken by a newer search";
+
 export const api = {
   /** Why the library didn't open when the app started (recovery.rs); null if it did. */
   libraryProblem: () => invoke<string | null>("library_problem"),
@@ -653,7 +656,9 @@ export const api = {
   retranscribeVod: (id: number, outdated = false) => invoke<void>("retranscribe_vod", { id, outdated }),
   pauseVod: (id: number) => invoke<void>("pause_vod", { id }),
   resumeVod: (id: number) => invoke<void>("resume_vod", { id }),
-  search: (query: string, filter: SearchFilter) => invoke<SearchResponse>("search", { query, filter }),
+  /** Searches the library; `typed` (the search box's) gives way to a newer one typed, failing with `OVERTAKEN`. */
+  search: (query: string, filter: SearchFilter, typed = false) =>
+    invoke<SearchResponse>("search", { query, filter, typed }),
   /** Names starting with `prefix` (any case) for `from:`: channels first, then chatters by messages. */
   authorSuggestions: (prefix: string, vodId: number | null = null) =>
     invoke<AuthorSuggestion[]>("author_suggestions", { prefix, vodId }),

@@ -41,9 +41,12 @@ use worker::Worker;
 struct AppState {
     paths: Paths,
     db: Mutex<Db>,
-    /// A read-only connection for what the views ask for (search, the
-    /// transcript, chat), which never waits for the writes on `db`.
+    /// A read-only connection for what the views ask for (the transcript,
+    /// chat, stretches, clips), which never waits for the writes on `db`.
     reads: Mutex<Db>,
+    /// Search's own read-only connection, so those reads never wait behind
+    /// a search of seconds; the newest search typed wins (`Searcher`).
+    searches: vodscribe_core::searcher::Searcher,
     worker: Worker,
     /// First-run setup's downloads.
     setup: setup::Install,
@@ -137,6 +140,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     }
     let db = Mutex::new(db);
     let reads = Mutex::new(Db::open_reader(&paths.db())?);
+    let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths.db())?);
     let worker = Worker::start(app.handle().clone(), paths.clone())?;
     let handle = app.handle().clone();
     let media = media::MediaServer::start(move |asked| match asked {
@@ -148,6 +152,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         paths,
         db,
         reads,
+        searches,
         worker,
         setup: setup::Install::new(),
         gpu: setup::Install::new(),

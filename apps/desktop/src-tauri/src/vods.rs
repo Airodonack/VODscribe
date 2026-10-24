@@ -692,9 +692,28 @@ pub(crate) struct SearchResponse {
     query: QueryInfo,
 }
 
+/// What a search typed into the box answers when a newer one typed has
+/// come: the page asks again if it was its newest (two sent close together
+/// can arrive the other way round).
+const OVERTAKEN: &str = "overtaken by a newer search";
+
+/// Searches the library, on search's own connection (`Searcher`): `typed`
+/// (the search box's, one per pause in the typing) gives way to the next
+/// one typed, which the page wants instead.
 #[tauri::command]
-pub(crate) async fn search(app: AppHandle, query: String, filter: SearchFilter) -> CmdResult<SearchResponse> {
-    let r = crate::with_reads(app, move |db| db.search(&query, &filter, 500)).await?;
+pub(crate) async fn search(
+    app: AppHandle,
+    query: String,
+    filter: SearchFilter,
+    typed: Option<bool>,
+) -> CmdResult<SearchResponse> {
+    let found = tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().searches.run(typed == Some(true), |db| db.search(&query, &filter, 500))
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    let r = found.ok_or(OVERTAKEN)?;
     Ok(SearchResponse { hits: r.hits, truncated: r.truncated, query: r.query })
 }
 
