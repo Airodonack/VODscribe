@@ -382,8 +382,11 @@
     gap: 6px;
     min-height: 40px;
     padding: 6px 16px;
+    /* The page's own scrollbar (app.css), below the pills. Not
+       scrollbar-width: thin, which WebKitGTK draws as an overlay whose hit
+       area covers the lower half of the bar: a pill's middle, and its
+       buttons, then reach the bar instead of the pill. */
     overflow-x: auto;
-    scrollbar-width: thin;
   }
 
   .chip {

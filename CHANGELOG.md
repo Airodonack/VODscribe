@@ -19,6 +19,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - On a Mac, the first time you play a file from your Downloads, Desktop or Documents folder, the player says it's waiting for permission to read that folder while macOS asks, rather than sitting black.
 - The window no longer sometimes stays empty for about two minutes when VODscribe starts.
 - The desktop's media controls show a Twitch VOD's own title and artwork again, as before 0.5.0. Turning WebKit's Media Session off then, for a desktop freeze seen once on GNOME, turned out not to reduce what WebKit tells the desktop, and it made the desktop controls fall back to a bare title.
+- A clip bar with more clips than fit, so that it scrolls sideways, takes clicks on its clips again: on some Linux systems, a click on the lower half of a clip, its name or its buttons did nothing.
 - Settings opens as a window of its own, with a section list, instead of a dropdown.
 - In Settings › Help, Reset settings and Repair VODscribe are set apart under Start over, marked in red as the other buttons that delete things are, each with a line on what it does.
 - Every keyboard control can be changed, in Settings › Controls: several keys per action, modifiers allowed, reset one or all.
