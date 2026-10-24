@@ -55,6 +55,8 @@ export interface Vod {
   outdated: boolean;
   /** Where its chat replay is: not fetched yet (or fetching), fetched, none on the site, or failed. */
   chat: "pending" | "done" | "none" | "failed";
+  /** Why fetching the chat failed, when it did; what it fetched before is kept. */
+  chat_error: string | null;
   /** In the library's list; one taken out stays, unlisted, while edits use it. */
   listed: boolean;
 }

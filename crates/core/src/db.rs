@@ -94,6 +94,9 @@ pub struct Vod {
     /// they resume.
     pub outdated: bool,
     pub chat: ChatStatus,
+    /// Why fetching the chat failed, when it did (`ChatStatus::Failed`); what
+    /// was fetched before it stopped is kept.
+    pub chat_error: Option<String>,
     /// In the library's list. One taken out stays a source, unlisted, while
     /// other clips use it; its work waits until it's listed again.
     pub listed: bool,
@@ -108,7 +111,8 @@ pub enum ChatStatus {
     Done,
     /// The site has no chat replay for this VOD.
     None,
-    /// Fetching failed; `chat_error` says why, and it's tried again later.
+    /// Fetching failed; `chat_error` says why, and it's tried again later,
+    /// carrying on from where it stopped. What it fetched is kept, and shown.
     Failed,
 }
 
@@ -651,7 +655,7 @@ END;";
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, added_at,
-     note, thumb, source_path, media_path, chat, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
+     note, thumb, source_path, media_path, chat, chat_error, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
      (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
       FROM stretches s WHERE s.vod_id = vods.id) AS stretches";
@@ -692,6 +696,7 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             .is_some_and(|mime| mime.starts_with("audio/")),
         outdated: shown.outdated,
         chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
+        chat_error: r.get("chat_error")?,
         listed: r.get("listed")?,
     })
 }
@@ -2884,6 +2889,7 @@ mod tests {
         assert_eq!(db.chat(a).unwrap().len(), 1);
         db.set_chat_status(b, ChatStatus::Failed, Some("Kick isn't responding")).unwrap();
         assert_eq!(db.chat_pending().unwrap(), [b]);
+        assert_eq!(db.vod(b).unwrap().unwrap().chat_error.as_deref(), Some("Kick isn't responding"), "said why");
         while db.delete_some_of(a, 1).unwrap() > 0 {}
         assert!(db.chat(a).unwrap().is_empty() && db.lines(a).unwrap().is_empty(), "deleted a part at a time");
         assert!(db.vod(a).unwrap().is_some(), "the VOD itself stays until delete_vod");

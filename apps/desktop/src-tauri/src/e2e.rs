@@ -126,3 +126,61 @@ fn run(app: &AppHandle, waiting: &Waiting, id: u64, body: &str) -> (u16, String)
         }
     }
 }
+
+/// A Twitch chat the tests left in the data folder (`e2e-chat.json`), fetched
+/// in place of Twitch's through the app's own fetch, so a chat's paging,
+/// saving and failing can be tested without the network: `{ "messages": [{
+/// "time", "author", "text" }], "fail_after": pages or null }`, served 100 to a
+/// page from an offset as Twitch's GraphQL API serves a VOD's. From the
+/// `fail_after`th comments page on, each is refused with "service error", as
+/// Twitch refuses one now and then. None without the file.
+pub(crate) fn chat(
+    root: &std::path::Path,
+    info: &vodscribe_core::fetch::VodInfo,
+    store: &mut dyn vodscribe_core::chat::ChatStore,
+    cancel: &std::sync::atomic::AtomicBool,
+    on_progress: &mut dyn FnMut(f64),
+) -> Option<anyhow::Result<bool>> {
+    #[derive(serde::Deserialize)]
+    struct Message {
+        time: f64,
+        author: String,
+        text: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        messages: Vec<Message>,
+        fail_after: Option<usize>,
+    }
+    let text = std::fs::read_to_string(root.join("e2e-chat.json")).ok()?;
+    let fixture: Fixture = match serde_json::from_str(&text) {
+        Ok(fixture) => fixture,
+        Err(e) => return Some(Err(e.into())),
+    };
+    let asked = AtomicU64::new(0);
+    let ask = |body: &serde_json::Value, _: &std::sync::atomic::AtomicBool| {
+        // The cheermotes' list: the built-in ones do.
+        let Some(offset) = body.pointer("/variables/offset").and_then(serde_json::Value::as_f64) else {
+            return Ok(serde_json::json!({ "data": {} }));
+        };
+        let n = asked.fetch_add(1, Ordering::SeqCst) as usize;
+        if fixture.fail_after.is_some_and(|after| n >= after) {
+            return Ok(serde_json::json!({ "errors": [{ "message": "service error" }], "data": { "video": null } }));
+        }
+        let from: Vec<_> = fixture.messages.iter().enumerate().filter(|(_, m)| m.time.floor() >= offset).collect();
+        let edges: Vec<_> = from
+            .iter()
+            .take(100)
+            .map(|(id, m)| {
+                serde_json::json!({ "node": { "id": id.to_string(), "contentOffsetSeconds": m.time,
+                    "commenter": { "displayName": m.author },
+                    "message": { "userColor": null, "fragments": [{ "text": m.text, "emote": null }] } } })
+            })
+            .collect();
+        // A page at a time, as slowly as Twitch's, so the test sees chat arrive.
+        std::thread::sleep(Duration::from_millis(50));
+        Ok(serde_json::json!({ "data": { "video": { "comments": {
+            "edges": edges, "pageInfo": { "hasNextPage": from.len() > 100 } } } } }))
+    };
+    Some(vodscribe_core::chat::fetch_twitch_from(info, store, cancel, on_progress, &ask))
+}

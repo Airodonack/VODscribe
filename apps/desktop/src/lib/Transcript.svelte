@@ -202,11 +202,13 @@
   // An edit's chat is its pieces' VODs' where they play: shown once there's some.
   let hasChat = $derived(vod ? vod.platform !== "local" : (overview?.count ?? 0) > 0);
   // A VOD without a chat replay (a video that wasn't a livestream, say): its
-  // toggle is grayed out and the column stays shut.
+  // toggle is grayed out and the column stays shut. A fetch that stopped
+  // partway (failed) keeps what it fetched, shown like the rest until Try
+  // again brings the others.
   let chatStatus = $derived(vod ? vod.chat : "done");
   let noChat = $derived(chatStatus === "none");
   let showChat = $derived(hasChat && chatOpen && !noChat);
-  let canHaveChat = $derived(!vod || (hasChat && (chatStatus === "done" || chatStatus === "pending")));
+  let canHaveChat = $derived(!vod || (hasChat && !noChat));
 
   let root: HTMLDivElement;
 

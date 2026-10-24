@@ -51,6 +51,15 @@
     height: number;
   } = $props();
 
+  // Why the chat fetch stopped, short enough for the header: the site's own
+  // words, after what the app was doing ("Twitch wouldn't give the chat:
+  // service error"); the whole of it in the tooltip.
+  const chatWhy = $derived.by(() => {
+    const full = vod?.chat_error?.trim() ?? "";
+    const why = full.split(": ").at(-1) ?? "";
+    return why.length > 48 ? `${why.slice(0, 47)}…` : why;
+  });
+
   // Which stretch is being transcribed; the whole VOD needs no saying.
   const span = $derived(
     stretch && !(stretch.start <= 0 && stretch.end === null)
@@ -84,7 +93,12 @@
         {:else if vod?.chat === "none"}
           No chat replay
         {:else if vod?.chat === "failed"}
-          <span class="error-text">Couldn't fetch chat</span>
+          <!-- What was fetched stays, and Try again carries on from where it stopped. -->
+          <span
+            class="error-text"
+            title={`${vod.chat_error ?? "The chat fetch failed"}${chatCount > 0 ? `. ${chatCount.toLocaleString()} message${chatCount === 1 ? "" : "s"} fetched before it stopped; Try again fetches the rest.` : ""}`}
+            >{chatCount > 0 ? "Chat stopped partway" : "Couldn't fetch chat"}{chatWhy ? `: ${chatWhy}` : ""}</span
+          >
           <button class="link accent" onclick={() => api.retryChat(vod.id).catch((e) => (chatError = String(e)))}
             >Try again</button
           >

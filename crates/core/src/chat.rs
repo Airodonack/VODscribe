@@ -146,7 +146,7 @@ pub fn fetch(
     match info.platform.as_str() {
         "kick" => fetch_kick(info, store, cancel, &mut on_progress)?,
         "twitch" => {
-            if !fetch_twitch(info, store, cancel, &mut on_progress)? {
+            if !fetch_twitch_from(info, store, cancel, &mut on_progress, &twitch_gql)? {
                 return Ok(false);
             }
         }
@@ -335,6 +335,58 @@ fn in_slices(
     }
 }
 
+/// An error worth asking again for: the site out of sorts for a moment. Twitch
+/// answers a page of a long VOD's chat with "service error" now and then, and
+/// the next ask is fine.
+#[derive(Debug)]
+pub(crate) struct Transient(pub String);
+
+impl std::fmt::Display for Transient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Transient {}
+
+fn is_transient(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| c.is::<Transient>())
+}
+
+/// How long a page that failed for a moment (`Transient`) waits before each
+/// ask again: five tries over about half a minute, then the fetch stops (and
+/// keeps what it saved). None in tests, which fail pages on purpose.
+const PAGE_RETRIES: &[Duration] = if cfg!(test) {
+    &[Duration::ZERO; 4]
+} else {
+    &[Duration::from_secs(2), Duration::from_secs(4), Duration::from_secs(8), Duration::from_secs(16)]
+};
+
+/// `ask`'s answer, asked again after each of `PAGE_RETRIES` while it fails for a moment.
+fn retrying<T>(stop: &AtomicBool, mut ask: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut waits = PAGE_RETRIES.iter();
+    loop {
+        match ask() {
+            Err(e) if is_transient(&e) => {
+                let Some(&wait) = waits.next() else { return Err(e) };
+                eprintln!("chat: {e:#}; asking again in {} s", wait.as_secs());
+                let until = std::time::Instant::now() + wait;
+                loop {
+                    if stop.load(Ordering::Relaxed) {
+                        return Err(crate::Canceled.into());
+                    }
+                    let left = until.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    std::thread::sleep(left.min(crate::tools::STOP_POLL));
+                }
+            }
+            answer => return answer,
+        }
+    }
+}
+
 /// Kick and Twitch API pages are a few tens of KB.
 const PAGE_MAX_BYTES: u64 = 4 << 20;
 /// How long to wait before asking again after the site says to slow down.
@@ -373,16 +425,25 @@ pub(crate) fn api(url: &str, body: Option<&Value>, headers: &[(&str, &str)], can
                 req.config().http_status_as_error(false).build().call()
             }
         };
-        let mut resp = resp.with_context(|| format!("contact {}", host(url)))?;
+        // The network or the site failing for a moment is asked again (`retrying`).
+        let mut resp = resp.map_err(|e| Transient(format!("contact {}: {e}", host(url))))?;
         let status = resp.status().as_u16();
         if status == 429 && attempt < 5 {
             *SLOW_DOWN.lock().unwrap() = Some(std::time::Instant::now() + RATE_LIMIT_WAIT);
             continue;
         }
+        if status == 429 || status >= 500 {
+            return Err(Transient(format!("{} answered {status} when asked for the chat.", host(url))).into());
+        }
         if status != 200 {
             bail!("{} answered {status} when asked for the chat.", host(url));
         }
-        let text = resp.body_mut().with_config().limit(PAGE_MAX_BYTES).read_to_string()?;
+        let text = resp
+            .body_mut()
+            .with_config()
+            .limit(PAGE_MAX_BYTES)
+            .read_to_string()
+            .map_err(|e| Transient(format!("read the chat from {}: {e}", host(url))))?;
         return serde_json::from_str(&text).with_context(|| format!("unreadable chat from {}", host(url)));
     }
     unreachable!()
@@ -453,7 +514,7 @@ fn kick_into(
         let mut cursor = from as i64;
         let mut seen = HashSet::new();
         loop {
-            let (messages, next) = page(cursor, stop)?;
+            let (messages, next) = retrying(stop, || page(cursor, stop))?;
             let mut oldest = (cursor as f64 / 1e6).min(hi);
             let mut keep = Vec::new();
             for (at, id, msg, subbed_at) in messages {
@@ -610,12 +671,24 @@ const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { com
 /// A Twitch comments page: (id, message), and whether there are more.
 type TwitchPage = (Vec<(String, ChatMessage)>, bool);
 
-/// False when there's no chat replay: a clip whose broadcast Twitch no longer has.
-fn fetch_twitch(
+/// Asks Twitch's GraphQL API, as its website does.
+fn twitch_gql(body: &Value, stop: &AtomicBool) -> Result<Value> {
+    api(TWITCH_GQL, Some(body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)
+}
+
+/// What answers a Twitch GraphQL request (`body`): Twitch itself, or in the
+/// app's end-to-end tests a chat from a file.
+pub type TwitchAsk<'a> = dyn Fn(&Value, &AtomicBool) -> Result<Value> + Sync + 'a;
+
+/// Fetches a Twitch VOD's chat into `store` as `fetch` does, with `ask`
+/// answering its requests (but a clip's own, which go to Twitch). False when
+/// there's no chat replay: a clip whose broadcast Twitch no longer has.
+pub fn fetch_twitch_from(
     info: &VodInfo,
     store: &mut dyn ChatStore,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
+    ask: &TwitchAsk,
 ) -> Result<bool> {
     // A clip's chat is its broadcast's over the clip's stretch, at the clip's times.
     let (id, span) = if crate::twitch::is_clip(&info.platform_id) {
@@ -626,10 +699,10 @@ fn fetch_twitch(
         let duration = info.duration.filter(|d| *d > 0.0);
         (info.platform_id.trim_start_matches('v').to_string(), Span { start: 0.0, duration, end: None })
     };
-    let cheermotes = Cheermotes::for_video(&id, cancel);
+    let cheermotes = Cheermotes::for_video(&id, cancel, ask);
     let page = |offset: i64, stop: &AtomicBool| {
         let body = json!({ "query": TWITCH_QUERY, "variables": { "id": id, "offset": offset } });
-        parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)?, &cheermotes)
+        parse_twitch_page(&ask(&body, stop)?, &cheermotes)
     };
     let slices = span.duration.map_or(1, slices_for);
     twitch_into(store, span, slices, page, cancel, on_progress)?;
@@ -704,7 +777,7 @@ fn twitch_into(
         // The newest second's messages, held until the page after brings the rest of that second.
         let mut held: Vec<ChatMessage> = Vec::new();
         loop {
-            let (messages, more) = page(offset, stop)?;
+            let (messages, more) = retrying(stop, || page(offset, stop))?;
             let last = messages.last().map_or(offset, |(_, m)| m.time as i64);
             // A page that ends in the second it started from may not have held all
             // of that second's messages; that's rare, and moving on keeps this finite.
@@ -729,8 +802,9 @@ fn twitch_into(
 }
 
 fn parse_twitch_page(page: &Value, cheermotes: &Cheermotes) -> Result<(Vec<(String, ChatMessage)>, bool)> {
+    // "service error", now and then, on one page of a long VOD's chat.
     if let Some(err) = page.pointer("/errors/0/message").and_then(Value::as_str) {
-        bail!("Twitch wouldn't give the chat: {err}");
+        return Err(Transient(format!("Twitch wouldn't give the chat: {err}")).into());
     }
     let video = page.pointer("/data/video").context("unreadable chat from Twitch")?;
     if video.is_null() {
@@ -825,12 +899,12 @@ impl Cheermotes {
     /// The built-in names, and the ones Twitch lists now: everyone's, and
     /// those of video `id`'s channel (a charity drive's, say). Twitch adds new
     /// ones from time to time; without an answer, the built-in ones do.
-    fn for_video(id: &str, cancel: &AtomicBool) -> Self {
+    fn for_video(id: &str, cancel: &AtomicBool, ask: &TwitchAsk) -> Self {
         let mut names = Self::builtin();
         let query = "query($id: ID!) { cheerConfig { groups { nodes { prefix } } }
             video(id: $id) { owner { cheer { cheerGroups { nodes { prefix } } } } } }";
         let body = json!({ "query": query, "variables": { "id": id } });
-        match api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], cancel) {
+        match ask(&body, cancel) {
             Ok(json) => names.0.extend(cheer_prefixes(&json)),
             Err(e) => eprintln!("Twitch's cheermotes: {e:#}; using the built-in list"),
         }
@@ -1194,6 +1268,7 @@ pub(crate) fn parse_time(s: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn parses_times() {
@@ -1495,6 +1570,77 @@ mod tests {
         assert_eq!(saved(&store), expected, "every message");
     }
 
+    /// Twitch's GraphQL API serving `all` in pages of 100 from an offset, as
+    /// it does, with `fail(n)` saying whether its nth comments page (from 0)
+    /// is answered with an error instead, as Twitch answers now and then.
+    /// Counts the comments pages asked for in `asked`.
+    fn twitch_answering<'a>(
+        all: &'a [(String, ChatMessage)],
+        asked: &'a AtomicUsize,
+        fail: impl Fn(usize) -> bool + Sync + 'a,
+    ) -> impl Fn(&Value, &AtomicBool) -> Result<Value> + Sync + 'a {
+        move |body: &Value, _: &AtomicBool| {
+            // The cheermotes' list: none beyond the built-in ones.
+            let Some(offset) = body.pointer("/variables/offset").and_then(Value::as_i64) else {
+                return Ok(json!({ "data": {} }));
+            };
+            if fail(asked.fetch_add(1, Ordering::Relaxed)) {
+                return Ok(json!({ "errors": [{ "message": "service error", "path": ["video", "comments"] }],
+                    "data": { "video": { "comments": null } } }));
+            }
+            let from: Vec<_> = all.iter().filter(|(_, m)| m.time as i64 >= offset).collect();
+            let edges: Vec<Value> = from
+                .iter()
+                .take(100)
+                .map(|(id, m)| {
+                    json!({ "node": { "id": id, "contentOffsetSeconds": m.time, "commenter": { "displayName": m.author },
+                        "message": { "userColor": null, "fragments": [{ "text": m.text(), "emote": null }] } } })
+                })
+                .collect();
+            Ok(json!({ "data": { "video": { "comments": {
+                "edges": edges, "pageInfo": { "hasNextPage": from.len() > 100 } } } } }))
+        }
+    }
+
+    #[test]
+    fn a_twitch_page_that_fails_for_a_moment_is_asked_again() {
+        let all: Vec<_> = (0..3000).map(|n| fake(n, 7)).collect();
+        let expected = saved(&MemoryChat { messages: all.iter().map(|(_, m)| m.clone()).collect(), positions: None });
+        let info = VodInfo {
+            platform: "twitch".into(),
+            platform_id: "2901646294".into(),
+            url: String::new(),
+            title: String::new(),
+            channel: None,
+            duration: Some(430.0),
+            thumbnail: None,
+            published: None,
+        };
+        let no = AtomicBool::new(false);
+
+        // Page, "service error", page: the error is asked again, and the fetch ends whole.
+        let mut store = MemoryChat::default();
+        let asked = AtomicUsize::new(0);
+        let ask = twitch_answering(&all, &asked, |n| n == 1);
+        assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
+        assert_eq!(saved(&store), expected);
+        assert!(asked.load(Ordering::Relaxed) > 30, "paged through");
+
+        // Twitch keeps refusing from the 11th page on: five tries, then the
+        // fetch stops with what it had, and carries on from there once Twitch answers.
+        let mut store = MemoryChat::default();
+        let asked = AtomicUsize::new(0);
+        let ask = twitch_answering(&all, &asked, |n| n >= 10);
+        let e = fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap_err();
+        assert_eq!(format!("{e:#}"), "Twitch wouldn't give the chat: service error");
+        assert_eq!(asked.load(Ordering::Relaxed), 10 + PAGE_RETRIES.len() + 1, "asked five times");
+        let partial = store.messages.len();
+        assert!((900..3000).contains(&partial), "saved {partial} before it stopped");
+        let ask = twitch_answering(&all, &asked, |_| false);
+        assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
+        assert_eq!(saved(&store), expected, "every message, once");
+    }
+
     #[test]
     fn a_kick_fetch_carries_on_where_it_stopped() {
         // 3,000 messages over 500 s from Unix time 1000, paged back 25 at a time by cursor, as Kick serves them.
@@ -1609,7 +1755,7 @@ mod tests {
     #[test]
     #[ignore = "network"]
     fn fetches_twitchs_cheermotes() {
-        let names = Cheermotes::for_video("2899842479", &AtomicBool::new(false));
+        let names = Cheermotes::for_video("2899842479", &AtomicBool::new(false), &twitch_gql);
         let fetched = names.0.len() - Cheermotes::builtin().0.len();
         eprintln!("{} cheermote names, {fetched} more than built in", names.0.len());
         assert!(names.has("PrideCheer") && names.has("Cheer") && names.has("Charity"));
@@ -1749,7 +1895,7 @@ mod tests {
     fn chat_slices_live() {
         use std::time::{Duration, Instant};
         let twitch = std::env::var("TWITCH_ID").unwrap_or_else(|_| "2862677806".into());
-        let cheermotes = Cheermotes::for_video(&twitch, &AtomicBool::new(false));
+        let cheermotes = Cheermotes::for_video(&twitch, &AtomicBool::new(false), &twitch_gql);
         let page = |offset: i64, stop: &AtomicBool| {
             let body = json!({ "query": TWITCH_QUERY, "variables": { "id": twitch, "offset": offset } });
             parse_twitch_page(&api(TWITCH_GQL, Some(&body), &[("Client-ID", TWITCH_CLIENT_ID)], stop)?, &cheermotes)

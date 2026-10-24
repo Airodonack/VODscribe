@@ -71,13 +71,22 @@ fn fetch(app: &AppHandle, id: i64) {
             let _ = app.emit("chat-saved", id);
         }),
     };
-    let result = chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &mut store, &flag, |f| {
+    let mut on_progress = |f: f64| {
         let percent = (f * 100.0) as i32;
         if percent != shown {
             shown = percent;
             let _ = app.emit("chat-progress", (id, f));
         }
-    });
+    };
+    // The tests' builds can fetch a chat the tests left, without the network (`e2e::chat`).
+    #[cfg(feature = "e2e")]
+    let offline = crate::e2e::chat(&state.paths.root, &vod.info, &mut store, &flag, &mut on_progress);
+    #[cfg(not(feature = "e2e"))]
+    let offline = None;
+    let result = match offline {
+        Some(result) => result,
+        None => chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &mut store, &flag, &mut on_progress),
+    };
     drop(store);
     *state.chat.current.lock().unwrap() = None;
     let db = state.db.lock().unwrap();
