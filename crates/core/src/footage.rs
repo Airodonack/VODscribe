@@ -218,7 +218,7 @@ pub fn remove(dir: &Path, vod_id: i64) {
     }
 }
 
-/// Removes files in `dir` not used for `max_age`, then the least recently
+/// Removes files in `dir` not used for `max_age` (`touch`), then the least recently
 /// used until they take at most `max_bytes` (the app passes no limit, or 0
 /// to remove all at once); never those `kept` says to keep (footage an edit
 /// uses: its site may not have the VOD any more).
@@ -231,7 +231,7 @@ pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64, kept: impl Fn(&Path) 
             // Not a part file: one being moved into place.
             let part = e.file_name().to_string_lossy().contains(".part");
             (meta.is_file() && !part && !kept(&e.path()))
-                .then(|| (e.path(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
+                .then(|| (e.path(), meta.accessed().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()))
         })
         .collect();
     let now = SystemTime::now();
@@ -252,10 +252,17 @@ pub fn tidy(dir: &Path, max_age: Duration, max_bytes: u64, kept: impl Fn(&Path) 
     }
 }
 
-/// Marks `path` used now, so `tidy` keeps it.
+/// Marks `path` used now, so `tidy` keeps it: its access time, not its
+/// modification time, which says what's in it (a storyboard is made of the
+/// file as it was changed last, and made again if it changes).
 pub fn touch(path: &Path) {
+    used_at(path, SystemTime::now());
+}
+
+/// Marks `path` last used at `when`.
+pub fn used_at(path: &Path, when: SystemTime) {
     if let Ok(f) = fs::File::options().append(true).open(path) {
-        let _ = f.set_modified(SystemTime::now());
+        let _ = f.set_times(fs::FileTimes::new().set_accessed(when));
     }
 }
 
@@ -357,7 +364,7 @@ mod tests {
             let p = dir.join(format!("{name}.mp4"));
             fs::write(&p, [0u8; 100]).unwrap();
             let when = SystemTime::now() - Duration::from_secs(age * 86_400);
-            fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
+            used_at(&p, when);
         }
         tidy(&dir, Duration::from_secs(30 * 86_400), 150, |_| false);
         let left: Vec<bool> = ["old", "mid", "new"].iter().map(|n| dir.join(format!("{n}.mp4")).exists()).collect();
@@ -371,15 +378,20 @@ mod tests {
             let p = dir.join(format!("{name}.mkv"));
             fs::write(&p, [0u8; 100]).unwrap();
             let when = SystemTime::now() - Duration::from_secs(100 * 86_400);
-            fs::File::options().append(true).open(&p).unwrap().set_modified(when).unwrap();
+            used_at(&p, when);
         }
         tidy(&dir, Duration::from_secs(30 * 86_400), 50, |p| p.ends_with("used.mkv"));
         assert!(dir.join("used.mkv").exists(), "an edit uses it");
         assert!(!dir.join("unused.mkv").exists());
     }
 
+    /// Found (a clip cut, a frame shown) or covering an edit's piece (an
+    /// edit planned, played, its thumbnails shown), a section is marked used
+    /// for tidying, and its modification time stays: what's made of the file
+    /// (its storyboard) is made of it as it was changed last, and made again
+    /// if it changes, so a look at it mustn't count as a change.
     #[test]
-    fn finding_a_section_marks_it_used() {
+    fn finding_a_section_marks_it_used_and_leaves_it_unchanged() {
         let dir = crate::TempDir::new("footage-find-touch");
         let db = Db::open(&dir.join("library.db")).unwrap();
         let (vod, _) = db.add_vod(&crate::edits::tests::info("a")).unwrap();
@@ -387,9 +399,20 @@ mod tests {
         fs::write(&path, [0u8; 10]).unwrap();
         let old = SystemTime::now() - Duration::from_secs(40 * 86_400);
         fs::File::options().append(true).open(&path).unwrap().set_modified(old).unwrap();
-        assert!(find(&db, &dir, vod.id, 10.0, 20.0).unwrap().is_some());
-        let used = fs::metadata(&path).unwrap().modified().unwrap();
-        assert!(SystemTime::now().duration_since(used).unwrap() < Duration::from_secs(60), "dated now");
+        let changed = fs::metadata(&path).unwrap().modified().unwrap();
+        for look in ["found", "covering"] {
+            used_at(&path, old);
+            match look {
+                "found" => assert!(find(&db, &dir, vod.id, 10.0, 20.0).unwrap().is_some()),
+                _ => assert_eq!(cover(&db, &dir, vod.id, 10.0, 20.0, None).unwrap().len(), 1),
+            }
+            let meta = fs::metadata(&path).unwrap();
+            let used = meta.accessed().unwrap();
+            assert!(SystemTime::now().duration_since(used).unwrap() < Duration::from_secs(60), "{look}: dated now");
+            assert_eq!(meta.modified().unwrap(), changed, "{look}: its modification time changed");
+        }
+        tidy(&dir, Duration::from_secs(30 * 86_400), u64::MAX, |_| false);
+        assert!(path.exists(), "used now, it's kept");
     }
 
     #[test]

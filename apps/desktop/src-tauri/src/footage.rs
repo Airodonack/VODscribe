@@ -429,7 +429,7 @@ pub(crate) fn ensure_as(
                 anyhow::bail!("That VOD is gone.");
             }
             std::fs::rename(&part, &out)?;
-            // Dated now, not when the site made it, for tidying.
+            // Used now, for tidying.
             footage::touch(&out);
             anyhow::Ok(())
         })();
@@ -457,9 +457,7 @@ pub(crate) fn drop_section(path: &std::path::Path) {
     if std::fs::remove_file(path).is_ok() || !path.is_file() {
         return;
     }
-    if let Ok(file) = std::fs::File::options().write(true).open(path) {
-        let _ = file.set_modified(std::time::UNIX_EPOCH);
-    }
+    footage::used_at(path, std::time::UNIX_EPOCH);
 }
 
 /// Removes footage sections' files from `work`: a section downloads there,

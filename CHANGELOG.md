@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.6.1 (unreleased)
 
+- Pointing at an edit's timeline now shows the small picture of the moment over pieces of a VOD from a site too, once that part of its video is downloaded, not only over pieces of video files.
+
 ## 0.6.0 — 2026-10-24
 
 - Adding a VOD or a video file no longer transcribes it by itself: it opens, ready to watch and clip, and its row says "Not transcribed". Click Transcribe on the row when you want its transcript. One partly transcribed says how much ("Transcribed 24:00 of 3:04:00"), and Transcribe the rest does what's left.
