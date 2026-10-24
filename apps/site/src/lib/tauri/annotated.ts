@@ -30,6 +30,28 @@ export function storedId(platform: string, id: string): string {
   return platform === "twitch" && /^\d+$/.test(id) ? `v${id}` : id;
 }
 
+/** A VOD listed in the download host's annotations/index.json. */
+export interface IndexEntry {
+  platform: string;
+  id: string;
+  channel: string;
+  title: string;
+  duration: number;
+  produced: { at: string };
+}
+
+/** The host's index of VODs: the entries with a platform and id, newest first. */
+export function indexEntries(value: unknown): IndexEntry[] {
+  if (!Array.isArray(value)) throw new Error("The list of VODs couldn't be read.");
+  return value
+    .filter((e) => typeof e?.platform === "string" && typeof e?.id === "string")
+    .sort((a, b) => String(b.produced?.at ?? "").localeCompare(String(a.produced?.at ?? "")));
+}
+
+/** A VOD's page on this site: Twitch's id as Twitch writes it, without the "v". */
+export const pageOf = (platform: string, id: string) =>
+  `/v/${encodeURIComponent(platform)}/${encodeURIComponent(platform === "twitch" ? id.replace(/^v(?=\d+$)/, "") : id)}`;
+
 /** The chat file beside an annotations file at `url`: its name with .chat.json for .json. */
 export const chatBeside = (url: string) => {
   const at = new URL(url);

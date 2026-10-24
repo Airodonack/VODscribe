@@ -22,6 +22,9 @@ export default defineConfig({
       // Every page is prerendered to plain HTML for Cloudflare.
       // 404.html is Cloudflare's not-found page: the site's shell, which shows SvelteKit's error page.
       adapter: adapter({ fallback: "404.html", strict: true }),
+      // Assets by absolute path: /v's page is also served for every VOD's
+      // address under it (static/_redirects), where relative paths would miss.
+      paths: { relative: false },
       // SvelteKit hashes its own inline startup script into this policy. Headers
       // a <meta> policy can't set (frame-ancestors) are in static/_headers.
       csp: {

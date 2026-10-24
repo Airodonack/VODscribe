@@ -1,0 +1,5 @@
+# Cloudflare redirects, read before its static files. Every VOD's address is
+# answered with the /v page (status 200: a shared link isn't a 404), whose
+# router shows the VOD's route (src/routes/v). No file of the site may live
+# under /v/: this rule would hide it.
+/v/* /v 200

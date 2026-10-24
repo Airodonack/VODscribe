@@ -4,7 +4,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { chatBeside, chatOf, pickDropped, pickSource, segmentsOf, storedId, vodOf } from "./annotated.ts";
+import {
+  chatBeside,
+  chatOf,
+  indexEntries,
+  pageOf,
+  pickDropped,
+  pickSource,
+  segmentsOf,
+  storedId,
+  vodOf,
+} from "./annotated.ts";
 import { parseAnnotations } from "../../../../desktop/src/lib/annotations.ts";
 
 /** @param {string} name */
@@ -130,4 +140,33 @@ test("the library's one VOD", () => {
   assert.equal(vod.published, "2026-10-14");
   assert.equal(vod.transcribed, "all");
   assert.equal(vod.chat, "pending");
+});
+
+test("the host's index: VODs with a platform and id, newest first, each to its page", () => {
+  const entry = (/** @type {string} */ id, /** @type {string} */ at) => ({
+    platform: "twitch",
+    id,
+    channel: "airodonack",
+    title: id,
+    duration: 75,
+    produced: { at },
+  });
+  const listed = indexEntries([
+    entry("v1", "2026-10-01T00:00:00Z"),
+    { title: "no id" },
+    entry("v2", "2026-10-20T00:00:00Z"),
+  ]);
+  assert.deepEqual(
+    listed.map((e) => e.id),
+    ["v2", "v1"],
+  );
+  assert.throws(() => indexEntries({}), /couldn't be read/);
+  // Twitch's page drops the "v" (pickSource puts it back); a clip's slug and other sites' ids stay.
+  assert.equal(pageOf("twitch", "v2901646294"), "/v/twitch/2901646294");
+  assert.equal(pageOf("twitch", "vSlugName"), "/v/twitch/vSlugName");
+  assert.equal(pageOf("youtube", "IaIo3d6cUuo"), "/v/youtube/IaIo3d6cUuo");
+  assert.equal(
+    pickSource("twitch", "2901646294", new URLSearchParams(), PAGE)?.annotations.endsWith("/v2901646294.json"),
+    true,
+  );
 });
