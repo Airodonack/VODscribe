@@ -61,14 +61,17 @@ export default {
 
     // Seeks, paused, by a click on the timeline at a time: to the bar's time
     // changing (in the page, at the frame it's drawn in), and to the frame.
+    // The frame's arrival is read through the e2e build's player-time
+    // events: CI's Linux job tests the release package, which has none, so
+    // there only the time shown is measured.
+    const framed = await app.hasE2e();
+    if (!framed) ctx.log("seek to frame shown: not measured (this build has no e2e feature)");
     for (const target of SEEKS) {
       let shown;
       const from = ctx.clock();
-      const frame = await app.timeToFrame(
-        "seek to frame shown",
-        async () => {
-          shown = await app.js(
-            `const target = arguments[0];
+      const click = async () => {
+        shown = await app.js(
+          `const target = arguments[0];
              const bar = document.querySelector(".scrubber");
              const box = bar.querySelector("canvas").getBoundingClientRect();
              const x = box.left + ((target - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
@@ -84,16 +87,18 @@ export default {
                if (time() !== before) return { ms: Math.round(performance.now() - start), before, after: time() };
              }
              return { error: "the time shown stayed " + before + " for 10 s" };`,
-            target,
-          );
-        },
-        target,
-        { keep: false },
-      );
+          target,
+        );
+      };
+      const frame = framed ? await app.timeToFrame("seek to frame shown", click, target, { keep: false }) : null;
+      if (!framed) await click();
       if (shown.error) throw new Error(`seek to ${target} s: ${shown.error}`);
       measures.add("seek: time shown", shown.ms, from, from + shown.ms / 1000);
-      measures.add("seek to frame shown", frame, from, ctx.clock());
-      ctx.log(`seek to ${target} s: ${shown.before} → ${shown.after} in ${shown.ms} ms, its frame in ${frame} ms`);
+      if (frame !== null) measures.add("seek to frame shown", frame, from, ctx.clock());
+      ctx.log(
+        `seek to ${target} s: ${shown.before} → ${shown.after} in ${shown.ms} ms` +
+          (frame !== null ? `, its frame in ${frame} ms` : ""),
+      );
     }
     measures.check();
   },

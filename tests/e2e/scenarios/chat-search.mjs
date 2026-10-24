@@ -22,6 +22,9 @@ export default {
       'The search box reads "from:Ada" with a chip for the filter under it; the results are all chat messages, each with the author "Ada" before it.',
   },
   async run(app, ctx) {
+    // The chat fixture is served by the app's e2e build only (CI's Linux job
+    // tests the release package).
+    if (!(await app.hasE2e())) return ctx.skip("this build has no e2e feature, so the chat fixture isn't served");
     const fixture = chat();
     await app.toLibrary();
     const added = await app.addAndTranscribe(ctx.fixtures.landed);
