@@ -85,6 +85,12 @@ export class PlayerReading {
       this.actual = this.shown ?? this.now;
     }
     this.playing = p.playing();
+    this.readSound(p);
+  }
+
+  /** The sound and speed alone: a player's, or what one will start with
+   *  before it's made (Player.svelte). */
+  readSound(p: Pick<Readable, "volume" | "rate">) {
     if (p.volume) [this.volume, this.muted] = [p.volume.get(), p.volume.muted()];
     this.rate = p.rate?.get() ?? 1;
   }

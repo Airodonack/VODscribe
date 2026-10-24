@@ -1,6 +1,12 @@
 <script module lang="ts">
+  import type { EmbeddedPlayer } from "./embed";
+
+  /** What the bar sets: the player's sound and speed, where it has them
+   *  (or, before it's made, what it will start with: Player.svelte). */
+  export type BarControls = Pick<EmbeddedPlayer, "volume" | "rate">;
+
   /** Mutes or unmutes `player`; unmuting at no volume goes back to full, or it would stay silent. */
-  export function toggleMute(player: EmbeddedPlayer | null | undefined) {
+  export function toggleMute(player: BarControls | null | undefined) {
     const sound = player?.volume;
     if (!sound) return;
     if (sound.muted() && sound.get() === 0) sound.set(1);
@@ -16,12 +22,12 @@
   // and full screen, where the player has them.
 
   import type { Snippet } from "svelte";
-  import type { EmbeddedPlayer } from "./embed";
   import Icon from "./Icon.svelte";
   import { Hold } from "./hold.svelte";
   import { frameIndex } from "./media";
   import { keyHint } from "./keys.svelte";
   import { formatTime } from "./platform";
+  import { prefs } from "./playerPrefs.svelte";
   import Popover from "./Popover.svelte";
   import { load, save } from "./stored";
 
@@ -44,7 +50,7 @@
     actions,
     beside,
   }: {
-    player: EmbeddedPlayer | null;
+    player: BarControls | null;
     playing: boolean;
     /** Where the picture is (PlayerReading.actual): the time shown, by frame and as a clock. */
     now: number;
@@ -130,7 +136,7 @@
     {/if}
   </button>
   {@render actions?.()}
-  {#if player?.volume && !player.ownControls}
+  {#if player?.volume}
     <button
       class="control"
       onclick={() => toggleMute(player)}
@@ -150,7 +156,7 @@
       aria-label="Volume"
     />
   {/if}
-  {#if player?.rate && !player.ownControls}
+  {#if player?.rate}
     <button
       class="control speed"
       bind:this={speedButton}
@@ -177,7 +183,7 @@
     <button
       class="control"
       class:on={captionsOn && captionsAvailable}
-      onclick={() => player?.captions?.toggle()}
+      onclick={() => prefs.toggleCaptions()}
       disabled={!captionsAvailable}
       aria-pressed={captionsOn && captionsAvailable}
       aria-label="Captions"

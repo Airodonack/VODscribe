@@ -44,8 +44,12 @@
 
   onMount(() => {
     const v = video!;
+    // As last set, in any player (or on the bar before this one was made).
+    // The default rate too: loading a source puts the rate back to it.
     const saved = prefs.volume();
     if (saved !== null) v.volume = saved;
+    const rate = prefs.speed();
+    if (rate !== null) v.defaultPlaybackRate = v.playbackRate = rate;
     v.src = src;
     // Through seek: before its metadata is in, a video may drop where it's put.
     seek(start, false);
@@ -144,15 +148,9 @@
   export const speed = {
     get: () => video?.playbackRate ?? 1,
     set: (rate: number) => {
-      if (video) video.playbackRate = rate;
+      if (video) video.defaultPlaybackRate = video.playbackRate = rate;
+      prefs.setSpeed(rate);
     },
-  };
-
-  export const captions = {
-    available: () => cues.length > 0,
-    none: () => cues.length === 0,
-    on: () => prefs.captions,
-    toggle: () => prefs.toggleCaptions(),
   };
 
   // A press held still on the picture carries the stretch the playhead is

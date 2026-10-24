@@ -47,15 +47,17 @@ export interface EmbeddedPlayer {
   /** When its last seek's reply came (performance.now()), null while one is
    *  out (the app's own player: playerReading.svelte.ts). */
   settled?(): number | null;
-  /** Its sound, where the app's controls set it (0..1). */
+  /** Its sound, where the app's controls set it (0..1): through a site's
+   *  API where it has one, read back from its reports (its own controls may
+   *  change it too). */
   volume?: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
-  /** Its speed, where the app's controls set it. */
+  /** Its speed, where the app's controls set it (Twitch's API has none). */
   rate?: { get(): number; set(rate: number): void };
-  /** Captions from the transcript, where it shows them (the app's own player, or its picture under a site's);
-   *  `none`: it would, but there are none (nothing transcribed yet). */
-  captions?: { available(): boolean; on(): boolean; toggle(): void; none?(): boolean };
-  /** Shows controls of its own that can't be hidden (Twitch's), so the app's leave out sound and speed. */
-  ownControls?: boolean;
+  /** Whether it draws the transcript's captions itself, over its picture
+   *  (the app's own player, or its picture under a site's). Where it
+   *  doesn't, the player's panel shows them in a strip under the player,
+   *  never over a site's (Player.svelte). */
+  drawsCaptions?(): boolean;
   destroy(): void;
 }
 
@@ -190,7 +192,9 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         sound.rate = data.info.playbackRate;
         clock.setSpeed(sound.rate);
       }
-      // Their ads: told to us once we ask (addEventListener through their API).
+      // Its sound as it changes (its volume and muted, read above), and
+      // their ads: told to us once we ask (addEventListener through their API).
+      if (data.event === "onReady") command("addEventListener", ["onVolumeChange"]);
       if (data.event === "onReady" && bridged) {
         command("addEventListener", ["onAdStart"]);
         command("addEventListener", ["onAdEnd"]);
@@ -242,7 +246,7 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
           command("setPlaybackRate", [rate]);
         },
       },
-      captions: bridged?.captions,
+      drawsCaptions: () => bridged?.drawing() ?? false,
       destroy: () => {
         bridged?.stop();
         cleanup();
@@ -300,6 +304,8 @@ const TWITCH_PROXY = "twitch-embed-player-proxy";
 const TWITCH_PAUSE = 2;
 const TWITCH_PLAY = 3;
 const TWITCH_SEEK = 4;
+const TWITCH_SET_MUTED = 10;
+const TWITCH_SET_VOLUME = 11;
 
 async function twitch(
   el: HTMLElement,
@@ -336,6 +342,8 @@ async function twitch(
       )
     : null;
   const clock = new Clock(time, play, { waitsForPlayer: true });
+  // Its sound as it last said (their own controls set it too); it has no speed to set.
+  const sound = { volume: 1, muted: false };
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>
@@ -348,10 +356,12 @@ async function twitch(
       const data = raw as {
         namespace?: string;
         eventName?: string;
-        params?: { currentTime?: number; playback?: string };
+        params?: { currentTime?: number; playback?: string; volume?: number; muted?: boolean };
       };
       if (data?.namespace === TWITCH_PROXY && data.eventName === "UPDATE_STATE") {
         const playback = data.params?.playback;
+        if (typeof data.params?.volume === "number") sound.volume = data.params.volume;
+        if (typeof data.params?.muted === "boolean") sound.muted = data.params.muted;
         // Reloaded plain (bridge), it now and then starts from the start
         // whatever its URL said (seen in macOS's WebKit): sent where it was, once.
         const now = data.params?.currentTime;
@@ -385,8 +395,20 @@ async function twitch(
         },
         bridged,
       ),
-      ownControls: true,
-      captions: bridged?.captions,
+      volume: {
+        get: () => sound.volume,
+        muted: () => sound.muted,
+        set(volume) {
+          sound.volume = volume;
+          command(TWITCH_SET_VOLUME, volume);
+          if (sound.muted && volume > 0) this.setMuted(false);
+        },
+        setMuted(muted) {
+          sound.muted = muted;
+          command(TWITCH_SET_MUTED, muted);
+        },
+      },
+      drawsCaptions: () => bridged?.drawing() ?? false,
       destroy: () => {
         bridged?.stop();
         cleanup();
@@ -531,7 +553,7 @@ async function local(
       settled: player.seekSettled,
       volume: player.sound,
       rate: player.speed,
-      captions: player.captions,
+      drawsCaptions: () => true,
       destroy: () => unmount(player),
     };
   }
@@ -550,7 +572,7 @@ async function local(
     fps: player.frameRate,
     volume: player.sound,
     rate: player.speed,
-    captions: player.captions,
+    drawsCaptions: () => true,
     destroy: () => unmount(player),
   };
 }
@@ -639,7 +661,6 @@ function bridge(
   drawing: () => boolean;
   /** The app's controls asked their player to seek. */
   asked: () => void;
-  captions: NonNullable<EmbeddedPlayer["captions"]>;
   adStarted: () => void;
   adEnded: () => void;
 } {
@@ -873,13 +894,6 @@ function bridge(
       }, 3000);
     },
     adEnded: () => frame.contentWindow?.postMessage({ vodscribeAd: false }, origin),
-    // None once it's stopped (their plain player, its own captions).
-    captions: {
-      available: () => !stopped && cues.length > 0,
-      none: () => !stopped && cues.length === 0,
-      on: () => prefs.captions,
-      toggle: () => prefs.toggleCaptions(),
-    },
   };
 }
 

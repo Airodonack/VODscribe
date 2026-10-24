@@ -4,6 +4,10 @@
 // the site has one, and played in the app. YouTube may ask to confirm
 // "you're not a bot": that's YouTube's block on the computer's address, not
 // the app's fault, so it's said, not failed (the app never signs in).
+// Playing, the bar has each site's sound (and speed, but on Twitch, whose
+// player has none), and the captions show in a strip under the player
+// where it doesn't draw them itself (always on Kick; on YouTube and Twitch
+// unless the build takes their picture over: site-embed.mjs).
 
 import { MINUTE, until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
@@ -92,6 +96,24 @@ export default {
           2 * MINUTE,
         );
         await ctx.checkpoint(`${site}-playing`);
+        const bar = await app.js(`return {
+          mute: !!document.querySelector('.bar button[aria-label="Mute"], .bar button[aria-label="Unmute"]'),
+          volume: !!document.querySelector('.bar input[aria-label="Volume"]'),
+          speed: !!document.querySelector(".bar button.speed"),
+          captions: document.querySelector('.bar button[aria-label="Captions"]')?.disabled === false,
+        }`);
+        const want = { mute: true, volume: true, speed: site !== "twitch", captions: true };
+        if (Object.keys(want).some((k) => bar[k] !== want[k]))
+          throw new Error(`playing, the bar has ${JSON.stringify(bar)}, not ${JSON.stringify(want)}`);
+        if (site === "kick" || !(await app.invoke("embed_takeover"))) {
+          const line = await until(
+            "a caption in the strip under the player",
+            () => app.js(`return document.querySelector(".caption-strip")?.textContent.trim()`),
+            30_000,
+          );
+          await ctx.checkpoint(`${site}-caption-strip`);
+          ctx.log(`${site}: the bar has ${Object.keys(want).join(", ")}; the strip says "${line}"`);
+        }
         await app.pause().catch(() => {});
         left.push({ site, id: vod.id, time: await app.shownTime() });
         const own = await app.js(`return !!document.querySelector(".own-player")`);

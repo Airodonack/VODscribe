@@ -23,8 +23,6 @@ export interface EditPlayback {
   step?(frames: number): void;
   fps(): number | null;
   volume: { get(): number; muted(): boolean; set(volume: number): void; setMuted(muted: boolean): void };
-  /** Captions on or off (shared by every player, playerPrefs.svelte.ts); which show is the view's. */
-  captions?: { available(): boolean; on(): boolean; toggle(): void };
   /** None where the player has no speed (the bar then hides its control). */
   rate?: { get(): number; set(rate: number): void };
   destroy(): void;
@@ -46,6 +44,8 @@ export class EditPlayer implements EditPlayback {
     this.screen = mount(Screen, { target: host });
     const saved = prefs.volume();
     if (saved !== null) this.driver.volume.set(saved);
+    const rate = prefs.speed();
+    if (rate !== null) this.driver.speed.set(rate);
   }
 
   async plan(id: number, from: number): Promise<PlayerStretch[]> {
@@ -83,7 +83,13 @@ export class EditPlayer implements EditPlayback {
   seek = (seconds: number, play: boolean) => this.driver.seek(seconds, play);
   step = (frames: number) => this.driver.step(frames);
   fps = () => this.driver.fps;
-  rate = this.driver.speed;
+  rate = {
+    get: () => this.driver.speed.get(),
+    set: (rate: number) => {
+      this.driver.speed.set(rate);
+      prefs.setSpeed(rate);
+    },
+  };
   volume = {
     get: () => this.driver.volume.get(),
     muted: () => this.driver.volume.muted(),
@@ -93,7 +99,6 @@ export class EditPlayer implements EditPlayback {
     },
     setMuted: (muted: boolean) => this.driver.volume.setMuted(muted),
   };
-  captions = { available: () => true, on: () => prefs.captions, toggle: () => prefs.toggleCaptions() };
 
   destroy() {
     this.gone = true;

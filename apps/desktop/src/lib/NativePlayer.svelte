@@ -74,8 +74,11 @@
   });
 
   onMount(() => {
+    // As last set, in any player (or on the bar before this one was made).
     const saved = prefs.volume();
     if (saved !== null) driver.volume.set(saved);
+    const rate = prefs.speed();
+    if (rate !== null) driver.speed.set(rate);
     const folder = guarded;
     askingSoon = folder ? setTimeout(() => (asking = folder), ASKING_AFTER) : undefined;
     const answered = () => {
@@ -149,13 +152,12 @@
     setMuted: (m: boolean) => driver.volume.setMuted(m),
   };
 
-  export const speed = driver.speed;
-
-  export const captions = {
-    available: () => cues.length > 0,
-    none: () => cues.length === 0,
-    on: () => prefs.captions,
-    toggle: () => prefs.toggleCaptions(),
+  export const speed = {
+    get: () => driver.speed.get(),
+    set(rate: number) {
+      driver.speed.set(rate);
+      prefs.setSpeed(rate);
+    },
   };
 
   // A press held still on the picture carries the stretch the playhead is

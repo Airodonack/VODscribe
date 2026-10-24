@@ -2,19 +2,20 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
-  import { api, type Vod } from "./api";
+  import { api, events, type Cue, type Vod } from "./api";
   import { ask } from "./ask";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts, markKey } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
-  import { frameStart, isUnplayable } from "./media";
+  import { cueAt, frameStart, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
-  import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
+  import PlayerBar, { toggleMute, type BarControls } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
   import { PlayerReading } from "./playerReading.svelte";
+  import { prefs } from "./playerPrefs.svelte";
   import Scrubber from "./Scrubber.svelte";
   import Icon from "./Icon.svelte";
   import { Hold } from "./hold.svelte";
@@ -127,6 +128,12 @@
         // Closed while loading: don't leave an invisible player running.
         if (destroyed) return p.destroy();
         player = p;
+        // Now, not at the next frame's reading: a strip shown for a frame would move what's under it.
+        drawsCaptions = p.drawsCaptions?.() ?? false;
+        // Muted on the bar before it was made: it starts muted (its volume
+        // and speed it takes from what was set, playerPrefs.svelte.ts).
+        if (firstMuted) p.volume?.setMuted(true);
+        firstMuted = false;
         if (pending) p.seek(pending.time, pending.play);
         const video = host?.querySelector("video, audio");
         video?.addEventListener("loadedmetadata", () => {
@@ -181,6 +188,7 @@
     if (!active || !player) return;
     const time = player.time();
     const play = player.playing();
+    firstMuted = player.volume?.muted() ?? false;
     player.destroy();
     player = null;
     active = false;
@@ -188,25 +196,66 @@
     activate(time, play);
   });
 
+  // A VOD played in the app's own player shows its sound and speed on the
+  // bar from the moment it opens, though the player is made only on the
+  // first Play (`activate`: a decoder for each VOD opened would be wasted):
+  // what's set meanwhile is what it starts with. The volume and speed are
+  // every player's (playerPrefs.svelte.ts); muted is kept till it's made
+  // (and from one player to the next, as a download switches it). A
+  // site's player has none of this till it's made: nothing of the site's
+  // is loaded before Play.
+  let firstMuted = $state(false);
+  const first: BarControls = {
+    volume: {
+      get: () => prefs.volume() ?? 1,
+      muted: () => firstMuted,
+      set(volume) {
+        prefs.setVolume(volume);
+        firstMuted = volume === 0;
+      },
+      setMuted: (muted) => (firstMuted = muted),
+    },
+    rate: { get: () => prefs.speed() ?? 1, set: (rate) => prefs.setSpeed(rate) },
+  };
+  const controls = $derived(player ?? (playsHere(vod) ? first : null));
+
+  // The transcript's lines as captions, for the captions button (greyed
+  // till a part is transcribed) and, where the player doesn't draw them
+  // over its picture (a site's own: embed.ts `drawsCaptions`), for the
+  // strip under it. Asked again as the VOD changes: a stretch transcribed
+  // brings its captions.
+  let cues = $state.raw<Cue[]>([]);
+  function fetchCues() {
+    api.captions(vod.id).then(
+      (c) => !destroyed && (cues = c),
+      (e) => console.error("captions", e),
+    );
+  }
+  fetchCues();
+  const changed = events.vod((v) => v.id === vod.id && fetchCues());
+
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
-  let captionsAvailable = $state(false);
-  let captionsNone = $state(false);
-  let captionsOn = $state(false);
+  let drawsCaptions = $state(false);
   let playerDuration = $state(0);
   let poll = 0;
   function read() {
     poll = requestAnimationFrame(read);
     const p = player;
-    if (!p) return;
+    if (!p) {
+      if (controls) reading.readSound(controls);
+      return;
+    }
     reading.read(p);
     nav.note({ kind: "vod", id: vod.id }, { time: reading.now });
     playerDuration = p.duration?.() ?? 0;
     cuts.fps = reading.fps;
-    captionsAvailable = p.captions?.available() ?? false;
-    captionsNone = p.captions?.none?.() ?? false;
-    captionsOn = p.captions?.on() ?? false;
+    drawsCaptions = p.drawsCaptions?.() ?? false;
   }
+  // The caption in the strip under a site's player (never over it).
+  const stripCue = $derived(
+    player && !drawsCaptions && prefs.captions && cues.length ? (cueAt(cues, reading.now)?.text ?? "") : null,
+  );
   const now = $derived(reading.now);
   const playing = $derived(reading.playing);
   const fps = $derived(reading.fps);
@@ -418,6 +467,7 @@
     destroyed = true;
     cancelAnimationFrame(poll);
     clearTimeout(copiedTimer);
+    void changed.then((u) => u());
     player?.destroy();
     // The note asks about this VOD's clip.
     clips.answer(false);
@@ -465,8 +515,8 @@
     }
     // Shift with a letter is the player's own: captions (C) and mute (M).
     if (is(e, "captions.toggle") || is(e, "mute.toggle")) {
-      if (is(e, "captions.toggle")) player?.captions?.toggle();
-      else toggleMute(player);
+      if (is(e, "captions.toggle")) prefs.toggleCaptions();
+      else toggleMute(controls);
       e.preventDefault();
       return;
     }
@@ -589,6 +639,11 @@
         {/if}
       </div>
     </div>
+    {#if stripCue !== null && !collapsed}
+      <!-- A site's player can't be drawn over: its captions show under it,
+           a line kept for them (so nothing below moves as they change). -->
+      <p class="caption-strip" aria-live="off">{stripCue}</p>
+    {/if}
     {#if !collapsed}
       <Popover
         bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
@@ -644,7 +699,7 @@
       />
     {/if}
     <PlayerBar
-      {player}
+      player={controls}
       {playing}
       now={reading.actual}
       {duration}
@@ -652,9 +707,9 @@
       muted={reading.muted}
       rate={reading.rate}
       {fps}
-      {captionsAvailable}
-      {captionsNone}
-      {captionsOn}
+      captionsAvailable={cues.length > 0}
+      captionsNone={cues.length === 0}
+      captionsOn={prefs.captions}
       {fullscreen}
       canFullscreen
       ontoggleplay={togglePlay}
@@ -970,5 +1025,28 @@
   .note {
     margin: 0;
     padding: 0 16px 12px;
+  }
+
+  /* Two lines' room, the longest cut short: on the stage's dark, as the
+     captions over the app's own picture are. */
+  .caption-strip {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    box-sizing: content-box;
+    height: calc(2 * 1.35em);
+    margin: 0;
+    padding: 6px 16px;
+    background: var(--stage);
+    color: var(--stage-text);
+    font-size: 14px;
+    line-height: 1.35;
+    text-align: center;
+  }
+
+  :global(.fullscreen) .caption-strip {
+    font-size: 22px;
   }
 </style>
