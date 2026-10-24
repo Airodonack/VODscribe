@@ -59,6 +59,10 @@ jobs:
       # The demo's search against the cases the Rust search is tested with.
       - run: node --test apps/site/src/lib/tauri/search.test.mjs apps/site/src/lib/tauri/query.test.mjs apps/site/src/lib/changelog.test.mjs
       - run: node --test apps/desktop/src/lib/events.test.mjs apps/desktop/src/lib/rows.test.mjs apps/desktop/src/lib/stretches.test.mjs apps/desktop/src/lib/chatParts.test.mjs apps/desktop/src/lib/theme.test.mjs apps/desktop/src/lib/modules.test.mjs apps/desktop/src/lib/media.test.mjs apps/desktop/src/lib/scrubFrame.test.mjs apps/desktop/src/lib/platform.test.mjs apps/desktop/colorMix.test.mjs apps/desktop/src/lib/playerClock.test.mjs apps/desktop/src/lib/ownStatus.test.mjs apps/desktop/src/lib/settle.test.mjs apps/desktop/src/lib/playerKeys.test.mjs apps/desktop/src/lib/keymap.test.mjs apps/desktop/src/lib/queryChips.test.mjs apps/desktop/src-tauri/src/embed_shim.test.mjs apps/desktop/src/lib/nativeDriver.test.mjs
+      # verify.mjs turns checkpoints into JPEGs with ffmpeg, and its tests
+      # make their pictures with it; Ubuntu's 4.4 does both.
+      - name: FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       # The end-to-end harness's own parts.
       - run: node --test tests/e2e/verify.test.mjs
       - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs
