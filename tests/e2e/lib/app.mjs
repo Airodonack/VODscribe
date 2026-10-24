@@ -804,14 +804,15 @@ export class App {
 
 /**
  * Makes the app's page `width` by `height` (CSS pixels), as a small screen
- * would (the e2e build's e2e_set_inner_size); returns the size the page got
- * once it holds still, which the window manager or the screen may make a
- * little different.
+ * would (the driver's resize: drivers.mjs); returns the size the page got
+ * once it holds still, which the window manager or the screen may make
+ * different: a little, or less than asked on a screen too small for it. The
+ * caller tests at what it got; it never throws for the size.
  */
 export async function resizeInner(app, width, height) {
   const size = () => app.js(`return innerWidth + "x" + innerHeight`);
   const before = await size();
-  await app.invoke("e2e_set_inner_size", { width, height });
+  await app.driver.resize(width, height);
   // Changed (or already so), then the same over two looks.
   let last = before;
   // (A window manager that keeps the size as it was gives no change to wait

@@ -67,13 +67,23 @@ const SHORT = [
 const pageSize = (app) => app.js(`return { width: innerWidth, height: innerHeight }`);
 
 /** Sizes the window's page to `width` by `height`, asking once more for what
- *  the window manager added or took (macOS counts the title bar in). */
-async function resize(app, width, height) {
+ *  the window manager added or took (macOS counts the title bar in); returns
+ *  the size it got, as "WxH". A screen too small for the size asked gives
+ *  less (a 1024 by 768 runner's has no 749 px page under the menu bar and
+ *  title bar): that's the size tested, and said. Only a page that didn't
+ *  change at all, asked for another size, fails. */
+async function resize(app, log, width, height) {
+  const was = await pageSize(app);
   let got = await resizeInner(app, width, height);
   if (got.width !== width || got.height !== height)
     got = await resizeInner(app, 2 * width - got.width, 2 * height - got.height);
-  if (Math.abs(got.width - width) > 1 || Math.abs(got.height - height) > 1)
-    throw new Error(`the window's page is ${got.width}x${got.height}, not ${width}x${height}`);
+  const asked = `${width}x${height}`;
+  const size = `${got.width}x${got.height}`;
+  if (Math.abs(got.width - width) <= 1 && Math.abs(got.height - height) <= 1) return asked;
+  if (got.width === was.width && got.height === was.height)
+    throw new Error(`the window's page stayed ${size}, asked for ${asked}`);
+  log(`asked ${asked}, got ${size}`);
+  return size;
 }
 
 /** Checks the legend, in a window too short for all of it, is a box that
@@ -142,18 +152,18 @@ export default {
     // closing it still leaves the picture where it was.
     const { width, height } = await pageSize(app);
     for (const [w, h] of SHORT) {
-      await resize(app, w, h);
-      const fit = await scrolls(app, `the VOD at ${w}x${h}`);
+      const at = await resize(app, ctx.log, w, h);
+      const fit = await scrolls(app, `the VOD at ${at}`);
       const open = await stageBox(app);
       await app.click(BUTTON);
       await until("the legend closed", () => app.js(`return !document.querySelector(".legend")`), 10_000);
-      same(`the stage at ${w}x${h} with the legend closed`, await stageBox(app), open);
+      same(`the stage at ${at} with the legend closed`, await stageBox(app), open);
       await app.click(BUTTON);
       await until("the legend", () => app.js(`return !!document.querySelector(".legend")`), 10_000);
-      same(`the stage at ${w}x${h} with the legend open again`, await stageBox(app), open);
-      ctx.log(`at ${w}x${h}: the legend ${fit}; the stage stayed at ${open}`);
+      same(`the stage at ${at} with the legend open again`, await stageBox(app), open);
+      ctx.log(`at ${at}: the legend ${fit}; the stage stayed at ${open}`);
     }
-    await resize(app, width, height);
+    await resize(app, ctx.log, width, height);
     await until("the legend's being open saved", async () => (await app.invoke("get_settings")).show_keys, 10_000);
 
     // All controls › opens Settings on Controls; B taken from Cut here, the
@@ -200,10 +210,10 @@ export default {
     ctx.log(`the edit's legend ${editFit}`);
     const { width: editWidth, height: editHeight } = await pageSize(app);
     for (const [w, h] of SHORT) {
-      await resize(app, w, h);
-      ctx.log(`at ${w}x${h}: the edit's legend ${await scrolls(app, `the edit at ${w}x${h}`)}`);
+      const at = await resize(app, ctx.log, w, h);
+      ctx.log(`at ${at}: the edit's legend ${await scrolls(app, `the edit at ${at}`)}`);
     }
-    await resize(app, editWidth, editHeight);
+    await resize(app, ctx.log, editWidth, editHeight);
     await ctx.checkpoint("legend-edit");
 
     // Closed, it's saved closed.

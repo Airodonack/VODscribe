@@ -1,8 +1,10 @@
 // The two ways into the app's page, behind one interface: each starts the app
-// and returns { run(body, args, waitMs), screenshot(), focus(), close(), proc },
-// where `run` does what WebDriver's "execute script" does (a function body,
-// its `arguments`, the awaited result), `focus` asks for the window to be
-// given the keyboard, and `proc` is the app's process as far as it's known:
+// and returns { run(body, args, waitMs), screenshot(), focus(), resize(width,
+// height), close(), proc }, where `run` does what WebDriver's "execute script"
+// does (a function body, its `arguments`, the awaited result), `focus` asks
+// for the window to be given the keyboard, `resize` asks for the window's page
+// to be `width` by `height` CSS pixels (without waiting for it to get there),
+// and `proc` is the app's process as far as it's known:
 // { exe, pid, closedAt, exitedAt, exit } (times in ms since the epoch; null
 // where not known or not yet), for the page dump (lib/dump.mjs).
 //
@@ -96,6 +98,20 @@ export async function webdriver(app) {
       const handle = await wd("GET", `/session/${session}/window`);
       await wd("POST", `/session/${session}/window`, { handle });
     },
+    // WebDriver's Set Window Rect, which sizes the whole window: the page is
+    // asked for plus what the window has around its page now. (The installed
+    // app has no e2e_set_inner_size: that's only in builds with the feature.)
+    resize: async (width, height) => {
+      const rect = await wd("GET", `/session/${session}/window/rect`);
+      const page = await wd("POST", `/session/${session}/execute/sync`, {
+        script: "return { width: innerWidth, height: innerHeight }",
+        args: [],
+      });
+      await wd("POST", `/session/${session}/window/rect`, {
+        width: width + rect.width - page.width,
+        height: height + rect.height - page.height,
+      });
+    },
     close: () => {
       proc.closedAt = Date.now();
       return wd("DELETE", `/session/${session}`).catch(() => {});
@@ -139,7 +155,7 @@ export async function bridge(app) {
   ).catch((e) => {
     throw new Error(exited !== null ? `the app exited (${exited}) before it listened` : e.message);
   });
-  return {
+  const driver = {
     run: async (body, args = [], waitMs = 30_000) => {
       if (exited !== null) throw new Error(`the app exited (${exited})`);
       // A script that doesn't parse never answers from the page: say so here.
@@ -159,6 +175,14 @@ export async function bridge(app) {
     // Nothing of its own: the hook runs scripts in the page, and the OS
     // brings the app to the front (App.focused).
     focus: async () => {},
+    // The e2e build's own command, which sizes the page itself.
+    resize: (width, height) =>
+      driver.run(
+        `return window.__TAURI_INTERNALS__.invoke("e2e_set_inner_size", arguments[0]).catch((e) => {
+          throw new Error(String(e));
+        })`,
+        [{ width, height }],
+      ),
     close: async () => {
       proc.closedAt = Date.now();
       await post("/quit").catch(() => {});
@@ -166,6 +190,7 @@ export async function bridge(app) {
     },
     proc,
   };
+  return driver;
 }
 
 /** The whole screen, where the platform can take it without a driver. */
