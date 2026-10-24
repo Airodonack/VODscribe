@@ -22,9 +22,10 @@ webkit = ["tauri/wry"]
 # for now. Built without the default features (`--no-default-features
 # --features servo`), so neither engine's crates come with the other's.
 servo = ["dep:tauri-runtime-servo", "dep:env_logger"]
-# The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs).
+# The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs),
+# and under Servo its WebDriver server (TAURI_RUNTIME_SERVO_WEBDRIVER_PORT).
 # Test builds only: never in a release.
-e2e = ["vodscribe-player/counts"]
+e2e = ["vodscribe-player/counts", "tauri-runtime-servo?/webdriver"]
 # A site's VOD's picture taken from its player into the app's own, under it
 # (embed_shim.js, embed.rs, embed.ts bridge). Off in releases: YouTube's and
 # Twitch's developer terms forbid playing their video through another player.

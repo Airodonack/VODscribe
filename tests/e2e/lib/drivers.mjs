@@ -15,10 +15,13 @@
 //   with the `e2e` feature, for macOS, whose webview has no WebDriver, and
 //   Windows. Its `proc` also has `stderr`: the end of what the app wrote
 //   there (passed on to this process's as it comes).
+// - servo: the app on the Servo engine (a build with the `servo` and `e2e`
+//   features, Linux on X11), through Servo's own WebDriver server, which the
+//   app starts on the port TAURI_RUNTIME_SERVO_WEBDRIVER_PORT names.
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { Script } from "node:vm";
 import { tmpdir } from "node:os";
@@ -426,6 +429,79 @@ export async function bridge(app) {
     proc,
   };
   return driver;
+}
+
+/** Mesa's software Vulkan, for a virtual display without a GPU's own X driver. */
+const LAVAPIPE = "/usr/share/vulkan/icd.d/lvp_icd.json";
+
+/** The servo driver's apps still running, ended with the run. */
+const servoApps = new Set();
+process.on("exit", () => servoApps.forEach((child) => child.kill("SIGKILL")));
+
+export async function servo(app) {
+  // Another port for runs side by side on one computer: E2E_DRIVER_PORT.
+  const port = process.env.E2E_DRIVER_PORT ? Number(process.env.E2E_DRIVER_PORT) : await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const env = { ...process.env, TAURI_RUNTIME_SERVO_WEBDRIVER_PORT: String(port) };
+  // The app's own player draws with Vulkan: on Xvfb, NVIDIA's Vulkan driver
+  // crashes (there's no NVIDIA X driver behind the display), so Mesa's
+  // lavapipe unless the caller chose one (VK_ICD_FILENAMES).
+  if (env.VK_ICD_FILENAMES === undefined && existsSync(LAVAPIPE)) env.VK_ICD_FILENAMES = LAVAPIPE;
+  const child = spawn(app, [], { env, stdio: ["ignore", "inherit", "inherit"] });
+  let exited = null;
+  servoApps.add(child);
+  child.on("exit", (code, signal) => {
+    exited = signal ?? code;
+    servoApps.delete(child);
+  });
+  const wd = async (method, url, body) => {
+    const res = await fetch(base + url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body && JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(`${method} ${url}: ${JSON.stringify(json.value ?? json)}`);
+    return json.value;
+  };
+  // The server starts with the app's first webview: listening, there's a page to drive.
+  const end = async () => {
+    await waitFor("the app to quit", async () => exited !== null, 20_000).catch(() => child.kill("SIGTERM"));
+    await waitFor("the app to end", async () => exited !== null, 10_000).catch(() => child.kill("SIGKILL"));
+  };
+  await waitFor(
+    "Servo's WebDriver server",
+    async () => {
+      if (exited !== null) throw new Error(`the app exited (${exited})`);
+      return (await wd("GET", "/status")).ready;
+    },
+    MINUTE,
+  ).catch(async (e) => {
+    if (exited === null) child.kill("SIGTERM");
+    throw new Error(exited !== null ? `the app exited (${exited}) before WebDriver listened` : e.message);
+  });
+  const session = await wd("POST", "/session", { capabilities: { alwaysMatch: {} } }).then(
+    (value) => value.sessionId,
+    async (e) => {
+      child.kill("SIGTERM");
+      await end();
+      throw e;
+    },
+  );
+  return {
+    run: async (body, args = []) => {
+      if (exited !== null) throw new Error(`the app exited (${exited})`);
+      return wd("POST", `/session/${session}/execute/sync`, { script: `return (async () => { ${body} })()`, args });
+    },
+    screenshot: async () => Buffer.from(await wd("GET", `/session/${session}/screenshot`), "base64"),
+    close: async () => {
+      if (exited !== null) return;
+      // Quit as the app's own Quit would (Servo's shutdown command: the app
+      // may hold it, mid-job), then the signal.
+      await wd("DELETE", `/session/${session}/servo/shutdown`).catch(() => {});
+      await end();
+    },
+  };
 }
 
 /** The whole screen, where the platform can take it without a driver. */
