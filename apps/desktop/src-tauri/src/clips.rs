@@ -368,6 +368,41 @@ pub(crate) async fn add_edit_clip(
     Ok(clip)
 }
 
+/// Makes each of `ranges` (`from`..`to` seconds of edit `edit_id`'s
+/// timeline) a clip on the edit's clip bar, in that order, as one change
+/// undo takes back whole (several stretches selected, clipped at once).
+#[tauri::command]
+pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    if ranges.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from && from >= 0.0)) {
+        return Err("That's not a stretch of the edit.".into());
+    }
+    let state = app.state::<AppState>();
+    let made = {
+        let db = state.db.lock().unwrap();
+        let pieces = db.edit_pieces(edit_id).map_err(err)?;
+        let doc = Doc::Edit(edit_id);
+        let before = history::snapshot(&db, doc).ok().flatten();
+        // Each one's title first: one that plays nothing makes none of them.
+        let mut titled = Vec::new();
+        for (from, to) in ranges {
+            let first = vodscribe_core::edits::stretch_pieces(&pieces, from, to);
+            let first = first.first().ok_or("Nothing of the edit plays there.")?;
+            let words = db.words_between(first.vod_id, first.start, first.end).map_err(err)?;
+            titled.push((from, to, clips::title(&words, first.start)));
+        }
+        let mut made = Vec::new();
+        for (from, to, title) in titled {
+            made.push(db.add_edit_clip(edit_id, from, to, &title, true).map_err(err)?);
+        }
+        state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
+        made
+    };
+    for clip in &made {
+        state.clips.queue(clip.id);
+    }
+    Ok(made)
+}
+
 #[tauri::command]
 pub(crate) async fn list_clips(app: AppHandle, vod_id: i64) -> CmdResult<Vec<Clip>> {
     crate::with_reads(app, move |db| db.clips(vod_id)).await
@@ -399,6 +434,37 @@ pub(crate) async fn add_clip(
     };
     state.clips.queue(clip.id);
     Ok(clip)
+}
+
+/// Makes each of `ranges` (`start`..`end` seconds of VOD `vod_id`) a clip in
+/// its clip bar, in that order, as one change undo takes back whole (several
+/// stretches selected, clipped at once).
+#[tauri::command]
+pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>) -> CmdResult<Vec<Clip>> {
+    let state = app.state::<AppState>();
+    let made = {
+        let db = state.db.lock().unwrap();
+        let vod = db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
+        let duration = vod.info.duration;
+        let ranges: Vec<(f64, f64)> =
+            ranges.into_iter().map(|(start, end)| (start, duration.map_or(end, |d| end.min(d)))).collect();
+        for &(start, end) in &ranges {
+            check_range(start, end, duration)?;
+        }
+        let doc = Doc::Vod(vod_id);
+        let before = history::snapshot(&db, doc).ok().flatten();
+        let mut made = Vec::new();
+        for (start, end) in ranges {
+            let words = db.words_between(vod_id, start, end).map_err(err)?;
+            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), true).map_err(err)?);
+        }
+        state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
+        made
+    };
+    for clip in &made {
+        state.clips.queue(clip.id);
+    }
+    Ok(made)
 }
 
 /// Moves clip `id` to `start`..`end`; its file is made again, named for the new range.
@@ -459,6 +525,36 @@ pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: 
     let before = history::snapshot(&db, doc).ok().flatten();
     remove(&app, &db, id).map_err(err)?;
     state.history.record(&db, doc, if clip.shown { "Clip deleted" } else { "Clip dropped" }, before);
+    Ok(())
+}
+
+/// Deletes clips `ids` (several selected), as one change in each clip bar's
+/// history: undone, they all come back. Each goes as `delete_clip` takes one.
+#[tauri::command]
+pub(crate) async fn delete_clips(app: AppHandle, state: State<'_, AppState>, ids: Vec<i64>) -> CmdResult<()> {
+    let db = state.db.lock().unwrap();
+    let mut gone = Vec::new();
+    for id in ids {
+        if let Some(clip) = db.clip(id).map_err(err)? {
+            gone.push(clip);
+        }
+    }
+    // Each clip bar as it was before any of them went.
+    let mut docs: Vec<(Doc, Option<history::Snapshot>)> = Vec::new();
+    for clip in &gone {
+        let doc = bar_doc(clip);
+        if !docs.iter().any(|(d, _)| *d == doc) {
+            docs.push((doc, history::snapshot(&db, doc).ok().flatten()));
+        }
+    }
+    for clip in &gone {
+        remove(&app, &db, clip.id).map_err(err)?;
+    }
+    for (doc, before) in docs {
+        let label =
+            if gone.iter().filter(|c| bar_doc(c) == doc).count() == 1 { "Clip deleted" } else { "Clips deleted" };
+        state.history.record(&db, doc, label, before);
+    }
     Ok(())
 }
 

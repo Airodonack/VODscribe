@@ -33,6 +33,9 @@
   import EditRow from "./EditRow.svelte";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
+  import { removeChosenEntries } from "./bulk";
+  import { keyHint } from "./keys.svelte";
+  import { count, dragBox, library, overlaps, picks, type Entry } from "./selection.svelte";
 
   let {
     rows,
@@ -186,6 +189,32 @@
   let byKey = $derived(new Map(rows.map((r) => [rowKey(r), r])));
   let shown = $derived(reorder.order.map((key) => byKey.get(key)).filter((r) => r !== undefined));
 
+  // Several rows picked (selection.svelte.ts): Ctrl-click (⌘ on a Mac) or
+  // Shift-click, or a box dragged from empty space below the rows. A plain
+  // click opens a row, as ever. What's picked shows above the list, with
+  // Remove…; the open row stays the one lit at its edge.
+  const entryOf = (row: LibraryRow): Entry =>
+    row.kind === "vod" ? { kind: "vod", id: row.vod.id } : { kind: "edit", id: row.edit.id };
+  function onRowClick(e: MouseEvent, row: LibraryRow) {
+    if ((e.target as HTMLElement).closest(".actions")) return;
+    if (!picks(e)) return void library.plain(entryOf(row));
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) library.rangeTo(entryOf(row), shown.map(entryOf));
+    else library.toggle(entryOf(row));
+  }
+  /** The rows a box drawn over the list touches, in their order. */
+  const boxed = (box: DOMRect) =>
+    shown
+      .filter((r) => {
+        const el = reorder.rows[rowKey(r)];
+        return el && overlaps(box, el.getBoundingClientRect());
+      })
+      .map(entryOf);
+  const vodsPicked = $derived(rows.filter((r) => r.kind === "vod" && library.has(entryOf(r))).length);
+  const editsPicked = $derived(rows.filter((r) => r.kind === "edit" && library.has(entryOf(r))).length);
+  const removePicked = () => removeChosenEntries(rows, (id) => id === selectedId && onselect(null));
+
   function onRowKey(e: KeyboardEvent, key: number) {
     if (reorder.key(e, key)) tick().then(() => reorder.rows[key]?.querySelector<HTMLElement>(".main")?.focus());
   }
@@ -267,7 +296,37 @@
     <p class="error-text add-error">{adder.error}</p>
   {/if}
 
-  <div class="list" bind:this={reorder.list}>
+  {#if vodsPicked + editsPicked}
+    <!-- What's picked in the list, and what can be done with it. -->
+    <div class="picked" role="status">
+      <span class="count"
+        >{count([
+          [vodsPicked, "VOD", "VODs"],
+          [editsPicked, "edit", "edits"],
+        ])}</span
+      >
+      <button class="link" onclick={removePicked} title="Remove them, after asking{keyHint('library.remove')}"
+        >Remove…</button
+      >
+      <button
+        class="clear"
+        onclick={() => library.clear()}
+        title="Let go of them (Esc)"
+        aria-label="Clear the selection"
+      >
+        <Icon name="x" size={13} />
+      </button>
+    </div>
+  {/if}
+
+  <div
+    class="list library-list"
+    role="listbox"
+    aria-label="Library"
+    aria-multiselectable="true"
+    bind:this={reorder.list}
+    use:dragBox={{ set: library, hits: boxed, onempty: () => library.clear() }}
+  >
     <!-- While a clip is carried: the place to start an edit with it (dragout.ts). -->
     {#if clips.carrying}
       <div class="new-edit" class:target={edits.dropTarget === "new"} data-new-edit>
@@ -294,17 +353,26 @@
     {/each}
     {#each shown as row (rowKey(row))}
       {@const key = rowKey(row)}
-      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      {@const picked = library.has(entryOf(row))}
+      {@const n = library.number(entryOf(row))}
+      <!-- The row's own button has the focus and the keys (VodRow, EditRow). -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_interactive_supports_focus -->
       <div
         class="vod"
         class:edit={row.kind === "edit"}
         class:selected={row.kind === "vod" ? row.vod.id === selectedId : edits.openId === row.edit.id}
+        class:chosen={picked}
         class:lifted={reorder.lifted(key)}
+        role="option"
+        aria-selected={picked}
         data-key={key}
         style:transform={reorder.transform(key)}
         bind:this={reorder.rows[key]}
         animate:flip={{ duration: reorder.flipDuration(key) }}
-        onclickcapture={reorder.clickCapture}
+        onclickcapture={(e) => {
+          reorder.clickCapture(e);
+          if (!e.defaultPrevented) onRowClick(e, row);
+        }}
         onclick={(e) => {
           if ((e.target as HTMLElement).closest("button")) return;
           if (row.kind === "vod") toggle(row.vod);
@@ -315,6 +383,7 @@
           if (!clips.carrying && !(e.target as HTMLElement).closest(".actions")) reorder.start(e, key);
         }}
       >
+        {#if n !== null}<span class="order row-order">{n}</span>{/if}
         {#if row.kind === "vod"}
           {@const vod = row.vod}
           <VodRow
@@ -568,6 +637,66 @@
   .vod.selected {
     background: var(--accent-soft);
     box-shadow: inset 3px 0 var(--accent);
+  }
+
+  /* Picked with others (Ctrl- or Shift-click, or a box): outlined, the open
+     one still lit at its edge. */
+  .vod.chosen {
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  .vod.chosen.selected {
+    box-shadow:
+      inset 3px 0 var(--accent),
+      inset 0 0 0 2px var(--accent);
+  }
+
+  /* Its place in the order, at the thumbnail's corner. */
+  .row-order {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+  }
+
+  /* What's picked, above the list. */
+  .picked {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 8px 6px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-soft);
+    font-size: 12px;
+  }
+
+  .picked .count {
+    font-weight: 600;
+  }
+
+  .picked .link {
+    color: var(--accent);
+    font-size: 12px;
+  }
+
+  .picked .clear {
+    margin-left: auto;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: none;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .picked .clear:hover {
+    background: var(--surface-3);
+    color: var(--text);
   }
 
   /* Opaque so the rows it passes over don't show through. */

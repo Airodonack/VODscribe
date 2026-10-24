@@ -478,6 +478,8 @@ export const api = {
   /** Makes `from`..`to` seconds of edit `editId`'s timeline a clip. */
   addEditClip: (editId: number, from: number, to: number, shown = true) =>
     invoke<Clip>("add_edit_clip", { editId, from, to, shown }),
+  /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
+  addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
@@ -560,6 +562,9 @@ export const api = {
   movePiece: (id: number, index: number) => invoke<EditView>("move_piece", { id, index }),
   trimPiece: (id: number, start: number, end: number) => invoke<EditView>("trim_piece", { id, start, end }),
   removePiece: (id: number) => invoke<EditView>("remove_piece", { id }),
+  /** Takes `pieces`, `stretches` (of its timeline) and clips `clips` of its clip bar out of edit `id`, as one change. */
+  removeFromEdit: (id: number, pieces: number[], stretches: [number, number][], clips: number[]) =>
+    invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
@@ -570,11 +575,15 @@ export const api = {
   cancelMark: (id: number) => invoke<void>("cancel_mark", { id }),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
+  /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
+  addClips: (vodId: number, ranges: [number, number][]) => invoke<Clip[]>("add_clips", { vodId, ranges }),
   /** Puts clip `id` (one only dragged out) in the clip bar. */
   keepClip: (id: number) => invoke<Clip>("keep_clip", { id }),
   setClipRange: (id: number, start: number, end: number) => invoke<Clip>("set_clip_range", { id, start, end }),
   renameClip: (id: number, title: string) => invoke<Clip>("rename_clip", { id, title }),
   deleteClip: (id: number) => invoke<void>("delete_clip", { id }),
+  /** Deletes clips `ids`, as one change in each clip bar's history. */
+  deleteClips: (ids: number[]) => invoke<void>("delete_clips", { ids }),
   /** Takes clips whose file was deleted outside the app off `doc`'s clip bar (`clip-removed` for each). */
   forgetGoneClips: (doc: Doc) =>
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),

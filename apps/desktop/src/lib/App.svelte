@@ -44,6 +44,8 @@
   import type { Doc } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
   import { showsProgress } from "./stretches";
+  import { removing } from "./removal.svelte";
+  import { selectionKey } from "./bulk";
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -236,6 +238,12 @@
       else nav.goForward();
       return;
     }
+    // A set selected: Escape lets it go, Delete removes the library's;
+    // Ctrl+A (⌘A) selects all of the clip bar or the list (bulk.ts).
+    if (!typing && selectionKey(e, rows, (id) => selectedId === id && pick(null))) {
+      e.preventDefault();
+      return;
+    }
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field.
     if (is(e, "search.focus")) {
       e.preventDefault();
@@ -405,6 +413,7 @@
       await events.vodRemoved(
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });
+          removing.delete(id);
           vods = vods.filter((v) => v.id !== id);
           if (selectedId === id) selectedId = null;
           if (playing?.vodId === id) playing = null;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-delete-clips"
+description = "Enables the delete_clips command without any pre-configured scope."
+commands.allow = ["delete_clips"]
+
+[[permission]]
+identifier = "deny-delete-clips"
+description = "Denies the delete_clips command without any pre-configured scope."
+commands.deny = ["delete_clips"]

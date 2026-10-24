@@ -173,6 +173,52 @@ class Clips {
     }
   }
 
+  /**
+   * Makes each of `ranges` a clip in the clip bar, in their order, as `make`
+   * makes one (the note on permission first, once): those not made yet as
+   * one change, so undo takes them all back; any made already as `make`
+   * gives them.
+   */
+  async makeAll(ranges: { start: number; end: number }[]): Promise<void> {
+    const vodId = this.vodId;
+    if (vodId === null || this.asking) return;
+    const fresh = ranges.filter((r) => !this.find(r.start, r.end));
+    for (const r of ranges) if (this.find(r.start, r.end)) await this.make(r.start, r.end);
+    if (!fresh.length) return;
+    if (this.#fromSite && !noteHidden()) {
+      const download = await new Promise<boolean>((answer) => (this.asking = answer));
+      this.asking = null;
+      if (!download) return;
+    }
+    try {
+      const since = this.#serial;
+      const made = await api.addClips(
+        vodId,
+        fresh.map((r) => [r.start, r.end]),
+      );
+      for (const clip of made) this.#answer(clip, since);
+      this.error = null;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  /** Makes each of `ranges` of the open edit's timeline a clip on its clip bar, in their order, as one change. */
+  async makeAllOfEdit(ranges: { start: number; end: number }[]): Promise<void> {
+    if (this.doc?.kind !== "edit") return;
+    try {
+      const since = this.#serial;
+      const made = await api.addEditClips(
+        this.doc.id,
+        ranges.map((r) => [r.start, r.end]),
+      );
+      for (const clip of made) this.#answer(clip, since);
+      this.error = null;
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
   /** Makes `from`..`to` of the open edit's timeline a clip on its clip bar. */
   async makeOfEdit(from: number, to: number): Promise<Clip | null> {
     if (this.doc?.kind !== "edit") return null;

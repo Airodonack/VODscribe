@@ -7,6 +7,11 @@
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
   // link, what the edit plays of the VOD. An edit's clip bar (no `vod`)
   // has its clips of stretches of the edit: they drag out as files.
+  //
+  // Ctrl-click (⌘ on a Mac) or Shift-click pills to pick several, or drag a
+  // box over them from empty space in the bar (selection.svelte.ts); what's
+  // picked, with the stretches picked on the timeline, shows first, with
+  // what can be done with it all.
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -16,13 +21,53 @@
   import Spinner from "./Spinner.svelte";
   import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
-  import { keyHint } from "./keys.svelte";
+  import { keyHint, labelOf } from "./keys.svelte";
+  import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
+  import { count, dragBox, overlaps, picks, snippets, type Snippet } from "./selection.svelte";
 
   let {
     vod,
     ownPlayer = false,
     onplay,
-  }: { vod?: Vod; ownPlayer?: boolean; onplay?: (time: number) => void } = $props();
+    onremove = removeChosenClips,
+  }: {
+    vod?: Vod;
+    ownPlayer?: boolean;
+    onplay?: (time: number) => void;
+    /** Removes what's picked (an edit's own clip bar takes its pieces too). */
+    onremove?: () => void;
+  } = $props();
+
+  const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
+  /** A Ctrl- or Shift-click on a pill picks it (or the run to it), rather than playing it. */
+  function onChipClick(e: MouseEvent, clip: Clip) {
+    if ((e.target as HTMLElement).closest(".act, input")) return;
+    if (!picks(e)) return void snippets.plain(itemOf(clip));
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.shiftKey) snippets.rangeTo(itemOf(clip), clips.shown.map(itemOf));
+    else snippets.toggle(itemOf(clip));
+  }
+  /** The pills a box drawn over the bar touches, in their order. */
+  const boxed = (box: DOMRect) =>
+    clips.shown
+      .filter((c) => {
+        const pill = strip?.querySelector(`.chip[data-clip="${c.id}"]`);
+        return pill && overlaps(box, pill.getBoundingClientRect());
+      })
+      .map(itemOf);
+  let strip = $state<HTMLElement>();
+  // A clip picked that's gone another way (its own ×) goes from the set too.
+  $effect(() => {
+    const ids = new Set(clips.shown.map((c) => c.id));
+    snippets.keep((i) => i.kind !== "clip" || ids.has(i.id));
+  });
+
+  // What's picked: how much, and what can be done with it.
+  const segmentsPicked = $derived(chosenSegments().length);
+  const clipsPicked = $derived(chosenClips().length);
+  /** Remove: the clips picked, and in an edit the stretches too (a VOD's are its splits). */
+  const removable = $derived(clipsPicked > 0 || (!vod && segmentsPicked > 0));
 
   let renaming = $state<number | null>(null);
   let draft = $state("");
@@ -106,7 +151,48 @@
 
 <svelte:window onpointermove={onPointerMove} onpointerup={() => (press = null)} />
 
-<div class="strip clip-bar" class:over={clips.overBar} role="group" aria-label="Clips">
+<div
+  class="strip clip-bar"
+  class:over={clips.overBar}
+  role="group"
+  aria-label="Clips"
+  bind:this={strip}
+  use:dragBox={{ set: snippets, hits: boxed, onempty: () => snippets.clear() }}
+>
+  {#if snippets.size}
+    <!-- What's picked here and on the timeline, and what can be done with it. -->
+    <div class="picked" role="status">
+      <span class="count"
+        >{count([
+          [segmentsPicked, "stretch", "stretches"],
+          [clipsPicked, "clip", "clips"],
+        ])}</span
+      >
+      {#if segmentsPicked}
+        <button
+          class="link"
+          onclick={clipSegments}
+          title="A clip of each stretch picked, in their order{keyHint('clip.make')}"
+          >Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}</button
+        >
+      {/if}
+      {#if removable}
+        <button
+          class="link"
+          onclick={onremove}
+          title="Remove what's picked{keyHint(vod ? 'clips.remove' : 'edit.remove')}">Remove</button
+        >
+      {/if}
+      <button
+        class="act"
+        onclick={() => snippets.clear()}
+        title="Let go of them (Esc)"
+        aria-label="Clear the selection"
+      >
+        <Icon name="x" size={13} />
+      </button>
+    </div>
+  {/if}
   {#each linked as edit (edit.id)}
     <button
       class="chip edit-link"
@@ -122,19 +208,27 @@
   {/each}
   {#each clips.shown as clip (clip.id)}
     {@const progress = clips.progress.get(clip.id)}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    {@const picked = snippets.has(itemOf(clip))}
+    {@const n = snippets.number(itemOf(clip))}
+    <!-- Its buttons have the focus and the keys. -->
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
     <div
       class="chip {clip.status}"
+      class:chosen={picked}
+      role="option"
+      aria-selected={picked}
       data-clip={clip.id}
       title="{vod ? span(clip.start, clip.end) : formatTime(clip.length ?? 0)} · {describe(clip)}{clip.status ===
       'ready'
         ? ' · drag it into a video editor or a folder'
         : ''}"
       onpointerdown={(e) => onChipDown(e, clip)}
+      onclickcapture={(e) => onChipClick(e, clip)}
       onmouseenter={() => vod && (clips.hovered = { start: clip.start, end: clip.end })}
       onmouseleave={() => (clips.hovered = null)}
     >
       <button class="play" onclick={() => play(clip.start)} aria-label="Play {clip.title}">
+        {#if n !== null}<span class="order">{n}</span>{/if}
         <span class="length">{formatTime(clip.length ?? clip.end - clip.start)}</span>
       </button>
       {#if renaming === clip.id}
@@ -288,6 +382,37 @@
 
   .chip.ready {
     cursor: grab;
+  }
+
+  /* Picked with others (Ctrl- or Shift-click, or a box). */
+  .chip.chosen {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .play .order {
+    margin-right: 5px;
+  }
+
+  /* What's picked, first in the bar. */
+  .picked {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px 0 2px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .picked .count {
+    font-weight: 600;
+  }
+
+  .picked .link {
+    color: var(--accent);
+    font-size: 12px;
   }
 
   .chip.error {

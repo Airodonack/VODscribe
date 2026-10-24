@@ -257,7 +257,11 @@ function newVod(e, is, { moving, fullscreen }) {
   if (is(e, "mute.toggle")) return "mute";
   if (is(e, "mark.highlight")) return "highlight";
   if (is(e, "mark.chapter")) return "chapter";
-  return newMark(e, is, moving) ?? newTransport(e, is, fullscreen);
+  const mark = newMark(e, is, moving);
+  if (mark) return mark;
+  // New: the clips selected in the clip bar go (Player.svelte `onKey`).
+  if (is(e, "clips.remove")) return "remove clips";
+  return newTransport(e, is, fullscreen);
 }
 
 /** @param {Press} e @param {Is} is @param {At} at */
@@ -286,11 +290,16 @@ function newApp(e, is, { typing }) {
   if (!typing && is(e, "nav.back")) return "back";
   if (!typing && is(e, "nav.forward")) return "forward";
   if (is(e, "search.focus")) return "search";
+  // New, with something to select or selected (App.svelte `onWindowKey`,
+  // bulk.ts `selectionKey`): all of the clip bar or the library, and the
+  // VODs and edits selected removed.
+  if (!typing && is(e, "select.all")) return "select all";
+  if (!typing && is(e, "library.remove")) return "remove from the library";
   return null;
 }
 
 const KEYS = [
-  ..."bBcCtTiIoOmMnNeEzZyYfFkKjJlLqQ ,.<>[]{};",
+  ..."aAbBcCtTiIoOmMnNeEzZyYfFkKjJlLqQ ,.<>[]{};",
   "ArrowLeft",
   "ArrowRight",
   "ArrowUp",
@@ -344,12 +353,21 @@ function dropped(os, e) {
   return null;
 }
 
+/** What actions added since the map do: each on presses that did nothing before. */
+const NEW = new Set(["select all", "remove from the library", "remove clips"]);
+
 /** The deliberate differences met, by reason, with a press or two each. */
 /** @type {Map<string, Set<string>>} */
 const met = new Map();
 /** @param {Os} os @param {string} where @param {Press} e @param {string | null} now @param {string | null} before */
 function check(os, where, e, now, before, context = "") {
   const label = `${os} ${where} ${named(e)}${context}`;
+  // An action added since the map, on a press that did nothing: so it may.
+  if (before === null && now !== null && NEW.has(now)) {
+    if (!met.has("new")) met.set("new", new Set());
+    met.get("new")?.add(`${os} ${named(e)} ${now}`);
+    return;
+  }
   if (now === null && before !== null) {
     const reason = dropped(os, e);
     assert.ok(reason, `${label} did "${before}" and now does nothing`);
@@ -395,7 +413,13 @@ test("on every OS, the app's keys do what they did, in a text field or not, or n
 
 test("the presses let through by accident before are the ones listed", () => {
   // Runs after the three above, which collected them.
-  assert.deepEqual([...met.keys()].sort(), ["< or > alone", "Y on a Mac", "held as well", "the other way round"]);
+  assert.deepEqual([...met.keys()].sort(), [
+    "< or > alone",
+    "Y on a Mac",
+    "held as well",
+    "new",
+    "the other way round",
+  ]);
   const all = new Set([...met.values()].flatMap((s) => [...s]));
   for (const example of [
     'linux meta+"b"',
@@ -412,6 +436,10 @@ test("the presses let through by accident before are the ones listed", () => {
     'mac ctrl+"z"',
     'mac meta+"y"',
     'linux "<"',
+    'linux ctrl+"a" select all',
+    'mac meta+"a" select all',
+    'linux "Delete" remove from the library',
+    'linux "Backspace" remove clips',
   ])
     assert.ok(all.has(example), example);
 });

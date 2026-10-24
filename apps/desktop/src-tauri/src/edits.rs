@@ -406,6 +406,43 @@ pub(crate) async fn remove_piece(app: AppHandle, id: i64) -> CmdResult<EditView>
     changing(&app, edit, "Piece removed", |db| db.remove_piece(id))
 }
 
+/// Takes several things out of edit `id` at once (selected on its timeline
+/// and its clip bar), as one change: the stretches `stretches` (seconds of
+/// its timeline, as `remove_stretch` takes one), the pieces `pieces` (as
+/// `remove_piece`) and the clips `clips` of its clip bar (as `delete_clip`).
+/// The stretches go from the last back, so each one's times are still where
+/// they were when it was picked.
+#[tauri::command]
+pub(crate) async fn remove_from_edit(
+    app: AppHandle,
+    id: i64,
+    pieces: Vec<i64>,
+    stretches: Vec<(f64, f64)>,
+    clips: Vec<i64>,
+) -> CmdResult<EditView> {
+    if stretches.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from)) {
+        return Err("That's not a stretch of the edit.".into());
+    }
+    let mut stretches = stretches;
+    stretches.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let label = if pieces.is_empty() && stretches.is_empty() { "Clips deleted" } else { "Pieces removed" };
+    changing(&app, id, label, |db| {
+        for (from, to) in stretches {
+            db.remove_edit_stretch(id, from, to)?;
+        }
+        for piece in pieces {
+            db.remove_piece(piece)?;
+        }
+        for clip in clips {
+            // Only a clip of this edit's own clip bar.
+            if db.clip(clip)?.is_some_and(|c| c.bar == Some(vodscribe_core::db::ClipBar::Edit { id })) {
+                crate::clips::remove(&app, db, clip)?;
+            }
+        }
+        Ok(())
+    })
+}
+
 /// Renders edit `id` (after any being rendered); shown as rendering from
 /// now, so it isn't asked for twice. Asked again while it waits, once is enough.
 #[tauri::command]

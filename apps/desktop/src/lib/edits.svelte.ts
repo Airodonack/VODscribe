@@ -9,6 +9,7 @@ import { SvelteMap } from "svelte/reactivity";
 import { playedSpans } from "./media";
 import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching } from "./api";
+import { clearsStretch, stretchMade } from "./selection.svelte";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
 export type Stretch = { vodId: number; start: number; end: number; title?: string };
@@ -31,14 +32,27 @@ class Edits {
   lit = $state<{ editId: number; vodId: number } | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
-  /** A stretch of the open edit's timeline chosen in its transcript: what Delete takes out. */
-  selection = $state<{ start: number; end: number } | null>(null);
+  /** A stretch of the open edit's timeline chosen in its transcript: what Delete takes out.
+   *  Made, it lets go of a set picked (selection.svelte.ts). */
+  #selection = $state<{ start: number; end: number } | null>(null);
+  get selection() {
+    return this.#selection;
+  }
+  set selection(picked: { start: number; end: number } | null) {
+    this.#selection = picked;
+    if (picked) stretchMade();
+  }
   /** Where the open edit's player was asked to go (a transcript line clicked), once each. */
   wanted = $state.raw<{ time: number } | null>(null);
   /** A clip of a clip bar open in the editor (not in the library's list). */
   #snippet = $state.raw<Edit | null>(null);
   #started = false;
   #seq = 0;
+
+  constructor() {
+    // A set picked lets go of the stretch.
+    clearsStretch(() => (this.selection = null));
+  }
 
   get open(): Edit | undefined {
     return (
@@ -181,6 +195,13 @@ class Edits {
     if (this.openId === null) return false;
     this.selection = null;
     return this.#change(api.removeStretch(this.openId, from, to));
+  }
+
+  /** Takes what's picked out of the open edit, as one change: pieces
+   *  `pieces`, stretches `stretches` of its timeline, clips `clipIds` of its clip bar. */
+  async removeFrom(pieces: number[], stretches: [number, number][], clipIds: number[]): Promise<boolean> {
+    if (this.openId === null) return false;
+    return this.#change(api.removeFromEdit(this.openId, pieces, stretches, clipIds));
   }
 
   async create(): Promise<Edit | null> {

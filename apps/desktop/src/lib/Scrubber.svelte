@@ -47,9 +47,11 @@
     frameStart,
     inFrame as frameAfter,
     PEAKS_RATE,
+    stretches as between,
     tickStep,
     waveformGaps,
   } from "./media";
+  import { picks, snippets, type Snippet } from "./selection.svelte";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { formatFraction, formatTime, os, playsFromFile } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
@@ -338,7 +340,42 @@
   /** The modifier that drags a stretch out: Alt (Option on a Mac). Ctrl stays free for selecting. */
   const dragsOut = (e: PointerEvent) => e.altKey;
 
+  // The stretches between cuts (in an edit, its pieces' ends too): a
+  // Ctrl-click (⌘ on a Mac) picks one to act on with others, a Shift-click
+  // the run of them from the last picked (selection.svelte.ts). Picking
+  // doesn't move the playhead.
+  const segments = $derived(
+    between(
+      [...(named ? cuts.list.map((m) => m.start) : []), ...(pieces ?? []).slice(1).map((p) => p.start)],
+      duration,
+    ),
+  );
+  const chosen = $derived(
+    snippets.items.filter((i): i is Extract<Snippet, { kind: "segment" }> => i.kind === "segment"),
+  );
+  // A cut added, moved or taken away: a stretch picked that isn't one any more goes.
+  $effect(() => {
+    const now = segments;
+    if (!now.length) return;
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+    snippets.keep((i) => i.kind !== "segment" || now.some((s) => near(s.start, i.start) && near(s.end, i.end)));
+  });
+  function pickAt(e: PointerEvent) {
+    const t = timeAt(e.clientX);
+    const seg = segments.find((s) => t >= s.start && t < s.end) ?? segments.at(-1);
+    if (!seg) return;
+    const order = segments.map((s) => ({ kind: "segment" as const, start: s.start, end: s.end }));
+    const item = { kind: "segment" as const, start: seg.start, end: seg.end };
+    if (e.shiftKey) snippets.rangeTo(item, order);
+    else snippets.toggle(item);
+  }
+
   function onDown(e: PointerEvent) {
+    if (e.button === 0 && picks(e) && !dragsOut(e)) {
+      e.preventDefault();
+      pickAt(e);
+      return;
+    }
     if (e.button === 1) {
       const at = timeAt(e.clientX);
       drag = { kind: "view", x: e.clientX, y: e.clientY, at, share: (at - viewStart) / span, span, moved: false };
@@ -849,6 +886,20 @@
         title="Selected: Delete takes it out"
       ></div>
     {/if}
+    {#each chosen as seg (`${seg.start} ${seg.end}`)}
+      {#if seg.end > viewStart && seg.start < viewStart + span}
+        {@const n = snippets.number(seg)}
+        <!-- A stretch picked, with its place in the order while two or more are. -->
+        <div
+          class="chosen"
+          data-segment="{seg.start} {seg.end}"
+          style:left={pct(Math.max(seg.start, viewStart))}
+          style:width={widthPct(Math.max(seg.start, viewStart), Math.min(seg.end, viewStart + span))}
+        >
+          {#if n !== null}<span class="order">{n}</span>{/if}
+        </div>
+      {/if}
+    {/each}
     {#each pending as w, i (i)}
       {@const from = Math.max(w.start + w.done, viewStart)}
       {@const to = Math.min(w.end, viewStart + span)}
@@ -1375,6 +1426,23 @@
     bottom: 0;
     background: color-mix(in srgb, var(--cut) 16%, transparent);
     pointer-events: none;
+  }
+
+  /* A stretch picked with others (Ctrl- or Shift-click), its number in the order on it. */
+  .chosen {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 0 0 2px var(--accent);
+    border-radius: 3px;
+    pointer-events: none;
+  }
+
+  .chosen .order {
+    position: absolute;
+    top: 3px;
+    left: 4px;
   }
 
   /* A stretch selected in the transcript, waiting for Clip. */

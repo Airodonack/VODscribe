@@ -16,6 +16,7 @@
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
+  import { DELETE, REMOVE, inEdits as inEditsOf, removeVod, removing as removals } from "./removal.svelte";
   import Thumb from "./Thumb.svelte";
 
   let {
@@ -108,12 +109,7 @@
     videoDownloads.keep(vod.id, pickedHeight);
   }
   /** A sentence about the edits with this VOD's clips, between `before` and `after`; empty if none. */
-  function inEdits(before: string, after: string): string {
-    const names = edits.forVod(vod.id).map((e) => `“${e.title}”`);
-    if (!names.length) return "";
-    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
-    return `${before}${names.length === 1 ? "the edit" : "the edits"} ${list}${after}`;
-  }
+  const inEdits = (before: string, after: string) => inEditsOf(vod.id, before, after);
 
   async function stopKeeping() {
     if (
@@ -189,13 +185,10 @@
 
   // Removing a VOD with a long transcript and busy chat takes a few seconds
   // (its text is erased, not just dropped); the row says so meanwhile, and
-  // goes when it's done.
-  let removing = $state(false);
+  // goes when it's done (removal.svelte.ts).
+  const removing = $derived(removals.has(vod.id));
   // Removing a VOD that edits use asks whether its video goes too: then the
-  // stretches they use are kept as videos of their own first ("realized"),
-  // and if that fails (offline, a full disk) it asks again what to do.
-  const REMOVE = "Remove from the library";
-  const DELETE = "Remove and delete the video";
+  // stretches they use are kept as videos of their own first.
   async function remove() {
     let deleteVideo = false;
     if (edits.forVod(vod.id).length) {
@@ -220,31 +213,8 @@
       return;
     }
     onremove();
-    removing = true;
     onerror(null);
-    let anyway = false;
-    for (;;) {
-      try {
-        await api.deleteVod(vod.id, deleteVideo, anyway);
-        return;
-      } catch (e) {
-        const text = String(e);
-        if (!text.startsWith("realize: ")) {
-          removing = false;
-          onerror(text);
-          return;
-        }
-        const answer = await choose(
-          `The stretches of it${inEdits(" in ", "")} couldn't be kept: ${text.slice("realize: ".length)} Deleting the video anyway leaves gaps in them.`,
-          "Try again",
-          "Delete anyway",
-          "Keep the video",
-        );
-        if (answer === "Delete anyway") anyway = true;
-        // Kept: removed from the library only.
-        else if (answer !== "Try again") deleteVideo = false;
-      }
-    }
+    await removeVod(vod, deleteVideo, onerror);
   }
 </script>
 

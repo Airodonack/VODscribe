@@ -35,6 +35,8 @@
   import { nav } from "./nav.svelte";
   import { hideNote, noteHidden } from "./permission";
   import { videoDownloads } from "./videos.svelte";
+  import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
+  import { snippets } from "./selection.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
   // result, a transcript line, a source link), a fresh object each time, so
@@ -275,12 +277,15 @@
     else cuts.toggle(now, fps, !playing);
   }
 
-  /** Clip: the selection, else the stretch the playhead is in (with no cuts, the whole video), as a clip in the clip bar. */
+  /** Clip: the stretches picked on the timeline, each a clip (bulk.ts); else
+   *  the selection, else the stretch the playhead is in (with no cuts, the
+   *  whole video), as a clip in the clip bar. */
   async function makeClip() {
+    if (chosenSegments().length) return clipSegments();
     const range = cuts.selection ? await cuts.cutSelection() : stretch;
     if (range) await exportStretch(range.start, range.end);
   }
-  const canClip = $derived(!!cuts.selection || !!stretch);
+  const canClip = $derived(!!cuts.selection || !!stretch || chosenSegments().length > 0);
 
   // Transcribe (T): the selection, else a stretch from the playhead, picked
   // from a menu (TranscribeFrom.svelte). Offered while some of the VOD isn't
@@ -413,6 +418,13 @@
     // The selected mark (or the selection's edge): renamed, moved, taken away.
     const pause = () => player?.playing() && player.togglePlay();
     if (markKey(e, { fps, length: duration, pause, seekTo })) {
+      e.preventDefault();
+      return;
+    }
+    // The clips picked in the clip bar go (a VOD's stretches picked aren't
+    // removable: they're splits).
+    if (is(e, "clips.remove") && chosenClips().length) {
+      if (!e.repeat) void removeChosenClips();
       e.preventDefault();
       return;
     }
@@ -559,7 +571,7 @@
         time={now}
         shown={reading.shown}
         {fps}
-        highlight={clipHover && canClip ? (cuts.selection ?? stretch) : null}
+        highlight={clipHover && canClip && !chosenSegments().length ? (cuts.selection ?? stretch) : null}
         ranges={editRanges}
         current={between ? stretch : null}
         ownPlayer={playsFromFile(vod)}
@@ -604,7 +616,7 @@
           onmouseenter={() => (clipHover = true)}
           onmouseleave={() => (clipHover = false)}
           disabled={!canClip}
-          title="Clip the lit-up stretch, to the clip bar{keyHint(
+          title="Clip the lit-up stretch (or each one selected), to the clip bar{keyHint(
             'clip.make',
           )}: with no cuts, the whole video. Or drag it: onto an edit, or straight into your video editor."
         >
@@ -654,7 +666,7 @@
         come yet.
       </p>
     {/if}
-    {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length)}
+    {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}

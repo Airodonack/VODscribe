@@ -37,6 +37,8 @@
   import { toast } from "./toasts.svelte";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
+  import { chosenClips, chosenSegments, clipSegments } from "./bulk";
+  import { count, snippets } from "./selection.svelte";
 
   let {
     vods,
@@ -298,6 +300,7 @@
   /** The selection, or else the stretch at the playhead (between split
    *  marks, or the piece), a clip on the edit's clip bar. */
   function clipNow() {
+    if (chosenSegments().length) return void clipSegments();
     const range = edits.selection ?? stretchNow;
     if (range) void clips.makeOfEdit(range.start, range.end);
   }
@@ -314,6 +317,35 @@
       .then(
         (removed) =>
           removed && toast.show("Stretch removed", { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
+      );
+  }
+
+  /** What's picked on the timeline and in the clip bar (selection.svelte.ts)
+   *  out of the edit, as one change: a stretch that's a whole band goes as
+   *  that piece (or group), as Remove takes one; the others as stretches. */
+  function removeChosen() {
+    const id = edit?.id;
+    const picked = chosenSegments();
+    const clipIds = chosenClips();
+    if (id === undefined || (!picked.length && !clipIds.length)) return;
+    const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+    const units: number[] = [];
+    const stretches: [number, number][] = [];
+    for (const s of picked) {
+      const band = lane.find((b) => near(b.start, s.start) && near(b.end, s.end));
+      if (band) units.push(band.id);
+      else stretches.push([s.start, s.end]);
+    }
+    snippets.clear();
+    const what = count([
+      [units.length + stretches.length, "piece", "pieces"],
+      [clipIds.length, "clip", "clips"],
+    ]);
+    edits
+      .removeFrom(units, stretches, clipIds)
+      .then(
+        (removed) =>
+          removed && toast.show(`${what} removed`, { label: "Undo", run: () => undoIn({ kind: "edit", id }) }),
       );
   }
 
@@ -471,6 +503,9 @@
       edits.selection = null;
     } else if (isEscape(e) && openGroup !== null) {
       openGroup = null;
+    } else if ((is(e, "edit.remove") || is(e, "clips.remove")) && snippets.size) {
+      // What's picked on the timeline and in the clip bar goes, at once.
+      if (!e.repeat) removeChosen();
     } else if (is(e, "edit.remove")) {
       // Held down, it's one press: one piece, not one after another. Lines
       // selected in the transcript go, or else the piece at the playhead.
@@ -918,8 +953,8 @@
       {/each}
     </div>
   {/if}
-  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error)}
-    <ClipStrip />
+  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error || snippets.size)}
+    <ClipStrip onremove={removeChosen} />
   {/if}
 {/snippet}
 

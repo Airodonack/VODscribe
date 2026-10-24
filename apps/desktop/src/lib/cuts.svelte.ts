@@ -15,6 +15,7 @@ import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
 import { is } from "./keys.svelte";
 import { isEscape, markFramesOf } from "./playerKeys";
+import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
 
 class Cuts {
   /** Whose marks these are: a VOD's or an edit's. */
@@ -32,8 +33,16 @@ class Cuts {
   editing = $state<number | null>(null);
   /** The mark just added whose title or note is being written: Escape takes it away. */
   fresh: number | null = null;
-  /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends. */
-  selection = $state<{ start: number; end: number } | null>(null);
+  /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends.
+   *  Made, it lets go of a set picked (selection.svelte.ts). */
+  #selection = $state<{ start: number; end: number } | null>(null);
+  get selection() {
+    return this.#selection;
+  }
+  set selection(picked: { start: number; end: number } | null) {
+    this.#selection = picked;
+    if (picked) stretchMade();
+  }
   /** The selection's edge selected, to drag or move a frame at a time. */
   selectedEdge = $state<"start" | "end" | null>(null);
   /** The open VOD's or edit's frame rate, as its player says, for marks placed elsewhere. */
@@ -47,6 +56,15 @@ class Cuts {
   pointed = $state<{ time: number; on: "timeline" | "transcript" } | null>(null);
   error = $state<string | null>(null);
   #seq = 0;
+
+  constructor() {
+    // A set picked lets go of the stretch, and of a mark selected: Delete
+    // is then the set's.
+    clearsStretch(() => {
+      this.clearSelection();
+      this.selected = null;
+    });
+  }
 
   open(vodId: number) {
     this.openDoc({ kind: "vod", id: vodId });
@@ -65,6 +83,8 @@ class Cuts {
     this.fresh = null;
     this.selection = null;
     this.selectedEdge = null;
+    // What was picked is of the last one's timeline and clip bar.
+    snippets.clear();
     this.#reload();
   }
 

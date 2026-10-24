@@ -145,6 +145,25 @@ export async function exportStretch(start: number, end: number, shown = true): P
   return clips.make(start, end, shown);
 }
 
+/**
+ * Makes each of `ranges` a clip in the clip bar (several stretches
+ * selected), in their order, as `exportStretch` makes one: asking first
+ * before a long download, all of them at once.
+ */
+export async function exportStretches(ranges: { start: number; end: number }[]): Promise<void> {
+  const fresh = ranges.filter((r) => !clips.find(r.start, r.end));
+  const length = fresh.reduce((sum, r) => sum + r.end - r.start, 0);
+  if (clips.fromSite && length > LONG) {
+    const sure = await ask(
+      `These stretches are ${formatTime(length)} long together, and they're downloaded from the site to make the clips. Make them?`,
+      "Make the clips",
+      "Cancel",
+    );
+    if (!sure) return;
+  }
+  await clips.makeAll(ranges);
+}
+
 /** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
 export function rectOf(start: number, end: number): DOMRect | null {
   const bar = document.querySelector<HTMLElement>(".scrubber");

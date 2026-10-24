@@ -108,6 +108,19 @@ export const ACTIONS = [
   { id: "nav.back", label: "Back", scope: "app", defaults: { linux: ["Alt+ArrowLeft"], mac: ["Meta+["] } },
   { id: "nav.forward", label: "Forward", scope: "app", defaults: { linux: ["Alt+ArrowRight"], mac: ["Meta+]"] } },
   { id: "search.focus", label: "Search", scope: "app", defaults: { linux: ["Ctrl+f"], mac: ["Meta+f"] } },
+  // Where the pointer or the focus is: the clip bar or the library's list.
+  {
+    id: "select.all",
+    label: "Select all the clips, or all the library",
+    scope: "app",
+    defaults: { linux: ["Ctrl+a"], mac: ["Meta+a"] },
+  },
+  {
+    id: "library.remove",
+    label: "Remove the selected VODs and edits",
+    scope: "app",
+    defaults: all("Delete", "Backspace"),
+  },
   // Either player.
   { id: "play.toggle", label: "Play or pause", scope: "player", defaults: all(" ", "k") },
   { id: "seek.back5", label: "Back 5 s", scope: "player", defaults: all("ArrowLeft") },
@@ -122,7 +135,8 @@ export const ACTIONS = [
   { id: "cut.here", label: "Cut here", scope: "player", defaults: { linux: ["b", "Ctrl+b"], mac: ["b", "Meta+b"] } },
   { id: "selection.in", label: "Start the selection here", scope: "player", defaults: all("i") },
   { id: "selection.out", label: "End the selection here", scope: "player", defaults: all("o") },
-  { id: "clip.make", label: "Clip the stretch", scope: "player", defaults: all("c") },
+  { id: "clip.make", label: "Clip the stretch, or each one selected", scope: "player", defaults: all("c") },
+  { id: "clips.remove", label: "Remove the selected clips", scope: "player", defaults: all("Delete", "Backspace") },
   {
     id: "transcribe.here",
     label: "Transcribe the selection, or from here",
@@ -150,7 +164,7 @@ export const ACTIONS = [
   },
   {
     id: "edit.remove",
-    label: "Remove the selected lines, the stretch here or the piece",
+    label: "Remove the selected lines, pieces and clips, the stretch here or the piece",
     scope: "edit",
     defaults: all("Delete", "Backspace"),
   },

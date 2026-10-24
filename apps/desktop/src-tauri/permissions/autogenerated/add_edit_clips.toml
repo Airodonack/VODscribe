@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-edit-clips"
+description = "Enables the add_edit_clips command without any pre-configured scope."
+commands.allow = ["add_edit_clips"]
+
+[[permission]]
+identifier = "deny-add-edit-clips"
+description = "Denies the add_edit_clips command without any pre-configured scope."
+commands.deny = ["add_edit_clips"]

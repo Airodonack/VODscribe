@@ -506,3 +506,31 @@ button.row-act:hover:not(:disabled) {
   aspect-ratio: auto;
   max-width: none;
 }
+
+/* An item's place in the order of a set picked (selection.svelte.ts), while
+   two or more are: on a pill, a library row or a stretch of the timeline. */
+.order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The box dragged over empty space to pick what it touches (selection.svelte.ts `dragBox`). */
+.select-box {
+  position: fixed;
+  z-index: 40;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
