@@ -75,6 +75,21 @@ node tests/e2e/run.mjs /usr/bin/vodscribe --parallel 3
 
 Scenarios are dealt longest first, each to the worker with the least to do so far, by the seconds each took when it last passed: `durations.json`, refreshed from runs' results with `node tests/e2e/durations.mjs <out dir>...` (a scenario that's new to it goes last). `--shard i/N` runs the i-th of N such deals, the same on every computer for the same file, for CI's machines to split the suite between them; it combines with `--parallel`. `distros.mjs --parallel N` runs a cell's suite that way; `runners.mjs` passes `run.mjs`'s options on as they are (`--shard` works there; `--parallel` is Linux's only).
 
+### In CI
+
+`e2e.yml` runs the suite as a matrix of shards, `run.mjs --shard i/N`: 2 on Ubuntu, 2 on Windows and 3 on macOS (its runners are the slowest: the whole suite took 26 minutes there, 10 to 13 elsewhere). `durations.json` makes the shards about equal, so refresh it (above) when scenarios are added or change a lot. Each shard uploads its `tests/e2e/out` as the artifact `e2e-<target>-<i>`, and a last job runs
+
+```sh
+node tests/e2e/merge-results.mjs --expect <shards> <folder of the artifacts' folders>
+```
+
+which reads every `results.json` and prints one summary in `run.mjs`'s words (`e2e: P of T passed, F flaky, in K shards`, a line per shard, and a line for each failure or flaky pass, with its shard). It exits 1 on a failed scenario, or when fewer shards reported than `--expect` (a shard that crashed leaves no `results.json`).
+
+Which shards run when (`build.yml`):
+
+- **Fast lane**: every push to `main` and every pull request: the Ubuntu shards only, against the Linux build.
+- **Full lane**: every night (09:00 UTC), on a manual run and on a `v*` tag: every system's shards. By hand: `gh workflow run build.yml` (add `-f lane=fast` for the fast lane). To test an earlier build's installers without building again: `gh workflow run e2e.yml -f build_run=<run id>` (`-f lane=fast` for the Ubuntu shards only). The full lane is also where `verify.mjs` belongs: `e2e.yml` has the step, commented out until `OPENROUTER_API_KEY` is a repository secret.
+
 ### The flake ledger
 
 `flaky.json` names the scenarios known to fail now and then for reasons outside what they check, each with the reason and the date it was seen: `{ "<scenario>": "<what happened, where, when>" }`. A listed scenario that fails runs once more; if it passes then, it's reported `flaky`, on a line of its own and counted apart from the passes (`e2e: 31 of 33 passed, 1 flaky`), never as passed, and its entry in `results.json` has `attempts: 2`, `flaky: true` and the first attempt's error (`firstError`). The first attempt's page and screenshot are kept as `<scenario>.first.txt` and `.png`, its checkpoints labelled "(first attempt)". A scenario goes in the ledger with its reason once the failure has been looked into and found to be the computer's or the runner's, not the app's; it comes out when the cause is fixed or a few rounds pass without it. Every summary says how many the ledger holds.

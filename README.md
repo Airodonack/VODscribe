@@ -84,6 +84,19 @@ The app's content security policy is in `tauri.conf.json` (`app.security.csp`). 
 
 `scripts/reset-setup.sh` (Linux and macOS) removes the speech model and yt-dlp so the first-run setup can be tested again; the library, settings and GPU add-on stay.
 
+### CI lanes
+
+`check.yml` (formatting, type checks, unit tests, the core and the player) runs on every push and pull request. `build.yml` builds the installers and drives them end to end (`e2e.yml`), in one of two lanes:
+
+| Event                                                         | Lane | Runs                                                                                                                                                                                                                           |
+| ------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| push to `main`, pull request (not for site and notes changes) | fast | the Linux build; the Linux end-to-end tests in 2 shards. A newer push to the same ref cancels the run in progress.                                                                                                             |
+| every night at 09:00 UTC, a manual run, a `v*` tag            | full | all four builds (Linux, Windows, macOS Apple silicon and Intel); the end-to-end tests of Linux and Windows in 2 shards each and macOS in 3. Never cancelled by a push. A tag then publishes the release and submits to winget. |
+
+Each end-to-end shard is `run.mjs --shard i/N` on a machine of its own and uploads its results as `e2e-<target>-<i>`; a last job merges them into one summary and fails on a failed scenario or a shard that never reported (see `tests/e2e/README.md`).
+
+To run the full lane by hand: `gh workflow run build.yml` (or `-f lane=fast` for the fast one), then `gh run watch`. To run only the end-to-end tests against an earlier build's installers, `gh workflow run e2e.yml -f build_run=<run id>`.
+
 ## Website
 
 `apps/site` is vodscribe.com: a landing page whose live demo is the app itself. It imports the desktop app's components as the workspace package `desktop` (`desktop/lib/…`, exported from `apps/desktop/package.json`), and `vite.config.ts` swaps the Tauri modules they call for stand-ins (`apps/site/src/lib/tauri/`) that answer from transcripts in `static/demo/`, with the same phrase search as the app. With `__DEMO__` defined, controls that only work in the app gray out and explain themselves on hover (`apps/desktop/src/lib/demo.ts`); mark new ones with `demoOff`.
@@ -102,7 +115,7 @@ It deploys from this repo through Cloudflare's Git integration: build command `p
 
 ## Building
 
-`pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. The GitHub Actions workflow in `.github/workflows/build.yml` builds Linux, Windows and macOS (Intel and Apple Silicon) on a manual run or a `v*` tag, and uploads the bundles as artifacts. macOS bundles are ad-hoc signed; nothing is signed with a paid certificate yet.
+`pnpm tauri build` in `apps/desktop` (after `prepare-sidecars.sh release`) produces the installers for the current platform. CI runs in two lanes (see CI lanes, above); the bundles are uploaded as artifacts. macOS bundles are ad-hoc signed; nothing is signed with a paid certificate yet.
 
 ## License
 

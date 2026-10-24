@@ -1,9 +1,17 @@
 name: Build installers
 
-# Runs on every push to main that touches the app, so a commit that breaks a
-# platform's build shows up within the hour instead of at release; on a v*
-# tag; and by hand. Main's runs also keep the Rust cache warm for tag runs,
-# which can only restore caches saved on the default branch.
+# Two lanes, one workflow (the build steps are the same; only what runs differs):
+#   fast  every push to main that touches the app, and every pull request: the
+#         Linux build and the Linux end-to-end shards. A commit that breaks the
+#         build or the tests shows up within minutes. A newer push to the same
+#         ref cancels the run in progress. Main's runs also keep the Rust cache
+#         warm for tag runs, which can only restore caches saved on the default
+#         branch.
+#   full  every night (09:00 UTC), by hand (Actions > Build installers > Run
+#         workflow, or `gh workflow run build.yml`), and on a v* tag: all four
+#         builds and every system's end-to-end shards. Never cancelled by a
+#         later push. A tag also publishes the release.
+# The plan job decides the lane from the event.
 #
 # A v* tag also publishes the release (the publish and winget jobs). Secrets:
 #   TAURI_SIGNING_PRIVATE_KEY   signs update bundles (~/.tauri/vodscribe-updater.key);
@@ -15,23 +23,72 @@ name: Build installers
 # Variables:
 #   WINGET_SUBMIT               optional: false skips the winget job
 on:
+  schedule:
+    - cron: "0 9 * * *"
   workflow_dispatch:
+    inputs:
+      lane:
+        description: fast (Linux only) or full (all systems)
+        type: choice
+        options: [full, fast]
+        default: full
   push:
     branches: [main]
     tags: ["v*"]
     # The website and notes don't change the app. (Tag pushes ignore this.)
     paths-ignore: ["apps/site/**", "**/*.md"]
+  pull_request:
+    paths-ignore: ["apps/site/**", "**/*.md"]
 
 permissions:
   contents: read
 
-# A new run for the same ref replaces one in progress.
+# A fast-lane run (a push to a branch, a pull request) is replaced by a newer
+# one for the same ref. A full-lane run (nightly, by hand, a tag) gets a group
+# of its own, so nothing queues behind it or cancels it.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ (github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/'))) && format('build-fast-{0}', github.ref) || format('build-full-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')) }}
 
 jobs:
+  # Which lane this run is, and the builds in it.
+  plan:
+    timeout-minutes: 5
+    runs-on: ubuntu-22.04
+    outputs:
+      lane: ${{ steps.plan.outputs.lane }}
+      builds: ${{ steps.plan.outputs.builds }}
+    steps:
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          CHOSEN: ${{ inputs.lane }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            schedule) lane=full ;;
+            workflow_dispatch) lane=${CHOSEN:-full} ;;
+            push) if [[ "$REF" == refs/tags/v* ]]; then lane=full; else lane=fast; fi ;;
+            *) lane=fast ;;
+          esac
+          all=$(cat <<'JSON'
+          [
+            {"os": "ubuntu-22.04", "target": "x86_64-unknown-linux-gnu"},
+            {"os": "windows-latest", "target": "x86_64-pc-windows-msvc"},
+            {"os": "macos-latest", "target": "aarch64-apple-darwin"},
+            {"os": "macos-15-intel", "target": "x86_64-apple-darwin"}
+          ]
+          JSON
+          )
+          # Intel Macs are built on Intel runners: a separate pool from the Apple
+          # Silicon ones, which at times can't take a job at all.
+          if [[ "$lane" == fast ]]; then all=$(jq -c 'map(select(.os == "ubuntu-22.04"))' <<<"$all"); fi
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "builds=$(jq -c '{include: .}' <<<"$all")" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     timeout-minutes: 90
     # The update signing key lives in the `release` environment, which only v*
     # tags may use. Other runs (by hand) build without it and skip the signed
@@ -39,18 +96,7 @@ jobs:
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'release' || '' }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          # Intel Macs, built on Intel runners: a separate pool from the Apple
-          # Silicon ones, which at times can't take a job at all.
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
+      matrix: ${{ fromJSON(needs.plan.outputs.builds) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,14 +248,18 @@ jobs:
           retention-days: 14
 
   # Installs each Linux and Windows build, and the Apple silicon one, and
-  # drives it end to end (e2e.yml).
+  # drives it end to end in shards (e2e.yml): the Linux ones only in the fast
+  # lane. Needs the whole build matrix, so the full lane waits for the slowest
+  # build before any shard starts.
   e2e:
-    needs: build
+    needs: [plan, build]
     # What e2e.yml asks for: it can't have more than its caller grants.
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/e2e.yml
+    with:
+      lane: ${{ needs.plan.outputs.lane }}
 
   # Uploads a tagged release to dl.vodscribe.com (R2): each file under
   # releases/<version>/, the installers again under releases/latest/ for the
