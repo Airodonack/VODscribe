@@ -176,14 +176,6 @@
     untrack(() => !playsFromFile(vod)),
   );
 
-  /** Plays from `time`, starting the player if it isn't yet. */
-  function playFrom(time: number) {
-    collapsed = false;
-    if (!active) activate(time);
-    else if (player) player.seek(time, true);
-    else pending = { time, play: true };
-  }
-
   // A VOD whose video has just been downloaded switches to the app's own
   // player, where it was and as it was (playing or not).
   let here = untrack(() => playsHere(vod));
@@ -809,7 +801,7 @@
       </p>
     {/if}
     {#if !collapsed && (clips.shown.length || clips.carryingAny || clips.error || edits.forVod(vod.id).length || snippets.size)}
-      <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
+      <ClipStrip {vod} ownPlayer={playsFromFile(vod)} />
     {/if}
     {#if error}
       <p class="error-text note">

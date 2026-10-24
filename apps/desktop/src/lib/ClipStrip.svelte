@@ -1,9 +1,12 @@
 <script lang="ts">
   // The clip bar: the open VOD's clips as pills under the player. Clicking one
-  // plays it; double-clicking its name (or Enter or F2 on it) renames it; once its file is made, it
-  // drags out of the window (into a video editor or a folder), or onto an
-  // edit in the library's list (or on "Make new edit" there). "Add to an edit"
-  // picks one from a list. Each edit using this VOD is a link here too.
+  // picks it, as in a file manager; double-clicking it (or Enter on its name,
+  // picked) opens it in the editor; F2 on its name renames it. Once its file
+  // is made, it drags out of the window (into a video editor or a folder), or
+  // onto an edit in the library's list (or on "Make new edit" there). "Add to
+  // an edit" picks one from a list. Each edit using this VOD is a link here too.
+  // The wheel scrolls the bar sideways, and so does a drag with the middle
+  // button pressed, anywhere on it.
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
   // link, what the edit plays of the VOD. An edit's clip bar (no `vod`)
   // has its clips of stretches of the edit: they drag out as files.
@@ -11,8 +14,8 @@
   // Ctrl-click (⌘ on a Mac) or Shift-click pills to pick several, or drag a
   // box over them from empty space in the bar (selection.svelte.ts); what's
   // picked, with the stretches picked on the timeline, shows first, with
-  // what can be done with it all ("Add to edit…" among it). A picked pill
-  // dragged carries them all (bulk.ts `carryChosen`).
+  // what can be done with it all ("Add to edit…" among it). A pill picked
+  // with others dragged carries them all (bulk.ts `carryChosen`).
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -25,30 +28,34 @@
   import { keyHint, labelOf } from "./keys.svelte";
   import AddToEdit from "./AddToEdit.svelte";
   import { carryChosen, chosenClips, chosenPuts, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
-  import { count, dragBox, overlaps, picks, snippets, type Snippet } from "./selection.svelte";
+  import { count, dragBox, overlaps, snippets, toggles, type Snippet } from "./selection.svelte";
 
   let {
     vod,
     ownPlayer = false,
-    onplay,
     onremove = removeChosenClips,
   }: {
     vod?: Vod;
     ownPlayer?: boolean;
-    onplay?: (time: number) => void;
     /** Removes what's picked (an edit's own clip bar takes its pieces too). */
     onremove?: () => void;
   } = $props();
 
   const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
-  /** A Ctrl- or Shift-click on a pill picks it (or the run to it), rather than playing it. */
+  /** A click on a pill picks it alone (as in a file manager; on the one
+   *  picked alone, lets it go), a Ctrl-click with the others, a Shift-click
+   *  the run to it. Its buttons and its name being edited keep their clicks. */
   function onChipClick(e: MouseEvent, clip: Clip) {
     if ((e.target as HTMLElement).closest(".act, input")) return;
-    if (!picks(e)) return void snippets.plain(itemOf(clip));
-    e.preventDefault();
-    e.stopPropagation();
+    // The click a drag that didn't start leaves behind, and a double-click's
+    // second: neither picks (the double-click opens it).
+    if (swallowClick || e.detail > 1) return void (swallowClick = false);
     if (e.shiftKey) snippets.rangeTo(itemOf(clip), clips.shown.map(itemOf));
-    else snippets.toggle(itemOf(clip));
+    else if (toggles(e)) snippets.toggle(itemOf(clip));
+    else snippets.only(itemOf(clip));
+  }
+  function onChipDoubleClick(e: MouseEvent, clip: Clip) {
+    if (!(e.target as HTMLElement).closest(".act, input")) edits.openEdit(clip.id);
   }
   /** The pills a box drawn over the bar touches, in their order. */
   const boxed = (box: DOMRect) =>
@@ -68,6 +75,11 @@
   // What's picked: how much, and what can be done with it.
   const segmentsPicked = $derived(chosenSegments().length);
   const clipsPicked = $derived(chosenClips().length);
+  /** One clip picked alone (a plain click): its pill's own buttons do what the
+   *  row would, and the row, first in the bar, would push the pills along
+   *  under the pointer as the click picks it (a double-click's second click
+   *  would land on another). */
+  const loneClip = $derived(snippets.size === 1 && clipsPicked === 1);
   /** Remove: the clips picked, and in an edit the stretches too (a VOD's are its splits). */
   const removable = $derived(clipsPicked > 0 || (!vod && segmentsPicked > 0));
 
@@ -90,35 +102,69 @@
     el.select();
   }
 
+  /** Picked with others (more clips, or stretches on the timeline): a drag of it carries them all. */
+  const withOthers = (clip: Clip) => snippets.size > 1 && snippets.has(itemOf(clip));
+
   // A made clip's chip drags out once the pointer moves with the button down
-  // (a picked one, made or not, carries what's picked); the click that may
-  // follow a drag that didn't start doesn't play it.
+  // (one picked with others, made or not, carries what's picked; picked
+  // alone, it goes as it would unpicked); the click that may follow a drag
+  // that didn't start doesn't pick it.
   let press: { clip: Clip; x: number; y: number } | null = null;
   let swallowClick = false;
   function onChipDown(e: PointerEvent, clip: Clip) {
     const target = e.target as HTMLElement;
-    // Picked, it carries what's picked, made or not.
-    const ready = clip.status === "ready" || snippets.has(itemOf(clip));
+    const ready = clip.status === "ready" || withOthers(clip);
     if (e.button !== 0 || !ready || target.closest(".act, input")) return;
     press = { clip, x: e.clientX, y: e.clientY };
   }
+
+  // The middle button pressed anywhere on the bar (a pill too) and dragged:
+  // the bar scrolls with the pointer, as if held. Nothing's picked or carried.
+  let pan = $state<{ x: number; left: number } | null>(null);
+  function onBarDown(e: PointerEvent) {
+    if (e.button !== 1 || !strip || (e.target as HTMLElement).closest("input")) return;
+    pan = { x: e.clientX, left: strip.scrollLeft };
+  }
+  // Not the system's own use of the middle button: scrolling by the
+  // pointer's distance (Windows), or pasting.
+  function onBarMouseDown(e: MouseEvent) {
+    if (e.button === 1 && !(e.target as HTMLElement).closest("input")) e.preventDefault();
+  }
+
+  // The wheel over the bar scrolls it sideways (it has nowhere to go up or
+  // down); one turned sideways (or Shift held, where that's how it's sent)
+  // scrolls it as ever. Ctrl and the wheel stay the system's.
+  function onWheel(e: WheelEvent) {
+    if (!strip || e.ctrlKey || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    if (strip.scrollWidth <= strip.clientWidth) return;
+    const unit =
+      e.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? 40
+        : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
+          ? strip.clientWidth
+          : 1;
+    strip.scrollLeft += e.deltaY * unit;
+    e.preventDefault();
+  }
+
   function onPointerMove(e: PointerEvent) {
+    if (pan && strip) {
+      // Its release missed (it happened outside the window): over.
+      if (!(e.buttons & 4)) pan = null;
+      else strip.scrollLeft = pan.left - (e.clientX - pan.x);
+      return;
+    }
     if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
     const { clip, x, y } = press;
     press = null;
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 500);
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
-    // One picked: all of what's picked goes, wherever it's dropped.
-    if (snippets.has(itemOf(clip))) return carryChosen(from, e.clientX, e.clientY);
+    // Picked with others: all of what's picked goes, wherever it's dropped.
+    if (withOthers(clip)) return carryChosen(from, e.clientX, e.clientY);
     if (!vod) return void dragFileOut([clip]);
     carry({ vod, start: clip.start, end: clip.end, title: clip.title, ownPlayer, from, x: e.clientX, y: e.clientY });
   }
-  function play(time: number) {
-    if (!swallowClick) onplay?.(time);
-    swallowClick = false;
-  }
-
   async function save(clip: Clip) {
     try {
       await api.saveClip(clip.id);
@@ -160,17 +206,29 @@
   }
 </script>
 
-<svelte:window onpointermove={onPointerMove} onpointerup={() => (press = null)} />
+<svelte:window
+  onpointermove={onPointerMove}
+  onpointerup={() => {
+    press = null;
+    pan = null;
+  }}
+/>
 
+<!-- The pointer's own ways of scrolling it (the wheel, a middle-button drag); the keys are its pills'. -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   class="strip clip-bar"
   class:over={clips.overBar}
+  class:panning={pan !== null}
   role="group"
   aria-label="Clips"
   bind:this={strip}
+  onpointerdown={onBarDown}
+  onmousedown={onBarMouseDown}
+  onwheel={onWheel}
   use:dragBox={{ set: snippets, hits: boxed, onempty: () => snippets.clear() }}
 >
-  {#if snippets.size}
+  {#if snippets.size && !loneClip}
     <!-- What's picked here and on the timeline, and what can be done with it. -->
     <div class="picked" role="status">
       <span class="count"
@@ -238,16 +296,17 @@
       title="{vod ? span(clip.start, clip.end) : formatTime(clip.length ?? 0)} · {describe(clip)}{clip.status ===
       'ready'
         ? ' · drag it into a video editor or a folder'
-        : ''}"
+        : ''} · double-click to open it in the editor"
       onpointerdown={(e) => onChipDown(e, clip)}
       onclickcapture={(e) => onChipClick(e, clip)}
+      ondblclick={(e) => onChipDoubleClick(e, clip)}
       onmouseenter={() => vod && (clips.hovered = { start: clip.start, end: clip.end })}
       onmouseleave={() => (clips.hovered = null)}
     >
-      <button class="play" onclick={() => play(clip.start)} aria-label="Play {clip.title}">
+      <span class="time">
         {#if n !== null}<span class="order">{n}</span>{/if}
         <span class="length">{formatTime(clip.length ?? clip.end - clip.start)}</span>
-      </button>
+      </span>
       {#if renaming === clip.id}
         <input
           class="name"
@@ -265,16 +324,17 @@
           spellcheck="false"
         />
       {:else}
-        <!-- Double-click opens it in the editor; Enter or F2 on it renames it. -->
+        <!-- Clicked, it has the keys: Enter opens the clip in the editor once
+             it's picked (as a click picks it), else renames it, as F2 does. -->
         <span
           class="name"
           role="button"
           tabindex="0"
-          title="Double-click to open it in the editor · Enter or F2 renames it"
-          ondblclick={() => edits.openEdit(clip.id)}
+          title="Double-click to open it in the editor · F2 renames it"
           onkeydown={(e) => {
-            if (e.key !== "Enter" && e.key !== "F2") return;
-            startRename(clip);
+            if (e.key === "Enter" && picked) edits.openEdit(clip.id);
+            else if (e.key === "Enter" || e.key === "F2") startRename(clip);
+            else return;
             e.preventDefault();
             e.stopPropagation();
           }}>{clip.title}</span
@@ -408,14 +468,20 @@
     cursor: grab;
   }
 
-  /* Picked with others (Ctrl- or Shift-click, or a box). */
+  /* Scrolled by a middle-button drag: held, wherever the pointer is. */
+  .strip.panning,
+  .strip.panning :global(*) {
+    cursor: grabbing;
+  }
+
+  /* Picked (a click; Ctrl- or Shift-click, or a box, for several). */
   .chip.chosen {
     border-color: var(--accent);
     background: var(--accent-soft);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
-  .play .order {
+  .time .order {
     margin-right: 5px;
   }
 
@@ -447,20 +513,15 @@
     color: var(--muted);
   }
 
-  .play {
+  .time {
     flex: none;
+    display: flex;
+    align-items: center;
     height: 100%;
     padding: 0 8px 0 10px;
-    border: none;
-    border-radius: 0;
-    background: none;
     color: var(--accent);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-  }
-
-  .play:hover {
-    background: var(--surface-3);
   }
 
   .name {

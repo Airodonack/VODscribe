@@ -214,16 +214,24 @@ export function click(x, y, scale = 1) {
 /**
  * The OS's mouse and keys, a step at a time, for drags: `steps` like
  * ["down", x, y], ["move", x, y], ["key", "Escape"], ["up"], ["wait", ms];
+ * ["down", x, y, 2] and ["up", 2] for the middle button (X11's numbering:
+ * 1 left, 2 middle, 3 right); ["wheel", "down", n] turns the wheel n notches
+ * ("up", "left", "right" too) where the pointer is; ["click", n] clicks n
+ * times where the pointer is (2: a double-click);
  * ["hold", "alt"] and ["release", "alt"] for a key held through a drag;
  * ["letgo", x, y] moves and lets go at once.
  * Linux (X11) only, so far.
  */
 export async function gesture(steps) {
   if (process.platform !== "linux") throw new Error("gestures are Linux-only, so far");
-  for (const [what, a, b] of steps) {
-    if (what === "down") execFileSync("xdotool", ["mousemove", String(a), String(b), "mousedown", "1"]);
+  const WHEEL = { up: "4", down: "5", left: "6", right: "7" };
+  for (const [what, a, b, c] of steps) {
+    if (what === "down") execFileSync("xdotool", ["mousemove", String(a), String(b), "mousedown", String(c ?? 1)]);
     else if (what === "move") execFileSync("xdotool", ["mousemove", String(a), String(b)]);
-    else if (what === "up") execFileSync("xdotool", ["mouseup", "1"]);
+    else if (what === "up") execFileSync("xdotool", ["mouseup", String(a ?? 1)]);
+    else if (what === "click") execFileSync("xdotool", ["click", "--repeat", String(a ?? 1), "--delay", "80", "1"]);
+    else if (what === "wheel")
+      execFileSync("xdotool", ["click", "--repeat", String(b ?? 1), "--delay", "30", WHEEL[a]]);
     else if (what === "key") execFileSync("xdotool", ["key", a]);
     else if (what === "hold") execFileSync("xdotool", ["keydown", a]);
     else if (what === "release") execFileSync("xdotool", ["keyup", a]);

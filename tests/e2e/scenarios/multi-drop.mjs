@@ -64,7 +64,7 @@ export default {
     const pickClip = (id) =>
       app.js(
         `${TOGGLE}
-         document.querySelector('.chip[data-clip="' + arguments[0] + '"] .play')
+         document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
            .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
         id,
       );

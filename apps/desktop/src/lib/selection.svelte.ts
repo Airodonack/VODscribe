@@ -2,9 +2,10 @@
 // Ctrl-click (⌘ on a Mac) adds one or takes it out again and is where a
 // Shift-click's run starts; a Shift-click picks the run from there to here,
 // in the order they're on screen, either way; a plain click does what it
-// always has (a row opens, a pill plays, the timeline scrubs) and leaves the
-// set as it is; Escape, or a click on empty space, lets it go. A box dragged
-// over empty space (`dragBox` below) picks what it touches.
+// always has (a row opens, the timeline scrubs) and leaves the set as it is,
+// but on a clip bar's pill, as in a file manager, it picks that pill alone
+// (`only`; a double-click opens it); Escape, or a click on empty space, lets
+// it go. A box dragged over empty space (`dragBox` below) picks what it touches.
 //
 // Two sets, never both at once: the snippet set (stretches of the open VOD's
 // or edit's timeline between its cuts, and clips of its clip bar, together)
@@ -107,6 +108,13 @@ export class Selection<T> {
    *  and with none, a Shift-click after runs from it. */
   plain(item: T) {
     if (!this.items.length) this.anchor = item;
+  }
+
+  /** A plain click where it picks (a clip bar's pill, as in a file manager):
+   *  `item` and only it, or, if it's picked alone already, nothing. */
+  only(item: T) {
+    if (this.items.length === 1 && this.has(item)) this.clear();
+    else this.set([item]);
   }
 
   /** Keeps only what `still` says is there yet (a cut moved, a clip deleted another way). */

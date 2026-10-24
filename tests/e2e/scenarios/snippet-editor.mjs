@@ -1,4 +1,5 @@
-// A clip opened in the editor: double-click its name in the clip bar. It's
+// A clip opened in the editor: double-click its pill in the clip bar (its
+// length, at its left; a single click only picks it). It's
 // a clip there (named "Clip name", no Render or Delete, not a row of the
 // library's list); cut a second in (B) and the rest taken out (Delete), its
 // file is made again, a second long; undone (Ctrl+Z), it's two seconds
@@ -17,8 +18,11 @@ export default {
     const clip = await app.clipOneToThree(vod.id);
     await until("its pill, made", () => app.js(`return !!document.querySelector(".chip.ready .name")`), 10_000);
 
+    // As the page gets a double-click: two clicks, then the double-click.
     await app.js(
-      `document.querySelector('.chip.ready[data-clip="${clip.id}"] .name').dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))`,
+      `const el = document.querySelector('.chip.ready[data-clip="${clip.id}"]').firstElementChild;
+       for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
+       el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
     );
     const name = 'section.edit-view input.title[aria-label="Clip name"]';
     await until(

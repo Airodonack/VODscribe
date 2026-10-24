@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Ctrl+A (⌘A) with nothing to pick, such as over the library page's main side, no longer selects all the text on the page.
 - Where the timeline has no waveform (a VOD not transcribed there yet, a stretch of an edit without one), it shows a thin line instead of a thick bar, so the waveform stands out from what isn't there yet.
 - A video on this computer (a file or a kept video) shows its picture as soon as it opens: the first frame, or the one where you left it, instead of its library picture. Play then starts at once, without the moment of black while the video got going.
+- In the clip bar, a click on a clip now selects it, as in a file manager: clicking another selects that one instead, and clicking the selected one again lets it go. Ctrl-click (⌘-click on a Mac) and Shift-click still pick several. Double-click a clip to open it in the editor. The mouse wheel over a long clip bar scrolls it sideways, and so does dragging with the middle button held down.
 - Fixes:
   - A VOD from a site whose player VODscribe can't show, played while its video downloads, no longer loses its picture when the download finishes and refuses to play on: it carries on from the video kept, where it was.
   - On a Twitch VOD, pressing I (or O) right after clicking the timeline starts the selection where you clicked. It started at 0:00 if Twitch's player was still loading there, so the whole VOD was selected.

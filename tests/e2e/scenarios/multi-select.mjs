@@ -2,7 +2,9 @@
 // file: cuts at 1, 2 and 3 s (B), then Ctrl-click (⌘ on a Mac) on the
 // stretch 2-3 s and then on 1-2 s: each shows its number in that order, the
 // playhead stays where it was, and C makes a clip of each, in that order, as
-// one change. The two pills Ctrl-clicked: Delete takes both off the clip
+// one change. A plain click on a pill picks it alone, one on another picks
+// that instead, and one on the pill picked alone lets it go. The two pills
+// Ctrl-clicked: Delete takes both off the clip
 // bar, and one undo brings both back. A box dragged from empty space in the
 // clip bar over both pills picks them; Escape lets them go. In the library:
 // three more files, Ctrl-click on one and Shift-click on another picks the
@@ -145,12 +147,36 @@ export default {
       throw new Error("the stretches are still picked once clipped");
     ctx.log(`C made ${byId.join(", ")} in the order picked`);
 
-    // The two pills Ctrl-clicked: the bar says so, with Remove.
+    // A plain click on a pill picks it alone, as in a file manager; one on
+    // another picks that one instead; one on the pill picked alone lets it go.
     await until("two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), 10_000);
+    const plainClick = (id) =>
+      app.js(
+        `document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
+           .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));`,
+        id,
+      );
+    const chosen = () =>
+      app.js(`return [...document.querySelectorAll(".chip.chosen")].map((c) => Number(c.dataset.clip))`);
+    const pickedAlone = (id, what) =>
+      until(what, async () => (await chosen()).join() === String(id), 10_000).catch(async (e) => {
+        throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}`);
+      });
+    await plainClick(made[0].id);
+    await pickedAlone(made[0].id, "a plain click picked the pill alone");
+    // Its own buttons do what the row of what's picked would: no row, pushing the pills along.
+    if (await head()) throw new Error(`the clip bar says "${await head()}" for the one pill picked`);
+    await plainClick(made[1].id);
+    await pickedAlone(made[1].id, "a plain click on another picked it instead");
+    await plainClick(made[1].id);
+    await until("a plain click on the pill picked alone let it go", async () => !(await chosen()).length, 10_000);
+    ctx.log("a plain click picks a pill alone, another instead, and lets go of the one picked alone");
+
+    // The two pills Ctrl-clicked: the bar says so, with Remove.
     for (const clip of made)
       await app.js(
         `${TOGGLE}
-         document.querySelector('.chip[data-clip="' + arguments[0] + '"] .play')
+         document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
            .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
         clip.id,
       );
@@ -218,7 +244,7 @@ export default {
       for (const clip of made)
         await app.js(
           `${TOGGLE}
-           document.querySelector('.chip[data-clip="' + arguments[0] + '"] .play')
+           document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
              .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
           clip.id,
         );
@@ -283,7 +309,7 @@ export default {
       await app.key("Escape");
       await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
     }
-    await focusOn(`.chip[data-clip="${made[0].id}"] .play`);
+    await focusOn(`.chip[data-clip="${made[0].id}"] .name`);
     await pointAt("aside .brand");
     await app.key("a", { cmd: true });
     await until("Ctrl+A over the library: its rows", async () => (await listCount()) === "4 VODs", 10_000).catch(
