@@ -134,6 +134,10 @@ export default {
     chmodSync(ytDlp, 0o755);
     try {
       app = await ctx.start();
+      // The app's own player's state (which document it holds) is read
+      // through the e2e build's command; CI's Linux job tests the release
+      // package, which hasn't got it.
+      if (!(await app.hasE2e())) return ctx.skip("a build without the e2e feature (no player state to read)");
       await app.toLibrary();
       // The rights note asks before the first download; not here.
       await app.js(`localStorage.setItem("vodscribe.clipNoteHidden", "true")`);

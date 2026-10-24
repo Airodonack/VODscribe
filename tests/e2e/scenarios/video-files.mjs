@@ -50,8 +50,9 @@ export default {
   },
 };
 
-/** The bar's controls of the VOD just opened, its player not made yet: set
- *  to 40% and 1.25×. What the page asks of the player from now is kept
+/** The bar's controls of the VOD just opened, before Play (the app's own
+ *  player opens with the file, paused, and takes what's set): set to 40%
+ *  and 1.25×. What the page asks of the player from now is kept
  *  (window.__asked: its commands as they go out, as player-seek.mjs traces
  *  them), the speed it says it plays at (window.__speeds), and whether each
  *  control is there, every frame (window.__missing: the frames one wasn't). */
@@ -73,7 +74,6 @@ async function setBeforePlay(app, log) {
   ).catch((e) => {
     throw new Error(`before Play, the captions button isn't there or stays greyed (${e.message})`);
   });
-  if (bar.player) throw new Error("the player was made before Play");
   if (!bar.mute || !bar.volume || bar.speed === null)
     throw new Error(`before Play, the bar has ${JSON.stringify(bar)}`);
   await app.js(`
@@ -134,19 +134,17 @@ async function appliedOncePlaying(app, log) {
       throw new Error(`the web view's player plays at ${seen.web.rate}×, volume ${seen.web.volume}`);
     log("playing in the web view's player: at 1.25×, volume 0.4");
   } else {
-    // The app's own player: told the volume and the speed once open (nativeDriver.ts `opened`).
+    // The app's own player: told the volume and the speed (nativeDriver.ts
+    // `opened`). A file's player opens with the file, before the trace
+    // starts, so they're asked as set; one opened on Play, once open.
     const asked = seen.asked.map(([cmd, args]) => `${cmd} ${JSON.stringify(args)}`);
     const opened = asked.findIndex((a) => a.startsWith("player_open "));
     const after = asked.slice(opened + 1);
-    if (
-      opened < 0 ||
-      !after.includes('player_set_volume {"volume":0.4}') ||
-      !after.includes('player_set_speed {"speed":1.25}')
-    )
+    if (!after.includes('player_set_volume {"volume":0.4}') || !after.includes('player_set_speed {"speed":1.25}'))
       throw new Error(`the player was asked: ${asked.join("; ")}`);
     const said = seen.speeds.at(-1);
     if (said !== 1.25) throw new Error(`the app's player says it plays at ${said}×`);
-    log(`playing in the app's own player: asked ${after.filter((a) => /volume|speed/.test(a)).join(", ")} once open`);
+    log(`playing in the app's own player: asked ${after.filter((a) => /volume|speed/.test(a)).join(", ")}`);
   }
   // Back to as it was, for the other files (the volume and speed are remembered).
   await app.js(`const slider = document.querySelector('.bar input[aria-label="Volume"]');
