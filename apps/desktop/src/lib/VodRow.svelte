@@ -18,6 +18,7 @@
   import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
   import { DELETE, REMOVE, inEdits as inEditsOf, removeVod, removing as removals } from "./removal.svelte";
   import Thumb from "./Thumb.svelte";
+  import { transcribe } from "./bulk";
 
   let {
     vod,
@@ -26,6 +27,7 @@
     onkey,
     onremove,
     onerror,
+    together,
   }: {
     vod: Vod;
     /** Whether the row can be dragged (there's more than one). */
@@ -36,6 +38,8 @@
     onremove: () => void;
     /** An action's error, or null when a new action starts. */
     onerror: (message: string | null) => void;
+    /** Picked with others to transcribe (Library.svelte): how many, lighting them up, and transcribing them all. */
+    together?: { count: number; lit: (on: boolean) => void; run: () => void };
   } = $props();
 
   // Nothing asked of it, and not all of it transcribed.
@@ -286,10 +290,19 @@
 <div class="actions" class:removing inert={removing}>
   {#if untouched}
     <!-- Clicking is the decision: no question. The rest is each part not transcribed. -->
-    {@const label = vod.transcribed === "some" ? "Transcribe the rest" : "Transcribe"}
+    {@const label = together
+      ? `Transcribe all ${together.count} picked`
+      : vod.transcribed === "some"
+        ? "Transcribe the rest"
+        : "Transcribe"}
+    <!-- Picked with others: hovered, all it would transcribe light up; clicked, they're all asked for. -->
     <button
       class="row-act"
-      onclick={() => act(vod.transcribed === "some" ? api.retryVod(vod.id) : api.transcribeStretch(vod.id, 0, null))}
+      onclick={() => (together ? together.run() : act(transcribe(vod)))}
+      onmouseenter={() => together?.lit(true)}
+      onmouseleave={() => together?.lit(false)}
+      onfocus={() => together?.lit(true)}
+      onblur={() => together?.lit(false)}
       title={label}
       aria-label={label}
       {...demoOff("The web demo can't transcribe. In the app, this transcribes the VOD.")}

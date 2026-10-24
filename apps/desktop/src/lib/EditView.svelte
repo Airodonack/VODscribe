@@ -18,7 +18,7 @@
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, inOut, isEscape, playerKey, transportKey } from "./playerKeys";
-  import { DRAG_SLOP, carry, type CarryHome } from "./dragout";
+  import { DRAG_SLOP, carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
@@ -37,7 +37,7 @@
   import { toast } from "./toasts.svelte";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
-  import { chosenClips, chosenSegments, clipSegments } from "./bulk";
+  import { carryChosen, chosenClips, chosenSegments, clipSegments } from "./bulk";
   import { count, snippets } from "./selection.svelte";
 
   let {
@@ -726,6 +726,10 @@
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
+      // A band picked with others: all of what's picked goes together.
+      const band = lane.find((b) => b.id === id);
+      if (band && snippets.has({ kind: "segment", start: band.start, end: band.end }))
+        return void carryChosen(from, x, y);
       // A piece, or a group of one: a group of more doesn't go out as one clip.
       const of = pieces.filter((p) => unitOf(p) === id);
       const piece = of.length === 1 ? of[0] : undefined;
@@ -737,6 +741,29 @@
   };
 
   const pieceLength = (p: EditPiece) => playedSpans(p.start, p.end, p.struck).reduce((sum, [a, b]) => sum + b - a, 0);
+
+  /** Where something carried over the timeline at `x` (on screen) would go
+   *  (dragout.ts): before the first of the edit's pieces (a group as one)
+   *  whose middle is past it, at its start. */
+  function insertionAt(x: number): Insertion {
+    const bar = document.querySelector<HTMLElement>(".drop-in .scrubber");
+    const box = bar?.getBoundingClientRect();
+    const viewStart = Number(bar?.dataset.viewStart ?? 0);
+    const span = Number(bar?.dataset.span ?? total);
+    const t = box?.width ? viewStart + ((x - box.left) / box.width) * span : 0;
+    const tops: { id: number; start: number; end: number }[] = [];
+    let at = 0;
+    for (const piece of pieces) {
+      const id = piece.group?.id ?? piece.id;
+      const last = tops.at(-1);
+      const end = at + pieceLength(piece);
+      if (last?.id === id) last.end = end;
+      else tops.push({ id, start: at, end });
+      at = end;
+    }
+    const index = tops.findIndex((p) => t < (p.start + p.end) / 2);
+    return index < 0 ? { index: tops.length, time: total } : { index, time: tops[index].start };
+  }
 
   // The rendered video, carried out of the window into an editor or a folder.
   let outPress: { x: number; y: number } | null = null;
@@ -859,25 +886,29 @@
 
 {#snippet editControls()}
   {#if total}
-    <Scrubber
-      memo={edit ? { kind: "edit", id: edit.id } : undefined}
-      {waveform}
-      pieces={lane}
-      {pending}
-      selectedPiece={atNow ? unitOf(atNow.piece) : null}
-      picked={edits.selection}
-      marks
-      removing={removeHover ? (stretchNow ?? null) : null}
-      {joins}
-      current={stretchNow && !stretchNow.whole ? stretchNow : null}
-      {onpiece}
-      duration={total}
-      time={now}
-      shown={reading.shown}
-      {fps}
-      onseek={seekTo}
-      onpause={() => player?.playing() && player.togglePlay()}
-    />
+    <!-- Several things picked, carried here, go in where the marker shows (dragout.ts). -->
+    <div class="drop-in" use:dropsInEdit={insertionAt}>
+      <Scrubber
+        memo={edit ? { kind: "edit", id: edit.id } : undefined}
+        {waveform}
+        pieces={lane}
+        {pending}
+        selectedPiece={atNow ? unitOf(atNow.piece) : null}
+        picked={edits.selection}
+        marks
+        removing={removeHover ? (stretchNow ?? null) : null}
+        {joins}
+        current={stretchNow && !stretchNow.whole ? stretchNow : null}
+        {onpiece}
+        duration={total}
+        time={now}
+        shown={reading.shown}
+        {fps}
+        onseek={seekTo}
+        onpause={() => player?.playing() && player.togglePlay()}
+        inserting={edits.inserting}
+      />
+    </div>
   {/if}
   <PlayerBar
     {player}
@@ -953,7 +984,7 @@
       {/each}
     </div>
   {/if}
-  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error || snippets.size)}
+  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error || snippets.size || clips.carryingAny)}
     <ClipStrip onremove={removeChosen} />
   {/if}
 {/snippet}
@@ -1004,6 +1035,10 @@
     align-items: center;
     gap: 6px;
     cursor: grab;
+  }
+
+  .drop-in {
+    display: contents;
   }
 
   .stage {

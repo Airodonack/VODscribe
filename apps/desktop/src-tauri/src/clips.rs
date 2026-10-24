@@ -815,42 +815,53 @@ fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
 const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 
 /// Starts dragging clip `id`'s file out of the window, into another app (a
-/// video editor, a file manager). Takes the clip's id, not a path, so the
-/// interface can't offer any other file. Called while the mouse button is
-/// still down; the drag then belongs to the system.
+/// video editor, a file manager), or several clips' files in one drag (the
+/// header names them, `3,5,8`, in their order). Takes the clips' ids, not
+/// paths, so the interface can't offer any other file. Called while the
+/// mouse button is still down; the drag then belongs to the system.
 #[tauri::command]
 pub(crate) async fn drag_clip(
     app: AppHandle,
     window: tauri::WebviewWindow,
     request: tauri::ipc::Request<'_>,
 ) -> CmdResult<()> {
-    // The clip in a header, its picture as the request's bytes (a PNG is
+    // The clips in a header, the picture as the request's bytes (a PNG is
     // tens of KB: a JSON array of its numbers took a moment to send).
-    let id: i64 = request.headers().get("clip").and_then(|v| v.to_str().ok()?.parse().ok()).ok_or("No clip named.")?;
+    let ids: Vec<i64> = request
+        .headers()
+        .get("clip")
+        .and_then(|v| v.to_str().ok()?.split(',').map(|id| id.trim().parse().ok()).collect())
+        .filter(|ids: &Vec<i64>| !ids.is_empty())
+        .ok_or("No clip named.")?;
     let image = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) if !bytes.is_empty() => Some(bytes.clone()),
         _ => None,
     };
-    let path = ready_file(&app, id)?;
+    let paths = ids.iter().map(|&id| ready_file(&app, id)).collect::<CmdResult<Vec<_>>>()?;
     // The picture the interface drew (the frame over its waveform), if it's a
-    // PNG of reasonable size; else the clip's first frame.
+    // PNG of reasonable size; else the first clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
-    let image = drawn.or_else(|| std::fs::read(thumb_path(&app, id)).ok());
-    // Another app's once one takes it (not when the drag begins: called off,
-    // or dropped on nothing, the file is still the app's to delete).
+    let image = drawn.or_else(|| std::fs::read(thumb_path(&app, ids[0])).ok());
+    // Another app's once one takes them (not when the drag begins: called
+    // off, or dropped on nothing, the files are still the app's to delete).
     let taken = move || {
-        let _ = app.state::<AppState>().db.lock().unwrap().hand_out_clip(id);
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        for &id in &ids {
+            let _ = db.hand_out_clip(id);
+        }
     };
-    drag_file(window, path, image, taken).await
+    drag_file(window, paths, image, taken).await
 }
 
-/// Starts the system's drag of the file at `path` (one the app made), showing
-/// `image` (a PNG) or the app's icon. When it's over, `taken` runs if it was
-/// dropped on something that took it, then the page hears "drag-ended", so
-/// what it does next (deleting a clip made only for the drag) knows.
+/// Starts the system's drag of the files at `paths` (ones the app made),
+/// showing `image` (a PNG) or the app's icon. When it's over, `taken` runs if
+/// they were dropped on something that took them, then the page hears
+/// "drag-ended", so what it does next (deleting a clip made only for the
+/// drag) knows.
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     image: Option<Vec<u8>>,
     taken: impl Fn() + Send + Sync + 'static,
 ) -> CmdResult<()> {
@@ -859,7 +870,7 @@ pub(crate) async fn drag_file(
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(start_drag(&on_main, &path, image, taken).map_err(|e| format!("{e:#}")));
+            let _ = tx.send(start_drag(&on_main, &paths, image, taken).map_err(|e| format!("{e:#}")));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
@@ -868,7 +879,7 @@ pub(crate) async fn drag_file(
 #[cfg(target_os = "linux")]
 fn start_drag(
     window: &tauri::WebviewWindow,
-    path: &Path,
+    paths: &[PathBuf],
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
@@ -877,17 +888,18 @@ fn start_drag(
     use std::rc::Rc;
 
     let source = window.gtk_window()?;
-    // Escaped, so names with spaces and other characters arrive whole.
-    let uri = glib::filename_to_uri(path, None)?;
+    // Escaped, so names with spaces and other characters arrive whole; one
+    // address for each file, as a list of them.
+    let uris = paths.iter().map(|p| glib::filename_to_uri(p, None)).collect::<Result<Vec<_>, _>>()?;
     let targets = gtk::TargetList::new(&[]);
     targets.add_uri_targets(0);
     let handlers: Rc<RefCell<Vec<glib::SignalHandlerId>>> = Rc::default();
-    // Taken: something asked for the file's address, and the drag didn't
+    // Taken: something asked for the files' addresses, and the drag didn't
     // fail (a file manager asks as it's dragged over; called off, it fails).
     let (asked, failed) = (Rc::new(std::cell::Cell::new(false)), Rc::new(std::cell::Cell::new(false)));
     let asking = asked.clone();
     let data = source.connect_drag_data_get(move |_, _, data, _, _| {
-        data.set_uris(&[uri.as_str()]);
+        data.set_uris(&uris.iter().map(|u| u.as_str()).collect::<Vec<_>>());
         asking.set(true);
     });
     handlers.borrow_mut().push(data);
@@ -1027,7 +1039,7 @@ fn release_button(page: &gtk::Widget) {
 #[cfg(not(target_os = "linux"))]
 fn start_drag(
     window: &tauri::WebviewWindow,
-    path: &Path,
+    paths: &[PathBuf],
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
@@ -1035,7 +1047,8 @@ fn start_drag(
     let taken = std::sync::Arc::new(taken);
     drag::start_drag(
         window,
-        drag::DragItem::Files(vec![path.to_path_buf()]),
+        // A list on both: Windows' file drop holds them all, macOS drags one item for each.
+        drag::DragItem::Files(paths.to_vec()),
         drag::Image::Raw(image),
         move |result, _| {
             // Taken, then the page told (so a drag of its own coming back in

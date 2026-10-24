@@ -33,7 +33,9 @@
   import EditRow from "./EditRow.svelte";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
-  import { removeChosenEntries } from "./bulk";
+  import { carryEntries, chosenEntries, chosenToTranscribe, removeChosenEntries, transcribeChosen } from "./bulk";
+  import AddToEdit from "./AddToEdit.svelte";
+  import { DRAG_SLOP } from "./dragout";
   import { keyHint } from "./keys.svelte";
   import { count, dragBox, library, overlaps, picks, type Entry } from "./selection.svelte";
 
@@ -215,6 +217,48 @@
   const editsPicked = $derived(rows.filter((r) => r.kind === "edit" && library.has(entryOf(r))).length);
   const removePicked = () => removeChosenEntries(rows, (id) => id === selectedId && onselect(null));
 
+  // "Add to edit…" for what's picked: the edits, then where in one.
+  let adding = $state(false);
+  let addButton = $state<HTMLElement>();
+
+  // A picked row dragged carries what's picked (into an edit: bulk.ts
+  // `carryEntries`) rather than reordering the list; the click that ends it
+  // doesn't open the row.
+  let press: { x: number; y: number; key: number } | null = null;
+  let swallowClick = false;
+  function onRowDown(e: PointerEvent, row: LibraryRow, key: number) {
+    // A clip carried over the list is dropped, not a row dragged.
+    if (clips.carryingAny || (e.target as HTMLElement).closest(".actions")) return;
+    if (e.button === 0 && library.has(entryOf(row))) press = { x: e.clientX, y: e.clientY, key };
+    else reorder.start(e, key);
+  }
+  function onPointerMove(e: PointerEvent) {
+    linkDragged = false;
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
+    const from = reorder.rows[press.key]?.getBoundingClientRect() ?? new DOMRect(press.x, press.y);
+    press = null;
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 500);
+    carryEntries(from, e.clientX, e.clientY);
+  }
+
+  // Transcribe on a VOD picked with others that can be: hovered, they all
+  // light up; clicked, they're all asked for, in the order picked.
+  const toTranscribe = $derived(chosenToTranscribe(rows));
+  let transcribeLit = $state(false);
+  function together(vod: Vod) {
+    if (toTranscribe.length < 2 || !toTranscribe.some((v) => v.id === vod.id)) return undefined;
+    return {
+      count: toTranscribe.length,
+      lit: (on: boolean) => (transcribeLit = on),
+      run: () => {
+        transcribeLit = false;
+        adder.error = null;
+        void transcribeChosen(toTranscribe, (message) => (adder.error = message));
+      },
+    };
+  }
+
   function onRowKey(e: KeyboardEvent, key: number) {
     if (reorder.key(e, key)) tick().then(() => reorder.rows[key]?.querySelector<HTMLElement>(".main")?.focus());
   }
@@ -227,7 +271,8 @@
   ondragover={onDragOver}
   ondrop={onDrop}
   ondragleave={onDragLeave}
-  onpointermove={() => (linkDragged = false)}
+  onpointermove={onPointerMove}
+  onpointerup={() => (press = null)}
 />
 
 {#if dropping}
@@ -305,6 +350,13 @@
           [editsPicked, "edit", "edits"],
         ])}</span
       >
+      <button
+        class="link"
+        bind:this={addButton}
+        onclick={() => (adding = !adding)}
+        title="Put them in an edit, in the order picked (each VOD whole): on its timeline or its clip bar"
+        >Add to edit…</button
+      >
       <button class="link" onclick={removePicked} title="Remove them, after asking{keyHint('library.remove')}"
         >Remove…</button
       >
@@ -328,7 +380,7 @@
     use:dragBox={{ set: library, hits: boxed, onempty: () => library.clear() }}
   >
     <!-- While a clip is carried: the place to start an edit with it (dragout.ts). -->
-    {#if clips.carrying}
+    {#if clips.carryingAny}
       <div class="new-edit" class:target={edits.dropTarget === "new"} data-new-edit>
         <Icon name="plus" size={15} /> Make new edit
       </div>
@@ -362,6 +414,7 @@
         class:edit={row.kind === "edit"}
         class:selected={row.kind === "vod" ? row.vod.id === selectedId : edits.openId === row.edit.id}
         class:chosen={picked}
+        class:lit={transcribeLit && row.kind === "vod" && toTranscribe.some((v) => v.id === row.vod.id)}
         class:lifted={reorder.lifted(key)}
         role="option"
         aria-selected={picked}
@@ -370,6 +423,12 @@
         bind:this={reorder.rows[key]}
         animate:flip={{ duration: reorder.flipDuration(key) }}
         onclickcapture={(e) => {
+          if (swallowClick) {
+            swallowClick = false;
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
           reorder.clickCapture(e);
           if (!e.defaultPrevented) onRowClick(e, row);
         }}
@@ -378,10 +437,7 @@
           if (row.kind === "vod") toggle(row.vod);
           else onopenedit(row.edit.id);
         }}
-        onpointerdown={(e) => {
-          // A clip carried over the list is dropped, not a row dragged.
-          if (!clips.carrying && !(e.target as HTMLElement).closest(".actions")) reorder.start(e, key);
-        }}
+        onpointerdown={(e) => onRowDown(e, row, key)}
       >
         {#if n !== null}<span class="order row-order">{n}</span>{/if}
         {#if row.kind === "vod"}
@@ -390,6 +446,7 @@
             {vod}
             reorderable={rows.length > 1}
             ontoggle={() => toggle(vod)}
+            together={together(vod)}
             onkey={(e) => onRowKey(e, key)}
             onremove={() => selectedId === vod.id && onselect(null)}
             onerror={(e) => (adder.error = e)}
@@ -410,6 +467,8 @@
     {/each}
   </div>
 </aside>
+
+<AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
 
 <style>
   aside {
@@ -643,6 +702,12 @@
      one still lit at its edge. */
   .vod.chosen {
     background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* Transcribe on one of them is hovered: all it would transcribe. */
+  .vod.lit {
+    background: color-mix(in srgb, var(--accent) 18%, var(--surface));
     box-shadow: inset 0 0 0 2px var(--accent);
   }
 

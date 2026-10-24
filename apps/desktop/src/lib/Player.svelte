@@ -731,7 +731,7 @@
         come yet.
       </p>
     {/if}
-    {#if !collapsed && (clips.shown.length || clips.carrying || clips.error || edits.forVod(vod.id).length || snippets.size)}
+    {#if !collapsed && (clips.shown.length || clips.carryingAny || clips.error || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}

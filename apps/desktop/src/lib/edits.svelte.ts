@@ -8,7 +8,8 @@
 import { SvelteMap } from "svelte/reactivity";
 import { playedSpans } from "./media";
 import { nav } from "./nav.svelte";
-import { api, events, type Edit, type EditPiece, type EditView, type Fetching } from "./api";
+import { api, events, type Edit, type EditPiece, type EditView, type Fetching, type Put } from "./api";
+import { clips } from "./clips.svelte";
 import { clearsStretch, stretchMade } from "./selection.svelte";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
@@ -32,6 +33,8 @@ class Edits {
   lit = $state<{ editId: number; vodId: number } | null>(null);
   /** Where a carried clip would go: an edit's pill, "Make new edit", or neither. */
   dropTarget = $state<number | "new" | null>(null);
+  /** Where on the open edit's timeline a carried clip would go (its time there), while it's over it. */
+  inserting = $state<number | null>(null);
   /** A stretch of the open edit's timeline chosen in its transcript: what Delete takes out.
    *  Made, it lets go of a set picked (selection.svelte.ts). */
   #selection = $state<{ start: number; end: number } | null>(null);
@@ -97,10 +100,11 @@ class Edits {
     return this.list.filter((e) => e.vod_ids.includes(vodId));
   }
 
-  /** A new edit holding a stretch of a VOD. */
-  async createWith(stretch: Stretch): Promise<Edit | null> {
+  /** A new edit holding a stretch of a VOD, or several things picked (in their order). */
+  async createWith(what: Stretch | Put[]): Promise<Edit | null> {
     const edit = await this.create();
-    if (edit) await this.addRange(edit.id, stretch);
+    if (edit && Array.isArray(what)) await this.put(edit.id, what, false);
+    else if (edit && !Array.isArray(what)) await this.addRange(edit.id, what);
     return edit;
   }
 
@@ -229,6 +233,14 @@ class Edits {
   /** Puts a stretch of a VOD in edit `editId` (last, or at `index`). */
   addRange = (editId: number, s: Stretch, index?: number) =>
     this.#change(api.addRangeToEdit(editId, s.vodId, s.start, s.end, s.title, index));
+  /** Puts several things picked in edit `editId`, in their order, as one change: on its clip
+   *  bar if `bar` (shown again if it's open), else on its timeline at `index` (or last). */
+  async put(editId: number, items: Put[], bar: boolean, index?: number): Promise<boolean> {
+    if (!items.length) return false;
+    const done = await this.#change(api.putInEdit(editId, items, bar, index));
+    if (done && bar) clips.reload({ kind: "edit", id: editId });
+    return done;
+  }
   rename = (id: number, title: string) => this.#change(api.renameEdit(id, title));
   move = (pieceId: number, index: number) => this.#change(api.movePiece(pieceId, index));
   trim = (pieceId: number, start: number, end: number) => this.#change(api.trimPiece(pieceId, start, end));

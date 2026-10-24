@@ -370,6 +370,45 @@ pub(crate) async fn add_range_to_edit(
     })
 }
 
+/// Puts `items` (several things picked) in edit `edit_id`, in their order,
+/// as one change undo takes back whole: on its clip bar if `bar`, else on its
+/// timeline at `index` of its top level (or last). The clips made on the bar
+/// are queued to be made.
+#[tauri::command]
+pub(crate) async fn put_in_edit(
+    app: AppHandle,
+    edit_id: i64,
+    items: Vec<edits::Put>,
+    bar: bool,
+    index: Option<usize>,
+) -> CmdResult<EditView> {
+    let fine = |a: f64, b: f64| a.is_finite() && b.is_finite() && a >= 0.0 && b > a;
+    if items.iter().any(|item| match *item {
+        edits::Put::Range { start, end, .. } => !fine(start, end),
+        edits::Put::Span { from, to, .. } => !fine(from, to),
+        _ => false,
+    }) {
+        return Err("A piece has to end after it starts.".into());
+    }
+    let onto = if bar { edits::Onto::Bar } else { edits::Onto::Timeline(index) };
+    let label = match (bar, items.len()) {
+        (true, 1) => "Clip added",
+        (true, _) => "Clips added",
+        (false, 1) => "Piece added",
+        (false, _) => "Pieces added",
+    };
+    let mut made = Vec::new();
+    let view = changing(&app, edit_id, label, |db| {
+        made = db.put(edit_id, &items, onto)?;
+        Ok(())
+    })?;
+    let state = app.state::<AppState>();
+    for id in made {
+        state.clips.queue(id);
+    }
+    Ok(view)
+}
+
 #[tauri::command]
 pub(crate) async fn move_piece(app: AppHandle, id: i64, index: usize) -> CmdResult<EditView> {
     let edit = edit_of(&app, id)?;
@@ -499,7 +538,7 @@ pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: 
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
-    crate::clips::drag_file(window, path, None, taken).await
+    crate::clips::drag_file(window, vec![path], None, taken).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

@@ -350,6 +350,7 @@ pub fn run() {
             edits::delete_edit,
             edits::add_to_edit,
             edits::add_range_to_edit,
+            edits::put_in_edit,
             edits::edit_thumb,
             storyboards::storyboard_frame,
             footage::vod_frame,

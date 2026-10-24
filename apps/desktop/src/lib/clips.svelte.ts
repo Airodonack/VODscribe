@@ -21,6 +21,12 @@ class Clips {
   hovered = $state<{ start: number; end: number } | null>(null);
   /** A stretch being carried (dragout.ts), and whether it's over the clip bar. */
   carrying = $state<{ start: number; end: number } | null>(null);
+  /** How many things picked are carried together (dragout.ts `carrySet`), while they are; else 0. */
+  carried = $state(0);
+  /** Whether anything is being carried: a stretch, or several things picked. */
+  get carryingAny(): boolean {
+    return this.carrying !== null || this.carried > 0;
+  }
   overBar = $state(false);
   /** While the note before downloading a clip is up: how it's answered. */
   asking = $state<((download: boolean) => void) | null>(null);
@@ -219,12 +225,13 @@ class Clips {
     }
   }
 
-  /** Makes `from`..`to` of the open edit's timeline a clip on its clip bar. */
-  async makeOfEdit(from: number, to: number): Promise<Clip | null> {
+  /** Makes `from`..`to` of the open edit's timeline a clip on its clip bar
+   *  (or, not `shown`, one only to drag out of the window). */
+  async makeOfEdit(from: number, to: number, shown = true): Promise<Clip | null> {
     if (this.doc?.kind !== "edit") return null;
     try {
       const since = this.#serial;
-      const clip = await api.addEditClip(this.doc.id, from, to);
+      const clip = await api.addEditClip(this.doc.id, from, to, shown);
       this.#answer(clip, since);
       this.error = null;
       return clip;

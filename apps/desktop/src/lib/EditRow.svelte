@@ -74,8 +74,8 @@
   class="main"
   onclick={onopen}
   onkeydown={onkey}
-  title={clips.carrying
-    ? `Drop to add it to “${edit.title}”`
+  title={clips.carryingAny
+    ? `Drop to add ${clips.carried > 1 ? "them" : "it"} to the end of “${edit.title}”`
     : reorderable
       ? `Drag to reorder (${os === "mac" ? "Option" : "Alt"}+↑/↓)`
       : undefined}
@@ -106,7 +106,7 @@
   </button>
 </div>
 <!-- Over the whole row, its buttons too, while a clip is carried: where it drops. -->
-{#if clips.carrying}
+{#if clips.carryingAny}
   <span class="drop" class:target={edits.dropTarget === edit.id} data-edit-drop={edit.id}>
     <Icon name="plus" size={22} />
   </span>

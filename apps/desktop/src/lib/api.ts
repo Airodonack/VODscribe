@@ -322,6 +322,14 @@ export interface Fetching {
   usable: number | null;
 }
 
+/** Something put in an edit (`api.putInEdit`): a stretch of a VOD (a clip of its clip bar is one, named),
+ *  a whole VOD, a clip of an edit's clip bar, or a stretch of an edit's timeline (`clip` is the edit). */
+export type Put =
+  | { kind: "range"; vodId: number; start: number; end: number; title?: string }
+  | { kind: "vod"; id: number }
+  | { kind: "clip"; id: number }
+  | { kind: "span"; clip: number; from: number; to: number };
+
 export interface EditView {
   edit: Edit;
   pieces: EditPiece[];
@@ -545,6 +553,9 @@ export const api = {
   addToEdit: (editId: number, clipId: number, index?: number) =>
     invoke<EditView>("add_to_edit", { editId, clipId, index }),
   /** Puts `start`..`end` of VOD `vodId` in edit `editId`, named `title` (else for what's said). */
+  /** Puts `items` (several picked) in edit `editId`, in order, as one change: on its clip bar if `bar`, else on its timeline at `index` (or last). */
+  putInEdit: (editId: number, items: Put[], bar: boolean, index?: number) =>
+    invoke<EditView>("put_in_edit", { editId, items, bar, index }),
   addRangeToEdit: (editId: number, vodId: number, start: number, end: number, title?: string, index?: number) =>
     invoke<EditView>("add_range_to_edit", { editId, vodId, start, end, title, index }),
   /** Edit `id`'s picture (its first frame, or its VOD's thumbnail); empty if none. */
@@ -588,10 +599,10 @@ export const api = {
   forgetGoneClips: (doc: Doc) =>
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
-  /** Starts dragging clip `id`'s file out of the window; call while the mouse button is down. */
+  /** Starts dragging the files of clips `ids` out of the window, in one drag; call while the mouse button is down. */
   /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */
-  dragClip: (id: number, image?: Uint8Array) =>
-    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: String(id) } }),
+  dragClips: (ids: number[], image?: Uint8Array) =>
+    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(",") } }),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
   frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
   /** The app's own player's frame showing now, as width, height (4 bytes each,

@@ -52,6 +52,7 @@
     waveformGaps,
   } from "./media";
   import { picks, snippets, type Snippet } from "./selection.svelte";
+  import { carryChosen } from "./bulk";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { formatFraction, formatTime, os, playsFromFile } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
@@ -101,6 +102,7 @@
     highlight = [],
     removing = null,
     picked = null,
+    inserting = null,
     marks = false,
     ranges = [],
     current = null,
@@ -149,6 +151,8 @@
     removing?: { start: number; end: number } | null;
     /** An edit's lines selected in its transcript: the stretch Delete takes out. */
     picked?: { start: number; end: number } | null;
+    /** Where on an edit's timeline something carried over it would go (dragout.ts), marked as a piece moved is. */
+    inserting?: number | null;
     /** An edit's chapters and highlights show (cuts.svelte.ts has the edit open). */
     marks?: boolean;
     /** Stretches lit up another way: what an edit plays of the VOD, while its link is hovered. */
@@ -561,9 +565,9 @@
     }
   }
 
-  /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file. */
+  /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file;
+   *  picked with others, what's picked (bulk.ts). */
   async function takeOut(range: { start: number; end: number }, px: number, py: number) {
-    taking = range;
     const box = bar!.getBoundingClientRect();
     const from = new DOMRect(
       box.left + Math.max(0, x(range.start)),
@@ -571,6 +575,8 @@
       Math.max(4, Math.min(width, x(range.end)) - Math.max(0, x(range.start))),
       HEIGHT,
     );
+    if (snippets.has({ kind: "segment", ...range })) return carryChosen(from, px, py);
+    taking = range;
     try {
       if (vod) await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
     } finally {
@@ -665,7 +671,7 @@
   // Where an edit's pieces meet, and where one being moved would go.
   const joins = $derived(splits ?? (pieces ?? []).slice(1).map((p) => p.start));
   const insertAt = $derived.by(() => {
-    if (drag?.kind !== "piece" || !drag.moved) return null;
+    if (drag?.kind !== "piece" || !drag.moved) return inserting;
     const id = drag.id;
     const others = (pieces ?? []).filter((p) => p.id !== id);
     return others[drag.to]?.start ?? others.at(-1)?.end ?? 0;

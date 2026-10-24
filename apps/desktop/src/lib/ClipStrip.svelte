@@ -11,7 +11,8 @@
   // Ctrl-click (⌘ on a Mac) or Shift-click pills to pick several, or drag a
   // box over them from empty space in the bar (selection.svelte.ts); what's
   // picked, with the stretches picked on the timeline, shows first, with
-  // what can be done with it all.
+  // what can be done with it all ("Add to edit…" among it). A picked pill
+  // dragged carries them all (bulk.ts `carryChosen`).
 
   import { api, type Clip, type Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -22,7 +23,8 @@
   import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
   import { keyHint, labelOf } from "./keys.svelte";
-  import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
+  import AddToEdit from "./AddToEdit.svelte";
+  import { carryChosen, chosenClips, chosenPuts, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
   import { count, dragBox, overlaps, picks, snippets, type Snippet } from "./selection.svelte";
 
   let {
@@ -88,13 +90,16 @@
     el.select();
   }
 
-  // A made clip's chip drags out once the pointer moves with the button down;
-  // the click that may follow a drag that didn't start doesn't play it.
+  // A made clip's chip drags out once the pointer moves with the button down
+  // (a picked one, made or not, carries what's picked); the click that may
+  // follow a drag that didn't start doesn't play it.
   let press: { clip: Clip; x: number; y: number } | null = null;
   let swallowClick = false;
   function onChipDown(e: PointerEvent, clip: Clip) {
     const target = e.target as HTMLElement;
-    if (e.button !== 0 || clip.status !== "ready" || target.closest(".act, input")) return;
+    // Picked, it carries what's picked, made or not.
+    const ready = clip.status === "ready" || snippets.has(itemOf(clip));
+    if (e.button !== 0 || !ready || target.closest(".act, input")) return;
     press = { clip, x: e.clientX, y: e.clientY };
   }
   function onPointerMove(e: PointerEvent) {
@@ -104,7 +109,9 @@
     swallowClick = true;
     setTimeout(() => (swallowClick = false), 500);
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
-    if (!vod) return void dragFileOut(clip);
+    // One picked: all of what's picked goes, wherever it's dropped.
+    if (snippets.has(itemOf(clip))) return carryChosen(from, e.clientX, e.clientY);
+    if (!vod) return void dragFileOut([clip]);
     carry({ vod, start: clip.start, end: clip.end, title: clip.title, ownPlayer, from, x: e.clientX, y: e.clientY });
   }
   function play(time: number) {
@@ -119,6 +126,10 @@
       clips.error = String(e);
     }
   }
+
+  // "Add to edit…" for what's picked: the edits, then where in one.
+  let addingAll = $state(false);
+  let addAllButton = $state<HTMLElement>();
 
   // "Add to edit": the edits to pick from, by the clip's button.
   let adding = $state<{ clip: Clip; anchor: HTMLElement } | null>(null);
@@ -176,6 +187,12 @@
           >Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}</button
         >
       {/if}
+      <button
+        class="link"
+        bind:this={addAllButton}
+        onclick={() => (addingAll = !addingAll)}
+        title="Put them in an edit, in the order picked: on its timeline or its clip bar">Add to edit…</button
+      >
       {#if removable}
         <button
           class="link"
@@ -296,6 +313,8 @@
   {/each}
   {#if clips.carrying && !clips.shown.some((c) => c.start === clips.carrying?.start && c.end === clips.carrying?.end)}
     <span class="drop muted">Drop here to keep it as a clip</span>
+  {:else if clips.carried && clips.overBar}
+    <span class="drop muted">Let go to keep them as clips</span>
   {/if}
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
@@ -304,6 +323,8 @@
     <span class="muted added">{added}</span>
   {/if}
 </div>
+
+<AddToEdit bind:open={addingAll} anchor={addAllButton} items={chosenPuts} />
 
 <Popover
   bind:open={() => !!adding, (open) => !open && (adding = null)}

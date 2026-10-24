@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-put-in-edit"
+description = "Enables the put_in_edit command without any pre-configured scope."
+commands.allow = ["put_in_edit"]
+
+[[permission]]
+identifier = "deny-put-in-edit"
+description = "Denies the put_in_edit command without any pre-configured scope."
+commands.deny = ["put_in_edit"]

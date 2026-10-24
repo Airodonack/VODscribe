@@ -84,6 +84,30 @@ pub struct EditState {
     pub marks: Vec<MarkAt>,
 }
 
+/// Something put in an edit (`Db::put`): several things picked, dropped on
+/// it or added to it from a menu.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase", rename_all_fields = "camelCase")]
+pub enum Put {
+    /// `start`..`end` of VOD `vod_id` (a stretch of its timeline, or a clip
+    /// of its clip bar, named `title`).
+    Range { vod_id: i64, start: f64, end: f64, title: Option<String> },
+    /// All of VOD `id`, as one piece, named for it.
+    Vod { id: i64 },
+    /// Clip `id` of an edit's clip bar, as it is.
+    Clip { id: i64 },
+    /// `from`..`to` seconds of clip `clip`'s timeline (an edit's): what plays there.
+    Span { clip: i64, from: f64, to: f64 },
+}
+
+/// Where `Db::put` puts things in an edit: on its timeline, at `index` of
+/// its top level (or last), or on its clip bar.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Onto {
+    Timeline(Option<usize>),
+    Bar,
+}
+
 /// A mark of a clip, as the record holds it: on a moment of a VOD, wherever
 /// that plays in the clip (`place_marks`).
 #[derive(Debug, Clone, PartialEq)]
@@ -1006,6 +1030,119 @@ impl Db {
         })
     }
 
+    /// Puts `items` in edit `edit`, one after another in their order, where
+    /// `onto` says, as one change (all of them, or none if one can't go):
+    /// several things picked, dropped on the edit or added from a menu. On
+    /// its timeline each is a piece (a clip of an edit's clip bar, a group);
+    /// on its clip bar each is a clip of its own, and one already there is
+    /// left as it is. The clips made on the bar, in order.
+    pub fn put(&self, edit: i64, items: &[Put], onto: Onto) -> Result<Vec<i64>> {
+        self.edit(edit)?.context("That edit is gone.")?;
+        self.atomically(|db| {
+            let mut made = Vec::new();
+            // Where the next one goes on the timeline: after those put so far.
+            let mut index = match onto {
+                Onto::Timeline(index) => index,
+                Onto::Bar => None,
+            };
+            for item in items {
+                match (item, onto) {
+                    (Put::Clip { id }, Onto::Timeline(_)) => {
+                        db.add_group(edit, *id, index)?;
+                        index = index.map(|i| i + 1);
+                    }
+                    (Put::Clip { id }, Onto::Bar) => {
+                        let clip = db.clip(*id)?.context("That clip is gone.")?;
+                        if clip.bar != Some(crate::db::ClipBar::Edit { id: edit }) {
+                            let state = db.edit_state(clip.id)?.context("That clip is gone.")?;
+                            made.push(db.add_bar_clip(edit, &state)?);
+                        }
+                    }
+                    (Put::Span { clip, from, to }, _) if *clip == edit && onto == Onto::Bar => {
+                        let title = db.span_title(edit, *from, *to)?;
+                        made.push(db.add_edit_clip(edit, *from, *to, &title, true)?.id);
+                    }
+                    _ => {
+                        let (title, parts) = db.put_parts(item)?;
+                        if onto == Onto::Bar {
+                            made.push(db.add_parts_clip(edit, &title, &parts)?);
+                        } else {
+                            db.add_parts(edit, &parts, index)?;
+                            index = index.map(|i| i + parts.len());
+                        }
+                    }
+                }
+            }
+            Ok(made)
+        })
+    }
+
+    /// What `item` (not a clip of an edit's clip bar) plays, as pieces, and
+    /// its name: a stretch's own or for what's said at its start, a VOD's title.
+    fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
+        let part = |vod_id, start, end, title: &str| StretchPiece {
+            vod_id,
+            start,
+            end,
+            struck: Vec::new(),
+            title: title.to_string(),
+        };
+        Ok(match item {
+            Put::Range { vod_id, start, end, title } => {
+                self.vod(*vod_id)?.context("That VOD is gone.")?;
+                let title = match title {
+                    Some(title) => title.clone(),
+                    None => crate::clips::title(&self.words_between(*vod_id, *start, *end)?, *start),
+                };
+                (title.clone(), vec![part(*vod_id, *start, *end, &title)])
+            }
+            Put::Vod { id } => {
+                let vod = self.vod(*id)?.context("That VOD is gone.")?;
+                let end =
+                    vod.info.duration.with_context(|| format!("How long “{}” is isn't known yet.", vod.info.title))?;
+                (vod.info.title.clone(), vec![part(*id, 0.0, end, &vod.info.title)])
+            }
+            Put::Span { clip, from, to } => {
+                let parts = stretch_pieces(&self.edit_pieces(*clip)?, *from, *to);
+                anyhow::ensure!(!parts.is_empty(), "Nothing of the edit plays there.");
+                (self.span_title(*clip, *from, *to)?, parts)
+            }
+            Put::Clip { .. } => unreachable!("a clip is put as a group or a copy"),
+        })
+    }
+
+    /// The name for `from`..`to` of clip `clip`'s timeline made a clip: what's
+    /// said at its start.
+    fn span_title(&self, clip: i64, from: f64, to: f64) -> Result<String> {
+        let parts = stretch_pieces(&self.edit_pieces(clip)?, from, to);
+        let first = parts.first().context("Nothing of the edit plays there.")?;
+        Ok(crate::clips::title(&self.words_between(first.vod_id, first.start, first.end)?, first.start))
+    }
+
+    /// Puts `parts` in clip `clip` as pieces, in order, from `index` of its
+    /// top level (or last), with the chapters and highlights of their VODs in them.
+    fn add_parts(&self, clip: i64, parts: &[StretchPiece], index: Option<usize>) -> Result<()> {
+        self.change(clip, None, |db| {
+            for (i, p) in parts.iter().enumerate() {
+                let (start, end) = db.within_vod(p.vod_id, p.start, p.end)?;
+                let new = db.insert_piece(clip, p.vod_id, (start, end), &p.title, &struck_flicks(&p.struck))?;
+                db.copy_vod_marks(clip, p.vod_id, start, end)?;
+                db.place(clip, new, index.map(|n| n + i))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// A clip on listed clip `bar`'s clip bar titled `title`, of `parts` in
+    /// order, with the chapters and highlights of their VODs in them; its id.
+    fn add_parts_clip(&self, bar: i64, title: &str, parts: &[StretchPiece]) -> Result<i64> {
+        self.change(bar, None, |db| {
+            let id = db.new_clip(title, Place::Bar(bar))?;
+            db.add_parts(id, parts, None)?;
+            Ok(id)
+        })
+    }
+
     /// For each stretch (`from`, `to`: seconds of edit `edit`'s timeline),
     /// the first `cap` chat messages of what plays there and how many it
     /// has: each piece's VOD's chat where it plays, at its time in the edit.
@@ -1918,6 +2055,72 @@ pub(crate) mod tests {
         let state = db.edit_state(clip.id).unwrap().unwrap();
         let again = db.add_bar_clip(edit, &state).unwrap();
         assert_eq!(db.edit_state(again).unwrap().unwrap(), state);
+    }
+
+    #[test]
+    fn several_things_put_in_an_edit_go_in_their_order_as_one_change() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let x = db.add_vod(&info("x")).unwrap().0.id;
+        let y = db.add_vod(&info("y")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, x, (0.0, 10.0), "first", None).unwrap();
+        db.add_piece(edit, x, (20.0, 30.0), "last", None).unwrap();
+        let range = |start, end, title: &str| Put::Range { vod_id: x, start, end, title: Some(title.into()) };
+        let shape = |id| {
+            db.edit_pieces(id).unwrap().iter().map(|p| (p.vod_id, p.start, p.end, p.title.clone())).collect::<Vec<_>>()
+        };
+
+        // Onto the timeline between its two pieces: in the order given.
+        let before = db.revision(edit).unwrap().unwrap();
+        let made = db.put(edit, &[range(40.0, 41.0, "b"), range(50.0, 52.0, "a")], Onto::Timeline(Some(1))).unwrap();
+        assert!(made.is_empty(), "no clips on the timeline");
+        assert!(db.revision(edit).unwrap().unwrap() > before, "a change to the edit");
+        assert_eq!(
+            shape(edit),
+            [
+                (x, 0.0, 10.0, "first".into()),
+                (x, 40.0, 41.0, "b".into()),
+                (x, 50.0, 52.0, "a".into()),
+                (x, 20.0, 30.0, "last".into())
+            ]
+        );
+
+        // A whole VOD, and a stretch of the edit's own timeline (what plays
+        // from 9 to 11 s: the ends of two pieces), at the end.
+        db.put(edit, &[Put::Vod { id: y }, Put::Span { clip: edit, from: 9.0, to: 11.0 }], Onto::Timeline(None))
+            .unwrap();
+        let now = shape(edit);
+        assert_eq!(now[4], (y, 0.0, 600.0, "VOD y".into()));
+        assert_eq!(&now[5..], [(x, 9.0, 10.0, "first".into()), (x, 40.0, 41.0, "b".into())]);
+
+        // Onto the clip bar: a clip of each, in order; one of its own stays as it is.
+        let own = db.add_edit_clip(edit, 0.0, 5.0, "own", true).unwrap().id;
+        let before = db.revision(edit).unwrap().unwrap();
+        let made = db
+            .put(
+                edit,
+                &[range(1.0, 2.0, "one"), Put::Clip { id: own }, Put::Span { clip: edit, from: 0.0, to: 2.0 }],
+                Onto::Bar,
+            )
+            .unwrap();
+        assert!(db.revision(edit).unwrap().unwrap() > before, "a change to the edit");
+        assert_eq!(made.len(), 2);
+        let bar: Vec<(i64, f64, f64)> = db.bar_clips(edit).unwrap().iter().map(|c| (c.id, c.start, c.end)).collect();
+        assert_eq!(bar, [(own, 0.0, 5.0), (made[0], 1.0, 2.0), (made[1], 0.0, 2.0)]);
+        assert_eq!(db.clip(made[0]).unwrap().unwrap().title, "one");
+
+        // A clip of another edit's clip bar: on the timeline a group, on the bar a copy.
+        let other = db.add_edit("o").unwrap().id;
+        db.put(other, &[Put::Clip { id: own }], Onto::Timeline(None)).unwrap();
+        assert_eq!(db.edit_pieces(other).unwrap()[0].group.as_ref().map(|g| g.title.as_str()), Some("own"));
+        let copy = db.put(other, &[Put::Clip { id: own }], Onto::Bar).unwrap();
+        assert_eq!(db.edit_state(copy[0]).unwrap().unwrap().items, db.edit_state(own).unwrap().unwrap().items);
+
+        // One that can't go: none of them do.
+        let had = shape(edit);
+        let gone = Put::Vod { id: 999 };
+        assert!(db.put(edit, &[range(1.0, 2.0, "c"), gone], Onto::Timeline(None)).is_err());
+        assert_eq!(shape(edit), had, "nothing half done");
     }
 
     #[test]

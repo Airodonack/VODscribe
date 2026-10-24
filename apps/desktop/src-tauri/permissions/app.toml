@@ -59,6 +59,7 @@ permissions = [
   "allow-delete-edit",
   "allow-add-to-edit",
   "allow-add-range-to-edit",
+  "allow-put-in-edit",
   "allow-edit-thumb",
   "allow-storyboard-frame",
   "allow-vod-frame",
