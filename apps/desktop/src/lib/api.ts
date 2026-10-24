@@ -175,6 +175,7 @@ export interface SearchQuery {
   tree: QueryNode | null;
   /** Seconds: the window the pieces must fit in, if typed (else 20). */
   within: number | null;
+  /** Every name `from:` gives (`from:a,b`, or `from:a from:b`), separated by ", ". */
   from: string | null;
   /** If `in:` was typed: the sources it asked for, in place of the filter's. */
   sources: { audio: boolean; chat: boolean } | null;

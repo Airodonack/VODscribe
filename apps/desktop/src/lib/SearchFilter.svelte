@@ -11,7 +11,16 @@
   import { api, type AuthorSuggestion, type SearchQuery, type Vod } from "./api";
   import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
-  import { DEFAULT_WITHIN, lengthText, MOST_WITHIN, splitLength, UNITS, type Unit } from "./queryChips";
+  import {
+    DEFAULT_WITHIN,
+    lengthText,
+    MOST_WITHIN,
+    namesTyped,
+    splitLength,
+    UNITS,
+    withName,
+    type Unit,
+  } from "./queryChips";
 
   // A button that sums up the search's filters, opening a panel to change them.
   // New kinds of filter get a section of the panel and a part of the summary.
@@ -34,7 +43,7 @@
     sources: Sources;
     /** Seconds a match's pieces must fit in. */
     within: number;
-    /** Who said or wrote it; empty for anyone. */
+    /** Who said or wrote it, names separated by commas as `from:` takes them; empty for anyone. */
     from: string;
     /** The selected VOD, which a search can be limited to. */
     selected: Vod | undefined;
@@ -83,20 +92,26 @@
   }
 
   // Names for From whom as they're typed: channels first, then chatters, as
-  // the library has them (in the VOD searched, if it's one).
+  // the library has them (in the VOD searched, if it's one). Several names
+  // go in separated by commas; the suggestions are for the one after the
+  // last comma, leaving out those already in.
   let suggestions = $state<AuthorSuggestion[]>([]);
   let naming = $state(false);
   let asked = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   $effect(() => {
-    const prefix = from.trim();
+    const prefix = namesTyped(from).typing;
     const vodId = selected && !scopeAll ? selected.id : null;
     if (!naming) return;
     clearTimeout(timer);
     const mine = ++asked;
     timer = setTimeout(() => {
       api.authorSuggestions(prefix, vodId).then(
-        (s) => mine === asked && (suggestions = s),
+        (s) => {
+          if (mine !== asked) return;
+          const done = namesTyped(from).done.map((n) => n.replaceAll('"', "").toLowerCase());
+          suggestions = s.filter((n) => !done.includes(n.name.toLowerCase()));
+        },
         () => mine === asked && (suggestions = []),
       );
     }, 150);
@@ -105,8 +120,10 @@
   // A channel with a VOD from YouTube, whose chat may show people by other names.
   const onYouTube = (name: string) =>
     [...vods.values()].some((v) => v.platform === "youtube" && v.channel?.toLowerCase() === name.toLowerCase());
+  // The name picked takes the place of the one being typed; type a comma
+  // for the suggestions of another.
   function choose(name: string) {
-    from = name;
+    from = withName(from, name);
     naming = false;
   }
 </script>
@@ -203,7 +220,7 @@
       <input
         type="text"
         aria-label="From whom"
-        placeholder="Anyone"
+        placeholder="Anyone (names separated by commas)"
         autocomplete="off"
         spellcheck="false"
         value={typed?.from ?? from}
@@ -218,7 +235,7 @@
       {#if naming && suggestions.length}
         <ul class="names" role="listbox" aria-label="Names">
           {#each suggestions as s (s.name)}
-            <li role="option" aria-selected={s.name.toLowerCase() === from.trim().toLowerCase()}>
+            <li role="option" aria-selected={s.name.toLowerCase() === namesTyped(from).typing.toLowerCase()}>
               <!-- Pressed, not clicked: the field keeps its focus until the name is in. -->
               <button onmousedown={(e) => (e.preventDefault(), choose(s.name))}>
                 <span class="label">{s.name}</span>

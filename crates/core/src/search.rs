@@ -112,21 +112,24 @@ impl Db {
             Err(e) => return Ok(none(QueryInfo::error(e))),
         };
         let mut info = QueryInfo::of(&parsed);
-        let conjunctions = match parsed.conjunctions() {
+        let mut conjunctions = match parsed.conjunctions() {
             Ok(c) => c,
             Err(e) => return Ok(none(QueryInfo { error: Some(e), ..info })),
         };
         let within = parsed.within.or(filter.within.filter(|&w| w > 0.0)).unwrap_or(DEFAULT_WITHIN);
-        let from = filter.from.as_deref().map(str::trim).filter(|n| !n.is_empty());
+        // The filter's names, as `from:` takes them: "a, b" is either.
+        let from = crate::query::names(filter.from.as_deref().unwrap_or(""));
+        // Nothing typed but a name in the filter: what `from:` typed alone lists.
+        if parsed.tree.is_none() && !from.is_empty() {
+            conjunctions.push(Conjunction::default());
+        }
         let mut found: Vec<Found> = Vec::new();
         let mut ran = false;
         for c in &conjunctions {
             // The filter's who, for an alternative that doesn't name its own.
             let mut c = c.clone();
-            if let Some(name) = from
-                && c.from.is_empty()
-            {
-                c.from.push(name.to_string());
+            if c.from.is_empty() {
+                c.from.extend(from.iter().cloned());
             }
             let c = &c;
             // Exclusions alone have nothing to leave things out of.
@@ -1366,6 +1369,65 @@ mod tests {
         assert!(names("zz", None).is_empty());
     }
 
+    /// A name alone lists everything it passes: a channel's speech (every
+    /// line of its VODs) and its own chat, a chatter's chat; `in:` narrows
+    /// it, and several names mean any of them.
+    #[test]
+    fn a_name_alone_lists_what_they_said_and_wrote() {
+        let mut db = library();
+        let mine = vod(&db, "mine", "Streamer");
+        let theirs = vod(&db, "theirs", "other");
+        say(&mut db, mine, 5.0, "hello chat");
+        say(&mut db, mine, 30.0, "what a play");
+        say(&mut db, theirs, 5.0, "hello chat");
+        chat(&mut db, mine, 6.0, "streamer", "hello everyone");
+        chat(&mut db, mine, 7.0, "Bob", "hello streamer");
+        chat(&mut db, theirs, 9.0, "alice", "hi bob");
+        let hits = |q: &str| {
+            let r = find(&db, q);
+            assert_eq!(r.query.error, None, "{q}");
+            r.hits.iter().map(|h| (h.vod_id, h.source, h.time)).collect::<Vec<_>>()
+        };
+        let (s, c) = (Source::Speech, Source::Chat);
+        assert_eq!(hits("from:streamer"), [(mine, s, 5.0), (mine, c, 6.0), (mine, s, 30.0)]);
+        assert_eq!(hits("from:streamer in:audio"), [(mine, s, 5.0), (mine, s, 30.0)]);
+        assert_eq!(hits("from:streamer in:chat"), [(mine, c, 6.0)]);
+        assert_eq!(hits("from:streamer after:10"), [(mine, s, 30.0)]);
+        assert_eq!(hits("from:streamer -play"), [(mine, s, 5.0), (mine, c, 6.0)]);
+        assert_eq!(
+            hits("from:streamer within:1m -hello"),
+            [],
+            "the window, centred on each line, that the minus clears"
+        );
+        assert_eq!(hits("from:streamer -hello"), [(mine, s, 30.0)]);
+        let either = [(theirs, c, 9.0), (mine, s, 5.0), (mine, c, 6.0), (mine, s, 30.0)];
+        assert_eq!(hits("from:streamer,alice"), either);
+        assert_eq!(hits("from:alice from:streamer"), either);
+        assert_eq!(hits("from:Bob,\"alice\" in:chat"), [(theirs, c, 9.0), (mine, c, 7.0)]);
+        // The filter's From whom takes the same list, spaces round the commas allowed.
+        let from = |names: &str| SearchFilter { from: Some(names.into()), ..Default::default() };
+        let by = |q: &str, f: &SearchFilter| {
+            db.search(q, f, 10).unwrap().hits.iter().map(|h| (h.vod_id, h.source, h.time)).collect::<Vec<_>>()
+        };
+        assert_eq!(by("in:chat", &from("Bob, \"alice\"")), [(theirs, c, 9.0), (mine, c, 7.0)]);
+        assert_eq!(by("hello in:audio", &from("streamer,alice")), [(mine, s, 5.0)]);
+        assert_eq!(by("in:chat from:alice", &from("Bob")), [(theirs, c, 9.0)], "typed wins");
+        // With nothing typed, the filter's names alone list as typed ones do.
+        assert_eq!(by("", &from("streamer")), hits("from:streamer"));
+        assert_eq!(by(" ", &from("Bob, alice")), [(theirs, c, 9.0), (mine, c, 7.0)]);
+        let chat_only = SearchFilter { speech: false, ..from("streamer") };
+        assert_eq!(by("", &chat_only), [(mine, c, 6.0)]);
+        assert!(find(&db, "").hits.is_empty(), "nothing typed, nothing set: no search");
+        assert!(by("", &from(" , ")).is_empty());
+        // Capped as every search is, VOD by VOD.
+        for i in 0..20 {
+            say(&mut db, theirs, 100.0 + i as f64, "more talk");
+        }
+        let r = db.search("from:other,streamer", &SearchFilter::default(), 10).unwrap();
+        assert_eq!((r.hits.len(), r.truncated), (10, true));
+        assert!(r.hits.iter().all(|h| h.vod_id == theirs && h.source == s), "the first VOD's lines first");
+    }
+
     #[test]
     fn times_into_the_vod() {
         let mut db = library();
@@ -1494,7 +1556,7 @@ mod tests {
     /// The cases timed, as (what, query): the e2e perf pass's three, and
     /// what this search adds. The library has no "i" or "mean", so the
     /// all-common phrase is one of its own common words.
-    const BENCHMARK: [(&str, &str); 14] = [
+    const BENCHMARK: [(&str, &str); 19] = [
         ("one line a VOD", "tranquility base relay"),
         ("many lines", "chat"),
         ("none", "zyzzyva"),
@@ -1507,6 +1569,14 @@ mod tests {
         ("from: a chatter", "from:viewer7"),
         ("from: a chatter, a word", "from:viewer7 good"),
         ("from: a streamer, a phrase", "from:streamer_a tranquility base"),
+        // A name alone: a scan of their lines and messages, no word to look up.
+        ("from: a streamer alone", "from:streamer_a"),
+        ("from: a streamer alone, late", "from:streamer_a after:1:50:00"),
+        ("from: two names", "from:streamer_b,viewer7"),
+        ("from: a streamer alone, -word", "from:streamer_a -the"),
+        // The minus, an hour either way, leaves out every line, so the scan
+        // reads all of the channel's: the slowest a name alone can be.
+        ("from: a streamer alone, -word everywhere", "from:streamer_a in:audio -the within:1h"),
         ("-word", "chat -the"),
         // The widest window (MOST_WITHIN) over common words, the slowest a
         // search can be: about 1.4 s on 10 VODs of 10 hours (grown with

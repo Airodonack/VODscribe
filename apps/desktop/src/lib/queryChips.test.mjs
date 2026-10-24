@@ -1,7 +1,16 @@
 // The search's grouping and the Within control (queryChips.ts): node --test apps/desktop/src/lib/queryChips.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chipsOf, filterText, lengthText, removeFilter, shows, splitLength } from "./queryChips.ts";
+import {
+  chipsOf,
+  filterText,
+  lengthText,
+  namesTyped,
+  removeFilter,
+  shows,
+  splitLength,
+  withName,
+} from "./queryChips.ts";
 
 /** @typedef {import("./api").QueryNode} Node */
 /** @param {string} text @returns {Node} */
@@ -62,6 +71,8 @@ test("brackets around a group inside another, OR between alternatives", () => {
 test("a filter's text as the core writes it", () => {
   assert.equal(filterText("in", "chat"), "in:chat");
   assert.equal(filterText("from", "Some One"), 'from:"Some One"');
+  assert.equal(filterText("from", 'a,"Some One"'), 'from:a,"Some One"', "a list has its own quotes");
+  assert.equal(filterText("from", "a,b"), "from:a,b");
 });
 
 test("removing a filter takes its text out of the box", () => {
@@ -71,6 +82,7 @@ test("removing a filter takes its text out of the box", () => {
   assert.equal(removeFilter("a in:chat b in:chat", "in:chat"), "a b in:chat", "the first only");
   assert.equal(removeFilter("join:chat in:chat", "in:chat"), "join:chat", "a whole word");
   assert.equal(removeFilter('hi from:"Some One"', 'from:"Some One"'), "hi");
+  assert.equal(removeFilter('hi from:a,"Some One" x', 'from:a,"Some One"'), "hi x");
   assert.equal(removeFilter('(from:a "x") OR "y"', "from:a"), '("x") OR "y"');
   assert.equal(removeFilter("landed", "in:chat"), "landed", "not there: as it was");
   // Quoted though it has no space: the core reads it as from:bob, and writes it so.
@@ -86,4 +98,16 @@ test("Within's lengths", () => {
   assert.equal(lengthText(20), "20 s");
   assert.equal(lengthText(300), "5 min");
   assert.equal(lengthText(3600), "1 h");
+});
+
+test("the From whom control takes several names, separated by commas", () => {
+  assert.deepEqual(namesTyped(""), { done: [], typing: "" });
+  assert.deepEqual(namesTyped("Ad"), { done: [], typing: "Ad" });
+  assert.deepEqual(namesTyped("Ada, So"), { done: ["Ada"], typing: "So" });
+  assert.deepEqual(namesTyped('"Last, First", Ada,'), { done: ['"Last, First"', "Ada"], typing: "" });
+  assert.deepEqual(namesTyped('Ada, "Last, Fi'), { done: ["Ada"], typing: "Last, Fi" }, "a quote still open");
+  assert.equal(withName("", "Ada"), "Ada");
+  assert.equal(withName("Ada, so", "Some One"), "Ada, Some One");
+  assert.equal(withName("Ada,", "Last, First"), 'Ada, "Last, First"');
+  assert.equal(withName(" , Ada,", "Bob"), "Ada, Bob", "empty ones dropped");
 });

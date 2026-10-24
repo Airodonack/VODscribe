@@ -25,9 +25,11 @@ export function shows(tree: QueryNode | null): tree is QueryNode {
   return tree !== null && tree.kind !== "phrase";
 }
 
-/** The filter as the core writes it: `key:value`, the value quoted if it has a space. */
+/** The filter as the core writes it: `key:value`, the value quoted if it
+ *  has a space, unless it's a list of names with quotes of its own
+ *  (`from:a,"Some One"`). */
 export function filterText(key: Key, value: string): string {
-  return /\s/.test(value) ? `${key}:"${value}"` : `${key}:${value}`;
+  return /\s/.test(value) && !value.includes('"') ? `${key}:"${value}"` : `${key}:${value}`;
 }
 
 export function chipsOf(tree: QueryNode): Chip[] {
@@ -86,6 +88,37 @@ export function removeFilter(query: string, text: string): string {
   const after = query.slice(found.end).replace(/^\s+/, "");
   const space = before && after && !before.endsWith("(") && !after.startsWith(")") ? " " : "";
   return before + space + after;
+}
+
+/**
+ * The From whom control's text, which takes names as `from:` does (the
+ * core's `query::names`): separated by commas, one with a comma in quotes.
+ * `done` are those before the last comma, as typed; `typing` the one after
+ * it, without its quotes, for the suggestions.
+ */
+export function namesTyped(text: string): { done: string[]; typing: string } {
+  const parts: string[] = [];
+  let part = "";
+  let quoted = false;
+  for (const c of text) {
+    if (c === "," && !quoted) {
+      parts.push(part);
+      part = "";
+      continue;
+    }
+    if (c === '"') quoted = !quoted;
+    part += c;
+  }
+  const done = parts.map((p) => p.trim()).filter((p) => p.replaceAll('"', "").trim());
+  return { done, typing: part.replaceAll('"', "").trim() };
+}
+
+/** The name in the control's text, quoted if it has a comma. */
+const asTyped = (name: string) => (name.includes(",") ? `"${name}"` : name);
+
+/** The control's `text` with the name being typed replaced by `name`. */
+export function withName(text: string, name: string): string {
+  return [...namesTyped(text).done, asTyped(name)].join(", ");
 }
 
 /** The window when neither the filter nor the text sets another, in

@@ -1,7 +1,8 @@
 // Searching a VOD's chat (and its speech) by who wrote it: `from:` a chatter
 // finds only that chatter's messages, a name with a space needs its quotes,
-// `from:` the channel finds the streamer's speech and their chat, `in:chat`
-// alone lists chat, `-gg` leaves out messages with that word, `@Ada` is
+// `from:` the channel finds the streamer's speech and their chat (alone, every
+// line of their VOD and every message they wrote), `from:a,b` is either
+// name, `in:chat` alone lists chat, `-gg` leaves out messages with that word, `@Ada` is
 // words to find (a mention), not a filter, and the box's suggestions name the
 // channel first, then chatters by how much they wrote. The chat is a
 // synthetic one (lib/fixtures.mjs chat(), served by the e2e build in place
@@ -57,20 +58,75 @@ export default {
       expect('from:"Some One": other authors', r.hits.filter((h) => h.author !== "Some One").length, 0);
     }
 
-    // from: the channel finds the streamer's chat, and with words, their speech
-    // too: the landing said "landed", and so does their chat.
+    // from: the channel alone lists all the streamer said, every line of the
+    // VOD (all its speech is the channel's), and all they wrote in chat; in:
+    // narrows it to one or the other.
     {
-      const chatOnly = await search(`from:${CHANNEL}`);
+      const lines = (await app.invoke("transcript", { vodId: added.id })).length;
+      if (lines === 0) wrong.push("the landing's transcript has no lines");
+      const all = await search(`from:${CHANNEL}`);
+      expect(`from:${CHANNEL}: speech hits`, all.hits.filter((h) => h.source === "speech").length, lines);
       expect(
         `from:${CHANNEL}: chat hits`,
-        chatOnly.hits.filter((h) => h.source === "chat").length,
+        all.hits.filter((h) => h.source === "chat").length,
         fixture.by(CHANNEL).length,
       );
       expect(
         `from:${CHANNEL}: hits by others`,
-        chatOnly.hits.filter((h) => h.source === "chat" && h.author !== CHANNEL).length,
+        all.hits.filter((h) => h.source === "chat" && h.author !== CHANNEL).length,
         0,
       );
+      expect(`from:${CHANNEL}: cut off`, all.truncated, false);
+      const times = all.hits.map((h) => h.time);
+      expect(
+        `from:${CHANNEL}: in time order`,
+        times.every((t, i) => i === 0 || times[i - 1] <= t),
+        true,
+      );
+      const audio = await search(`from:${CHANNEL} in:audio`);
+      expect(`from:${CHANNEL} in:audio: hits`, audio.hits.length, lines);
+      expect(`from:${CHANNEL} in:audio: chat hits`, audio.hits.filter((h) => h.source === "chat").length, 0);
+      const written = await search(`from:${CHANNEL} in:chat`);
+      onlyChat(`from:${CHANNEL} in:chat`, written);
+      expect(`from:${CHANNEL} in:chat: hits`, written.hits.length, fixture.by(CHANNEL).length);
+      ctx.log(`from:${CHANNEL}: ${lines} line(s) said, ${fixture.by(CHANNEL).length} message(s) written`);
+    }
+
+    // Several names, comma-separated or each typed, are any of them; the
+    // filter shows them all.
+    {
+      const want = fixture.by("Cormac").length + fixture.by("Some One").length;
+      for (const query of ['from:Cormac,"Some One"', 'from:Cormac from:"Some One"', 'from:"Some One",cormac']) {
+        const r = await search(query);
+        onlyChat(query, r);
+        expect(`${query}: hits`, r.hits.length, want);
+        expect(
+          `${query}: other authors' hits`,
+          r.hits.filter((h) => h.author !== "Cormac" && h.author !== "Some One").length,
+          0,
+        );
+        expect(
+          `${query}: Some One's hits`,
+          r.hits.filter((h) => h.author === "Some One").length,
+          fixture.by("Some One").length,
+        );
+      }
+      expect(
+        'from:Cormac,"Some One": the filter',
+        (await search('from:Cormac,"Some One"')).query.from,
+        "Cormac, Some One",
+      );
+      const both = await search(`from:Ada,${CHANNEL} in:chat`);
+      expect(
+        `from:Ada,${CHANNEL} in:chat: hits`,
+        both.hits.length,
+        fixture.by("Ada").length + fixture.by(CHANNEL).length,
+      );
+    }
+
+    // With words, the channel's speech too: the landing said "landed", and so
+    // does their chat.
+    {
       const landed = await search(`from:${CHANNEL} landed`);
       const speech = landed.hits.filter((h) => h.source === "speech").length;
       const chatHits = landed.hits.filter((h) => h.source === "chat");
@@ -179,5 +235,80 @@ export default {
     if (typed.authors.join() !== "Ada") throw new Error(`from:Ada shows messages by ${typed.authors.join(", ")}`);
     ctx.log(`typed from:Ada: ${typed.rows} rows, all by Ada`);
     await ctx.checkpoint("chat-search-from");
+
+    // Two names typed: both people's messages, and the filter's summary names both.
+    await app.type(SEARCH, 'from:Cormac,"Some One"');
+    const two = await until(
+      "Cormac's and Some One's messages",
+      async () => {
+        const r = await app.js(`return {
+          rows: document.querySelectorAll(".results button.row").length,
+          authors: [...new Set([...document.querySelectorAll(".results button.row .chat-author")].map((a) => a.textContent.trim()))].sort(),
+          summary: document.querySelector("button.filter")?.textContent.replace(/\\s+/g, " ").trim() ?? "" }`);
+        return r.authors.join() === "Cormac,Some One" && r;
+      },
+      MINUTE,
+    );
+    if (!two.summary.includes("from Cormac, Some One"))
+      throw new Error(`the filter's summary for two names: "${two.summary}"`);
+    ctx.log(`typed from:Cormac,"Some One": ${two.rows} rows; the filter says "${two.summary}"`);
+
+    // The same in the filter's From whom, with nothing typed in the box: a
+    // name typed, a comma, and another picked from the suggestions lists what
+    // they wrote, as from: typed alone does. And the names typed in the box
+    // show there.
+    const WHOM = 'input[aria-label="From whom"]';
+    const rows = `return {
+      rows: document.querySelectorAll(".results button.row").length,
+      authors: [...new Set([...document.querySelectorAll(".results button.row .chat-author")].map((a) => a.textContent.trim()))].sort(),
+      whom: document.querySelector(${JSON.stringify(WHOM)})?.value ?? null,
+      disabled: document.querySelector(${JSON.stringify(WHOM)})?.disabled ?? null,
+      summary: document.querySelector(".results .summary")?.textContent.replace(/\\s+/g, " ").trim() ?? "" }`;
+    await app.type(SEARCH, "");
+    await app.js(`document.querySelector("button.filter").click();`);
+    await until(
+      "the From whom control",
+      async () => app.js(`return !!document.querySelector(arguments[0]);`, WHOM),
+      MINUTE,
+    );
+    await app.type(WHOM, "Cormac, so");
+    await until(
+      "Some One suggested",
+      async () =>
+        app.js(
+          `const b = [...document.querySelectorAll("ul.names button")].find((b) => b.querySelector(".label")?.textContent.trim() === "Some One");
+           if (!b) return false;
+           b.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+           return true;`,
+        ),
+      MINUTE,
+    );
+    const picked = await until(
+      "Cormac's and Some One's messages, picked in the control",
+      async () => {
+        const r = await app.js(rows);
+        return r.authors.join() === "Cormac,Some One" && r;
+      },
+      MINUTE,
+    );
+    if (picked.whom !== "Cormac, Some One") throw new Error(`From whom after the pick: "${picked.whom}"`);
+    const theirs = fixture.by("Cormac").length + fixture.by("Some One").length;
+    if (picked.rows !== theirs) throw new Error(`From whom alone: ${picked.rows} rows, not ${theirs}`);
+    if (!picked.summary.includes("from Cormac, Some One"))
+      throw new Error(`From whom alone, the results say "${picked.summary}"`);
+    await app.type(SEARCH, "in:chat from:Ada,Dara");
+    const mirrored = await until(
+      "Ada's and Dara's messages, the control showing them",
+      async () => {
+        const r = await app.js(rows);
+        return r.authors.join() === "Ada,Dara" && r;
+      },
+      MINUTE,
+    );
+    if (mirrored.whom !== "Ada, Dara" || mirrored.disabled !== true)
+      throw new Error(`From whom with from:Ada,Dara typed: "${mirrored.whom}", disabled ${mirrored.disabled}`);
+    ctx.log(
+      `From whom: "${picked.whom}" picked with the box empty, ${picked.rows} rows ("${picked.summary}"); "${mirrored.whom}" shown for from:Ada,Dara`,
+    );
   },
 };

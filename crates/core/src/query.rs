@@ -5,7 +5,7 @@
 //! offers alternatives and `AND` joins pieces explicitly, binding tighter
 //! than `OR`; brackets group. Pieces and filters side by side (the implicit
 //! AND) bind looser than `OR`, so `from:x "a" OR "b"` is from x, a or b.
-//! Filters: `from:name`, `in:chat` / `in:audio`, `within:20s`, `after:1:20:00`,
+//! Filters: `from:name` (`from:a,b` for either), `in:chat` / `in:audio`, `within:20s`, `after:1:20:00`,
 //! `before:2h`. Anything else is words.
 //!
 //! Parsing is pure: `parse` gives the tree the page shows, and
@@ -213,6 +213,8 @@ impl Query {
 pub struct QueryInfo {
     pub tree: Option<Node>,
     pub within: Option<f64>,
+    /// Every name `from:` gives, each once, separated by ", " (one with a
+    /// comma in quotes), as the From whom control takes them.
     pub from: Option<String>,
     pub sources: Option<Sources>,
     pub after: Option<f64>,
@@ -223,12 +225,20 @@ pub struct QueryInfo {
 impl QueryInfo {
     pub fn of(query: &Query) -> QueryInfo {
         let mut info = QueryInfo { tree: query.tree.clone(), within: query.within, ..Default::default() };
-        // Values were checked by `parse`. A `from:` typed twice shows the last;
-        // times typed twice all hold (`Conjunction::and`), so the latest start
-        // and the earliest end show, as the search applies them.
+        // Values were checked by `parse`. Every name `from:` gives shows, as
+        // any of them is searched for; times typed twice all hold
+        // (`Conjunction::and`), so the latest start and the earliest end
+        // show, as the search applies them.
+        let mut from: Vec<String> = Vec::new();
         for (key, value) in query.top_filters() {
             match key {
-                Key::From => info.from = Some(value.to_string()),
+                Key::From => {
+                    for name in names(value) {
+                        if !from.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+                            from.push(name);
+                        }
+                    }
+                }
                 Key::In => {
                     let s = sources(value).unwrap_or_default();
                     let was = info.sources.unwrap_or_default();
@@ -239,6 +249,9 @@ impl QueryInfo {
                 Key::Before => info.before = min_of(info.before, seconds(value)),
             }
         }
+        // As the From whom control takes them: a name with a comma in quotes.
+        let shown = |n: &String| if n.contains(',') { format!("\"{n}\"") } else { n.clone() };
+        info.from = (!from.is_empty()).then(|| from.iter().map(shown).collect::<Vec<_>>().join(", "));
         info
     }
 
@@ -297,7 +310,7 @@ fn filter(key: Key, value: &str) -> Result<Conjunction, String> {
         return Ok(c);
     }
     match key {
-        Key::From => c.from.push(value.to_string()),
+        Key::From => c.from.extend(names(value)),
         Key::In => c.sources = Some(sources(value)?),
         // Global, read by `parse`.
         Key::Within => {}
@@ -305,6 +318,29 @@ fn filter(key: Key, value: &str) -> Result<Conjunction, String> {
         Key::Before => c.before = Some(seconds(value).ok_or_else(|| time_error(key))?),
     }
     Ok(c)
+}
+
+/// The names in a `from:` value (`tokens`), or in the filter's From whom:
+/// one, or several separated by commas, any of them in quotes; a comma
+/// inside quotes is the name's.
+pub fn names(value: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut name = String::new();
+    let mut quoted = false;
+    for c in value.chars().chain([',']) {
+        match c {
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                let n = name.trim();
+                if !n.is_empty() {
+                    out.push(n.to_string());
+                }
+                name.clear();
+            }
+            c => name.push(c),
+        }
+    }
+    out
 }
 
 fn sources(value: &str) -> Result<Sources, String> {
@@ -387,23 +423,25 @@ fn ends_word(c: char) -> bool {
     c.is_whitespace() || matches!(c, '(' | ')' | '"')
 }
 
+/// The text up to the closing quote, from `*i` just past the opening one;
+/// `*i` ends past the closing one.
+fn quoted(chars: &[char], i: &mut usize) -> Result<String, String> {
+    let start = *i;
+    while *i < chars.len() && chars[*i] != '"' {
+        *i += 1;
+    }
+    if *i == chars.len() {
+        return Err("A quote isn't closed: add the other \".".into());
+    }
+    let s: String = chars[start..*i].iter().collect();
+    *i += 1;
+    Ok(s)
+}
+
 fn tokens(text: &str) -> Result<Vec<Token>, String> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
-    let quoted = |i: &mut usize| -> Result<String, String> {
-        // `*i` is just past the opening quote.
-        let start = *i;
-        while *i < chars.len() && chars[*i] != '"' {
-            *i += 1;
-        }
-        if *i == chars.len() {
-            return Err("A quote isn't closed: add the other \".".into());
-        }
-        let s: String = chars[start..*i].iter().collect();
-        *i += 1;
-        Ok(s)
-    };
     let word = |i: &mut usize| -> String {
         let start = *i;
         while *i < chars.len() && !ends_word(chars[*i]) {
@@ -423,13 +461,13 @@ fn tokens(text: &str) -> Result<Vec<Token>, String> {
             i += 1;
         } else if c == '"' {
             i += 1;
-            out.push(Token::Quoted(quoted(&mut i)?));
+            out.push(Token::Quoted(quoted(&chars, &mut i)?));
         } else if c == '-' {
             i += 1;
             match chars.get(i) {
                 Some('"') => {
                     i += 1;
-                    out.push(Token::NotQuoted(quoted(&mut i)?));
+                    out.push(Token::NotQuoted(quoted(&chars, &mut i)?));
                 }
                 Some('(') => return Err("A minus goes before a word or a quoted phrase, not brackets.".into()),
                 Some(&c) if !ends_word(c) => {
@@ -449,10 +487,14 @@ fn tokens(text: &str) -> Result<Vec<Token>, String> {
             } else if w == "AND" {
                 out.push(Token::And);
             } else if let Some((key, value)) = w.split_once(':').and_then(|(k, v)| Some((Key::parse(k)?, v))) {
-                // A quoted value, for a name with spaces: from:"Some One".
-                let value = if value.is_empty() && chars.get(i) == Some(&'"') {
+                let value = if key == Key::From {
+                    // Read again from the colon, as the names it lists.
+                    i -= value.chars().count();
+                    from_value(&chars, &mut i)?
+                } else if value.is_empty() && chars.get(i) == Some(&'"') {
+                    // A quoted value: within:"2m".
                     i += 1;
-                    quoted(&mut i)?
+                    quoted(&chars, &mut i)?
                 } else {
                     value.to_string()
                 };
@@ -463,6 +505,36 @@ fn tokens(text: &str) -> Result<Vec<Token>, String> {
         }
     }
     Ok(out)
+}
+
+/// A `from:` value, from `*i` just past the colon: one name, or several
+/// separated by commas (`from:a,b`), each bare or in quotes for one with a
+/// space or a comma (`from:a,"Some One"`). The value is a name alone as
+/// itself; several, or one with a comma, as typed, quotes and all, which
+/// `names` reads.
+fn from_value(chars: &[char], i: &mut usize) -> Result<String, String> {
+    let start = *i;
+    let mut names = Vec::new();
+    loop {
+        if chars.get(*i) == Some(&'"') {
+            *i += 1;
+            names.push(quoted(chars, i)?);
+        } else {
+            let from = *i;
+            while *i < chars.len() && !ends_word(chars[*i]) && chars[*i] != ',' {
+                *i += 1;
+            }
+            names.push(chars[from..*i].iter().collect());
+        }
+        if chars.get(*i) != Some(&',') {
+            break;
+        }
+        *i += 1;
+    }
+    Ok(match &names[..] {
+        [name] if !name.contains(',') => name.clone(),
+        _ => chars[start..*i].iter().collect(),
+    })
 }
 
 struct Parser {
@@ -664,7 +736,8 @@ impl fmt::Display for Node {
             Node::Phrase { text, strict: true, .. } => write!(f, "\"{text}\""),
             Node::Phrase { text, .. } => f.write_str(text),
             Node::Not { item } => write!(f, "-{item}"),
-            Node::Filter { key, value } if value.contains(char::is_whitespace) => {
+            // A list of names (`from_value`) has its own quotes.
+            Node::Filter { key, value } if value.contains(char::is_whitespace) && !value.contains('"') => {
                 write!(f, "{}:\"{value}\"", key.name())
             }
             Node::Filter { key, value } => write!(f, "{}:{value}", key.name()),
@@ -797,6 +870,34 @@ mod tests {
         assert_eq!(q.top_filters().len(), 6);
     }
 
+    /// `from:a,b` is either name, as `from:a from:b` is; a name with a space
+    /// or a comma (a YouTube display name can have one) goes in quotes.
+    #[test]
+    fn several_names_separated_by_commas() {
+        let from = |text: &str| parse(text).unwrap().conjunctions().unwrap().remove(0).from;
+        assert_eq!(tree("from:a,b"), filter(Key::From, "a,b"));
+        assert_eq!(from("from:a,b"), ["a", "b"]);
+        assert_eq!(from("from:a,\"Some One\",c"), ["a", "Some One", "c"]);
+        assert_eq!(tree("from:a,\"Some One\" hi"), and(vec![filter(Key::From, "a,\"Some One\""), typing("hi")]));
+        assert_eq!(from("from:\"Some One\",a"), ["Some One", "a"]);
+        assert_eq!(from("from:\"Last, First\""), ["Last, First"], "quoted, a comma is the name's");
+        assert_eq!(from("from:\"Last, First\",bob"), ["Last, First", "bob"]);
+        assert_eq!(from("from:a, hi"), ["a"], "a comma left at the end, while typing");
+        assert_eq!(from("from:a from:b,c"), ["a", "b", "c"]);
+        assert!(parse("from:,").unwrap().conjunctions().unwrap()[0].from.is_empty());
+        assert!(error("from:a,\"Some").contains("quote"));
+        // The filter shows them all, each once.
+        let shown = |text: &str| QueryInfo::of(&parse(text).unwrap()).from;
+        assert_eq!(shown("from:a,\"Some One\" hi"), Some("a, Some One".into()));
+        assert_eq!(shown("from:Ada from:bob,ada"), Some("Ada, bob".into()));
+        assert_eq!(shown("from:\"Some One\""), Some("Some One".into()));
+        assert_eq!(shown("from:\"Last, First\",b"), Some("\"Last, First\", b".into()));
+        // The control's text, read back, is the same names.
+        assert_eq!(names("\"Last, First\", b"), ["Last, First", "b"]);
+        assert_eq!(names(" Ada ,  Some One,"), ["Ada", "Some One"]);
+        assert_eq!(shown("hi"), None);
+    }
+
     #[test]
     fn errors_say_what_to_fix() {
         assert!(error("\"unclosed").contains("quote"));
@@ -888,6 +989,9 @@ mod tests {
             "a b AND c",
             "nice \"clutch\" OR \"play\" good",
             "from:\"Some One\" -\"a phrase\" within:2m",
+            "from:a,\"Some One\" hi",
+            "from:\"Last, First\" hi",
+            "from:\"Last, First\",b hi",
         ] {
             let parsed = tree(text);
             let shown = parsed.to_string();

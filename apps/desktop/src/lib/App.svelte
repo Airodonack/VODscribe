@@ -443,7 +443,9 @@
   async function runSearch() {
     const mine = ++seq;
     const q = query.trim();
-    if (!q) {
+    // A name in From whom lists what it passes with nothing typed, as
+    // `from:` typed alone does; nothing typed and no name is no search.
+    if (!q && !from.trim()) {
       results = null;
       searchError = null;
       return;
@@ -703,7 +705,7 @@
             hits={results.hits}
             truncated={results.truncated}
             vods={vodsById}
-            query={query.trim()}
+            query={query.trim() || `from ${from.trim()}`}
             scope={scopeAll ? undefined : selected}
             columns={lookingThrough.audio && lookingThrough.chat}
             onplay={play}

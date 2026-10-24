@@ -47,11 +47,15 @@ const KEEP = 100;
 
 const key = (doc: Doc | null) => (doc ? docKey(doc) : "none");
 const same = (a: Doc | null, b: Doc | null) => key(a) === key(b);
-/** Whether a search's results are up, rather than the view itself. */
-export const searching = (search: Search) => search.query.trim() !== "" && !search.aside;
-/** The same results (the same words, whatever the spaces round them), or both the view itself. */
+/** Whether a search's results are up, rather than the view itself: words
+ *  typed, or a name in From whom, which lists what it passes alone. */
+export const searching = (search: Search) => (search.query.trim() !== "" || search.from.trim() !== "") && !search.aside;
+/** What makes a step of its own: the words, whatever the spaces round them,
+ *  or with none, the names (the filter's other settings don't). */
+const searchKey = (s: Search) => s.query.trim() || `from ${s.from.trim()}`;
+/** The same results, or both the view itself. */
 const sameSearch = (a: Search, b: Search) =>
-  searching(a) === searching(b) && (!searching(a) || a.query.trim() === b.query.trim());
+  searching(a) === searching(b) && (!searching(a) || searchKey(a) === searchKey(b));
 /** Two steps that would bring back the same thing. */
 const samePlace = (a: Step, b: Step) => same(a.doc, b.doc) && sameSearch(a.search, b.search);
 
