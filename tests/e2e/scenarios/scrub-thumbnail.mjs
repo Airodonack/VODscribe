@@ -63,6 +63,11 @@ const THUMBNAIL = `
 
 export default {
   name: "scrub-thumbnail",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "thumbnail-at-the-end":
+      "Inside the timeline, beside the line where the pointer is, a small thumbnail of the video shows a flat yellow frame, with a dark time tip reading 0:03 next to it; both sit within the timeline, not over the video picture above it, and a stretch from about 0:02 to 0:04 is marked as selected.",
+  },
   async run(app, ctx) {
     const file = colours(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
@@ -161,6 +166,7 @@ export default {
     await pointer("pointermove", 4.4);
     await pointer("pointermove", 4 + half);
     const end = await shows("the end's frame while dragging it", "yellow", { exact: true, tip: "0:03" });
+    await ctx.checkpoint("thumbnail-at-the-end");
     await pointer("pointerup", 4 + half);
     ctx.log(`the end at 4 s: ${named(end.rgb)} at ${end.time.toFixed(4)} s, tip ${end.tip}`);
     if (Math.abs(end.time - 119 / FPS) > 1e-6) throw new Error(`the end shows ${end.time}, not the frame before 4 s`);

@@ -12,6 +12,11 @@ import * as os from "../lib/os.mjs";
 
 export default {
   name: "captions-fullscreen",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "captions-on":
+      "A video is open and paused, its picture showing, and one line of caption text sits over the lower part of the picture, light text on a dark band, whole and readable, matching the transcript line below.",
+  },
   async run(app, ctx) {
     const why = os.unavailable();
     if (why) ctx.skip(why);

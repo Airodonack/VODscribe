@@ -17,6 +17,11 @@ const SEARCH = 'input[placeholder="Search for a phrase…"]';
 
 export default {
   name: "search",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "search-or":
+      'Under the search box, which reads "zebra OR landed", the query is shown as two word chips, "zebra" and "landed", with OR between them; below, the matches are grouped under each video\'s name, the word "landed" highlighted in each.',
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const audio = await app.addAndTranscribe(ctx.fixtures.landed);

@@ -8,7 +8,7 @@ These tests drive a built VODscribe through its page, as a person would: a libra
 - **`distros.mjs`** (Linux only) runs the suite inside a podman container per distribution, its "cell": our .deb or .rpm installed with that distribution's package manager, then `run.mjs` under a headless display. `--only debian-13,fedora-44` picks distributions (the list is `DISTROS` in distros.mjs). `--env weston` or `--env gnome` runs under a headless Wayland compositor instead of Xvfb with openbox; `--scheme dark` in the dark colour scheme; `--gpu nvidia` with the host's NVIDIA GPU, `--gpu dri` with the host's render nodes (`/dev/dri/renderD*`) and the distribution's Mesa (Intel and AMD).
 - **`runners.mjs`** runs the suite on another computer over SSH (a "runner"): it copies the harness and the app there, runs `run.mjs`, and brings the results back. Runners are listed in `runners.json`, which isn't in the repository: copy `runners.example.json` and fill in each one's name, SSH host, operating system (`windows` or `macos`), a folder to work in, and for Windows the folders to put first on `PATH`. Someone must be signed in on the runner, and its app data is emptied before each scenario, so use a computer kept for testing.
 
-`contact-sheet.mjs` makes a page of the checkpoints a run took (`ctx.checkpoint`), one column per run, for looking at what the tests can't judge.
+`contact-sheet.mjs` makes a page of the checkpoints a run took (`ctx.checkpoint`), one column per run, for looking at what the tests can't judge. `verify.mjs` has a model judge them (below, "Judging the pictures").
 
 ## What they need
 
@@ -93,6 +93,28 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 `run.mjs` writes `results.json` (each scenario, passed, failed or skipped, and why) to `E2E_OUT`. For a failure it adds the page's text and errors (`<scenario>.txt`) and a screenshot (`<scenario>.png`); checkpoints go in `checkpoints/`. `distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named for the distribution and what differs from the default (`debian-13-weston-dark`), with the whole log in `run.log`, and prints one line per cell at the end. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`. Two runs of the same cell from the same checkout wipe each other's folders.
 
 Every run also writes `perf.json` to `E2E_OUT`: the steps each scenario timed (below), the app's memory at each scenario's end, and what the run was on (CPU, kernel, WebKit, display). Each result in `results.json` has its `timings` (ms) and, on Linux, `memory`.
+
+## Judging the pictures
+
+The tests are layered: unit tests of the app's pure parts, then these scenarios, which check what the page and the screen say, then on top `verify.mjs`, which has a model look at the checkpoints the way a person would. It's the most flexible layer and the only one that costs money per run: it judges what no check can (a picture cut off, text over text, a dark theme half applied), never what a check already asserts.
+
+A scenario says what each checkpoint should show beside its `run`:
+
+```js
+expects: {
+  "search-or": 'Under the search box, which reads "zebra OR landed", the query is shown as two word chips, ...',
+},
+```
+
+The rule for an expectation: write what a person should see; one or two sentences; nothing a check already asserts. Write it so a wrong picture fails it, not so anything passes: name what's there and where, not "the page looks right".
+
+```sh
+OPENROUTER_API_KEY=... E2E_VERIFY_MODEL='vendor/family*' node tests/e2e/verify.mjs tests/e2e/out
+```
+
+Each checkpoint with an expectation goes to OpenRouter's chat completions with its picture (scaled as the contact sheet does), the expectation and a fixed rubric; the answer is pass, fail or unsure, with a reason and, as concerns, anything that looks broken even if not asked. Checkpoints without an expectation are listed, not judged, and an expectation whose checkpoint a scenario that ran didn't take is named (a label renamed). `--model` or `E2E_VERIFY_MODEL` is a model id, or a prefix ending in `*` for the cheapest model with that prefix that takes pictures, looked up at run time (variants such as `:batch` left out); the line it prints says which, and its price. `--only a,b` keeps those scenarios, `--concurrency N` (default 4) caps the requests at once (each retried on 429 and 5xx, 60 s at most), `--out` names the verdict sheet (default `verify.html` in the first out dir), with `verify.json` beside it: each checkpoint's scenario, label, expectation, verdict, reason, concerns, model and tokens. `--dry-run` prints the pairs and the prompt and calls nothing. The last line is `verify: P pass, F fail, U unsure, N without expectation; ~T tokens`; the exit status is 1 on any fail, not on unsure.
+
+It runs in the full lane only (nightly, by hand, on tags), never per push.
 
 ## Timings and profiling
 

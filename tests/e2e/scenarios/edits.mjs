@@ -19,6 +19,11 @@ const NAME = "Landing edit";
 
 export default {
   name: "edits",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "edit-clip-bar":
+      "An edit is open (its name at the top, with Render): under its player and timeline, on a row of its own, there is one clip pill showing a start time, a few words of its line, and small download, folder, + and × icons, none of it cut off.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);

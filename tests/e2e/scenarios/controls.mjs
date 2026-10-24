@@ -66,6 +66,11 @@ async function pPlays(app, ctx, label) {
 
 export default {
   name: "controls",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "controls-changed":
+      "Settings is open on Controls: rows of actions grouped under headings such as Everywhere and Playing, each with its keys at the right as small boxed key caps, each cap with an × and a + after the last; Play or pause shows K and P and no Space.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);

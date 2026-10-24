@@ -20,6 +20,11 @@ const TOGGLE = `const mac = /Mac/.test(navigator.platform);
 
 export default {
   name: "multi-select",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "stretches-numbered":
+      'On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one; under the bar a row reads "2 stretches" with Clip and Add to edit….',
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);

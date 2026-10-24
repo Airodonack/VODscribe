@@ -31,6 +31,11 @@ const SEARCH = 'input[placeholder="Search for a phrase…"]';
 
 export default {
   name: "transcribe-stretch",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "transcribe-lit-the-rest":
+      "In the bar under the timeline a Transcribe button sits at the right, just before the captions (CC) button; on the timeline the two stretches 0:00 to 2:00 and 3:00 to the end are outlined and lit, and the stretch from 2:00 to 3:00 between them is not.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const [vod] = await app.addFiles([longSpeech(path.join(ctx.out, "fixtures"))]);

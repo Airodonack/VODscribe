@@ -19,6 +19,11 @@ const NEAR = 90;
 
 export default {
   name: "player-picture",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "paused-on-yellow":
+      "A video is open and paused at 0:03, and its player shows a single flat yellow picture filling the video's box, with no other colour, stripes or black inside it; the timeline and the controls under the player are drawn and readable.",
+  },
   async run(app, ctx) {
     const why = os.unavailable();
     if (why) ctx.skip(why);
@@ -90,6 +95,7 @@ export default {
     await app.key("ArrowRight", { shift: true });
     await to(3);
     await expect(3);
+    await ctx.checkpoint("paused-on-yellow");
     // The time by the button is the frame on screen (the app's own player says which).
     if (native) ctx.log(await app.timeIsPicture("after the seeks, paused"));
 
