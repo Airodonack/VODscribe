@@ -78,9 +78,14 @@ impl Videos {
                 }
             };
             // Done (the VOD now says it has its video), stopped or failed.
-            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
+            // The VOD first: told the download's over while the VOD doesn't
+            // say it has its video yet, the page of one from a site without a
+            // player would take it for unplayable, and take down its player.
             if error.is_none() {
                 let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
+            }
+            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
+            if error.is_none() {
                 state.storyboards.push(id);
             }
         })
