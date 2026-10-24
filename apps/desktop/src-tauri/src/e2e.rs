@@ -88,6 +88,16 @@ pub(crate) async fn e2e_player_state(app: AppHandle) -> crate::player::Seen {
     app.state::<crate::AppState>().player.seen()
 }
 
+/// Makes the main window's page `width` by `height` (logical pixels), as a
+/// small screen or a person's resize would (tests/e2e/scenarios/legend.mjs).
+/// The window manager may give it a little more or less; the test reads what
+/// it got from the page.
+#[tauri::command]
+pub(crate) fn e2e_set_inner_size(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("no window")?;
+    window.set_size(tauri::LogicalSize::new(width, height)).map_err(|e| e.to_string())
+}
+
 /// Runs `body` (a `Run`) in the main window and waits for its answer:
 /// `{"id", "ok", "value"}`, `value` being what it returned or the error.
 fn run(app: &AppHandle, waiting: &Waiting, id: u64, body: &str) -> (u16, String) {

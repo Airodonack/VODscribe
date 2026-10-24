@@ -801,3 +801,31 @@ export class App {
     return this.transcribe(vod.id, { click: true, label: path.basename(file) });
   }
 }
+
+/**
+ * Makes the app's page `width` by `height` (CSS pixels), as a small screen
+ * would (the e2e build's e2e_set_inner_size); returns the size the page got
+ * once it holds still, which the window manager or the screen may make a
+ * little different.
+ */
+export async function resizeInner(app, width, height) {
+  const size = () => app.js(`return innerWidth + "x" + innerHeight`);
+  const before = await size();
+  await app.invoke("e2e_set_inner_size", { width, height });
+  // Changed (or already so), then the same over two looks.
+  let last = before;
+  // (A window manager that keeps the size as it was gives no change to wait
+  // for: after a while, what the page has is the answer.)
+  const got = await until(
+    `the page to be ${width}x${height}`,
+    async () => {
+      const seen = await size();
+      const settled = seen === last && (seen !== before || seen === `${width}x${height}`);
+      last = seen;
+      return settled && seen;
+    },
+    5_000,
+  ).catch(() => last);
+  const [w, h] = got.split("x").map(Number);
+  return { width: w, height: h };
+}

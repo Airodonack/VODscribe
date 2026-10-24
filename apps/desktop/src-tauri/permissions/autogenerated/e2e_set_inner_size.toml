@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-e2e-set-inner-size"
+description = "Enables the e2e_set_inner_size command without any pre-configured scope."
+commands.allow = ["e2e_set_inner_size"]
+
+[[permission]]
+identifier = "deny-e2e-set-inner-size"
+description = "Denies the e2e_set_inner_size command without any pre-configured scope."
+commands.deny = ["e2e_set_inner_size"]

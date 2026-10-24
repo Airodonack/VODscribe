@@ -13,7 +13,7 @@
 // Emote images aren't tested: the fixture's chat has the names as plain
 // text, as Twitch's emote fragments and 7TV's lists aren't part of the seam.)
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { chat, fetchChat } from "../lib/fixtures.mjs";
 
 const BINS = 120;
@@ -82,8 +82,15 @@ export default {
     expect("events", overview.events.length, fixture.events.sub + fixture.events.gift + fixture.events.tip);
 
     // The minimap's pixels: the mirrored waveform is widest in the bursts.
-    // Rows of the strip whose width stands well above the middle of them all,
-    // and the burst's rows are among them.
+    // Each bar sums a stretch of the VOD that grows as the strip gets shorter
+    // (a bar per 2 px of height): 1 m 43 s in a 1200x800 window's 141 px strip,
+    // 4 m 27 s in a 1024x645 one's 54 px, as a small screen gives (a 1024x768
+    // CI runner's). The longer the stretch, the more background chat each bar
+    // has besides a burst's messages, so how many times wider a burst's bar is
+    // depends on the window: 23 px over 11 at 800, 25 px over 17 at 645. What
+    // doesn't is that its bar stands out from every bar away from the bursts,
+    // which are all background; it does at both sizes, the second checked by
+    // making the window that small.
     const widths = () =>
       app.js(`
         const canvas = document.querySelector(".minimap canvas");
@@ -96,24 +103,52 @@ export default {
           rows.push(n);
         }
         return rows;`);
-    const bars = await until(
-      "the minimap to draw",
-      async () => {
-        const rows = await widths();
-        return rows.some((n) => n > 0) && rows;
-      },
-      MINUTE,
-    );
-    const sorted = [...bars].sort((a, b) => a - b);
-    const typical = sorted[Math.floor(sorted.length / 2)];
-    for (const burst of fixture.bursts) {
-      const from = Math.floor((burst.at / duration) * bars.length);
-      const to = Math.ceil(((burst.at + 60) / duration) * bars.length);
-      const widest = Math.max(...bars.slice(Math.max(0, from - 3), to + 3));
-      // Half again as wide: the canvas is small, so a burst of 120 messages
-      // over a 13 px typical row drew 23 px on a Mac (and twice that here).
-      if (!(widest >= 1.5 * typical))
-        wrong.push(`the minimap at ${burst.at} s is ${widest} px wide, with ${typical} px typical`);
+    const minimap = async () => {
+      // Drawn, and for the strip's height now (after a resize, once it has redrawn).
+      const bars = await until(
+        "the minimap to draw",
+        async () => {
+          const tall = await app.js(
+            `const map = document.querySelector(".minimap");
+             return Math.round(map.clientHeight * devicePixelRatio)`,
+          );
+          const rows = await widths();
+          return rows.length === tall && rows.some((n) => n > 0) && rows;
+        },
+        MINUTE,
+      );
+      // A burst's rows, and a few either side (the bars are smoothed with their neighbours').
+      const near = (burst, margin) => [
+        Math.max(0, Math.floor((burst.at / duration) * bars.length) - margin),
+        Math.ceil(((burst.at + 60) / duration) * bars.length) + margin,
+      ];
+      const away = bars.filter((_, y) =>
+        fixture.bursts.every((b) => {
+          const [from, to] = near(b, 6);
+          return y < from || y > to;
+        }),
+      );
+      const background = Math.max(...away);
+      const size = await app.js(`return innerWidth + "x" + innerHeight`);
+      const widest = fixture.bursts.map((burst) => Math.max(...bars.slice(...near(burst, 3))));
+      // Clearly wider: the rows of one bar differ by a couple of pixels at its edges.
+      fixture.bursts.forEach((burst, i) => {
+        if (!(widest[i] >= background + 3))
+          wrong.push(
+            `in a ${size} window the minimap at ${burst.at} s is ${widest[i]} px wide, and ${background} px away from the bursts`,
+          );
+      });
+      ctx.log(
+        `the minimap in a ${size} window: ${bars.length} px tall, ${widest.join(", ")} px at the bursts, ${background} px at most away from them`,
+      );
+      return bars;
+    };
+    const bars = await minimap();
+    {
+      const before = await app.js(`return { width: innerWidth, height: innerHeight }`);
+      await resizeInner(app, 1024, 645);
+      await minimap();
+      await resizeInner(app, before.width, before.height);
     }
     // And between bursts it isn't: the quietest stretch is below the bursts'.
     const quiet = Math.max(...bars.slice(Math.floor(0.3 * bars.length), Math.floor(0.45 * bars.length)));

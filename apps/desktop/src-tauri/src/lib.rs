@@ -381,6 +381,8 @@ pub fn run() {
             player::player_decoders_started,
             #[cfg(feature = "e2e")]
             e2e::e2e_player_state,
+            #[cfg(feature = "e2e")]
+            e2e::e2e_set_inner_size,
             screen::screen_under,
             player::player_play,
             player::player_pause,
