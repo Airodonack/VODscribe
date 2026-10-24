@@ -87,9 +87,10 @@ export class App {
    * own player showing a frame (its `player-time` status says which:
    * `shown`): the one at `near` seconds (within 20 ms), or with no `near`,
    * any. Measured in the page, by when the status arrives; kept as the
-   * timing `name`. Returns the milliseconds.
+   * timing `name` (unless `keep` is false: the caller keeps it its own
+   * way). Returns the milliseconds.
    */
-  async timeToFrame(name, act, near = null) {
+  async timeToFrame(name, act, near = null, { keep = true } = {}) {
     await this.js(`
       if (window.__e2eFrames) return;
       const frames = (window.__e2eFrames = []);
@@ -116,7 +117,7 @@ export class App {
       { every: TIMED_POLL },
     );
     const ms = Math.round(at - since);
-    this.timing(name, ms, from, clock());
+    if (keep) this.timing(name, ms, from, clock());
     return ms;
   }
 

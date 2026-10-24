@@ -169,6 +169,10 @@ jobs:
           # Each scenario starts on an empty library (tests/e2e/lib/data.mjs).
           E2E_RESET_DATA: "1"
           SHARD: ${{ matrix.shard }}
+          # The perf budgets (tests/e2e/budgets.json) were measured on a fast
+          # workstation; the hosted runners get twice the room until their own
+          # perf.json sets budgets of their own.
+          E2E_BUDGET_SCALE: "2"
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             # Under a window manager, as on a desktop: full screen is the window manager's to do.

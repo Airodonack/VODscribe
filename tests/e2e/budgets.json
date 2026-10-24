@@ -1,0 +1,50 @@
+{
+  "about": "The most each perf-* scenario's steps may take (ms), by platform (linux, darwin, win32), judged on the median of the scenario's own repeats (lib/budgets.mjs; perf-compare.mjs --budgets). Each budget is 1.5 times the slowest of three runs' medians (measured), rounded up to 10 ms, and never under that median plus two frames (34 ms), so a step of a few ms isn't failed by one late frame. E2E_BUDGET_SCALE multiplies them all, for a slower computer than the one they were set on.",
+  "linux": {
+    "machine": "AMD Ryzen 9 5950X (32 threads), Debian 13 in a container, WebKitGTK 2.54, Xvfb 1400x900 with openbox, no GPU (llvmpipe, lavapipe)",
+    "build": "release (pnpm tauri build --no-bundle) at 5f27457; a debug build with --features e2e measured within every budget too",
+    "measured": "2026-10-23, run.mjs --only perf-player,perf-library,perf-page --repeat 3, serial",
+    "scenarios": {
+      "perf-player": {
+        "open to first frame": {
+          "budget": 280,
+          "measured": 183,
+          "debug": 198,
+          "from": "this pass; the perf pass (2026-10-22) had 133 for the first open alone"
+        },
+        "seek: time shown": { "budget": 50, "measured": 13, "debug": 5, "from": "this pass" },
+        "seek to frame shown": {
+          "budget": 120,
+          "measured": 74,
+          "debug": 78,
+          "from": "this pass: a click mid-second, two modes (about 32 and 75 ms); the perf pass's 39 was a key's seek to a keyframe"
+        }
+      },
+      "perf-library": {
+        "search sent to drawn, many lines": {
+          "budget": 220,
+          "measured": 142,
+          "debug": 196,
+          "from": "this pass; the perf pass had 311 with the 120 ms debounce"
+        },
+        "search sent to drawn, one line a VOD": {
+          "budget": 70,
+          "measured": 31,
+          "debug": 42,
+          "from": "this pass; the perf pass had 153 with the debounce"
+        },
+        "search sent to drawn, none": {
+          "budget": 50,
+          "measured": 16,
+          "debug": 13,
+          "from": "this pass; the perf pass had 133 with the debounce"
+        },
+        "transcript scroll, frame gap p95": { "budget": 60, "measured": 19, "debug": 19, "from": "this pass" }
+      },
+      "perf-page": {
+        "Settings open": { "budget": 50, "measured": 7, "debug": 15, "from": "this pass" },
+        "clip bar, 20 pills drawn": { "budget": 60, "measured": 25, "debug": 24, "from": "this pass" }
+      }
+    }
+  }
+}
