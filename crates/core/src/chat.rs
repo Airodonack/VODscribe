@@ -1290,7 +1290,12 @@ pub(crate) fn parse_time(s: &str) -> Option<f64> {
                 _ => return None,
             };
             let (h, m) = rest.get(1..)?.split_once(':')?;
-            sign * (h.parse::<i64>().ok()? * 3600 + m.parse::<i64>().ok()? * 60)
+            let (h, m) = (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?);
+            // Within a day, so nothing below can overflow.
+            if !(0..24).contains(&h) || !(0..60).contains(&m) {
+                return None;
+            }
+            sign * (h * 3600 + m * 60)
         }
     };
     // Days since 1970-01-01 (Howard Hinnant's days_from_civil).
@@ -1318,6 +1323,12 @@ mod tests {
         assert_eq!(parse_time("2024-02-29T12:00:00Z"), Some(1709208000.0));
         assert_eq!(parse_time("2026-13-01T00:00:00Z"), None);
         assert_eq!(parse_time("yesterday"), None);
+        // An offset is at most a day either way: one larger isn't a time
+        // (an annotations file's `recorded_at`, read with the library locked).
+        assert_eq!(parse_time("2026-10-01T18:00:00+9999999999999999:00"), None);
+        assert_eq!(parse_time("2026-10-01T18:00:00-00:9999999999999999999"), None);
+        assert_eq!(parse_time("2026-10-01T18:00:00+24:00"), None);
+        assert_eq!(parse_time("2026-10-01T18:00:00+23:59"), Some(1790877600.0 - 86340.0));
     }
 
     #[test]

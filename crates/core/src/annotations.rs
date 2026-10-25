@@ -363,10 +363,17 @@ pub fn file_url(base: &str, platform: &str, id: &str) -> String {
     format!("{base}/annotations/{}/{}.json", escape(platform), escape(id))
 }
 
+/// yt-dlp's name for a link no site's own reader takes (`fetch::platform_of`
+/// of its "Generic"): the video's id is then the link's file name.
+const GENERIC: &str = "generic";
+
 /// Whether VODs of `platform` can have published annotations: those from a
-/// site, not a file on this computer (its id is this computer's own).
+/// site, not a file on this computer (its id is this computer's own), nor a
+/// link yt-dlp reads as a plain video file, whose id is the file's name on
+/// whatever server it's on (a private one, say), not a site's id for it. The
+/// file host is never asked of those.
 pub fn can_be_published(platform: &str) -> bool {
-    platform != crate::local::PLATFORM
+    platform != crate::local::PLATFORM && platform != GENERIC
 }
 
 /// The client for the file host: quick to give up, since nothing waits on
@@ -997,6 +1004,22 @@ mod tests {
         );
         assert_eq!(file_url("http://h", "youtube", "a/../b?c"), "http://h/annotations/youtube/a%2F..%2Fb%3Fc.json");
         assert!(can_be_published("kick") && !can_be_published(crate::local::PLATFORM));
+    }
+
+    /// A VOD added by a link to a plain video file is never asked about: its
+    /// id is the link's file name, which would tell the file host what the
+    /// user watches, and from where.
+    #[test]
+    fn a_plain_video_links_vod_is_never_asked_about() {
+        let info = crate::fetch::parse_info(&serde_json::json!({
+            "id": "q3-all-hands-recording", "extractor_key": "Generic", "title": "q3-all-hands-recording",
+            "webpage_url": "https://files.example.internal/q3-all-hands-recording.mp4"
+        }))
+        .unwrap();
+        assert!(!can_be_published(&info.platform), "{}", info.platform);
+        for site in ["twitch", "youtube", "kick", "dailymotion"] {
+            assert!(can_be_published(site), "{site}");
+        }
     }
 
     #[test]
