@@ -141,10 +141,6 @@ export type Annotations = {
   povs?: Pov[];
 };
 
-/** Where a VOD's files live on the download host, relative to its root. */
-export const annotationsPath = (platform: string, id: string) => `annotations/${platform}/${id}.json`;
-export const annotationsChatPath = (platform: string, id: string) => `annotations/${platform}/${id}.chat.json`;
-
 /**
  * Reads a parsed JSON value as an annotations file, checking the shape the
  * app relies on; the message of the error it throws is for the user.

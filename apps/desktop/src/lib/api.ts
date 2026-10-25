@@ -568,11 +568,6 @@ export const api = {
   /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
   addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
-  /** Imports an annotations file (annotations.ts), as parsed, for the VOD it names, adding it if need be. */
-  importAnnotations: (annotations: unknown, chat: ChatLine[] | null = null) =>
-    invoke<{ vod: Vod; created: boolean }>("import_annotations", { annotations, chat }),
-  /** Imports the annotations file at `path` (and the chat file beside it, if there's one). */
-  importAnnotationsFile: (path: string) => invoke<{ vod: Vod; created: boolean }>("import_annotations_file", { path }),
   /** Asks the file host again whether a VOD's annotations are published; `asked` is false when Settings turned that off. */
   checkAnnotations: (vodId: number) =>
     invoke<{ asked: boolean; offer: AnnotationsOffer }>("check_annotations", { vodId }),

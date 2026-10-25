@@ -257,7 +257,7 @@ pub fn parse(json: &str) -> Result<Annotations> {
     from_value(value)
 }
 
-/// As `parse`, from JSON already read (the page's).
+/// As `parse`, from JSON already read.
 pub fn from_value(value: serde_json::Value) -> Result<Annotations> {
     let format = value.get("format");
     if format.and_then(|f| f.as_str()) != Some(FORMAT) {
@@ -309,7 +309,6 @@ fn watch_url(platform: &str, id: &str, channel: Option<&str>) -> Option<String> 
     }
 }
 
-/// A time from the file that can stand as one: finite and not before the start.
 /// `icon` as a chapter's icon: one emoji (a single character as the reader
 /// sees it, of no letter or digit and not plain ASCII), trimmed; None for
 /// anything else, which an import leaves out rather than refusing the file.
@@ -324,6 +323,7 @@ pub fn one_emoji(icon: &str) -> Option<&str> {
     Some(s)
 }
 
+/// A time from the file that can stand as one: finite and not before the start.
 fn usable(t: f64) -> bool {
     t.is_finite() && t >= 0.0
 }

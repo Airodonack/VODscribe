@@ -61,8 +61,9 @@ export const chatBeside = (url: string) => {
 
 /**
  * Where the page at /v/<platform>/<id> reads from: the URL in `?src=` (and
- * the chat beside it), resolved against the page, or else the download host.
- * Null for a platform the page doesn't know.
+ * the chat beside it), resolved against the page, or else the download host,
+ * where the app looks too (crates/core annotations.rs `file_url`). Null for a
+ * platform the page doesn't know.
  */
 export function pickSource(
   platform: string,

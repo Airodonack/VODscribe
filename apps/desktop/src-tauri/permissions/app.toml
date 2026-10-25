@@ -14,7 +14,6 @@ permissions = [
   "allow-run-setup",
   "allow-cancel-setup",
   "allow-add-vod",
-  "allow-import-annotations",
   "allow-import-annotations-file",
   "allow-check-annotations",
   "allow-annotations-offer",

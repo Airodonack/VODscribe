@@ -313,7 +313,6 @@ pub fn run() {
             setup::run_setup,
             setup::cancel_setup,
             vods::add_vod,
-            annotations::import_annotations,
             annotations::import_annotations_file,
             annotations::check_annotations,
             annotations::annotations_offer,

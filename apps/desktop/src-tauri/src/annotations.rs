@@ -1,8 +1,7 @@
 //! Importing annotations for a VOD (`vodscribe_core::annotations`): from the
-//! page's parsed file, from a file picked, or from the file host where
-//! they're published; asking the file host whether a VOD has some; and
-//! reading a VOD's cast and activity back for the page, and where its
-//! pictures come from.
+//! file host where they're published, or from a file (the tests'); asking
+//! the file host whether a VOD has some; and reading a VOD's cast and
+//! activity back for the page, and where its pictures come from.
 
 use std::path::Path;
 
@@ -23,22 +22,11 @@ pub(crate) struct Imported {
     created: bool,
 }
 
-/// Makes `annotations` (an annotations file as the page parsed it) the
-/// VOD's it names, with `chat` (its chat file) as its chat if given: adding
-/// the VOD if the library doesn't have it. What an earlier import brought is
-/// replaced; the user's own marks stay.
-#[tauri::command]
-pub(crate) async fn import_annotations(
-    app: AppHandle,
-    annotations: serde_json::Value,
-    chat: Option<Vec<ChatMessage>>,
-) -> CmdResult<Imported> {
-    let annotations = annotations::from_value(annotations).map_err(err)?;
-    import(app, annotations, chat).await
-}
-
-/// As `import_annotations`, from file `path` (picked in the file dialog),
-/// with the chat file beside it if there's one.
+/// Imports annotations file `path` for the VOD it names, with the chat file
+/// beside it if there's one, adding the VOD if the library doesn't have it.
+/// What an earlier import brought is replaced; the user's own marks stay.
+/// The app brings annotations in by the offer (`fetch_annotations`); this
+/// is the end-to-end tests' way in, on builds with and without their feature.
 #[tauri::command]
 pub(crate) async fn import_annotations_file(app: AppHandle, path: String) -> CmdResult<Imported> {
     let read = tauri::async_runtime::spawn_blocking(move || annotations::read(Path::new(&path), None));

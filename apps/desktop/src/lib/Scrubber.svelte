@@ -758,11 +758,11 @@
   // highlight pointed at in the pane drawn as one pointed at here is.
   const pointer = {};
   $effect(() => () => markHover.point(null, pointer));
-  const pointedId = $derived(mine ? markHover.id : null);
+  const hoveredId = $derived(mine ? markHover.id : null);
   const momentMark = $derived.by(() => {
     if (hoverMark?.kind === "highlight" && hoverMark.category) return hoverMark;
-    if (hoverMark || pointedId === null) return null;
-    return cuts.highlights.find((h) => h.id === pointedId) ?? null;
+    if (hoverMark || hoveredId === null) return null;
+    return cuts.highlights.find((h) => h.id === hoveredId) ?? null;
   });
 
   /** Where mark `m` is drawn: where it's being dragged to, while it is. */
@@ -893,7 +893,7 @@
             class="chapter"
             class:current={i === nowChapter}
             class:selected={cuts.selected === chapter.id}
-            class:hovered={pointedId === chapter.id}
+            class:hovered={hoveredId === chapter.id}
             class:imported={turn !== undefined}
             class:other={turn === 1}
             data-chapter={chapter.id}
@@ -1088,7 +1088,7 @@
       <span
         class="emoji"
         class:selected={cuts.selected === h.id}
-        class:hovered={pointedId !== null && members.some((m) => m.id === pointedId)}
+        class:hovered={hoveredId !== null && members.some((m) => m.id === hoveredId)}
         class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
         data-mark={h.id}
         data-category={h.category}
@@ -1105,7 +1105,7 @@
           <span
             class="star"
             class:selected={cuts.selected === h.id}
-            class:hovered={pointedId === h.id}
+            class:hovered={hoveredId === h.id}
             class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
             data-mark={h.id}
             style:left={pct(at)}

@@ -9,7 +9,8 @@
   // highlight shows its kind's emoji, title, start and length (and the discs
   // of who's in it, at the end of that line) until it's expanded, then its
   // kind's word too, why and cast by name (each by their own short name, a
-  // link to the channel of the streamer playing them). A click on a
+  // link where the streamer playing them is: their channel, or their own
+  // stream at the highlight's start, castLink.svelte.ts). A click on a
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
@@ -839,7 +840,7 @@
   }
 
   /* A cast member's disc, then their name in their colour, a link to the
-     streamer's channel when they have one. A chip is never cut short: one
+     streamer's channel (or stream) when they have one. A chip is never cut short: one
      that doesn't fit beside the one before goes to the next line whole, and
      only a name wider than the column breaks, between its words. */
   .chip {
