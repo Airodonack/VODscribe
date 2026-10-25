@@ -1,5 +1,6 @@
 <script lang="ts">
-  // A VOD's annotations as a list beside its player: its chapters (each with
+  // A VOD's annotations (or an edit's) as a list beside its transcript, on
+  // the right of the window (App.svelte): its chapters (each with
   // its emoji when the file gave one), each with the highlights that start in
   // it nested under it; the chapter playing, and any highlight playing, lit
   // and kept in view. (Who's who is in the transcript, over their lines.) A chapter
@@ -10,14 +11,24 @@
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
-  // The website's VOD page shows it in the library pane's place (App.svelte
-  // `leftPane`), with its review controls under each row (`review`) and the
-  // VOD's own (`reviewVod`) at the top; the app has none of those. Its data
-  // comes as the other displays' does: the marks open (cuts.svelte.ts) and
-  // the VOD's annotations (annotated.svelte.ts).
+  // A VOD's highlight goes into an edit as a group named for it, one band as
+  // a clip's pill does: dragged onto an edit's row in the library, "Make new
+  // edit" or the clip bar (dragout.ts `carry`), or from the keyboard, A on
+  // its row (or its menu, a right click or the menu key) asking which edit
+  // (AddToEdit.svelte). The website's VOD page shows it in the same place,
+  // with its review controls under each row (`review`) and the VOD's own
+  // (`reviewVod`) at the top; the app has none of those, and the website
+  // nowhere to put a highlight. Its data comes as the other displays' does:
+  // the marks open (cuts.svelte.ts) and the VOD's annotations
+  // (annotated.svelte.ts).
   import { tick, type Snippet } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { Vod } from "./api";
+  import type { Put, Vod } from "./api";
+  import AddToEdit from "./AddToEdit.svelte";
+  import Popover from "./Popover.svelte";
+  import { DEMO } from "./demo";
+  import { DRAG_SLOP, carry, stretchAt } from "./dragout";
+  import { putOf } from "./edits.svelte";
   import { speakerColor } from "./annotated";
   import { annotated } from "./annotated.svelte";
   import { highlightGlyph } from "./annotations";
@@ -37,16 +48,20 @@
     type PaneRow,
   } from "./annotationRows";
   import { cuts } from "./cuts.svelte";
-  import { formatTime } from "./platform";
+  import { formatTime, playsFromFile } from "./platform";
 
   let {
     vod,
+    edit = null,
     onplay,
     review,
     reviewVod,
   }: {
+    /** The VOD whose annotations these are, or none for an edit's. */
     vod: Vod | null | undefined;
-    /** Plays the VOD from `time`. */
+    /** The edit whose chapters and highlights these are (on its timeline), if not a VOD's. */
+    edit?: number | null;
+    /** Plays the VOD (or the edit) from `time`. */
     onplay: (time: number) => void;
     /** What goes under each chapter and highlight row (the website's review controls). */
     review?: Snippet<[PaneRow]>;
@@ -56,8 +71,10 @@
 
   $effect(() => annotated.load(vod?.id));
   const cast = $derived(vod ? (annotated.of(vod.id)?.cast ?? []) : []);
-  // The marks open are this VOD's once its player has opened them.
-  const mine = $derived(!!vod && cuts.isOf({ kind: "vod", id: vod.id }));
+  // The marks open are this VOD's once its player has opened them (or the edit's, open).
+  const mine = $derived(
+    vod ? cuts.isOf({ kind: "vod", id: vod.id }) : edit !== null && cuts.isOf({ kind: "edit", id: edit }),
+  );
   const chapters = $derived(mine ? chapterRows(cuts.shown, vod?.duration) : []);
   const highlights = $derived(mine ? highlightRows(cuts.shown) : []);
   const groups = $derived(nestRows(chapters, highlights));
@@ -119,9 +136,90 @@
     scroller?.querySelector<HTMLElement>(`button.row-main[data-row="${rowId(row)}"]`)?.focus();
   }
 
+  /** What of the VOD a highlight goes into an edit as: its own stretch, or
+   *  for one with no end (a mark of the user's), the stretch between cuts it's in. */
+  function stretchOf(row: HighlightRow): Put | null {
+    if (!vod || !mine || DEMO) return null;
+    const end = row.end ?? (vod.duration ? stretchAt(row.start, vod.duration)?.end : undefined);
+    if (end === undefined || !(end > row.start)) return null;
+    return putOf({ vodId: vod.id, start: row.start, end, title: row.title, highlight: true });
+  }
+
+  // A highlight's row pressed and moved is carried into an edit (dragout.ts),
+  // as a clip's pill is from the clip bar; the click it leaves doesn't play.
+  let press: { row: HighlightRow; x: number; y: number } | null = null;
+  let swallowClick = false;
+  function onRowDown(e: PointerEvent, row: HighlightRow) {
+    if (e.button === 0 && stretchOf(row)) press = { row, x: e.clientX, y: e.clientY };
+  }
+  function onWindowMove(e: PointerEvent) {
+    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
+    const { row } = press;
+    press = null;
+    const put = stretchOf(row);
+    if (!vod || put?.kind !== "highlight") return;
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 500);
+    const from =
+      scroller?.querySelector(`[data-row="${rowId(row)}"]`)?.getBoundingClientRect() ??
+      new DOMRect(e.clientX, e.clientY);
+    void carry({
+      vod,
+      start: put.start,
+      end: put.end,
+      title: put.title,
+      highlight: true,
+      ownPlayer: playsFromFile(vod),
+      from,
+      x: e.clientX,
+      y: e.clientY,
+    });
+  }
+  function onRowClick(row: PaneRow) {
+    if (swallowClick) return void (swallowClick = false);
+    onplay(row.start);
+  }
+
+  // From the keyboard: A on a highlight's row asks which edit it goes in
+  // (AddToEdit.svelte); its menu (a right click, or the menu key) has that
+  // and Play. The row has the focus again once that's done.
+  let adding = $state(false);
+  let addFor = $state<{ row: HighlightRow; el: HTMLElement } | null>(null);
+  let menuOpen = $state(false);
+  function addToEdit(row: HighlightRow, el: HTMLElement) {
+    if (!stretchOf(row)) return;
+    addFor = { row, el };
+    adding = true;
+  }
+  function openMenu(e: MouseEvent, row: HighlightRow) {
+    e.preventDefault();
+    addFor = { row, el: e.currentTarget as HTMLElement };
+    menuOpen = true;
+  }
+  let menu = $state<HTMLElement>();
+  $effect(() => {
+    if (menuOpen) void tick().then(() => menu?.querySelector<HTMLElement>("button")?.focus());
+  });
+  // Closed with its focus gone (the panel went with it): back on the row.
+  let wasOpen = false;
+  $effect(() => {
+    const open = adding || menuOpen;
+    const row = addFor?.row;
+    if (wasOpen && !open && row)
+      void tick().then(() => {
+        if (!document.activeElement || document.activeElement === document.body) void focusRow(row);
+      });
+    wasOpen = open;
+  });
+
   // The rows shown are one list to the keyboard, chapters and highlights alike.
   function onRowKey(e: KeyboardEvent, row: PaneRow) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    if (row.kind === "highlight" && (e.key === "a" || e.key === "A") && stretchOf(row)) {
+      e.preventDefault();
+      addToEdit(row, e.currentTarget as HTMLElement);
+      return;
+    }
     const i = rows.findIndex((r) => r.kind === row.kind && r.id === row.id);
     const to = stepRow(i, rows.length, e.key);
     if (to !== null) {
@@ -137,18 +235,9 @@
   }
 </script>
 
-<aside class="annotations-pane" aria-label="Annotations">
-  <div class="top">
-    {#if vod}
-      <span class="title" title={vod.title}>{vod.title}</span>
-      <span class="meta muted">
-        <span class="platform {vod.platform}">{vod.platform[0].toUpperCase() + vod.platform.slice(1)}</span>
-        {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
-        {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
-      </span>
-    {/if}
-  </div>
+<svelte:window onpointermove={onWindowMove} onpointerup={() => (press = null)} />
 
+<aside class="annotations-pane" aria-label="Chapters and highlights">
   <div class="lists" bind:this={scroller}>
     {#if reviewVod}
       <div class="vod-review">{@render reviewVod()}</div>
@@ -189,7 +278,7 @@
                 <button
                   class="row-main"
                   data-row={rowId(row)}
-                  onclick={() => onplay(row.start)}
+                  onclick={() => onRowClick(row)}
                   onkeydown={(e) => onRowKey(e, row)}
                   aria-current={i === current ? "true" : undefined}
                   title="Play from {formatTime(row.start)}"
@@ -227,6 +316,7 @@
               {@const length = lengthLabel(row.start, row.end)}
               {@const open = expanded.has(row.id)}
               {@const detail = hasDetail(row)}
+              {@const carries = !!stretchOf(row)}
               <div
                 class="pane-row highlight"
                 class:nested={chapters.length > 0}
@@ -249,10 +339,15 @@
                   <button
                     class="row-main"
                     data-row={rowId(row)}
-                    onclick={() => onplay(row.start)}
+                    onclick={() => onRowClick(row)}
                     onkeydown={(e) => onRowKey(e, row)}
+                    onpointerdown={(e) => onRowDown(e, row)}
+                    oncontextmenu={(e) => carries && openMenu(e, row)}
                     aria-current={playing.has(row.id) ? "true" : undefined}
-                    title="Play from {formatTime(row.start)}"
+                    aria-keyshortcuts={carries ? "A" : undefined}
+                    title="Play from {formatTime(row.start)}{carries
+                      ? ' · drag it into an edit, or press A to add it to one'
+                      : ''}"
                   >
                     <span class="emoji" title={row.category} aria-hidden="true">{highlightGlyph(row.category)}</span>
                     <span class="text">
@@ -306,37 +401,69 @@
   </div>
 </aside>
 
+{#if addFor}
+  <Popover bind:open={menuOpen} anchor={addFor.el} label="Highlight menu" width={200} padding={4}>
+    <div class="menu" role="menu" bind:this={menu}>
+      <button
+        role="menuitem"
+        onclick={() => {
+          menuOpen = false;
+          if (addFor) onplay(addFor.row.start);
+        }}>Play from {formatTime(addFor.row.start)}</button
+      >
+      <button
+        role="menuitem"
+        onclick={() => {
+          menuOpen = false;
+          if (addFor) addToEdit(addFor.row, addFor.el);
+        }}>Add to edit…<kbd>A</kbd></button
+      >
+    </div>
+  </Popover>
+  <AddToEdit
+    bind:open={adding}
+    anchor={addFor.el}
+    items={() => {
+      const put = addFor && stretchOf(addFor.row);
+      return put ? [put] : [];
+    }}
+  />
+{/if}
+
 <style>
-  /* The library pane's place and look (Library.svelte). */
+  /* A sidebar as the library is (Library.svelte), on the transcript's right;
+     its width is the layout's (App.svelte). */
   aside {
     display: flex;
     flex-direction: column;
     min-height: 0;
     min-width: 0;
-    border-right: 1px solid var(--border);
+    border-left: 1px solid var(--border);
     background: var(--surface);
   }
 
-  /* As high as the library's header, level with the toolbar beside it. */
-  .top {
-    flex: none;
+  .menu {
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    gap: 1px;
-    box-sizing: border-box;
-    height: 53px;
-    padding: 0 14px;
-    border-bottom: 1px solid var(--border);
-    min-width: 0;
   }
 
-  .top .title {
-    font-weight: 700;
-    font-size: 14px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-start;
+    border: none;
+    background: none;
+    text-align: left;
+  }
+
+  .menu button:hover,
+  .menu button:focus-visible {
+    background: var(--surface-2);
+  }
+
+  .menu kbd {
+    margin-left: auto;
   }
 
   .meta {

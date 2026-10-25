@@ -397,7 +397,7 @@ export default {
     // selects it, and Delete takes it out of the edit (its slice of the timeline,
     // the pieces split there, as any removal), gone from the transcript;
     // Ctrl+Z brings it back.
-    const rows = "section.edit-view ~ .body .transcript .line button.row";
+    const rows = "section.edit-view ~ .below .body .transcript .line button.row";
     const lineCount = () => app.js(`return document.querySelectorAll(arguments[0]).length`, rows);
     const lines = await until("the edit's transcript", lineCount, 10_000);
     const struckCount = async () => (await edit()).pieces.reduce((n, p) => n + p.struck.length, 0);

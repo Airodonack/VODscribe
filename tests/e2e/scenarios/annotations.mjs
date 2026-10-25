@@ -12,15 +12,23 @@
 // one head naming them in their cast colour (an alias by the cast member's
 // name), the lines in it unnamed, and each chapter has a divider with its
 // icon and title; the Cast button lists the cast, with roles and aliases.
+// The chapters and highlights pane sits on the right beside the transcript,
+// the chapter and highlight playing lit; a click on a highlight's row plays
+// it. Dragged onto "Make new edit", a highlight's row makes an edit holding
+// it as a group named for it, one band as a clip's pill goes in; from the
+// keyboard, A on the other's row asks which edit and puts it there, a group
+// too; the edit open, its pane has the highlights it holds. On a narrower
+// window the pane is a tab beside the transcript's.
 // The Timeline panel's Imported marks toggle hides the import's chapters
-// and highlights from the timeline, and shows them again. Imported again,
-// the import's marks are replaced and a chapter of the user's own stays.
+// and highlights from the timeline (and the pane with them), and shows them
+// again. Imported again, the import's marks are replaced and a chapter of
+// the user's own stays.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { minute } from "../lib/fixtures.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -46,6 +54,14 @@ const PRESS = `
   el.dispatchEvent(new PointerEvent("pointerdown", at));
   window.dispatchEvent(new PointerEvent("pointerup", at));`;
 
+/** A pointer event's fields at (x, y) with `buttons` down, in the page. */
+const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
+
+/** The pane's rows, top to bottom: "chapter Hello", "highlight Close call"…, a lit one with a *. */
+const PANE_ROWS = `return [...document.querySelectorAll(".annotations-pane .pane-row")].map((r) =>
+  (r.classList.contains("chapter") ? "chapter " : "highlight ") + r.querySelector(".name").textContent.trim() +
+  (r.classList.contains("lit") ? "*" : ""))`;
+
 const tip = (app) =>
   app.js(`return document.querySelector(".scrubber .tip")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
 
@@ -54,6 +70,8 @@ export default {
   expects: {
     "annotations-timeline":
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
+    "annotations-pane":
+      'Right of the transcript, a narrower pane lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-cast":
       'The transcript\'s lines sit under headings, each a coloured circle with an initial, a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
   },
@@ -231,11 +249,206 @@ export default {
     await until("the imported marks hidden", async () => (await onTimeline()) === 0, 10_000).catch(async () =>
       wrong.push(`with imported marks hidden, ${await onTimeline()} still on the timeline`),
     );
+    await until(
+      "the pane gone with them",
+      () => app.js(`return !document.querySelector(".annotations-pane")`),
+      10_000,
+    ).catch(() => wrong.push("with imported marks hidden, the chapters and highlights pane still shows"));
     await flip();
     await until("the imported marks back", async () => (await onTimeline()) === 5, 10_000).catch(async () =>
       wrong.push(`with imported marks shown again, ${await onTimeline()} on the timeline`),
     );
     await app.key("Escape");
+
+    // The chapters and highlights pane, right of the transcript, the
+    // chapter and highlight playing (at 0:35) lit.
+    const [funny, drama] = marks.filter((m) => m.kind === "highlight");
+    const row = (m) => `.annotations-pane button.row-main[data-row="highlight-${m.id}"]`;
+    const paneRows = await until(
+      "the pane's rows",
+      async () => {
+        const got = await app.js(PANE_ROWS);
+        return got.length === 5 && got;
+      },
+      10_000,
+    ).catch(async () => app.js(PANE_ROWS));
+    const expectedRows = [
+      "chapter Hello",
+      "chapter The game*",
+      "highlight Close call",
+      "highlight The twist*",
+      "chapter Goodbye",
+    ];
+    if (paneRows.join(" | ") !== expectedRows.join(" | ")) wrong.push(`the pane reads ${paneRows.join(" | ")}`);
+    const placed =
+      await app.js(`const pane = document.querySelector(".below.beside .annotations-pane")?.getBoundingClientRect();
+      const text = document.querySelector("#transcript")?.getBoundingClientRect();
+      return pane && text ? { left: pane.left, width: pane.width, textRight: text.right } : null`);
+    if (!placed || placed.left < placed.textRight || placed.width > 280)
+      wrong.push(`the pane isn't a narrow column right of the transcript: ${JSON.stringify(placed)}`);
+    await ctx.checkpoint("annotations-pane");
+
+    // A click on the first highlight's row plays it, from its start.
+    await app.click(row(funny));
+    await until("the player at 0:25", async () => (await app.shownTime()) === 25, 10_000).catch(async () =>
+      wrong.push(`a click on the first highlight's row went to ${await app.shownTime()} s, not 25`),
+    );
+    await app.pause().catch(() => {});
+
+    // Its row dragged onto "Make new edit": an edit holding it as a group named for it.
+    await app.js(
+      `${AT}
+       const el = document.querySelector(arguments[0]);
+       const r = el.getBoundingClientRect();
+       const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+       el.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x - 10, y - 10, 1)));
+       window.__drag = [x - 10, y - 10];`,
+      row(funny),
+    );
+    await until(
+      '"Make new edit", to drop on',
+      () => app.js(`return !!document.querySelector("[data-new-edit]")`),
+      10_000,
+    );
+    await app.js(
+      `${AT}
+       const r = document.querySelector("[data-new-edit]").getBoundingClientRect();
+       const [x0, y0] = window.__drag;
+       const [x1, y1] = [r.left + r.width / 2, r.top + r.height / 2];
+       for (let i = 1; i <= 5; i++) window.dispatchEvent(new PointerEvent("pointermove", at(x0 + ((x1 - x0) * i) / 5, y0 + ((y1 - y0) * i) / 5, 1)));
+       window.__drag = [x1, y1];`,
+    );
+    await until(
+      '"Make new edit" lit as where it would go',
+      () => app.js(`return !!document.querySelector("[data-new-edit].target")`),
+      10_000,
+    );
+    await app.js(
+      `${AT}
+       const [x, y] = window.__drag;
+       window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+    );
+    const [made] = await until(
+      "the new edit",
+      async () => {
+        const all = await app.invoke("list_edits");
+        return all.length === 1 && all;
+      },
+      10_000,
+    ).catch(() => []);
+    /** Edit `id`'s pieces as "start-end group", for what's checked. */
+    const shapeOf = async (id) =>
+      (await app.invoke("get_edit", { id })).pieces.map((p) => `${p.start}-${p.end} ${p.group?.title ?? "(no group)"}`);
+    if (!made) wrong.push("the highlight dropped on Make new edit made no edit");
+    else {
+      const shape = await until(
+        "the highlight in the edit",
+        async () => {
+          const got = await shapeOf(made.id);
+          return got.length === 1 && got;
+        },
+        10_000,
+      ).catch(() => shapeOf(made.id));
+      if (shape.join(" | ") !== "25-30 Close call")
+        wrong.push(`the dragged highlight came in as ${shape.join(" | ") || "nothing"}, not a group named for it`);
+      else ctx.log("a highlight's row dragged onto Make new edit: an edit holding it as a group");
+
+      // From the keyboard: A on the other's row asks which edit, its first
+      // choice focused; Enter on it (a click, as Enter on a button is) and on
+      // "Timeline, at the end" puts it there, a group too.
+      await app.js(
+        `const el = document.querySelector(arguments[0]);
+         el.focus();
+         el.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }));`,
+        row(drama),
+      );
+      const enter = async (label) => {
+        const got = await until(
+          `"${label}" focused`,
+          () =>
+            app.js(`const el = document.activeElement;
+              return !!el?.closest('[role=dialog][aria-label="Add to an edit"]') && el.textContent.trim()`),
+          10_000,
+        ).catch(() => "(nothing)");
+        if (!got.includes(label)) {
+          wrong.push(`in Add to an edit, the focus is on "${got}", not "${label}"`);
+          return false;
+        }
+        await app.js(`document.activeElement.click()`);
+        return true;
+      };
+      if ((await enter(made.title)) && (await enter("Timeline, at the end"))) {
+        const both = await until(
+          "the second highlight in the edit",
+          async () => {
+            const got = await shapeOf(made.id);
+            return got.length === 2 && got;
+          },
+          10_000,
+        ).catch(() => shapeOf(made.id));
+        if (both.join(" | ") !== "25-30 Close call | 35-38 The twist")
+          wrong.push(`after A on the second highlight, the edit holds ${both.join(" | ")}`);
+        else ctx.log("A on a highlight's row put it in the edit as a group");
+      }
+
+      // The edit open: its own highlights (those of its stretches) in the
+      // pane, on its timeline; then the VOD again.
+      await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+      const inEdit = await until(
+        "the edit's pane",
+        async () => {
+          const got = await app.js(
+            `return document.querySelector("section.edit-view") ? (${PANE_ROWS.replace(/^return /, "")}) : []`,
+          );
+          return got.length === 2 && got;
+        },
+        10_000,
+      ).catch(async () => app.js(PANE_ROWS));
+      if (inEdit.map((r) => r.replace("*", "")).join(" | ") !== "highlight Close call | highlight The twist")
+        wrong.push(`the edit's pane reads ${inEdit.join(" | ") || "nothing"}`);
+      await app.click(`.vod[data-key="${vod.id}"] button.main`);
+      await until("the VOD's pane again", async () => (await app.js(PANE_ROWS)).length === 5, 10_000).catch(() =>
+        wrong.push("back on the VOD, its pane didn't come back"),
+      );
+    }
+
+    // A narrower window: the pane is a tab beside the transcript's, the
+    // transcript's open; the other tab shows the pane in its place.
+    const was = await app.js(`return { width: innerWidth, height: innerHeight }`);
+    const narrow = await resizeInner(app, 880, Math.min(was.height, 760));
+    const mainWidth = await app.js(`return document.querySelector(".main").clientWidth`);
+    if (mainWidth >= 800) ctx.log(`the window stayed ${narrow.width} px wide (the view ${mainWidth}): no tabs to try`);
+    else {
+      const tabs = () =>
+        app.js(`return [...document.querySelectorAll(".pane-tabs [role=tab]")].map((t) =>
+          t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : ""))`);
+      const shown = await until("the tabs", async () => (await tabs()).length === 2 && tabs(), 10_000).catch(() =>
+        tabs(),
+      );
+      if (shown.join(" | ") !== "Transcript* | Chapters and highlights")
+        wrong.push(`at ${narrow.width} px the tabs read ${shown.join(" | ") || "nothing"}`);
+      else {
+        await app.click(".pane-tabs [role=tab]:nth-child(2)");
+        const swapped = await until(
+          "the pane in the transcript's place",
+          () =>
+            app.js(`return !!document.querySelector(".annotations-pane") &&
+              getComputedStyle(document.querySelector(".body")).display === "none"`),
+          10_000,
+        ).catch(() => false);
+        if (!swapped) wrong.push("the pane's tab didn't show the pane in the transcript's place");
+        await app.click(".pane-tabs [role=tab]:nth-child(1)");
+        await until(
+          "the transcript back",
+          () =>
+            app.js(`return !document.querySelector(".annotations-pane") &&
+              getComputedStyle(document.querySelector(".body")).display !== "none"`),
+          10_000,
+        ).catch(() => wrong.push("the transcript's tab didn't bring the transcript back"));
+      }
+    }
+    await resizeInner(app, was.width, was.height);
 
     // Imported again: the import's marks replaced, the user's chapter kept.
     await app.invoke("add_mark", { vodId: vod.id, time: 50, kind: "chapter", text: "Mine" });

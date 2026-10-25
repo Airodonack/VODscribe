@@ -1,9 +1,12 @@
 <script lang="ts">
-  // "Add to edit…" for several things picked (selection.svelte.ts), without
-  // a mouse to drag them: the edits to pick from (or a new one), then where
-  // in it, at the end of its timeline or on its clip bar, as a drop there
-  // would put them (bulk.ts `addTo`).
+  // "Add to edit…" for several things picked (selection.svelte.ts), or a
+  // highlight (AnnotationsPane.svelte), without a mouse to drag them: the
+  // edits to pick from (or a new one), then where in it, at the end of its
+  // timeline or on its clip bar, as a drop there would put them (bulk.ts
+  // `addTo`). Its first choice has the focus as it opens and as it moves on,
+  // so the keys go on from there.
 
+  import { tick } from "svelte";
   import type { Put } from "./api";
   import { addTo } from "./bulk";
   import { edits } from "./edits.svelte";
@@ -27,6 +30,11 @@
   $effect(() => {
     if (!open) into = null;
   });
+  let list = $state<HTMLElement>();
+  $effect(() => {
+    void into;
+    if (open) void tick().then(() => list?.querySelector<HTMLElement>("button")?.focus());
+  });
 
   function pick(editId: number | null) {
     const edit = editId === null ? null : edits.list.find((e) => e.id === editId);
@@ -44,7 +52,7 @@
 </script>
 
 <Popover bind:open {anchor} label="Add to an edit" width={240} padding={6}>
-  <div class="pick">
+  <div class="pick" bind:this={list}>
     {#if into}
       <span class="muted head">{into === "new" ? "Into a new edit:" : `Into “${into.title}”:`}</span>
       <button onclick={() => put(false)}><Icon name="film" size={13} /> Timeline, at the end</button>
@@ -82,7 +90,8 @@
     font-size: 13px;
   }
 
-  .pick button:hover {
+  .pick button:hover,
+  .pick button:focus-visible {
     background: var(--surface-2);
   }
 

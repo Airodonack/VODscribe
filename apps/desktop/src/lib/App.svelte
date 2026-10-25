@@ -50,15 +50,22 @@
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
+  import AnnotationsPane from "./AnnotationsPane.svelte";
+  import type { PaneRow } from "./annotationRows";
 
-  // The website's VOD pages open straight onto their one VOD, with their own
-  // pane in the library's place (`leftPane`: the annotations, AnnotationsPane.svelte).
+  // The website's VOD pages open straight onto their one VOD, without the
+  // library (`library`), with their review controls in the chapters and
+  // highlights pane (`review`, `reviewVod`: AnnotationsPane.svelte's).
   let {
     openVod = null,
-    leftPane,
+    library = true,
+    review,
+    reviewVod,
   }: {
     openVod?: number | null;
-    leftPane?: Snippet<[{ vod: Vod | undefined; onplay: (time: number) => void }]>;
+    library?: boolean;
+    review?: Snippet<[PaneRow]>;
+    reviewVod?: Snippet;
   } = $props();
 
   let setup = $state<SetupStatus | null>(null);
@@ -525,6 +532,48 @@
   // (before it's painted) scrolls the list back so the clicked line stays put,
   // unless the user scrolls meanwhile.
   let body = $state<HTMLElement>();
+
+  // The open VOD's chapters and highlights (or the open edit's), when it has
+  // any shown, in a pane of their own on the right, scrolling on their own:
+  // beside the transcript on a wide window, and on a narrow one a tab of
+  // their own beside the transcript's, the one open remembered.
+  const paneDoc = $derived<Doc | null>(
+    showResults ? null : editOpen ? view : selected ? { kind: "vod", id: selected.id } : null,
+  );
+  const paneKinds = $derived({
+    chapters: cuts.shown.some((m) => m.kind === "chapter"),
+    highlights: cuts.shown.some((m) => m.kind === "highlight"),
+  });
+  const paneShown = $derived(cuts.isOf(paneDoc) && (paneKinds.chapters || paneKinds.highlights));
+  const paneName = $derived(
+    paneKinds.chapters && paneKinds.highlights
+      ? "Chapters and highlights"
+      : paneKinds.chapters
+        ? "Chapters"
+        : "Highlights",
+  );
+  // The pane beside the transcript once the main column has the room for
+  // both: the pane's widest (280 px) and the transcript's narrowest (520 px).
+  const BESIDE = 800;
+  let mainWidth = $state(0);
+  const beside = $derived(mainWidth >= BESIDE);
+  const TAB = "vodscribe.paneTab";
+  let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
+  function openTab(to: "transcript" | "annotations") {
+    tab = to;
+    save(TAB, to);
+  }
+  const tabbed = $derived(paneShown && !beside);
+  const paneOpen = $derived(paneShown && (beside || tab === "annotations"));
+  // The tabs as one control: ← and → between them, as tabs go.
+  function onTabKey(e: KeyboardEvent) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    openTab(tab === "transcript" ? "annotations" : "transcript");
+    void Promise.resolve().then(() =>
+      document.querySelector<HTMLElement>(`.pane-tabs [aria-selected="true"]`)?.focus(),
+    );
+  }
   let pressed: { el: HTMLElement; at: number } | null = null;
   $effect(() => {
     const list = body;
@@ -630,15 +679,12 @@
 {:else if !ready}
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
-  <div class="app">
-    <!-- AnnotationsPane.svelte lists a VOD's annotations; it can stand here for a VOD with them. -->
-    {#if leftPane}
-      {@render leftPane({ vod: selected, onplay: (time) => selected && play(selected.id, time) })}
-    {:else}
+  <div class="app" class:alone={!library}>
+    {#if library}
       <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
-    <svelte:element this={DEMO ? "div" : "main"} class="main">
+    <svelte:element this={DEMO ? "div" : "main"} class="main" bind:clientWidth={mainWidth}>
       <div class="toolbar">
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
@@ -719,73 +765,121 @@
         {/key}
       {/if}
 
-      <div class="body" bind:this={body} onscroll={noteScroll}>
-        {#if showResults && searchError}
-          <p class="error-text pad">{searchError}</p>
-        {:else if showResults && results?.query.error}
-          <!-- What's wrong with the text shows under the box, in the grouping's place. -->
-        {:else if showResults && results}
-          <Results
-            hits={results.hits}
-            truncated={results.truncated}
-            vods={vodsById}
-            query={query.trim() || `from ${from.trim()}`}
-            scope={scopeAll ? undefined : selected}
-            columns={lookingThrough.audio && lookingThrough.chat}
-            onplay={play}
-            onreveal={reveal}
-            onclearscope={() => (scopeAll = true)}
-          />
-        {:else if editOpen}
-          {#key edits.openId}
-            <Transcript edit={edits.openId} vods={vodsById} onplay={(time) => edits.playAt(time)} />
-          {/key}
-        {:else if selected}
-          <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
-               heights, a seek in progress) shows under the next while it loads. -->
-          {#key selected.id}
-            <Transcript
-              vod={selected}
-              reveal={revealing?.vod_id === selected.id ? revealing : null}
-              onrevealed={() => (revealing = null)}
-              onplay={(time) => play(selected.id, time)}
+      {#if tabbed}
+        <div class="pane-tabs" role="tablist" aria-label="Transcript, or {paneName.toLowerCase()}">
+          <button
+            role="tab"
+            id="tab-transcript"
+            aria-selected={tab === "transcript"}
+            aria-controls="transcript-panel"
+            tabindex={tab === "transcript" ? 0 : -1}
+            onclick={() => openTab("transcript")}
+            onkeydown={onTabKey}>Transcript</button
+          >
+          <button
+            role="tab"
+            id="tab-annotations"
+            aria-selected={tab === "annotations"}
+            aria-controls="annotations-panel"
+            tabindex={tab === "annotations" ? 0 : -1}
+            onclick={() => openTab("annotations")}
+            onkeydown={onTabKey}>{paneName}</button
+          >
+        </div>
+      {/if}
+      <div class="below" class:beside={paneShown && beside}>
+        <div
+          class="body"
+          class:away={paneOpen && !beside}
+          id="transcript-panel"
+          role={tabbed ? "tabpanel" : undefined}
+          aria-labelledby={tabbed ? "tab-transcript" : undefined}
+          bind:this={body}
+          onscroll={noteScroll}
+        >
+          {#if showResults && searchError}
+            <p class="error-text pad">{searchError}</p>
+          {:else if showResults && results?.query.error}
+            <!-- What's wrong with the text shows under the box, in the grouping's place. -->
+          {:else if showResults && results}
+            <Results
+              hits={results.hits}
+              truncated={results.truncated}
+              vods={vodsById}
+              query={query.trim() || `from ${from.trim()}`}
+              scope={scopeAll ? undefined : selected}
+              columns={lookingThrough.audio && lookingThrough.chat}
+              onplay={play}
+              onreveal={reveal}
+              onclearscope={() => (scopeAll = true)}
             />
-          {/key}
-        {:else}
-          <div class="home">
-            <div class="empty">
-              <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
-              {#if vods.length === 0}
-                <h2>Your library is empty</h2>
-                <p class="muted">
-                  Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file here.
-                  VODscribe turns what's said into text on your computer, and then you can search every word.
-                </p>
-              {:else}
-                <h2>Search every VOD</h2>
-                <p class="muted">
-                  <!-- Search's key can be taken away (Settings › Controls): then the box is to click. -->
-                  {#if searchKey}
-                    Press <kbd>{searchKey}</kbd> to search
-                  {:else}
-                    Search
-                  {/if}
-                  all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to read its transcript.
-                </p>
-                {#if keyTips.length}
-                  <p class="keys muted">
-                    <Icon name="keyboard" size={14} /> While a VOD is open:
-                    {#each keyTips as tip, i (tip.does)}{i ? ", " : ""}{#each tip.keys as k, j (j)}<kbd>{k}</kbd>{/each}
-                      {tip.does}{/each}.
+          {:else if editOpen}
+            {#key edits.openId}
+              <Transcript edit={edits.openId} vods={vodsById} onplay={(time) => edits.playAt(time)} />
+            {/key}
+          {:else if selected}
+            <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
+               heights, a seek in progress) shows under the next while it loads. -->
+            {#key selected.id}
+              <Transcript
+                vod={selected}
+                reveal={revealing?.vod_id === selected.id ? revealing : null}
+                onrevealed={() => (revealing = null)}
+                onplay={(time) => play(selected.id, time)}
+              />
+            {/key}
+          {:else}
+            <div class="home">
+              <div class="empty">
+                <span class="glyph muted"><Icon name={vods.length === 0 ? "film" : "search"} size={28} /></span>
+                {#if vods.length === 0}
+                  <h2>Your library is empty</h2>
+                  <p class="muted">
+                    Paste a link from Kick, Twitch, YouTube or another video site on the left, or drop a video file
+                    here. VODscribe turns what's said into text on your computer, and then you can search every word.
                   </p>
+                {:else}
+                  <h2>Search every VOD</h2>
+                  <p class="muted">
+                    <!-- Search's key can be taken away (Settings › Controls): then the box is to click. -->
+                    {#if searchKey}
+                      Press <kbd>{searchKey}</kbd> to search
+                    {:else}
+                      Search
+                    {/if}
+                    all {vods.length} VOD{vods.length === 1 ? "" : "s"}, or pick one on the left to read its transcript.
+                  </p>
+                  {#if keyTips.length}
+                    <p class="keys muted">
+                      <Icon name="keyboard" size={14} /> While a VOD is open:
+                      {#each keyTips as tip, i (tip.does)}{i ? ", " : ""}{#each tip.keys as k, j (j)}<kbd>{k}</kbd
+                          >{/each}
+                        {tip.does}{/each}.
+                    </p>
+                  {/if}
                 {/if}
-              {/if}
+              </div>
+              <button class="credit" onclick={() => openUrl(SUPPORT)}>
+                Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
+                  >Help cover hosting on Ko-fi</span
+                >
+              </button>
             </div>
-            <button class="credit" onclick={() => openUrl(SUPPORT)}>
-              Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-                >Help cover hosting on Ko-fi</span
-              >
-            </button>
+          {/if}
+        </div>
+        {#if paneOpen}
+          <div
+            class="pane"
+            id="annotations-panel"
+            role={tabbed ? "tabpanel" : undefined}
+            aria-labelledby={tabbed ? "tab-annotations" : undefined}
+          >
+            {#if paneDoc?.kind === "edit"}
+              <AnnotationsPane vod={null} edit={paneDoc.id} onplay={(time) => edits.playAt(time)} />
+            {:else if selected}
+              {@const vod = selected}
+              <AnnotationsPane {vod} onplay={(time) => play(vod.id, time)} {review} {reviewVod} />
+            {/if}
           </div>
         {/if}
       </div>
@@ -801,6 +895,74 @@
     grid-template-columns: minmax(280px, 340px) 1fr;
     /* The website's demo sets its own height. */
     height: var(--app-height, 100vh);
+  }
+
+  /* Without the library (the website's VOD page): the main column is all of it. */
+  .app.alone {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Under the player: the transcript (or the results), and the chapters and
+     highlights pane beside it on the right, narrower than the library, each
+     scrolling on its own; or, on a narrow window, whichever tab is open. */
+  .below {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .below.beside {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
+    /* As tall as there's room for, whatever's in them: each scrolls. */
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .pane > :global(aside) {
+    flex: 1;
+  }
+
+  .body.away {
+    display: none;
+  }
+
+  .pane-tabs {
+    flex: none;
+    display: flex;
+    gap: 4px;
+    padding: 6px 12px 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .pane-tabs button {
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    padding: 6px 10px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .pane-tabs button:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+  }
+
+  .pane-tabs button[aria-selected="true"] {
+    color: var(--text);
+    border-bottom-color: var(--accent);
   }
 
   .main {
@@ -846,6 +1008,7 @@
 
   .body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
   }
 

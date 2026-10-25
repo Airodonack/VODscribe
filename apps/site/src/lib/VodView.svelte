@@ -6,27 +6,20 @@
   // here in the browser and never uploaded. The VOD pages (routes/v/[platform]/[id])
   // show it with their source, as the whole page: the app's view fills the
   // window under the site's bar (+layout.svelte), whose line carries the note
-  // and Open a file (siteBar.svelte.ts), with the VOD's annotations
-  // (AnnotationsPane.svelte) in the library pane's place, and Review, which
-  // adds a verdict and a note to each of them (review.svelte.ts). The index
-  // (routes/v) shows it `idle`,
-  // its list (`children`) in place in a normal page, until a file is opened.
-  //
-  // Phones (under 821 px) get the VOD's title, the platform's player and a
-  // note that the rest needs a bigger screen. A proper phone layout is for
-  // later.
+  // and Open a file (siteBar.svelte.ts), without the library: the VOD's
+  // chapters and highlights (AnnotationsPane.svelte) sit beside its
+  // transcript as in the app, a tab of their own on a narrow window or a
+  // phone, and Review adds a verdict and a note to each of them there
+  // (review.svelte.ts). The index (routes/v) shows it `idle`, its list
+  // (`children`) in place in a normal page, until a file is opened.
   import { onDestroy, onMount, untrack, type Snippet } from "svelte";
   import { parseAnnotations } from "desktop/lib/annotations.ts";
   import Demo from "#lib/Demo.svelte";
-  import AnnotationsPane from "desktop/lib/AnnotationsPane.svelte";
   import { chapterRows, highlightRows } from "desktop/lib/annotationRows.ts";
   import { cuts } from "desktop/lib/cuts.svelte.ts";
   import ReviewControls from "#lib/ReviewControls.svelte";
   import { Review } from "#lib/review.svelte.ts";
   import { siteBar } from "#lib/siteBar.svelte.ts";
-  import { annotated } from "#lib/tauri/annotations.ts";
-  import type { EmbeddedPlayer } from "desktop/lib/embed.ts";
-  import type { Vod } from "desktop/lib/api.ts";
   import type { PaneRow } from "desktop/lib/annotationRows.ts";
   import { pickDropped, type Source } from "#lib/tauri/annotated.ts";
   import { chatArrived, closeAnnotations, openAnnotations } from "#lib/tauri/annotations.ts";
@@ -134,17 +127,10 @@
     siteBar.review = !idle && view.kind === "open" ? review : null;
   });
 
-  // The same width the demo hides itself under (Demo.svelte).
-  let wide = $state(true);
   onMount(() => {
-    const query = matchMedia("(min-width: 821px)");
-    const sync = () => (wide = query.matches);
-    sync();
-    query.addEventListener("change", sync);
     if (source) fromUrls(source);
     else if (!idle) view = { kind: "missing" };
     if (!idle) siteBar.pick = () => picker?.click();
-    return () => query.removeEventListener("change", sync);
   });
   onDestroy(() => {
     closeAnnotations();
@@ -159,27 +145,6 @@
         ? ""
         : `From ${view.from}. Transcribing and clipping VODs of your own needs the app.`;
   });
-
-  // The platform's player on a phone: the app's own embed, made as its player
-  // panel makes it, in the element this action is given.
-  function embed(host: HTMLElement) {
-    let player: EmbeddedPlayer | undefined;
-    let gone = false;
-    const vod = annotated()?.vod;
-    if (vod)
-      import("desktop/lib/embed.ts").then(({ createPlayer }) =>
-        createPlayer(host, vod, 0, false, (message) => (embedError = message))?.then((p) =>
-          gone ? p.destroy() : (player = p),
-        ),
-      );
-    return {
-      destroy() {
-        gone = true;
-        player?.destroy();
-      },
-    };
-  }
-  let embedError = $state<string | null>(null);
 
   // Files dropped anywhere on the page open here (the demo's own drop handling is off).
   let dragging = $state(false);
@@ -199,16 +164,7 @@
   let picker = $state<HTMLInputElement>();
 </script>
 
-<!-- The VOD page's left pane: its annotations, and their review when it's on. -->
-{#snippet pane({ vod, onplay }: { vod: Vod | undefined; onplay: (time: number) => void })}
-  <AnnotationsPane
-    {vod}
-    {onplay}
-    review={review?.on ? reviewRow : undefined}
-    reviewVod={review?.on ? reviewVod : undefined}
-  />
-{/snippet}
-
+<!-- The review, when it's on, in the chapters and highlights pane: under each row, and for the VOD at its top. -->
 {#snippet reviewRow(row: PaneRow)}
   {#if review}<ReviewControls {review} {row} />{/if}
 {/snippet}
@@ -273,24 +229,15 @@
   />
 
   {#if view.kind === "open"}
-    {#if idle || wide}
-      {#key view.id}
-        <Demo openVod={view.id} fill={!idle} leftPane={idle ? undefined : pane} />
-      {/key}
-    {:else}
-      <div class="phone">
-        <h1>{view.title}</h1>
-        {#if view.channel}<p class="muted">{view.channel}</p>{/if}
-        {#key view.id}
-          <div class="embed" use:embed></div>
-        {/key}
-        {#if embedError}<p class="error-text small">{embedError}</p>{/if}
-        <p class="caption">
-          <strong>This page needs a bigger screen for the transcript and chapters.</strong>
-          <span class="muted">Open it on a computer to read and search the VOD.</span>
-        </p>
-      </div>
-    {/if}
+    {#key view.id}
+      <Demo
+        openVod={view.id}
+        fill={!idle}
+        library={idle}
+        review={!idle && review?.on ? reviewRow : undefined}
+        reviewVod={!idle && review?.on ? reviewVod : undefined}
+      />
+    {/key}
   {:else if view.kind === "idle"}
     {@render children?.()}
   {:else}
@@ -341,40 +288,6 @@
   main.page.dragging {
     outline-offset: 4px;
     border-radius: 12px;
-  }
-
-  .phone {
-    height: 100%;
-    overflow: auto;
-    padding: 16px;
-    box-sizing: border-box;
-  }
-
-  .phone h1 {
-    font-size: 20px;
-    line-height: 1.25;
-    margin: 0 0 4px;
-  }
-
-  .phone p {
-    margin: 0 0 12px;
-  }
-
-  .embed {
-    aspect-ratio: 16 / 9;
-    margin: 12px 0;
-    background: #000;
-    border-radius: 8px;
-    overflow: hidden;
-  }
-
-  .caption {
-    text-align: center;
-    font-size: 14px;
-  }
-
-  .caption strong {
-    display: block;
   }
 
   .bar {

@@ -345,9 +345,11 @@ export interface Fetching {
 }
 
 /** Something put in an edit (`api.putInEdit`): a stretch of a VOD (a clip of its clip bar is one, named),
- *  a whole VOD, a clip of an edit's clip bar, or a stretch of an edit's timeline (`clip` is the edit). */
+ *  a whole VOD, a clip of an edit's clip bar, a stretch of an edit's timeline (`clip` is the edit), or a
+ *  highlight of a VOD (on a timeline a group named for it, as a clip's pill goes in). */
 export type Put =
   | { kind: "range"; vodId: number; start: number; end: number; title?: string }
+  | { kind: "highlight"; vodId: number; start: number; end: number; title: string }
   | { kind: "vod"; id: number }
   | { kind: "clip"; id: number }
   | { kind: "span"; clip: number; from: number; to: number };

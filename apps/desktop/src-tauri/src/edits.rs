@@ -387,7 +387,7 @@ pub(crate) async fn put_in_edit(
 ) -> CmdResult<EditView> {
     let fine = |a: f64, b: f64| a.is_finite() && b.is_finite() && a >= 0.0 && b > a;
     if items.iter().any(|item| match *item {
-        edits::Put::Range { start, end, .. } => !fine(start, end),
+        edits::Put::Range { start, end, .. } | edits::Put::Highlight { start, end, .. } => !fine(start, end),
         edits::Put::Span { from, to, .. } => !fine(from, to),
         _ => false,
     }) {

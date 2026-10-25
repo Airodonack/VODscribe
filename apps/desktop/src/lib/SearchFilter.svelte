@@ -286,6 +286,14 @@
     color: var(--muted);
   }
 
+  /* A phone (the website's VOD page): the search box keeps the room. */
+  @media (max-width: 560px) {
+    .bar,
+    .summary {
+      display: none;
+    }
+  }
+
   .eyebrow {
     margin: 0 0 6px;
   }

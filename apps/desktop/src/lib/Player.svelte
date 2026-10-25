@@ -911,6 +911,23 @@
     white-space: nowrap;
   }
 
+  /* A phone (the website's VOD page): the title over its details, and the
+     actions without their keys, which a phone hasn't got. */
+  @media (max-width: 560px) {
+    .info {
+      flex-wrap: wrap;
+      row-gap: 2px;
+    }
+
+    .info strong {
+      flex-basis: 100%;
+    }
+
+    .action kbd {
+      display: none;
+    }
+  }
+
   /* The chapter playing: the first to give way when the header is narrow. */
   .chapter-now {
     flex: 0 4 auto;

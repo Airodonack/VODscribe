@@ -16,7 +16,21 @@ import { clearsStretch, stretchMade } from "./selection.svelte";
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
  *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
  *  group, with the clip's own cuts), as `add` puts it. */
-export type Stretch = { vodId: number; start: number; end: number; title?: string; clip?: number };
+export type Stretch = {
+  vodId: number;
+  start: number;
+  end: number;
+  title?: string;
+  clip?: number;
+  /** A highlight's (the annotations pane's): it goes in as a group named for it, as a clip's pill does. */
+  highlight?: boolean;
+};
+
+/** What `s` goes in an edit as: a highlight's a group named for it, else a stretch. */
+export const putOf = (s: Stretch): Put =>
+  s.highlight
+    ? { kind: "highlight", vodId: s.vodId, start: s.start, end: s.end, title: s.title ?? "Highlight" }
+    : { kind: "range", vodId: s.vodId, start: s.start, end: s.end, title: s.title };
 
 class Edits {
   list = $state.raw<Edit[]>([]);
@@ -109,6 +123,7 @@ class Edits {
     if (!edit) return edit;
     if (Array.isArray(what)) await this.put(edit.id, what, false);
     else if (what.clip !== undefined) await this.add(edit.id, what.clip);
+    else if (what.highlight) await this.put(edit.id, [putOf(what)], false);
     else await this.addRange(edit.id, what);
     return edit;
   }

@@ -207,7 +207,7 @@
   <!-- Full screen hides the legend, so its button goes too. -->
   {#if !fullscreen}
     <button
-      class="control"
+      class="control keys"
       class:on={showKeys}
       onclick={toggleKeys}
       aria-expanded={showKeys}
@@ -397,10 +397,20 @@
     accent-color: var(--accent);
   }
 
+  /* A phone: no keyboard to show the keys of, either. */
   @media (max-width: 560px) {
     .volume,
-    .speed {
+    .speed,
+    .keys {
       display: none;
+    }
+
+    .bar {
+      gap: 0;
+    }
+
+    .bar :global(.action) {
+      padding: 0 4px;
     }
   }
 </style>

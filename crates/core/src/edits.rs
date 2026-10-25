@@ -98,6 +98,10 @@ pub enum Put {
     Clip { id: i64 },
     /// `from`..`to` seconds of clip `clip`'s timeline (an edit's): what plays there.
     Span { clip: i64, from: f64, to: f64 },
+    /// A highlight of VOD `vod_id`, `start`..`end`, named `title`: on a
+    /// timeline a group named for it, one band as a clip's pill goes in; on a
+    /// clip bar a clip of it.
+    Highlight { vod_id: i64, start: f64, end: f64, title: String },
 }
 
 /// Where `Db::put` puts things in an edit: on its timeline, at `index` of
@@ -973,6 +977,34 @@ impl Db {
         })
     }
 
+    /// Puts `start`..`end` of VOD `vod_id` in clip `into` as a group titled
+    /// `title`, holding it as one piece, at `index` of its top level (or
+    /// last), with the VOD's chapters and highlights there: a highlight goes
+    /// in as a clip's pill does, one band named for it. The group's id.
+    pub fn add_stretch_group(
+        &self,
+        into: i64,
+        vod_id: i64,
+        (start, end): (f64, f64),
+        title: &str,
+        index: Option<usize>,
+    ) -> Result<i64> {
+        self.vod(vod_id)?.context("That VOD is gone.")?;
+        let (start, end) = self.within_vod(vod_id, start, end)?;
+        self.change(into, None, |db| {
+            db.conn.execute(
+                "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
+                params![into, title],
+            )?;
+            let group = db.conn.last_insert_rowid();
+            let piece = db.insert_piece(into, vod_id, (start, end), title, &[])?;
+            db.conn.execute("UPDATE items SET parent = ?2 WHERE id = ?1", params![piece, group])?;
+            db.copy_vod_marks(into, vod_id, start, end)?;
+            db.place(into, group, index)?;
+            Ok(group)
+        })
+    }
+
     /// Clip `id`'s own marks, with their ids, in the order they were made at.
     pub fn clip_marks(&self, id: i64) -> Result<Vec<(i64, MarkAt)>> {
         let mut stmt =
@@ -1059,6 +1091,10 @@ impl Db {
                             made.push(db.add_bar_clip(edit, &state)?);
                         }
                     }
+                    (Put::Highlight { vod_id, start, end, title }, Onto::Timeline(_)) => {
+                        db.add_stretch_group(edit, *vod_id, (*start, *end), title, index)?;
+                        index = index.map(|i| i + 1);
+                    }
                     (Put::Span { clip, from, to }, _) if *clip == edit && onto == Onto::Bar => {
                         let title = db.span_title(edit, *from, *to)?;
                         made.push(db.add_edit_clip(edit, *from, *to, &title, true)?.id);
@@ -1096,6 +1132,10 @@ impl Db {
                     None => crate::clips::title(&self.words_between(*vod_id, *start, *end)?, *start),
                 };
                 (title.clone(), vec![part(*vod_id, *start, *end, &title)])
+            }
+            Put::Highlight { vod_id, start, end, title } => {
+                self.vod(*vod_id)?.context("That VOD is gone.")?;
+                (title.clone(), vec![part(*vod_id, *start, *end, title)])
             }
             Put::Vod { id } => {
                 let vod = self.vod(*id)?.context("That VOD is gone.")?;
@@ -2137,6 +2177,32 @@ pub(crate) mod tests {
         assert_eq!(db.edit_pieces(other).unwrap()[0].group.as_ref().map(|g| g.title.as_str()), Some("own"));
         let copy = db.put(other, &[Put::Clip { id: own }], Onto::Bar).unwrap();
         assert_eq!(db.edit_state(copy[0]).unwrap().unwrap().items, db.edit_state(own).unwrap().unwrap().items);
+
+        // A highlight: on the timeline a group named for it, holding its
+        // stretch, the chapter in it coming too; on the bar a clip of it.
+        let lit = db.add_edit("h").unwrap().id;
+        db.add_mark(x, "chapter", 45.0, Some("inside")).unwrap();
+        let highlight = Put::Highlight { vod_id: x, start: 44.0, end: 48.0, title: "Close call".into() };
+        db.put(lit, &[range(0.0, 1.0, "before"), highlight.clone()], Onto::Timeline(None)).unwrap();
+        db.put(lit, std::slice::from_ref(&highlight), Onto::Timeline(Some(0))).unwrap();
+        let got: Vec<_> = db
+            .edit_pieces(lit)
+            .unwrap()
+            .iter()
+            .map(|p| (p.start, p.end, p.title.clone(), p.group.as_ref().map(|g| g.title.clone())))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                (44.0, 48.0, "Close call".into(), Some("Close call".into())),
+                (0.0, 1.0, "before".into(), None),
+                (44.0, 48.0, "Close call".into(), Some("Close call".into())),
+            ]
+        );
+        let chapters = db.clip_marks(lit).unwrap().into_iter().filter(|(_, m)| m.kind == "chapter").count();
+        assert_eq!(chapters, 2, "each group brings the chapter in its stretch");
+        let made = db.put(lit, &[highlight], Onto::Bar).unwrap();
+        assert_eq!(db.clip(made[0]).unwrap().unwrap().title, "Close call");
 
         // One that can't go: none of them do.
         let had = shape(edit);

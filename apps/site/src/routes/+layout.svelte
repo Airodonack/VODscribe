@@ -99,6 +99,21 @@
     border-bottom: 1px solid var(--border);
   }
 
+  /* A VOD's page on a phone: its own buttons keep the bar, sliding sideways
+     when Review's are out too. */
+  @media (max-width: 480px) {
+    .shell.full nav {
+      align-self: stretch;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .shell.full .download-link {
+      display: none;
+    }
+  }
+
   .note {
     flex: 1;
     min-width: 0;
