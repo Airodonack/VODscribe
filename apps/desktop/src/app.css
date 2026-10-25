@@ -23,6 +23,12 @@
   --danger: #c81e1e;
   --danger-soft: #fee2e2;
   --ok: #15803d;
+  /* Chatters' names' lightness (oklch) stays between these (.chat-author):
+     pure yellow, cyan, lime and white held at 0.47 read at 4.5:1 or more on
+     the light backgrounds; pure blue, red, purple and black raised to 0.74
+     do on the dark ones. */
+  --author-floor: 0;
+  --author-ceiling: 0.47;
   --stage: #0d0d0c;
   /* Text on the stage, which is dark in either theme. */
   --stage-text: #ecece9;
@@ -71,6 +77,8 @@
   --danger: #f87171;
   --danger-soft: #3f1d1d;
   --ok: #4ade80;
+  --author-floor: 0.74;
+  --author-ceiling: 1;
   --stage: #000000;
   --shadow: 0 12px 32px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
 }
@@ -99,6 +107,8 @@
     --danger: #f87171;
     --danger-soft: #3f1d1d;
     --ok: #4ade80;
+    --author-floor: 0.74;
+    --author-ceiling: 1;
     --stage: #000000;
     --shadow: 0 12px 32px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
   }
@@ -372,12 +382,23 @@ kbd {
   background-clip: padding-box;
 }
 
-/* A chatter's name, in chat and search results: a hint of their chat color
-   (--author), toned toward the text color so every one is readable here. */
+/* A chatter's name, in chat and search results: their chat color (--author)
+   with its lightness held where every color is readable here, hue and chroma
+   kept: no darker than --author-floor on the dark theme, no lighter than
+   --author-ceiling on the light one (Twitch's default blue was 3.5:1 on the
+   dark theme). Engines without relative colors get a hint of the color
+   toned toward the text. (In @supports: with var() in it, a line they can't
+   read would still replace the one before, and fall back to plain text.) */
 .chat-author {
   font-weight: 600;
   margin-right: 6px;
   color: color-mix(in srgb, var(--author, var(--muted)) 65%, var(--text));
+}
+
+@supports (color: oklch(from red l c h)) {
+  .chat-author {
+    color: oklch(from var(--author, var(--muted)) clamp(var(--author-floor), l, var(--author-ceiling)) c h);
+  }
 }
 
 /* The "·" between inline details. */

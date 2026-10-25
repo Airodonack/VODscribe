@@ -321,7 +321,14 @@
     background: none;
   }
 
+  /* A choice that can't be made (This VOD with none open, a source set by in:
+     in the search text) dims its name only: its muted detail, dimmed too, was
+     unreadable. */
   .choices button:disabled {
+    opacity: 1;
+  }
+
+  .choices button:disabled .label {
     opacity: 0.7;
   }
 
@@ -378,6 +385,12 @@
   .segmented button.on {
     color: var(--text);
     background: var(--accent-soft);
+  }
+
+  /* Set by within:, typed: the unit shown as plainly as the number beside it
+     (the units are muted already; a disabled button's fading made them unreadable). */
+  .segmented button:disabled {
+    opacity: 1;
   }
 
   .names button {
