@@ -53,8 +53,10 @@ function lastBelow(n: number, below: (i: number) => boolean): number {
 /**
  * The groups of one speaker's lines, from the heads over the rows that
  * start one (transcriptGroups.ts `groupHeads`) and whether each row is a
- * line someone is named for: a group goes on over the rows after its head
- * that are named lines with no head of their own.
+ * line in a group (one someone is named for; and, where the transcript
+ * names anyone, any line, those no one is named for being Unknown's): a
+ * group goes on over the rows after its head that are such lines with no
+ * head of their own.
  */
 export function groupSpans(heads: readonly unknown[], speaking: readonly boolean[]): Span[] {
   const out: Span[] = [];

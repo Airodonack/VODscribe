@@ -1,7 +1,7 @@
 // The transcript's groups of lines by one speaker (transcriptGroups.ts): node --test apps/desktop/src/lib/transcriptGroups.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GROUP_GAP, groupHeads, initial } from "./transcriptGroups.ts";
+import { GROUP_GAP, UNKNOWN_SPEAKER, anyoneNamed, groupHeads, initial } from "./transcriptGroups.ts";
 
 /** A line from `start` to `end`, said by `speaker`, as a row with no divider over it.
  *  @type {(start: number, end?: number, speaker?: string) => import("./transcriptGroups").GroupItem} */
@@ -29,6 +29,39 @@ test("a line no one is named for has no head, and the next named line starts afr
     "Ada 10",
     null,
   ]);
+});
+
+test("where anyone is named, lines no one is named for are an unknown speaker's, in groups of their own", () => {
+  const items = [
+    said(0, 4, "Ada"),
+    said(5, 9),
+    said(10, 12, " "),
+    said(13, 14, "Unknown"),
+    said(15, 16),
+    { line: null, divided: false },
+    said(17, 18),
+    { ...said(19, 20), divided: true },
+    said(50, 51),
+  ];
+  assert.ok(anyoneNamed(items.map((i) => i.line)));
+  assert.ok(!anyoneNamed([said(0, 1).line, said(2, 3, " ").line, null]));
+  const got = groupHeads(items, undefined, true);
+  assert.deepEqual(
+    got.map((h) => h && `${h.name} ${h.start}${h.unknown ? " ?" : ""}`),
+    [
+      "Ada 0",
+      `${UNKNOWN_SPEAKER} 5 ?`,
+      null,
+      // Someone named "Unknown" is someone: not the unknown speaker's group.
+      "Unknown 13",
+      `${UNKNOWN_SPEAKER} 15 ?`,
+      null,
+      `${UNKNOWN_SPEAKER} 17 ?`,
+      `${UNKNOWN_SPEAKER} 19 ?`,
+      `${UNKNOWN_SPEAKER} 50 ?`,
+    ],
+    "after a row that isn't a line, a divider and a long pause, a new group as for anyone",
+  );
 });
 
 test("a chapter's divider starts a group, though the speaker goes on", () => {

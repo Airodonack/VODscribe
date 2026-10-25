@@ -406,10 +406,23 @@ export interface Activity {
   name?: string;
 }
 
+/** Another streamer's VOD that ran alongside, from an annotations import (annotations.ts `Pov`). */
+export interface Pov {
+  player: string;
+  account: { platform: "twitch" | "kick" | "youtube"; login: string };
+  video: { platform: "twitch" | "kick" | "youtube"; id: string };
+  /** When it started, ISO 8601. */
+  start: string;
+  /** Seconds. */
+  duration: number;
+}
+
 /** What an annotations import left of a VOD besides its transcript and marks. */
 export interface VodAnnotations {
   cast: CastMember[];
   activity: Activity[];
+  /** Other streamers' VODs that ran alongside. */
+  povs: Pov[];
 }
 
 /** A caption (crates/core `transcript::Cue`). */

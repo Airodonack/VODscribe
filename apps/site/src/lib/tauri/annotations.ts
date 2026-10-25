@@ -5,11 +5,11 @@
 // Its chapters, highlights, cast and activity are kept here as the file has
 // them, and reach the app's components through the commands the app answers
 // for a VOD whose annotations it imported: list_marks (chapters and
-// highlights, as marks), vod_annotations (cast and activity) and transcript
+// highlights, as marks), vod_annotations (cast, activity and other points of view) and transcript
 // (each line's speaker), in core.ts and backend.ts.
 
 import type { ChatLine, Vod } from "desktop/lib/api.ts";
-import type { Activity, Annotations, CastMember, Chapter, Highlight } from "desktop/lib/annotations.ts";
+import type { Activity, Annotations, CastMember, Chapter, Highlight, Pov } from "desktop/lib/annotations.ts";
 import { chatOf, segmentsOf, vodOf, type Segment } from "./annotated";
 import { emit } from "./event";
 
@@ -21,6 +21,7 @@ export interface Annotated {
   highlights: Highlight[];
   cast: CastMember[];
   activity: Activity[];
+  povs: Pov[];
 }
 
 let current: Annotated | null = null;
@@ -48,6 +49,7 @@ export function openAnnotations(annotations: Annotations, chat: unknown | null |
     highlights: annotations.highlights,
     cast: annotations.cast,
     activity: annotations.activity,
+    povs: annotations.povs ?? [],
   };
   return id;
 }

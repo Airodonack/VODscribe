@@ -327,5 +327,20 @@
       "end": 60,
       "kind": "just chatting"
     }
+  ],
+  "povs": [
+    {
+      "player": "Vance",
+      "account": {
+        "platform": "twitch",
+        "login": "marlowe_live"
+      },
+      "video": {
+        "platform": "twitch",
+        "id": "v1000000001"
+      },
+      "start": "2026-10-01T18:00:20Z",
+      "duration": 3600
+    }
   ]
 }

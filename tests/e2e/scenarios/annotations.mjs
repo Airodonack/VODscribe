@@ -10,7 +10,9 @@
 // The activity band says what the VOD is doing where it's pointed at. The
 // transcript reads as a chat: one speaker's lines one after another sit under
 // one head naming them in their cast colour (an alias by the cast member's
-// name), the lines in it unnamed, and each chapter has a divider with its
+// name), the lines in it unnamed, a line no one is named for under an
+// "Unknown" head of its own (a person's outline, no link, as the transcript
+// names others), and each chapter has a divider with its
 // icon and title; the Cast button lists the cast, with roles and aliases.
 // The chapters and highlights pane is the window's right column, full
 // height, the player and transcript between it and the library, the chapter
@@ -30,7 +32,11 @@
 // the character. A cast member with an account is headed by their picture,
 // from the image server (the run's file host, lib/fileHost.mjs), their name a
 // link to their channel; one whose picture isn't there keeps their initial,
-// the character's.
+// the character's. Where the file has the streamer's own VOD running at the
+// same time (its povs: Marlowe's, from 0:20 in), the name and disc link to
+// that VOD at the same moment instead: a heading at its lines' start, a chip
+// at its highlight's start, the Cast list at the playhead; outside it, the
+// channel. (Only the links are read: the opener can't be stood in for.)
 // The Timeline panel's Imported marks toggle hides the import's chapters
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
@@ -40,7 +46,7 @@
 // A longer transcript imported last: scrolled past a speaker's heading, the
 // chapter and the speaker stay pinned at the top; the next heading pushes
 // the pinned one out without overlapping it, a new chapter both; over lines
-// no one is named for, only the chapter. A line the playhead moves to,
+// no one is named for, the chapter over Unknown. A line the playhead moves to,
 // under the pinned headings, is brought out below them; a click on the
 // pinned speaker goes back to where their lines start.
 
@@ -165,7 +171,7 @@ export default {
     "annotations-pinned":
       'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
+      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; the line at 0:15 is under a heading "Unknown" with a gray circle holding a person\'s outline; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar, Their stream at 0:15) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -273,29 +279,33 @@ export default {
       async () => {
         const got = await app.js(`return [...document.querySelectorAll("#transcript .line .speaker")].map((s) =>
           ({ name: s.textContent.trim(), color: getComputedStyle(s).color, unknown: s.classList.contains("unknown") }))`);
-        return got.length === 4 && got;
+        return got.length === 5 && got;
       },
       MINUTE,
     ).catch(() => []);
     const names = speakers.map((s) => s.name).join(", ");
-    if (names !== "Marlowe (Vance), Ada, Marlowe (Vance), Ada") wrong.push(`the lines' speakers: ${names || "none"}`);
+    if (names !== "Marlowe (Vance), Ada, Unknown, Marlowe (Vance), Ada")
+      wrong.push(`the lines' speakers: ${names || "none"}`);
     else {
-      const [marlowe, ada, mar] = speakers;
-      if (speakers.some((s) => s.unknown)) wrong.push("a cast member's line has no cast colour");
+      const [marlowe, ada, nobody, mar] = speakers;
+      if ([marlowe, ada, mar].some((s) => s.unknown)) wrong.push("a cast member's line has no cast colour");
+      if (!nobody.unknown) wrong.push(`the line no one is named for is headed in a cast colour, ${nobody.color}`);
       if (marlowe.color !== mar.color) wrong.push(`Marlowe is ${marlowe.color} and Marlowe (said as Mar) ${mar.color}`);
       if (marlowe.color === ada.color) wrong.push(`Marlowe and Ada are both ${ada.color}`);
     }
 
     // Each line, top to bottom: the head over it, if it starts a group, and the
     // chapter's divider over it, if any. Ada's last two lines are one group,
-    // with no divider between them; the line no one is named for has no head;
+    // with no divider between them; the line no one is named for has a head
+    // of its own, "Unknown", its disc a person's outline (no letter);
     // and no line names its speaker itself.
     const chat = await app.js(`return [...document.querySelectorAll("#transcript .line")].flatMap((l) => {
       const row = l.querySelector(":scope > button.row:not(.chapter-head)");
       return row ? [{
         time: Number(row.dataset.time),
         head: l.querySelector(":scope > .group-head .speaker")?.textContent.trim() ?? null,
-        disc: l.querySelector(":scope > .group-head .avatar")?.textContent.trim() ?? null,
+        disc: ((a) => a && (a.textContent.trim() || (a.querySelector("svg") ? "(outline)" : "")))(
+          l.querySelector(":scope > .group-head .avatar")) ?? null,
         named: !!row.querySelector(".speaker"),
         divider: l.querySelector(":scope > .chapter-head")?.textContent.replace(/\\s+/g, "") ?? null,
       }] : [];
@@ -307,7 +317,7 @@ export default {
     const expected = [
       "[💬Hello] 0 M Marlowe (Vance)",
       "8 A Ada",
-      "[🎮Thegame] 15",
+      "[🎮Thegame] 15 (outline) Unknown",
       "25 M Marlowe (Vance)",
       "[Goodbye] 35 A Ada",
       "45",
@@ -316,7 +326,9 @@ export default {
     if (chat.some((l) => l.named)) wrong.push("a line names its speaker as well as its group's head");
 
     // The heads of those with an account: the name a link to their channel,
-    // saying where it goes (the head itself says who plays them); the disc their picture once it has loaded, or
+    // saying where it goes (the head itself says who plays them), or for
+    // Marlowe's second, at 0:25, 5 s into Vance's own VOD, to that VOD there;
+    // the disc the same link, their picture once it has loaded, or
     // their initial when there's none (Ada's), never empty.
     const heads = await until(
       "the cast's pictures",
@@ -329,22 +341,27 @@ export default {
             picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
             initial: getComputedStyle(h.querySelector(".avatar")).color !== "rgba(0, 0, 0, 0)" };
         })`);
-        return got.length === 4 && got.every((h) => h.picture !== "loading") && got;
+        return got.length === 5 && got.every((h) => h.picture !== "loading") && got;
       },
       MINUTE,
     ).catch(() => []);
+    const marloweHead = (link, title) => ({ name: "Marlowe (Vance)", link, title, picture: "shown", initial: false });
+    const adaHead = {
+      name: "Ada",
+      link: "https://kick.com/ada_plays",
+      title: "kick.com/ada_plays",
+      picture: "none",
+      initial: true,
+    };
     const want = [
-      {
-        name: "Marlowe (Vance)",
-        link: "https://www.twitch.tv/marlowe_live",
-        title: "twitch.tv/marlowe_live",
-        picture: "shown",
-        initial: false,
-      },
-      { name: "Ada", link: "https://kick.com/ada_plays", title: "kick.com/ada_plays", picture: "none", initial: true },
+      marloweHead("https://www.twitch.tv/marlowe_live", "twitch.tv/marlowe_live"),
+      adaHead,
+      { name: "Unknown", link: null, title: "", picture: "no img", initial: true },
+      marloweHead("https://www.twitch.tv/videos/1000000001?t=5s", "Vance's stream at 0:05 · twitch.tv"),
+      adaHead,
     ];
     for (const [i, h] of heads.entries()) {
-      const w = want[i % 2];
+      const w = want[i];
       const got = { name: h.name, link: h.link, title: h.title, picture: h.picture, initial: h.initial };
       if (JSON.stringify(got) !== JSON.stringify(w)) wrong.push(`head ${i + 1}: ${JSON.stringify(got)}`);
       if (h.disc !== w.link) wrong.push(`head ${i + 1}'s disc links to ${h.disc}`);
@@ -359,7 +376,8 @@ export default {
     host.stop();
 
     // The cast, from the transcript's header: each with the disc their lines
-    // have (its initial, in their colour), then who they are.
+    // have (its initial, in their colour), then who they are; at 0:35,
+    // Marlowe's link is to Vance's own VOD 15 s in, Ada's to her channel.
     await app.click(".cast-toggle");
     const cast = await until(
       "the cast list",
@@ -368,13 +386,14 @@ export default {
           return list ? [...list.querySelectorAll("li")].map((li) => {
             const disc = li.querySelector(".avatar");
             return (disc ? disc.textContent.trim() + " " + getComputedStyle(disc).backgroundColor + ": " : "no disc: ") +
-              li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim();
+              li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim() + " → " +
+              li.querySelector(".who a")?.getAttribute("href");
           }) : false`),
       10_000,
     ).catch(() => []);
     const castWant = [
-      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar twitch.tv/marlowe_live`,
-      `A ${speakers[1]?.color}: Ada Friend kick.com/ada_plays`,
+      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar Their stream at 0:15 → https://www.twitch.tv/videos/1000000001?t=15s`,
+      `A ${speakers[1]?.color}: Ada Friend kick.com/ada_plays → https://kick.com/ada_plays`,
     ];
     if (cast.join(" | ") !== castWant.join(" | ")) wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
@@ -450,7 +469,7 @@ export default {
     if (chips?.title !== "Marlowe (Vance), Ada, Jules") wrong.push(`the first highlight's discs say "${chips?.title}"`);
     else {
       if (
-        speakers.length === 4 &&
+        speakers.length === 5 &&
         JSON.stringify(chips.discs.slice(0, 2)) !== JSON.stringify([`M ${speakers[0].color}`, `A ${speakers[1].color}`])
       )
         wrong.push(`the discs ${chips.discs} aren't the speakers' M ${speakers[0].color}, A ${speakers[1].color}`);
@@ -584,7 +603,8 @@ export default {
     // outside the row's button: each by the cast's own name for them
     // (Marlowe, not "Marlowe (Vance)" nor the file's "Mar"), Jules as
     // written. One with an account is a link to the streamer's channel, its
-    // tooltip naming the streamer and where, reached from the keyboard;
+    // tooltip naming the streamer and where, reached from the keyboard
+    // (Marlowe's to Vance's own VOD at the highlight's start, 5 s in);
     // Jules's is no link. No chip's name is cut short. A click on a chip
     // leaves the row open and the player where it was. (The link's own click
     // isn't made: the opener would start the system's browser, and the page
@@ -612,8 +632,8 @@ export default {
       {
         tag: "A",
         text: "Marlowe",
-        href: "https://www.twitch.tv/marlowe_live",
-        title: "Vance · twitch.tv/marlowe_live",
+        href: "https://www.twitch.tv/videos/1000000001?t=5s",
+        title: "Vance's stream at 0:05 · twitch.tv",
         focusable: true,
       },
       { tag: "A", text: "Ada", href: "https://kick.com/ada_plays", title: "Ada · kick.com/ada_plays", focusable: true },
@@ -937,10 +957,10 @@ export default {
       wrong.push(
         `"The game"'s divider 10 px into the pinned pair at ${JSON.stringify(divider)}: ${JSON.stringify(pair)}`,
       );
-    // Over the lines no one is named for: the chapter alone.
+    // Over the lines no one is named for: the chapter, and Unknown under it.
     await app.js(`${PINS} await put('#transcript .line button.row[data-time="35"]', 0);`);
     const unnamed = await app.js(`${PINS} return pins();`);
-    if (unnamed.chapter?.text !== "🎮Thegame" || unnamed.speaker)
+    if (unnamed.chapter?.text !== "🎮Thegame" || unnamed.speaker?.text !== "Unknown")
       wrong.push(`over lines no one is named for, pinned: ${JSON.stringify(unnamed)}`);
 
     // The playhead moved to a line under the pinned headings (a click on the

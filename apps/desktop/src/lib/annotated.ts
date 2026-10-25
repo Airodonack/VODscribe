@@ -45,12 +45,18 @@ export function activityLabel(a: Activity): string {
   return name ? `${sentence(a.kind)}: ${name}` : sentence(a.kind);
 }
 
+/** Whether a cast member is a text-to-speech voice (role "tts"): no one's channel, so never a link. */
+export const isVoice = (m: Pick<CastMember, "role"> | undefined): boolean => m?.role.trim().toLowerCase() === "tts";
+
+/** A role as the cast list says it: "Streamer", "In-game character"; a text-to-speech voice's "TTS". */
+const roleLabel = (role: string) => (role.trim().toLowerCase() === "tts" ? "TTS" : sentence(role));
+
 /** A cast member's role and aliases, as the cast list says them: "Streamer · also Mar, M". An alias
  *  that is their name, or their player's (already in the name they're listed by, castNames.ts), isn't repeated. */
 export function castDetail(m: CastMember): string {
   const said = [m.name, m.player ?? ""].map((n) => n.trim().toLowerCase());
   const aliases = m.aliases.filter((a) => a.trim() && !said.includes(a.trim().toLowerCase()));
-  return [sentence(m.role), aliases.length ? `also ${aliases.join(", ")}` : ""].filter(Boolean).join(" · ");
+  return [roleLabel(m.role), aliases.length ? `also ${aliases.join(", ")}` : ""].filter(Boolean).join(" · ");
 }
 
 /**

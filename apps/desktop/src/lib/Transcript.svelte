@@ -30,12 +30,11 @@
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
   import { castIndex, speakerColor } from "./annotated";
-  import { GROUP_HEAD_HEIGHT, groupHeads, type GroupHead } from "./transcriptGroups";
+  import { GROUP_HEAD_HEIGHT, anyoneNamed, groupHeads, type GroupHead } from "./transcriptGroups";
   import { groupSpans, pinnedAt, reserveAt, type Divider } from "./pinned";
-  import { channelLabel, channelUrl } from "./accounts";
+  import { castLink } from "./castLink.svelte";
   import { speakerName } from "./castNames";
   import CastDisc from "./CastDisc.svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
@@ -278,10 +277,14 @@
   // A cast member's alias is them, grouped by their name, so one person reads
   // as one; a name not in the cast as the line has it. The head reads their
   // display name (castNames.ts): the character first, the streamer in parentheses where one plays them.
+  // Where anyone is named, lines no one is named for are grouped under "Unknown", so they never read as
+  // the speaker's before them; where no one is, there are no heads at all.
+  const named = $derived(anyoneNamed(rows.map((row) => row.line)));
   const speakerHeads = $derived(
     groupHeads(
       rows.map((row) => ({ line: row.line, divided: heads.has(row.key) })),
       (name) => cast[castIndex(cast, name)]?.name ?? name,
+      named,
     ),
   );
 
@@ -370,7 +373,7 @@
   const spans = $derived(
     groupSpans(
       speakerHeads,
-      rows.map((row) => !!row.line?.speaker?.trim()),
+      rows.map((row) => !!row.line && (named || !!row.line.speaker?.trim())),
     ),
   );
   const groups = $derived.by(() => {
@@ -1147,27 +1150,28 @@
 {/snippet}
 
 <!-- Who says the lines below, and when the first is: their picture, or their
-     initial; their name links to their channel. Pinned at the top, the rest of
-     it scrolls back to where their lines start. -->
+     initial; their name links to their channel, or to their own stream at the
+     moment the lines start when it ran alongside (castLink.svelte.ts). Pinned at
+     the top, the rest of it scrolls back to where their lines start.
+     Lines no one is named for, where others are, are Unknown's: a person's outline, no link. -->
 {#snippet speakerHead(group: GroupHead, pinnedCopy: boolean)}
-  {@const color = speakerColor(cast, group.name)}
-  {@const member = cast[castIndex(cast, group.name)]}
-  {@const account = member?.account}
-  {@const label = speakerName(member, group.name)}
+  {@const color = group.unknown ? null : speakerColor(cast, group.name)}
+  {@const member = group.unknown ? undefined : cast[castIndex(cast, group.name)]}
+  {@const to = castLink(member, vod, group.start)}
+  {@const label = group.unknown ? group.name : speakerName(member, group.name)}
   <span class="avatar-slot">
-    <CastDisc name={label} {color} {member} />
+    <CastDisc name={label} {color} {member} {to} anonymous={group.unknown} />
   </span>
   <span class="who">
-    {#if account}
-      {@const url = channelUrl(account)}
+    {#if to}
       <a
         class="speaker channel"
         class:unknown={!color}
         style:color
-        href={url}
-        title={channelLabel(account)}
+        href={to.href}
+        title={to.title}
         tabindex={pinnedCopy ? -1 : undefined}
-        onclick={(e) => (e.preventDefault(), openUrl(url))}>{label}</a
+        onclick={(e) => (e.preventDefault(), to.follow())}>{label}</a
       >
     {:else}
       <span class="speaker" class:unknown={!color} style:color>{label}</span>

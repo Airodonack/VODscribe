@@ -4,13 +4,18 @@
   // (accounts.ts). The picture shows only once it has loaded, so the disc is
   // never empty: before, or when there's none, the initial is what shows. It
   // is shown whole as the site has it, only clipped round as chats draw one,
-  // and the disc links to their channel as their name beside it does, unless
-  // it sits inside something that is a control of its own (`link`). The
-  // Cast popover and the chapters and highlights pane draw it smaller (`size`).
-  import { openUrl } from "@tauri-apps/plugin-opener";
-  import { avatarUrl, channelLabel, channelUrl } from "./accounts";
+  // and the disc links where their name beside it does (`to`, castLink.svelte.ts:
+  // their channel, or their stream at the moment), unless it sits inside
+  // something that is a control of its own (`link`). The Cast popover and the
+  // chapters and highlights pane draw it smaller (`size`). A text-to-speech
+  // voice is no one: a voice's sign in place of an initial, and no picture;
+  // nor is a speaker no one names (`anonymous`): a person's outline.
+  import { avatarUrl } from "./accounts";
   import { annotated } from "./annotated.svelte";
+  import { isVoice } from "./annotated";
   import type { CastMember } from "./api";
+  import type { CastLink } from "./castLink.svelte";
+  import Icon from "./Icon.svelte";
   import { initial } from "./transcriptGroups";
 
   let {
@@ -19,6 +24,8 @@
     member,
     size = 22,
     link = true,
+    to = null,
+    anonymous = false,
   }: {
     /** Who it's for, as the head names them: the initial is its first letter, the character's where a streamer plays them. */
     name: string;
@@ -27,11 +34,16 @@
     member?: CastMember;
     /** Its width and height, in pixels; the initial is drawn to match. */
     size?: number;
-    /** Whether it links to their channel; false inside a button, which can't hold a link. */
+    /** Whether it's a link; false inside a button, which can't hold one. */
     link?: boolean;
+    /** Where it links, as their name beside it does; null for nowhere. */
+    to?: CastLink | null;
+    /** For lines no one is named for: an outline of a person, no one's initial. */
+    anonymous?: boolean;
   } = $props();
 
-  const account = $derived(member?.account);
+  const voice = $derived(isVoice(member));
+  const account = $derived(voice ? undefined : member?.account);
   const base = $derived(account ? annotated.avatarBase() : null);
   // TODO: a YouTube picture must show YouTube's own icon beside it, linking to
   // the channel (YouTube's developer policies). Until that icon is in the app,
@@ -45,7 +57,13 @@
 </script>
 
 {#snippet face()}
-  {initial(name)}
+  {#if anonymous}
+    <Icon name="user" size={Math.round(size * 0.6)} />
+  {:else if voice}
+    <Icon name="audio-lines" size={Math.round(size * 0.6)} />
+  {:else}
+    {initial(name)}
+  {/if}
   {#if picture}
     <img
       src={picture}
@@ -59,8 +77,7 @@
   {/if}
 {/snippet}
 
-{#if account && link}
-  {@const url = channelUrl(account)}
+{#if to && link}
   <!-- The name beside it is the same link, for the keyboard and screen readers. -->
   <a
     class="avatar"
@@ -68,11 +85,11 @@
     class:pictured={loaded}
     style:background={color}
     style:--size="{size}px"
-    href={url}
-    title={channelLabel(account)}
+    href={to.href}
+    title={to.title}
     tabindex="-1"
     aria-hidden="true"
-    onclick={(e) => (e.preventDefault(), openUrl(url))}>{@render face()}</a
+    onclick={(e) => (e.preventDefault(), to.follow())}>{@render face()}</a
   >
 {:else}
   <span

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { api, type CastMember, type Stretch, type Vod } from "./api";
   import { castDetail, speakerColor } from "./annotated";
-  import { channelLabel, channelUrl } from "./accounts";
+  import { castLink } from "./castLink.svelte";
+  import { cuts } from "./cuts.svelte";
   import { displayName } from "./castNames";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { clock } from "./povs";
   import Popover from "./Popover.svelte";
   import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
@@ -78,6 +79,8 @@
 
   let castOpen = $state(false);
   let castAnchor = $state<HTMLElement>();
+  // The Cast list's links go to their streams at the playhead, when it's this VOD's.
+  const playhead = $derived(vod && cuts.vodId === vod.id ? cuts.now : null);
 </script>
 
 <div class="head" bind:offsetHeight={height}>
@@ -104,17 +107,22 @@
       <Popover bind:open={castOpen} anchor={castAnchor} label="Cast" width={280}>
         <ul class="cast">
           {#each cast as member (member.name)}
+            {@const to = castLink(member, vod, playhead)}
             <li>
-              <CastDisc name={displayName(member)} color={speakerColor(cast, member.name)} {member} size={20} />
+              <CastDisc name={displayName(member)} color={speakerColor(cast, member.name)} {member} {to} size={20} />
               <span class="who">
-                <!-- The streamer who plays them is in the name ("Gigi (GEEGA)"), so only their channel follows. -->
+                <!-- The streamer who plays them is in the name ("Gigi (GEEGA)"), so only their channel follows,
+                     or their own stream at the playhead when it ran alongside. -->
                 <strong>{displayName(member)}</strong>
                 <span class="muted">{castDetail(member)}</span>
-                {#if member.account}
-                  {@const url = channelUrl(member.account)}
+                {#if to}
                   <span class="muted"
-                    ><a class="channel" href={url} onclick={(e) => (e.preventDefault(), openUrl(url))}
-                      >{channelLabel(member.account)}</a
+                    ><a
+                      class="channel"
+                      href={to.href}
+                      title={to.pov ? to.title : undefined}
+                      onclick={(e) => (e.preventDefault(), to.follow())}
+                      >{to.pov ? `Their stream at ${clock(to.pov.offset)}` : to.title}</a
                     ></span
                   >
                 {/if}

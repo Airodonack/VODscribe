@@ -50,6 +50,10 @@ pub struct Annotations {
     pub highlights: Vec<Highlight>,
     pub cast: Vec<CastMember>,
     pub activity: Vec<Activity>,
+    /// Other points of view: cast members' own VODs that ran alongside this
+    /// one. Optional; one `Pov::read` can't take is left out.
+    #[serde(default, deserialize_with = "povs", skip_serializing_if = "Vec::is_empty")]
+    pub povs: Vec<Pov>,
 }
 
 /// The VOD the file is of.
@@ -165,6 +169,65 @@ fn account<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Account>, D:
     Ok(Account::read(&serde_json::Value::deserialize(d)?))
 }
 
+/// Another streamer's VOD that ran alongside this one: whose (`player`, by
+/// their public name, and `account`), which video, when it started (RFC
+/// 3339) and how long it is (seconds). A moment `t` seconds into this VOD is
+/// `started_at + t - start` seconds into it.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub struct Pov {
+    pub player: String,
+    pub account: Account,
+    pub video: Video,
+    pub start: String,
+    pub duration: f64,
+}
+
+/// A video on a site: the platform and its own id there (Twitch's "v2906990586").
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub struct Video {
+    pub platform: String,
+    pub id: String,
+}
+
+impl Pov {
+    /// `value` as a point of view: a player's name, an account
+    /// `Account::read` takes, a video on a listed platform with an id of
+    /// letters, digits and `_-`, a start that reads as a time and a length
+    /// that is one; trimmed; None for anything else. The page's `readPov`
+    /// (annotations.ts) is the same rule.
+    pub fn read(value: &serde_json::Value) -> Option<Pov> {
+        let player = value.get("player")?.as_str()?.trim();
+        let account = Account::read(value.get("account")?)?;
+        let video = value.get("video")?;
+        let platform = video.get("platform")?.as_str()?.trim().to_lowercase();
+        let id = video.get("id")?.as_str()?.trim();
+        let start = value.get("start")?.as_str()?.trim();
+        let duration = value.get("duration")?.as_f64()?;
+        let fits = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-');
+        if player.is_empty()
+            || !ACCOUNT_PLATFORMS.contains(&platform.as_str())
+            || id.is_empty()
+            || !id.chars().all(fits)
+            || crate::chat::parse_time(start).is_none()
+            || !(duration.is_finite() && duration > 0.0)
+        {
+            return None;
+        }
+        Some(Pov {
+            player: player.into(),
+            account,
+            video: Video { platform, id: id.into() },
+            start: start.into(),
+            duration,
+        })
+    }
+}
+
+fn povs<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Pov>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_array().map(|list| list.iter().filter_map(Pov::read).collect()).unwrap_or_default())
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct Activity {
     pub start: f64,
@@ -174,11 +237,12 @@ pub struct Activity {
     pub name: Option<String>,
 }
 
-/// A VOD's cast and activity, as an import left them.
+/// A VOD's cast, activity and other points of view, as an import left them.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct VodAnnotations {
     pub cast: Vec<CastMember>,
     pub activity: Vec<Activity>,
+    pub povs: Vec<Pov>,
 }
 
 fn not_annotations(what: &str) -> anyhow::Error {
@@ -459,14 +523,15 @@ impl Db {
             db.import_transcript(vod_id, annotations)?;
             db.import_marks(vod_id, annotations)?;
             db.conn.execute(
-                "INSERT OR REPLACE INTO vod_annotations (vod_id, cast_members, activity, produced, imported_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT OR REPLACE INTO vod_annotations (vod_id, cast_members, activity, produced, imported_at, povs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     vod_id,
                     serde_json::to_string(&annotations.cast)?,
                     serde_json::to_string(&annotations.activity)?,
                     annotations.produced.as_ref().map(serde_json::to_string).transpose()?,
-                    now()
+                    now(),
+                    serde_json::to_string(&annotations.povs)?
                 ],
             )?;
             if let Some(chat) = chat {
@@ -579,16 +644,21 @@ impl Db {
         })
     }
 
-    /// VOD `vod_id`'s cast and activity, if annotations were imported for it.
+    /// VOD `vod_id`'s cast, activity and other points of view, if annotations were imported for it.
     pub fn vod_annotations(&self, vod_id: i64) -> Result<Option<VodAnnotations>> {
-        let row: Option<(String, String)> = self
+        let row: Option<(String, String, Option<String>)> = self
             .conn
-            .query_row("SELECT cast_members, activity FROM vod_annotations WHERE vod_id = ?1", [vod_id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
+            .query_row("SELECT cast_members, activity, povs FROM vod_annotations WHERE vod_id = ?1", [vod_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             })
             .optional()?;
-        let Some((cast, activity)) = row else { return Ok(None) };
-        Ok(Some(VodAnnotations { cast: serde_json::from_str(&cast)?, activity: serde_json::from_str(&activity)? }))
+        let Some((cast, activity, povs)) = row else { return Ok(None) };
+        Ok(Some(VodAnnotations {
+            cast: serde_json::from_str(&cast)?,
+            activity: serde_json::from_str(&activity)?,
+            // None from an import before they were kept (`db::MIGRATE_V34`).
+            povs: povs.as_deref().map(serde_json::from_str).transpose()?.unwrap_or_default(),
+        }))
     }
 }
 
@@ -777,6 +847,49 @@ mod tests {
             "account": { "platform": "youtube", "login": "@ada.makes" } }),
             "and leaves out what's not there"
         );
+    }
+
+    #[test]
+    fn other_points_of_view_are_read_and_kept_through_an_import() {
+        let pov = |player: &str, platform: &str, id: &str, start: &str, duration: f64| {
+            serde_json::json!({ "player": player, "account": { "platform": "twitch", "login": "burn" },
+                                "video": { "platform": platform, "id": id }, "start": start, "duration": duration })
+        };
+        let mut json = serde_json::to_value(file("twitch", "v123")).unwrap();
+        assert!(from_value(json.clone()).unwrap().povs.is_empty(), "a file may leave them out");
+        json["povs"] = serde_json::json!([
+            pov(" Burn ", "Twitch", " v2906773722 ", "2026-10-01T17:30:00Z", 7200.0),
+            pov("", "twitch", "v1", "2026-10-01T17:30:00Z", 60.0),
+            pov("Burn", "vimeo", "1", "2026-10-01T17:30:00Z", 60.0),
+            pov("Burn", "twitch", "../v1", "2026-10-01T17:30:00Z", 60.0),
+            pov("Burn", "twitch", "v1", "yesterday", 60.0),
+            pov("Burn", "twitch", "v1", "2026-10-01T17:30:00Z", -1.0),
+            { "player": "Burn", "account": { "platform": "vimeo", "login": "burn" },
+              "video": { "platform": "twitch", "id": "v1" }, "start": "2026-10-01T17:30:00Z", "duration": 60.0 },
+            "Burn"
+        ]);
+        let annotations = from_value(json.clone()).expect("a point of view that can't be read isn't fatal");
+        let burn = Pov {
+            player: "Burn".into(),
+            account: Account { platform: "twitch".into(), login: "burn".into() },
+            video: Video { platform: "twitch".into(), id: "v2906773722".into() },
+            start: "2026-10-01T17:30:00Z".into(),
+            duration: 7200.0,
+        };
+        assert_eq!(
+            annotations.povs,
+            std::slice::from_ref(&burn),
+            "trimmed, the platform in lower case, the rest left out"
+        );
+        json["povs"] = serde_json::json!("none");
+        assert!(from_value(json).unwrap().povs.is_empty(), "a list that isn't one is none");
+
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&annotations, None).unwrap();
+        assert_eq!(db.vod_annotations(vod.id).unwrap().unwrap().povs, [burn]);
+        // Imported again without them: none any more.
+        db.import_annotations(&file("twitch", "v123"), None).unwrap();
+        assert!(db.vod_annotations(vod.id).unwrap().unwrap().povs.is_empty());
     }
 
     #[test]

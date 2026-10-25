@@ -132,11 +132,12 @@ export default {
             const got = await app.js(
               `return [...document.querySelectorAll("#transcript .line .speaker")].map((s) => s.textContent.trim())`,
             );
-            return got.length === 4 && got;
+            return got.length === 5 && got;
           },
           MINUTE,
         ).catch(() => []);
-        if (names.join(", ") !== "Marlowe (Vance), Ada, Marlowe (Vance), Ada")
+        // The line no one is named for is under an "Unknown" heading of its own.
+        if (names.join(", ") !== "Marlowe (Vance), Ada, Unknown, Marlowe (Vance), Ada")
           wrong.push(`the transcript's speakers: ${names.join(", ")}`);
         const chapters = await chaptersRead(app, "💬Hello, 🎮Thegame, Goodbye");
         if (chapters !== "💬Hello, 🎮Thegame, Goodbye") wrong.push(`the transcript's chapters: ${chapters}`);

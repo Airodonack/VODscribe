@@ -135,10 +135,10 @@ const commands: Record<string, (args: Args) => unknown> = {
   },
   // The cast's pictures come from the app's own server, unless the build names another.
   avatar_base: () => __AVATAR_BASE__,
-  // A VOD page's cast and activity, as the app keeps them from an import; none in the demo.
+  // A VOD page's cast, activity and other points of view, as the app keeps them from an import; none in the demo.
   vod_annotations: ({ vodId }) => {
     const open = annotated();
-    return open && open.vod.id === vodId ? { cast: open.cast, activity: open.activity } : null;
+    return open && open.vod.id === vodId ? { cast: open.cast, activity: open.activity, povs: open.povs } : null;
   },
   add_mark: ({ vodId, time, kind, text }) => {
     const mark = {

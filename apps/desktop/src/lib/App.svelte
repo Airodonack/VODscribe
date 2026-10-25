@@ -51,6 +51,7 @@
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
   import AnnotationsPane from "./AnnotationsPane.svelte";
+  import { povLibrary } from "./castLink.svelte";
   import type { PaneRow } from "./annotationRows";
 
   // The website's VOD pages open straight onto their one VOD, without the
@@ -672,6 +673,22 @@
     if (playing?.vodId === vodId) playing.at = { time, play: false };
     else playing = { vodId, at: { time, play: false } };
   }
+
+  /** Another streamer's VOD the library has, from a cast member's link to
+   *  their stream at a moment (castLink.svelte.ts): opened, paused at `time`. */
+  function openPov(vodId: number, time: number) {
+    edits.lit = null;
+    edits.openEdit(null);
+    aside = false;
+    selectedId = vodId;
+    if (playing?.vodId === vodId) playing.at = { time, play: false };
+    else playing = { vodId, at: { time, play: false } };
+  }
+  // The website has no library of the visitor's own: its links to other streams go to their sites.
+  $effect(() => {
+    povLibrary.vods = DEMO ? [] : vods;
+    povLibrary.open = DEMO ? null : openPov;
+  });
 
   /** Opens VOD `id` (or none), paused where its playhead was left this session (its start if it's new),
    *  unless it's the one on screen. */

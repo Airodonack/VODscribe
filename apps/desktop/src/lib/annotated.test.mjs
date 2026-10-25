@@ -1,7 +1,16 @@
 // What an imported annotations file shows (annotated.ts): node --test apps/desktop/src/lib/annotated.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CAST_COLORS, activityColor, activityLabel, castDetail, castIndex, crowds, speakerColor } from "./annotated.ts";
+import {
+  CAST_COLORS,
+  activityColor,
+  activityLabel,
+  castDetail,
+  castIndex,
+  crowds,
+  isVoice,
+  speakerColor,
+} from "./annotated.ts";
 import {
   HIGHLIGHT_GLYPHS,
   UNKNOWN_GLYPH,
@@ -66,6 +75,11 @@ test("a cast member's line has their role and other names", () => {
   assert.equal(castDetail(cast[0]), "Streamer · also Mar, M");
   assert.equal(castDetail(cast[1]), "Friend");
   assert.equal(castDetail({ name: "Bo", aliases: ["bo", ""], role: "in-game character" }), "In-game character");
+  // A text-to-speech voice's role is an abbreviation, said as one; and it is no one to link to.
+  assert.equal(castDetail({ name: "TTS", aliases: [], role: "tts" }), "TTS");
+  assert.equal(castDetail({ name: "Voice", aliases: ["Robot"], role: " TTS " }), "TTS · also Robot");
+  assert.ok(isVoice({ role: "tts" }) && isVoice({ role: "TTS" }));
+  assert.ok(!isVoice({ role: "streamer" }) && !isVoice(undefined));
   // The streamer who plays them is named in the heading already.
   assert.equal(
     castDetail({ name: "Gigi", aliases: ["geega", "G"], role: "streamer", player: "GEEGA" }),

@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { groupSpans, pinnedAt, reserveAt } from "./pinned.ts";
+import { anyoneNamed, groupHeads } from "./transcriptGroups.ts";
 
 // A transcript of ten rows, 40 px each: a chapter's divider (30 px) over row
 // 0 and one over row 6; one speaker from row 0 to 3, another from row 3 to 5,
@@ -71,6 +72,31 @@ test("a line no one is named for pushes the speaker out, and none is pinned over
   assert.equal(over.group, -1);
   assert.equal(over.chapter, 0);
   assert.equal(over.height, 30);
+});
+
+test("where anyone is named, a stretch no one is named for is Unknown's: its own group, pinned over it", () => {
+  // The same rows, as lines: row 5 no one's, so in a transcript naming
+  // others it heads a group of its own (transcriptGroups.ts), pinned as theirs are.
+  const who = ["A", "A", "A", "B", "B", null, "C", "C", "C", "C"];
+  const lines = who.map((speaker, i) => ({ start: i * 4, end: i * 4 + 3, speaker }));
+  const items = lines.map((line, i) => ({ line, divided: i === 0 || i === 6 }));
+  const heads = groupHeads(items, undefined, anyoneNamed(lines));
+  const spans = groupSpans(
+    heads,
+    lines.map(() => true),
+  );
+  assert.deepEqual(spans, [
+    { row: 0, end: 3 },
+    { row: 3, end: 5 },
+    { row: 5, end: 6 },
+    { row: 6, end: 10 },
+  ]);
+  const withUnknown = spans.map((span) => ({ ...span, height: SPEAKER }));
+  const over = pinnedAt(offsets, dividers, withUnknown, 215);
+  assert.equal(over.group, 2);
+  assert.ok(heads[withUnknown[over.group].row]?.unknown);
+  // Its lines end at row 6's divider (at 240), which pushes it up as it comes.
+  assert.equal(over.speakerTop, 240 - 215 - SPEAKER);
 });
 
 test("a new chapter pushes out both the pinned divider and the speaker under it", () => {

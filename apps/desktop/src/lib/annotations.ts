@@ -112,6 +112,17 @@ export type CastMember = {
   account?: Account;
 };
 
+/** A video on a site: the platform, and its own id there (Twitch's "v2906990586"). */
+export type Video = { platform: Account["platform"]; id: string };
+
+/**
+ * Another streamer's VOD that ran alongside this one: whose (`player`, by
+ * their public name, and `account`), which video, when it started (`start`,
+ * ISO 8601) and how long it is (`duration`, seconds). A moment `t` seconds
+ * into this VOD is `source.recorded_at + t - start` seconds into it (povs.ts).
+ */
+export type Pov = { player: string; account: Account; video: Video; start: string; duration: number };
+
 export type ActivityKind = "game" | "just chatting" | "event" | "break" | string;
 
 export type Activity = { start: number; end: number; kind: ActivityKind; name?: string };
@@ -126,6 +137,8 @@ export type Annotations = {
   highlights: Highlight[];
   cast: CastMember[];
   activity: Activity[];
+  /** Other points of view, when the file has them. */
+  povs?: Pov[];
 };
 
 /** Where a VOD's files live on the download host, relative to its root. */
@@ -183,8 +196,40 @@ export function parseAnnotations(value: unknown): Annotations {
       ...(tied ? { account: tied } : {}),
     };
   });
-  return { ...v, transcript: { ...transcript, segments }, chapters, highlights, cast } as Annotations;
+  // Other points of view may be left out, and one that can't be read is, rather than the file refused.
+  const povs = Array.isArray(v.povs) ? v.povs.map(readPov).filter((p): p is Pov => p !== null) : [];
+  return { ...v, transcript: { ...transcript, segments }, chapters, highlights, cast, povs } as Annotations;
 }
+
+/**
+ * `value` as another point of view: a player's name, an account `readAccount`
+ * takes, a video on a listed platform with an id of letters, digits and `_-`,
+ * a start that reads as a time and a length that is one; trimmed; null for
+ * anything else. crates/core annotations.rs `Pov::read` is the same rule.
+ */
+export function readPov(value: unknown): Pov | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { player, account, video, start, duration } = value as Record<string, unknown>;
+  const tied = readAccount(account);
+  if (typeof player !== "string" || !player.trim() || !tied) return null;
+  if (typeof video !== "object" || video === null) return null;
+  const { platform, id } = video as Record<string, unknown>;
+  if (typeof platform !== "string" || typeof id !== "string") return null;
+  const site = platform.trim().toLowerCase();
+  if (!(ACCOUNT_PLATFORMS as readonly string[]).includes(site) || !/^[A-Za-z0-9_-]+$/.test(id.trim())) return null;
+  if (typeof start !== "string" || !RFC3339.test(start.trim()) || Number.isNaN(Date.parse(start.trim()))) return null;
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return null;
+  return {
+    player: player.trim(),
+    account: tied,
+    video: { platform: site as Account["platform"], id: id.trim() },
+    start: start.trim(),
+    duration,
+  };
+}
+
+/** A time as crates/core chat.rs `parse_time` reads one: "2026-10-21T18:57:20Z", with seconds' fraction or an offset. */
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
 /**
  * `value` as a cast member's account: a listed platform and a login of

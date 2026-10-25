@@ -29,8 +29,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { Put, Vod } from "./api";
   import AddToEdit from "./AddToEdit.svelte";
-  import { openUrl } from "@tauri-apps/plugin-opener";
-  import { channelLabel, channelUrl } from "./accounts";
+  import { castLink } from "./castLink.svelte";
   import CastDisc from "./CastDisc.svelte";
   import Popover from "./Popover.svelte";
   import { DEMO } from "./demo";
@@ -434,14 +433,13 @@
                     {#if row.cast.length}
                       <p class="people">
                         {#each people(row) as p, j (j)}
-                          {@const account = p.member?.account}
-                          {#if account}
-                            {@const url = channelUrl(account)}
+                          {@const to = castLink(p.member, vod, row.start)}
+                          {#if to}
                             <a
                               class="chip"
-                              href={url}
-                              title="{p.member?.player?.trim() || p.member?.name} · {channelLabel(account)}"
-                              onclick={(e) => (e.preventDefault(), openUrl(url))}
+                              href={to.href}
+                              title={to.pov ? to.title : `${p.member?.player?.trim() || p.member?.name} · ${to.title}`}
+                              onclick={(e) => (e.preventDefault(), to.follow())}
                               ><CastDisc
                                 name={p.label}
                                 color={p.color}
