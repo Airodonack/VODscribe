@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated October 14, 2026</p>
+  <p class="muted">Last updated October 25, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -63,6 +63,17 @@
       other sites play from your computer.
     </li>
     <li>
+      <strong>Look for annotations, unless you turn it off.</strong> When you add a Kick, Twitch or YouTube VOD, it asks dl.vodscribe.com
+      whether annotations (a transcript, chapters, highlights and who's speaking) are published for it, naming only the site
+      and the VOD's id there. If you choose to use them, it downloads them from there. Turn it off in Settings → Privacy.
+    </li>
+    <li>
+      <strong>Show the pictures of the streamers annotations name, unless you turn it off.</strong> For each, it asks img.vodscribe.com,
+      which gets the streamer's site and login and your IP address, and sends the app on to Twitch's or Kick's own picture
+      (static-cdn.jtvnw.net, files.kick.com). They're kept only as the app's web view keeps any image. Turn it off in Settings
+      → Privacy, and their initials show instead.
+    </li>
+    <li>
       <strong>Download what it needs to run.</strong> On first run, and when you ask: the video downloader (yt-dlp, from GitHub),
       the video reader (FFmpeg, from GitHub or ffmpeg.martin-riedl.de), the YouTube helper (Deno, from GitHub) and the speech
       model (from dl.vodscribe.com). The optional GPU add-on comes from GitHub and NVIDIA's packages on PyPI. Every file is
@@ -82,7 +93,10 @@
   <p>
     vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
     like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
-    when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one.
+    when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
+    page here loads its annotations from dl.vodscribe.com, and the pictures of the streamers they name from
+    img.vodscribe.com, which gets the streamer's site and login and your IP address, and passes your browser on to
+    Twitch's or Kick's own picture.
   </p>
 
   <h2>Donations</h2>

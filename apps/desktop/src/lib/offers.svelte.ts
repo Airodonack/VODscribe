@@ -38,8 +38,9 @@ class Offers {
   /** Asks the file host again about `vod` (its row's menu), and offers what's found. */
   async check(vod: Vod) {
     try {
-      const { asked, offer } = await api.checkAnnotations(vod.id);
-      if (!asked) toast.show("Looking for annotations is turned off in Settings › Privacy.");
+      const { asked, can_have, offer } = await api.checkAnnotations(vod.id);
+      if (!can_have) toast.show("Annotations are only published for Twitch, YouTube and Kick VODs.");
+      else if (!asked) toast.show("Looking for annotations is turned off in Settings › Privacy.");
       else if (offer.available !== "available") toast.show("No annotations are published for this VOD yet.");
       else await this.offer(vod, false);
     } catch (e) {

@@ -65,6 +65,12 @@ pub struct Settings {
     /// the request names the site and the VOD's id, nothing else. On unless
     /// turned off; off, nothing is asked.
     pub ask_for_annotations: bool,
+    /// Whether the page shows the pictures of the streamers annotations
+    /// name, asking the image server for each (accounts.ts `AVATAR_BASE`):
+    /// the request names the site and the streamer's login. On unless turned
+    /// off; off, nothing is asked and their initials show. Only the page
+    /// reads it.
+    pub load_cast_pictures: bool,
 }
 
 impl Default for Settings {
@@ -78,6 +84,7 @@ impl Default for Settings {
             key_bindings: BTreeMap::new(),
             show_keys: false,
             ask_for_annotations: true,
+            load_cast_pictures: true,
         }
     }
 }
@@ -227,6 +234,18 @@ mod tests {
         let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
         assert!(!again.ask_for_annotations);
         assert!(again.show_keys);
+    }
+
+    #[test]
+    fn loading_cast_pictures_starts_on_and_stays_as_left() {
+        // A settings.json as 0.6.0 wrote it: no word of pictures.
+        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "ask_for_annotations": false}"#).unwrap();
+        assert!(old.load_cast_pictures);
+        assert!(Settings::default().load_cast_pictures);
+        let off = Settings { load_cast_pictures: false, ..old };
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!again.load_cast_pictures);
+        assert!(!again.ask_for_annotations);
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

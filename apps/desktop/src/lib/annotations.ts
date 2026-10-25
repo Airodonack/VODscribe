@@ -142,6 +142,89 @@ export type Annotations = {
 };
 
 /**
+ * The most a file may bring, as crates/core annotations.rs has them: well
+ * past what the longest VOD's annotations have, short of what would hold
+ * the app up. `MAX_TEXT` is any one text's length in characters.
+ */
+export const LIMITS = {
+  segments: 200_000,
+  words: 2_000,
+  chapters: 2_000,
+  highlights: 5_000,
+  cast: 1_000,
+  /** A cast member's other names, and the people a highlight names. */
+  names: 100,
+  activity: 10_000,
+  povs: 1_000,
+  text: 10_000,
+  /** A chat file's messages, and one message's parts. */
+  messages: 2_000_000,
+  parts: 1_000,
+} as const;
+
+/** `n` as it's written out: "200,000". */
+export const count = (n: number) => n.toLocaleString("en-US");
+
+const listLength = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+
+/** Whether `s` is longer than `LIMITS.text` characters (not UTF-16 units, as crates/core counts them). */
+function longText(s: string): boolean {
+  if (s.length <= LIMITS.text) return false;
+  let n = 0;
+  for (const _ of s) if (++n > LIMITS.text) return true;
+  return false;
+}
+
+/** Whether any text in `value` (a key or a string, at any depth) is longer than `LIMITS.text` characters. */
+export function hasLongText(value: unknown): boolean {
+  const left: unknown[] = [value];
+  while (left.length) {
+    const v = left.pop();
+    if (typeof v === "string") {
+      if (longText(v)) return true;
+    } else if (Array.isArray(v)) {
+      // One at a time: a spread of a long list overflows the call's arguments.
+      for (const item of v) left.push(item);
+    } else if (typeof v === "object" && v !== null)
+      for (const [k, item] of Object.entries(v)) {
+        if (longText(k)) return true;
+        left.push(item);
+      }
+  }
+  return false;
+}
+
+/**
+ * Throws, with a message for the user, if annotations file `v` brings more
+ * than the app takes (`LIMITS`). crates/core annotations.rs `within_limits`
+ * is the same rule.
+ */
+function withinLimits(v: Record<string, unknown>) {
+  const tooBig = (what: string): never => {
+    throw new Error(`This annotations file is too big: ${what}.`);
+  };
+  const segments = (v.transcript as Record<string, unknown> | undefined)?.segments;
+  const lists: [unknown, number, string][] = [
+    [segments, LIMITS.segments, "lines"],
+    [v.chapters, LIMITS.chapters, "chapters"],
+    [v.highlights, LIMITS.highlights, "highlights"],
+    [v.cast, LIMITS.cast, "people in its cast"],
+    [v.activity, LIMITS.activity, "stretches of activity"],
+    [v.povs, LIMITS.povs, "other points of view"],
+  ];
+  for (const [list, max, what] of lists) if (listLength(list) > max) tooBig(`it has more than ${count(max)} ${what}`);
+  const nested: [unknown, string, number, string][] = [
+    [segments, "words", LIMITS.words, "a line has more than {} words"],
+    [v.highlights, "cast", LIMITS.names, "a highlight names more than {} people"],
+    [v.cast, "aliases", LIMITS.names, "a cast member has more than {} other names"],
+  ];
+  for (const [list, inner, max, what] of nested)
+    if (Array.isArray(list) && list.some((item) => listLength((item as Record<string, unknown> | null)?.[inner]) > max))
+      tooBig(what.replace("{}", count(max)));
+  if (hasLongText(v)) tooBig(`a text in it is longer than ${count(LIMITS.text)} characters`);
+}
+
+/**
  * Reads a parsed JSON value as an annotations file, checking the shape the
  * app relies on; the message of the error it throws is for the user.
  */
@@ -153,6 +236,7 @@ export function parseAnnotations(value: unknown): Annotations {
   const v = value as Record<string, unknown>;
   if (v.format !== ANNOTATIONS_FORMAT) bad(`its format is ${JSON.stringify(v.format)}`);
   if (v.version !== ANNOTATIONS_VERSION) bad(`version ${JSON.stringify(v.version)} isn't ${ANNOTATIONS_VERSION}`);
+  withinLimits(v);
   const source = (v.source ?? {}) as Record<string, unknown>;
   if (typeof source.platform !== "string" || typeof source.id !== "string") bad("no source platform and id");
   if (typeof source.duration !== "number") bad("no duration");
@@ -229,9 +313,10 @@ const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})
 
 /**
  * `value` as a cast member's account: a listed platform and a login of
- * letters, digits and `_.-` (a YouTube handle with its "@" first), trimmed;
- * null for anything else. crates/core annotations.rs `Account::read` is the
- * same rule.
+ * letters, digits and `_.-`, not only dots (which a path would read as
+ * itself or its parent), a YouTube handle with its "@" first; trimmed; null
+ * for anything else. crates/core annotations.rs `Account::read` is the same
+ * rule.
  */
 export function readAccount(value: unknown): Account | null {
   if (typeof value !== "object" || value === null) return null;
@@ -241,6 +326,7 @@ export function readAccount(value: unknown): Account | null {
   const name = login.trim();
   if (!(ACCOUNT_PLATFORMS as readonly string[]).includes(site)) return null;
   if (!(site === "youtube" ? /^@?[A-Za-z0-9_.-]+$/ : /^[A-Za-z0-9_.-]+$/).test(name)) return null;
+  if (/^@?\.+$/.test(name)) return null;
   return { platform: site as Account["platform"], login: name };
 }
 

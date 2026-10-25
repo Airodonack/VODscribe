@@ -6,8 +6,7 @@
 // under its speakers' names, with its chapters, and the
 // library row has the gift button. The Timeline panel's Marks toggles hide
 // the imported chapters and highlights, or the user's own (here, as the
-// transcript's chapter dividers: a Dailymotion VOD has no timeline till it's
-// downloaded), and stay as left after a restart. The gift button,
+// transcript's chapter dividers), and stay as left after a restart. The gift button,
 // with the file unchanged, says the VOD has the latest already and offers
 // Replace anyway (no Don't ask again); replaced, the import's marks are
 // brought anew and a chapter of the user's own stays.
@@ -25,7 +24,7 @@ import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const ID = "xe2eoffer";
-const FILE = `/annotations/dailymotion/${ID}.json`;
+const FILE = `/annotations/youtube/${ID}.json`;
 const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
 
 /** The offer's words and buttons, or null while there's none. */
@@ -37,15 +36,14 @@ const offer = (app) =>
     DIALOG,
   );
 
-/** Shows VOD `id` (its transcript and timeline: a Dailymotion VOD has no player till Play). */
+/** Shows VOD `id` (its transcript and timeline: YouTube's player loads only on Play). */
 async function show(app, id) {
   if (!(await app.js(`return !!document.querySelector('.vod.selected[data-key="${id}"]')`)))
     await app.click(`.vod[data-key="${id}"]`);
   await until("its transcript", () => app.js(`return !!document.querySelector("#transcript")`), MINUTE);
 }
 
-/** The transcript's chapter dividers, as their icon and title (no spaces), in order. A
- *  Dailymotion VOD has no timeline till it's downloaded: the transcript shows its chapters. */
+/** The transcript's chapter dividers, as their icon and title (no spaces), in order. */
 const chapterHeads = (app) =>
   app.js(
     `return [...document.querySelectorAll("#transcript .chapter-head")].map((d) => d.textContent.replace(/\\s+/g, ""))`,
@@ -89,7 +87,7 @@ export default {
       'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "Transcript and annotations" says the VOD has the latest transcript and annotations already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again".',
   },
   async run(app, ctx) {
-    const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"dailymotion"').replace('"{ID}"', `"${ID}"`);
+    const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
     const host = serveFiles((method, at) =>
       at === FILE
         ? { status: 200, headers: { ETag: '"v1"', "Content-Type": "application/json" }, body: json }

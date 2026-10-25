@@ -1,10 +1,13 @@
 // VODs "from a site", added by their link without the network: yt-dlp is a
 // stand-in in the data folder's bin (the real one put back after) that
-// answers any lookup as a Dailymotion video whose id is the link's last
-// part, a minute long, and does nothing else (a download fails). Dailymotion
-// has no chat replay the app reads, and the answer names no thumbnail, so
-// adding one reaches nothing outside this computer. Links are on a name
-// that never resolves (.invalid), as the stand-in never looks.
+// answers any lookup as a YouTube video whose id is the link's last part, a
+// minute long (or a Dailymotion one, for a link to /dailymotion/<id>), and
+// does nothing else: it has no chat replay, and a download fails. YouTube's,
+// as the file host is asked only about Twitch's, YouTube's and Kick's VODs,
+// and YouTube's chat comes through yt-dlp alone; the answer names no
+// thumbnail and its player loads only on Play, so adding one reaches nothing
+// outside this computer. Links are on a name that never resolves
+// (.invalid), as the stand-in never looks.
 
 import { chmodSync, existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -12,21 +15,28 @@ import path from "node:path";
 import { MINUTE, until } from "./app.mjs";
 import { dataDirs } from "./data.mjs";
 
-/** A yt-dlp answering `-J <link>` as Dailymotion's video of the link's last part. */
+/** A yt-dlp answering `-J <link>` as YouTube's (or Dailymotion's) video of the link's last part. */
 const STAND_IN = `#!/bin/sh
 # The e2e tests' stand-in for yt-dlp (tests/e2e/lib/siteVod.mjs).
-json=0; link=""
+json=0; chat=0; link=""
 for arg in "$@"; do
   [ "$arg" = "-J" ] && json=1
+  [ "$arg" = "--write-subs" ] && chat=1
   link="$arg"
 done
+# A chat replay asked for: none written, as for a video that wasn't a livestream.
+[ "$chat" = 1 ] && exit 0
 [ "$json" = 1 ] || exit 1
 id="\${link##*/}"
-printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","duration":60}\\n' "$id" "$id"
+rest="\${link%/*}"
+case "\${rest##*/}" in
+  dailymotion) printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","duration":60}\\n' "$id" "$id" ;;
+  *) printf '{"id":"%s","extractor_key":"Youtube","webpage_url":"https://www.youtube.com/watch?v=%s","title":"A minute with Marlowe","channel":"Marlowe","duration":60}\\n' "$id" "$id" ;;
+esac
 `;
 
-/** The link the stand-in answers for VOD `id`. */
-export const linkTo = (id) => `https://vods.example.invalid/${id}`;
+/** The link the stand-in answers for VOD `id`: YouTube's, or `site`'s ("dailymotion"). */
+export const linkTo = (id, site = null) => `https://vods.example.invalid/${site ? `${site}/` : ""}${id}`;
 
 /**
  * Runs `fn(app)` with the stand-in in place: the app is started again with
@@ -51,10 +61,10 @@ export async function withSiteVods(ctx, fn) {
   }
 }
 
-/** Adds the stand-in's VOD `id` by its link, as pasted in; the VOD, once in the library. */
-export async function addSiteVod(app, id) {
+/** Adds the stand-in's VOD `id` (YouTube's, or `site`'s) by its link, as pasted in; the VOD, once in the library. */
+export async function addSiteVod(app, id, site = null) {
   await app.toLibrary();
-  await app.type('input[aria-label="VOD link"]', linkTo(id));
+  await app.type('input[aria-label="VOD link"]', linkTo(id, site));
   await app.submit('input[aria-label="VOD link"]');
   return until(
     `VOD ${id} added`,

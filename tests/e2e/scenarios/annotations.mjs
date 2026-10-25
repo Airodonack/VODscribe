@@ -32,7 +32,8 @@
 // the character. A cast member with an account is headed by their picture,
 // from the image server (the run's file host, lib/fileHost.mjs), their name a
 // link to their channel; one whose picture isn't there keeps their initial,
-// the character's. Where the file has the streamer's own VOD running at the
+// the character's. With pictures turned off in Settings › Privacy, every disc
+// is its initial and the image server isn't asked. Where the file has the streamer's own VOD running at the
 // same time (its povs: Marlowe's, from 0:20 in), the name and disc link to
 // that VOD at the same moment instead: a heading at its lines' start, a chip
 // at its highlight's start, the Cast list at the playhead; outside it, the
@@ -159,6 +160,27 @@ const pictures = (method, path) =>
     : path === "/pictures/marlowe.png"
       ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
       : { status: 404 };
+
+const PICTURES = "Load streamers' pictures from img.vodscribe.com";
+
+/** Turns the cast's pictures on or off in Settings › Privacy, and closes Settings. */
+async function setPictures(app, on) {
+  await app.openSettings("Privacy");
+  await app.js(
+    `const label = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label')].find((l) => l.textContent.trim() === arguments[0]);
+     if (!label) throw new Error("no setting " + arguments[0]);
+     const box = label.querySelector("input");
+     if (box.checked !== arguments[1]) box.click();`,
+    PICTURES,
+    on,
+  );
+  await until(
+    `pictures turned ${on ? "on" : "off"}`,
+    async () => (await app.invoke("get_settings")).load_cast_pictures === on,
+    10_000,
+  );
+  await app.key("Escape");
+}
 
 const tip = (app) =>
   app.js(`return document.querySelector(".scrubber .tip")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
@@ -400,6 +422,40 @@ export default {
     if (cast.join(" | ") !== castWant.join(" | ")) wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
     await app.key("Escape");
+
+    // Pictures turned off: each disc is its initial (Unknown's the outline),
+    // in the transcript and in Cast, and the image server isn't asked.
+    const quiet = serveFiles(pictures);
+    await setPictures(app, false);
+    const discs = (where) =>
+      app.js(
+        `return [...document.querySelectorAll(arguments[0])].map((d) =>
+          (d.querySelector("img") ? "picture " : "") + (d.textContent.trim() || "outline") +
+          (getComputedStyle(d).color === "rgba(0, 0, 0, 0)" ? " hidden" : ""))`,
+        where,
+      );
+    const initials = "M | A | outline | M | A";
+    const plain = await until(
+      "the transcript's discs without pictures",
+      async () => (await discs("#transcript .group-head .avatar")).join(" | ") === initials,
+      10_000,
+    ).catch(async () => (await discs("#transcript .group-head .avatar")).join(" | "));
+    if (plain !== true) wrong.push(`with pictures off, the transcript's discs read ${plain}`);
+    await app.click(".cast-toggle");
+    const castDiscs = await until(
+      "the cast list's discs",
+      async () => {
+        const got = await discs('[role=dialog][aria-label="Cast"] li .avatar');
+        return got.length && got.join(" | ");
+      },
+      10_000,
+    ).catch(() => "none");
+    if (castDiscs !== "M | A") wrong.push(`with pictures off, the cast list's discs read ${castDiscs}`);
+    await app.key("Escape");
+    if (quiet.requests.length)
+      wrong.push(`with pictures off, the image server was asked: ${quiet.requests.map((r) => r.path).join(", ")}`);
+    quiet.stop();
+    await setPictures(app, true);
 
     // The Timeline panel's "Imported marks" toggle takes the import's chapters
     // and highlights off the timeline, and puts them back.

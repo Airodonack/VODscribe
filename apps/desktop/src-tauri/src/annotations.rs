@@ -129,13 +129,18 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
 
 #[derive(Serialize)]
 pub(crate) struct Checked {
-    /// False when the user turned asking off (Settings): nothing was asked.
+    /// False when nothing was asked: the VOD can't have any
+    /// (`can_have`), or the user turned asking off (Settings).
     asked: bool,
+    /// Whether the file host can hold annotations for a VOD of its site
+    /// (`annotations::can_be_published`).
+    can_have: bool,
     offer: Offer,
 }
 
 /// Asks the file host again whether VOD `vod_id`'s annotations are
-/// published, whatever it said before, unless the user turned asking off.
+/// published, whatever it said before, unless it can't have any or the user
+/// turned asking off.
 #[tauri::command]
 pub(crate) async fn check_annotations(app: AppHandle, vod_id: i64) -> CmdResult<Checked> {
     let task_app = app.clone();
@@ -146,13 +151,14 @@ pub(crate) async fn check_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
             let db = state.db.lock().unwrap();
             db.vod(vod_id)?.ok_or_else(|| anyhow::anyhow!("That VOD is gone."))?
         };
-        let asked = annotations::can_be_published(&vod.info.platform) && may_ask(&app);
+        let can_have = annotations::can_be_published(&vod.info.platform);
+        let asked = can_have && may_ask(&app);
         if asked {
             look_up(&app, vod_id, &vod.info.platform, &vod.info.platform_id)
                 .map_err(|e| anyhow::anyhow!("Couldn't check for annotations: {e:#}"))?;
         }
         let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(vod_id)?;
-        Ok(Checked { asked, offer })
+        Ok(Checked { asked, can_have, offer })
     })
     .await
     .map_err(err)?

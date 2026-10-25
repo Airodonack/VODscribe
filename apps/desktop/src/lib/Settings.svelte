@@ -30,6 +30,7 @@
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
+  let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -413,9 +414,9 @@
         </p>
         <p class="muted hint">
           VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, to
-          check for updates and, unless you turn it off below, to look for annotations. Those parts and updates are
-          checked before they're used, to make sure they haven't been tampered with. Video files from your computer
-          never leave it.
+          check for updates and, unless you turn them off below, to look for annotations and to show the pictures of the
+          streamers they name. Those parts and updates are checked before they're used, to make sure they haven't been
+          tampered with. Video files from your computer never leave it.
         </p>
         <label class="toggle">
           <input
@@ -426,6 +427,18 @@
           Ask the file host whether annotations exist for a VOD you add
         </label>
         <p class="muted hint">It sends the VOD's site and its id on that site, nothing else.</p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={loadCastPictures}
+            onchange={(e) => appSettings.update({ load_cast_pictures: e.currentTarget.checked })}
+          />
+          Load streamers' pictures from img.vodscribe.com
+        </label>
+        <p class="muted hint">
+          It gets the streamer's site and login, and your IP address, and passes you on to Twitch's or Kick's own
+          picture. Off, their initials show instead.
+        </p>
         {#if dataDir}
           <p class="muted hint">Your library is in:</p>
           <code class="path">{dataDir}</code>

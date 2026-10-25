@@ -129,6 +129,16 @@ test("the chat file as the chat commands give it", () => {
   });
   assert.equal(lines[2].kind, "sub");
   assert.throws(() => chatOf({}), /isn't a VODscribe chat file/);
+  // More than the app takes: refused as the app refuses it (crates/core annotations.rs).
+  const message = { time: 1, author: "Ada", parts: [{ type: "text", text: "hi" }] };
+  const cases = [
+    [new Array(2_000_001).fill(null), "it has more than 2,000,000 messages"],
+    [[{ ...message, parts: new Array(1_001).fill(message.parts[0]) }], "a message has more than 1,000 parts"],
+    [[{ ...message, author: "x".repeat(10_001) }], "a text in it is longer than 10,000 characters"],
+  ];
+  for (const [value, said] of cases)
+    assert.throws(() => chatOf(value), { message: `This chat file is too big: ${said}.` });
+  assert.equal(chatOf([{ ...message, author: "é".repeat(10_000) }]).length, 1);
 });
 
 test("the library's one VOD", () => {

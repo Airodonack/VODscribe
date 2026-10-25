@@ -38,6 +38,31 @@ pub const BASE_ENV: &str = "VODSCRIBE_ANNOTATIONS_URL";
 /// The largest published file read: a long VOD's is a few megabytes.
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
+// The most a file may bring: well past what the longest VOD's annotations
+// have, short of what would hold the app up (an import is one transaction
+// with the library locked, and the page draws a row and a mark for each).
+// The page's reader (annotations.ts) has the same limits.
+/// Transcript lines.
+pub const MAX_SEGMENTS: usize = 200_000;
+/// A transcript line's words.
+pub const MAX_WORDS: usize = 2_000;
+pub const MAX_CHAPTERS: usize = 2_000;
+pub const MAX_HIGHLIGHTS: usize = 5_000;
+/// The people in the cast.
+pub const MAX_CAST: usize = 1_000;
+/// A cast member's other names, and the people a highlight names.
+pub const MAX_NAMES: usize = 100;
+/// Stretches of activity (a game, just chatting, an event).
+pub const MAX_ACTIVITY: usize = 10_000;
+/// Other points of view.
+pub const MAX_POVS: usize = 1_000;
+/// Any one text in a file (a title, a line, a name), in characters.
+pub const MAX_TEXT: usize = 10_000;
+/// A chat file's messages.
+pub const MAX_MESSAGES: usize = 2_000_000;
+/// One chat message's parts (its text and emotes).
+pub const MAX_PARTS: usize = 1_000;
+
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct Annotations {
     pub format: String,
@@ -142,9 +167,10 @@ pub const ACCOUNT_PLATFORMS: [&str; 3] = ["twitch", "kick", "youtube"];
 
 impl Account {
     /// `value` as an account: a listed platform (any case) and a login of
-    /// letters, digits and `_.-` (a YouTube handle with its "@" first),
-    /// trimmed; None for anything else. The page's `readAccount`
-    /// (annotations.ts) is the same rule.
+    /// letters, digits and `_.-`, not only dots (which a path would read as
+    /// itself or its parent), a YouTube handle with its "@" first; trimmed;
+    /// None for anything else. The page's `readAccount` (annotations.ts) is
+    /// the same rule.
     pub fn read(value: &serde_json::Value) -> Option<Account> {
         let platform = value.get("platform")?.as_str()?.trim().to_lowercase();
         let login = value.get("login")?.as_str()?.trim();
@@ -153,7 +179,7 @@ impl Account {
         }
         let rest = if platform == "youtube" { login.strip_prefix('@').unwrap_or(login) } else { login };
         let fits = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
-        if rest.is_empty() || !rest.chars().all(fits) {
+        if rest.is_empty() || !rest.chars().all(fits) || rest.chars().all(|c| c == '.') {
             return None;
         }
         Some(Account { platform, login: login.to_string() })
@@ -268,7 +294,95 @@ pub fn from_value(value: serde_json::Value) -> Result<Annotations> {
         let shown = version.map_or("none".to_string(), |v| v.to_string());
         return Err(not_annotations(&format!("version {shown} isn't {VERSION}")));
     }
+    within_limits(&value)?;
     serde_json::from_value(value).map_err(|e| not_annotations(&e.to_string()))
+}
+
+/// `n` as it's written out: "200,000".
+fn count(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
+
+/// The length of the list at `value`'s `path`, if there's one there.
+fn list_len(value: &serde_json::Value, path: &str) -> usize {
+    value.pointer(path).and_then(|v| v.as_array()).map_or(0, Vec::len)
+}
+
+/// Whether any text in `value` (a key or a string, at any depth) is longer
+/// than `MAX_TEXT` characters.
+fn has_long_text(value: &serde_json::Value) -> bool {
+    let long = |s: &str| s.len() > MAX_TEXT && s.chars().count() > MAX_TEXT;
+    match value {
+        serde_json::Value::String(s) => long(s),
+        serde_json::Value::Array(list) => list.iter().any(has_long_text),
+        serde_json::Value::Object(map) => map.iter().any(|(k, v)| long(k) || has_long_text(v)),
+        _ => false,
+    }
+}
+
+/// The items of the list at `value`'s `path`, none if there's none.
+fn items<'a>(value: &'a serde_json::Value, path: &str) -> &'a [serde_json::Value] {
+    value.pointer(path).and_then(|v| v.as_array()).map_or(&[], Vec::as_slice)
+}
+
+/// Refuses an annotations file that brings more than the app takes (the
+/// `MAX_` limits), saying what for the user. The page's `withinLimits`
+/// (annotations.ts) is the same rule.
+fn within_limits(value: &serde_json::Value) -> Result<()> {
+    let too_big = |what: String| Err(anyhow::anyhow!("This annotations file is too big: {what}."));
+    let lists = [
+        ("/transcript/segments", MAX_SEGMENTS, "lines"),
+        ("/chapters", MAX_CHAPTERS, "chapters"),
+        ("/highlights", MAX_HIGHLIGHTS, "highlights"),
+        ("/cast", MAX_CAST, "people in its cast"),
+        ("/activity", MAX_ACTIVITY, "stretches of activity"),
+        ("/povs", MAX_POVS, "other points of view"),
+    ];
+    for (path, max, what) in lists {
+        if list_len(value, path) > max {
+            return too_big(format!("it has more than {} {what}", count(max)));
+        }
+    }
+    let nested = [
+        ("/transcript/segments", "/words", MAX_WORDS, "a line has more than {} words"),
+        ("/highlights", "/cast", MAX_NAMES, "a highlight names more than {} people"),
+        ("/cast", "/aliases", MAX_NAMES, "a cast member has more than {} other names"),
+    ];
+    for (path, inner, max, what) in nested {
+        if items(value, path).iter().any(|item| list_len(item, inner) > max) {
+            return too_big(what.replace("{}", &count(max)));
+        }
+    }
+    if has_long_text(value) {
+        return too_big(format!("a text in it is longer than {} characters", count(MAX_TEXT)));
+    }
+    Ok(())
+}
+
+/// Refuses a chat file that has more than the app takes (`MAX_MESSAGES`,
+/// `MAX_PARTS`, `MAX_TEXT`), saying what for the user. The website's
+/// `chatOf` (apps/site annotated.ts) is the same rule.
+fn chat_within_limits(value: &serde_json::Value) -> Result<()> {
+    let too_big = |what: String| Err(anyhow::anyhow!("This chat file is too big: {what}."));
+    let messages = value.as_array().map_or(&[][..], Vec::as_slice);
+    if messages.len() > MAX_MESSAGES {
+        return too_big(format!("it has more than {} messages", count(MAX_MESSAGES)));
+    }
+    if messages.iter().any(|m| list_len(m, "/parts") > MAX_PARTS) {
+        return too_big(format!("a message has more than {} parts", count(MAX_PARTS)));
+    }
+    if has_long_text(value) {
+        return too_big(format!("a text in it is longer than {} characters", count(MAX_TEXT)));
+    }
+    Ok(())
 }
 
 /// The chat file that goes with annotations file `path`: `x.chat.json` beside `x.json`.
@@ -291,11 +405,40 @@ pub fn read(path: &Path, chat: Option<&Path>) -> Result<(Annotations, Option<Vec
         Some(chat) => {
             let shown = crate::tools::shown(&chat);
             let json = std::fs::read_to_string(&chat).with_context(|| format!("read {shown}"))?;
-            Some(serde_json::from_str(&json).with_context(|| format!("{shown} isn't a chat VODscribe can read"))?)
+            let not_chat = || format!("{shown} isn't a chat VODscribe can read");
+            let value = serde_json::from_str(&json).with_context(not_chat)?;
+            chat_within_limits(&value)?;
+            Some(serde_json::from_value(value).with_context(not_chat)?)
         }
         None => None,
     };
     Ok((annotations, chat))
+}
+
+/// Whether `id` (and for Kick, `channel`) has the shape the site's own
+/// VODs' have, as a VOD added by its link gets them: YouTube's eleven
+/// letters, digits, `_` and `-`; Twitch's number, its "v" first or not;
+/// Kick's UUID, under a channel of letters, digits, `_` and `-`. They go
+/// into the paths of the requests made for the VOD (Kick's playback, on
+/// web.kick.com), so a file's own can't steer those.
+fn has_sites_shape(platform: &str, id: &str, channel: Option<&str>) -> bool {
+    let word = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'));
+    match platform {
+        "youtube" => id.len() == 11 && word(id),
+        "twitch" => {
+            let number = id.strip_prefix('v').unwrap_or(id);
+            (1..=20).contains(&number.len()) && number.bytes().all(|b| b.is_ascii_digit())
+        }
+        "kick" => {
+            let uuid = id.len() == 36
+                && id.bytes().enumerate().all(|(i, b)| match i {
+                    8 | 13 | 18 | 23 => b == b'-',
+                    _ => b.is_ascii_hexdigit(),
+                });
+            uuid && channel.is_some_and(|c| c.len() <= 100 && word(c))
+        }
+        _ => false,
+    }
 }
 
 /// Where a VOD of `platform` with id `id` is watched, for a VOD an import
@@ -306,6 +449,16 @@ fn watch_url(platform: &str, id: &str, channel: Option<&str>) -> Option<String> 
         "twitch" => Some(format!("https://www.twitch.tv/videos/{}", id.strip_prefix('v').unwrap_or(id))),
         "kick" => channel.map(|c| format!("https://kick.com/{}/videos/{id}", c.to_lowercase())),
         _ => None,
+    }
+}
+
+/// `platform`'s name as its site writes it.
+fn site_name(platform: &str) -> &str {
+    match platform {
+        "youtube" => "YouTube",
+        "twitch" => "Twitch",
+        "kick" => "Kick",
+        other => other,
     }
 }
 
@@ -363,17 +516,14 @@ pub fn file_url(base: &str, platform: &str, id: &str) -> String {
     format!("{base}/annotations/{}/{}.json", escape(platform), escape(id))
 }
 
-/// yt-dlp's name for a link no site's own reader takes (`fetch::platform_of`
-/// of its "Generic"): the video's id is then the link's file name.
-const GENERIC: &str = "generic";
-
-/// Whether VODs of `platform` can have published annotations: those from a
-/// site, not a file on this computer (its id is this computer's own), nor a
-/// link yt-dlp reads as a plain video file, whose id is the file's name on
-/// whatever server it's on (a private one, say), not a site's id for it. The
-/// file host is never asked of those.
+/// Whether VODs of `platform` can have published annotations: Twitch's,
+/// YouTube's and Kick's, the only ones the file host holds. The file host is
+/// never asked of others: not a file on this computer (its id is this
+/// computer's own), nor a link yt-dlp reads as a plain video file (whose id
+/// is the file's name on whatever server it's on, a private one, say), nor
+/// another site's VOD.
 pub fn can_be_published(platform: &str) -> bool {
-    platform != crate::local::PLATFORM && platform != GENERIC
+    ACCOUNT_PLATFORMS.contains(&platform)
 }
 
 /// The client for the file host: quick to give up, since nothing waits on
@@ -491,7 +641,13 @@ impl Db {
                     (id, false)
                 }
                 None => {
-                    let url = watch_url(&source.platform, &source.id, source.channel.as_deref())
+                    let channel = source.channel.as_deref().map(str::trim);
+                    if watch_url(&source.platform, &source.id, channel).is_some()
+                        && !has_sites_shape(&source.platform, &source.id, channel)
+                    {
+                        bail!("The annotations file's VOD isn't one {0} could have: its id or channel isn't the shape of {0}'s.", site_name(&source.platform));
+                    }
+                    let url = watch_url(&source.platform, &source.id, channel)
                         .with_context(|| match source.platform.as_str() {
                             crate::local::PLATFORM => "Add the video file first, then import its annotations.".into(),
                             "kick" => "The annotations file doesn't say the Kick VOD's channel.".to_string(),
@@ -732,7 +888,7 @@ mod tests {
         db.set_chat_start(site.id, 1790631005.0).unwrap();
         assert_eq!(started(site.id).as_deref(), Some("2026-09-28T21:30:05Z"));
         // A time that doesn't read as one is left out.
-        let mut odd = file("youtube", "xyz");
+        let mut odd = file("youtube", "xyzxyzxyz12");
         odd.source.recorded_at = Some("yesterday".into());
         let (odd, _) = db.import_annotations(&odd, None).unwrap();
         assert_eq!(odd.info.started_at, None);
@@ -756,6 +912,10 @@ mod tests {
         assert_eq!((chat[0].time, chat[0].author.as_str(), chat[0].parts.len()), (2.5, "Ada", 2));
         let err = read(&dir.join("v123.chat.json"), None).unwrap_err().to_string();
         assert!(err.contains("pick the annotations file beside it"), "{err}");
+        let long = format!(r#"[{{"time": 1, "author": "{}", "parts": []}}]"#, "x".repeat(MAX_TEXT + 1));
+        std::fs::write(dir.join("v123.chat.json"), long).unwrap();
+        let err = read(&path, None).unwrap_err().to_string();
+        assert_eq!(err, "This chat file is too big: a text in it is longer than 10,000 characters.");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -824,7 +984,7 @@ mod tests {
 
     #[test]
     fn a_cast_members_player_and_account_are_read_and_kept_through_an_import() {
-        let mut json = serde_json::to_value(file("youtube", "abc")).unwrap();
+        let mut json = serde_json::to_value(file("youtube", "abcdefghijk")).unwrap();
         json["cast"] = serde_json::json!([
             { "name": "Marlowe", "role": "streamer", "player": " Marlowe Plays ",
               "account": { "platform": "Twitch", "login": " marlowe_plays " } },
@@ -832,7 +992,11 @@ mod tests {
             { "name": "Bo", "role": "friend", "player": 3, "account": { "platform": "vimeo", "login": "bo" } },
             { "name": "Cy", "role": "friend", "player": "", "account": { "platform": "kick", "login": "../cy" } },
             { "name": "Di", "role": "friend", "account": { "platform": "kick", "login": "@di" } },
-            { "name": "Ed", "role": "friend", "account": "ed" }
+            { "name": "Ed", "role": "friend", "account": "ed" },
+            { "name": "Fi", "role": "friend", "account": { "platform": "twitch", "login": "." } },
+            { "name": "Gu", "role": "friend", "account": { "platform": "kick", "login": ".." } },
+            { "name": "Hal", "role": "friend", "account": { "platform": "youtube", "login": "@..." } },
+            { "name": "Io", "role": "friend", "account": { "platform": "twitch", "login": "i.o" } }
         ]);
         let annotations = from_value(json).expect("a player or account that can't be read isn't fatal");
         let cast = &annotations.cast;
@@ -844,6 +1008,10 @@ mod tests {
         assert_eq!((cast[3].player.as_deref(), cast[3].account.as_ref()), (None, None), "a login that's a path");
         assert_eq!(cast[4].account, None, "an @ is YouTube's only");
         assert_eq!(cast[5].account, None);
+        for (i, login) in [(6, "."), (7, ".."), (8, "@...")] {
+            assert_eq!(cast[i].account, None, "a login of only dots ({login}) is a path's");
+        }
+        assert_eq!(cast[9].account.as_ref().map(|a| a.login.as_str()), Some("i.o"), "a dot in a name is one");
 
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let (vod, _) = db.import_annotations(&annotations, None).unwrap();
@@ -904,14 +1072,14 @@ mod tests {
     #[test]
     fn importing_again_replaces_the_import_and_keeps_the_users_marks() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-        let (vod, _) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
         assert_eq!(vod.chat, ChatStatus::Pending, "with no chat file, the site's chat is fetched as for any VOD");
         let mine = db.add_mark(vod.id, "highlight", 30.0, Some("mine")).unwrap();
         // An imported chapter the user renames is theirs from then on.
         let middle = db.marks(vod.id).unwrap().into_iter().find(|m| m.text.as_deref() == Some("Middle")).unwrap();
         db.set_mark_text(middle.id, Some("My middle")).unwrap();
 
-        let mut next = file("youtube", "abc");
+        let mut next = file("youtube", "abcdefghijk");
         next.chapters = vec![Chapter { start: 0.0, title: "Opening".into(), icon: None }];
         next.highlights.clear();
         next.cast.push(CastMember {
@@ -939,14 +1107,14 @@ mod tests {
     #[test]
     fn undo_puts_imported_marks_back_as_imported() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-        let (vod, _) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
         let before = db.mark_states(vod.id).unwrap();
         db.add_mark(vod.id, "cut", 3.0, None).unwrap();
         db.restore_marks(vod.id, &before).unwrap();
         assert_eq!(db.mark_states(vod.id).unwrap(), before);
         assert!(before.iter().any(|m| m.detail.cast == ["Marlowe", "Ada"]), "with the highlight's cast");
         // So the next import still replaces them.
-        db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
         assert_eq!(db.marks(vod.id).unwrap().len(), 3);
     }
 
@@ -1019,9 +1187,149 @@ mod tests {
         }))
         .unwrap();
         assert!(!can_be_published(&info.platform), "{}", info.platform);
-        for site in ["twitch", "youtube", "kick", "dailymotion"] {
+        for site in ["twitch", "youtube", "kick"] {
             assert!(can_be_published(site), "{site}");
         }
+    }
+
+    /// The file host holds only Twitch's, YouTube's and Kick's VODs: a VOD
+    /// from another site is never asked about, as nothing can be there for it.
+    #[test]
+    fn only_twitch_youtube_and_kick_vods_are_asked_about() {
+        for site in ["dailymotion", "vimeo", "rumble", "generic", crate::local::PLATFORM, ""] {
+            assert!(!can_be_published(site), "{site}");
+        }
+    }
+
+    /// `file("twitch", "v123")` as JSON, with `key` (a path of fields) set to `value`.
+    fn file_with(path: &[&str], value: serde_json::Value) -> serde_json::Value {
+        let mut json = serde_json::to_value(file("twitch", "v123")).unwrap();
+        let (last, parents) = path.split_last().unwrap();
+        let mut at = &mut json;
+        for key in parents {
+            at = match key.parse::<usize>() {
+                Ok(i) => &mut at[i],
+                Err(_) => &mut at[*key],
+            };
+        }
+        at[*last] = value;
+        json
+    }
+
+    /// A list of `n` of `item`.
+    fn many(n: usize, item: serde_json::Value) -> serde_json::Value {
+        serde_json::Value::Array(vec![item; n])
+    }
+
+    #[test]
+    fn a_file_with_more_than_the_app_takes_is_refused_with_a_message() {
+        let segment = serde_json::json!({ "start": 1.0, "end": 2.0, "text": "hi" });
+        let word = serde_json::json!({ "text": "hi", "start": 1.0, "end": 1.5 });
+        let chapter = serde_json::json!({ "start": 0.0, "title": "A" });
+        let highlight = serde_json::json!({ "start": 0.0, "end": 1.0, "title": "A", "kind": "funny" });
+        let member = serde_json::json!({ "name": "A", "role": "friend" });
+        let activity = serde_json::json!({ "start": 0.0, "end": 1.0, "kind": "game" });
+        let cases = [
+            (&["transcript", "segments"][..], many(MAX_SEGMENTS + 1, segment), "it has more than 200,000 lines"),
+            (&["transcript", "segments", "0", "words"], many(MAX_WORDS + 1, word), "a line has more than 2,000 words"),
+            (&["chapters"], many(MAX_CHAPTERS + 1, chapter), "it has more than 2,000 chapters"),
+            (&["highlights"], many(MAX_HIGHLIGHTS + 1, highlight), "it has more than 5,000 highlights"),
+            (&["highlights", "0", "cast"], many(MAX_NAMES + 1, "A".into()), "a highlight names more than 100 people"),
+            (&["cast"], many(MAX_CAST + 1, member), "it has more than 1,000 people in its cast"),
+            (&["cast", "0", "aliases"], many(MAX_NAMES + 1, "A".into()), "a cast member has more than 100 other names"),
+            (&["activity"], many(MAX_ACTIVITY + 1, activity), "it has more than 10,000 stretches of activity"),
+            (&["povs"], many(MAX_POVS + 1, serde_json::Value::Null), "it has more than 1,000 other points of view"),
+            (
+                &["chapters", "0", "title"],
+                "x".repeat(MAX_TEXT + 1).into(),
+                "a text in it is longer than 10,000 characters",
+            ),
+            (&["produced", "build"], "é".repeat(MAX_TEXT + 1).into(), "a text in it is longer than 10,000 characters"),
+        ];
+        for (path, value, said) in cases {
+            let err = from_value(file_with(path, value)).unwrap_err().to_string();
+            assert_eq!(err, format!("This annotations file is too big: {said}."), "{path:?}");
+        }
+        // At the limits, it's read.
+        let at = [
+            (&["chapters", "0", "title"][..], "é".repeat(MAX_TEXT).into()),
+            (&["cast", "0", "aliases"], many(MAX_NAMES, "A".into())),
+            (&["chapters"], many(MAX_CHAPTERS, serde_json::json!({ "start": 0.0, "title": "A" }))),
+        ];
+        for (path, value) in at {
+            from_value(file_with(path, value)).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+        }
+    }
+
+    /// A file of a million highlights was read, then imported one mark at a
+    /// time with the library locked: minutes in which the app answered
+    /// nothing, then a pane and a timeline of a million rows.
+    #[test]
+    fn a_file_that_would_hold_the_app_up_is_refused_before_anything_is_imported() {
+        let highlight = serde_json::json!({ "start": 1.0, "end": 2.0, "title": "Big laugh", "kind": "funny" });
+        let json = file_with(&["highlights"], many(1_000_000, highlight));
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let err = from_value(json).and_then(|a| db.import_annotations(&a, None)).unwrap_err();
+        assert_eq!(err.to_string(), "This annotations file is too big: it has more than 5,000 highlights.");
+        assert!(db.vods().unwrap().is_empty(), "nothing added");
+    }
+
+    #[test]
+    fn a_chat_file_with_more_than_the_app_takes_is_refused_with_a_message() {
+        let message = serde_json::json!({ "time": 1.0, "author": "Ada", "parts": [{ "type": "text", "text": "hi" }] });
+        let part = serde_json::json!({ "type": "text", "text": "hi" });
+        let mut long = message.clone();
+        long["parts"] = many(MAX_PARTS + 1, part);
+        let mut wordy = message.clone();
+        wordy["author"] = "x".repeat(MAX_TEXT + 1).into();
+        let cases = [
+            (many(MAX_MESSAGES + 1, serde_json::Value::Null), "it has more than 2,000,000 messages"),
+            (serde_json::json!([long]), "a message has more than 1,000 parts"),
+            (serde_json::json!([wordy]), "a text in it is longer than 10,000 characters"),
+        ];
+        for (json, said) in cases {
+            let err = chat_within_limits(&json).unwrap_err().to_string();
+            assert_eq!(err, format!("This chat file is too big: {said}."));
+        }
+        let mut most = message.clone();
+        most["parts"] = many(MAX_PARTS, serde_json::json!({ "type": "text", "text": "é".repeat(MAX_TEXT) }));
+        chat_within_limits(&serde_json::json!([most])).unwrap();
+    }
+
+    /// A VOD an import adds has an id of its site's shape, and a Kick VOD a
+    /// channel that is one: the id goes into the path of the requests made
+    /// for it (Kick's `/api/v1/stream/<id>/playback` on web.kick.com).
+    #[test]
+    fn a_vod_an_import_adds_has_its_sites_shape_of_id_and_channel() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let kick = "01a169a1-9aa8-7653-8a9e-390e694cc11a";
+        let refused = [
+            ("kick", "../../x?", "Marlowe"),
+            ("kick", "01a169a1-9aa8-7653-8a9e-390e694cc11a/../x", "Marlowe"),
+            ("kick", kick, "../marlowe"),
+            ("kick", kick, "marlowe/videos"),
+            ("youtube", "abc", "Marlowe"),
+            ("youtube", "IaIo3d6cUu/", "Marlowe"),
+            ("twitch", "v12x", "Marlowe"),
+            ("twitch", "../123", "Marlowe"),
+        ];
+        for (platform, id, channel) in refused {
+            let mut odd = file(platform, id);
+            odd.source.channel = Some(channel.into());
+            let err = db.import_annotations(&odd, None).unwrap_err().to_string();
+            assert!(err.starts_with("The annotations file's VOD isn't one"), "{platform} {id} {channel}: {err}");
+        }
+        assert!(db.vods().unwrap().is_empty(), "nothing added");
+        for (platform, id) in [("kick", kick), ("youtube", "IaIo3d6cUuo"), ("twitch", "v2901646294"), ("twitch", "123")]
+        {
+            let (vod, created) = db.import_annotations(&file(platform, id), None).unwrap();
+            assert!(created, "{platform} {id}");
+            assert_eq!(vod.info.platform_id, id);
+        }
+        // A VOD the library has already is its own, whatever its id.
+        let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+        let (imported, created) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        assert_eq!((imported.id, created), (vod.id, false));
     }
 
     #[test]
@@ -1112,7 +1420,7 @@ mod tests {
     #[test]
     fn transcribed_here_after_the_import_it_no_longer_has_the_latest() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
-        let (vod, _) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
         db.set_annotations_imported(vod.id, Some("v1")).unwrap();
         assert!(db.annotations_offer(vod.id).unwrap().up_to_date);
         // Transcribe again (a part of it, or all): the lines there are this computer's now.

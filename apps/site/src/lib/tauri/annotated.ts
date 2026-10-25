@@ -1,11 +1,12 @@
 // A VOD with annotations (desktop annotations.ts), as the site's per-VOD page
 // (/v/<platform>/<id>) shows it: where its two files come from, and the
 // annotations turned into the demo's shapes, so the stand-ins answer the app's
-// commands from them as they do from static/demo. Only types and the download
-// host are imported, so Node can test it directly (annotated.test.mjs).
+// commands from them as they do from static/demo. Only types, the download
+// host and the files' limits are imported, so Node can test it directly
+// (annotated.test.mjs).
 
 import type { ChatLine, Vod } from "desktop/lib/api.ts";
-import type { Annotations } from "desktop/lib/annotations.ts";
+import { LIMITS, count, hasLongText, type Annotations } from "desktop/lib/annotations.ts";
 import { DOWNLOAD_HOST } from "../downloads.ts";
 
 /** A line as the demo's transcripts have it: text, start, each word's start; and here, its end and speaker. */
@@ -122,10 +123,19 @@ export function segmentsOf(annotations: Annotations): Segment[] {
 /**
  * The chat file's messages (the app's ChatMessage, chat.rs) as the chat
  * commands give them: numbered, in time order, with the fields the app's
- * serializer fills in. The error's message is for the user.
+ * serializer fills in. The error's message is for the user. A file with
+ * more than the app takes is refused as crates/core annotations.rs
+ * `chat_within_limits` refuses it.
  */
 export function chatOf(value: unknown): ChatLine[] {
   if (!Array.isArray(value)) throw new Error("This isn't a VODscribe chat file: not a list of messages.");
+  const tooBig = (what: string): never => {
+    throw new Error(`This chat file is too big: ${what}.`);
+  };
+  if (value.length > LIMITS.messages) tooBig(`it has more than ${count(LIMITS.messages)} messages`);
+  if (value.some((m) => Array.isArray(m?.parts) && m.parts.length > LIMITS.parts))
+    tooBig(`a message has more than ${count(LIMITS.parts)} parts`);
+  if (hasLongText(value)) tooBig(`a text in it is longer than ${count(LIMITS.text)} characters`);
   return value
     .filter((m) => typeof m?.time === "number" && Array.isArray(m?.parts))
     .sort((a, b) => a.time - b.time)

@@ -16,6 +16,7 @@ import {
   UNKNOWN_GLYPH,
   highlightGlyph,
   oneEmoji,
+  LIMITS,
   parseAnnotations,
   readAccount,
 } from "./annotations.ts";
@@ -173,8 +174,13 @@ test("a cast member's player and account are read when they can be, left out whe
     { platform: "twitch", login: "" },
     { platform: "twitch" },
     { platform: 1, login: "x" },
+    // Only dots: a path's own or its parent.
+    { platform: "twitch", login: "." },
+    { platform: "kick", login: ".." },
+    { platform: "youtube", login: "@..." },
   ])
     assert.equal(readAccount(odd), null, JSON.stringify(odd));
+  assert.deepEqual(readAccount({ platform: "twitch", login: "i.o" }), { platform: "twitch", login: "i.o" });
   const file = {
     format: "vodscribe-annotations",
     version: 1,
@@ -229,4 +235,79 @@ test("a file that leaves out what the app's reader fills in is read as the app r
   assert.equal(castIndex(read.cast, "Marlowe"), 0);
   assert.equal(castIndex(read.cast, "Brigid"), -1);
   assert.equal(castDetail(read.cast[0]), "Streamer");
+});
+
+/**
+ * A small file as crates/core annotations.rs's tests have it, with `path` (its fields) set to `value`.
+ * @param {(string | number)[]} path
+ * @param {unknown} value
+ */
+function fileWith(path, value) {
+  const file = {
+    format: "vodscribe-annotations",
+    version: 1,
+    source: { platform: "twitch", id: "v123", channel: "Marlowe", title: "A stream", duration: 60 },
+    produced: { at: "2026-10-02T00:00:00Z", build: "b1" },
+    transcript: { segments: [{ start: 1, end: 3, text: "hello there", words: [] }] },
+    chapters: [{ start: 0, title: "Start" }],
+    highlights: [{ start: 5, end: 9, title: "Big laugh", kind: "funny", cast: [] }],
+    cast: [{ name: "Marlowe", aliases: [], role: "streamer" }],
+    activity: [],
+  };
+  /** @type {any} */
+  let at = file;
+  for (const key of path.slice(0, -1)) at = at[key];
+  at[path[path.length - 1]] = value;
+  return file;
+}
+
+/** @param {number} n @param {unknown} item */
+const many = (n, item) => Array.from({ length: n }, () => item);
+
+test("a file with more than the app takes is refused with a message, as the app refuses it", () => {
+  // The same cases, and words, as crates/core annotations.rs's.
+  const segment = { start: 1, end: 2, text: "hi" };
+  /** @type {[(string | number)[], unknown, string][]} */
+  const cases = [
+    [["transcript", "segments"], many(LIMITS.segments + 1, segment), "it has more than 200,000 lines"],
+    [
+      ["transcript", "segments", 0, "words"],
+      many(LIMITS.words + 1, { text: "hi", start: 1, end: 1.5 }),
+      "a line has more than 2,000 words",
+    ],
+    [["chapters"], many(LIMITS.chapters + 1, { start: 0, title: "A" }), "it has more than 2,000 chapters"],
+    [
+      ["highlights"],
+      many(LIMITS.highlights + 1, { start: 0, end: 1, title: "A", kind: "funny" }),
+      "it has more than 5,000 highlights",
+    ],
+    [["highlights", 0, "cast"], many(LIMITS.names + 1, "A"), "a highlight names more than 100 people"],
+    [["cast"], many(LIMITS.cast + 1, { name: "A", role: "friend" }), "it has more than 1,000 people in its cast"],
+    [["cast", 0, "aliases"], many(LIMITS.names + 1, "A"), "a cast member has more than 100 other names"],
+    [
+      ["activity"],
+      many(LIMITS.activity + 1, { start: 0, end: 1, kind: "game" }),
+      "it has more than 10,000 stretches of activity",
+    ],
+    [["povs"], many(LIMITS.povs + 1, null), "it has more than 1,000 other points of view"],
+    [["chapters", 0, "title"], "x".repeat(LIMITS.text + 1), "a text in it is longer than 10,000 characters"],
+    [["produced", "build"], "é".repeat(LIMITS.text + 1), "a text in it is longer than 10,000 characters"],
+  ];
+  for (const [path, value, said] of cases)
+    assert.throws(
+      () => parseAnnotations(fileWith(path, value)),
+      { message: `This annotations file is too big: ${said}.` },
+      path.join("."),
+    );
+  // At the limits, it's read: an emoji is one character, as the app counts, though two units here.
+  parseAnnotations(fileWith(["chapters", 0, "title"], "😂".repeat(LIMITS.text)));
+  parseAnnotations(fileWith(["cast", 0, "aliases"], many(LIMITS.names, "A")));
+  parseAnnotations(fileWith(["chapters"], many(LIMITS.chapters, { start: 0, title: "A" })));
+});
+
+test("a file of a million highlights is refused before the page draws any", () => {
+  const file = fileWith(["highlights"], many(1_000_000, { start: 1, end: 2, title: "Big laugh", kind: "funny" }));
+  assert.throws(() => parseAnnotations(file), {
+    message: "This annotations file is too big: it has more than 5,000 highlights.",
+  });
 });

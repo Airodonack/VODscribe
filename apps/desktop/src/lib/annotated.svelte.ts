@@ -9,6 +9,7 @@
 import { SvelteMap } from "svelte/reactivity";
 import { AVATAR_BASE } from "./accounts";
 import { api, events, type VodAnnotations } from "./api";
+import { settings } from "./appSettings.svelte";
 import { cuts } from "./cuts.svelte";
 
 class Annotated {
@@ -26,12 +27,14 @@ class Annotated {
 
   /**
    * The image server the cast's pictures are asked of; null until the app
-   * has said which (it may name its own, for tests), when none is asked.
+   * has said which (it may name its own, for tests), and while the settings
+   * aren't read or turn pictures off (Settings › Privacy), when none is asked.
    */
   avatarBase(): string | null {
     if (!this.#askedBase) {
       this.#askedBase = true;
-      // Read from a microtask, not while drawing (it changes state).
+      // Read from a microtask, not while drawing (they change state).
+      void Promise.resolve().then(() => settings.load());
       void Promise.resolve()
         .then(() => api.avatarBase())
         .then(
@@ -39,6 +42,8 @@ class Annotated {
           () => (this.#avatarBase = AVATAR_BASE),
         );
     }
+    // The website's stand-in settings say nothing of pictures: they show.
+    if (!settings.value || settings.value.load_cast_pictures === false) return null;
     return this.#avatarBase;
   }
 

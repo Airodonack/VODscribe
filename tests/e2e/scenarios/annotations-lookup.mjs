@@ -5,7 +5,9 @@
 // saying where it's turned back on. With the setting off, a VOD added is
 // never asked about, and its menu's "Check for annotations" says asking is
 // turned off; turned back on in Settings › Privacy, the same item asks, and
-// says when there's nothing.
+// says when there's nothing. A VOD from another site (Dailymotion) is never
+// asked about, the setting on: the file host has only Twitch's, YouTube's and
+// Kick's, and its menu's item says so.
 //
 // Offline: the VODs are the stand-in yt-dlp's (lib/siteVod.mjs).
 
@@ -54,7 +56,7 @@ export default {
   },
   async run(app, ctx) {
     const host = serveFiles((method, at) =>
-      at === "/annotations/dailymotion/xe2eask.json"
+      at === "/annotations/youtube/xe2eask.json"
         ? { status: 200, headers: { ETag: '"v1"' }, body: "{}" }
         : { status: 404 },
     );
@@ -75,7 +77,7 @@ export default {
         if (await app.js(`return !!document.querySelector('.vod[data-key="${none.id}"] button.gift')`))
           wrong.push("a VOD with nothing published has the gift button");
         const asked = host.requests.map((r) => `${r.method} ${r.path}`);
-        if (asked.join() !== "HEAD /annotations/dailymotion/xe2enone.json")
+        if (asked.join() !== "HEAD /annotations/youtube/xe2enone.json")
           wrong.push(`for the VOD with none, the file host was asked: ${asked.join(", ")}`);
 
         // Published: offered; Don't ask again turns the setting off.
@@ -132,8 +134,21 @@ export default {
         ).catch(async () => `(${await toastSays(app)})`);
         if (nothing !== "No annotations are published for this VOD yet.")
           wrong.push(`the menu's check says "${nothing}"`);
-        if (!host.requests.some((r) => r.method === "HEAD" && r.path === "/annotations/dailymotion/xe2eoff.json"))
+        if (!host.requests.some((r) => r.method === "HEAD" && r.path === "/annotations/youtube/xe2eoff.json"))
           wrong.push("the menu's check, with the setting on, didn't ask the file host");
+        await until("the toast gone", async () => !(await toastSays(app)), MINUTE).catch(() => {});
+
+        // Another site's VOD: never asked about, and its menu says why.
+        const since = host.requests.length;
+        const other = await addSiteVod(app, "xe2eother", "dailymotion");
+        if (other.platform !== "dailymotion") wrong.push(`the other site's VOD is ${other.platform}'s`);
+        await sleep(3000);
+        await checkFromMenu(app, other.id);
+        const why = await until("the menu's toast", () => toastSays(app), 10_000).catch(() => "");
+        if (why !== "Annotations are only published for Twitch, YouTube and Kick VODs.")
+          wrong.push(`for another site's VOD, the menu's toast: "${why}"`);
+        if (host.requests.length !== since)
+          wrong.push(`for another site's VOD, the file host was asked: ${JSON.stringify(host.requests.slice(since))}`);
         if (wrong.length) throw new Error(wrong.join("; "));
       });
     } finally {

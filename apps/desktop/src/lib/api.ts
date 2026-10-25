@@ -129,6 +129,8 @@ export interface Settings {
   show_keys: boolean;
   /** Whether a VOD added from a site is looked up on the file host, for its published annotations. */
   ask_for_annotations: boolean;
+  /** Whether the cast's pictures are asked of the image server (accounts.ts `AVATAR_BASE`); off, their initials show. */
+  load_cast_pictures: boolean;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
@@ -568,9 +570,10 @@ export const api = {
   /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
   addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
-  /** Asks the file host again whether a VOD's annotations are published; `asked` is false when Settings turned that off. */
+  /** Asks the file host again whether a VOD's annotations are published; `asked` is false when nothing was:
+   *  the VOD can't have any (`can_have`: only Twitch's, YouTube's and Kick's can), or Settings turned asking off. */
   checkAnnotations: (vodId: number) =>
-    invoke<{ asked: boolean; offer: AnnotationsOffer }>("check_annotations", { vodId }),
+    invoke<{ asked: boolean; can_have: boolean; offer: AnnotationsOffer }>("check_annotations", { vodId }),
   /** What's known of a VOD's published annotations. */
   annotationsOffer: (vodId: number) => invoke<AnnotationsOffer>("annotations_offer", { vodId }),
   /** Fetches a VOD's published annotations and imports them (the user's own marks stay). */

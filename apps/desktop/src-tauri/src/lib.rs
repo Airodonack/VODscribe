@@ -116,6 +116,31 @@ fn webview_args(extra: &str) -> String {
         .join(" ")
 }
 
+/// The app's context, with the page's policy also letting pictures come from
+/// the image server the end-to-end tests name, on this computer
+/// (`annotations::AVATAR_ENV`): the policy built in lets them come only from
+/// the real one and the sites' own picture hosts.
+fn context() -> tauri::Context {
+    let mut context = tauri::generate_context!();
+    if let Some(base) = vodscribe_core::annotations::avatar_base() {
+        allow_images_from(&mut context.config_mut().app.security.csp, &base);
+    }
+    context
+}
+
+/// Adds `base`'s origin, if it's a web address, to `csp`'s image sources.
+fn allow_images_from(csp: &mut Option<tauri::utils::config::Csp>, base: &str) {
+    let Ok(url) = tauri::Url::parse(base) else { return };
+    if !matches!(url.scheme(), "http" | "https") {
+        return;
+    }
+    if let Some(tauri::utils::config::Csp::DirectiveMap(directives)) = csp
+        && let Some(sources) = directives.get_mut("img-src")
+    {
+        sources.push(url.origin().ascii_serialization());
+    }
+}
+
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     if let Some(vod) = db.vod(id).map_err(err)? {
         let _ = app.emit("vod", vod);
@@ -457,7 +482,7 @@ pub fn run() {
             vods::delete_video,
             setup::clear_cache,
         ])
-        .build(tauri::generate_context!())
+        .build(context())
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
@@ -513,5 +538,29 @@ mod tests {
              --remote-debugging-port=0 --enable-logging"
         );
         assert_eq!(super::webview_args(""), "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection");
+    }
+
+    /// The policy built in lets pictures come from no server on this
+    /// computer; the image server the tests name, and only it, is let in.
+    #[test]
+    fn pictures_come_from_this_computer_only_from_the_tests_image_server() {
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let built_in: tauri::utils::config::Csp =
+            serde_json::from_value(config["app"]["security"]["csp"].clone()).unwrap();
+        let img_src = |csp: &tauri::utils::config::Csp| match csp {
+            tauri::utils::config::Csp::DirectiveMap(d) => Vec::<String>::from(d["img-src"].clone()).join(" "),
+            tauri::utils::config::Csp::Policy(p) => p.clone(),
+        };
+        let release = img_src(&built_in);
+        assert!(release.contains("https://img.vodscribe.com"), "{release}");
+        for local in ["127.0.0.1", "localhost", "[::1]"] {
+            assert!(!release.contains(local), "{release}");
+        }
+        let mut csp = Some(built_in.clone());
+        super::allow_images_from(&mut csp, "http://127.0.0.1:41723/");
+        assert_eq!(img_src(csp.as_ref().unwrap()), format!("{release} http://127.0.0.1:41723"));
+        let mut csp = Some(built_in);
+        super::allow_images_from(&mut csp, "not a server");
+        assert_eq!(img_src(csp.as_ref().unwrap()), release);
     }
 }
