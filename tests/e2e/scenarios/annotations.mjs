@@ -49,6 +49,8 @@
 // no one is named for, the chapter over Unknown. A line the playhead moves to,
 // under the pinned headings, is brought out below them; a click on the
 // pinned speaker goes back to where their lines start.
+// Last, an imported chapter renamed is the user's, counted under Your marks
+// at once; and a chapter made while Your marks are hidden shows them again.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -1021,6 +1023,63 @@ export default {
       if (!returned.head || returned.head.top < returned.pins.bottom - 1 || returned.head.top > 80)
         wrong.push(`a click on the pinned Ada: ${JSON.stringify(returned)}`);
     }
+
+    // The import's first chapter renamed (N on its frame opens its title):
+    // the user's from then on, so the Marks toggles count it as theirs at
+    // once, as the library does. Then Your marks hidden and a chapter made:
+    // they show again, the new one with them.
+    const toggles = async () => {
+      const there = `return !!document.querySelector('[aria-label="Marks"] button')`;
+      if (!(await app.js(there))) await app.click("button.timeline");
+      await until("the Marks toggles", () => app.js(there), 10_000);
+      return app.js(`return Object.fromEntries([...document.querySelectorAll('[aria-label="Marks"] button')].map((b) =>
+        [b.textContent.includes("Imported") ? "imported" : "user",
+         { count: Number(b.querySelector(".count").textContent), on: b.getAttribute("aria-pressed") === "true" }]));`);
+    };
+    const title = `[role=dialog][aria-label="Chapter title"] input`;
+    const name = async (was, text) => {
+      await app.key("n");
+      await until(
+        `the title box of ${JSON.stringify(was)}`,
+        () => app.js(`return document.querySelector(arguments[0])?.value === arguments[1]`, title, was),
+        10_000,
+      );
+      await app.type(title, text);
+      await app.submit(title);
+      await until(
+        "the title box to close",
+        () => app.js(`return !document.querySelector(arguments[0])`, title),
+        10_000,
+      );
+      // The chapter let go of, so the arrows move the playhead, not it.
+      await app.key("Escape");
+    };
+    // (A click on the timeline's start: the arrows go back 5 s at a time from 0:46.)
+    await app.js(PRESS_AT, 0);
+    await until("the player at the start", async () => (await app.shownTime()) === 0, 10_000);
+    await name("Hello", "Hi");
+    const renamed = await toggles();
+    if (renamed.user.count !== 2 || renamed.imported.count !== 4)
+      wrong.push(`an imported chapter renamed, the Marks toggles say ${JSON.stringify(renamed)}`);
+    await app.js(
+      `[...document.querySelectorAll('[aria-label="Marks"] button')].find((b) => b.textContent.includes("Your marks")).click();`,
+    );
+    await until("Your marks hidden", async () => !(await toggles()).user.on, 10_000);
+    await app.key("Escape");
+    await app.key("ArrowRight", { shift: true });
+    await until("the player at 1 s", async () => (await app.shownTime()) === 1, 10_000);
+    await name("", "Ours");
+    const ours = (await app.invoke("list_marks", { vodId: vod.id })).find((m) => m.text === "Ours");
+    const drawn = await until(
+      "the new chapter on the timeline",
+      () => app.js(`return !!document.querySelector('[data-mark="' + arguments[0] + '"]')`, ours?.id),
+      10_000,
+    ).catch(() => false);
+    const marksNow = await toggles();
+    if (!ours || !drawn || !marksNow.user.on)
+      wrong.push(`a chapter made with Your marks hidden: ${JSON.stringify({ ours, drawn, marksNow })}`);
+    else ctx.log(`a chapter made with Your marks hidden shows them again: ${JSON.stringify(marksNow)}`);
+    await app.key("Escape");
 
     if (wrong.length) throw new Error(wrong.join("; "));
   },

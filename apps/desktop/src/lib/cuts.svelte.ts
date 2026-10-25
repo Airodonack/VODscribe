@@ -16,7 +16,7 @@ import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
 import { is } from "./keys.svelte";
 import { isEscape, markFramesOf } from "./playerKeys";
 import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
-import { shownMarks, type MarkSources } from "./markSources";
+import { changed, shownMarks, sourceOf, type MarkSources } from "./markSources";
 import { layers } from "./layers.svelte";
 
 class Cuts {
@@ -202,6 +202,8 @@ class Cuts {
       const mark = there ?? (await this.#addTo(doc, start, kind));
       if (!this.#showing(doc)) return;
       if (!there) this.#put(mark);
+      // Made (or opened) with its kind hidden by the Marks toggles: shown again, to be seen and named.
+      if (!layers.marks[sourceOf(mark)]) layers.showMarks({ [sourceOf(mark)]: true });
       this.clearSelection();
       this.selected = mark.id;
       this.editing = mark.id;
@@ -217,7 +219,7 @@ class Cuts {
     const clean = text.trim() || null;
     const mark = this.all.find((m) => m.id === id);
     if (!mark || mark.text === clean) return;
-    this.all = this.all.map((m) => (m.id === id ? { ...m, text: clean } : m));
+    this.all = this.all.map((m) => (m.id === id ? changed(m, { text: clean }) : m));
     this.#save(api.setMarkText(id, clean));
   }
 
@@ -266,7 +268,7 @@ class Cuts {
   }
 
   move(id: number, time: number) {
-    this.all = this.#sorted(this.all.map((m) => (m.id === id ? { ...m, start: time } : m)));
+    this.all = this.#sorted(this.all.map((m) => (m.id === id ? changed(m, { start: time }) : m)));
     this.#save(api.moveMark(id, time));
   }
 

@@ -457,7 +457,8 @@ fn download_from(base: &str, platform: &str, id: &str) -> Result<(Annotations, O
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Offer {
     pub available: Availability,
-    /// The version published is the one it last brought in.
+    /// The version published is the one it last brought in, and its
+    /// transcript is still the one it brought in.
     pub up_to_date: bool,
     /// It has a transcript made on this computer, which an import replaces.
     pub local_transcript: bool,
@@ -645,8 +646,9 @@ impl Db {
             )?;
         Ok(Offer {
             available: Availability::parse(available.as_deref()),
-            // Without a version from the server, there's no telling: never up to date.
-            up_to_date: version.is_some() && version == imported,
+            // Without a version from the server, there's no telling: never up to date. Nor
+            // with lines transcribed here since: what it brought in is replaced, in part or all.
+            up_to_date: version.is_some() && version == imported && !local,
             local_transcript: local,
         })
     }
@@ -1105,5 +1107,18 @@ mod tests {
         assert!(db.annotations_offer(vod.id).unwrap().local_transcript);
         db.import_annotations(&file("youtube", "abc"), None).unwrap();
         assert!(!db.annotations_offer(vod.id).unwrap().local_transcript, "replaced by the import's");
+    }
+
+    #[test]
+    fn transcribed_here_after_the_import_it_no_longer_has_the_latest() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        db.set_annotations_imported(vod.id, Some("v1")).unwrap();
+        assert!(db.annotations_offer(vod.id).unwrap().up_to_date);
+        // Transcribe again (a part of it, or all): the lines there are this computer's now.
+        db.insert_done(vod.id, 0.0, Some(30.0), Some(crate::model::CPU_MODEL.id)).unwrap();
+        let offer = db.annotations_offer(vod.id).unwrap();
+        // Not "the latest already" with Replace anyway and no word of the transcript it replaces.
+        assert_eq!(offer, Offer { available: Availability::Available, up_to_date: false, local_transcript: true });
     }
 }

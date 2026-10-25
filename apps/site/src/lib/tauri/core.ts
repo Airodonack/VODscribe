@@ -5,6 +5,7 @@
 import * as backend from "./backend";
 import { annotated } from "./annotations";
 import type { SearchFilter } from "desktop/lib/api.ts";
+import { changed } from "desktop/lib/markSources.ts";
 
 type Args = Record<string, unknown>;
 
@@ -151,13 +152,14 @@ const commands: Record<string, (args: Args) => unknown> = {
     marks.push(mark);
     return mark;
   },
+  // An imported mark changed is the visitor's, as the app keeps it (crates/core db.rs `move_mark`).
   move_mark: ({ id, time }) => {
     const mark = marks.find((m) => m.id === id);
-    if (mark) mark.start = time as number;
+    if (mark) Object.assign(mark, changed(mark, { start: time as number }));
   },
   set_mark_text: ({ id, text }) => {
     const mark = marks.find((m) => m.id === id);
-    if (mark) mark.text = text as string | null;
+    if (mark) Object.assign(mark, changed(mark, { text: text as string | null }));
   },
   delete_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
   cancel_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
