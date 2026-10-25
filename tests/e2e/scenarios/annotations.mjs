@@ -37,6 +37,12 @@
 // the user's own stays. The library and the pane's column each hide by a
 // button at the toolbar's end, the centre taking their room, the pane's
 // column then fitting a narrower window; both stay hidden over a reload.
+// A longer transcript imported last: scrolled past a speaker's heading, the
+// chapter and the speaker stay pinned at the top; the next heading pushes
+// the pinned one out without overlapping it, a new chapter both; over lines
+// no one is named for, only the chapter. A line the playhead moves to,
+// under the pinned headings, is brought out below them; a click on the
+// pinned speaker goes back to where their lines start.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -76,6 +82,54 @@ const PRESS = `
   el.dispatchEvent(new PointerEvent("pointerdown", at));
   window.dispatchEvent(new PointerEvent("pointerup", at));`;
 
+/** In the page: a press on the timeline at `arguments[0]` seconds, as the timeline hears it. */
+const PRESS_AT = `
+  const bar = document.querySelector(".scrubber");
+  const box = bar.getBoundingClientRect();
+  const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+  const at = { clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, bubbles: true, cancelable: true,
+    pointerId: 1, pointerType: "mouse", isPrimary: true };
+  bar.dispatchEvent(new PointerEvent("pointerdown", at));
+  window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`;
+
+/** In the page: the transcript's scroller, and `put` (arguments[0] scrolled
+ *  to arguments[1] px below the view's top, laid out first) and `pins` (the
+ *  pinned headings, their boxes from the view's top). */
+const PINS = `
+  const scroller = document.querySelector("#transcript").closest(".body");
+  const frames = () => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)));
+  const viewTop = () => document.querySelector("#transcript .pinned-anchor").getBoundingClientRect().top;
+  const from = (el) => { const b = el.getBoundingClientRect(); return { top: b.top - viewTop(), bottom: b.bottom - viewTop() }; };
+  const put = async (sel, below) => {
+    if (!document.querySelector(sel)) scroller.scrollTop = 0;
+    for (let i = 0; i < 100 && !document.querySelector(sel); i++) { scroller.scrollTop += 200; await frames(); }
+    const el = document.querySelector(sel);
+    if (!el) throw new Error("never laid out: " + sel);
+    scroller.scrollTop += el.getBoundingClientRect().top - (viewTop() + below);
+    await frames();
+    await frames();
+    return from(el);
+  };
+  const pins = () => {
+    const box = document.querySelector("#transcript .pinned");
+    const chapter = document.querySelector("#transcript .pinned .pinned-chapter");
+    const speaker = document.querySelector("#transcript .pinned .pinned-speaker");
+    return { hidden: box?.getAttribute("aria-hidden") ?? null, bottom: box ? from(box).bottom : 0,
+      chapter: chapter ? { text: chapter.textContent.replace(/\\s+/g, ""), ...from(chapter.parentElement) } : null,
+      speaker: speaker ? { text: speaker.querySelector(".speaker").textContent.trim(), ...from(speaker.parentElement) } : null };
+  };`;
+
+/** A minute of lines every half second, in long stretches: Marlowe to 0:12, Ada
+ *  to 0:20, Marlowe (as Mar) to 0:32, no one named to 0:40, then Ada to the end. */
+function longLines() {
+  const who = (t) => (t < 12 ? "Marlowe" : t < 20 ? "Ada" : t < 32 ? "Mar" : t < 40 ? null : "Ada");
+  return Array.from({ length: 120 }, (_, i) => {
+    const start = i / 2;
+    const text = `Line ${i + 1}, ${"and so on ".repeat(1 + (i % 4)).trim()}`;
+    return { start, end: start + 0.4, text, ...(who(start) ? { speaker: who(start) } : {}) };
+  });
+}
+
 /** A pointer event's fields at (x, y) with `buttons` down, in the page. */
 const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
 
@@ -108,6 +162,8 @@ export default {
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
     "annotations-pane":
       'On the window\'s right, a column the full height of the window lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
+    "annotations-pinned":
+      'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
       'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
   },
@@ -215,7 +271,7 @@ export default {
     const speakers = await until(
       "the speakers' names",
       async () => {
-        const got = await app.js(`return [...document.querySelectorAll("#transcript .speaker")].map((s) =>
+        const got = await app.js(`return [...document.querySelectorAll("#transcript .line .speaker")].map((s) =>
           ({ name: s.textContent.trim(), color: getComputedStyle(s).color, unknown: s.classList.contains("unknown") }))`);
         return got.length === 4 && got;
       },
@@ -837,6 +893,114 @@ export default {
     await chord("B", true, false);
     await chord("b", false, true);
     await settled("both shown again by their keys", (w) => w.library > 0 && w.pane > 0);
+
+    // Pinned headings, over a longer transcript of the same VOD: the chapters
+    // as before (and the user's own at 0:50), the lines every half second.
+    const long = JSON.parse(json);
+    long.transcript.segments = longLines();
+    const longFile = path.join(dir, "minute-annotations-long.json");
+    writeFileSync(longFile, JSON.stringify(long));
+    await app.invoke("import_annotations_file", { path: longFile });
+    await until(
+      "the longer transcript",
+      () => app.js(`return !!document.querySelector('#transcript .line button.row[data-time="0.5"]')`),
+      MINUTE,
+    );
+    // Marlowe's 13th line at the top: his heading is above, and pinned.
+    await app.js(`${PINS} await put('#transcript .line button.row[data-time="6"]', 0);`);
+    const atRest = await app.js(`${PINS} return pins();`);
+    if (atRest.chapter?.text !== "💬Hello" || atRest.speaker?.text !== "Marlowe (Vance)" || atRest.hidden !== "true")
+      wrong.push(`mid-stretch, the pinned headings: ${JSON.stringify(atRest)}`);
+    else ctx.log(`mid-stretch, pinned: ${atRest.chapter.text} over ${atRest.speaker.text}, ${atRest.bottom} px`);
+    await ctx.checkpoint("annotations-pinned");
+    const stack = atRest.bottom;
+    // Ada's heading 10 px into the pinned Marlowe's: he's pushed up by as much, touching it.
+    const ada = await app.js(`${PINS} return put('#transcript .line > .group-head[data-time="12"]', ${stack - 10});`);
+    const pushed = await app.js(`${PINS} return pins();`);
+    if (
+      pushed.speaker?.text !== "Marlowe (Vance)" ||
+      Math.abs(pushed.speaker.bottom - ada.top) > 1 ||
+      Math.abs(pushed.speaker.top - (atRest.speaker.top - 10)) > 1 ||
+      Math.abs(pushed.chapter?.top ?? 99) > 1
+    )
+      wrong.push(`Ada's heading 10 px into Marlowe's pinned one at ${JSON.stringify(ada)}: ${JSON.stringify(pushed)}`);
+    // "The game"'s divider (its row, with the space over it) 10 px into the pinned pair: both pushed up together.
+    const divider = await app.js(`${PINS} return put('#transcript .line > .chapter-head[data-time="20"]', ${stack});`);
+    const pair = await app.js(`${PINS} return pins();`);
+    const rowTop = divider.top - 10;
+    if (
+      pair.chapter?.text !== "💬Hello" ||
+      pair.speaker?.text !== "Ada" ||
+      Math.abs(pair.chapter.top + 10) > 1 ||
+      Math.abs(pair.bottom - rowTop) > 1
+    )
+      wrong.push(
+        `"The game"'s divider 10 px into the pinned pair at ${JSON.stringify(divider)}: ${JSON.stringify(pair)}`,
+      );
+    // Over the lines no one is named for: the chapter alone.
+    await app.js(`${PINS} await put('#transcript .line button.row[data-time="35"]', 0);`);
+    const unnamed = await app.js(`${PINS} return pins();`);
+    if (unnamed.chapter?.text !== "🎮Thegame" || unnamed.speaker)
+      wrong.push(`over lines no one is named for, pinned: ${JSON.stringify(unnamed)}`);
+
+    // The playhead moved to a line under the pinned headings (a click on the
+    // timeline), following: that line is brought out below them.
+    if (await app.js(`return !!document.querySelector("#transcript .follow")`)) await app.click("#transcript .follow");
+    await app.js(PRESS_AT, 24.2);
+    const nowAt = (time) =>
+      until(
+        `the line at ${time} s lit`,
+        () =>
+          app.js(
+            `return !!document.querySelector(arguments[0])`,
+            `#transcript .line.now > button.row[data-time="${time}"]`,
+          ),
+        10_000,
+      );
+    /** In the page: once the view has held still for a few frames, where line `arguments[0]` is and what's pinned. */
+    const still = (time) =>
+      app.js(
+        `${PINS}
+         let last = NaN;
+         for (let same = 0, i = 0; same < 5 && i < 200; i++) { await frames(); same = scroller.scrollTop === last ? same + 1 : 0; last = scroller.scrollTop; }
+         const line = document.querySelector('#transcript .line > button.row[data-time="' + arguments[0] + '"]');
+         return { line: line && from(line), pins: pins() };`,
+        time,
+      );
+    await nowAt(24);
+    await still(24);
+    // Line 24 s just under the view's top, under the pinned headings, the line after it too.
+    const under = await app.js(`${PINS} return put('#transcript .line > button.row[data-time="24"]', 5);`);
+    const hiding = await app.js(`${PINS} return pins();`);
+    const next = await app.js(
+      `${PINS} return from(document.querySelector('#transcript .line > button.row[data-time="24.5"]'));`,
+    );
+    if (!(next.top < hiding.bottom))
+      ctx.log(`the line at 0:24.5 isn't under the pinned headings (${JSON.stringify({ under, next, hiding })})`);
+    await app.js(PRESS_AT, 24.7);
+    await nowAt(24.5);
+    const brought = await still(24.5);
+    if (!brought.line || brought.line.top < brought.pins.bottom - 1)
+      wrong.push(`the line the playhead moved to is under the pinned headings: ${JSON.stringify(brought)}`);
+    else
+      ctx.log(
+        `the line the playhead moved to: ${brought.line.top} px down, the pinned headings ${brought.pins.bottom} px`,
+      );
+
+    // A click on the pinned speaker (not their name): back to where their lines start, the heading in view.
+    await app.js(`${PINS} await put('#transcript .line button.row[data-time="46"]', 0);`);
+    const before = await app.js(`${PINS} return pins();`);
+    if (before.speaker?.text !== "Ada") wrong.push(`at 0:46, pinned: ${JSON.stringify(before)}`);
+    else {
+      await app.js(`document.querySelector("#transcript .pinned .pinned-speaker .head-time").click();`);
+      const returned = await app.js(
+        `${PINS} await frames(); await frames();
+         const head = document.querySelector('#transcript .line > .group-head[data-time="40"]');
+         return { head: head && from(head), pins: pins() };`,
+      );
+      if (!returned.head || returned.head.top < returned.pins.bottom - 1 || returned.head.top > 80)
+        wrong.push(`a click on the pinned Ada: ${JSON.stringify(returned)}`);
+    }
 
     if (wrong.length) throw new Error(wrong.join("; "));
   },

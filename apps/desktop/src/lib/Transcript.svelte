@@ -30,7 +30,8 @@
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
   import { castIndex, speakerColor } from "./annotated";
-  import { GROUP_HEAD_HEIGHT, groupHeads } from "./transcriptGroups";
+  import { GROUP_HEAD_HEIGHT, groupHeads, type GroupHead } from "./transcriptGroups";
+  import { groupSpans, pinnedAt, reserveAt, type Divider } from "./pinned";
   import { channelLabel, channelUrl } from "./accounts";
   import { speakerName } from "./castNames";
   import CastDisc from "./CastDisc.svelte";
@@ -43,7 +44,8 @@
   // playhead is kept in view, playing or not, until the reader scrolls away.
   // It reads as a chat window: a speaker's lines one after another sit under
   // one head with their name (transcriptGroups.ts), and each chapter's start
-  // has a divider with its title.
+  // has a divider with its title. While a chapter's or a speaker's lines are
+  // at the top, their heading stays pinned there (pinned.ts).
   let {
     vod = null,
     edit = null,
@@ -346,6 +348,74 @@
     return [from, Math.max(from, to)];
   });
 
+  // The headings pinned at the top of the view (pinned.ts): the chapter and
+  // the speaker whose lines are there, once their own heading is above it.
+  // Only the rows near the view are laid out, so they're drawn over the list
+  // (`.pinned`) from where the rows are, not by the headings sticking.
+
+  // How tall each row's dividers and head are, as laid out (`remeasure`);
+  // those not laid out yet as the last that was (a title or a name that
+  // wraps in a narrow pane is taller).
+  const headHeights = new Map<string, { divider: number; speaker: number }>();
+  let headsGen = $state(0);
+  let dividerHeight = HEAD_HEIGHT;
+  let speakerHeight = GROUP_HEAD_HEIGHT;
+  const dividers = $derived.by(() => {
+    void headsGen;
+    return rows.flatMap((row, i): Divider[] => {
+      const count = heads.get(row.key)?.length ?? 0;
+      return count ? [{ row: i, height: headHeights.get(row.key)?.divider || dividerHeight * count }] : [];
+    });
+  });
+  const spans = $derived(
+    groupSpans(
+      speakerHeads,
+      rows.map((row) => !!row.line?.speaker?.trim()),
+    ),
+  );
+  const groups = $derived.by(() => {
+    void headsGen;
+    return spans.map((span) => ({ ...span, height: headHeights.get(rows[span.row].key)?.speaker || speakerHeight }));
+  });
+  const pinned = $derived.by(() => pinnedAt(offsets, dividers, groups, scrollTop + headHeight - listTop));
+  const pinnedChapters = $derived(pinned.chapter >= 0 ? (heads.get(rows[dividers[pinned.chapter].row].key) ?? []) : []);
+  const pinnedGroup = $derived(pinned.group >= 0 ? speakerHeads[groups[pinned.group].row] : null);
+  /** How much of the view's top the pinned headings cover with row `i` at the top. */
+  const reserve = (i: number) => reserveAt(i, dividers, groups);
+  /** Notes how tall the dividers and head over row `el` (row `index`) are, as laid out. */
+  function measureHeads(el: HTMLElement, index: number) {
+    let divider = 0;
+    for (const d of el.querySelectorAll<HTMLElement>(":scope > .chapter-head"))
+      divider += d.getBoundingClientRect().height + parseFloat(getComputedStyle(d).marginTop);
+    const speaker = el.querySelector<HTMLElement>(":scope > .group-head")?.getBoundingClientRect().height ?? 0;
+    if (!divider && !speaker) return;
+    const key = rows[index].key;
+    const was = headHeights.get(key);
+    if (was?.divider === divider && was?.speaker === speaker) return;
+    headHeights.set(key, { divider, speaker });
+    if (divider) dividerHeight = divider / (heads.get(key)?.length || 1);
+    if (speaker) speakerHeight = speaker;
+    headsGen++;
+  }
+
+  /** Scrolls row `i` to the top of the view, below what's pinned with it there. */
+  function toRow(i: number) {
+    if (!scroller || i < 0 || i >= rows.length) return;
+    aim = null;
+    scroller.scrollTop = listTop + offsets[i] - headHeight - reserve(i);
+  }
+
+  // A line focused from the keyboard is scrolled clear of the header and the
+  // headings pinned under it, as are the rows brought into view below.
+  $effect(() => {
+    const s = scroller;
+    if (!s) return;
+    void headsGen;
+    const most = (dividers.length ? dividerHeight : 0) + (groups.length ? speakerHeight : 0);
+    s.style.scrollPaddingTop = `${headHeight + most}px`;
+    return () => void (s.style.scrollPaddingTop = "");
+  });
+
   // Measures rows as they're laid out or change size. A row above the view
   // that turns out taller or shorter than thought moves the view by as much, so
   // what's being read stays put (WebKit has no scroll anchoring of its own).
@@ -359,9 +429,13 @@
       const index = Number(el.dataset.index);
       const row = rows[index];
       if (!row || !el.isConnected) continue;
+      measureHeads(el, index);
       const key = heightKeys[index];
       const before = measured.get(key) ?? estimate(row, index);
-      const height = el.offsetHeight;
+      // As laid out, to the fraction: rows a fraction of a pixel taller than
+      // whole pixels would put each next row that much further from where
+      // the list thinks, and the pinned headings would be pushed out early.
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? el.getBoundingClientRect().height;
       if (height === before) continue;
       measured.set(key, height);
       changed = true;
@@ -813,7 +887,9 @@
    *  where the row's time puts it. */
   function place() {
     if (!aim || !scroller) return;
-    const middle = headHeight + (railHeight - headHeight) / 2;
+    // The middle of what's in view below the header and the headings pinned there.
+    const pin = reserve(rowAtTime(aim.time));
+    const middle = headHeight + pin + (railHeight - headHeight - pin) / 2;
     const hit = aim.hit;
     const target = hit ? found(hit) : nearestMessage(aim.time);
     if (target) {
@@ -963,9 +1039,11 @@
   /** Brings row `i` into view a third of the way down, unless it's well in view already. */
   function bring(i: number) {
     if (!scroller || i < 0 || i >= rows.length) return;
-    const go = followTarget(offsets[i], offsets[i + 1], viewY(), viewHeight());
+    // In view means below the headings pinned at the top, not under them.
+    const pin = reserve(i);
+    const go = followTarget(offsets[i], offsets[i + 1], viewY() + pin, viewHeight() - pin);
     if (!go) return;
-    const target = Math.max(0, listTop + go.top - headHeight);
+    const target = Math.max(0, listTop + go.top - pin - headHeight);
     // Nearby, it glides there, so the eye can keep its place; far (a jump), it's there at once.
     ownScroll = go.far ? null : { from: scroller.scrollTop, to: target, until: performance.now() + 1000 };
     scroller.scrollTo({ top: target, behavior: go.far ? "auto" : "smooth" });
@@ -1051,6 +1129,53 @@
   </div>
 {/snippet}
 
+<!-- A chapter's divider: a rule across with its icon and title. Over its first
+     line it plays from its start; pinned at the top, it scrolls back there. -->
+{#snippet chapterHead(chapter: Mark, pinnedCopy: boolean)}
+  <button
+    class="row {pinnedCopy ? 'pinned-chapter' : 'chapter-head'}"
+    data-time={chapter.start}
+    tabindex={pinnedCopy ? -1 : undefined}
+    onclick={() => (pinnedCopy ? toRow(dividers[pinned.chapter].row) : play(chapter.start))}
+    title={pinnedCopy ? "Back to where this chapter starts" : `Play from ${formatTime(chapter.start)}`}
+  >
+    <span class="rule lead"></span>
+    {#if chapter.icon}<span class="emoji" aria-hidden="true">{chapter.icon}</span>{/if}
+    <span class="title" class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
+    <span class="rule"></span>
+  </button>
+{/snippet}
+
+<!-- Who says the lines below, and when the first is: their picture, or their
+     initial; their name links to their channel. Pinned at the top, the rest of
+     it scrolls back to where their lines start. -->
+{#snippet speakerHead(group: GroupHead, pinnedCopy: boolean)}
+  {@const color = speakerColor(cast, group.name)}
+  {@const member = cast[castIndex(cast, group.name)]}
+  {@const account = member?.account}
+  {@const label = speakerName(member, group.name)}
+  <span class="avatar-slot">
+    <CastDisc name={label} {color} {member} />
+  </span>
+  <span class="who">
+    {#if account}
+      {@const url = channelUrl(account)}
+      <a
+        class="speaker channel"
+        class:unknown={!color}
+        style:color
+        href={url}
+        title={channelLabel(account)}
+        tabindex={pinnedCopy ? -1 : undefined}
+        onclick={(e) => (e.preventDefault(), openUrl(url))}>{label}</a
+      >
+    {:else}
+      <span class="speaker" class:unknown={!color} style:color>{label}</span>
+    {/if}
+    <span class="head-time">{formatTime(group.start)}</span>
+  </span>
+{/snippet}
+
 <svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
 
 <div class="layout">
@@ -1085,6 +1210,36 @@
       onpointermove={onHover}
       onpointerleave={() => pointAt(null)}
     >
+      <!-- The headings pinned at the top of the view (pinned.ts): a copy for the
+           eye and the pointer. Screen readers and the keyboard have the
+           headings themselves, each over its lines in the list. -->
+      <div class="pinned-anchor" style:top="{headHeight}px">
+        {#if pinned.height > 0}
+          <div class="pinned" aria-hidden="true" style:height="{pinned.height}px">
+            {#if pinnedGroup}
+              {@const start = groups[pinned.group].row}
+              <div class="pinned-part" style:transform="translateY({pinned.speakerTop}px)">
+                <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                <div
+                  class="pinned-speaker"
+                  data-time={pinnedGroup.start}
+                  title="Back to where these lines start"
+                  onclick={(e) => !(e.target as Element).closest("a") && toRow(start)}
+                >
+                  {@render speakerHead(pinnedGroup, true)}
+                </div>
+              </div>
+            {/if}
+            {#if pinnedChapters.length}
+              <div class="pinned-part" style:transform="translateY({pinned.chapterTop}px)">
+                {#each pinnedChapters as chapter (chapter.id)}
+                  {@render chapterHead(chapter, true)}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
       {#if error}
         <p class="error-text">{error}</p>
       {/if}
@@ -1124,45 +1279,12 @@
           class:now={row.line && range[0] + k === nowRow}
         >
           {#each heads.get(key) ?? [] as chapter (chapter.id)}
-            <button
-              class="row chapter-head"
-              data-time={chapter.start}
-              onclick={() => play(chapter.start)}
-              title="Play from {formatTime(chapter.start)}"
-            >
-              <span class="rule lead"></span>
-              {#if chapter.icon}<span class="emoji" aria-hidden="true">{chapter.icon}</span>{/if}
-              <span class="title" class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
-              <span class="rule"></span>
-            </button>
+            {@render chapterHead(chapter, false)}
           {/each}
           {#if speakerHeads[range[0] + k]}
             {@const group = speakerHeads[range[0] + k]!}
-            {@const color = speakerColor(cast, group.name)}
-            {@const member = cast[castIndex(cast, group.name)]}
-            {@const account = member?.account}
-            {@const label = speakerName(member, group.name)}
-            <!-- Who says the lines below, and when the first is: their picture, or their initial; their name links to their channel. -->
             <div class="group-head" data-time={group.start}>
-              <span class="avatar-slot">
-                <CastDisc name={label} {color} {member} />
-              </span>
-              <span class="who">
-                {#if account}
-                  {@const url = channelUrl(account)}
-                  <a
-                    class="speaker channel"
-                    class:unknown={!color}
-                    style:color
-                    href={url}
-                    title={channelLabel(account)}
-                    onclick={(e) => (e.preventDefault(), openUrl(url))}>{label}</a
-                  >
-                {:else}
-                  <span class="speaker" class:unknown={!color} style:color>{label}</span>
-                {/if}
-                <span class="head-time">{formatTime(group.start)}</span>
-              </span>
+              {@render speakerHead(group, false)}
             </div>
           {/if}
           {#if row.line}
@@ -1267,6 +1389,12 @@
     max-width: 1320px;
   }
 
+  /* The margin over a row's divider is inside the row, so the row's measured
+     height (and where the next row starts) counts it. */
+  .line {
+    display: flow-root;
+  }
+
   /* Columns apart; a divider or a group's head over the line sits as close
      as it does without chat. */
   .with-chat .line {
@@ -1304,7 +1432,8 @@
      their name in their colour in the cast and when the first line is. As
      wide as the row, as a chapter's divider is, so the chat beside the lines
      stays beside them. */
-  .group-head {
+  .group-head,
+  .pinned-speaker {
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
@@ -1353,8 +1482,39 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The headings pinned at the top of the view, over the lines going under
+     them: in the list's place, as wide as its rows, opaque. A divider is over
+     the speaker's head it pushes out with it. It takes no room in the list. */
+  .pinned-anchor {
+    position: sticky;
+    z-index: 1;
+    height: 0;
+  }
+
+  .pinned {
+    position: absolute;
+    top: 0;
+    left: -20px;
+    right: -20px;
+    overflow: hidden;
+  }
+
+  .pinned-part {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 0 20px;
+    background: var(--bg);
+  }
+
+  .pinned-speaker {
+    cursor: pointer;
+  }
+
   /* A chapter's start: a rule across with its icon and title, muted, over its first line. */
-  .chapter-head {
+  .chapter-head,
+  .pinned-chapter {
     grid-column: 1 / -1;
     align-items: center;
     gap: 8px;
@@ -1364,24 +1524,28 @@
     color: var(--muted);
   }
 
-  .chapter-head .rule {
+  .chapter-head .rule,
+  .pinned-chapter .rule {
     flex: 1;
     height: 1px;
     background: var(--border);
   }
 
   /* As far in as the lines' times, so the title starts where their text does. */
-  .chapter-head .rule.lead {
+  .chapter-head .rule.lead,
+  .pinned-chapter .rule.lead {
     flex: none;
     width: 62px;
   }
 
-  .chapter-head .emoji {
+  .chapter-head .emoji,
+  .pinned-chapter .emoji {
     font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
     font-size: 13px;
   }
 
-  .chapter-head .title {
+  .chapter-head .title,
+  .pinned-chapter .title {
     overflow-wrap: anywhere;
   }
 
@@ -1390,7 +1554,8 @@
     background: none;
   }
 
-  .chapter-head .untitled {
+  .chapter-head .untitled,
+  .pinned-chapter .untitled {
     font-weight: 400;
     font-style: italic;
   }

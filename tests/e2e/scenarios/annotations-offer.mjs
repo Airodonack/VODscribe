@@ -130,7 +130,7 @@ export default {
           "the speakers",
           async () => {
             const got = await app.js(
-              `return [...document.querySelectorAll("#transcript .speaker")].map((s) => s.textContent.trim())`,
+              `return [...document.querySelectorAll("#transcript .line .speaker")].map((s) => s.textContent.trim())`,
             );
             return got.length === 4 && got;
           },
