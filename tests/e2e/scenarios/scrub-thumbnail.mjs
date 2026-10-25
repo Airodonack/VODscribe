@@ -67,6 +67,42 @@ const THUMBNAIL = `
   return { time: Number(canvas.dataset.time), exact: canvas.dataset.exact === "true", rgb: [r, g, b],
            tip: tip?.textContent.trim() ?? null, beside: !!tip?.classList.contains("beside") };`;
 
+/** In the page: the pointer moved over the timeline to `time` (arguments
+ *  [0]), then the first thumbnail it shows (as THUMBNAIL reads it) that is
+ *  the frame at `want` s ([1]; any frame, null), exact or not as [2] says,
+ *  or after [3] ms none, with the last one seen. Looked at on each change
+ *  to the timeline as it's made, not polled from outside: the storyboard's
+ *  frame draws within a few tens of milliseconds and the exact frame
+ *  replaces it once the pointer has rested, both between two looks over
+ *  WebDriver. Not looked at before the move's changes land, so the frame
+ *  shown for the last moment can't count for this one. Only the first match
+ *  counts: a frame asked for a moment the pointer has left can show for an
+ *  instant on the way. */
+const HOVER = `
+  const [time, want, exact, ms] = arguments;
+  const move = function () {${POINTER}
+  };
+  const read = () => {${THUMBNAIL}
+  };
+  return new Promise((resolve) => {
+    let last = null;
+    const done = (seen) => {
+      watch.disconnect();
+      clearTimeout(timer);
+      resolve(seen);
+    };
+    const check = () => {
+      const t = read();
+      if (!t) return;
+      last = t;
+      if (want === null || (Math.abs(t.time - want) < 1e-3 && t.exact === exact)) done({ ...t, found: true });
+    };
+    const watch = new MutationObserver(check);
+    watch.observe(document.querySelector(".timeline"), { subtree: true, childList: true, attributes: true });
+    const timer = setTimeout(() => done({ found: false, last }), ms);
+    move("pointermove", time);
+  });`;
+
 /** In the page: where the tip is, and whether it's beside a thumbnail (or its box). */
 const TIP = `
   const tip = document.querySelector(".timeline .tip");
@@ -127,12 +163,17 @@ export default {
         { every: 100 },
       );
 
-    // 2. Hovering 2.5 s before the player is open: the storyboard's frame, the keyframe at 2 s, blue.
+    // 2. Hovering 2.5 s: first the storyboard's frame, the keyframe at 2 s,
+    //    blue. The player is open (it opens with the file); the exact frame
+    //    waits for the pointer to rest.
     await app.openVod(vod.id);
-    await pointer("pointermove", 2.5);
-    const hovered = await shows("the storyboard's frame at 2.5 s", "blue");
-    ctx.log(`hovering 2.5 s: ${named(hovered.rgb)} from ${hovered.time} s (exact: ${hovered.exact})`);
-    if (hovered.exact) throw new Error("exact before the player was open");
+    const hovered = await app.js(HOVER, 2.5, null, false, 15_000);
+    if (!hovered.found) throw new Error("hovering 2.5 s, no thumbnail");
+    ctx.log(`hovering 2.5 s: first ${named(hovered.rgb)} from ${hovered.time} s (exact: ${hovered.exact})`);
+    if (hovered.exact)
+      throw new Error(`hovering 2.5 s, the exact frame (${hovered.time} s) came before the storyboard's`);
+    if (named(hovered.rgb) !== "blue" || Math.abs(hovered.time - 2) > 1e-6)
+      throw new Error(`hovering 2.5 s, first ${named(hovered.rgb)} at ${hovered.time} s, not the keyframe at 2 s`);
 
     // The player open: resting there, the exact frame on the grid.
     await app.click('.bar button[aria-label="Play"]');
@@ -206,12 +247,16 @@ export default {
 
     // 6. Rested at 4.5 s, then a click there and Play: the decoder that
     //    previewed it plays on, none started, and the screen is magenta.
+    //    Inside the frame, half a frame on, as step 3's edges are: a WebKit
+    //    that drops the pointer's fraction of a pixel (Ubuntu 22.04's) loses
+    //    at most 0.0145 s, where on 4.5 itself a pixel short is the frame
+    //    before.
     await pointer("pointermove", 4.6);
-    await pointer("pointermove", 4.5);
+    await pointer("pointermove", 4.5 + half);
     await shows("the exact frame at 4.5 s", "magenta", { exact: true });
     const before = await app.invoke("player_decoders_started");
-    await pointer("pointerdown", 4.5);
-    await pointer("pointerup", 4.5);
+    await pointer("pointerdown", 4.5 + half);
+    await pointer("pointerup", 4.5 + half);
     await app.click('.bar button[aria-label="Play"]');
     await until(
       "it to play",
@@ -239,11 +284,12 @@ export default {
       }
     }
 
-    // 7. A keyframe only every five seconds: before the player is open,
-    //    hovering anywhere shows the keyframe at or before the pointer (the
-    //    one its picture there is made from), however far back, and the tip
-    //    stays beside it. First each keyframe's own moment, so the
-    //    storyboard is all made; then across the whole timeline.
+    // 7. A keyframe only every five seconds: hovering anywhere shows first
+    //    the keyframe at or before the pointer (the one its picture there is
+    //    made from), however far back, and the tip stays beside it; the
+    //    exact frame follows once the pointer rests. First each keyframe's
+    //    own moment, so the storyboard is all made; then across the whole
+    //    timeline.
     const gop = longGop(path.join(ctx.out, "fixtures"));
     await app.pickFiles([gop]);
     await app.clickText("add video files…");
@@ -265,19 +311,12 @@ export default {
     }
     const missed = [];
     for (let t = 0.25; t < 20; t += 0.25) {
-      await pointer("pointermove", t);
       const want = keyframeOf(t);
-      const seen = await until(
-        `the keyframe at ${want} s for ${t} s`,
-        async () => {
-          const shown = await thumbnail();
-          if (shown && Math.abs(shown.time - want) < 1e-3) return shown;
-          throw new Error(shown ? `the frame at ${shown.time} s` : "no thumbnail");
-        },
-        2_000,
-        { every: 50 },
-      ).catch((e) => e);
-      if (seen instanceof Error) missed.push(`${t} s (${seen.message.match(/last: "?(.*?)"?\)$/)?.[1]})`);
+      const seen = await app.js(HOVER, t, want, false, 2_000);
+      if (!seen.found)
+        missed.push(
+          `${t} s (${seen.last ? `the ${seen.last.exact ? "exact " : ""}frame at ${seen.last.time} s` : "no thumbnail"})`,
+        );
       else if (named(seen.rgb) !== colourAt(want) || !seen.beside)
         missed.push(`${t} s (${named(seen.rgb)}, the tip ${seen.beside ? "beside" : "centred"})`);
     }
