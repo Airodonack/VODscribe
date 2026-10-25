@@ -76,6 +76,9 @@ pub struct AnnotatedSegment {
 pub struct Chapter {
     pub start: f64,
     pub title: String,
+    /// What it's about, as one emoji; shown as given (`one_emoji` keeps only that).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -180,6 +183,20 @@ fn watch_url(platform: &str, id: &str, channel: Option<&str>) -> Option<String> 
 }
 
 /// A time from the file that can stand as one: finite and not before the start.
+/// `icon` as a chapter's icon: one emoji (a single character as the reader
+/// sees it, of no letter or digit and not plain ASCII), trimmed; None for
+/// anything else, which an import leaves out rather than refusing the file.
+/// The page's `oneEmoji` (annotations.ts) is the same rule.
+pub fn one_emoji(icon: &str) -> Option<&str> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let s = icon.trim();
+    let plain = |c: char| c.is_alphanumeric() || c.is_control() || c.is_whitespace();
+    if s.is_empty() || s.is_ascii() || s.chars().any(plain) || s.graphemes(true).count() != 1 {
+        return None;
+    }
+    Some(s)
+}
+
 fn usable(t: f64) -> bool {
     t.is_finite() && t >= 0.0
 }
@@ -306,7 +323,9 @@ impl Db {
             let from_import = || MarkDetail { source: SOURCE.into(), ..MarkDetail::default() };
             for c in annotations.chapters.iter().filter(|c| usable(c.start)) {
                 let title = Some(c.title.trim()).filter(|t| !t.is_empty());
-                db.insert_mark_with(clip, vod_id, "chapter", Flicks::from_seconds(c.start), title, &from_import())?;
+                let detail =
+                    MarkDetail { icon: c.icon.as_deref().and_then(one_emoji).map(Into::into), ..from_import() };
+                db.insert_mark_with(clip, vod_id, "chapter", Flicks::from_seconds(c.start), title, &detail)?;
             }
             for h in annotations.highlights.iter().filter(|h| usable(h.start)) {
                 let detail = MarkDetail {
@@ -355,7 +374,7 @@ mod tests {
                   "words": [{ "text": "hello", "start": 1.0, "end": 1.5 }, { "text": "there", "start": 1.6, "end": 3.0 }] },
                 { "id": 1, "start": 10.0, "end": 12.0, "text": "general kenobi", "words": [] }
             ]},
-            "chapters": [{ "start": 0.0, "title": "Start" }, { "start": 20.0, "title": "Middle" }],
+            "chapters": [{ "start": 0.0, "title": "Start", "icon": " 🎮" }, { "start": 20.0, "title": "Middle", "icon": "a game" }],
             "highlights": [{ "start": 5.0, "end": 9.0, "title": "Big laugh", "kind": "funny", "why": "everyone loses it",
                               "cast": ["Marlowe", " ", "Ada "] }],
             "cast": [{ "name": "Marlowe", "aliases": ["Mar"], "role": "streamer" }],
@@ -410,6 +429,16 @@ mod tests {
     }
 
     #[test]
+    fn a_chapter_icon_is_one_emoji_or_none() {
+        for icon in ["🎮", " 🍳 ", "👩‍🍳", "🏳️‍🌈", "❤️", "🇫🇷"] {
+            assert_eq!(one_emoji(icon), Some(icon.trim()), "{icon}");
+        }
+        for icon in ["", " ", "🎮🎮", "a", "🎮 game", "Game", "7", "?", ":)", "日"] {
+            assert_eq!(one_emoji(icon), None, "{icon}");
+        }
+    }
+
+    #[test]
     fn an_import_adds_the_vod_transcribed_with_its_marks_cast_and_chat() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let chat = [message(2.0, "hi"), message(4.0, "KEKW")];
@@ -439,6 +468,8 @@ mod tests {
         );
         assert_eq!(h.cast, ["Marlowe", "Ada"], "names trimmed, blanks left out");
         assert!(marks[0].detail.cast.is_empty(), "a chapter has no cast");
+        assert_eq!(marks[0].detail.icon.as_deref(), Some("🎮"), "an icon, trimmed");
+        assert_eq!(marks[2].detail.icon, None, "an icon that isn't one emoji is left out");
         assert!(marks.iter().all(|m| m.detail.source == SOURCE));
         let extra = db.vod_annotations(vod.id).unwrap().unwrap();
         assert_eq!(extra.cast[0].aliases, ["Mar"]);
@@ -459,7 +490,7 @@ mod tests {
         db.set_mark_text(middle.id, Some("My middle")).unwrap();
 
         let mut next = file("youtube", "abc");
-        next.chapters = vec![Chapter { start: 0.0, title: "Opening".into() }];
+        next.chapters = vec![Chapter { start: 0.0, title: "Opening".into(), icon: None }];
         next.highlights.clear();
         next.cast.push(CastMember { name: "Ada".into(), aliases: vec![], role: "chatter".into() });
         next.transcript.segments.truncate(1);

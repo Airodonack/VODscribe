@@ -179,3 +179,14 @@ test("a highlight's cast is read when it's there, left out when it isn't, refuse
   without.highlights[0].cast = "airodonack";
   assert.throws(() => parseAnnotations(without), /a highlight's cast isn't a list of names/);
 });
+
+test("a chapter's icon is read as the file has it; one that isn't one emoji is left out", () => {
+  assert.deepEqual(
+    annotations.chapters.map((c) => c.icon),
+    [undefined, "🚪"],
+  );
+  const odd = structuredClone(fixture("v2901646294.json"));
+  odd.chapters[1].icon = "door";
+  assert.equal(parseAnnotations(odd).chapters[1].icon, undefined);
+  assert.equal(parseAnnotations(odd).chapters[1].title, "The door");
+});

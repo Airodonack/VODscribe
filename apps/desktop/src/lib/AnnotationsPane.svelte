@@ -1,10 +1,11 @@
 <script lang="ts">
-  // A VOD's annotations as a list beside its player: its chapters (the one
-  // playing lit and kept in view), each with the highlights that start in it
+  // A VOD's annotations as a list beside its player: its chapters (each with
+  // its emoji when the file gave one, the one playing lit and kept in view), each with the highlights that start in it
   // nested under it, and its cast with their roles and other names. A chapter
   // shows its highlights until it's collapsed, then how many it holds; a
-  // highlight shows its title, start and length (and dots for who's in it)
-  // until it's expanded, then its kind, why and cast by name. A click on a
+  // highlight shows its kind's emoji, title, start and length (and dots for
+  // who's in it) until it's expanded, then its kind's word too, why and cast
+  // by name. A click on a
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
@@ -16,8 +17,9 @@
   import { tick, type Snippet } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { Vod } from "./api";
-  import { castDetail, chapterColor, highlightColor, speakerColor } from "./annotated";
+  import { castDetail, speakerColor } from "./annotated";
   import { annotated } from "./annotated.svelte";
+  import { highlightGlyph } from "./annotations";
   import {
     chapterRows,
     currentChapter,
@@ -183,8 +185,8 @@
                   aria-current={i === current ? "true" : undefined}
                   title="Play from {formatTime(row.start)}"
                 >
-                  <span class="swatch" style:background={chapterColor(i)}></span>
                   <span class="time">{formatTime(row.start)}</span>
+                  {#if row.icon}<span class="emoji" aria-hidden="true">{row.icon}</span>{/if}
                   <span class="name">{row.title}</span>
                   {#if count}
                     <span class="count muted" title="{count} highlight{count === 1 ? '' : 's'}">{count}</span>
@@ -237,7 +239,7 @@
                     onkeydown={(e) => onRowKey(e, row)}
                     title="Play from {formatTime(row.start)}"
                   >
-                    <span class="dot" style:background={highlightColor(row.category)} title={row.category}></span>
+                    <span class="emoji" title={row.category} aria-hidden="true">{highlightGlyph(row.category)}</span>
                     <span class="text">
                       <span class="name">{row.title}</span>
                       <span class="meta muted">
@@ -504,25 +506,22 @@
     outline-offset: -2px;
   }
 
-  .swatch,
   .dot {
     flex: none;
     width: 9px;
     height: 9px;
-    align-self: center;
-  }
-
-  .swatch {
-    border-radius: 2px;
-  }
-
-  .dot {
     border-radius: 50%;
   }
 
-  .row-main .dot {
+  /* A highlight's kind, as its emoji, beside its title. */
+  .emoji {
+    flex: none;
+    width: 16px;
     align-self: flex-start;
-    margin-top: 5px;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: 14px;
+    line-height: 18px;
+    text-align: center;
   }
 
   .time {
@@ -559,13 +558,13 @@
 
   /* An expanded highlight's why and cast, under its title. */
   .detail {
-    padding: 0 14px 9px 67px;
+    padding: 0 14px 9px 74px;
     font-size: 12px;
     line-height: 1.4;
   }
 
   .highlight:not(.nested) .detail {
-    padding-left: 49px;
+    padding-left: 56px;
   }
 
   .detail p {
@@ -594,11 +593,11 @@
   }
 
   .highlight .review {
-    padding-left: 49px;
+    padding-left: 56px;
   }
 
   .highlight.nested .review {
-    padding-left: 67px;
+    padding-left: 74px;
   }
 
   .vod-review {

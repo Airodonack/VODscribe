@@ -258,11 +258,13 @@
   "chapters": [
     {
       "start": 0,
-      "title": "Hello"
+      "title": "Hello",
+      "icon": "💬"
     },
     {
       "start": 20,
-      "title": "The game"
+      "title": "The game",
+      "icon": "🎮"
     },
     {
       "start": 40,

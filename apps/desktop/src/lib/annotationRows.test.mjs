@@ -18,7 +18,7 @@ import {
 const mark = (id, kind, start, extra = {}) => ({ id, vod_id: 1, kind, start, text: null, ...extra });
 
 const marks = [
-  mark(1, "chapter", 120, { text: "The door" }),
+  mark(1, "chapter", 120, { text: "The door", icon: "🚪" }),
   mark(2, "highlight", 50, { text: "Later", end: 60, category: "funny", note: " Why. ", cast: ["Ada", "Mar"] }),
   mark(3, "cut", 10),
   mark(4, "chapter", 0, { text: "The start" }),
@@ -27,14 +27,14 @@ const marks = [
   mark(7, "chapter", 300, { text: "  " }),
 ];
 
-test("chapters come in time order, each to the next one's start, the last to the VOD's end", () => {
+test("chapters come in time order, each to the next one's start, the last to the VOD's end, with their icon", () => {
   const rows = chapterRows(marks, 400);
   assert.deepEqual(
-    rows.map((r) => [r.id, r.start, r.end, r.title]),
+    rows.map((r) => [r.id, r.start, r.end, r.title, r.icon]),
     [
-      [4, 0, 120, "The start"],
-      [1, 120, 300, "The door"],
-      [7, 300, 400, "Untitled chapter"],
+      [4, 0, 120, "The start", null],
+      [1, 120, 300, "The door", "🚪"],
+      [7, 300, 400, "Untitled chapter", null],
     ],
   );
   assert.equal(chapterRows(marks).at(-1)?.end, null);

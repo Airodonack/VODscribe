@@ -34,9 +34,52 @@ export type AnnotatedSegment = {
   speaker?: string;
 };
 
-export type Chapter = { start: number; title: string };
+export type Chapter = {
+  start: number;
+  title: string;
+  /** What the chapter is about, as one emoji (a game, cooking, a drive…), shown as given beside its title. */
+  icon?: string;
+};
 
-export type HighlightKind = "funny" | "hype" | "drama" | "wholesome" | "lore" | string;
+/**
+ * The kinds of highlight there are, each with the one emoji it shows as (in
+ * the app's pane and on its timeline, and on the website's VOD page). The
+ * kind's word is what a file carries; the emoji is only how it's drawn, so a
+ * file may carry a kind not listed here: it shows as `UNKNOWN_GLYPH` and keeps
+ * its word. All are old enough to draw on every system.
+ */
+export const HIGHLIGHT_GLYPHS = {
+  funny: "😂",
+  hype: "🔥",
+  drama: "🍿",
+  wholesome: "💛",
+  clutch: "🎯",
+  fail: "💀",
+  scary: "👻",
+  rage: "😡",
+  sad: "😢",
+  cringe: "😬",
+  lore: "📜",
+  chat: "💬",
+  music: "🎵",
+  milestone: "🏆",
+  /** A moment worth seeing rather than hearing: a play, a face, a scene. */
+  visual: "👀",
+} as const;
+
+/** What a highlight of a kind not in `HIGHLIGHT_GLYPHS` shows as. */
+export const UNKNOWN_GLYPH = "⭐";
+
+/** A highlight's kind: one of `HIGHLIGHT_GLYPHS`', or another a newer file brings. */
+export type HighlightKind = keyof typeof HIGHLIGHT_GLYPHS | string;
+
+/** The emoji a highlight of `kind` shows as, its word in any case. */
+export function highlightGlyph(kind: string | null | undefined): string {
+  const key = kind?.trim().toLowerCase() ?? "";
+  return Object.prototype.hasOwnProperty.call(HIGHLIGHT_GLYPHS, key)
+    ? HIGHLIGHT_GLYPHS[key as keyof typeof HIGHLIGHT_GLYPHS]
+    : UNKNOWN_GLYPH;
+}
 
 export type Highlight = {
   start: number;
@@ -94,5 +137,25 @@ export function parseAnnotations(value: unknown): Annotations {
   for (const h of v.highlights as { cast?: unknown }[])
     if (h?.cast !== undefined && !(Array.isArray(h.cast) && h.cast.every((n) => typeof n === "string")))
       bad("a highlight's cast isn't a list of names");
-  return value as Annotations;
+  // A chapter's icon that isn't one emoji is left out, rather than the file refused.
+  const chapters = (v.chapters as Record<string, unknown>[]).map((c) => {
+    if (typeof c !== "object" || c === null || !("icon" in c)) return c;
+    const { icon, ...rest } = c;
+    const one = oneEmoji(icon);
+    return one ? { ...rest, icon: one } : rest;
+  });
+  return { ...v, chapters } as Annotations;
+}
+
+/**
+ * `value` as a chapter's icon: one emoji (a single character as the reader
+ * sees it, of no letter or digit and not plain ASCII), trimmed; null for
+ * anything else. crates/core annotations.rs `one_emoji` is the same rule.
+ */
+export function oneEmoji(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const s = value.trim();
+  if (!s || /^[ -~]*$/.test(s) || /[\p{L}\p{N}\p{Cc}\p{Z}]/u.test(s)) return null;
+  const graphemes = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(s)];
+  return graphemes.length === 1 ? s : null;
 }

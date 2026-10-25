@@ -656,6 +656,10 @@ CREATE TABLE vod_annotations (
 const MIGRATE_V30: &str = "
 ALTER TABLE marks ADD COLUMN people TEXT;";
 
+/// Version 31: what an imported chapter is about, as one emoji (`icon`), on its mark.
+const MIGRATE_V31: &str = "
+ALTER TABLE marks ADD COLUMN icon TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -800,7 +804,8 @@ pub struct Mark {
 }
 
 /// What a mark brings besides its kind, moment and text: an imported
-/// highlight's end, kind, why and cast (`annotations.rs`), and where it came from.
+/// highlight's end, kind, why and cast, an imported chapter's icon
+/// (`annotations.rs`), and where it came from.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct MarkDetail {
     /// A highlight's end, in seconds of the VOD, when it has one.
@@ -812,6 +817,8 @@ pub struct MarkDetail {
     /// Who is in a highlight: cast members' names (or aliases), as the import gave them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cast: Vec<String>,
+    /// What a chapter is about, as one emoji.
+    pub icon: Option<String>,
     /// "user" for a mark made here; "annotations" for one an import brought,
     /// which the next import replaces.
     pub source: String,
@@ -819,7 +826,7 @@ pub struct MarkDetail {
 
 impl Default for MarkDetail {
     fn default() -> Self {
-        Self { end: None, category: None, note: None, cast: Vec::new(), source: USER_MARK.into() }
+        Self { end: None, category: None, note: None, cast: Vec::new(), icon: None, source: USER_MARK.into() }
     }
 }
 
@@ -1063,6 +1070,7 @@ impl Db {
             MIGRATE_V28,
             MIGRATE_V29,
             MIGRATE_V30,
+            MIGRATE_V31,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1308,7 +1316,7 @@ impl Db {
     /// VOD `vod_id`'s marks (its own clip's), in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, vod_id, kind, at, text, end_at, category, note, source, people FROM marks
+            "SELECT id, vod_id, kind, at, text, end_at, category, note, source, people, icon FROM marks
              WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
              ORDER BY at, id",
         )?;
@@ -1329,6 +1337,7 @@ impl Db {
                         .get::<_, Option<String>>(9)?
                         .and_then(|j| serde_json::from_str(&j).ok())
                         .unwrap_or_default(),
+                    icon: r.get(10)?,
                 },
             })
         })?;
@@ -1373,8 +1382,8 @@ impl Db {
         detail: &MarkDetail,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, icon, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 clip,
                 vod_id,
@@ -1386,6 +1395,7 @@ impl Db {
                 detail.note,
                 detail.source,
                 (!detail.cast.is_empty()).then(|| serde_json::to_string(&detail.cast)).transpose()?,
+                detail.icon,
                 now()
             ],
         )?;
@@ -2496,7 +2506,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2532,11 +2542,13 @@ mod tests {
         // Back to version 29: the column 30 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE marks DROP COLUMN people; PRAGMA user_version = 29;")
+            .execute_batch(
+                "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; PRAGMA user_version = 29;",
+            )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2544,6 +2556,33 @@ mod tests {
         let detail = MarkDetail { cast: vec!["Marlowe".into(), "Ada".into()], ..MarkDetail::default() };
         db.insert_mark_with(clip, vod, "highlight", Flicks::from_seconds(9.0), None, &detail).unwrap();
         assert_eq!(db.marks(vod).unwrap()[1].detail.cast, ["Marlowe", "Ada"]);
+    }
+
+    #[test]
+    fn marks_from_before_chapters_had_an_icon_read_with_none() {
+        let dir = crate::TempDir::new("migrate-v30");
+        let path = dir.join("library.sqlite");
+        let vod = {
+            let db = Db::open(&path).unwrap();
+            let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+            db.add_mark(vod.id, "chapter", 5.0, Some("The game")).unwrap();
+            vod.id
+        };
+        // Back to version 30: the column 31 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE marks DROP COLUMN icon; PRAGMA user_version = 30;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 31);
+        let marks = db.marks(vod).unwrap();
+        assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
+        // And an icon, once there is one, is kept and read back.
+        let clip = db.vod_clip(vod).unwrap().unwrap();
+        let detail = MarkDetail { icon: Some("🎮".into()), ..MarkDetail::default() };
+        db.insert_mark_with(clip, vod, "chapter", Flicks::from_seconds(9.0), None, &detail).unwrap();
+        assert_eq!(db.marks(vod).unwrap()[1].detail.icon.as_deref(), Some("🎮"));
     }
 
     #[test]

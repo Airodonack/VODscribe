@@ -15,11 +15,14 @@
   // each from its start to the next one's; highlights are stars on its top
   // edge. Hovering one shows its title or note, a click goes to it and selects
   // it (to move like a cut), and a double click opens its title to write.
-  // From an annotations import (annotated.ts): its chapters are tinted
-  // slices, each its own colour; its highlights are dots on the bar's upper
-  // part in their kind's colour, and hovering one draws a line down the bar
-  // at its start, shades it to its end, and says why it's one; and what the
-  // VOD is doing (a game, just chatting) is a thin band under the chapters.
+  // From an annotations import (annotated.ts): its chapters are slices in
+  // two gray tints by turns, so neighbours part, each with its emoji when
+  // the file gave one and the slice has room; its highlights are their
+  // kind's emoji on the bar's upper part (annotations.ts `highlightGlyph`),
+  // those closer than a glyph apart one glyph with their count, and hovering
+  // one draws a line down the bar at its start, shades it to its end, and
+  // says why it's one; and what the VOD is doing (a game, just chatting) is a
+  // thin band under the chapters.
   //
   // An edit's timeline (EditView.svelte) is the same without any of a VOD's
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
@@ -66,7 +69,8 @@
   import { TIP_INSET, nearWithin, place } from "./scrubFrame";
   import { ExactFrame } from "./exactFrame.svelte";
   import type { Mark } from "./api";
-  import { activityColor, activityLabel, chapterColor, highlightColor, withAlpha } from "./annotated";
+  import { activityColor, activityLabel, crowds } from "./annotated";
+  import { highlightGlyph } from "./annotations";
   import { annotated } from "./annotated.svelte";
 
   /** An edit's piece on its timeline (in the edit's time). */
@@ -758,12 +762,26 @@
   const label = (m: Mark) => m.text ?? (m.kind === "chapter" ? "Untitled chapter" : "Highlight");
   /** From an annotations import, rather than made here. */
   const imported = (m: Mark) => m.source === "annotations";
-  // Imported chapters' colours, in their order along the timeline.
-  const chapterColors = $derived.by(() => {
-    const out = new Map<number, string>();
-    for (const { chapter } of chapterSpans) if (imported(chapter)) out.set(chapter.id, chapterColor(out.size));
+  // Imported chapters' turns in the two tints (0 or 1), in their order along the timeline.
+  const chapterTurns = $derived.by(() => {
+    const out = new Map<number, number>();
+    for (const { chapter } of chapterSpans) if (imported(chapter)) out.set(chapter.id, out.size % 2);
     return out;
   });
+  // A chapter's icon shows in its slice once the slice has room for it and a little of its title.
+  const ICON_ROOM = 32;
+  // The imported highlights in view, those closer than a glyph apart as one.
+  const GLYPH_WIDTH = 14;
+  const glyphs = $derived(
+    crowds(
+      named ? cuts.highlights.filter((h) => h.category && placed(h) >= viewStart && placed(h) <= viewStart + span) : [],
+      (h) => x(placed(h)),
+      // Not until the bar's width is known, when all would be at 0.
+      width ? GLYPH_WIDTH : 0,
+    ),
+  );
+  // How many more each glyph drawn stands for, by its highlight's id, for its tip.
+  const crowded = $derived(new Map(glyphs.map((g) => [g.first.id, g.count - 1])));
   // What the VOD is doing when, from an import; nothing on an edit's timeline.
   $effect(() => annotated.load(vod?.id));
   const activity = $derived(vod ? (annotated.of(vod.id)?.activity ?? []) : []);
@@ -854,19 +872,21 @@
     <div class="chapters" bind:this={markLane} onpointerdown={onDown}>
       {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
         {#if end > viewStart && start < viewStart + span}
-          {@const color = chapterColors.get(chapter.id)}
+          {@const turn = chapterTurns.get(chapter.id)}
+          {@const shownWidth = x(Math.min(end, viewStart + span)) - x(Math.max(start, viewStart))}
           <div
             class="chapter"
             class:current={i === nowChapter}
             class:selected={cuts.selected === chapter.id}
-            class:imported={!!color}
+            class:imported={turn !== undefined}
+            class:other={turn === 1}
             data-chapter={chapter.id}
             style:left={pct(Math.max(start, viewStart))}
             style:width={widthPct(Math.max(start, viewStart), Math.min(end, viewStart + span))}
-            style:--chapter={color}
-            style:background={color ? withAlpha(color, i === nowChapter ? 0.34 : 0.18) : null}
             ondblclick={() => (cuts.editing = chapter.id)}
           >
+            {#if chapter.icon && shownWidth >= ICON_ROOM}<span class="icon" aria-hidden="true">{chapter.icon}</span
+              >{/if}
             <span class="label" class:untitled={!chapter.text}>{label(chapter)}</span>
           </div>
           {#if start >= viewStart}
@@ -1035,36 +1055,36 @@
     {#if hoverMark?.kind === "highlight" && hoverMark.category}
       {@const at = placed(hoverMark)}
       {@const until = endOf(hoverMark)}
-      {@const color = highlightColor(hoverMark.category)}
       <!-- The highlight pointed at: a line at its start, and its stretch to its end. -->
       {#if until !== null && until > viewStart && at < viewStart + span}
         <span
           class="moment"
           style:left={pct(Math.max(at, viewStart))}
           style:width={widthPct(Math.max(at, viewStart), Math.min(until, viewStart + span))}
-          style:background={withAlpha(color, 0.18)}
         ></span>
       {/if}
       {#if at >= viewStart && at <= viewStart + span}
-        <span class="moment-line" style:left={pct(at)} style:background={color}></span>
+        <span class="moment-line" style:left={pct(at)}></span>
       {/if}
     {/if}
+    {#each glyphs as { first: h, count } (h.id)}
+      <!-- An imported highlight: its kind's emoji, with how many it stands for when they crowd. -->
+      <span
+        class="emoji"
+        class:selected={cuts.selected === h.id}
+        class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
+        data-mark={h.id}
+        data-category={h.category}
+        data-count={count}
+        style:left={pct(placed(h))}
+        ondblclick={() => (cuts.editing = h.id)}
+        >{highlightGlyph(h.category)}{#if count > 1}<span class="crowd">{count}</span>{/if}</span
+      >
+    {/each}
     {#each named ? cuts.highlights : [] as h (h.id)}
       {@const at = placed(h)}
       {#if at >= viewStart && at <= viewStart + span}
-        {#if h.category}
-          <!-- An imported highlight: a dot in its kind's colour. -->
-          <span
-            class="dot"
-            class:selected={cuts.selected === h.id}
-            class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
-            data-mark={h.id}
-            data-category={h.category}
-            style:left={pct(at)}
-            style:--dot={highlightColor(h.category)}
-            ondblclick={() => (cuts.editing = h.id)}
-          ></span>
-        {:else}
+        {#if !h.category}
           <span
             class="star"
             class:selected={cuts.selected === h.id}
@@ -1105,9 +1125,10 @@
         >{#if hoverMark}<strong>{label(hoverMark)}</strong>
           {formatTime(placed(hoverMark))}{#if endOf(hoverMark) !== null}–{formatTime(
               endOf(hoverMark)!,
-            )}{/if}{#if hoverMark.note}<span class="why">{hoverMark.note}</span>{/if}{:else if hoverActivity}<strong
-            >{activityLabel(hoverActivity)}</strong
-          >
+            )}{/if}{#if hoverMark.note}<span class="why">{hoverMark.note}</span
+            >{/if}{#if crowded.get(hoverMark.id)}<span class="why"
+              >{crowded.get(hoverMark.id)} more close by: zoom in to see them</span
+            >{/if}{:else if hoverActivity}<strong>{activityLabel(hoverActivity)}</strong>
           {formatTime(hoverActivity.start)}–{formatTime(hoverActivity.end)}{:else}{formatTime(
             tipTime ?? hoverTime,
           )}{/if}</span
@@ -1153,15 +1174,36 @@
     color: var(--text);
   }
 
-  /* An imported chapter: a slice in its own colour. */
+  /* An imported chapter: a gray slice, the next one a shade darker so
+     neighbours part, the one playing darker still. A chapter has no colour
+     of its own: colour on the timeline means a person, a played stretch or
+     an event. */
   .chapter.imported {
+    background: color-mix(in srgb, var(--muted) 16%, transparent);
+    box-shadow: none;
     color: var(--text);
+  }
+
+  .chapter.imported.other {
+    background: color-mix(in srgb, var(--muted) 26%, transparent);
+  }
+
+  .chapter.imported.current {
+    background: color-mix(in srgb, var(--muted) 40%, transparent);
   }
 
   .chapter.selected {
     box-shadow:
       inset 2px 0 0 var(--picked),
       inset 0 0 0 1px var(--picked);
+  }
+
+  /* An imported chapter's emoji, before its title. */
+  .chapter .icon {
+    flex: none;
+    margin-right: 4px;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: 12px;
   }
 
   .label {
@@ -1358,26 +1400,48 @@
     opacity: 1;
   }
 
-  /* An imported highlight: a dot on the bar's upper part, in its kind's colour. */
-  .dot {
+  /* An imported highlight: its kind's emoji on the bar's upper part (under the
+     time labels), centred on its start. */
+  .emoji {
     position: absolute;
-    top: 3px;
-    width: 9px;
-    height: 9px;
-    margin-left: -4.5px;
+    top: 12px;
+    width: 16px;
+    height: 16px;
+    margin-left: -8px;
     border-radius: 50%;
-    background: var(--dot);
-    box-shadow: 0 0 0 1.5px var(--surface-2);
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: 13px;
+    line-height: 16px;
+    text-align: center;
     cursor: pointer;
     z-index: 3;
   }
 
-  .dot.selected {
+  .emoji.selected {
     box-shadow: 0 0 0 2px var(--picked);
   }
 
-  .dot.away {
+  .emoji.away {
     opacity: 0.35;
+  }
+
+  /* How many highlights a glyph stands for, at its lower right. */
+  .crowd {
+    position: absolute;
+    left: 11px;
+    top: 9px;
+    min-width: 11px;
+    padding: 0 2px;
+    box-sizing: border-box;
+    border-radius: 6px;
+    background: var(--text);
+    color: var(--surface);
+    font-family: var(--font);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 11px;
+    text-align: center;
+    pointer-events: none;
   }
 
   /* The highlight pointed at: its start, and its stretch to its end. */
@@ -1387,6 +1451,7 @@
     bottom: 0;
     width: 2px;
     margin-left: -1px;
+    background: var(--text);
     pointer-events: none;
     z-index: 1;
   }
@@ -1395,6 +1460,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
+    background: color-mix(in srgb, var(--text) 14%, transparent);
     pointer-events: none;
   }
 
@@ -1706,6 +1772,7 @@
     font-variant-numeric: tabular-nums;
     pointer-events: none;
     white-space: nowrap;
-    z-index: 2;
+    /* Over the highlights' emoji and stars, which it would otherwise cut through. */
+    z-index: 4;
   }
 </style>

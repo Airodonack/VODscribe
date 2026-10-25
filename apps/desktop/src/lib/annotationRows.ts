@@ -13,6 +13,8 @@ export interface ChapterRow {
   /** The next chapter's start, or the VOD's end (null when it isn't known). */
   end: number | null;
   title: string;
+  /** What it's about, as one emoji, when an import gave it one. */
+  icon: string | null;
 }
 
 export interface HighlightRow {
@@ -21,7 +23,7 @@ export interface HighlightRow {
   start: number;
   end: number | null;
   title: string;
-  /** Its kind: funny, hype, drama… (annotated.ts colours it). */
+  /** Its kind: funny, hype, drama… (annotations.ts `highlightGlyph` draws it). */
   category: string | null;
   /** Why it's one. */
   why: string | null;
@@ -43,6 +45,7 @@ export function chapterRows(marks: Mark[], duration?: number | null): ChapterRow
     start: m.start,
     end: chapters[i + 1]?.start ?? (duration ? duration : null),
     title: m.text?.trim() || "Untitled chapter",
+    icon: m.icon ?? null,
   }));
 }
 

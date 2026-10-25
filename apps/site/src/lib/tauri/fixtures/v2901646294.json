@@ -228,7 +228,8 @@
     },
     {
       "start": 15,
-      "title": "The door"
+      "title": "The door",
+      "icon": "🚪"
     }
   ],
   "highlights": [

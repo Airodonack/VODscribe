@@ -1,25 +1,14 @@
 // What an imported annotations file (annotations.ts) shows, worked out for
-// the views: the colours its cast, highlights, chapters and activity are
-// drawn in, and what's said of them. The data comes through the app's
+// the views: the colours its cast and activity are drawn in, and what's said
+// of them (a highlight's kind is an emoji, annotations.ts `highlightGlyph`;
+// chapters have no colour of their own). The data comes through the app's
 // commands (list_marks, transcript, vod_annotations), never from the file.
 
 import type { Activity, CastMember } from "./api";
 
 /** The cast's colours, by their place in the cast: each reads on the light
- *  and the dark theme alike, and none is the accent or a highlight's. */
+ *  and the dark theme alike, and none is the accent. */
 export const CAST_COLORS = ["#2f7de1", "#d9534f", "#1f9d6b", "#c27c0e", "#8a5cd6", "#0e9aa7", "#c2408a", "#6b8e23"];
-
-/** A highlight's colour by its kind; another kind has the highlight colour. */
-export const HIGHLIGHT_COLORS: Record<string, string> = {
-  funny: "#e0a100",
-  hype: "#db2777",
-  drama: "#d9534f",
-  wholesome: "#1f9d6b",
-  lore: "#8a5cd6",
-};
-
-/** The colour imported chapters take turns in, one after another along the timeline. */
-export const CHAPTER_COLORS = ["#2f7de1", "#1f9d6b", "#c27c0e", "#8a5cd6", "#0e9aa7", "#c2408a"];
 
 /** What the VOD is doing, by kind; another kind is gray. */
 export const ACTIVITY_COLORS: Record<string, string> = {
@@ -44,14 +33,6 @@ export function speakerColor(cast: CastMember[], name: string | null | undefined
   return i < 0 ? null : CAST_COLORS[i % CAST_COLORS.length];
 }
 
-/** A highlight's dot colour, by its kind (`category`). */
-export const highlightColor = (category: string | null | undefined): string =>
-  HIGHLIGHT_COLORS[category?.toLowerCase() ?? ""] ?? HIGHLIGHT_COLORS.hype;
-
-/** The `i`-th imported chapter's colour. */
-export const chapterColor = (i: number): string =>
-  CHAPTER_COLORS[((i % CHAPTER_COLORS.length) + CHAPTER_COLORS.length) % CHAPTER_COLORS.length];
-
 /** An activity's colour, by its kind. */
 export const activityColor = (kind: string): string => ACTIVITY_COLORS[kind.toLowerCase()] ?? OTHER;
 
@@ -70,8 +51,20 @@ export function castDetail(m: CastMember): string {
   return [sentence(m.role), aliases.length ? `also ${aliases.join(", ")}` : ""].filter(Boolean).join(" · ");
 }
 
-/** `hex` (#rrggbb) at `alpha`, as rgb() (not color-mix: the older web views have none). */
-export function withAlpha(hex: string, alpha: number): string {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-  return `rgb(${r} ${g} ${b} / ${alpha})`;
+/**
+ * Highlights close together on a timeline, as one glyph each: walking them
+ * in order of `x` (where each is drawn, in pixels), one less than `within`
+ * from the first of the group before joins it. The first of each group is
+ * the one drawn (and what a click goes to); `count` says how many it stands
+ * for. Zoomed in, they come apart.
+ */
+export function crowds<T>(items: T[], x: (item: T) => number, within: number): { first: T; count: number }[] {
+  const sorted = items.map((item) => ({ item, at: x(item) })).sort((a, b) => a.at - b.at);
+  const out: { first: T; count: number; at: number }[] = [];
+  for (const { item, at } of sorted) {
+    const last = out.at(-1);
+    if (last && at - last.at < within) last.count++;
+    else out.push({ first: item, count: 1, at });
+  }
+  return out.map(({ first, count }) => ({ first, count }));
 }

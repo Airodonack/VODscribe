@@ -34,6 +34,7 @@ type Mark = {
   end?: number | null;
   category?: string | null;
   note?: string | null;
+  icon?: string | null;
   source?: string;
 };
 let marks: Mark[] = [];
@@ -49,7 +50,7 @@ function seedMarks(vodId: number) {
   seeded.add(vodId);
   const from = { vod_id: vodId, source: "annotations" };
   for (const c of open.chapters)
-    marks.push({ ...from, id: ++lastMark, kind: "chapter", start: c.start, text: c.title });
+    marks.push({ ...from, id: ++lastMark, kind: "chapter", start: c.start, text: c.title, icon: c.icon ?? null });
   for (const h of open.highlights)
     marks.push({
       ...from,

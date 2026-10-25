@@ -6688,6 +6688,7 @@ dependencies = [
  "sherpa-onnx",
  "tar",
  "unicode-normalization",
+ "unicode-segmentation",
  "ureq 3.4.2",
  "which",
  "zip 9.0.1",

@@ -607,7 +607,10 @@
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if chapterNow?.text}
-        <span class="chapter-now" title="Chapter: {chapterNow.text}">{chapterNow.text}</span>
+        <span class="chapter-now" title="Chapter: {chapterNow.text}"
+          >{#if chapterNow.icon}<span class="icon" aria-hidden="true">{chapterNow.icon}</span
+            >{/if}{chapterNow.text}</span
+        >
       {/if}
       {#if from > 0 && isLocal}
         <span class="stamp"><span class="time">{formatTime(from)}</span></span>
@@ -917,6 +920,11 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .chapter-now .icon {
+    margin-right: 4px;
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   }
 
   .stamp {
