@@ -54,7 +54,7 @@ export default {
     "annotations-timeline":
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a coloured circle with an initial, a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading. Thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
+      'The transcript\'s lines sit under headings, each a coloured circle with an initial, a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
