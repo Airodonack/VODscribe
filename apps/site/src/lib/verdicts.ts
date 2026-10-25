@@ -32,6 +32,8 @@ export interface ReviewRow {
   start: number;
   end: number | null;
   title: string;
+  /** Who is in a highlight, as the file names them. */
+  cast?: string[];
 }
 
 export const NONE: Judgment = { verdict: null, corrected_start: null, note: "" };
@@ -81,7 +83,8 @@ export function parseReviewed(text: string | null | undefined): Reviewed {
 /** The verdicts file's lines for VOD `platform`/`id`: each of `rows` with
  *  something said of it, in the order given, then the VOD's own. A row's
  *  verdict is null when it has only a note; a corrected start goes with a
- *  misplaced one only, and an end with a highlight. */
+ *  misplaced one only, and an end and its cast (who is in it, so a note can
+ *  say who's missing or wrongly named) with a highlight. */
 export function verdictLines(platform: string, id: string, rows: ReviewRow[], reviewed: Reviewed): string[] {
   const lines: string[] = [];
   for (const row of rows) {
@@ -95,6 +98,7 @@ export function verdictLines(platform: string, id: string, rows: ReviewRow[], re
         start: row.start,
         ...(row.kind === "highlight" && row.end !== null ? { end: row.end } : {}),
         title: row.title,
+        ...(row.kind === "highlight" ? { cast: row.cast ?? [] } : {}),
         verdict: j.verdict,
         ...(j.verdict === "misplaced" && j.corrected_start !== null ? { corrected_start: j.corrected_start } : {}),
         note: j.note.trim(),

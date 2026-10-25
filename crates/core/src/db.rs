@@ -651,6 +651,11 @@ CREATE TABLE vod_annotations (
     imported_at INTEGER NOT NULL
 );";
 
+/// Version 30: who is in an imported highlight (`people`: its cast's names,
+/// as a JSON array), on its mark.
+const MIGRATE_V30: &str = "
+ALTER TABLE marks ADD COLUMN people TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -795,7 +800,7 @@ pub struct Mark {
 }
 
 /// What a mark brings besides its kind, moment and text: an imported
-/// highlight's end, kind and why (`annotations.rs`), and where it came from.
+/// highlight's end, kind, why and cast (`annotations.rs`), and where it came from.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct MarkDetail {
     /// A highlight's end, in seconds of the VOD, when it has one.
@@ -804,6 +809,9 @@ pub struct MarkDetail {
     pub category: Option<String>,
     /// Why it's a highlight.
     pub note: Option<String>,
+    /// Who is in a highlight: cast members' names (or aliases), as the import gave them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cast: Vec<String>,
     /// "user" for a mark made here; "annotations" for one an import brought,
     /// which the next import replaces.
     pub source: String,
@@ -811,7 +819,7 @@ pub struct MarkDetail {
 
 impl Default for MarkDetail {
     fn default() -> Self {
-        Self { end: None, category: None, note: None, source: USER_MARK.into() }
+        Self { end: None, category: None, note: None, cast: Vec::new(), source: USER_MARK.into() }
     }
 }
 
@@ -1054,6 +1062,7 @@ impl Db {
             MIGRATE_V27,
             MIGRATE_V28,
             MIGRATE_V29,
+            MIGRATE_V30,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1299,7 +1308,7 @@ impl Db {
     /// VOD `vod_id`'s marks (its own clip's), in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, vod_id, kind, at, text, end_at, category, note, source FROM marks
+            "SELECT id, vod_id, kind, at, text, end_at, category, note, source, people FROM marks
              WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
              ORDER BY at, id",
         )?;
@@ -1315,6 +1324,11 @@ impl Db {
                     category: r.get(6)?,
                     note: r.get(7)?,
                     source: r.get(8)?,
+                    // A list the app wrote; one it can't read is no one.
+                    cast: r
+                        .get::<_, Option<String>>(9)?
+                        .and_then(|j| serde_json::from_str(&j).ok())
+                        .unwrap_or_default(),
                 },
             })
         })?;
@@ -1359,8 +1373,8 @@ impl Db {
         detail: &MarkDetail,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 clip,
                 vod_id,
@@ -1371,6 +1385,7 @@ impl Db {
                 detail.category,
                 detail.note,
                 detail.source,
+                (!detail.cast.is_empty()).then(|| serde_json::to_string(&detail.cast)).transpose()?,
                 now()
             ],
         )?;
@@ -2481,7 +2496,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 29);
+        assert_eq!(version, 30);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2502,6 +2517,33 @@ mod tests {
         );
         let names: Vec<String> = db.author_suggestions("BO", None).unwrap().into_iter().map(|s| s.name).collect();
         assert_eq!(names, ["Bob", "bobby"]);
+    }
+
+    #[test]
+    fn marks_from_before_highlights_had_a_cast_read_with_none() {
+        let dir = crate::TempDir::new("migrate-v29");
+        let path = dir.join("library.sqlite");
+        let vod = {
+            let db = Db::open(&path).unwrap();
+            let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+            db.add_mark(vod.id, "highlight", 5.0, Some("Big laugh")).unwrap();
+            vod.id
+        };
+        // Back to version 29: the column 30 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE marks DROP COLUMN people; PRAGMA user_version = 29;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 30);
+        let marks = db.marks(vod).unwrap();
+        assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
+        // And a cast, once there is one, is kept and read back.
+        let clip = db.vod_clip(vod).unwrap().unwrap();
+        let detail = MarkDetail { cast: vec!["Marlowe".into(), "Ada".into()], ..MarkDetail::default() };
+        db.insert_mark_with(clip, vod, "highlight", Flicks::from_seconds(9.0), None, &detail).unwrap();
+        assert_eq!(db.marks(vod).unwrap()[1].detail.cast, ["Marlowe", "Ada"]);
     }
 
     #[test]

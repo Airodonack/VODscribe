@@ -1,19 +1,37 @@
 <script lang="ts">
   // A VOD's annotations as a list beside its player: its chapters (the one
-  // playing lit and kept in view), its highlights in time order with their
-  // kind's colour and why, and its cast with their roles and other names. A
-  // click on a chapter or highlight plays from its start; the rows take the
-  // keyboard (↑/↓, Home and End between them, Enter to play). The website's
-  // VOD page shows it in the library pane's place (App.svelte `leftPane`),
-  // with its review controls under each row (`review`) and the VOD's own
-  // (`reviewVod`) at the top; the app has none of those. Its data comes as the
-  // other displays' does: the marks open (cuts.svelte.ts) and the VOD's
-  // annotations (annotated.svelte.ts).
+  // playing lit and kept in view), each with the highlights that start in it
+  // nested under it, and its cast with their roles and other names. A chapter
+  // shows its highlights until it's collapsed, then how many it holds; a
+  // highlight shows its title, start and length (and dots for who's in it)
+  // until it's expanded, then its kind, why and cast by name. A click on a
+  // row plays from its start; the chevron beside it opens or closes it. The
+  // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
+  // to play, → and ← to open and close, ← from a highlight to its chapter).
+  // The website's VOD page shows it in the library pane's place (App.svelte
+  // `leftPane`), with its review controls under each row (`review`) and the
+  // VOD's own (`reviewVod`) at the top; the app has none of those. Its data
+  // comes as the other displays' does: the marks open (cuts.svelte.ts) and
+  // the VOD's annotations (annotated.svelte.ts).
   import { tick, type Snippet } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import type { Vod } from "./api";
   import { castDetail, chapterColor, highlightColor, speakerColor } from "./annotated";
   import { annotated } from "./annotated.svelte";
-  import { chapterRows, currentChapter, highlightRows, lengthLabel, stepRow, type PaneRow } from "./annotationRows";
+  import {
+    chapterRows,
+    currentChapter,
+    groupKey,
+    hasDetail,
+    highlightRows,
+    lengthLabel,
+    nestRows,
+    shownRows,
+    sideStep,
+    stepRow,
+    type HighlightRow,
+    type PaneRow,
+  } from "./annotationRows";
   import { cuts } from "./cuts.svelte";
   import { formatTime } from "./platform";
 
@@ -38,15 +56,31 @@
   const mine = $derived(!!vod && cuts.isOf({ kind: "vod", id: vod.id }));
   const chapters = $derived(mine ? chapterRows(cuts.all, vod?.duration) : []);
   const highlights = $derived(mine ? highlightRows(cuts.all) : []);
+  const groups = $derived(nestRows(chapters, highlights));
   const current = $derived(mine ? currentChapter(chapters, cuts.now) : -1);
 
-  // A highlight clicked shows its why under it until another is.
-  let expanded = $state<number | null>(null);
+  // Chapters are open until collapsed (by groupKey), highlights closed until expanded (by id).
+  const collapsed = new SvelteSet<number>();
+  const expanded = new SvelteSet<number>();
+  const rows = $derived(shownRows(groups, collapsed));
 
-  function activate(row: PaneRow) {
-    if (row.kind === "highlight") expanded = row.id;
-    onplay(row.start);
+  const isOpen = (row: PaneRow) => (row.kind === "chapter" ? !collapsed.has(row.id) : expanded.has(row.id));
+  const opens = (row: PaneRow) =>
+    row.kind === "chapter" ? !!groups.find((g) => g.chapter?.id === row.id)?.highlights.length : hasDetail(row);
+
+  function toggle(row: PaneRow) {
+    const set = row.kind === "chapter" ? collapsed : expanded;
+    if (set.has(row.id)) set.delete(row.id);
+    else set.add(row.id);
   }
+
+  function toggleGroup(key: number) {
+    if (collapsed.has(key)) collapsed.delete(key);
+    else collapsed.add(key);
+  }
+
+  /** Who is in a highlight, in the cast's colours (null for a name not in it). */
+  const people = (row: HighlightRow) => row.cast.map((name) => ({ name, color: speakerColor(cast, name) }));
 
   let scroller = $state<HTMLElement>();
   const chapterEls: HTMLElement[] = $state([]);
@@ -67,14 +101,28 @@
     });
   });
 
-  // ↑/↓, Home and End go from row to row, across the chapters and highlights.
-  function onRowKey(e: KeyboardEvent) {
+  const rowId = (row: PaneRow) => `${row.kind}-${row.id}`;
+
+  async function focusRow(row: PaneRow) {
+    await tick();
+    scroller?.querySelector<HTMLElement>(`button.row-main[data-row="${rowId(row)}"]`)?.focus();
+  }
+
+  // The rows shown are one list to the keyboard, chapters and highlights alike.
+  function onRowKey(e: KeyboardEvent, row: PaneRow) {
     if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-    const rows = [...(scroller?.querySelectorAll<HTMLElement>("button.row-main") ?? [])];
-    const to = stepRow(rows.indexOf(e.currentTarget as HTMLElement), rows.length, e.key);
-    if (to === null) return;
+    const i = rows.findIndex((r) => r.kind === row.kind && r.id === row.id);
+    const to = stepRow(i, rows.length, e.key);
+    if (to !== null) {
+      e.preventDefault();
+      void focusRow(rows[to]);
+      return;
+    }
+    const side = sideStep(rows, i, e.key, isOpen, opens);
+    if (!side) return;
     e.preventDefault();
-    rows[to].focus();
+    if ("toggle" in side) toggle(side.toggle);
+    else void focusRow(rows[side.focus]);
   }
 </script>
 
@@ -95,54 +143,135 @@
       <div class="vod-review">{@render reviewVod()}</div>
     {/if}
 
-    {#if chapters.length}
-      <section aria-label="Chapters">
-        <h2 class="head"><span class="eyebrow">Chapters</span> <span class="muted">{chapters.length}</span></h2>
-        {#each chapters as row, i (row.id)}
-          <div class="pane-row" class:lit={i === current} bind:this={chapterEls[i]}>
-            <button
-              class="row-main"
-              onclick={() => activate(row)}
-              onkeydown={onRowKey}
-              aria-current={i === current ? "true" : undefined}
-              title="Play from {formatTime(row.start)}"
-            >
-              <span class="swatch" style:background={chapterColor(i)}></span>
-              <span class="time">{formatTime(row.start)}</span>
-              <span class="name">{row.title}</span>
-            </button>
-            {#if review}<div class="review">{@render review(row)}</div>{/if}
-          </div>
-        {/each}
-      </section>
-    {/if}
-
-    {#if highlights.length}
-      <section aria-label="Highlights">
-        <h2 class="head"><span class="eyebrow">Highlights</span> <span class="muted">{highlights.length}</span></h2>
-        {#each highlights as row (row.id)}
-          {@const length = lengthLabel(row.start, row.end)}
-          <div class="pane-row" class:expanded={expanded === row.id}>
-            <button
-              class="row-main"
-              onclick={() => activate(row)}
-              onkeydown={onRowKey}
-              title={row.why ?? `Play from ${formatTime(row.start)}`}
-              aria-expanded={row.why ? expanded === row.id : undefined}
-            >
-              <span class="dot" style:background={highlightColor(row.category)}></span>
-              <span class="text">
-                <span class="name">{row.title}</span>
-                <span class="meta muted">
-                  {formatTime(row.start)}{#if length}<span class="sep">·</span>{length}{/if}{#if row.category}<span
-                      class="sep">·</span
-                    >{row.category}{/if}
+    {#if groups.length}
+      <section aria-label={chapters.length ? "Chapters" : "Highlights"}>
+        <h2 class="head">
+          {#if chapters.length}
+            <span class="eyebrow">Chapters</span> <span class="muted">{chapters.length}</span>
+            {#if highlights.length}<span class="sep muted">·</span><span class="eyebrow">Highlights</span>
+              <span class="muted">{highlights.length}</span>{/if}
+          {:else}
+            <span class="eyebrow">Highlights</span> <span class="muted">{highlights.length}</span>
+          {/if}
+        </h2>
+        {#each groups as group (groupKey(group))}
+          {@const key = groupKey(group)}
+          {@const shut = collapsed.has(key)}
+          {@const count = group.highlights.length}
+          {#if group.chapter}
+            {@const row = group.chapter}
+            {@const i = chapters.indexOf(row)}
+            <div class="pane-row chapter" class:lit={i === current} bind:this={chapterEls[i]}>
+              <div class="line">
+                {#if count}
+                  <button
+                    class="chevron"
+                    class:shut
+                    aria-expanded={!shut}
+                    aria-label="{shut ? 'Show' : 'Hide'} the highlights of “{row.title}”"
+                    title={shut ? "Show its highlights" : "Hide its highlights"}
+                    onclick={() => toggle(row)}
+                  ></button>
+                {:else}
+                  <span class="chevron-space"></span>
+                {/if}
+                <button
+                  class="row-main"
+                  data-row={rowId(row)}
+                  onclick={() => onplay(row.start)}
+                  onkeydown={(e) => onRowKey(e, row)}
+                  aria-current={i === current ? "true" : undefined}
+                  title="Play from {formatTime(row.start)}"
+                >
+                  <span class="swatch" style:background={chapterColor(i)}></span>
+                  <span class="time">{formatTime(row.start)}</span>
+                  <span class="name">{row.title}</span>
+                  {#if count}
+                    <span class="count muted" title="{count} highlight{count === 1 ? '' : 's'}">{count}</span>
+                  {/if}
+                </button>
+              </div>
+              {#if review}<div class="review">{@render review(row)}</div>{/if}
+            </div>
+          {:else if chapters.length}
+            <div class="pane-row chapter before">
+              <div class="line">
+                <button
+                  class="chevron"
+                  class:shut
+                  aria-expanded={!shut}
+                  aria-label="{shut ? 'Show' : 'Hide'} the highlights before the first chapter"
+                  title={shut ? "Show its highlights" : "Hide its highlights"}
+                  onclick={() => toggleGroup(key)}
+                ></button>
+                <span class="row-head">
+                  <span class="name muted">Before the first chapter</span>
+                  <span class="count muted">{count}</span>
                 </span>
-              </span>
-            </button>
-            {#if row.why}<p class="why">{row.why}</p>{/if}
-            {#if review}<div class="review">{@render review(row)}</div>{/if}
-          </div>
+              </div>
+            </div>
+          {/if}
+          {#if !shut}
+            {#each group.highlights as row (row.id)}
+              {@const length = lengthLabel(row.start, row.end)}
+              {@const open = expanded.has(row.id)}
+              {@const detail = hasDetail(row)}
+              <div class="pane-row highlight" class:nested={chapters.length > 0} class:expanded={open}>
+                <div class="line">
+                  {#if detail}
+                    <button
+                      class="chevron"
+                      class:shut={!open}
+                      aria-expanded={open}
+                      aria-label="{open ? 'Hide' : 'Show'} what “{row.title}” is"
+                      title={open ? "Hide the details" : "Show why, and who's in it"}
+                      onclick={() => toggle(row)}
+                    ></button>
+                  {:else}
+                    <span class="chevron-space"></span>
+                  {/if}
+                  <button
+                    class="row-main"
+                    data-row={rowId(row)}
+                    onclick={() => onplay(row.start)}
+                    onkeydown={(e) => onRowKey(e, row)}
+                    title="Play from {formatTime(row.start)}"
+                  >
+                    <span class="dot" style:background={highlightColor(row.category)} title={row.category}></span>
+                    <span class="text">
+                      <span class="name">{row.title}</span>
+                      <span class="meta muted">
+                        {formatTime(row.start)}{#if length}<span class="sep">·</span
+                          >{length}{/if}{#if open && row.category}<span class="sep">·</span>{row.category}{/if}
+                      </span>
+                    </span>
+                    {#if !open && row.cast.length}
+                      <span class="faces" title={row.cast.join(", ")}>
+                        {#each people(row).slice(0, 4) as p, j (j)}
+                          <span class="face" class:unknown={!p.color} style:background={p.color}></span>
+                        {/each}
+                        {#if row.cast.length > 4}<span class="more muted">+{row.cast.length - 4}</span>{/if}
+                      </span>
+                    {/if}
+                  </button>
+                </div>
+                {#if open}
+                  <div class="detail">
+                    {#if row.why}<p class="why">{row.why}</p>{/if}
+                    {#if row.cast.length}
+                      <p class="people">
+                        {#each people(row) as p, j (j)}{#if j}<span class="muted">, </span>{/if}<strong
+                            class:unknown={!p.color}
+                            style:color={p.color}>{p.name}</strong
+                          >{/each}
+                      </p>
+                    {/if}
+                  </div>
+                {/if}
+                {#if review}<div class="review">{@render review(row)}</div>{/if}
+              </div>
+            {/each}
+          {/if}
         {/each}
       </section>
     {/if}
@@ -251,12 +380,20 @@
     box-shadow: inset 3px 0 var(--accent);
   }
 
+  /* A row: its chevron, then what plays it. */
+  .line {
+    display: flex;
+    align-items: stretch;
+    min-width: 0;
+  }
+
   .row-main {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: baseline;
     gap: 8px;
-    width: 100%;
-    padding: 9px 14px 8px;
+    padding: 9px 14px 8px 2px;
     border: none;
     border-radius: 0;
     background: none;
@@ -264,6 +401,98 @@
     font-weight: 400;
     text-align: left;
     justify-content: flex-start;
+  }
+
+  /* What opens and closes a row, a chevron pointing down when it's open. */
+  .chevron,
+  .chevron-space {
+    flex: none;
+    width: 26px;
+    margin-left: 4px;
+  }
+
+  .chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: var(--radius);
+    background: none;
+    color: var(--muted);
+  }
+
+  .chevron::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+  }
+
+  .chevron.shut::before {
+    transform: translateX(-2px) rotate(-45deg);
+  }
+
+  .chevron:hover:not(:disabled) {
+    background: none;
+    color: var(--text);
+  }
+
+  .chevron:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -4px;
+  }
+
+  /* A highlight under its chapter, in from it. */
+  .highlight.nested .line {
+    padding-left: 18px;
+  }
+
+  .highlight .chevron {
+    align-items: flex-start;
+    padding-top: 13px;
+  }
+
+  .row-head {
+    flex: 1;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 9px 14px 8px 2px;
+    min-width: 0;
+  }
+
+  .count {
+    margin-left: auto;
+    flex: none;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Who's in a collapsed highlight: a dot each in their cast colour. */
+  .faces {
+    margin-left: auto;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    align-self: center;
+  }
+
+  .face {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .face.unknown {
+    background: var(--muted);
+  }
+
+  .more {
+    font-size: 11px;
   }
 
   .row-main:hover:not(:disabled) {
@@ -328,23 +557,48 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Why it's a highlight: under it when it's clicked or has the focus, on hover always. */
-  .why {
-    display: none;
-    margin: -2px 0 0;
-    padding: 0 14px 9px 31px;
+  /* An expanded highlight's why and cast, under its title. */
+  .detail {
+    padding: 0 14px 9px 67px;
     font-size: 12px;
     line-height: 1.4;
+  }
+
+  .highlight:not(.nested) .detail {
+    padding-left: 49px;
+  }
+
+  .detail p {
+    margin: 0;
+  }
+
+  .why {
     color: var(--muted);
   }
 
-  .pane-row.expanded .why,
-  .pane-row:focus-within .why {
-    display: block;
+  .why + .people {
+    margin-top: 4px;
   }
 
+  .people strong {
+    font-weight: 600;
+  }
+
+  .people strong.unknown {
+    color: var(--text);
+  }
+
+  /* Under the row's title, as its detail is. */
   .review {
-    padding: 0 14px 9px;
+    padding: 0 14px 9px 32px;
+  }
+
+  .highlight .review {
+    padding-left: 49px;
+  }
+
+  .highlight.nested .review {
+    padding-left: 67px;
   }
 
   .vod-review {

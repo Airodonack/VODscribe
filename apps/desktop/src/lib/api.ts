@@ -360,6 +360,8 @@ export interface Mark {
   end?: number | null;
   category?: string | null;
   note?: string | null;
+  /** Who is in an imported highlight: cast members' names or aliases (missing when no one is named). */
+  cast?: string[];
   /** "user" for a mark made here, "annotations" for one an import brought (missing in the demo: the user's). */
   source?: string;
 }

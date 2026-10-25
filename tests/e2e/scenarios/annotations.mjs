@@ -3,7 +3,8 @@
 // the VOD opens transcribed whole with what the file brought. Its three
 // chapters are slices on the timeline, each in its own colour; its two
 // highlights are dots on the bar's upper part, coloured by kind, and pointing
-// at one draws a line down the bar and says its title, when and why; a click
+// at one draws a line down the bar and says its title, when and why (the
+// first's mark names who's in it, its cast); a click
 // on one goes to its start, and the header names the chapter playing there.
 // The activity band says what the VOD is doing where it's pointed at. The
 // transcript's lines name their speaker in their cast colour (an alias in the
@@ -85,6 +86,10 @@ export default {
     const summary = marks.map((m) => `${m.kind} ${m.start} ${m.text} ${m.source}`);
     if (marks.length !== 5 || marks.some((m) => m.source !== "annotations"))
       throw new Error(`the marks: ${JSON.stringify(summary)}`);
+    // A highlight's cast comes with its mark; one with none has none.
+    const inThem = marks.filter((m) => m.kind === "highlight").map((m) => m.cast ?? []);
+    if (JSON.stringify(inThem) !== '[["Mar","Ada"],[]]')
+      throw new Error(`the highlights' cast: ${JSON.stringify(inThem)}`);
     ctx.log(`imported: transcribed whole, chat in, ${marks.length} marks`);
 
     // The import opens the VOD.

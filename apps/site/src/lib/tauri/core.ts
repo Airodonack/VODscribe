@@ -60,6 +60,8 @@ function seedMarks(vodId: number) {
       end: h.end,
       category: h.kind,
       note: h.why,
+      // As the app's import keeps it: names trimmed, blanks left out, none at all left out.
+      ...(h.cast?.some((n) => n.trim()) ? { cast: h.cast.map((n) => n.trim()).filter(Boolean) } : {}),
     });
 }
 

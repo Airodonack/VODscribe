@@ -86,6 +86,9 @@ pub struct Highlight {
     pub kind: String,
     #[serde(default)]
     pub why: String,
+    /// Who is in it: cast members' names, or their aliases.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cast: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -310,6 +313,7 @@ impl Db {
                     end: Some(h.end).filter(|e| e.is_finite() && *e > h.start),
                     category: Some(h.kind.trim().to_string()).filter(|k| !k.is_empty()),
                     note: Some(h.why.trim().to_string()).filter(|w| !w.is_empty()),
+                    cast: h.cast.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).map(Into::into).collect(),
                     ..from_import()
                 };
                 let title = Some(h.title.trim()).filter(|t| !t.is_empty());
@@ -352,7 +356,8 @@ mod tests {
                 { "id": 1, "start": 10.0, "end": 12.0, "text": "general kenobi", "words": [] }
             ]},
             "chapters": [{ "start": 0.0, "title": "Start" }, { "start": 20.0, "title": "Middle" }],
-            "highlights": [{ "start": 5.0, "end": 9.0, "title": "Big laugh", "kind": "funny", "why": "everyone loses it" }],
+            "highlights": [{ "start": 5.0, "end": 9.0, "title": "Big laugh", "kind": "funny", "why": "everyone loses it",
+                              "cast": ["Marlowe", " ", "Ada "] }],
             "cast": [{ "name": "Marlowe", "aliases": ["Mar"], "role": "streamer" }],
             "activity": [{ "start": 0.0, "end": 30.0, "kind": "just chatting" }, { "start": 30.0, "end": 60.0, "kind": "game", "name": "Chess" }]
         });
@@ -432,6 +437,8 @@ mod tests {
             (h.end, h.category.as_deref(), h.note.as_deref()),
             (Some(9.0), Some("funny"), Some("everyone loses it"))
         );
+        assert_eq!(h.cast, ["Marlowe", "Ada"], "names trimmed, blanks left out");
+        assert!(marks[0].detail.cast.is_empty(), "a chapter has no cast");
         assert!(marks.iter().all(|m| m.detail.source == SOURCE));
         let extra = db.vod_annotations(vod.id).unwrap().unwrap();
         assert_eq!(extra.cast[0].aliases, ["Mar"]);
@@ -478,6 +485,7 @@ mod tests {
         db.add_mark(vod.id, "cut", 3.0, None).unwrap();
         db.restore_marks(vod.id, &before).unwrap();
         assert_eq!(db.mark_states(vod.id).unwrap(), before);
+        assert!(before.iter().any(|m| m.detail.cast == ["Marlowe", "Ada"]), "with the highlight's cast");
         // So the next import still replaces them.
         db.import_annotations(&file("youtube", "abc"), None).unwrap();
         assert_eq!(db.marks(vod.id).unwrap().len(), 3);

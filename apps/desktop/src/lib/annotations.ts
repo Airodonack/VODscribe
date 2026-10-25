@@ -38,7 +38,15 @@ export type Chapter = { start: number; title: string };
 
 export type HighlightKind = "funny" | "hype" | "drama" | "wholesome" | "lore" | string;
 
-export type Highlight = { start: number; end: number; title: string; kind: HighlightKind; why: string };
+export type Highlight = {
+  start: number;
+  end: number;
+  title: string;
+  kind: HighlightKind;
+  why: string;
+  /** Who is in it: cast members' `name`s, or their aliases. */
+  cast?: string[];
+};
 
 export type CastRole = "streamer" | "friend" | "chatter" | "in-game character" | "other" | string;
 
@@ -82,5 +90,9 @@ export function parseAnnotations(value: unknown): Annotations {
   const transcript = v.transcript as Record<string, unknown> | undefined;
   if (!transcript || !Array.isArray(transcript.segments)) bad("no transcript segments");
   for (const key of ["chapters", "highlights", "cast", "activity"]) if (!Array.isArray(v[key])) bad(`no ${key} list`);
+  // A highlight's cast may be left out, but what's there is a list of names (as the app's import reads it).
+  for (const h of v.highlights as { cast?: unknown }[])
+    if (h?.cast !== undefined && !(Array.isArray(h.cast) && h.cast.every((n) => typeof n === "string")))
+      bad("a highlight's cast isn't a list of names");
   return value as Annotations;
 }

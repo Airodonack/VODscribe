@@ -11,7 +11,7 @@ const chapter = { kind: "chapter", start: 0, end: 15, title: "The old tutorial" 
 /** @type {Row} */
 const door = { kind: "chapter", start: 15, end: null, title: "The door" };
 /** @type {Row} */
-const pelican = { kind: "highlight", start: 7, end: 14, title: "The pelican skip" };
+const pelican = { kind: "highlight", start: 7, end: 14, title: "The pelican skip", cast: ["airodonack"] };
 /** @type {Row} */
 const quiet = { kind: "highlight", start: 30, end: null, title: "Quiet" };
 
@@ -38,12 +38,21 @@ test("one line per row judged, in the rows' order, then the VOD's", () => {
       start: 7,
       end: 14,
       title: "The pelican skip",
+      cast: ["airodonack"],
       verdict: "misplaced",
       corrected_start: 6.5,
       note: "Starts on the jump.",
     },
     { platform: "twitch", id: "v1", kind: "vod", note: "Good overall." },
   ]);
+});
+
+test("a highlight's line has its cast, empty when it names no one; a chapter's has none", () => {
+  /** @type {Reviewed} */
+  const noted = { rows: { [rowKey(quiet)]: { verdict: "wrong", corrected_start: null, note: "" } }, note: "" };
+  assert.deepEqual(JSON.parse(verdictLines("twitch", "v1", [quiet], noted)[0]).cast, []);
+  const [line] = verdictLines("twitch", "v1", [chapter], reviewed).map((l) => JSON.parse(l));
+  assert.equal("cast" in line, false);
 });
 
 test("a corrected start goes only with a misplaced verdict; nothing judged leaves the VOD's line", () => {
