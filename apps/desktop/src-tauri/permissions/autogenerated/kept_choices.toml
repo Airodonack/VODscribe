@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-kept-choices"
+description = "Enables the kept_choices command without any pre-configured scope."
+commands.allow = ["kept_choices"]
+
+[[permission]]
+identifier = "deny-kept-choices"
+description = "Denies the kept_choices command without any pre-configured scope."
+commands.deny = ["kept_choices"]

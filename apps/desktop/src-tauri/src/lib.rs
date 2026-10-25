@@ -8,6 +8,7 @@ mod annotations;
 #[cfg(any(not(dev), test))]
 mod app_server;
 mod chats;
+mod choices;
 mod clips;
 #[cfg(feature = "e2e")]
 mod e2e;
@@ -206,6 +207,7 @@ pub fn run() {
             // On Windows the data dir roams, so downloads go in the local one.
             let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
             paths.ensure()?;
+            app.manage(choices::Kept::load(paths.choices()));
             // Upgrades: drop models this version no longer uses.
             if model::is_installed(&paths.model_dir(), &model::CPU_MODEL) {
                 model::remove_others(&paths.models(), &[&model::CPU_MODEL, &model::GPU_MODEL]);
@@ -442,6 +444,8 @@ pub fn run() {
             vods::kick_stream,
             vods::twitch_clip_video,
             setup::get_settings,
+            choices::kept_choices,
+            choices::keep_choice,
             setup::set_settings,
             setup::reset_settings,
             setup::gpu_status,

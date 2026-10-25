@@ -132,6 +132,9 @@ export default {
     };
     writeFileSync(ytDlp, standIn(file, info));
     chmodSync(ytDlp, 0o755);
+    // The rights note asks before the first download; not here. Hidden as the
+    // app keeps it (crates/core choices.rs), read as the page starts.
+    writeFileSync(path.join(dataDirs()[0], "choices.json"), JSON.stringify({ "vodscribe.clipNoteHidden": "true" }));
     try {
       app = await ctx.start();
       // The app's own player's state (which document it holds) is read
@@ -139,8 +142,6 @@ export default {
       // package, which hasn't got it.
       if (!(await app.hasE2e())) return ctx.skip("a build without the e2e feature (no player state to read)");
       await app.toLibrary();
-      // The rights note asks before the first download; not here.
-      await app.js(`localStorage.setItem("vodscribe.clipNoteHidden", "true")`);
 
       for (const [i, id] of ids.entries()) {
         const seeking = i === 1;

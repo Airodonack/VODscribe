@@ -143,6 +143,8 @@ permissions = [
   "allow-kick-stream",
   "allow-twitch-clip-video",
   "allow-get-settings",
+  "allow-kept-choices",
+  "allow-keep-choice",
   "allow-set-settings",
   "allow-reset-settings",
   "allow-gpu-status",

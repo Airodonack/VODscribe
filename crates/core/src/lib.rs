@@ -7,6 +7,7 @@ pub mod annotations;
 pub mod asr;
 pub mod audio;
 pub mod chat;
+pub mod choices;
 pub mod clips;
 pub mod db;
 pub mod deps;
@@ -144,6 +145,11 @@ impl Paths {
 
     pub fn settings(&self) -> PathBuf {
         self.root.join("settings.json")
+    }
+
+    /// The page's small choices (see `choices`).
+    pub fn choices(&self) -> PathBuf {
+        self.root.join("choices.json")
     }
 
     /// What this computer's webview plays (`playable::Playable`).

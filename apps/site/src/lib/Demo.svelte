@@ -27,7 +27,12 @@
   onMount(() => {
     const wide = matchMedia("(min-width: 821px)");
     const load = async () => {
-      if ((wide.matches || openVod !== null) && !App) App = (await import("desktop/lib/App.svelte")).default;
+      if ((wide.matches || openVod !== null) && !App) {
+        // The choices the app's page remembers are read before its modules
+        // load, as the app does in its hooks.client.ts (stored.ts).
+        await (await import("desktop/lib/stored.ts")).start();
+        App = (await import("desktop/lib/App.svelte")).default;
+      }
     };
     load();
     wide.addEventListener("change", load);

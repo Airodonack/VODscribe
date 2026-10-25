@@ -93,6 +93,28 @@ const commands: Record<string, (args: Args) => unknown> = {
   transcript_stretches: ({ vodId }) => backend.transcriptStretches(vodId as number),
   thumbnail: async ({ name }) => (await fetch(`/demo/thumbs/${encodeURIComponent(name as string)}`)).arrayBuffer(),
   get_settings: () => ({ device: "cpu" }),
+  // The page's small choices (the app keeps them in its data folder: crates/core
+  // choices.rs), in this browser's storage, as the page kept them before.
+  kept_choices: () => {
+    const kept: Record<string, string> = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        const value = key?.startsWith("vodscribe.") ? localStorage.getItem(key) : null;
+        if (key && value !== null) kept[key] = value;
+      }
+    } catch {
+      // No storage here (a private window): nothing remembered.
+    }
+    return kept;
+  },
+  keep_choice: ({ key, value }) => {
+    try {
+      localStorage.setItem(key as string, value as string);
+    } catch {
+      // Not remembered this time.
+    }
+  },
   self_updatable: () => true,
   chat_overview: ({ vodId, duration, bins }) =>
     backend.chatOverview(vodId as number, duration as number, bins as number),
