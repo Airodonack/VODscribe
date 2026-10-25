@@ -17,6 +17,7 @@
   import TranscriptHead from "./TranscriptHead.svelte";
   import { layers } from "./layers.svelte";
   import { eventColor } from "./events";
+  import { followTarget } from "./follow";
   import { Marks } from "./marks.svelte";
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
@@ -33,8 +34,8 @@
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
   // plays from it; dragging across lines selects them: a VOD's to cut
-  // around (Split), an edit's to take out (Delete). As it plays, the line
-  // playing is kept in view, until the reader scrolls away.
+  // around (Split), an edit's to take out (Delete). The line at the
+  // playhead is kept in view, playing or not, until the reader scrolls away.
   let {
     vod = null,
     edit = null,
@@ -885,14 +886,17 @@
     return () => kinds.forEach((kind) => s.removeEventListener(kind, stop));
   });
 
-  // Following the playhead. While it plays, the line playing stays in view:
-  // the view stays still while it moves down the page, and once it nears the
-  // bottom (or is out of view, after a jump), the view moves so that it's a
-  // third of the way down, with what's coming below it. Moving once a
-  // screenful rather than with every line keeps the text still to read.
-  // Scrolling away stops it (above, or by any other way the line playing
-  // leaves the view, as the minimap does); playing from the transcript, or
-  // the button that then shows, starts it again.
+  // Following the playhead, from the moment the transcript opens (each VOD
+  // or edit opens it afresh, so it always starts following) and whether it
+  // plays or not: the line at the playhead stays in view (follow.ts). The view
+  // stays still while it moves down the page, and once it nears the bottom
+  // (or is out of view, after a jump of the playhead: the timeline, a mark,
+  // the keys, the site's own player), the view moves so that it's a third of
+  // the way down, with what's coming below it. Moving once a screenful rather
+  // than with every line keeps the text still to read. Scrolling away stops it
+  // (above, or by any other way the line playing leaves the view, as the
+  // minimap does); playing from the transcript, or the button that then
+  // shows, starts it again.
   let following = $state(true);
   /** Just after playing from the transcript, the moment played from, until
    *  the player says it's there: the line followed meanwhile, not the one before. */
@@ -939,22 +943,19 @@
   /** Brings row `i` into view a third of the way down, unless it's well in view already. */
   function bring(i: number) {
     if (!scroller || i < 0 || i >= rows.length) return;
-    const height = viewHeight();
-    if (height <= 0) return;
-    const top = viewY();
-    const [a, b] = [offsets[i], offsets[i + 1]];
-    // In view and clear of the bottom, or (a tall row) starting high enough.
-    if (a >= top && (b <= top + height * 0.9 || a <= top + height / 3)) return;
-    const target = Math.max(0, listTop + a - headHeight - height / 3);
-    const far = Math.abs(target - scroller.scrollTop) > height;
+    const go = followTarget(offsets[i], offsets[i + 1], viewY(), viewHeight());
+    if (!go) return;
+    const target = Math.max(0, listTop + go.top - headHeight);
     // Nearby, it glides there, so the eye can keep its place; far (a jump), it's there at once.
-    ownScroll = far ? null : { from: scroller.scrollTop, to: target, until: performance.now() + 1000 };
-    scroller.scrollTo({ top: target, behavior: far ? "auto" : "smooth" });
+    ownScroll = go.far ? null : { from: scroller.scrollTop, to: target, until: performance.now() + 1000 };
+    scroller.scrollTo({ top: target, behavior: go.far ? "auto" : "smooth" });
   }
 
+  // Playing or paused: a move of the playhead while paused (a click on the
+  // timeline, a search match, the arrow keys) is followed as one playing is.
   $effect(() => {
     const i = nowRow;
-    if (!following || !cuts.playing || !mine || i < 0) return;
+    if (!following || !mine || i < 0) return;
     // Again as rows are measured or the view resizes: where the row is changes.
     void offsets;
     void railHeight;

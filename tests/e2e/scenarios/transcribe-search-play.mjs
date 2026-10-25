@@ -1,7 +1,8 @@
 // Adding a file, transcribing it, searching, and playing from the result in
 // the app's own player: a waveform read from the file, the transcript as
-// captions. Then a transcript long enough to scroll, followed as it plays,
-// and its lines' times marked on the timeline as the pointer goes over them.
+// captions. Then a transcript long enough to scroll, following the playhead
+// from when it opens, paused or playing, and its lines' times marked on the
+// timeline as the pointer goes over them.
 
 import path from "node:path";
 
@@ -99,7 +100,7 @@ export default {
       () => app.js(`return document.querySelectorAll("#transcript .line button.row").length > 10`),
       MINUTE,
     );
-    // Where the line playing is, next to the view below the transcript's header, and the follow button.
+    // Where the line at the playhead is, next to the view below the transcript's header, and the follow button.
     const following = () =>
       app.js(`
         const body = document.querySelector(".body");
@@ -111,16 +112,25 @@ export default {
         return {
           at: line?.querySelector(".row .time")?.textContent ?? null,
           inView: !!box && box.bottom > top + 4 && box.top < view.bottom - 4,
+          whole: !!box && box.top >= top - 1 && box.bottom <= view.bottom + 1,
           button: document.querySelector("#transcript button.follow")?.textContent.trim() ?? null,
+          paused: !!document.querySelector('.bar button[aria-label="Play"]'),
         };`);
-    // Playing from the first line, then a click halfway along the timeline:
-    // the transcript follows the jump.
-    await app.click("#transcript .line button.row");
-    await until(
-      "it to play",
-      () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
-      MINUTE,
+    const minutes = (at) => (at ?? "0:00").split(":").reduce((total, part) => total * 60 + Number(part), 0) / 60;
+    // Opened, it follows already, before anything plays: the line at the
+    // playhead (the start) lit and in view.
+    const opened = await until(
+      "the first line lit and in view",
+      async () => {
+        const f = await following();
+        return f.whole && !f.button && f;
+      },
+      15_000,
     );
+    if (!opened.paused) throw new Error("the VOD plays as it opens");
+    if (minutes(opened.at) >= 1) throw new Error(`opened at the start, the line lit is the one at ${opened.at}`);
+    app.log(`opened: following, the line at ${opened.at} lit and in view`);
+    // Paused, a click halfway along the timeline: the transcript follows the jump.
     await app.js(
       `const box = document.querySelector(".scrubber canvas").getBoundingClientRect();
        const at = { clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0, bubbles: true, pointerId: 1 };
@@ -129,17 +139,20 @@ export default {
        el.dispatchEvent(new PointerEvent("pointerup", at));`,
     );
     const halfway = await until(
-      "the line playing halfway in view",
+      "the line halfway lit and in view",
       async () => {
         const f = await following();
-        const [m] = (f.at ?? "0:00").split(":").map(Number);
-        return f.inView && m >= 4 && !f.button && f;
+        return f.whole && minutes(f.at) >= 4 && !f.button && f;
       },
       15_000,
     );
-    app.log(`following: the line at ${halfway.at} is in view`);
-    // Scrolled away (by script: no wheel or keys), it follows no more, and says so.
-    await app.js(`document.querySelector(".body").scrollTop = 0`);
+    if (!halfway.paused) throw new Error("a click on the timeline while paused started it playing");
+    app.log(`paused, the timeline clicked halfway: the line at ${halfway.at} is lit and in view`);
+    // Scrolled away with the wheel, it follows no more, and says so.
+    await app.js(`
+      const body = document.querySelector(".body");
+      body.dispatchEvent(new WheelEvent("wheel", { deltaY: -body.scrollTop, bubbles: true }));
+      body.scrollTop = 0;`);
     const away = await until(
       "the follow button",
       async () => {
@@ -156,12 +169,71 @@ export default {
       "following again",
       async () => {
         const f = await following();
-        return f.inView && !f.button && f;
+        return f.whole && !f.button && f;
       },
       10_000,
     );
+    if (back.at !== halfway.at) throw new Error(`Follow along went to the line at ${back.at}, not ${halfway.at}`);
     app.log(`scrolled away, then Follow along: the line at ${back.at} is in view again`);
     await checkpoint("transcript-following");
+    // A search match far from there (near 1:30), double-clicked (its clicks
+    // play it): the transcript at its line, still following.
+    await app.type('input[placeholder="Search for a phrase…"]', "landed");
+    await until(
+      "search results",
+      () => app.js(`return document.querySelectorAll(".results button.row").length > 2`),
+      MINUTE,
+    );
+    const hit = await app.js(
+      `const minutes = (at) => at.split(":").reduce((total, part) => total * 60 + Number(part), 0) / 60;
+       const off = (row) => Math.abs(minutes(row.querySelector(".time").textContent) - 1.5);
+       const row = [...document.querySelectorAll(".results button.row")].reduce((a, b) => (off(b) < off(a) ? b : a));
+       row.click();
+       row.click();
+       row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+       return row.querySelector(".time").textContent;`,
+    );
+    if (Math.abs(minutes(hit) - minutes(halfway.at)) < 1) throw new Error(`the search match near 1:30 is at ${hit}`);
+    // The match's time is its word's; its line starts a little before, and
+    // as it plays on, the next lines take over.
+    const near = (at) => {
+      const d = (minutes(at) - minutes(hit)) * 60;
+      return d > -10 && d < 20;
+    };
+    const shown = await until(
+      "the search match's line lit and in view",
+      async () => {
+        const f = await following();
+        return near(f.at) && f.whole && !f.button && f;
+      },
+      15_000,
+    );
+    // Once the transcript is done placing it (two seconds), it still follows.
+    await new Promise((r) => setTimeout(r, 2500));
+    const after = await following();
+    if (after.button) throw new Error("after a search match was shown, the transcript stopped following");
+    if (!after.whole) throw new Error(`after a search match was shown, the line at ${after.at} is out of view`);
+    app.log(`a search match at ${shown.at} double-clicked: its line lit and in view, following`);
+    await checkpoint("transcript-search-match");
+    // Paused, the search let go of: the transcript opens again (after the
+    // results, a moment), at the playhead's line from the start.
+    await app.pause();
+    const paused = await following();
+    await app.type('input[placeholder="Search for a phrase…"]', "");
+    await until(
+      "the transcript again, at the playhead's line",
+      async () => {
+        const f = await following();
+        return f.at === paused.at && f.whole && !f.button && f;
+      },
+      15_000,
+    );
+    // And it stays there as the rows around it are measured.
+    await new Promise((r) => setTimeout(r, 1000));
+    const settled = await following();
+    if (!settled.whole || settled.button)
+      throw new Error(`the transcript opened again moved the line at ${settled.at} out of view`);
+    app.log(`the search let go of: the transcript again, the line at ${paused.at} lit and in view`);
 
     // Pressing on a line and dragging across two more selects the three.
     await app.pause();
