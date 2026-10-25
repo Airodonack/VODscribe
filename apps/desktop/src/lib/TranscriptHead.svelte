@@ -107,7 +107,7 @@
             <li>
               <CastDisc name={displayName(member)} color={speakerColor(cast, member.name)} {member} size={20} />
               <span class="who">
-                <!-- The streamer who plays them is in the name ("GEEGA (Gigi)"), so only their channel follows. -->
+                <!-- The streamer who plays them is in the name ("Gigi (GEEGA)"), so only their channel follows. -->
                 <strong>{displayName(member)}</strong>
                 <span class="muted">{castDetail(member)}</span>
                 {#if member.account}

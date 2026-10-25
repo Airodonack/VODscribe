@@ -20,7 +20,7 @@
     size = 22,
     link = true,
   }: {
-    /** Who it's for, as the head names them: the initial is its first letter, the streamer's where they're named first. */
+    /** Who it's for, as the head names them: the initial is its first letter, the character's where a streamer plays them. */
     name: string;
     /** Their cast colour; null for someone not in the cast. */
     color: string | null;

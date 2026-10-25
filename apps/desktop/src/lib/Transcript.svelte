@@ -275,7 +275,7 @@
   // place in `rows`): a group ends at a chapter's divider, so they agree.
   // A cast member's alias is them, grouped by their name, so one person reads
   // as one; a name not in the cast as the line has it. The head reads their
-  // display name (castNames.ts): the streamer first where one plays them.
+  // display name (castNames.ts): the character first, the streamer in parentheses where one plays them.
   const speakerHeads = $derived(
     groupHeads(
       rows.map((row) => ({ line: row.line, divided: heads.has(row.key) })),
