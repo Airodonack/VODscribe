@@ -88,6 +88,7 @@ import { memoryOf } from "./lib/memory.mjs";
 import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import * as profile from "./lib/profile.mjs";
+import { startFileHost } from "./lib/fileHost.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const { values: opts, positionals } = parseArgs({
@@ -128,6 +129,8 @@ const worker = process.env.E2E_WORKER;
 
 const out = process.env.E2E_OUT ?? path.join(here, "out");
 const fixtures = { landed: path.join(here, "fixtures", "eagle-has-landed.mp3") };
+// The file host the app asks for annotations, before any app starts (lib/fileHost.mjs).
+await startFileHost();
 
 // Setup first: it's where a new install starts, and it downloads what the others keep.
 const order = ["setup"];

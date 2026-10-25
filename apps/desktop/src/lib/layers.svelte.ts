@@ -1,9 +1,10 @@
-// Timeline layers and event toggles (crates/core `layers`): loaded once, saved
-// shortly after each change. A few layers are drawn at once, so the timeline
+// Timeline layers, event toggles and whose marks are shown (crates/core
+// `layers`): loaded once, saved shortly after each change. A few layers are drawn at once, so the timeline
 // stays legible; the events are drawn apart from them (events.ts), any of them.
 
 import { api, type Layer, type Vod } from "./api";
 import type { EventKind } from "./events";
+import { BOTH, type MarkSources } from "./markSources";
 
 /** Term layers drawn at once, per VOD. */
 export const MAX_VISIBLE = 3;
@@ -16,6 +17,8 @@ class Layers {
 
   /** The chat events drawn on the timeline. */
   events = $state<EventKind[]>([]);
+  /** Whose chapters and highlights are shown (markSources.ts); both until the saved choice is in. */
+  marks = $state<MarkSources>({ ...BOTH });
   /** The saved layers have arrived. Until then nothing is saved: the list is
    *  empty, and saving it would replace every saved layer. */
   loaded = $state(false);
@@ -28,6 +31,7 @@ class Layers {
       (t) => {
         this.list = t.layers;
         this.events = t.events;
+        this.marks = { ...BOTH, ...t.marks };
         this.loaded = true;
         this.error = null;
       },
@@ -44,7 +48,12 @@ class Layers {
     if (!this.loaded) return;
     clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
-      api.setTimeline({ layers: $state.snapshot(this.list), events: $state.snapshot(this.events) }).then(
+      const timeline = {
+        layers: $state.snapshot(this.list),
+        events: $state.snapshot(this.events),
+        marks: $state.snapshot(this.marks),
+      };
+      api.setTimeline(timeline).then(
         () => (this.error = null),
         (e) => (this.error = String(e)),
       );
@@ -74,6 +83,12 @@ class Layers {
   toggleEvent(kind: EventKind) {
     if (this.events.includes(kind)) this.events = this.events.filter((k) => k !== kind);
     else this.events.push(kind);
+    this.save();
+  }
+
+  /** Shows or hides the user's own chapters and highlights, or those imported. */
+  showMarks(change: Partial<MarkSources>) {
+    this.marks = { ...this.marks, ...change };
     this.save();
   }
 

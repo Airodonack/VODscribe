@@ -35,7 +35,7 @@ pub enum ClipFormat {
     Mov,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Settings {
     pub device: Device,
@@ -60,6 +60,26 @@ pub struct Settings {
     /// Whether the players' keyboard legend is open: left open, it stays open
     /// across VODs, edits and launches. Only the page reads it.
     pub show_keys: bool,
+    /// Whether a VOD added from a site is looked up on the file host, to
+    /// offer its annotations if they're published (`annotations::look_up`):
+    /// the request names the site and the VOD's id, nothing else. On unless
+    /// turned off; off, nothing is asked.
+    pub ask_for_annotations: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            device: Device::default(),
+            theme: Theme::default(),
+            emote_providers: EmoteProviders::default(),
+            video_height: None,
+            clip_format: ClipFormat::default(),
+            key_bindings: BTreeMap::new(),
+            show_keys: false,
+            ask_for_annotations: true,
+        }
+    }
 }
 
 /// Every known emote provider, each once, in priority order.
@@ -195,6 +215,18 @@ mod tests {
         let again: Settings = serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
         assert!(again.show_keys);
         assert_eq!(again.video_height, Some(720));
+    }
+
+    #[test]
+    fn asking_for_annotations_starts_on_and_stays_as_left() {
+        // A settings.json as 0.6.0 wrote it: no word of annotations.
+        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "show_keys": true}"#).unwrap();
+        assert!(old.ask_for_annotations);
+        assert!(Settings::default().ask_for_annotations);
+        let off = Settings { ask_for_annotations: false, ..old };
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!again.ask_for_annotations);
+        assert!(again.show_keys);
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

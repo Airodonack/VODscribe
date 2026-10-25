@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-annotations-offer"
+description = "Enables the annotations_offer command without any pre-configured scope."
+commands.allow = ["annotations_offer"]
+
+[[permission]]
+identifier = "deny-annotations-offer"
+description = "Denies the annotations_offer command without any pre-configured scope."
+commands.deny = ["annotations_offer"]

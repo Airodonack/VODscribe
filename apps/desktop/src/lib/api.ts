@@ -59,6 +59,19 @@ export interface Vod {
   chat_error: string | null;
   /** In the library's list; one taken out stays, unlisted, while edits use it. */
   listed: boolean;
+  /** Whether its annotations are published, as last asked (crates/core `db::Availability`; missing in the demo). */
+  annotations?: Availability;
+}
+
+export type Availability = "unknown" | "none" | "available";
+
+/** What's known of a VOD's published annotations, to offer them (crates/core `annotations::Offer`). */
+export interface AnnotationsOffer {
+  available: Availability;
+  /** The version published is the one it last brought in. */
+  up_to_date: boolean;
+  /** It has a transcript made on this computer, which bringing them in replaces. */
+  local_transcript: boolean;
 }
 
 export type Device = "cpu" | "gpu";
@@ -112,6 +125,8 @@ export interface Settings {
   key_bindings: Record<string, string[]>;
   /** Whether the players' keyboard legend is open (PlayerPanel.svelte). */
   show_keys: boolean;
+  /** Whether a VOD added from a site is looked up on the file host, for its published annotations. */
+  ask_for_annotations: boolean;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
@@ -432,6 +447,8 @@ export type ChatKind = "message" | "sub" | "gift" | "tip";
 export interface TimelineSettings {
   layers: Layer[];
   events: Exclude<ChatKind, "message">[];
+  /** Whose chapters and highlights are shown (crates/core `layers::MarkSources`; markSources.ts). */
+  marks: { user: boolean; imported: boolean };
 }
 
 /** An emote chat writes as a word: 7TV, BTTV, FFZ (crates/core `word_emotes::WordEmote`). */
@@ -535,6 +552,13 @@ export const api = {
     invoke<{ vod: Vod; created: boolean }>("import_annotations", { annotations, chat }),
   /** Imports the annotations file at `path` (and the chat file beside it, if there's one). */
   importAnnotationsFile: (path: string) => invoke<{ vod: Vod; created: boolean }>("import_annotations_file", { path }),
+  /** Asks the file host again whether a VOD's annotations are published; `asked` is false when Settings turned that off. */
+  checkAnnotations: (vodId: number) =>
+    invoke<{ asked: boolean; offer: AnnotationsOffer }>("check_annotations", { vodId }),
+  /** What's known of a VOD's published annotations. */
+  annotationsOffer: (vodId: number) => invoke<AnnotationsOffer>("annotations_offer", { vodId }),
+  /** Fetches a VOD's published annotations and imports them (the user's own marks stay). */
+  fetchAnnotations: (vodId: number) => invoke<{ vod: Vod; created: boolean }>("fetch_annotations", { vodId }),
   /** A VOD's cast and activity, if annotations were imported for it. */
   vodAnnotations: (vodId: number) => invoke<VodAnnotations | null>("vod_annotations", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
@@ -772,6 +796,8 @@ export const events = {
   vodProgress: (cb: (id: number, stretch: number, status: Status, progress: number) => void) =>
     listen<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
+  /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
+  annotationsFound: (cb: (id: number) => void) => listen<number>("annotations-found", (e) => cb(e.payload)),
   /** Which setup item ("yt-dlp", "ffmpeg", "model", "deno") and where its download is. */
   setupProgress: (cb: (item: string, progress: DownloadProgress) => void) =>
     listen<DownloadProgress & { item: string }>("setup-progress", (e) => cb(e.payload.item, e.payload)),

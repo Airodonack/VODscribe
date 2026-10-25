@@ -14,10 +14,13 @@
   let {
     open = $bindable(),
     label,
+    small = false,
     children,
   }: {
     open: boolean;
     label: string;
+    /** A short question rather than a window: as tall as what it says. */
+    small?: boolean;
     children: Snippet;
   } = $props();
 
@@ -89,7 +92,7 @@
       downOnBackdrop = false;
     }}
   >
-    <div bind:this={panel} class="modal" role="dialog" aria-modal="true" aria-label={label} tabindex="-1">
+    <div bind:this={panel} class="modal" class:small role="dialog" aria-modal="true" aria-label={label} tabindex="-1">
       <header>
         <h2>{label}</h2>
         <button class="icon" onclick={() => (open = false)} aria-label="Close" title="Close (Esc)"
@@ -124,6 +127,12 @@
     border-radius: 10px;
     box-shadow: var(--shadow);
     overflow: hidden;
+  }
+
+  .modal.small {
+    width: min(440px, calc(100vw - 32px));
+    height: auto;
+    max-height: calc(100vh - 32px);
   }
 
   .modal:focus {

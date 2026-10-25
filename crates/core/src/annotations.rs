@@ -5,6 +5,11 @@
 //! transcript, all of it transcribed; its chapters and highlights as marks
 //! from the import (the user's own stay); its cast and activity; and its
 //! chat, if given. Importing again replaces what the last import brought.
+//!
+//! Annotations can also be published, one file per VOD, at
+//! `<BASE_URL>/annotations/<platform>/<platform id>.json`: `look_up` asks
+//! whether a VOD's is there (one HEAD request naming the site and the VOD's
+//! id, nothing else), and `download` fetches it to import.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +18,7 @@ use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
 use crate::chat::ChatMessage;
-use crate::db::{Db, MarkDetail, Vod, now};
+use crate::db::{Availability, Db, MarkDetail, Vod, now};
 use crate::fetch::VodInfo;
 use crate::time::Flicks;
 use crate::transcript::Word;
@@ -24,6 +29,14 @@ pub const VERSION: u32 = 1;
 
 /// The `source` of the marks an import brings.
 pub const SOURCE: &str = "annotations";
+
+/// Where published annotations are served from.
+pub const BASE_URL: &str = "https://dl.vodscribe.com";
+/// Names another server to ask instead of `BASE_URL` (the end-to-end tests'
+/// own, on this computer, over plain HTTP).
+pub const BASE_ENV: &str = "VODSCRIBE_ANNOTATIONS_URL";
+/// The largest published file read: a long VOD's is a few megabytes.
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct Annotations {
@@ -201,6 +214,123 @@ fn usable(t: f64) -> bool {
     t.is_finite() && t >= 0.0
 }
 
+/// The server published annotations are asked of: `BASE_ENV`'s, if set.
+fn base_url() -> String {
+    std::env::var(BASE_ENV)
+        .ok()
+        .map(|b| b.trim().trim_end_matches('/').to_string())
+        .filter(|b| !b.is_empty())
+        .unwrap_or_else(|| BASE_URL.to_string())
+}
+
+/// Where VOD `id` of `platform`'s published annotations would be on server
+/// `base`: each part with anything but letters, digits and `-._~` escaped,
+/// so an id can't reach another path.
+pub fn file_url(base: &str, platform: &str, id: &str) -> String {
+    let escape = |part: &str| -> String {
+        part.bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    };
+    format!("{base}/annotations/{}/{}.json", escape(platform), escape(id))
+}
+
+/// Whether VODs of `platform` can have published annotations: those from a
+/// site, not a file on this computer (its id is this computer's own).
+pub fn can_be_published(platform: &str) -> bool {
+    platform != crate::local::PLATFORM
+}
+
+/// The client for the file host: quick to give up, since nothing waits on
+/// it but an offer. Plain HTTP only for a server named by `BASE_ENV`.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(std::time::Duration::from_secs(10)))
+            .timeout_recv_response(Some(std::time::Duration::from_secs(20)))
+            .timeout_recv_body(Some(std::time::Duration::from_secs(120)))
+            .https_only(std::env::var_os(BASE_ENV).is_none() && !cfg!(test))
+            .build()
+            .into()
+    })
+}
+
+/// What the file host said of a VOD's annotations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Found {
+    None,
+    /// There, in the version given (its ETag, or else its Last-Modified), if the server says.
+    Available {
+        version: Option<String>,
+    },
+}
+
+/// The file's version, from a response's headers: its ETag, or else its Last-Modified.
+fn version_of<B>(response: &ureq::http::Response<B>) -> Option<String> {
+    let header = |name: &str| {
+        response.headers().get(name).and_then(|v| v.to_str().ok()).map(str::trim).filter(|v| !v.is_empty())
+    };
+    header("etag").or_else(|| header("last-modified")).map(str::to_string)
+}
+
+/// Asks the file host whether VOD `id` of `platform` has published
+/// annotations: one HEAD request. Not there (404, 410, 403) is `None`; a
+/// failure to ask (offline, a server error) is an error, and tells nothing.
+pub fn look_up(platform: &str, id: &str) -> Result<Found> {
+    look_up_at(&base_url(), platform, id)
+}
+
+fn look_up_at(base: &str, platform: &str, id: &str) -> Result<Found> {
+    match agent().head(file_url(base, platform, id)).call() {
+        Ok(response) if response.status() == 200 => Ok(Found::Available { version: version_of(&response) }),
+        Ok(response) => bail!("the file host answered {}", response.status()),
+        Err(ureq::Error::StatusCode(403 | 404 | 410)) => Ok(Found::None),
+        Err(e) => Err(e).context("ask the file host"),
+    }
+}
+
+/// Fetches VOD `id` of `platform`'s published annotations, and the file's
+/// version; fails if they're of another VOD.
+pub fn download(platform: &str, id: &str) -> Result<(Annotations, Option<String>)> {
+    download_from(&base_url(), platform, id)
+}
+
+fn download_from(base: &str, platform: &str, id: &str) -> Result<(Annotations, Option<String>)> {
+    let mut response = match agent().get(file_url(base, platform, id)).call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(403 | 404 | 410)) => {
+            bail!("The annotations for this VOD aren't there any more.")
+        }
+        Err(e) => return Err(e).context("Couldn't get the annotations for this VOD"),
+    };
+    let version = version_of(&response);
+    let json = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_FILE_BYTES)
+        .read_to_string()
+        .context("Couldn't get the annotations for this VOD")?;
+    let annotations = parse(&json)?;
+    if annotations.source.platform != platform || annotations.source.id != id {
+        bail!("The annotations found are of another VOD.");
+    }
+    Ok((annotations, version))
+}
+
+/// What the library knows of a VOD's published annotations, for offering them.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Offer {
+    pub available: Availability,
+    /// The version published is the one it last brought in.
+    pub up_to_date: bool,
+    /// It has a transcript made on this computer, which an import replaces.
+    pub local_transcript: bool,
+}
+
 impl Db {
     /// Makes `annotations` VOD `source`'s (see the module's comment), with
     /// `chat` as its chat if given, all in one transaction: adding the VOD
@@ -339,6 +469,47 @@ impl Db {
                 db.insert_mark_with(clip, vod_id, "highlight", Flicks::from_seconds(h.start), title, &detail)?;
             }
             Ok(())
+        })
+    }
+
+    /// Keeps what the file host said of VOD `vod_id`'s annotations.
+    pub fn set_annotations_found(&self, vod_id: i64, found: &Found) -> Result<()> {
+        let (availability, version) = match found {
+            Found::None => (Availability::None, None),
+            Found::Available { version } => (Availability::Available, version.as_deref()),
+        };
+        self.conn.execute(
+            "UPDATE vods SET annotations = ?2, annotations_version = ?3 WHERE id = ?1",
+            params![vod_id, availability.as_str(), version],
+        )?;
+        Ok(())
+    }
+
+    /// VOD `vod_id` brought in its published annotations, in version `version`.
+    pub fn set_annotations_imported(&self, vod_id: i64, version: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET annotations = ?2, annotations_version = ?3, annotations_imported = ?3 WHERE id = ?1",
+            params![vod_id, Availability::Available.as_str(), version],
+        )?;
+        Ok(())
+    }
+
+    /// What's known of VOD `vod_id`'s published annotations (`Offer`).
+    pub fn annotations_offer(&self, vod_id: i64) -> Result<Offer> {
+        let (available, version, imported, local): (Option<String>, Option<String>, Option<String>, bool) =
+            self.conn.query_row(
+                "SELECT annotations, annotations_version, annotations_imported,
+                     EXISTS (SELECT 1 FROM segments WHERE vod_id = ?1)
+                     AND EXISTS (SELECT 1 FROM stretches WHERE vod_id = ?1 AND model IS NOT ?2)
+                 FROM vods WHERE id = ?1",
+                params![vod_id, crate::model::IMPORTED_MODEL],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+        Ok(Offer {
+            available: Availability::parse(available.as_deref()),
+            // Without a version from the server, there's no telling: never up to date.
+            up_to_date: version.is_some() && version == imported,
+            local_transcript: local,
         })
     }
 
@@ -541,5 +712,127 @@ mod tests {
         assert_eq!((imported.id, created), (vod.id, false));
         assert_eq!(imported.info.title, "VOD abc", "the library's title stays");
         assert_eq!(imported.transcribed, Transcribed::All);
+    }
+
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    /// A file host on this computer answering each request with `answer`
+    /// (status line and headers, and a body) for its request line, as many
+    /// as come; its address, and the request lines it was sent.
+    fn host(answer: fn(&str) -> (String, String)) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                let Ok(mut conn) = conn else { return };
+                let mut req = [0u8; 4096];
+                let n = conn.read(&mut req).unwrap_or(0);
+                let line = String::from_utf8_lossy(&req[..n]).lines().next().unwrap_or("").to_string();
+                let (head, body) = answer(&line);
+                seen.lock().unwrap().push(line.clone());
+                let body = if line.starts_with("HEAD") { String::new() } else { body };
+                let _ = write!(conn, "{head}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        (format!("http://{addr}"), asked)
+    }
+
+    #[test]
+    fn a_vods_file_is_at_its_site_and_id_escaped() {
+        assert_eq!(
+            file_url(BASE_URL, "twitch", "v2901646294"),
+            "https://dl.vodscribe.com/annotations/twitch/v2901646294.json"
+        );
+        assert_eq!(file_url("http://h", "youtube", "a/../b?c"), "http://h/annotations/youtube/a%2F..%2Fb%3Fc.json");
+        assert!(can_be_published("kick") && !can_be_published(crate::local::PLATFORM));
+    }
+
+    #[test]
+    fn looking_up_says_there_not_there_or_fails() {
+        let (base, asked) = host(|line| match line {
+            l if l.contains("/annotations/youtube/there.json") => {
+                ("HTTP/1.1 200 OK\r\nETag: \"v1\"".into(), String::new())
+            }
+            l if l.contains("/dated.json") => {
+                ("HTTP/1.1 200 OK\r\nLast-Modified: Sat, 24 Oct 2026 10:00:00 GMT".into(), String::new())
+            }
+            l if l.contains("/broken.json") => ("HTTP/1.1 500 Internal Server Error".into(), String::new()),
+            _ => ("HTTP/1.1 404 Not Found".into(), String::new()),
+        });
+        assert_eq!(look_up_at(&base, "youtube", "there").unwrap(), Found::Available { version: Some("\"v1\"".into()) });
+        let dated = look_up_at(&base, "youtube", "dated").unwrap();
+        assert_eq!(dated, Found::Available { version: Some("Sat, 24 Oct 2026 10:00:00 GMT".into()) });
+        assert_eq!(look_up_at(&base, "twitch", "v1").unwrap(), Found::None);
+        assert!(look_up_at(&base, "youtube", "broken").is_err());
+        let asked = asked.lock().unwrap().clone();
+        assert!(asked.iter().all(|l| l.starts_with("HEAD ")), "only asked, never fetched: {asked:?}");
+        assert_eq!(asked[2], "HEAD /annotations/twitch/v1.json HTTP/1.1");
+        // Nothing listening: a failure, which tells nothing.
+        let gone = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        assert!(look_up_at(&format!("http://{gone}"), "youtube", "there").is_err());
+    }
+
+    #[test]
+    fn a_download_is_the_vods_own_file_with_its_version() {
+        let (base, _) = host(|line| {
+            let platform = if line.contains("/youtube/") { "youtube" } else { "twitch" };
+            let json = serde_json::to_string(&file(platform, "abc")).unwrap();
+            ("HTTP/1.1 200 OK\r\nETag: \"v2\"".into(), json)
+        });
+        let (annotations, version) = download_from(&base, "youtube", "abc").unwrap();
+        assert_eq!((annotations.source.id.as_str(), version.as_deref()), ("abc", Some("\"v2\"")));
+        // A file whose source is another VOD isn't this one's.
+        let err = download_from(&base, "youtube", "xyz").unwrap_err();
+        assert_eq!(err.to_string(), "The annotations found are of another VOD.");
+        let (_, _) = download_from(&base, "twitch", "abc").unwrap();
+        let (gone, _) = host(|_| ("HTTP/1.1 404 Not Found".into(), String::new()));
+        let err = download_from(&gone, "youtube", "abc").unwrap_err();
+        assert_eq!(err.to_string(), "The annotations for this VOD aren't there any more.");
+    }
+
+    #[test]
+    fn what_is_found_is_kept_and_an_import_of_it_is_up_to_date_till_it_changes() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+        assert_eq!(vod.annotations, Availability::Unknown);
+        let offer = db.annotations_offer(vod.id).unwrap();
+        assert_eq!(offer, Offer { available: Availability::Unknown, up_to_date: false, local_transcript: false });
+
+        db.set_annotations_found(vod.id, &Found::None).unwrap();
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().annotations, Availability::None);
+        let v1 = Found::Available { version: Some("v1".into()) };
+        db.set_annotations_found(vod.id, &v1).unwrap();
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().annotations, Availability::Available);
+        assert!(!db.annotations_offer(vod.id).unwrap().up_to_date, "found, not brought in");
+
+        db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        db.set_annotations_imported(vod.id, Some("v1")).unwrap();
+        let offer = db.annotations_offer(vod.id).unwrap();
+        assert_eq!(offer, Offer { available: Availability::Available, up_to_date: true, local_transcript: false });
+        // Asked again: the same file is still up to date; a new one isn't.
+        db.set_annotations_found(vod.id, &v1).unwrap();
+        assert!(db.annotations_offer(vod.id).unwrap().up_to_date);
+        db.set_annotations_found(vod.id, &Found::Available { version: Some("v2".into()) }).unwrap();
+        assert!(!db.annotations_offer(vod.id).unwrap().up_to_date);
+        // A server that gives no version can't be told up to date.
+        db.set_annotations_imported(vod.id, None).unwrap();
+        assert!(!db.annotations_offer(vod.id).unwrap().up_to_date);
+    }
+
+    #[test]
+    fn a_transcript_made_here_is_told_from_an_imported_one() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+        db.conn
+            .execute("INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, 0, 1, 'hi', '[]')", [vod.id])
+            .unwrap();
+        db.insert_done(vod.id, 0.0, None, Some(crate::model::CPU_MODEL.id)).unwrap();
+        assert!(db.annotations_offer(vod.id).unwrap().local_transcript);
+        db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        assert!(!db.annotations_offer(vod.id).unwrap().local_transcript, "replaced by the import's");
     }
 }

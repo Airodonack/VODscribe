@@ -16,6 +16,8 @@ import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
 import { is } from "./keys.svelte";
 import { isEscape, markFramesOf } from "./playerKeys";
 import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
+import { shownMarks, type MarkSources } from "./markSources";
+import { layers } from "./layers.svelte";
 
 class Cuts {
   /** Whose marks these are: a VOD's or an edit's. */
@@ -24,10 +26,13 @@ class Cuts {
   vodId = $derived(this.doc?.kind === "vod" ? this.doc.id : null);
   /** Every mark, in time order. */
   all = $state.raw<Mark[]>([]);
+  /** The marks shown: all the cuts, and the chapters and highlights of those
+   *  the Timeline panel's Marks toggles show (layers.svelte.ts). */
+  shown = $derived(shownMarks(this.all, layers.marks));
   /** The cuts. */
   list = $derived(this.all.filter((m) => m.kind === "cut"));
-  chapters = $derived(this.all.filter((m) => m.kind === "chapter"));
-  highlights = $derived(this.all.filter((m) => m.kind === "highlight"));
+  chapters = $derived(this.shown.filter((m) => m.kind === "chapter"));
+  highlights = $derived(this.shown.filter((m) => m.kind === "highlight"));
   /** The mark or cut selected: one thing of its own kind, so selecting it
    *  lets go of a set picked (selection.svelte.ts), as a stretch made does,
    *  and Delete is then the mark's. */
@@ -74,6 +79,15 @@ class Cuts {
       this.clearSelection();
       this.selected = null;
     });
+  }
+
+  /** Shows or hides the user's own chapters and highlights, or those imported; a mark
+   *  hidden is no longer selected or being written. */
+  setSources(change: Partial<MarkSources>) {
+    layers.showMarks(change);
+    const shown = (id: number | null) => id !== null && this.shown.some((m) => m.id === id);
+    if (!shown(this.selected)) this.selected = null;
+    if (!shown(this.editing)) this.editing = null;
   }
 
   open(vodId: number) {

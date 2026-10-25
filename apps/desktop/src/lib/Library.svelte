@@ -36,6 +36,8 @@
   import { edits } from "./edits.svelte";
   import { carryEntries, chosenEntries, chosenToTranscribe, removeChosenEntries, transcribeChosen } from "./bulk";
   import AddToEdit from "./AddToEdit.svelte";
+  import Popover from "./Popover.svelte";
+  import { offers } from "./offers.svelte";
   import { DRAG_SLOP } from "./dragout";
   import { keyHint } from "./keys.svelte";
   import { count, dragBox, library, overlaps, picks, type Entry } from "./selection.svelte";
@@ -53,6 +55,17 @@
     onreorder: (items: LibraryItem[]) => void;
     onopenedit: (id: number) => void;
   } = $props();
+
+  // A VOD's menu, opened by a right click on its row (or the menu key).
+  let menuOpen = $state(false);
+  let menuFor = $state<{ vod: Vod; row: HTMLElement } | null>(null);
+  function openMenu(e: MouseEvent, vod: Vod) {
+    // Its one item is about VODs from sites (a file's id is this computer's own).
+    if (DEMO || vod.platform === "local") return;
+    e.preventDefault();
+    menuFor = { vod, row: e.currentTarget as HTMLElement };
+    menuOpen = true;
+  }
 
   let url = $state("");
   // Adding links and files, one after another (adder.svelte.ts). Its error is
@@ -472,6 +485,7 @@
           else onopenedit(row.edit.id);
         }}
         onpointerdown={(e) => onRowDown(e, row, key)}
+        oncontextmenu={(e) => row.kind === "vod" && openMenu(e, row.vod)}
       >
         {#if n !== null}<span class="order row-order">{n}</span>{/if}
         {#if row.kind === "vod"}
@@ -504,7 +518,39 @@
 
 <AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
 
+<Popover bind:open={menuOpen} anchor={menuFor?.row} label="VOD menu" width={220} padding={4}>
+  <div class="menu" role="menu">
+    <button
+      role="menuitem"
+      onclick={() => {
+        menuOpen = false;
+        if (menuFor) void offers.check(menuFor.vod);
+      }}><Icon name="gift" size={14} /> Check for annotations</button
+    >
+  </div>
+</Popover>
+
 <style>
+  .menu {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .menu button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-start;
+    border: none;
+    background: none;
+    text-align: left;
+  }
+
+  .menu button:hover,
+  .menu button:focus-visible {
+    background: var(--surface-2);
+  }
+
   aside {
     display: flex;
     flex-direction: column;

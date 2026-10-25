@@ -100,6 +100,38 @@ pub struct Vod {
     /// In the library's list. One taken out stays a source, unlisted, while
     /// other clips use it; its work waits until it's listed again.
     pub listed: bool,
+    /// Whether the file host has annotations for it (`annotations::look_up`),
+    /// as last asked: the library offers them when it has.
+    pub annotations: Availability,
+}
+
+/// Whether annotations are published for a VOD, as the app last found out.
+#[derive(Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Availability {
+    /// Never asked, or the asking failed (offline, an error).
+    #[default]
+    Unknown,
+    None,
+    Available,
+}
+
+impl Availability {
+    pub(crate) fn as_str(self) -> Option<&'static str> {
+        match self {
+            Availability::Unknown => None,
+            Availability::None => Some("none"),
+            Availability::Available => Some("available"),
+        }
+    }
+
+    pub(crate) fn parse(s: Option<&str>) -> Self {
+        match s {
+            Some("none") => Availability::None,
+            Some("available") => Availability::Available,
+            _ => Availability::Unknown,
+        }
+    }
 }
 
 /// Where a VOD's chat replay is.
@@ -660,6 +692,15 @@ ALTER TABLE marks ADD COLUMN people TEXT;";
 const MIGRATE_V31: &str = "
 ALTER TABLE marks ADD COLUMN icon TEXT;";
 
+/// Version 32: whether annotations are published for a VOD
+/// (`annotations`: none or available; unknown until asked), the published
+/// file's version as last seen (its ETag or Last-Modified), and the version
+/// the VOD last brought in from there, to tell an update from what it has.
+const MIGRATE_V32: &str = "
+ALTER TABLE vods ADD COLUMN annotations TEXT;
+ALTER TABLE vods ADD COLUMN annotations_version TEXT;
+ALTER TABLE vods ADD COLUMN annotations_imported TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -682,7 +723,7 @@ END;";
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, added_at,
-     note, thumb, source_path, media_path, chat, chat_error, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
+     note, thumb, source_path, media_path, chat, chat_error, annotations, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
      (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
       FROM stretches s WHERE s.vod_id = vods.id) AS stretches";
@@ -725,6 +766,7 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         chat: ChatStatus::parse(r.get::<_, Option<String>>("chat")?.as_deref()),
         chat_error: r.get("chat_error")?,
         listed: r.get("listed")?,
+        annotations: Availability::parse(r.get::<_, Option<String>>("annotations")?.as_deref()),
     })
 }
 
@@ -1071,6 +1113,7 @@ impl Db {
             MIGRATE_V29,
             MIGRATE_V30,
             MIGRATE_V31,
+            MIGRATE_V32,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -2506,7 +2549,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2542,13 +2585,15 @@ mod tests {
         // Back to version 29: the column 30 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch(
-                "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; PRAGMA user_version = 29;",
-            )
+            .execute_batch(concat!(
+                "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
+                "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
+                "ALTER TABLE vods DROP COLUMN annotations_imported; PRAGMA user_version = 29;"
+            ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2571,11 +2616,15 @@ mod tests {
         // Back to version 30: the column 31 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE marks DROP COLUMN icon; PRAGMA user_version = 30;")
+            .execute_batch(concat!(
+                "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
+                "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
+                "PRAGMA user_version = 30;"
+            ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -2583,6 +2632,30 @@ mod tests {
         let detail = MarkDetail { icon: Some("🎮".into()), ..MarkDetail::default() };
         db.insert_mark_with(clip, vod, "chapter", Flicks::from_seconds(9.0), None, &detail).unwrap();
         assert_eq!(db.marks(vod).unwrap()[1].detail.icon.as_deref(), Some("🎮"));
+    }
+
+    #[test]
+    fn vods_from_before_annotations_were_looked_up_are_unknown() {
+        let dir = crate::TempDir::new("migrate-v31");
+        let path = dir.join("library.sqlite");
+        let vod = {
+            let db = Db::open(&path).unwrap();
+            db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
+        };
+        // Back to version 31: the columns 32 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(concat!(
+                "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
+                "ALTER TABLE vods DROP COLUMN annotations_imported; PRAGMA user_version = 31;"
+            ))
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 32);
+        assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
+        let listed = db.vods().unwrap();
+        assert_eq!(listed[0].annotations, Availability::Unknown);
     }
 
     #[test]

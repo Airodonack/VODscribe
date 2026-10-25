@@ -5,9 +5,12 @@
   import { EVENTS, eventColor, eventName, eventRgb, type EventKind } from "./events";
   import { MAX_VISIBLE, layers } from "./layers.svelte";
   import Popover from "./Popover.svelte";
+  import { cuts } from "./cuts.svelte";
+  import { isImported } from "./markSources";
 
-  // The Timeline button above the minimap, and its panel for the layers drawn
-  // on it: saved chat searches, each a list of terms shown as pills.
+  // The Timeline button above the minimap, and its panel for what's drawn on
+  // it: whose chapters and highlights (the user's own, those imported), and
+  // the layers, saved chat searches, each a list of terms shown as pills.
   let {
     vod,
     emotes,
@@ -28,6 +31,18 @@
   let mine = $derived(layers.forVod(vod));
   let elsewhere = $derived(layers.list.length - mine.length);
   let shown = $derived(layers.shownFor(vod));
+
+  // This VOD's chapters and highlights, the user's and those imported (once its marks are in).
+  const named = $derived(
+    cuts.isOf({ kind: "vod", id: vod.id })
+      ? cuts.all.filter((m) => m.kind === "chapter" || m.kind === "highlight")
+      : [],
+  );
+  const MARKS = [
+    { key: "user", label: "Your marks", icon: "star" },
+    { key: "imported", label: "Imported marks", icon: "gift" },
+  ] as const;
+  const markCount = (key: "user" | "imported") => named.filter((m) => isImported(m) === (key === "imported")).length;
 
   function addTerm(layer: Layer, input: HTMLInputElement) {
     const text = input.value.trim().replace(/,$/, "").trim();
@@ -80,6 +95,24 @@
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   <Popover bind:open {anchor} label="Timeline layers" width={352}>
+    <!-- Whose chapters and highlights: on the timeline, in the pane and in the transcript. -->
+    <section class="marks" aria-label="Marks">
+      {#each MARKS as m (m.key)}
+        {@const on = layers.marks[m.key]}
+        <button
+          class="event"
+          class:on
+          style:--event="var(--accent)"
+          onclick={() => cuts.setSources({ [m.key]: !on })}
+          aria-pressed={on}
+          title={on ? "Hide these chapters and highlights" : "Show these chapters and highlights"}
+        >
+          <Icon name={m.icon} size={13} />
+          {m.label}
+          <span class="count">{markCount(m.key)}</span>
+        </button>
+      {/each}
+    </section>
     <p class="intro muted">
       Events and words to look for in chat, drawn on the timeline with their messages highlighted. Up to {MAX_VISIBLE}
       layers show at once, besides the events.
@@ -247,12 +280,19 @@
 
   /* The layer's color, opening the system color picker. */
   /* The events: one row of toggles in the platform's color, each kind at its own strength. */
-  .events {
+  .events,
+  .marks {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
     padding: 8px 0 10px;
     border-top: 1px solid var(--border);
+  }
+
+  /* Whose marks: first in the panel, above what's about chat. */
+  .marks {
+    padding-top: 0;
+    border-top: none;
   }
 
   .event {

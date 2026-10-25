@@ -104,6 +104,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
     let _ = app.emit("vod", &added.vod);
     if added.created {
         state.chat.push(added.vod.id);
+        crate::annotations::look_up_added(&app, &added.vod);
         let (app, id) = (app.clone(), added.vod.id);
         std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
     }

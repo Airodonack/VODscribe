@@ -29,6 +29,7 @@
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
+  let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -411,10 +412,20 @@
           anything about how you use it.
         </p>
         <p class="muted hint">
-          VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, and
-          to check for updates. Those parts and updates are checked before they're used, to make sure they haven't been
-          tampered with. Video files from your computer never leave it.
+          VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, to
+          check for updates and, unless you turn it off below, to look for annotations. Those parts and updates are
+          checked before they're used, to make sure they haven't been tampered with. Video files from your computer
+          never leave it.
         </p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={askForAnnotations}
+            onchange={(e) => appSettings.update({ ask_for_annotations: e.currentTarget.checked })}
+          />
+          Ask the file host whether annotations exist for a VOD you add
+        </label>
+        <p class="muted hint">It sends the VOD's site and its id on that site, nothing else.</p>
         {#if dataDir}
           <p class="muted hint">Your library is in:</p>
           <code class="path">{dataDir}</code>
@@ -556,6 +567,13 @@
   .path {
     font-size: 11px;
     word-break: break-all;
+  }
+
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
   }
 
   .row-buttons {

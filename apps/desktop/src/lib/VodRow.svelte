@@ -19,6 +19,7 @@
   import { DELETE, REMOVE, inEdits as inEditsOf, removeVod, removing as removals } from "./removal.svelte";
   import Thumb from "./Thumb.svelte";
   import { transcribe } from "./bulk";
+  import { offers } from "./offers.svelte";
 
   let {
     vod,
@@ -288,6 +289,17 @@
 {/if}
 
 <div class="actions" class:removing inert={removing}>
+  <!-- Published annotations for it (offers.svelte.ts): at the left, apart from what's done to the VOD itself. -->
+  {#if vod.annotations === "available"}
+    <button
+      class="row-act gift"
+      onclick={() => void offers.offer(vod, false)}
+      title="Get the transcript and annotations for this VOD"
+      aria-label="Get the transcript and annotations for this VOD"
+    >
+      <Icon name="gift" size={15} />
+    </button>
+  {/if}
   {#if untouched}
     <!-- Clicking is the decision: no question. The rest is each part not transcribed. -->
     {@const label = together
@@ -566,6 +578,11 @@
     justify-content: flex-end;
     margin-top: 4px;
     margin-right: -6px;
+  }
+
+  .row-act.gift {
+    margin-right: auto;
+    color: var(--accent);
   }
 
   /* The video's download: where Delete video is once it's here. */

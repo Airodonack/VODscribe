@@ -43,6 +43,8 @@
   import { clips } from "./clips.svelte";
   import { toast } from "./toasts.svelte";
   import Toast from "./Toast.svelte";
+  import AnnotationsOffer from "./AnnotationsOffer.svelte";
+  import { offers } from "./offers.svelte";
   import type { Doc } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
   import { showsProgress } from "./stretches";
@@ -422,6 +424,13 @@
           }
         }),
       ),
+      // Annotations published for a VOD just added: offered.
+      await events.annotationsFound(
+        afterLoad((id) => {
+          const vod = vodsById.get(id);
+          if (vod) void offers.offer(vod, true);
+        }),
+      ),
       await events.vodRemoved(
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });
@@ -783,6 +792,7 @@
     </svelte:element>
   </div>
   <Toast />
+  <AnnotationsOffer />
 {/if}
 
 <style>

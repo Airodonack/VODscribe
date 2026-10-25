@@ -2,7 +2,8 @@
 //! transcript, each in its own color, with the messages they match highlighted
 //! in chat. A layer is a list of terms (words, phrases or emote names), for
 //! every channel or just one (emotes are often a channel's own). Alongside
-//! them, built-in toggles for chat events (subs, gifts, tips; see `chat::Kind`).
+//! them, built-in toggles for chat events (subs, gifts, tips; see `chat::Kind`),
+//! and for whose chapters and highlights are shown (`MarkSources`).
 
 use std::fs;
 use std::path::Path;
@@ -19,6 +20,24 @@ pub struct Timeline {
     /// The chat events drawn on the timeline (never `Kind::Message`).
     #[serde(default)]
     pub events: Vec<Kind>,
+    /// Whose chapters and highlights are shown, on the timeline and beside it.
+    #[serde(default)]
+    pub marks: MarkSources,
+}
+
+/// Whose chapters and highlights are shown: the user's own, those an
+/// annotations import brought (`annotations::SOURCE`). Both, at first.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(default)]
+pub struct MarkSources {
+    pub user: bool,
+    pub imported: bool,
+}
+
+impl Default for MarkSources {
+    fn default() -> Self {
+        Self { user: true, imported: true }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -74,10 +93,16 @@ pub fn defaults() -> Vec<Layer> {
 /// yet or it can't be read. Reads the plain list of layers the file held before
 /// event toggles too.
 pub fn load(path: &Path) -> Timeline {
-    let fresh = || Timeline { layers: defaults(), events: Vec::new() };
+    let fresh = || Timeline { layers: defaults(), events: Vec::new(), marks: MarkSources::default() };
     let Ok(text) = fs::read_to_string(path) else { return fresh() };
     serde_json::from_str(&text)
-        .or_else(|_| serde_json::from_str(&text).map(|layers| Timeline { layers, events: Vec::new() }))
+        .or_else(|_| {
+            serde_json::from_str(&text).map(|layers| Timeline {
+                layers,
+                events: Vec::new(),
+                marks: MarkSources::default(),
+            })
+        })
         .unwrap_or_else(|e| {
             eprintln!("{}: unreadable, using the default layers: {e}", path.display());
             fresh()
@@ -99,7 +124,7 @@ mod tests {
     fn saves_and_falls_back_to_the_defaults() {
         let dir = crate::TempDir::new("layers");
         let path = dir.join("layers.json");
-        let fresh = Timeline { layers: defaults(), events: Vec::new() };
+        let fresh = Timeline { layers: defaults(), events: Vec::new(), marks: MarkSources::default() };
         assert_eq!(load(&path), fresh, "nothing saved yet");
         let mut mine = fresh.clone();
         mine.layers[0].channel = Some(Channel { platform: "kick".into(), channel: "Barky".into() });
@@ -108,12 +133,19 @@ mod tests {
         mine.events = vec![Kind::Sub, Kind::Tip];
         save(&path, &mine).unwrap();
         assert_eq!(load(&path), mine);
-        save(&path, &Timeline { layers: Vec::new(), events: Vec::new() }).unwrap();
+        mine.marks = MarkSources { user: false, imported: true };
+        save(&path, &mine).unwrap();
+        assert_eq!(load(&path).marks, mine.marks, "whose marks are shown sticks");
+        save(&path, &Timeline { layers: Vec::new(), events: Vec::new(), marks: MarkSources::default() }).unwrap();
         assert!(load(&path).layers.is_empty(), "deleting every layer sticks");
         fs::write(&path, "{").unwrap();
         assert_eq!(load(&path), fresh);
         // Before event toggles, the file was just the layers.
         fs::write(&path, serde_json::to_string(&defaults()[..1]).unwrap()).unwrap();
-        assert_eq!(load(&path), Timeline { layers: defaults()[..1].to_vec(), events: Vec::new() });
+        let old = Timeline { layers: defaults()[..1].to_vec(), events: Vec::new(), marks: MarkSources::default() };
+        assert_eq!(load(&path), old);
+        // As 0.6.0 wrote it: no word of marks, so both are shown.
+        fs::write(&path, r#"{"layers": [], "events": ["sub"]}"#).unwrap();
+        assert_eq!(load(&path).marks, MarkSources { user: true, imported: true });
     }
 }

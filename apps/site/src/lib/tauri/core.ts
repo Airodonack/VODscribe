@@ -23,6 +23,7 @@ let timeline = {
     layer("clip", "Clip it", "#ef4444", ["clip", "clipped", "clip it"], false),
   ],
   events: [] as string[],
+  marks: { user: true, imported: true },
 };
 
 type Mark = {

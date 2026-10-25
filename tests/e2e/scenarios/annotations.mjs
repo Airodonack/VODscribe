@@ -12,8 +12,9 @@
 // one head naming them in their cast colour (an alias by the cast member's
 // name), the lines in it unnamed, and each chapter has a divider with its
 // icon and title; the Cast button lists the cast, with roles and aliases.
-// Imported again, the import's marks are replaced and a chapter of the
-// user's own stays.
+// The Timeline panel's Imported marks toggle hides the import's chapters
+// and highlights from the timeline, and shows them again. Imported again,
+// the import's marks are replaced and a chapter of the user's own stays.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -210,6 +211,30 @@ export default {
     if (cast.join(" | ") !== "Marlowe Streamer · also Mar | Ada Friend")
       wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
+    await app.key("Escape");
+
+    // The Timeline panel's "Imported marks" toggle takes the import's chapters
+    // and highlights off the timeline, and puts them back.
+    const onTimeline = () =>
+      app.js(`return document.querySelectorAll(".chapters .chapter.imported, .scrubber .emoji").length`);
+    const flip = () =>
+      app.js(`const b = [...document.querySelectorAll('[aria-label="Marks"] button')].find((b) => b.textContent.includes("Imported marks"));
+        if (!b) throw new Error("no Imported marks toggle");
+        b.click();`);
+    await app.click("button.timeline");
+    await until(
+      "the Marks toggles",
+      () => app.js(`return !!document.querySelector('[aria-label="Marks"] button')`),
+      10_000,
+    );
+    await flip();
+    await until("the imported marks hidden", async () => (await onTimeline()) === 0, 10_000).catch(async () =>
+      wrong.push(`with imported marks hidden, ${await onTimeline()} still on the timeline`),
+    );
+    await flip();
+    await until("the imported marks back", async () => (await onTimeline()) === 5, 10_000).catch(async () =>
+      wrong.push(`with imported marks shown again, ${await onTimeline()} on the timeline`),
+    );
     await app.key("Escape");
 
     // Imported again: the import's marks replaced, the user's chapter kept.

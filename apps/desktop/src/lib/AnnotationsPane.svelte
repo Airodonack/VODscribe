@@ -58,8 +58,8 @@
   const cast = $derived(vod ? (annotated.of(vod.id)?.cast ?? []) : []);
   // The marks open are this VOD's once its player has opened them.
   const mine = $derived(!!vod && cuts.isOf({ kind: "vod", id: vod.id }));
-  const chapters = $derived(mine ? chapterRows(cuts.all, vod?.duration) : []);
-  const highlights = $derived(mine ? highlightRows(cuts.all) : []);
+  const chapters = $derived(mine ? chapterRows(cuts.shown, vod?.duration) : []);
+  const highlights = $derived(mine ? highlightRows(cuts.shown) : []);
   const groups = $derived(nestRows(chapters, highlights));
   const current = $derived(mine ? currentChapter(chapters, cuts.now) : -1);
   // The highlights playing, as a string first: it changes only when they do, not with every move of the playhead.
@@ -294,7 +294,14 @@
     {/if}
 
     {#if mine && !chapters.length && !highlights.length}
-      <p class="muted empty">This VOD has no chapters or highlights.</p>
+      <!-- Some there, but the Timeline panel's Marks toggles hide them all. -->
+      {#if cuts.all.some((m) => m.kind === "chapter" || m.kind === "highlight")}
+        <p class="muted empty">
+          Its chapters and highlights are hidden: show them from Timeline, above the transcript.
+        </p>
+      {:else}
+        <p class="muted empty">This VOD has no chapters or highlights.</p>
+      {/if}
     {/if}
   </div>
 </aside>
