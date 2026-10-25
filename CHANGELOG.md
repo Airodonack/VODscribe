@@ -2,7 +2,7 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.6.1 (unreleased)
+## 0.7.0 (unreleased)
 
 - The keyboard button is now at the right of the player's controls, beside the captions and full screen buttons, just above the cheat sheet it opens.
 - A VOD from a site whose player VODscribe can't show says just "Press Play to download the video and watch it here." under its thumbnail; the note before downloading still explains why.
