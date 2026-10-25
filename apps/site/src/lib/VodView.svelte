@@ -7,9 +7,8 @@
   // show it with their source, as the whole page: the app's view fills the
   // window under the site's bar (+layout.svelte), whose line carries the note
   // and Open a file (siteBar.svelte.ts), without the library: the VOD's
-  // chapters and highlights (AnnotationsPane.svelte) sit beside its
-  // transcript as in the app, a tab of their own on a narrow window or a
-  // phone, and Review adds a verdict and a note to each of them there
+  // chapters and highlights (AnnotationsPane.svelte) are a column on the
+  // right as in the app, a tab beside the transcript's on a phone, and Review adds a verdict and a note to each of them there
   // (review.svelte.ts). The index (routes/v) shows it `idle`, its list
   // (`children`) in place in a normal page, until a file is opened.
   import { onDestroy, onMount, untrack, type Snippet } from "svelte";

@@ -88,6 +88,11 @@ test("highlights closer than a glyph's width on the timeline are one glyph with 
     [20, 2],
   ]);
   assert.deepEqual(at([5, 5, 5]), [[5, 3]]);
+  // Each group names the ones it stands for, the first among them.
+  assert.deepEqual(
+    crowds([30, 0, 10], (x) => x, 14).map((g) => g.members),
+    [[0, 10], [30]],
+  );
   assert.deepEqual(at([]), []);
 });
 

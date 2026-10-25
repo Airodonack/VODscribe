@@ -72,6 +72,7 @@
   import { activityColor, activityLabel, crowds } from "./annotated";
   import { highlightGlyph } from "./annotations";
   import { annotated } from "./annotated.svelte";
+  import { markHover } from "./markHover.svelte";
 
   /** An edit's piece on its timeline (in the edit's time). */
   export interface LanePiece {
@@ -492,6 +493,8 @@
     const over = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-mark], [data-chapter]");
     const id = over && root?.contains(over) ? Number(over.dataset.mark ?? over.dataset.chapter) : null;
     hoverMark = id === null ? null : (cuts.all.find((m) => m.id === id && m.kind !== "cut") ?? null);
+    // Its row in the chapters and highlights pane lights too.
+    markHover.point(mine && !touch && hoverMark ? hoverMark.id : null, pointer);
     const doing = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-activity]");
     hoverActivity = doing && root?.contains(doing) ? (activity[Number(doing.dataset.activity)] ?? null) : null;
     if (bar) {
@@ -750,6 +753,18 @@
   });
   const pointedAt = $derived(mine && cuts.pointed?.on === "transcript" ? cuts.pointed.time : null);
 
+  // The chapter or highlight pointed at, here or by its row in the chapters
+  // and highlights pane (markHover.svelte.ts): its slice or glyph lit, and a
+  // highlight pointed at in the pane drawn as one pointed at here is.
+  const pointer = {};
+  $effect(() => () => markHover.point(null, pointer));
+  const pointedId = $derived(mine ? markHover.id : null);
+  const momentMark = $derived.by(() => {
+    if (hoverMark?.kind === "highlight" && hoverMark.category) return hoverMark;
+    if (hoverMark || pointedId === null) return null;
+    return cuts.highlights.find((h) => h.id === pointedId) ?? null;
+  });
+
   /** Where mark `m` is drawn: where it's being dragged to, while it is. */
   const placed = (m: Mark) => (drag?.kind === "mark" && drag.id === m.id ? drag.at : m.start);
 
@@ -878,6 +893,7 @@
             class="chapter"
             class:current={i === nowChapter}
             class:selected={cuts.selected === chapter.id}
+            class:hovered={pointedId === chapter.id}
             class:imported={turn !== undefined}
             class:other={turn === 1}
             data-chapter={chapter.id}
@@ -1052,9 +1068,9 @@
         </span>
       {/if}
     {/each}
-    {#if hoverMark?.kind === "highlight" && hoverMark.category}
-      {@const at = placed(hoverMark)}
-      {@const until = endOf(hoverMark)}
+    {#if momentMark}
+      {@const at = placed(momentMark)}
+      {@const until = endOf(momentMark)}
       <!-- The highlight pointed at: a line at its start, and its stretch to its end. -->
       {#if until !== null && until > viewStart && at < viewStart + span}
         <span
@@ -1067,11 +1083,12 @@
         <span class="moment-line" style:left={pct(at)}></span>
       {/if}
     {/if}
-    {#each glyphs as { first: h, count } (h.id)}
+    {#each glyphs as { first: h, count, members } (h.id)}
       <!-- An imported highlight: its kind's emoji, with how many it stands for when they crowd. -->
       <span
         class="emoji"
         class:selected={cuts.selected === h.id}
+        class:hovered={pointedId !== null && members.some((m) => m.id === pointedId)}
         class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
         data-mark={h.id}
         data-category={h.category}
@@ -1088,6 +1105,7 @@
           <span
             class="star"
             class:selected={cuts.selected === h.id}
+            class:hovered={pointedId === h.id}
             class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
             data-mark={h.id}
             style:left={pct(at)}
@@ -1190,6 +1208,11 @@
 
   .chapter.imported.current {
     background: color-mix(in srgb, var(--muted) 40%, transparent);
+  }
+
+  /* Pointed at, here or by its row in the chapters and highlights pane. */
+  .chapter.hovered {
+    box-shadow: inset 0 0 0 1px var(--text);
   }
 
   .chapter.selected {
@@ -1417,6 +1440,10 @@
     z-index: 3;
   }
 
+  .emoji.hovered {
+    box-shadow: 0 0 0 2px var(--text);
+  }
+
   .emoji.selected {
     box-shadow: 0 0 0 2px var(--picked);
   }
@@ -1475,6 +1502,10 @@
     clip-path: polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
     cursor: ew-resize;
     z-index: 3;
+  }
+
+  .star.hovered {
+    background: var(--text);
   }
 
   .star.selected {

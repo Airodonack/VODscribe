@@ -58,15 +58,21 @@ export function castDetail(m: CastMember): string {
  * in order of `x` (where each is drawn, in pixels), one less than `within`
  * from the first of the group before joins it. The first of each group is
  * the one drawn (and what a click goes to); `count` says how many it stands
- * for. Zoomed in, they come apart.
+ * for, and `members` which (the first among them). Zoomed in, they come apart.
  */
-export function crowds<T>(items: T[], x: (item: T) => number, within: number): { first: T; count: number }[] {
+export function crowds<T>(
+  items: T[],
+  x: (item: T) => number,
+  within: number,
+): { first: T; count: number; members: T[] }[] {
   const sorted = items.map((item) => ({ item, at: x(item) })).sort((a, b) => a.at - b.at);
-  const out: { first: T; count: number; at: number }[] = [];
+  const out: { first: T; count: number; members: T[]; at: number }[] = [];
   for (const { item, at } of sorted) {
     const last = out.at(-1);
-    if (last && at - last.at < within) last.count++;
-    else out.push({ first: item, count: 1, at });
+    if (last && at - last.at < within) {
+      last.count++;
+      last.members.push(item);
+    } else out.push({ first: item, count: 1, members: [item], at });
   }
-  return out.map(({ first, count }) => ({ first, count }));
+  return out.map(({ first, count, members }) => ({ first, count, members }));
 }

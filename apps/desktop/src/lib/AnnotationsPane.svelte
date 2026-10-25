@@ -1,6 +1,7 @@
 <script lang="ts">
-  // A VOD's annotations (or an edit's) as a list beside its transcript, on
-  // the right of the window (App.svelte): its chapters (each with
+  // A VOD's annotations (or an edit's) as a list in the window's right
+  // column, or in a tab beside its transcript's on a narrow window
+  // (App.svelte): its chapters (each with
   // its emoji when the file gave one), each with the highlights that start in
   // it nested under it; the chapter playing, and any highlight playing, lit
   // and kept in view. (Who's who is in the transcript, over their lines.) A chapter
@@ -15,7 +16,9 @@
   // a clip's pill does: dragged onto an edit's row in the library, "Make new
   // edit" or the clip bar (dragout.ts `carry`), or from the keyboard, A on
   // its row (or its menu, a right click or the menu key) asking which edit
-  // (AddToEdit.svelte). The website's VOD page shows it in the same place,
+  // (AddToEdit.svelte). A row pointed at lights its slice or glyph on the
+  // timeline, and one pointed at there lights its row (markHover.svelte.ts).
+  // The website's VOD page shows it in the same place,
   // with its review controls under each row (`review`) and the VOD's own
   // (`reviewVod`) at the top; the app has none of those, and the website
   // nowhere to put a highlight. Its data comes as the other displays' does:
@@ -49,11 +52,13 @@
     type PaneRow,
   } from "./annotationRows";
   import { cuts } from "./cuts.svelte";
+  import { markHover } from "./markHover.svelte";
   import { formatTime, playsFromFile } from "./platform";
 
   let {
     vod,
     edit = null,
+    full = false,
     onplay,
     review,
     reviewVod,
@@ -62,6 +67,8 @@
     vod: Vod | null | undefined;
     /** The edit whose chapters and highlights these are (on its timeline), if not a VOD's. */
     edit?: number | null;
+    /** A column of the window's own, its head as tall as the toolbar beside it. */
+    full?: boolean;
     /** Plays the VOD (or the edit) from `time`. */
     onplay: (time: number) => void;
     /** What goes under each chapter and highlight row (the website's review controls). */
@@ -131,6 +138,15 @@
   });
 
   const rowId = (row: PaneRow) => `${row.kind}-${row.id}`;
+
+  // The row pointed at lights its mark on the timeline; one pointed at there
+  // has the hover look here. Not for a finger.
+  const pointer = {};
+  $effect(() => () => markHover.point(null, pointer));
+  function onRowEnter(e: PointerEvent, row: PaneRow) {
+    if (e.pointerType !== "touch") markHover.point(row.id, pointer);
+  }
+  const onRowLeave = () => markHover.point(null, pointer);
 
   async function focusRow(row: PaneRow) {
     await tick();
@@ -238,7 +254,7 @@
 
 <svelte:window onpointermove={onWindowMove} onpointerup={() => (press = null)} />
 
-<aside class="annotations-pane" aria-label="Chapters and highlights">
+<aside class="annotations-pane" class:full aria-label="Chapters and highlights">
   <div class="lists" bind:this={scroller}>
     {#if reviewVod}
       <div class="vod-review">{@render reviewVod()}</div>
@@ -262,7 +278,15 @@
           {#if group.chapter}
             {@const row = group.chapter}
             {@const i = chapters.indexOf(row)}
-            <div class="pane-row chapter" class:lit={i === current} bind:this={chapterEls[i]}>
+            <div
+              class="pane-row chapter"
+              class:lit={i === current}
+              class:hover={markHover.id === row.id}
+              bind:this={chapterEls[i]}
+              onpointerenter={(e) => onRowEnter(e, row)}
+              onpointerleave={onRowLeave}
+              role="presentation"
+            >
               <div class="line">
                 {#if count}
                   <button
@@ -323,6 +347,10 @@
                 class:nested={chapters.length > 0}
                 class:expanded={open}
                 class:lit={playing.has(row.id)}
+                class:hover={markHover.id === row.id}
+                onpointerenter={(e) => onRowEnter(e, row)}
+                onpointerleave={onRowLeave}
+                role="presentation"
               >
                 <div class="line">
                   {#if detail}
@@ -435,7 +463,7 @@
 {/if}
 
 <style>
-  /* A sidebar as the library is (Library.svelte), on the transcript's right;
+  /* A sidebar as the library is (Library.svelte), on the window's right;
      its width is the layout's (App.svelte). */
   aside {
     display: flex;
@@ -502,6 +530,22 @@
     font-weight: 400;
   }
 
+  /* The window's own column: its head the toolbar's height (and the
+     library's top), so the three columns' tops line up. */
+  .full .head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0 4px;
+    min-height: 53px;
+    box-sizing: border-box;
+    background: var(--surface);
+  }
+
+  .full .head .sep {
+    margin: 0 1px;
+  }
+
   .pane-row {
     border-bottom: 1px solid var(--border);
     background: var(--surface);
@@ -515,6 +559,18 @@
   .pane-row.lit {
     background: var(--accent-soft);
     box-shadow: inset 3px 0 var(--accent);
+  }
+
+  /* Its mark pointed at on the timeline (or the row itself): outlined in
+     the lit row's colour, lit or not. */
+  .pane-row.hover {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .pane-row.lit.hover {
+    box-shadow:
+      inset 3px 0 var(--accent),
+      inset 0 0 0 1px var(--accent);
   }
 
   /* A row: its chevron, then what plays it. */

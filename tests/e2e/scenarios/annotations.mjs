@@ -12,13 +12,16 @@
 // one head naming them in their cast colour (an alias by the cast member's
 // name), the lines in it unnamed, and each chapter has a divider with its
 // icon and title; the Cast button lists the cast, with roles and aliases.
-// The chapters and highlights pane sits on the right beside the transcript,
-// the chapter and highlight playing lit; a click on a highlight's row plays
-// it. Dragged onto "Make new edit", a highlight's row makes an edit holding
-// it as a group named for it, one band as a clip's pill goes in; from the
-// keyboard, A on the other's row asks which edit and puts it there, a group
-// too; the edit open, its pane has the highlights it holds. On a narrower
-// window the pane is a tab beside the transcript's.
+// The chapters and highlights pane is the window's right column, full
+// height, the player and transcript between it and the library, the chapter
+// and highlight playing lit. Pointing at a highlight's row lights its glyph
+// and draws its line down the bar; pointing at a chapter's slice lights its
+// row. A click on a highlight's row plays it. Dragged onto "Make new edit",
+// a highlight's row makes an edit holding it as a group named for it, one
+// band as a clip's pill goes in; from the keyboard, A on the other's row
+// asks which edit and puts it there, a group too; the edit open, its pane
+// has the highlights it holds. On a window too narrow for three columns the
+// pane is a tab beside the transcript's.
 // A character played by a streamer is named the streamer first, the
 // character after ("Vance (Marlowe)"): on their heads, in the Cast button
 // (with their channels) and in a highlight's tooltip, grouped and coloured as
@@ -52,6 +55,13 @@ const POINT = `
     pointerId: 1, pointerType: "mouse", isPrimary: true };
   el.dispatchEvent(new PointerEvent("pointermove", at));
   return true;`;
+
+/** In the page: a pointer coming onto the element `arguments[0]`, and leaving it (as a row in the pane hears it). */
+const ENTER = `
+  const el = document.querySelector(arguments[0]);
+  if (!el) throw new Error("nothing at " + arguments[0]);
+  el.dispatchEvent(new PointerEvent("pointerenter", { pointerId: 1, pointerType: "mouse", isPrimary: true }));`;
+const LEAVE = ENTER.replaceAll("pointerenter", "pointerleave");
 
 /** In the page: a click on the element `arguments[0]`, as the timeline hears it (down on it, up on the window). */
 const PRESS = `
@@ -93,7 +103,7 @@ export default {
     "annotations-timeline":
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
     "annotations-pane":
-      'Right of the transcript, a narrower pane lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
+      'On the window\'s right, a column the full height of the window lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-cast":
       'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Vance (Marlowe)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Vance (Marlowe) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with a coloured dot.',
   },
@@ -367,12 +377,113 @@ export default {
     )
       wrong.push(`the chips' colours ${chips.colors} aren't the speakers' ${speakers[0].color}, ${speakers[1].color}`);
     const placed =
-      await app.js(`const pane = document.querySelector(".below.beside .annotations-pane")?.getBoundingClientRect();
-      const text = document.querySelector("#transcript")?.getBoundingClientRect();
-      return pane && text ? { left: pane.left, width: pane.width, textRight: text.right } : null`);
-    if (!placed || placed.left < placed.textRight || placed.width > 280)
-      wrong.push(`the pane isn't a narrow column right of the transcript: ${JSON.stringify(placed)}`);
+      await app.js(`const pane = document.querySelector(".app > .pane.side .annotations-pane")?.getBoundingClientRect();
+      const main = document.querySelector(".main")?.getBoundingClientRect();
+      return pane && main ? { left: pane.left, right: pane.right, top: pane.top, bottom: pane.bottom, width: pane.width,
+        mainRight: main.right, innerWidth, innerHeight } : null`);
+    if (
+      !placed ||
+      placed.left < placed.mainRight - 1 ||
+      Math.abs(placed.right - placed.innerWidth) > 1 ||
+      placed.top > 1 ||
+      Math.abs(placed.bottom - placed.innerHeight) > 1 ||
+      placed.width > 320
+    )
+      wrong.push(`the pane isn't the window's right column, full height: ${JSON.stringify(placed)}`);
     await ctx.checkpoint("annotations-pane");
+
+    // Pointing at a highlight's row lights its glyph on the timeline and
+    // draws its line down the bar; leaving the row lets go of both.
+    // Lit, a mark keeps its own box (a ring round the glyph, an outline on
+    // the slice, the star recoloured), never stretched to the bar's height.
+    const paneRow = (m) => `.annotations-pane .pane-row:has(> .line > button.row-main[data-row="${m}"])`;
+    const BOX = `const r = document.querySelector(arguments[0])?.getBoundingClientRect();
+      return r ? [r.left, r.top, r.width, r.height].map((n) => Math.round(n)) : null`;
+    const keepsBox = async (what, at, was) => {
+      const now = await app.js(BOX, at);
+      if (!was || !now || now.some((n, i) => Math.abs(n - was[i]) > 1))
+        wrong.push(`${what}, lit, is drawn on ${JSON.stringify(now)}, not its own box ${JSON.stringify(was)}`);
+    };
+    const glyphAt = `.scrubber .emoji[data-category="funny"]`;
+    const glyphBox = await app.js(BOX, glyphAt);
+    if (!glyphBox || Math.abs(glyphBox[2] - 16) > 1 || Math.abs(glyphBox[3] - 16) > 1)
+      wrong.push(`the first highlight's glyph is ${JSON.stringify(glyphBox)}, not 16 by 16`);
+    await app.js(ENTER, paneRow(`highlight-${funny.id}`));
+    const lit = await until(
+      "the row's glyph lit",
+      () =>
+        app.js(`const g = document.querySelector(".scrubber .emoji.hovered");
+          return !!g && !!document.querySelector(".scrubber .moment-line") && g.dataset.category`),
+      10_000,
+    ).catch(() => "(none)");
+    if (lit !== "funny") wrong.push(`pointing at the first highlight's row lit the glyph "${lit}" and its line`);
+    await keepsBox("the first highlight's glyph", glyphAt, glyphBox);
+    await app.js(LEAVE, paneRow(`highlight-${funny.id}`));
+    await until(
+      "the glyph let go",
+      () => app.js(`return !document.querySelector(".scrubber .emoji.hovered, .scrubber .moment-line")`),
+      10_000,
+    ).catch(() => wrong.push("off the row, its glyph stays lit"));
+    // And the other way: pointing at a chapter's slice outlines its row (hover, not lit).
+    const game = marks.find((m) => m.kind === "chapter" && m.text === "The game");
+    const sliceAt = `.chapters .chapter[data-chapter="${game.id}"]`;
+    const sliceBox = await app.js(BOX, sliceAt);
+    const FILL = `const el = document.querySelector(arguments[0]); return el && getComputedStyle(el).backgroundColor`;
+    const sliceFill = await app.js(FILL, sliceAt);
+    await app.js(POINT, sliceAt);
+    const rowLit = await until(
+      "the slice's row lit",
+      () =>
+        app.js(`const rows = [...document.querySelectorAll(".annotations-pane .pane-row.hover")];
+          const slice = document.querySelector(".chapters .chapter.hovered");
+          return rows.length && slice ? rows.map((r) => r.querySelector(".name").textContent.trim()).join(", ") : false`),
+      10_000,
+    ).catch(() => "(none)");
+    if (rowLit !== "The game") wrong.push(`pointing at "The game"'s slice lit the rows "${rowLit}"`);
+    await keepsBox(`"The game"'s slice`, sliceAt, sliceBox);
+    const litFill = await app.js(FILL, sliceAt);
+    if (litFill !== sliceFill) wrong.push(`"The game"'s slice, lit, turns ${litFill} from ${sliceFill}`);
+    await app.js(POINT, "#transcript");
+    await until(
+      "the row let go",
+      () => app.js(`return !document.querySelector(".annotations-pane .pane-row.hover, .chapters .chapter.hovered")`),
+      10_000,
+    ).catch(() => wrong.push("off the slice, its row stays lit"));
+    // A highlight of the user's own (M, at 0:45, clear of the imported
+    // ones) is a star; its row pointed at lights the star, in its own box.
+    // Delete removes it again.
+    await app.key("ArrowRight");
+    await app.key("ArrowRight");
+    await until("the player at 0:45", async () => (await app.shownTime()) === 45, 10_000);
+    await app.key("m");
+    const note = `[role=dialog][aria-label="Highlight note"] input`;
+    await until("the note box", () => app.js(`return !!document.querySelector(arguments[0])`, note), 10_000);
+    await app.type(note, "Mine");
+    await app.submit(note);
+    await until("the note box to close", () => app.js(`return !document.querySelector(arguments[0])`, note), 10_000);
+    const star = await until(
+      "the user's highlight",
+      async () =>
+        (await app.invoke("list_marks", { vodId: vod.id })).find((m) => m.kind === "highlight" && m.source === "user"),
+      10_000,
+    );
+    const starAt = `.scrubber .star[data-mark="${star.id}"]`;
+    const starBox = await until("its star", () => app.js(BOX, starAt), 10_000);
+    await app.js(ENTER, paneRow(`highlight-${star.id}`));
+    await until(
+      "its star lit",
+      () => app.js(`return !!document.querySelector(arguments[0] + ".hovered")`, starAt),
+      10_000,
+    )
+      .then(() => keepsBox("the user's star", starAt, starBox))
+      .catch(() => wrong.push("pointing at the user's highlight's row didn't light its star"));
+    await app.js(LEAVE, paneRow(`highlight-${star.id}`));
+    await app.key("Delete");
+    await until(
+      "the user's highlight gone",
+      async () => !(await app.invoke("list_marks", { vodId: vod.id })).some((m) => m.source === "user"),
+      10_000,
+    ).catch(() => wrong.push("Delete didn't remove the user's highlight"));
 
     // A click on the first highlight's row plays it, from its start.
     await app.click(row(funny));
@@ -499,13 +610,16 @@ export default {
       );
     }
 
-    // A narrower window: the pane is a tab beside the transcript's, the
-    // transcript's open; the other tab shows the pane in its place.
+    // A window too narrow for three columns (under 1100 px): no right
+    // column; the pane is a tab beside the transcript's, the transcript's
+    // open; the other tab shows the pane in its place.
     const was = await app.js(`return { width: innerWidth, height: innerHeight }`);
-    const narrow = await resizeInner(app, 880, Math.min(was.height, 760));
-    const mainWidth = await app.js(`return document.querySelector(".main").clientWidth`);
-    if (mainWidth >= 800) ctx.log(`the window stayed ${narrow.width} px wide (the view ${mainWidth}): no tabs to try`);
+    const narrow = await resizeInner(app, 1000, Math.min(was.height, 760));
+    if (narrow.width >= 1100) ctx.log(`the window stayed ${narrow.width} px wide: no tabs to try`);
     else {
+      await until("the column gone", () => app.js(`return !document.querySelector(".app > .pane.side")`), 10_000).catch(
+        () => wrong.push(`at ${narrow.width} px the pane is still a column`),
+      );
       const tabs = () =>
         app.js(`return [...document.querySelectorAll(".pane-tabs [role=tab]")].map((t) =>
           t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : ""))`);

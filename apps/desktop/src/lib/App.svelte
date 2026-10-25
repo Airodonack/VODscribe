@@ -534,9 +534,10 @@
   let body = $state<HTMLElement>();
 
   // The open VOD's chapters and highlights (or the open edit's), when it has
-  // any shown, in a pane of their own on the right, scrolling on their own:
-  // beside the transcript on a wide window, and on a narrow one a tab of
-  // their own beside the transcript's, the one open remembered.
+  // any shown, in a column of their own on the window's right, full height
+  // and scrolling on its own, the library's mirror; on a window too narrow
+  // for three columns, a tab of their own beside the transcript's, the one
+  // open remembered.
   const paneDoc = $derived<Doc | null>(
     showResults ? null : editOpen ? view : selected ? { kind: "vod", id: selected.id } : null,
   );
@@ -552,19 +553,21 @@
         ? "Chapters"
         : "Highlights",
   );
-  // The pane beside the transcript once the main column has the room for
-  // both: the pane's widest (280 px) and the transcript's narrowest (520 px).
-  const BESIDE = 800;
-  let mainWidth = $state(0);
-  const beside = $derived(mainWidth >= BESIDE);
+  // A column of its own once the window has the room for three: the
+  // library's widest (340 px), the pane's (320 px) and a centre of 440 px
+  // between them; without the library (the website's VOD page), the pane's
+  // and the centre's.
+  const columnFrom = $derived(library ? 1100 : 760);
+  let appWidth = $state(0);
+  const column = $derived(paneShown && appWidth >= columnFrom);
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
     tab = to;
     save(TAB, to);
   }
-  const tabbed = $derived(paneShown && !beside);
-  const paneOpen = $derived(paneShown && (beside || tab === "annotations"));
+  const tabbed = $derived(paneShown && !column);
+  const inTab = $derived(tabbed && tab === "annotations");
   // The tabs as one control: ← and → between them, as tabs go.
   function onTabKey(e: KeyboardEvent) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
@@ -674,17 +677,27 @@
   onmouseup={onMouseNav}
 />
 
+<!-- The chapters and highlights pane: the window's right column, or the transcript's tab. -->
+{#snippet annotationsPane(full: boolean)}
+  {#if paneDoc?.kind === "edit"}
+    <AnnotationsPane vod={null} edit={paneDoc.id} {full} onplay={(time) => edits.playAt(time)} />
+  {:else if selected}
+    {@const vod = selected}
+    <AnnotationsPane {vod} {full} onplay={(time) => play(vod.id, time)} {review} {reviewVod} />
+  {/if}
+{/snippet}
+
 {#if setup === null}
   <!-- Loading -->
 {:else if !ready}
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
-  <div class="app" class:alone={!library}>
+  <div class="app" class:alone={!library} class:with-pane={column} bind:clientWidth={appWidth}>
     {#if library}
       <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
-    <svelte:element this={DEMO ? "div" : "main"} class="main" bind:clientWidth={mainWidth}>
+    <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
@@ -787,10 +800,10 @@
           >
         </div>
       {/if}
-      <div class="below" class:beside={paneShown && beside}>
+      <div class="below">
         <div
           class="body"
-          class:away={paneOpen && !beside}
+          class:away={inTab}
           id="transcript-panel"
           role={tabbed ? "tabpanel" : undefined}
           aria-labelledby={tabbed ? "tab-transcript" : undefined}
@@ -867,23 +880,18 @@
             </div>
           {/if}
         </div>
-        {#if paneOpen}
-          <div
-            class="pane"
-            id="annotations-panel"
-            role={tabbed ? "tabpanel" : undefined}
-            aria-labelledby={tabbed ? "tab-annotations" : undefined}
-          >
-            {#if paneDoc?.kind === "edit"}
-              <AnnotationsPane vod={null} edit={paneDoc.id} onplay={(time) => edits.playAt(time)} />
-            {:else if selected}
-              {@const vod = selected}
-              <AnnotationsPane {vod} onplay={(time) => play(vod.id, time)} {review} {reviewVod} />
-            {/if}
+        {#if inTab}
+          <div class="pane" id="annotations-panel" role="tabpanel" aria-labelledby="tab-annotations">
+            {@render annotationsPane(false)}
           </div>
         {/if}
       </div>
     </svelte:element>
+    {#if column}
+      <div class="pane side" id="annotations-panel">
+        {@render annotationsPane(true)}
+      </div>
+    {/if}
   </div>
   <Toast />
   <AnnotationsOffer />
@@ -902,21 +910,24 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  /* Under the player: the transcript (or the results), and the chapters and
-     highlights pane beside it on the right, narrower than the library, each
-     scrolling on its own; or, on a narrow window, whichever tab is open. */
+  /* The chapters and highlights pane, a column on the right as the library
+     is on the left, a little narrower; or, without the library, beside the
+     main column alone. */
+  .app.with-pane {
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  .app.alone.with-pane {
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  /* Under the player: the transcript (or the results); on a narrow window,
+     or the chapters and highlights pane in its place, whichever tab is open. */
   .below {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-
-  .below.beside {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 280px);
-    /* As tall as there's room for, whatever's in them: each scrolls. */
-    grid-template-rows: minmax(0, 1fr);
   }
 
   .pane {

@@ -10,6 +10,7 @@ import {
   highlightRows,
   lengthLabel,
   nestRows,
+  pointAt,
   shownRows,
   sideStep,
   stepRow,
@@ -192,4 +193,20 @@ test("→ opens, ← closes, and ← on a closed highlight goes to its chapter",
   open.delete("c1");
   assert.equal(step("c1", "ArrowRight"), "toggle c1");
   assert.equal(step("c1", "ArrowLeft"), null, "a closed chapter has nowhere to go");
+});
+
+test("a mark pointed at in one place is let go of only there", () => {
+  const pane = {};
+  const timeline = {};
+  const other = {};
+  let at = pointAt(null, 4, pane);
+  assert.deepEqual(at, { id: 4, by: pane });
+  assert.equal(pointAt(at, 4, pane), at, "the same again changes nothing");
+  assert.equal(pointAt(at, null, timeline), at, "a timeline the pointer isn't over keeps the pane's");
+  at = pointAt(at, 7, timeline);
+  assert.deepEqual(at, { id: 7, by: timeline });
+  assert.equal(pointAt(at, null, other), at, "another timeline keeps this one's");
+  assert.equal(pointAt(at, null, pane), at);
+  assert.equal(pointAt(at, null, timeline), null);
+  assert.equal(pointAt(null, null, pane), null);
 });

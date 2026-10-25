@@ -165,3 +165,14 @@ export function stepRow(i: number, count: number, key: string): number | null {
   if (key === "End") return count - 1;
   return null;
 }
+
+/** A chapter or highlight pointed at, by its mark's id, and who pointed at it (markHover.svelte.ts). */
+export type Pointed = { id: number; by: object } | null;
+
+/** What's pointed at once `by` points at mark `id`, or at none (null): it
+ *  only lets go of what it pointed at itself; the same as before comes back
+ *  as it was, so nothing that reads it changes. */
+export function pointAt(was: Pointed, id: number | null, by: object): Pointed {
+  if (id === null) return was?.by === by ? null : was;
+  return was?.id === id && was.by === by ? was : { id, by };
+}
