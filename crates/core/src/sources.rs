@@ -135,6 +135,8 @@ impl Db {
     /// pieces of it stay: holes, till nothing uses it and it goes too.
     pub fn set_gone(&self, vod_id: i64) -> Result<()> {
         self.conn.execute("UPDATE vods SET gone = 1, media_path = NULL WHERE id = ?1", [vod_id])?;
+        // Its cast and activity go with its transcript.
+        self.conn.execute("DELETE FROM vod_annotations WHERE vod_id = ?1", [vod_id])?;
         Ok(())
     }
 }

@@ -3,6 +3,7 @@
 //! `thumbnails`, `chats` and `clips`; `worker` runs the download and transcription
 //! queue, and `chats` the chat replay one.
 
+mod annotations;
 // `tauri dev` serves the app from its dev server instead; tests still cover it.
 #[cfg(any(not(dev), test))]
 mod app_server;
@@ -310,6 +311,9 @@ pub fn run() {
             setup::run_setup,
             setup::cancel_setup,
             vods::add_vod,
+            annotations::import_annotations,
+            annotations::import_annotations_file,
+            annotations::vod_annotations,
             vods::cancel_add,
             vods::list_vods,
             vods::add_files,

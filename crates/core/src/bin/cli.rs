@@ -75,6 +75,14 @@ fn main() -> Result<()> {
             pipeline::remove_work_files(&paths.work(), vod.id);
             eprintln!();
         }
+        ["import-annotations", file, rest @ ..] if rest.len() <= 1 => {
+            // An annotations file (and its chat: the one given, or the one beside it).
+            let chat = rest.first().map(std::path::Path::new);
+            let (annotations, chat) = vodscribe_core::annotations::read(std::path::Path::new(file), chat)?;
+            let db = Db::open(&paths.db())?;
+            let (vod, created) = db.import_annotations(&annotations, chat.as_deref())?;
+            println!("#{} {} ({})", vod.id, vod.info.title, if created { "added" } else { "updated" });
+        }
         ["probe", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
             let probe_path = paths.work().join("probe.json");
@@ -136,7 +144,7 @@ fn main() -> Result<()> {
             }
         }
         _ => bail!(
-            "usage: vodscribe-cli setup | add <url> | probe <url> | chat <url> | list | search <phrase> | transcript <id> | peaks <file> <out>"
+            "usage: vodscribe-cli setup | add <url> | probe <url> | chat <url> | list | search <phrase> | transcript <id> | peaks <file> <out> | import-annotations <file.json> [<chat.json>]"
         ),
     }
     Ok(())

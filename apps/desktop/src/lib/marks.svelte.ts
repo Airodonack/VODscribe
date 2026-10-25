@@ -167,7 +167,8 @@ export class Marks {
   });
 
   /** Whether `vod` has a chat to mark at all. */
-  #activeFor = (vod: Vod) => vod.platform !== "local" && vod.chat !== "none";
+  // A file's chat is one an annotations import brought.
+  #activeFor = (vod: Vod) => (vod.platform !== "local" || vod.chat === "done") && vod.chat !== "none";
   #active = $derived.by(() => this.#of.vods.some(this.#activeFor));
   /** The site of the chat's VOD (an edit's first with chat), for what's named or coloured by it. */
   #platform = $derived.by(() => this.#of.vods.find(this.#activeFor)?.platform ?? "local");

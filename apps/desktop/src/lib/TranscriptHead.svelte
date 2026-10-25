@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { api, type Stretch, type Vod } from "./api";
+  import { api, type CastMember, type Stretch, type Vod } from "./api";
+  import { castDetail, speakerColor } from "./annotated";
+  import Popover from "./Popover.svelte";
   import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
   import Icon from "./Icon.svelte";
@@ -12,6 +14,7 @@
   // its Chat button, and the Timeline button of the VOD with most time in it.
   let {
     vod,
+    cast = [],
     stretch = null,
     timelineVod,
     lineCount,
@@ -28,6 +31,8 @@
     height = $bindable(),
   }: {
     vod: Vod | null;
+    /** Who's in the VOD, from an annotations import: the Cast button lists them. */
+    cast?: CastMember[];
     /** The stretch being transcribed, if any. */
     stretch?: Stretch | null;
     /** Whose Timeline panel it shows: the VOD, or an edit's with most time in it. */
@@ -66,6 +71,9 @@
       ? `${formatSpan(stretch.start, stretch.end ?? vod?.duration ?? 0)} · `
       : "",
   );
+
+  let castOpen = $state(false);
+  let castAnchor = $state<HTMLElement>();
 </script>
 
 <div class="head" bind:offsetHeight={height}>
@@ -78,6 +86,32 @@
       <span class="sep">·</span>{lineCount} line{lineCount === 1 ? "" : "s"}
     {/if}
   </p>
+  {#if cast.length}
+    <div class="cast-anchor" bind:this={castAnchor}>
+      <button
+        class="cast-toggle"
+        class:on={castOpen}
+        onclick={() => (castOpen = !castOpen)}
+        aria-expanded={castOpen}
+        title="Who's in this VOD"
+      >
+        <Icon name="users" size={14} /> Cast <span class="muted">{cast.length}</span>
+      </button>
+      <Popover bind:open={castOpen} anchor={castAnchor} label="Cast" width={280}>
+        <ul class="cast">
+          {#each cast as member (member.name)}
+            <li>
+              <span class="swatch" style:background={speakerColor(cast, member.name)}></span>
+              <span class="who">
+                <strong>{member.name}</strong>
+                <span class="muted">{castDetail(member)}</span>
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </Popover>
+    </div>
+  {/if}
   {#if hasChat}
     <div class="chat-head">
       <span
@@ -158,6 +192,58 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+    font-size: 12px;
+  }
+
+  .cast-anchor {
+    position: relative;
+    flex: none;
+    /* Beside the transcript's status, with the chat's at the far side. */
+    margin-right: auto;
+  }
+
+  .cast-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    padding: 3px 8px;
+  }
+
+  .cast-toggle.on {
+    border-color: var(--accent);
+  }
+
+  .cast {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+  }
+
+  .cast li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  /* The colour their lines' names have in the transcript. */
+  .swatch {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .who {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  .who .muted {
     font-size: 12px;
   }
 

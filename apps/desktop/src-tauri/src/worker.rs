@@ -556,7 +556,7 @@ mod tests {
 
     /// VOD `vod`'s lines, as (start, text).
     fn lines(db: &Db, vod: i64) -> Vec<(f64, String)> {
-        db.lines(vod).unwrap().into_iter().map(|(start, _, text)| (start, text)).collect()
+        db.lines(vod).unwrap().into_iter().map(|l| (l.start, l.text)).collect()
     }
 
     /// Writes a line from 0 to 10 s for request `id`, which reached its end.

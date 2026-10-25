@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-annotations-file"
+description = "Enables the import_annotations_file command without any pre-configured scope."
+commands.allow = ["import_annotations_file"]
+
+[[permission]]
+identifier = "deny-import-annotations-file"
+description = "Denies the import_annotations_file command without any pre-configured scope."
+commands.deny = ["import_annotations_file"]

@@ -25,6 +25,7 @@
   import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
   import { Adder } from "./adder.svelte";
+  import { annotated } from "./annotated.svelte";
   import Spinner from "./Spinner.svelte";
   import { Reorder } from "./reorder.svelte";
   import UpdateBanner from "./UpdateBanner.svelte";
@@ -73,6 +74,23 @@
       filters: extensions.length ? [{ name: "Video and audio", extensions }] : [],
     }).catch(() => null);
     if (picked) adder.items(Array.isArray(picked) ? picked : [picked], true);
+  }
+
+  // An annotations file for a VOD (annotations.ts): it says which VOD, so
+  // it's imported from here, adding the VOD if it isn't in the library yet;
+  // the VOD then opens with its chapters, highlights and cast.
+  let importing = $state(false);
+  async function importAnnotations() {
+    importing = true;
+    adder.error = null;
+    try {
+      const vod = await annotated.pickAndImport();
+      if (vod) onselect(vod.id);
+    } catch (e) {
+      adder.error = String(e);
+    } finally {
+      importing = false;
+    }
   }
 
   // Dropping onto the window. Files arrive through the webview's drop event with
@@ -343,6 +361,15 @@
       >add video files…</button
     >
     {#if !DEMO}or drop {linksDrop ? "files and links" : "video files"} anywhere{/if}
+    ·
+    <button
+      class="link"
+      onclick={importAnnotations}
+      disabled={importing}
+      title="Import a VOD's annotations file: its transcript, chapters, highlights, who's speaking, and its chat"
+      {...demoOff("The web demo can't import files. In the app, this imports a VOD's annotations file.")}
+      >{importing ? "importing…" : "import annotations…"}</button
+    >
   </p>
   {#if adder.error}
     <p class="error-text add-error">{adder.error}</p>

@@ -2,6 +2,7 @@
 //! decoding it with ffmpeg, transcribing it with Parakeet (via sherpa-onnx)
 //! and indexing the transcript in SQLite for phrase search.
 
+pub mod annotations;
 #[cfg(feature = "asr")]
 pub mod asr;
 pub mod audio;

@@ -685,7 +685,7 @@ pub(crate) async fn add_edit_mark(
         _ => "Cut added",
     };
     state.history.record(&db, doc, label, before);
-    Ok(Mark { id, vod_id, kind, start: time, text })
+    Ok(Mark { id, vod_id, kind, start: time, text, detail: Default::default() })
 }
 
 /// The history a mark's changes go in: its VOD's, or its edit's.

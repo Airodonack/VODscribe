@@ -1,0 +1,58 @@
+[
+  {
+    "id": 1,
+    "time": 3,
+    "author": "Brigid",
+    "color": "#1e90ff",
+    "parts": [
+      {
+        "type": "text",
+        "text": "hi Marlowe"
+      }
+    ],
+    "kind": "message",
+    "amount": null
+  },
+  {
+    "id": 2,
+    "time": 9,
+    "author": "Cormac",
+    "color": null,
+    "parts": [
+      {
+        "type": "text",
+        "text": "hey Ada"
+      }
+    ],
+    "kind": "message",
+    "amount": null
+  },
+  {
+    "id": 3,
+    "time": 26,
+    "author": "Dara",
+    "color": "#ff4500",
+    "parts": [
+      {
+        "type": "text",
+        "text": "so close KEKW"
+      }
+    ],
+    "kind": "message",
+    "amount": null
+  },
+  {
+    "id": 4,
+    "time": 36,
+    "author": "Brigid",
+    "color": "#1e90ff",
+    "parts": [
+      {
+        "type": "text",
+        "text": "what a twist"
+      }
+    ],
+    "kind": "message",
+    "amount": null
+  }
+]

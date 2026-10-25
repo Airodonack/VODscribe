@@ -264,6 +264,8 @@
     !drawsCaptions && prefs.captions && cues.length ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null,
   );
   const now = $derived(reading.now);
+  // The chapter playing, named in the header where there's room for it.
+  const chapterNow = $derived(cuts.isOf({ kind: "vod", id: vod.id }) ? cuts.chapterAt(now) : undefined);
   const playing = $derived(reading.playing);
   const fps = $derived(reading.fps);
   poll = requestAnimationFrame(read);
@@ -595,6 +597,9 @@
         {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
+      {#if chapterNow?.text}
+        <span class="chapter-now" title="Chapter: {chapterNow.text}">{chapterNow.text}</span>
+      {/if}
       {#if from > 0 && isLocal}
         <span class="stamp"><span class="time">{formatTime(from)}</span></span>
       {:else if from > 0}
@@ -892,6 +897,17 @@
     flex: none;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  /* The chapter playing: the first to give way when the header is narrow. */
+  .chapter-now {
+    flex: 0 4 auto;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--chapter);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .stamp {

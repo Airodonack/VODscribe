@@ -27,6 +27,8 @@
   import { edits } from "./edits.svelte";
   import { load, save } from "./stored";
   import Icon from "./Icon.svelte";
+  import { annotated } from "./annotated.svelte";
+  import { speakerColor } from "./annotated";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
@@ -79,6 +81,9 @@
   }
 
   let lines = $state.raw<Line[]>([]);
+  // Who's who, from an annotations import: the speakers' colours.
+  $effect(() => annotated.load(vod?.id));
+  let cast = $derived(vod ? (annotated.of(vod.id)?.cast ?? []) : []);
   // What of the VOD is transcribed, and asked to be (stretches.ts).
   let stretches = $state.raw<Stretch[]>([]);
   let error = $state<string | null>(null);
@@ -104,6 +109,8 @@
     const id = vodId;
     void asked;
     void revision;
+    // Annotations imported bring a transcript of their own.
+    void annotated.imports(vod?.id);
     const mine = ++seq;
     rangeSeq++;
     if (edit !== null) {
@@ -200,7 +207,8 @@
   // The chat as a whole (counts and events), when it's been asked for.
   let overview = $state.raw<ChatOverview | null>(null);
   // An edit's chat is its pieces' VODs' where they play: shown once there's some.
-  let hasChat = $derived(vod ? vod.platform !== "local" : (overview?.count ?? 0) > 0);
+  // A file's chat is one an annotations import brought.
+  let hasChat = $derived(vod ? vod.platform !== "local" || vod.chat === "done" : (overview?.count ?? 0) > 0);
   // A VOD without a chat replay (a video that wasn't a livestream, say): its
   // toggle is grayed out and the column stays shut. A fetch that stopped
   // partway (failed) keeps what it fetched, shown like the rest until Try
@@ -513,8 +521,9 @@
   $effect(() => {
     const id = vodId;
     // A change of status (the fetch done) reads everything afresh; a refresh
-    // still waiting here would only come after it.
+    // still waiting here would only come after it. So does an import's chat.
     void chatStatus;
+    void annotated.imports(vod?.id);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let last = 0;
     const refresh = () => {
@@ -1026,6 +1035,7 @@
 <div class="layout">
   <TranscriptHead
     {vod}
+    {cast}
     stretch={runningStretch}
     timelineVod={chatVods[0] ?? null}
     lineCount={lines.length}
@@ -1107,7 +1117,14 @@
               onclick={(e) => onRowClick(e, line)}
             >
               <span class="time">{formatTime(line.start)}</span>
-              <span>{line.text}</span>
+              <span
+                >{#if line.speaker}<span
+                    class="speaker"
+                    class:unknown={!speakerColor(cast, line.speaker)}
+                    style:color={speakerColor(cast, line.speaker)}>{line.speaker}</span
+                  >
+                {/if}{line.text}</span
+              >
             </button>
           {:else if row.gap}
             {@render gapRow(row.gap)}
@@ -1228,6 +1245,16 @@
   .dragging {
     user-select: none;
     cursor: ns-resize;
+  }
+
+  /* Who says the line, from an annotations import, in their colour in the cast. */
+  .speaker {
+    margin-right: 0.35em;
+    font-weight: 600;
+  }
+
+  .speaker.unknown {
+    color: var(--muted);
   }
 
   /* A chapter's title, over its first line. */

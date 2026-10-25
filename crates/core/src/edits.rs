@@ -385,6 +385,7 @@ pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::
                     kind: m.kind.clone(),
                     start,
                     text: m.text.clone(),
+                    detail: Default::default(),
                 });
             }
         }

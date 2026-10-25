@@ -251,6 +251,8 @@ export interface Line {
   /** Missing in the website's demo, whose lines end where the next begins. */
   end?: number;
   text: string;
+  /** Who says it, when an annotations import named them (a cast member's name). */
+  speaker?: string;
 }
 
 export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
@@ -354,6 +356,33 @@ export interface Mark {
   start: number;
   /** A chapter's title, or a highlight's note. */
   text: string | null;
+  /** An imported highlight's end, its kind (funny, hype…) and why it's one. */
+  end?: number | null;
+  category?: string | null;
+  note?: string | null;
+  /** "user" for a mark made here, "annotations" for one an import brought (missing in the demo: the user's). */
+  source?: string;
+}
+
+/** A VOD's cast, from an annotations import (crates/core annotations.rs). */
+export interface CastMember {
+  name: string;
+  aliases: string[];
+  role: string;
+}
+
+/** What a VOD is doing from `start` to `end`: a game, just chatting, an event. */
+export interface Activity {
+  start: number;
+  end: number;
+  kind: string;
+  name?: string;
+}
+
+/** What an annotations import left of a VOD besides its transcript and marks. */
+export interface VodAnnotations {
+  cast: CastMember[];
+  activity: Activity[];
 }
 
 /** A caption (crates/core `transcript::Cue`). */
@@ -497,6 +526,13 @@ export const api = {
   /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
   addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
   listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
+  /** Imports an annotations file (annotations.ts), as parsed, for the VOD it names, adding it if need be. */
+  importAnnotations: (annotations: unknown, chat: ChatLine[] | null = null) =>
+    invoke<{ vod: Vod; created: boolean }>("import_annotations", { annotations, chat }),
+  /** Imports the annotations file at `path` (and the chat file beside it, if there's one). */
+  importAnnotationsFile: (path: string) => invoke<{ vod: Vod; created: boolean }>("import_annotations_file", { path }),
+  /** A VOD's cast and activity, if annotations were imported for it. */
+  vodAnnotations: (vodId: number) => invoke<VodAnnotations | null>("vod_annotations", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
   /** A mark (a cut, chapter or highlight) in edit `editId` at `time` seconds of its timeline. */

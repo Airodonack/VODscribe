@@ -443,8 +443,10 @@ mod tests {
     #[test]
     fn a_change_taken_back_gives_back_what_could_be_redone() {
         let vod = Doc::Vod(1);
-        let marked =
-            Snapshot::Vod { marks: vec![MarkState { kind: "cut".into(), start: 1.0, text: None }], clips: Vec::new() };
+        let marked = Snapshot::Vod {
+            marks: vec![MarkState { kind: "cut".into(), start: 1.0, text: None, detail: Default::default() }],
+            clips: Vec::new(),
+        };
         let mut s = Stacks::default();
         s.add(vod, None, "Cut added", empty(), marked.clone(), 1);
         // Undone: the cut can be redone.
@@ -452,7 +454,7 @@ mod tests {
         s.redo.entry(vod).or_default().push(undone);
         // A chapter started, which takes the redo away...
         let chapter = Snapshot::Vod {
-            marks: vec![MarkState { kind: "chapter".into(), start: 2.0, text: None }],
+            marks: vec![MarkState { kind: "chapter".into(), start: 2.0, text: None, detail: Default::default() }],
             clips: Vec::new(),
         };
         s.add(vod, None, "Chapter added", empty(), chapter, 2);

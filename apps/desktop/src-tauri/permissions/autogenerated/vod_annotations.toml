@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-vod-annotations"
+description = "Enables the vod_annotations command without any pre-configured scope."
+commands.allow = ["vod_annotations"]
+
+[[permission]]
+identifier = "deny-vod-annotations"
+description = "Denies the vod_annotations command without any pre-configured scope."
+commands.deny = ["vod_annotations"]

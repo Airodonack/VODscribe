@@ -732,6 +732,9 @@ pub(crate) struct Line {
     pub(crate) start: f64,
     pub(crate) end: f64,
     pub(crate) text: String,
+    /// Who says it, when an import named them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) speaker: Option<String>,
 }
 
 /// VOD `vod_id`'s lines: all of them, or with `from`, those starting from it
@@ -749,7 +752,7 @@ pub(crate) async fn transcript(
         None => db.lines(vod_id),
     })
     .await?;
-    Ok(lines.into_iter().map(|(start, end, text)| Line { start, end, text }).collect())
+    Ok(lines.into_iter().map(|l| Line { start: l.start, end: l.end, text: l.text, speaker: l.speaker }).collect())
 }
 
 /// VOD `vod_id`'s captions, for the player of a file played here.

@@ -633,6 +633,24 @@ CREATE INDEX chat_by_author ON chat (author COLLATE NOCASE, vod_id);
 CREATE VIRTUAL TABLE segments_vocab USING fts5vocab (segments_fts, 'row');
 CREATE VIRTUAL TABLE chat_vocab USING fts5vocab (chat_fts, 'row');";
 
+/// Version 29: annotations imported from a file (`annotations.rs`). A
+/// highlight's end, its kind (`category`: funny, hype…) and why it's one
+/// (`note`), on its mark; who says a line (`speaker`), on the line; a VOD's
+/// cast and what it does when (`activity`), each read whole, as JSON in a row
+/// of the VOD's own.
+const MIGRATE_V29: &str = "
+ALTER TABLE marks ADD COLUMN end_at INTEGER;
+ALTER TABLE marks ADD COLUMN category TEXT;
+ALTER TABLE marks ADD COLUMN note TEXT;
+ALTER TABLE segments ADD COLUMN speaker TEXT;
+CREATE TABLE vod_annotations (
+    vod_id INTEGER PRIMARY KEY REFERENCES vods (id) ON DELETE CASCADE,
+    cast_members TEXT NOT NULL,
+    activity TEXT NOT NULL,
+    produced TEXT,
+    imported_at INTEGER NOT NULL
+);";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -772,6 +790,43 @@ pub struct Mark {
     pub kind: String,
     pub start: f64,
     pub text: Option<String>,
+    #[serde(flatten)]
+    pub detail: MarkDetail,
+}
+
+/// What a mark brings besides its kind, moment and text: an imported
+/// highlight's end, kind and why (`annotations.rs`), and where it came from.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MarkDetail {
+    /// A highlight's end, in seconds of the VOD, when it has one.
+    pub end: Option<f64>,
+    /// A highlight's kind: funny, hype, drama…
+    pub category: Option<String>,
+    /// Why it's a highlight.
+    pub note: Option<String>,
+    /// "user" for a mark made here; "annotations" for one an import brought,
+    /// which the next import replaces.
+    pub source: String,
+}
+
+impl Default for MarkDetail {
+    fn default() -> Self {
+        Self { end: None, category: None, note: None, source: USER_MARK.into() }
+    }
+}
+
+/// The `source` of a mark made in the app.
+pub const USER_MARK: &str = "user";
+
+/// A line of a VOD's transcript as the transcript view shows it: no word timings.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct TranscriptLine {
+    pub start: f64,
+    pub end: f64,
+    pub text: String,
+    /// Who says it, when an import named them (a cast member's name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<String>,
 }
 
 /// Where a mark is: on a VOD's own timeline, or in an edit (its clip).
@@ -788,6 +843,7 @@ pub struct MarkState {
     pub kind: String,
     pub start: f64,
     pub text: Option<String>,
+    pub detail: MarkDetail,
 }
 
 /// A snippet's columns: the clip's, and its first piece's stretch.
@@ -997,6 +1053,7 @@ impl Db {
             MIGRATE_V26,
             MIGRATE_V27,
             MIGRATE_V28,
+            MIGRATE_V29,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1242,7 +1299,8 @@ impl Db {
     /// VOD `vod_id`'s marks (its own clip's), in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, vod_id, kind, at, text FROM marks WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
+            "SELECT id, vod_id, kind, at, text, end_at, category, note, source FROM marks
+             WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
              ORDER BY at, id",
         )?;
         let rows = stmt.query_map([vod_id], |r| {
@@ -1252,6 +1310,12 @@ impl Db {
                 kind: r.get(2)?,
                 start: Flicks(r.get(3)?).seconds(),
                 text: r.get(4)?,
+                detail: MarkDetail {
+                    end: r.get::<_, Option<i64>>(5)?.map(|f| Flicks(f).seconds()),
+                    category: r.get(6)?,
+                    note: r.get(7)?,
+                    source: r.get(8)?,
+                },
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -1262,7 +1326,14 @@ impl Db {
         let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
         let at = Flicks::from_seconds(start);
         let id = self.change(clip, None, |db| db.insert_mark(clip, vod_id, kind, at, text))?;
-        Ok(Mark { id, vod_id, kind: kind.into(), start: at.seconds(), text: text.map(Into::into) })
+        Ok(Mark {
+            id,
+            vod_id,
+            kind: kind.into(),
+            start: at.seconds(),
+            text: text.map(Into::into),
+            detail: MarkDetail::default(),
+        })
     }
 
     /// Inserts a mark of VOD `vod_id` on clip `clip` at `at`; its id.
@@ -1274,9 +1345,34 @@ impl Db {
         at: Flicks,
         text: Option<&str>,
     ) -> Result<i64> {
+        self.insert_mark_with(clip, vod_id, kind, at, text, &MarkDetail::default())
+    }
+
+    /// Inserts a mark as `insert_mark` does, with `detail`; its id.
+    pub(crate) fn insert_mark_with(
+        &self,
+        clip: i64,
+        vod_id: i64,
+        kind: &str,
+        at: Flicks,
+        text: Option<&str>,
+        detail: &MarkDetail,
+    ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO marks (clip_id, vod_id, kind, at, text, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![clip, vod_id, kind, at.0, text, now()],
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                clip,
+                vod_id,
+                kind,
+                at.0,
+                text,
+                detail.end.map(|e| Flicks::from_seconds(e).0),
+                detail.category,
+                detail.note,
+                detail.source,
+                now()
+            ],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -1293,7 +1389,8 @@ impl Db {
     /// Sets mark `id`'s title or note (none, if None); false if it's gone.
     pub fn set_mark_text(&self, id: i64, text: Option<&str>) -> Result<bool> {
         self.change_mark(id, |db| {
-            db.conn.execute("UPDATE marks SET text = ?2 WHERE id = ?1", params![id, text])?;
+            // An imported mark changed here is the user's: a later import leaves it.
+            db.conn.execute("UPDATE marks SET text = ?2, source = ?3 WHERE id = ?1", params![id, text, USER_MARK])?;
             Ok(())
         })
     }
@@ -1301,7 +1398,8 @@ impl Db {
     /// Moves mark `id` to `start` seconds; false if it's gone.
     pub fn move_mark(&self, id: i64, start: f64) -> Result<bool> {
         self.change_mark(id, |db| {
-            db.conn.execute("UPDATE marks SET at = ?2 WHERE id = ?1", params![id, Flicks::from_seconds(start).0])?;
+            let at = Flicks::from_seconds(start).0;
+            db.conn.execute("UPDATE marks SET at = ?2, source = ?3 WHERE id = ?1", params![id, at, USER_MARK])?;
             Ok(())
         })
     }
@@ -1330,7 +1428,11 @@ impl Db {
 
     /// VOD `vod_id`'s marks, to be put back later with `restore_marks` (for undo).
     pub fn mark_states(&self, vod_id: i64) -> Result<Vec<MarkState>> {
-        Ok(self.marks(vod_id)?.into_iter().map(|m| MarkState { kind: m.kind, start: m.start, text: m.text }).collect())
+        Ok(self
+            .marks(vod_id)?
+            .into_iter()
+            .map(|m| MarkState { kind: m.kind, start: m.start, text: m.text, detail: m.detail })
+            .collect())
     }
 
     /// Makes VOD `vod_id`'s marks those of `marks` (made anew, so with new ids).
@@ -1339,7 +1441,14 @@ impl Db {
         self.change(clip, None, |db| {
             db.conn.execute("DELETE FROM marks WHERE clip_id = ?1", [clip])?;
             for m in marks {
-                db.insert_mark(clip, vod_id, &m.kind, Flicks::from_seconds(m.start), m.text.as_deref())?;
+                db.insert_mark_with(
+                    clip,
+                    vod_id,
+                    &m.kind,
+                    Flicks::from_seconds(m.start),
+                    m.text.as_deref(),
+                    &m.detail,
+                )?;
             }
             Ok(())
         })
@@ -1529,19 +1638,22 @@ impl Db {
 
     /// VOD `vod_id`'s lines as (start, end, text), without the per-word
     /// timings that `segments` also parses: what the transcript view needs.
-    pub fn lines(&self, vod_id: i64) -> Result<Vec<(f64, f64, String)>> {
+    pub fn lines(&self, vod_id: i64) -> Result<Vec<TranscriptLine>> {
         self.lines_between(vod_id, f64::MIN, None)
     }
 
     /// VOD `vod_id`'s lines starting from `from` to before `to` (None: on to
     /// the end), as `lines` gives them: the ones a stretch being transcribed
     /// replaces (`replace_segments`), so the view can replace them in turn.
-    pub fn lines_between(&self, vod_id: i64, from: f64, to: Option<f64>) -> Result<Vec<(f64, f64, String)>> {
+    pub fn lines_between(&self, vod_id: i64, from: f64, to: Option<f64>) -> Result<Vec<TranscriptLine>> {
         let mut stmt = self.conn.prepare(
-            "SELECT start, end, text FROM segments WHERE vod_id = ?1 AND start >= ?2 AND (?3 IS NULL OR start < ?3)
+            "SELECT start, end, text, speaker FROM segments
+             WHERE vod_id = ?1 AND start >= ?2 AND (?3 IS NULL OR start < ?3)
              ORDER BY start",
         )?;
-        let rows = stmt.query_map(params![vod_id, from, to], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let rows = stmt.query_map(params![vod_id, from, to], |r| {
+            Ok(TranscriptLine { start: r.get(0)?, end: r.get(1)?, text: r.get(2)?, speaker: r.get(3)? })
+        })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -1612,27 +1724,7 @@ impl Db {
     /// Adds `messages` to VOD `vod_id`'s chat and records that its fetch's slices reached `positions`, together.
     pub fn add_chat(&mut self, vod_id: i64, messages: &[ChatMessage], positions: &[f64]) -> Result<()> {
         let tx = self.conn.transaction()?;
-        {
-            let mut stmt = tx.prepare(
-                "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount, event_time)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            )?;
-            for m in messages {
-                let parts = serde_json::to_string(&m.parts)?;
-                let kind = m.kind.as_str();
-                stmt.execute(params![
-                    vod_id,
-                    m.time,
-                    m.author,
-                    m.color,
-                    m.text(),
-                    parts,
-                    kind,
-                    m.amount,
-                    m.event_time
-                ])?;
-            }
-        }
+        insert_chat(&tx, vod_id, messages)?;
         tx.execute(
             "UPDATE vods SET chat_slices = ?2 WHERE id = ?1",
             params![vod_id, serde_json::to_string(positions)?],
@@ -1824,6 +1916,29 @@ impl Db {
 
 /// A VOD's chat in the library, as `chat::fetch` saves it. Holds the library's
 /// lock only while it reads or writes, not while the fetch waits on the network.
+/// Inserts `messages` as VOD `vod_id`'s, on `conn` (in a transaction the caller holds).
+pub(crate) fn insert_chat(conn: &Connection, vod_id: i64, messages: &[ChatMessage]) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount, event_time)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+    )?;
+    for m in messages {
+        let parts = serde_json::to_string(&m.parts)?;
+        stmt.execute(params![
+            vod_id,
+            m.time,
+            m.author,
+            m.color,
+            m.text(),
+            parts,
+            m.kind.as_str(),
+            m.amount,
+            m.event_time
+        ])?;
+    }
+    Ok(())
+}
+
 pub struct LibraryChat<'a> {
     pub db: &'a std::sync::Mutex<Db>,
     pub vod_id: i64,
@@ -2366,7 +2481,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 28);
+        assert_eq!(version, 29);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2566,10 +2681,10 @@ mod tests {
         let line = |start: f64, text: &str| Segment { start, end: start + 1.0, text: text.into(), words: Vec::new() };
         db.insert_segments(vod, &[line(0.0, "one"), line(2.5, "two")]).unwrap();
         db.insert_segments(vod, &[line(4.0, "three")]).unwrap();
-        let texts = db.lines(vod).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
+        let texts = db.lines(vod).unwrap().into_iter().map(|l| l.text).collect::<Vec<_>>();
         assert_eq!(texts, ["one", "two", "three"]);
         let between =
-            |from, to| db.lines_between(vod, from, to).unwrap().into_iter().map(|(_, _, t)| t).collect::<Vec<_>>();
+            |from, to| db.lines_between(vod, from, to).unwrap().into_iter().map(|l| l.text).collect::<Vec<_>>();
         assert_eq!(between(2.5, Some(4.0)), ["two"], "from its start, to before its end");
         assert_eq!(between(1.0, None), ["two", "three"], "on to the end");
     }

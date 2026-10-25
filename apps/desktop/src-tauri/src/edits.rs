@@ -281,7 +281,10 @@ pub(crate) async fn edit_lines(app: AppHandle, id: i64) -> CmdResult<Vec<crate::
     crate::with_reads(app, move |db| {
         let pieces = db.edit_pieces(id)?;
         let lines = vodscribe_core::edits::clip_segments(&pieces, |vod| db.segments(vod))?;
-        Ok(lines.into_iter().map(|s| crate::vods::Line { start: s.start, end: s.end, text: s.text }).collect())
+        Ok(lines
+            .into_iter()
+            .map(|s| crate::vods::Line { start: s.start, end: s.end, text: s.text, speaker: None })
+            .collect())
     })
     .await
 }

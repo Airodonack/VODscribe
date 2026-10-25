@@ -15,6 +15,11 @@
   // each from its start to the next one's; highlights are stars on its top
   // edge. Hovering one shows its title or note, a click goes to it and selects
   // it (to move like a cut), and a double click opens its title to write.
+  // From an annotations import (annotated.ts): its chapters are tinted
+  // slices, each its own colour; its highlights are dots on the bar's upper
+  // part in their kind's colour, and hovering one draws a line down the bar
+  // at its start, shades it to its end, and says why it's one; and what the
+  // VOD is doing (a game, just chatting) is a thin band under the chapters.
   //
   // An edit's timeline (EditView.svelte) is the same without any of a VOD's
   // marks or clips: its own time, its pieces' waveforms end to end (`waveform`)
@@ -61,6 +66,8 @@
   import { TIP_INSET, nearWithin, place } from "./scrubFrame";
   import { ExactFrame } from "./exactFrame.svelte";
   import type { Mark } from "./api";
+  import { activityColor, activityLabel, chapterColor, highlightColor, withAlpha } from "./annotated";
+  import { annotated } from "./annotated.svelte";
 
   /** An edit's piece on its timeline (in the edit's time). */
   export interface LanePiece {
@@ -84,7 +91,7 @@
   import { theme } from "./theme.svelte";
   import { nav } from "./nav.svelte";
   import { keyHint } from "./keys.svelte";
-  import type { Doc } from "./api";
+  import type { Activity, Doc } from "./api";
 
   let {
     vod,
@@ -481,10 +488,12 @@
     const over = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-mark], [data-chapter]");
     const id = over && root?.contains(over) ? Number(over.dataset.mark ?? over.dataset.chapter) : null;
     hoverMark = id === null ? null : (cuts.all.find((m) => m.id === id && m.kind !== "cut") ?? null);
+    const doing = (e.target as HTMLElement | null)?.closest?.<HTMLElement>("[data-activity]");
+    hoverActivity = doing && root?.contains(doing) ? (activity[Number(doing.dataset.activity)] ?? null) : null;
     if (bar) {
       const box = bar.getBoundingClientRect();
       const inside = e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom;
-      const top = (markLane ?? lane)?.getBoundingClientRect().top;
+      const top = (markLane ?? activityLane ?? lane)?.getBoundingClientRect().top;
       const inLane = top !== undefined && e.clientY >= top && e.clientY < box.top;
       const across = e.clientX >= box.left && e.clientX <= box.right;
       hover = inside || (inLane && across) || drag ? Math.min(box.width, Math.max(0, e.clientX - box.left)) : null;
@@ -684,6 +693,7 @@
     return others[drag.to]?.start ?? others.at(-1)?.end ?? 0;
   });
   let hoverMark = $state<Mark | null>(null);
+  let hoverActivity = $state<Activity | null>(null);
 
   // The moment the tip and the thumbnail show: the pointer's, or a
   // selection's edge being dragged (its end: the frame before it).
@@ -699,6 +709,7 @@
       (vod ? ownPlayer : true) &&
       !touch &&
       !hoverMark &&
+      !hoverActivity &&
       (!drag || drag.kind === "scrub" || drag.kind === "edge"),
   );
   // Its exact frame, from the app's own player, once the pointer rests.
@@ -745,10 +756,24 @@
   });
   const nowChapter = $derived(chapterSpans.findIndex((c) => time >= c.start && time < c.end));
   const label = (m: Mark) => m.text ?? (m.kind === "chapter" ? "Untitled chapter" : "Highlight");
+  /** From an annotations import, rather than made here. */
+  const imported = (m: Mark) => m.source === "annotations";
+  // Imported chapters' colours, in their order along the timeline.
+  const chapterColors = $derived.by(() => {
+    const out = new Map<number, string>();
+    for (const { chapter } of chapterSpans) if (imported(chapter)) out.set(chapter.id, chapterColor(out.size));
+    return out;
+  });
+  // What the VOD is doing when, from an import; nothing on an edit's timeline.
+  $effect(() => annotated.load(vod?.id));
+  const activity = $derived(vod ? (annotated.of(vod.id)?.activity ?? []) : []);
+  /** A highlight's end, if it has one past its start: imported ones do. */
+  const endOf = (m: Mark) => (m.end != null && m.end > m.start ? m.end : null);
 
   let root = $state<HTMLDivElement>();
   let lane = $state<HTMLDivElement>();
   let markLane = $state<HTMLDivElement>();
+  let activityLane = $state<HTMLDivElement>();
 </script>
 
 <svelte:window
@@ -829,13 +854,17 @@
     <div class="chapters" bind:this={markLane} onpointerdown={onDown}>
       {#each chapterSpans as { chapter, start, end }, i (chapter.id)}
         {#if end > viewStart && start < viewStart + span}
+          {@const color = chapterColors.get(chapter.id)}
           <div
             class="chapter"
             class:current={i === nowChapter}
             class:selected={cuts.selected === chapter.id}
+            class:imported={!!color}
             data-chapter={chapter.id}
             style:left={pct(Math.max(start, viewStart))}
             style:width={widthPct(Math.max(start, viewStart), Math.min(end, viewStart + span))}
+            style:--chapter={color}
+            style:background={color ? withAlpha(color, i === nowChapter ? 0.34 : 0.18) : null}
             ondblclick={() => (cuts.editing = chapter.id)}
           >
             <span class="label" class:untitled={!chapter.text}>{label(chapter)}</span>
@@ -849,6 +878,23 @@
               style:left={pct(start)}
             ></span>
           {/if}
+        {/if}
+      {/each}
+    </div>
+  {/if}
+  {#if activity.length}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="activity" bind:this={activityLane} onpointerdown={onDown}>
+      {#each activity as a, i (i)}
+        {#if a.end > viewStart && a.start < viewStart + span}
+          <span
+            class="doing"
+            class:lit={hoverActivity === a}
+            data-activity={i}
+            style:left={pct(Math.max(a.start, viewStart))}
+            style:width={widthPct(Math.max(a.start, viewStart), Math.min(a.end, viewStart + span))}
+            style:background={activityColor(a.kind)}
+          ></span>
         {/if}
       {/each}
     </div>
@@ -986,17 +1032,48 @@
         </span>
       {/if}
     {/each}
+    {#if hoverMark?.kind === "highlight" && hoverMark.category}
+      {@const at = placed(hoverMark)}
+      {@const until = endOf(hoverMark)}
+      {@const color = highlightColor(hoverMark.category)}
+      <!-- The highlight pointed at: a line at its start, and its stretch to its end. -->
+      {#if until !== null && until > viewStart && at < viewStart + span}
+        <span
+          class="moment"
+          style:left={pct(Math.max(at, viewStart))}
+          style:width={widthPct(Math.max(at, viewStart), Math.min(until, viewStart + span))}
+          style:background={withAlpha(color, 0.18)}
+        ></span>
+      {/if}
+      {#if at >= viewStart && at <= viewStart + span}
+        <span class="moment-line" style:left={pct(at)} style:background={color}></span>
+      {/if}
+    {/if}
     {#each named ? cuts.highlights : [] as h (h.id)}
       {@const at = placed(h)}
       {#if at >= viewStart && at <= viewStart + span}
-        <span
-          class="star"
-          class:selected={cuts.selected === h.id}
-          class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
-          data-mark={h.id}
-          style:left={pct(at)}
-          ondblclick={() => (cuts.editing = h.id)}
-        ></span>
+        {#if h.category}
+          <!-- An imported highlight: a dot in its kind's colour. -->
+          <span
+            class="dot"
+            class:selected={cuts.selected === h.id}
+            class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
+            data-mark={h.id}
+            data-category={h.category}
+            style:left={pct(at)}
+            style:--dot={highlightColor(h.category)}
+            ondblclick={() => (cuts.editing = h.id)}
+          ></span>
+        {:else}
+          <span
+            class="star"
+            class:selected={cuts.selected === h.id}
+            class:away={drag?.kind === "mark" && drag.id === h.id && drag.away}
+            data-mark={h.id}
+            style:left={pct(at)}
+            ondblclick={() => (cuts.editing = h.id)}
+          ></span>
+        {/if}
       {/if}
     {/each}
     {#if hoverTime !== null && hover !== null}
@@ -1018,13 +1095,20 @@
       {/if}
       <span
         class="tip"
-        class:wide={!!hoverMark}
+        class:wide={!!hoverMark || !!hoverActivity}
+        class:noted={!!hoverMark?.note}
         class:beside={beside.frame !== null}
         bind:offsetWidth={tipWidth}
         style:left={beside.frame !== null
           ? `${beside.tip}px`
           : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
-        >{#if hoverMark}<strong>{label(hoverMark)}</strong> {formatTime(placed(hoverMark))}{:else}{formatTime(
+        >{#if hoverMark}<strong>{label(hoverMark)}</strong>
+          {formatTime(placed(hoverMark))}{#if endOf(hoverMark) !== null}–{formatTime(
+              endOf(hoverMark)!,
+            )}{/if}{#if hoverMark.note}<span class="why">{hoverMark.note}</span>{/if}{:else if hoverActivity}<strong
+            >{activityLabel(hoverActivity)}</strong
+          >
+          {formatTime(hoverActivity.start)}–{formatTime(hoverActivity.end)}{:else}{formatTime(
             tipTime ?? hoverTime,
           )}{/if}</span
       >
@@ -1066,6 +1150,11 @@
 
   .chapter.current {
     background: color-mix(in srgb, var(--chapter) 16%, var(--surface-2));
+    color: var(--text);
+  }
+
+  /* An imported chapter: a slice in its own colour. */
+  .chapter.imported {
     color: var(--text);
   }
 
@@ -1238,6 +1327,77 @@
     opacity: 0.35;
   }
 
+  /* What the VOD is doing (an import's): a thin band under the chapters, each
+     stretch in its kind's colour. */
+  .activity {
+    position: relative;
+    height: 4px;
+    margin-bottom: 3px;
+    cursor: pointer;
+    touch-action: none;
+  }
+
+  /* Taller where it's pointed at, so a thin band is easy to hit. */
+  .activity::before {
+    content: "";
+    position: absolute;
+    inset: -3px 0;
+  }
+
+  .doing {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 2px;
+    opacity: 0.75;
+    /* A hair apart from the next one. */
+    box-shadow: inset -1px 0 0 var(--bg);
+  }
+
+  .doing.lit {
+    opacity: 1;
+  }
+
+  /* An imported highlight: a dot on the bar's upper part, in its kind's colour. */
+  .dot {
+    position: absolute;
+    top: 3px;
+    width: 9px;
+    height: 9px;
+    margin-left: -4.5px;
+    border-radius: 50%;
+    background: var(--dot);
+    box-shadow: 0 0 0 1.5px var(--surface-2);
+    cursor: pointer;
+    z-index: 3;
+  }
+
+  .dot.selected {
+    box-shadow: 0 0 0 2px var(--picked);
+  }
+
+  .dot.away {
+    opacity: 0.35;
+  }
+
+  /* The highlight pointed at: its start, and its stretch to its end. */
+  .moment-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .moment {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    pointer-events: none;
+  }
+
   /* A highlight: a star on the timeline's top edge. */
   .star {
     position: absolute;
@@ -1272,6 +1432,18 @@
 
   .tip strong {
     font-weight: 600;
+  }
+
+  /* A highlight's why, under its title: wrapped, the tip as wide as it needs up to its most. */
+  .tip.noted {
+    white-space: normal;
+    width: max-content;
+  }
+
+  .tip .why {
+    display: block;
+    margin-top: 1px;
+    opacity: 0.85;
   }
 
   .scrubber.panning {

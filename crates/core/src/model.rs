@@ -106,9 +106,14 @@ pub const GPU_MODEL: ModelSpec = ModelSpec {
     ],
 };
 
+/// The model a transcript imported with annotations is recorded as made by
+/// (`annotations.rs`): not one of ours, and not one to transcribe again with.
+pub const IMPORTED_MODEL: &str = "imported";
+
 /// Whether transcripts from model `id` are as good as this version produces.
+/// An imported one counts: a newer model of ours isn't a reason to replace it.
 pub fn is_current(id: &str) -> bool {
-    id == CPU_MODEL.id || id == GPU_MODEL.id
+    id == CPU_MODEL.id || id == GPU_MODEL.id || id == IMPORTED_MODEL
 }
 
 pub fn model_dir(models_root: &Path, spec: &ModelSpec) -> PathBuf {

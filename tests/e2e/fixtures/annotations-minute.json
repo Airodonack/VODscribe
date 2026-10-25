@@ -1,0 +1,320 @@
+{
+  "format": "vodscribe-annotations",
+  "version": 1,
+  "source": {
+    "platform": "{PLATFORM}",
+    "id": "{ID}",
+    "channel": "Marlowe",
+    "title": "A minute with Marlowe",
+    "duration": 60,
+    "recorded_at": "2026-10-01T18:00:00Z"
+  },
+  "produced": {
+    "at": "2026-10-02T00:00:00Z",
+    "build": "fixture"
+  },
+  "transcript": {
+    "segments": [
+      {
+        "id": 0,
+        "start": 0,
+        "end": 4,
+        "text": "Welcome back everyone, good to see you",
+        "words": [
+          {
+            "text": "Welcome",
+            "start": 0.0,
+            "end": 0.52
+          },
+          {
+            "text": "back",
+            "start": 0.57,
+            "end": 1.09
+          },
+          {
+            "text": "everyone,",
+            "start": 1.14,
+            "end": 1.66
+          },
+          {
+            "text": "good",
+            "start": 1.71,
+            "end": 2.24
+          },
+          {
+            "text": "to",
+            "start": 2.29,
+            "end": 2.81
+          },
+          {
+            "text": "see",
+            "start": 2.86,
+            "end": 3.38
+          },
+          {
+            "text": "you",
+            "start": 3.43,
+            "end": 3.95
+          }
+        ],
+        "speaker": "Marlowe"
+      },
+      {
+        "id": 1,
+        "start": 8,
+        "end": 12,
+        "text": "Thanks for having me on the stream",
+        "words": [
+          {
+            "text": "Thanks",
+            "start": 8.0,
+            "end": 8.52
+          },
+          {
+            "text": "for",
+            "start": 8.57,
+            "end": 9.09
+          },
+          {
+            "text": "having",
+            "start": 9.14,
+            "end": 9.66
+          },
+          {
+            "text": "me",
+            "start": 9.71,
+            "end": 10.24
+          },
+          {
+            "text": "on",
+            "start": 10.29,
+            "end": 10.81
+          },
+          {
+            "text": "the",
+            "start": 10.86,
+            "end": 11.38
+          },
+          {
+            "text": "stream",
+            "start": 11.43,
+            "end": 11.95
+          }
+        ],
+        "speaker": "Ada"
+      },
+      {
+        "id": 2,
+        "start": 15,
+        "end": 19,
+        "text": "Right, let's start the game",
+        "words": [
+          {
+            "text": "Right,",
+            "start": 15.0,
+            "end": 15.75
+          },
+          {
+            "text": "let's",
+            "start": 15.8,
+            "end": 16.55
+          },
+          {
+            "text": "start",
+            "start": 16.6,
+            "end": 17.35
+          },
+          {
+            "text": "the",
+            "start": 17.4,
+            "end": 18.15
+          },
+          {
+            "text": "game",
+            "start": 18.2,
+            "end": 18.95
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "start": 25,
+        "end": 29,
+        "text": "Oh no, that was a close one",
+        "words": [
+          {
+            "text": "Oh",
+            "start": 25.0,
+            "end": 25.52
+          },
+          {
+            "text": "no,",
+            "start": 25.57,
+            "end": 26.09
+          },
+          {
+            "text": "that",
+            "start": 26.14,
+            "end": 26.66
+          },
+          {
+            "text": "was",
+            "start": 26.71,
+            "end": 27.24
+          },
+          {
+            "text": "a",
+            "start": 27.29,
+            "end": 27.81
+          },
+          {
+            "text": "close",
+            "start": 27.86,
+            "end": 28.38
+          },
+          {
+            "text": "one",
+            "start": 28.43,
+            "end": 28.95
+          }
+        ],
+        "speaker": "Mar"
+      },
+      {
+        "id": 4,
+        "start": 35,
+        "end": 39,
+        "text": "Nobody saw that coming",
+        "words": [
+          {
+            "text": "Nobody",
+            "start": 35.0,
+            "end": 35.95
+          },
+          {
+            "text": "saw",
+            "start": 36.0,
+            "end": 36.95
+          },
+          {
+            "text": "that",
+            "start": 37.0,
+            "end": 37.95
+          },
+          {
+            "text": "coming",
+            "start": 38.0,
+            "end": 38.95
+          }
+        ],
+        "speaker": "Ada"
+      },
+      {
+        "id": 5,
+        "start": 45,
+        "end": 50,
+        "text": "We're nearly done here, thanks for watching",
+        "words": [
+          {
+            "text": "We're",
+            "start": 45.0,
+            "end": 45.66
+          },
+          {
+            "text": "nearly",
+            "start": 45.71,
+            "end": 46.38
+          },
+          {
+            "text": "done",
+            "start": 46.43,
+            "end": 47.09
+          },
+          {
+            "text": "here,",
+            "start": 47.14,
+            "end": 47.81
+          },
+          {
+            "text": "thanks",
+            "start": 47.86,
+            "end": 48.52
+          },
+          {
+            "text": "for",
+            "start": 48.57,
+            "end": 49.24
+          },
+          {
+            "text": "watching",
+            "start": 49.29,
+            "end": 49.95
+          }
+        ]
+      }
+    ],
+    "corrected": 0
+  },
+  "chapters": [
+    {
+      "start": 0,
+      "title": "Hello"
+    },
+    {
+      "start": 20,
+      "title": "The game"
+    },
+    {
+      "start": 40,
+      "title": "Goodbye"
+    }
+  ],
+  "highlights": [
+    {
+      "start": 25,
+      "end": 30,
+      "title": "Close call",
+      "kind": "funny",
+      "why": "everyone gasped, then laughed"
+    },
+    {
+      "start": 35,
+      "end": 38,
+      "title": "The twist",
+      "kind": "drama",
+      "why": "nobody saw it coming"
+    }
+  ],
+  "cast": [
+    {
+      "name": "Marlowe",
+      "aliases": [
+        "Mar"
+      ],
+      "role": "streamer"
+    },
+    {
+      "name": "Ada",
+      "aliases": [],
+      "role": "friend"
+    }
+  ],
+  "activity": [
+    {
+      "start": 0,
+      "end": 20,
+      "kind": "just chatting"
+    },
+    {
+      "start": 20,
+      "end": 40,
+      "kind": "game",
+      "name": "Chess"
+    },
+    {
+      "start": 40,
+      "end": 60,
+      "kind": "just chatting"
+    }
+  ]
+}
