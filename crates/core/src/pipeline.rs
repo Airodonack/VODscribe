@@ -663,6 +663,7 @@ mod tests {
             duration: Some(1.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0;
         db.set_source_path(vod.id, &source.to_string_lossy()).unwrap();
@@ -703,6 +704,7 @@ mod tests {
             duration: Some(1.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0;
         let stretch = db.request(vod.id, 0.0, None).unwrap();
@@ -758,6 +760,7 @@ mod tests {
             duration: Some(600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0;
         // Probed a moment ago: not probed again.
@@ -852,6 +855,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let (vod, _) = db.add_vod(&info).unwrap();
         let stretch = db.request(vod.id, 0.0, None).unwrap();
@@ -937,6 +941,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let (vod, _) = db.add_vod(&info).unwrap();
         let old =
@@ -1004,6 +1009,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let (vod, _) = db.add_vod(&info).unwrap();
         db.insert_segments(vod.id, &[line("old a", 0.0, 5.0), line("old b", 15.0, 17.0)]).unwrap();
@@ -1040,6 +1046,7 @@ mod tests {
             duration: Some(600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let (vod, _) = db.add_vod(&info).unwrap();
         let ask = db.request(vod.id, 100.0, Some(130.0)).unwrap().id;

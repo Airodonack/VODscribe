@@ -1116,6 +1116,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0.id;
         let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;

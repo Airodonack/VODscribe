@@ -1092,6 +1092,7 @@ mod tests {
             duration: Some(3600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         db.add_vod(&info).unwrap().0.id
     }
@@ -1116,6 +1117,7 @@ mod tests {
             kind: Kind::Message,
             amount: None,
             event_time: None,
+            at: None,
         };
         db.add_chat(vod, &[m], &[]).unwrap();
     }
@@ -1676,6 +1678,7 @@ mod tests {
                     kind: Kind::Message,
                     amount: None,
                     event_time: None,
+                    at: None,
                 })
                 .collect();
             db.add_chat(vod, &messages, &[]).unwrap();

@@ -156,6 +156,9 @@ pub(crate) fn chat(
         time: f64,
         author: String,
         text: String,
+        /// When it was sent, as Twitch's `createdAt` says it.
+        #[serde(default)]
+        created_at: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct Fixture {
@@ -182,7 +185,7 @@ pub(crate) fn chat(
             .iter()
             .take(100)
             .map(|(id, m)| {
-                serde_json::json!({ "node": { "id": id.to_string(), "contentOffsetSeconds": m.time,
+                serde_json::json!({ "node": { "id": id.to_string(), "contentOffsetSeconds": m.time, "createdAt": m.created_at,
                     "commenter": { "displayName": m.author },
                     "message": { "userColor": null, "fragments": [{ "text": m.text, "emote": null }] } } })
             })

@@ -509,6 +509,7 @@ mod tests {
             duration,
             thumbnail: None,
             published: None,
+            started_at: None,
         }
     }
 

@@ -114,6 +114,9 @@ fn main() -> Result<()> {
                 *kinds.entry(m.kind.as_str()).or_insert(0) += 1;
             }
             println!("{kinds:?}");
+            let starts: Vec<f64> = messages.iter().filter_map(chat::ChatMessage::start).collect();
+            let by_chat = chat::vod_start(&starts).map(vodscribe_core::db::utc_time);
+            println!("started {by_chat:?} by the chat ({} messages), {:?} by the site", starts.len(), info.started_at);
             for m in messages.iter().filter(|m| m.kind != chat::Kind::Message).take(8) {
                 println!("{:>9.1}  {:?} {:?}  {}: {}", m.time, m.kind, m.amount, m.author, m.text());
             }

@@ -712,6 +712,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
         let db = Mutex::new(db);

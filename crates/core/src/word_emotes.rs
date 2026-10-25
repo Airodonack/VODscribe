@@ -462,6 +462,7 @@ mod tests {
             duration: None,
             thumbnail: None,
             published: None,
+            started_at: None,
         }
     }
 
@@ -513,6 +514,7 @@ mod tests {
             duration: None,
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let shown = |enabled: &[&str]| {
             for_vod(&info, &dir, enabled)

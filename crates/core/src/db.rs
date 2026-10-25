@@ -701,6 +701,18 @@ ALTER TABLE vods ADD COLUMN annotations TEXT;
 ALTER TABLE vods ADD COLUMN annotations_version TEXT;
 ALTER TABLE vods ADD COLUMN annotations_imported TEXT;";
 
+/// Version 33: when a VOD started (`started_at`), as an RFC 3339 time in UTC
+/// to the second, so VODs of one moment from different streams line up. The
+/// best known, in this order: from its chat (`set_chat_start`: each message's
+/// time sent less its time into the VOD, the median; to the second), else
+/// from the site's own metadata when it was added (`VodInfo::started_at`:
+/// when the site made the video, which can be tens of seconds off the first
+/// frame), else an annotations file's `recorded_at` (`set_start_if_unknown`).
+/// A chat always replaces the others; the others never replace anything.
+/// Null when nothing says.
+const MIGRATE_V33: &str = "
+ALTER TABLE vods ADD COLUMN started_at TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -722,7 +734,7 @@ END;";
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, added_at,
+    "id, platform, platform_id, url, title, channel, duration, thumbnail, published, started_at, added_at,
      note, thumb, source_path, media_path, chat, chat_error, annotations, EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
      (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
@@ -744,6 +756,7 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             duration,
             thumbnail: r.get("thumbnail")?,
             published: r.get("published")?,
+            started_at: r.get("started_at")?,
         },
         status: shown.status,
         progress: shown.progress,
@@ -1027,6 +1040,14 @@ fn date_of(secs: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
+/// `secs` since 1970 as an RFC 3339 time in UTC, to the nearest second
+/// (`2026-10-14T18:00:05Z`).
+pub fn utc_time(secs: f64) -> String {
+    let secs = secs.round() as i64;
+    let of_day = secs.rem_euclid(86400);
+    format!("{}T{:02}:{:02}:{:02}Z", date_of(secs), of_day / 3600, of_day / 60 % 60, of_day % 60)
+}
+
 /// v22: the struck stretches, kept as JSON pairs of seconds till then, as
 /// pairs of flicks.
 fn struck_to_flicks(conn: &Connection) -> Result<()> {
@@ -1114,6 +1135,7 @@ impl Db {
             MIGRATE_V30,
             MIGRATE_V31,
             MIGRATE_V32,
+            MIGRATE_V33,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1150,12 +1172,12 @@ impl Db {
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
         let id = self.atomically(|db| {
             db.conn.execute(
-                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, status, added_at)
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, duration, thumbnail, published, started_at, status, added_at)
                  VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'queued', ?9)",
+                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10)",
                 params![
                     info.platform, info.platform_id, info.url, info.title, info.channel,
-                    info.duration, info.thumbnail, info.published, now()
+                    info.duration, info.thumbnail, info.published, info.started_at, now()
                 ],
             )?;
             let id = db.conn.last_insert_rowid();
@@ -1801,6 +1823,26 @@ impl Db {
         Ok(())
     }
 
+    /// VOD `vod_id` started at `secs` (Unix seconds), by its chat
+    /// (`chat::vod_start`): better than anything else says, so it replaces
+    /// it (see `MIGRATE_V33`).
+    pub fn set_chat_start(&self, vod_id: i64, secs: f64) -> Result<()> {
+        self.conn.execute("UPDATE vods SET started_at = ?2 WHERE id = ?1", params![vod_id, utc_time(secs)])?;
+        Ok(())
+    }
+
+    /// VOD `vod_id` started at `time` (RFC 3339), by an annotations file:
+    /// kept only if nothing better said when (see `MIGRATE_V33`), and only a
+    /// time that reads as one.
+    pub fn set_start_if_unknown(&self, vod_id: i64, time: &str) -> Result<()> {
+        let Some(secs) = crate::chat::parse_time(time) else { return Ok(()) };
+        self.conn.execute(
+            "UPDATE vods SET started_at = ?2 WHERE id = ?1 AND started_at IS NULL",
+            params![vod_id, utc_time(secs)],
+        )?;
+        Ok(())
+    }
+
     /// Records VOD `vod_id`'s chat as fetched in full.
     pub fn finish_chat(&self, vod_id: i64) -> Result<()> {
         self.conn.execute(
@@ -1826,6 +1868,7 @@ impl Db {
                     kind,
                     amount: r.get(4)?,
                     event_time: r.get(5)?,
+                    at: None,
                 },
             ))
         })?;
@@ -2012,6 +2055,10 @@ pub struct LibraryChat<'a> {
     pub vod_id: i64,
     /// Told after each batch is saved.
     pub on_save: Box<dyn FnMut() + 'a>,
+    /// The VOD's start by each message saved (`ChatMessage::start`), for
+    /// `chat::vod_start` once the fetch is done. Only this fetch's: one that
+    /// carries on from an earlier one goes by the messages it fetched itself.
+    pub starts: Vec<f64>,
 }
 
 impl crate::chat::ChatStore for LibraryChat<'_> {
@@ -2025,6 +2072,7 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
         while self.db.lock().unwrap().clear_some_chat(self.vod_id, 1000)? > 0 {
             std::thread::yield_now();
         }
+        self.starts.clear();
         let db = self.db.lock().unwrap();
         db.clear_chat(self.vod_id)?;
         // The old messages' words out of the index too (some may be gone from
@@ -2038,6 +2086,7 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
 
     fn save(&mut self, messages: &[ChatMessage], positions: &[f64]) -> Result<()> {
         self.db.lock().unwrap().add_chat(self.vod_id, messages, positions)?;
+        self.starts.extend(messages.iter().filter_map(ChatMessage::start));
         (self.on_save)();
         Ok(())
     }
@@ -2104,6 +2153,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         }
     }
 
@@ -2549,7 +2599,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2588,12 +2638,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
-                "ALTER TABLE vods DROP COLUMN annotations_imported; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2619,12 +2669,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
-                "PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN started_at; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -2647,15 +2697,67 @@ mod tests {
             .unwrap()
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
-                "ALTER TABLE vods DROP COLUMN annotations_imported; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
+    }
+
+    #[test]
+    fn vods_from_before_their_start_was_kept_have_none_till_their_chat_says() {
+        let dir = crate::TempDir::new("migrate-v32");
+        let path = dir.join("library.sqlite");
+        let vod = {
+            let db = Db::open(&path).unwrap();
+            db.add_vod(&crate::edits::tests::info("abc")).unwrap().0.id
+        };
+        // Back to version 32: the column 33 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE vods DROP COLUMN started_at; PRAGMA user_version = 32;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 33);
+        assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
+        db.set_chat_start(vod, 1790631005.0).unwrap();
+        assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
+    }
+
+    #[test]
+    fn a_vods_start_by_its_site_is_kept_till_its_chat_says_better() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let mut info = crate::edits::tests::info("abc");
+        info.started_at = Some("2026-09-28T21:29:40Z".into());
+        let (vod, _) = db.add_vod(&info).unwrap();
+        assert_eq!(vod.info.started_at.as_deref(), Some("2026-09-28T21:29:40Z"));
+        // A file's time doesn't replace the site's.
+        db.set_start_if_unknown(vod.id, "2026-09-28T21:00:00Z").unwrap();
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().info.started_at.as_deref(), Some("2026-09-28T21:29:40Z"));
+        // The chat's does, to the nearest second; and a later chat's replaces that.
+        db.set_chat_start(vod.id, 1790631004.5).unwrap();
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
+        db.set_chat_start(vod.id, 1790631001.2).unwrap();
+        assert_eq!(db.vod(vod.id).unwrap().unwrap().info.started_at.as_deref(), Some("2026-09-28T21:30:01Z"));
+        // And on a VOD with nothing yet, a file's time stands, read in any zone and kept in UTC.
+        let (other, _) = db.add_vod(&crate::edits::tests::info("xyz")).unwrap();
+        db.set_start_if_unknown(other.id, "2026-09-28T23:30:05.6+02:00").unwrap();
+        assert_eq!(db.vod(other.id).unwrap().unwrap().info.started_at.as_deref(), Some("2026-09-28T21:30:06Z"));
+    }
+
+    #[test]
+    fn utc_times_read_back() {
+        assert_eq!(utc_time(0.0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_time(1790631005.0), "2026-09-28T21:30:05Z");
+        assert_eq!(utc_time(1709251199.6), "2024-03-01T00:00:00Z", "rounded, over a leap day's end");
+        for t in [0.0, 951782400.0, 1790631005.0] {
+            assert_eq!(crate::chat::parse_time(&utc_time(t)), Some(t));
+        }
     }
 
     #[test]
@@ -3007,6 +3109,7 @@ mod tests {
             kind: Kind::Message,
             amount: None,
             event_time: None,
+            at: None,
         }
     }
 
@@ -3059,12 +3162,12 @@ mod tests {
         subs.kind = Kind::Sub;
         db.add_chat(b, &[subs.clone(), subs.clone(), subs], &[2.0]).unwrap();
         let lock = std::sync::Mutex::new(db);
-        let mut store = LibraryChat { db: &lock, vod_id: b, on_save: Box::new(|| {}) };
+        let mut store = LibraryChat { db: &lock, vod_id: b, on_save: Box::new(|| {}), starts: Vec::new() };
         let ids: Vec<i64> = store.of_kind(Kind::Sub).unwrap().into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids.len(), 3);
         store.demote(&ids[..2]).unwrap();
         assert_eq!(store.of_kind(Kind::Sub).unwrap().len(), 1);
-        let mut store = LibraryChat { db: &lock, vod_id: a, on_save: Box::new(|| {}) };
+        let mut store = LibraryChat { db: &lock, vod_id: a, on_save: Box::new(|| {}), starts: Vec::new() };
         store.clear().unwrap();
         let db = lock.lock().unwrap();
         assert_eq!(db.chat_count(a).unwrap(), 0);

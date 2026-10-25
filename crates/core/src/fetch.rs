@@ -23,6 +23,12 @@ pub struct VodInfo {
     pub thumbnail: Option<String>,
     /// YYYY-MM-DD
     pub published: Option<String>,
+    /// When the VOD started, as an RFC 3339 time in UTC to the second
+    /// (`2026-10-14T18:00:05Z`), if known. As the site gives it here (see
+    /// `started_by_site`); the library keeps a better one when the chat gives
+    /// one (`db::Db::set_chat_start`).
+    #[serde(default)]
+    pub started_at: Option<String>,
 }
 
 fn platform_of(extractor_key: &str) -> String {
@@ -60,7 +66,23 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
         duration: json.get("duration").and_then(Value::as_f64),
         thumbnail: s("thumbnail"),
         published,
+        started_at: started_by_site(json, &extractor),
     })
+}
+
+/// When the site says a VOD started, from yt-dlp's info: a Twitch VOD's
+/// `timestamp` (when Twitch made the video, about when the stream began),
+/// or a YouTube livestream's `release_timestamp` (when it went live). Not a
+/// clip's (when it was clipped), an uploaded video's or another site's:
+/// those say when it was put up, not recorded.
+fn started_by_site(json: &Value, extractor: &str) -> Option<String> {
+    let secs = |k: &str| json.get(k).and_then(Value::as_f64).filter(|t| t.is_finite() && *t > 0.0);
+    let started = match extractor {
+        "TwitchVod" => secs("timestamp"),
+        "Youtube" if json.get("live_status").and_then(Value::as_str) == Some("was_live") => secs("release_timestamp"),
+        _ => None,
+    };
+    started.map(crate::db::utc_time)
 }
 
 /// Fetches metadata and saves yt-dlp's info JSON to `info_path`, so the later
@@ -640,6 +662,7 @@ mod tests {
         assert_eq!(info.platform, "twitch");
         assert_eq!(info.channel.as_deref(), Some("someone"));
         assert_eq!(info.published.as_deref(), Some("2026-01-02"));
+        assert_eq!(info.started_at, None, "no timestamp");
         assert!(parse_info(&serde_json::json!({"_type": "playlist"})).is_err());
         let clip = serde_json::json!({
             "id": "1431111279", "display_id": "CoweringRudeDiamondMikeHogu-somPr5Um-WHGc4ga",
@@ -655,6 +678,23 @@ mod tests {
             let json = serde_json::json!({ "id": "abc", "webpage_url": "https://www.twitch.tv/videos/abc", "upload_date": date });
             assert_eq!(parse_info(&json).unwrap().published, None);
         }
+    }
+
+    #[test]
+    fn when_the_site_says_a_vod_started() {
+        let started = |json: serde_json::Value| parse_info(&json).unwrap().started_at;
+        let vod = serde_json::json!({ "id": "v1", "extractor_key": "TwitchVod", "webpage_url": "https://www.twitch.tv/videos/1",
+            "timestamp": 1790631005 });
+        assert_eq!(started(vod).as_deref(), Some("2026-09-28T21:30:05Z"));
+        let clip = serde_json::json!({ "id": "1", "display_id": "Slug", "extractor_key": "TwitchClips",
+            "webpage_url": "https://www.twitch.tv/x/clip/Slug", "timestamp": 1790631005 });
+        assert_eq!(started(clip), None, "when it was clipped");
+        let youtube = |live: &str| {
+            serde_json::json!({ "id": "abc", "extractor_key": "Youtube", "webpage_url": "https://www.youtube.com/watch?v=abc",
+                "timestamp": 1790640000, "release_timestamp": 1790631005, "live_status": live })
+        };
+        assert_eq!(started(youtube("was_live")).as_deref(), Some("2026-09-28T21:30:05Z"));
+        assert_eq!(started(youtube("not_live")), None, "when it was uploaded");
     }
 
     /// Keeps a real video in a format that plays, merged with ffmpeg:

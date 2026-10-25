@@ -413,6 +413,7 @@ mod tests {
                 duration: Some(60.0),
                 thumbnail: None,
                 published: None,
+                started_at: None,
             };
             let id = db.add_vod(&info).unwrap().0.id;
             let whole = db.request(id, 0.0, None).unwrap();
@@ -535,6 +536,7 @@ mod tests {
             duration: Some(600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
         let busy = |db: &Db| downloading_to_transcribe(db, &db.vod(id).unwrap().unwrap()).unwrap();

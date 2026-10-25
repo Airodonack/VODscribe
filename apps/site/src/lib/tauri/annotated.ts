@@ -164,6 +164,8 @@ export function vodOf(annotations: Annotations, id: number, chat: Vod["chat"]): 
     media: false,
     audio_only: false,
     published: s.recorded_at?.slice(0, 10) ?? null,
+    // The app keeps the file's time as the VOD's start when nothing better says (crates/core `db::MIGRATE_V33`).
+    started_at: s.recorded_at ?? null,
     status: "done",
     progress: 1,
     error: null,

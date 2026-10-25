@@ -18,7 +18,7 @@ export type AnnotationsSource = {
   title: string;
   /** Seconds. */
   duration: number;
-  /** ISO 8601, when known. */
+  /** When the VOD started (its time 0), ISO 8601, when known: the app keeps it as the VOD's `started_at` if nothing better says. */
   recorded_at: string | null;
 };
 

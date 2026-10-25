@@ -177,12 +177,15 @@ function random(seed) {
 export const CHANNEL = "Marlowe";
 /** Chatters by name, most messages first; "Some One" has a space, as `from:"Some One"` is for. */
 export const CHATTERS = ["Ada", "Brigid", "Cormac", "Some One", "Dara"];
+/** When the chat's stream started, as the app keeps it (RFC 3339, UTC, to the second). */
+export const STARTED = "2026-10-14T18:00:05Z";
 
 /**
  * A synthetic Twitch chat for a VOD of `duration` seconds (two hours), the
  * same on every run: about 3,000 messages, in the shape src-tauri/src/e2e.rs
- * serves (time, author, text; nothing more, so no emote images: Twitch's emote
- * fragments aren't part of it, and 7TV and the others need the network).
+ * serves (time, author, text, and when it was sent; nothing more, so no emote
+ * images: Twitch's emote fragments aren't part of it, and 7TV and the others
+ * need the network).
  *
  * - Named chatters (CHATTERS) and the streamer (CHANNEL) among thirty
  *   "viewerN"s, each named one under 500 messages so `from:` finds all of
@@ -194,6 +197,8 @@ export const CHATTERS = ["Ada", "Brigid", "Cormac", "Some One", "Dara"];
  *   "Cheer500"), which the app reads from the author's name and the text.
  * - Mentions ("@Ada ..."), the streamer saying "landed" (as the transcribed
  *   fixture does), and "gg" in some messages for a `-gg`.
+ * - Each message sent (`created_at`) its time after STARTED, as the VOD's
+ *   start the app works out from them should be.
  *
  * Returns the messages, sorted by time, with the facts the tests check.
  */
@@ -280,6 +285,7 @@ export function chat(duration = 2 * 3600) {
   messages.push(...events);
 
   messages.sort((a, b) => a.time - b.time);
+  for (const m of messages) m.created_at = new Date(Date.parse(STARTED) + m.time * 1000).toISOString();
   const count = (name) => messages.filter((m) => m.author.toLowerCase() === name.toLowerCase()).length;
   for (const name of [...CHATTERS, CHANNEL]) {
     if (count(name) > 450) throw new Error(`${name} has ${count(name)} messages: a search would cut them off`);
@@ -288,6 +294,7 @@ export function chat(duration = 2 * 3600) {
   return {
     duration,
     channel: CHANNEL,
+    started: STARTED,
     messages,
     bursts,
     // Subs, gifts and tips, as the app counts them: 6, 3 and 4.

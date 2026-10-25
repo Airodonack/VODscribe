@@ -136,6 +136,7 @@ mod tests {
             duration: None,
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let mut store = crate::chat::MemoryChat::default();
         let found = crate::chat::fetch(

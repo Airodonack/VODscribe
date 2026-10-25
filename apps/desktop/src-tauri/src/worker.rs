@@ -524,6 +524,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
         let stretch = db.request(id, 0.0, None).unwrap().id;
@@ -582,6 +583,7 @@ mod tests {
             duration: Some(600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0.id;
         let media = pipeline::media_dir(&work);

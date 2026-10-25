@@ -36,6 +36,28 @@ pub struct ChatMessage {
     /// celebration can be shared long after the sub (see `resubs_announced`).
     #[serde(default)]
     pub event_time: Option<f64>,
+    /// When it was sent, in Unix seconds, where the site says: Twitch's
+    /// `createdAt`, Kick's `created_at`, YouTube's `timestampUsec`. Only
+    /// while a fetch runs, not saved with the message: what it's for is the
+    /// VOD's start (`vod_start`).
+    #[serde(skip)]
+    pub at: Option<f64>,
+}
+
+/// The fewest messages with a time of their own that `vod_start` goes by.
+pub const START_MESSAGES: usize = 20;
+
+/// When a VOD started, in Unix seconds, from its messages' `start`s: their
+/// median, so a few odd ones (a site's clock, a message held back) don't move
+/// it. None with fewer than `START_MESSAGES` of them.
+pub fn vod_start(starts: &[f64]) -> Option<f64> {
+    if starts.len() < START_MESSAGES {
+        return None;
+    }
+    let mut sorted = starts.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let mid = sorted.len() / 2;
+    Some(if sorted.len() % 2 == 1 { sorted[mid] } else { (sorted[mid - 1] + sorted[mid]) / 2.0 })
 }
 
 /// What a chat message is: someone writing, or an event the site posts in
@@ -90,6 +112,12 @@ pub enum ChatPart {
 }
 
 impl ChatMessage {
+    /// When the VOD started, by this message: when it was sent less how far
+    /// into the VOD it is.
+    pub fn start(&self) -> Option<f64> {
+        Some(self.at? - self.time).filter(|s| s.is_finite())
+    }
+
     /// The message as plain text, emotes by name, for the search index.
     pub fn text(&self) -> String {
         let mut out = String::new();
@@ -521,7 +549,7 @@ fn kick_into(
                 oldest = oldest.min(at);
                 if at >= lo && (at < hi || last && at <= end) && seen.insert(id) {
                     let event_time = subbed_at.map(|t| t - start);
-                    keep.push(ChatMessage { time: at - start, event_time, ..msg });
+                    keep.push(ChatMessage { time: at - start, event_time, at: Some(at), ..msg });
                 }
             }
             let progress = ((hi - oldest) / (hi - lo)).clamp(0.0, 1.0);
@@ -563,6 +591,7 @@ fn parse_kick_page(page: &Value) -> Result<KickPage> {
             kind,
             amount,
             event_time: None,
+            at: None,
         };
         out.push((at, id.to_string(), msg, subbed_at.filter(|_| kind == Kind::Sub)));
     }
@@ -660,7 +689,7 @@ fn push_text(parts: &mut Vec<ChatPart>, text: &str) {
 pub(crate) const TWITCH_GQL: &str = "https://gql.twitch.tv/gql";
 pub(crate) const TWITCH_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 const TWITCH_QUERY: &str = "query($id: ID!, $offset: Int) { video(id: $id) { comments(contentOffsetSeconds: $offset) {
-    edges { node { id contentOffsetSeconds commenter { displayName }
+    edges { node { id contentOffsetSeconds createdAt commenter { displayName }
         message { userColor fragments { text emote { emoteID } } } } }
     pageInfo { hasNextPage } } } }";
 
@@ -840,6 +869,7 @@ fn parse_twitch_page(page: &Value, cheermotes: &Cheermotes) -> Result<(Vec<(Stri
             kind: Kind::Message,
             amount: None,
             event_time: None,
+            at: n["createdAt"].as_str().and_then(parse_time),
         };
         (msg.kind, msg.amount) = twitch_event(&msg.author, &msg.text(), cheermotes);
         out.push((id.to_string(), msg));
@@ -1206,6 +1236,7 @@ fn parse_youtube_line(line: &str, out: &mut Vec<ChatMessage>) {
             kind,
             amount: None,
             event_time: None,
+            at: r["timestampUsec"].as_str().and_then(|s| s.parse::<f64>().ok()).map(|us| us / 1e6),
         };
         // "Sent 5 … gift memberships": how many.
         if kind == Kind::Gift {
@@ -1322,6 +1353,7 @@ mod tests {
             (*at, id.as_str(), m.author.as_str(), m.color.as_deref()),
             (1790631001.0, "a", "sunkai", Some("#F2708A"))
         );
+        assert_eq!(m.at, None, "given its time sent once its time into the VOD is known (kick_into)");
         assert_eq!(m.text(), "barkywave hello");
         assert_eq!(messages[1].2.color, None, "only #rrggbb colors");
     }
@@ -1329,7 +1361,8 @@ mod tests {
     #[test]
     fn reads_a_twitch_page() {
         let page = json!({ "data": { "video": { "comments": {
-            "edges": [{ "node": { "id": "c", "contentOffsetSeconds": 526, "commenter": { "displayName": "swiftyspiffy" },
+            "edges": [{ "node": { "id": "c", "contentOffsetSeconds": 526, "createdAt": "2026-09-28T21:39:47.391Z",
+                "commenter": { "displayName": "swiftyspiffy" },
                 "message": { "userColor": "#FF3AE9", "fragments": [
                     { "text": "item #4 is scary ", "emote": null },
                     { "text": "monkaS", "emote": { "emoteID": "emotesv2_3a2f" } },
@@ -1339,6 +1372,8 @@ mod tests {
         assert!(more);
         let m = &messages[0].1;
         assert_eq!((m.time, m.author.as_str()), (526.0, "swiftyspiffy"));
+        assert_eq!(m.at, Some(1790631587.391));
+        assert_eq!(m.start(), Some(1790631587.391 - 526.0));
         assert_eq!(m.text(), "item #4 is scary monkaS");
         assert!(matches!(&m.parts[1], ChatPart::Emote { url, .. }
             if url == "https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_3a2f/default/dark/1.0"));
@@ -1406,6 +1441,7 @@ mod tests {
                 kind,
                 amount,
                 event_time: None,
+                at: None,
             }
         };
         let mut bombs = GiftBombs::default();
@@ -1465,6 +1501,7 @@ mod tests {
             kind,
             amount: None,
             event_time: None,
+            at: None,
         };
         let celebrated = |time, author, text, subbed_at| ChatMessage {
             event_time: Some(subbed_at),
@@ -1481,17 +1518,23 @@ mod tests {
         assert_eq!(resubs_announced(&subs), [3]);
     }
 
-    /// A message `n` of a fake chat, `per_second` to a second.
+    /// When the fake chats' VOD started (Unix seconds).
+    const FAKE_START: f64 = 1790631000.0;
+
+    /// A message `n` of a fake chat, `per_second` to a second, sent some
+    /// time within its second (Twitch's offsets are whole seconds).
     fn fake(n: usize, per_second: usize) -> (String, ChatMessage) {
         let text = format!("message {n}");
+        let time = (n / per_second) as f64;
         let msg = ChatMessage {
-            time: (n / per_second) as f64,
+            time,
             author: "v".into(),
             color: None,
             parts: vec![ChatPart::Text { text }],
             kind: Kind::Message,
             amount: None,
             event_time: None,
+            at: Some(FAKE_START + time + (n % per_second) as f64 / per_second as f64),
         };
         (n.to_string(), msg)
     }
@@ -1610,7 +1653,8 @@ mod tests {
                 .iter()
                 .take(100)
                 .map(|(id, m)| {
-                    json!({ "node": { "id": id, "contentOffsetSeconds": m.time, "commenter": { "displayName": m.author },
+                    json!({ "node": { "id": id, "contentOffsetSeconds": m.time, "createdAt": m.at.map(crate::db::utc_time),
+                        "commenter": { "displayName": m.author },
                         "message": { "userColor": null, "fragments": [{ "text": m.text(), "emote": null }] } } })
                 })
                 .collect();
@@ -1632,6 +1676,7 @@ mod tests {
             duration: Some(430.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let no = AtomicBool::new(false);
 
@@ -1642,6 +1687,11 @@ mod tests {
         assert!(fetch_twitch_from(&info, &mut store, &no, &mut |_| {}, &ask).unwrap());
         assert_eq!(saved(&store), expected);
         assert!(asked.load(Ordering::Relaxed) > 30, "paged through");
+        // Each message sent within its second, given to the second: the VOD started then.
+        let starts: Vec<f64> = store.messages.iter().filter_map(ChatMessage::start).collect();
+        assert_eq!(starts.len(), 3000);
+        let start = vod_start(&starts).unwrap();
+        assert!((FAKE_START..=FAKE_START + 1.0).contains(&start), "{start}");
 
         // Twitch keeps refusing from the 11th page on: five tries, then the
         // fetch stops with what it had, and carries on from there once Twitch answers.
@@ -1672,6 +1722,7 @@ mod tests {
             duration: Some(418.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let no = AtomicBool::new(false);
         // The messages before `end` saved, and all of them.
@@ -1761,7 +1812,31 @@ mod tests {
 
             kick_into(&mut store, start, 500.0, slices, page, &no, &mut |_| {}).unwrap();
             assert_eq!(saved(&store), expected, "{slices} slices");
+            // Each message's time sent is Kick's, so each says when the VOD started.
+            assert!(store.messages.iter().all(|m| m.start().is_some_and(|s| (s - start).abs() < 1e-6)));
         }
+    }
+
+    #[test]
+    fn a_vods_start_is_the_median_of_its_messages() {
+        let starts = |n: usize| (0..n).map(|i| 1000.0 + i as f64).collect::<Vec<_>>();
+        assert_eq!(vod_start(&starts(19)), None, "too few to go by");
+        assert_eq!(vod_start(&[]), None);
+        // Odd: the middle one, whatever the order; one far off moves nothing.
+        let mut odd = starts(21);
+        odd.reverse();
+        odd[0] = 9e9;
+        assert_eq!(vod_start(&odd), Some(1010.0));
+        // Even: halfway between the middle two.
+        assert_eq!(vod_start(&starts(20)), Some(1009.5));
+
+        // A message gives a start only with its time sent.
+        let (_, mut m) = fake(14, 7);
+        assert_eq!(m.start(), Some(FAKE_START));
+        m.at = None;
+        assert_eq!(m.start(), None);
+        let (_, sent_late) = fake(20, 7);
+        assert_eq!(sent_late.start(), Some(FAKE_START + 6.0 / 7.0));
     }
 
     #[test]
@@ -1811,7 +1886,7 @@ mod tests {
             line(
                 "12345",
                 json!({ "liveChatTextMessageRenderer": {
-                "authorName": { "simpleText": "@viewer" },
+                "authorName": { "simpleText": "@viewer" }, "timestampUsec": "1790631017345123",
                 "message": { "runs": [
                     { "text": "nice " },
                     { "emoji": { "emojiId": "UC/x", "isCustomEmoji": true, "shortcuts": [":yt:"],
@@ -1827,6 +1902,7 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!((messages[0].time, messages[0].author.as_str()), (12.345, "@viewer"));
         assert_eq!(messages[0].text(), "nice :yt: 😂");
+        assert_eq!(messages[0].at, Some(1790631017.345123));
     }
 
     /// Asks Twitch for real: `cargo test -p vodscribe-core -- --ignored cheermotes`.
@@ -1898,6 +1974,7 @@ mod tests {
             duration: Some(40.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         // Stopped while yt-dlp runs: it ends promptly, and leaves no files behind.
         let cancel = std::sync::Arc::new(AtomicBool::new(false));
@@ -2030,6 +2107,7 @@ mod tests {
             duration: Some(14786.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let origin = kick::chat_origin(&info.platform_id).unwrap();
         let page = |cursor: i64, stop: &AtomicBool| {

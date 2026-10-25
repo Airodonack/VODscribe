@@ -24,6 +24,7 @@ const MESSAGES = Array.from({ length: 4000 }, (_, i) => ({
   time: i * 3.6,
   author: `viewer${i % 37}`,
   text: `message ${i}`,
+  created_at: new Date(Date.parse("2026-10-14T18:00:05Z") + i * 3600).toISOString(),
 }));
 // Twitch refuses every page from the twelfth on, until told otherwise.
 const FAIL_AFTER = 12;

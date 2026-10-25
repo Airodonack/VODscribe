@@ -1782,6 +1782,7 @@ pub(crate) mod tests {
             duration: Some(600.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         }
     }
 

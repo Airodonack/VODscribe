@@ -70,6 +70,7 @@ fn fetch(app: &AppHandle, id: i64) {
         on_save: Box::new(|| {
             let _ = app.emit("chat-saved", id);
         }),
+        starts: Vec::new(),
     };
     let mut on_progress = |f: f64| {
         let percent = (f * 100.0) as i32;
@@ -87,13 +88,15 @@ fn fetch(app: &AppHandle, id: i64) {
         Some(result) => result,
         None => chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &mut store, &flag, &mut on_progress),
     };
+    let started = chat::vod_start(&store.starts);
     drop(store);
     *state.chat.current.lock().unwrap() = None;
     let db = state.db.lock().unwrap();
     // The VOD may have been deleted meanwhile, which is no error. A failure
     // keeps what was saved, and where it got to, for the next try.
     let saved = match result {
-        Ok(true) => db.finish_chat(id),
+        // A chat that says when the VOD started says it best (`db::MIGRATE_V33`).
+        Ok(true) => started.map_or(Ok(()), |secs| db.set_chat_start(id, secs)).and_then(|()| db.finish_chat(id)),
         Ok(false) => db.set_chat_status(id, ChatStatus::None, None),
         Err(e) if vodscribe_core::is_canceled(&e) => return,
         Err(e) => {

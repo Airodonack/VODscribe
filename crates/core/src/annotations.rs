@@ -64,6 +64,8 @@ pub struct Source {
     pub title: Option<String>,
     /// Seconds.
     pub duration: f64,
+    /// When the VOD started (its time 0), RFC 3339: an import keeps it as
+    /// the VOD's `started_at` when nothing better says (`db::MIGRATE_V33`).
     #[serde(default)]
     pub recorded_at: Option<String>,
 }
@@ -438,6 +440,7 @@ impl Db {
                             .and_then(|t| t.get(..10))
                             .filter(|d| d.len() == 10 && d.as_bytes()[4] == b'-' && d.as_bytes()[7] == b'-')
                             .map(str::to_string),
+                        started_at: None,
                     };
                     (db.add_vod(&info)?.0.id, true)
                 }
@@ -449,6 +452,10 @@ impl Db {
                 "UPDATE vods SET duration = ?2 WHERE id = ?1 AND duration IS NULL",
                 params![vod_id, source.duration],
             )?;
+            // When it was recorded, if nothing better says when it started.
+            if let Some(at) = &source.recorded_at {
+                db.set_start_if_unknown(vod_id, at)?;
+            }
             db.import_transcript(vod_id, annotations)?;
             db.import_marks(vod_id, annotations)?;
             db.conn.execute(
@@ -622,7 +629,34 @@ mod tests {
             kind: Kind::Message,
             amount: None,
             event_time: None,
+            at: None,
         }
+    }
+
+    #[test]
+    fn a_files_recorded_at_is_when_the_vod_started_only_if_nothing_better_says() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let started = |id: i64| db.vod(id).unwrap().unwrap().info.started_at;
+        // Nothing says: the file does.
+        let (vod, _) = db.import_annotations(&file("twitch", "v123"), None).unwrap();
+        assert_eq!(vod.info.started_at.as_deref(), Some("2026-10-01T18:00:00Z"));
+        // The chat says better, and a file imported again doesn't undo it.
+        db.set_chat_start(vod.id, 1790631004.6).unwrap();
+        db.import_annotations(&file("twitch", "v123"), None).unwrap();
+        assert_eq!(started(vod.id).as_deref(), Some("2026-09-28T21:30:05Z"));
+        // The site said when it was added: that stays too, till a chat says.
+        let mut info = crate::edits::tests::info("abc");
+        info.started_at = Some("2026-10-01T17:59:30Z".into());
+        let (site, _) = db.add_vod(&info).unwrap();
+        db.import_annotations(&file("youtube", "abc"), None).unwrap();
+        assert_eq!(started(site.id).as_deref(), Some("2026-10-01T17:59:30Z"));
+        db.set_chat_start(site.id, 1790631005.0).unwrap();
+        assert_eq!(started(site.id).as_deref(), Some("2026-09-28T21:30:05Z"));
+        // A time that doesn't read as one is left out.
+        let mut odd = file("youtube", "xyz");
+        odd.source.recorded_at = Some("yesterday".into());
+        let (odd, _) = db.import_annotations(&odd, None).unwrap();
+        assert_eq!(odd.info.started_at, None);
     }
 
     #[test]

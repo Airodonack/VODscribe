@@ -38,6 +38,8 @@ export interface Vod {
   /** What plays here is audio alone (by its file type): no picture to show. */
   audio_only: boolean;
   published: string | null;
+  /** When it started, RFC 3339 in UTC to the second: by its chat, else the site, else an annotations file (crates/core `db::MIGRATE_V33`). */
+  started_at: string | null;
   status: Status;
   /** 0..1 within the status, within the stretch the row shows. */
   progress: number;

@@ -433,6 +433,7 @@ mod tests {
             duration: Some(60.0),
             thumbnail: None,
             published: None,
+            started_at: None,
         };
         let id = db.add_vod(&info).unwrap().0.id;
         let kept = pipeline::media_stem(&pipeline::media_dir(&work), id, "t").with_extension("mp4");

@@ -1,9 +1,10 @@
 // A fetched chat as the page shows it, against a synthetic one whose bursts,
 // events and words were placed (lib/fixtures.mjs chat(), served by the e2e
 // build in place of Twitch's: src-tauri/src/e2e.rs; about 3,000 messages
-// over two hours): the header's count is the chat's; the minimap's histogram
-// has its three bursts where they were placed (asked of the app, and read
-// back from the pixels the minimap drew); the chat column, scrolled to a
+// over two hours): the VOD's start is when its messages say it was; the
+// header's count is the chat's; the minimap's histogram has its three
+// bursts where they were placed (asked of the app, and read back from the
+// pixels the minimap drew); the chat column, scrolled to a
 // moment by the minimap, shows the messages of that moment, each as it was
 // written; the subs, gifts and tips are counted and badged; and a Timeline
 // layer for a word counts its messages, highlights them in the column and
@@ -37,11 +38,14 @@ export default {
     // on the same folders as an earlier one would count its layer too.
     await app.invoke("set_timeline", { timeline: { layers: [], events: [] } });
     const added = await app.addAndTranscribe(ctx.fixtures.landed);
-    ({ app } = await fetchChat(app, ctx, added.id, fixture));
+    let vod;
+    ({ app, vod } = await fetchChat(app, ctx, added.id, fixture));
     const wrong = [];
     const expect = (what, got, want) => {
       if (got !== want) wrong.push(`${what}: ${got}, not ${want}`);
     };
+    // When the VOD started, from when its messages were sent.
+    expect("the VOD's start", vod.started_at, fixture.started);
     await app.openVod(added.id);
 
     // The header's count is the chat's.
