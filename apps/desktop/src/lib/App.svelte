@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount, untrack, type Snippet } from "svelte";
   import {
     api,
     docKey,
@@ -49,8 +49,15 @@
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
 
-  // The website's VOD pages open straight onto their one VOD.
-  let { openVod = null }: { openVod?: number | null } = $props();
+  // The website's VOD pages open straight onto their one VOD, with their own
+  // pane in the library's place (`leftPane`: the annotations, AnnotationsPane.svelte).
+  let {
+    openVod = null,
+    leftPane,
+  }: {
+    openVod?: number | null;
+    leftPane?: Snippet<[{ vod: Vod | undefined; onplay: (time: number) => void }]>;
+  } = $props();
 
   let setup = $state<SetupStatus | null>(null);
   let ready = $derived(setup !== null && setup.model && setup.yt_dlp && setup.ffmpeg && !setup.running);
@@ -615,7 +622,12 @@
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
   <div class="app">
-    <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
+    <!-- AnnotationsPane.svelte lists a VOD's annotations; it can stand here for a VOD with them. -->
+    {#if leftPane}
+      {@render leftPane({ vod: selected, onplay: (time) => selected && play(selected.id, time) })}
+    {:else}
+      <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
+    {/if}
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">

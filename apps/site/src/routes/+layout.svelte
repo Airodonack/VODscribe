@@ -22,6 +22,29 @@
       <p class="note muted">{siteBar.note}</p>
     {/if}
     <nav>
+      {#if full && siteBar.review}
+        {@const review = siteBar.review}
+        <!-- A verdict and a note on each chapter and highlight, kept in this browser (review.svelte.ts). -->
+        <span class="review-tools">
+          <button
+            class="open"
+            class:on={review.on}
+            aria-pressed={review.on}
+            onclick={() => (review.on = !review.on)}
+            title="Say whether each chapter and highlight is right, with notes, to export">Review</button
+          >
+          {#if review.on}
+            <button class="open" onclick={() => review.export()} title="Save what's said as a JSONL file"
+              >Export verdicts</button
+            >
+            <button
+              class="open"
+              onclick={() => confirm("Clear every verdict and note on this VOD?") && review.clear()}
+              title="Forget every verdict and note on this VOD">Clear</button
+            >
+          {/if}
+        </span>
+      {/if}
       {#if full && siteBar.pick}
         <button class="open" onclick={siteBar.pick}>Open a file…</button>
       {/if}
@@ -90,6 +113,16 @@
     font-size: 13px;
     padding: 3px 10px;
     white-space: nowrap;
+  }
+
+  .review-tools {
+    display: flex;
+    gap: 6px;
+  }
+
+  .open.on {
+    background: var(--accent-soft);
+    border-color: var(--accent);
   }
 
   nav {

@@ -6,7 +6,10 @@
   // here in the browser and never uploaded. The VOD pages (routes/v/[platform]/[id])
   // show it with their source, as the whole page: the app's view fills the
   // window under the site's bar (+layout.svelte), whose line carries the note
-  // and Open a file (siteBar.svelte.ts). The index (routes/v) shows it `idle`,
+  // and Open a file (siteBar.svelte.ts), with the VOD's annotations
+  // (AnnotationsPane.svelte) in the library pane's place, and Review, which
+  // adds a verdict and a note to each of them (review.svelte.ts). The index
+  // (routes/v) shows it `idle`,
   // its list (`children`) in place in a normal page, until a file is opened.
   //
   // Phones (under 821 px) get the VOD's title, the platform's player and a
@@ -15,9 +18,16 @@
   import { onDestroy, onMount, untrack, type Snippet } from "svelte";
   import { parseAnnotations } from "desktop/lib/annotations.ts";
   import Demo from "#lib/Demo.svelte";
+  import AnnotationsPane from "desktop/lib/AnnotationsPane.svelte";
+  import { chapterRows, highlightRows } from "desktop/lib/annotationRows.ts";
+  import { cuts } from "desktop/lib/cuts.svelte.ts";
+  import ReviewControls from "#lib/ReviewControls.svelte";
+  import { Review } from "#lib/review.svelte.ts";
   import { siteBar } from "#lib/siteBar.svelte.ts";
   import { annotated } from "#lib/tauri/annotations.ts";
   import type { EmbeddedPlayer } from "desktop/lib/embed.ts";
+  import type { Vod } from "desktop/lib/api.ts";
+  import type { PaneRow } from "desktop/lib/annotationRows.ts";
   import { pickDropped, type Source } from "#lib/tauri/annotated.ts";
   import { chatArrived, closeAnnotations, openAnnotations } from "#lib/tauri/annotations.ts";
 
@@ -57,6 +67,10 @@
         }
       const id = openAnnotations(annotations, chat === undefined ? undefined : chat === null ? null : chatValue);
       const s = annotations.source;
+      // The rows exported are the pane's: the marks open, once they're this VOD's.
+      review = new Review(s.platform, s.id, () =>
+        cuts.vodId === id ? [...chapterRows(cuts.all), ...highlightRows(cuts.all)] : [],
+      );
       view = { kind: "open", id, title: s.title || s.id, channel: s.channel ?? "", platform: s.platform, from };
       return id;
     } catch (e) {
@@ -114,6 +128,12 @@
     open(text, picked.annotations.name, chat, picked.annotations.name);
   }
 
+  let review = $state<Review | null>(null);
+  // Review shows in the bar on a VOD's own page, once it's open.
+  $effect(() => {
+    siteBar.review = !idle && view.kind === "open" ? review : null;
+  });
+
   // The same width the demo hides itself under (Demo.svelte).
   let wide = $state(true);
   onMount(() => {
@@ -130,6 +150,7 @@
     closeAnnotations();
     siteBar.pick = null;
     siteBar.note = "";
+    siteBar.review = null;
   });
 
   $effect(() => {
@@ -177,6 +198,31 @@
 
   let picker = $state<HTMLInputElement>();
 </script>
+
+<!-- The VOD page's left pane: its annotations, and their review when it's on. -->
+{#snippet pane({ vod, onplay }: { vod: Vod | undefined; onplay: (time: number) => void })}
+  <AnnotationsPane
+    {vod}
+    {onplay}
+    review={review?.on ? reviewRow : undefined}
+    reviewVod={review?.on ? reviewVod : undefined}
+  />
+{/snippet}
+
+{#snippet reviewRow(row: PaneRow)}
+  {#if review}<ReviewControls {review} {row} />{/if}
+{/snippet}
+
+{#snippet reviewVod()}
+  {#if review}
+    {@const r = review}
+    <label class="vod-note">
+      <span class="eyebrow">Review</span>
+      <span class="muted small">{r.count} judged. Notes on the whole VOD:</span>
+      <textarea rows="3" value={r.note} oninput={(e) => (r.note = e.currentTarget.value)}></textarea>
+    </label>
+  {/if}
+{/snippet}
 
 <!-- What a tab and a bookmark read. A shared link's preview (og: tags) needs
      them in the HTML as served, which this page, made in the browser, can't
@@ -229,7 +275,7 @@
   {#if view.kind === "open"}
     {#if idle || wide}
       {#key view.id}
-        <Demo openVod={view.id} fill={!idle} />
+        <Demo openVod={view.id} fill={!idle} leftPane={idle ? undefined : pane} />
       {/key}
     {:else}
       <div class="phone">
@@ -345,6 +391,23 @@
 
   .small {
     font-size: 13px;
+  }
+
+  .vod-note {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .vod-note textarea {
+    resize: vertical;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+    font-size: 12px;
   }
 
   .message {

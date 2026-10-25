@@ -4,12 +4,20 @@
   // in the app carry data-demo (see demo.ts there): they're grayed out, explain
   // themselves on hover or focus, and ignore clicks. A VOD's page
   // (routes/v) shows the same, opened onto its VOD (`openVod`), filling the
-  // window's height (`fill`).
-  import { onMount, type Component } from "svelte";
+  // window's height (`fill`), with its own pane in the library's place
+  // (`leftPane`, App.svelte's).
+  import { onMount, type Component, type Snippet } from "svelte";
+  import type { Vod } from "desktop/lib/api.ts";
 
-  let { openVod = null, fill = false }: { openVod?: number | null; fill?: boolean } = $props();
+  type LeftPane = Snippet<[{ vod: Vod | undefined; onplay: (time: number) => void }]>;
 
-  let App = $state<Component<{ openVod?: number | null }> | null>(null);
+  let {
+    openVod = null,
+    fill = false,
+    leftPane,
+  }: { openVod?: number | null; fill?: boolean; leftPane?: LeftPane } = $props();
+
+  let App = $state<Component<{ openVod?: number | null; leftPane?: LeftPane }> | null>(null);
   let root = $state<HTMLElement>();
   // Phones get a screenshot instead (+page.svelte), so the app's code and the
   // demo's data only load once the window is wide enough to show it. A VOD's
@@ -91,7 +99,7 @@
   aria-label="VODscribe demo"
 >
   {#if App}
-    <App {openVod} />
+    <App {openVod} {leftPane} />
   {:else}
     <div class="loading muted">Loading the demo…</div>
   {/if}
