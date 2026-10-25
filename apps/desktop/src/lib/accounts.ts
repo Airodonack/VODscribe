@@ -5,7 +5,7 @@
 // nothing of it is kept by the app. The channel link beside it is the way to
 // where the picture comes from.
 
-import type { Account, CastMember } from "./annotations";
+import type { Account } from "./annotations";
 
 /** The image server's address. The app can be pointed at another (crates/core annotations.rs `AVATAR_ENV`). */
 export const AVATAR_BASE = "https://img.vodscribe.com";
@@ -35,7 +35,3 @@ export const channelLabel = (account: Account): string => channelUrl(account).re
 /** Where `account`'s picture is asked for, on image server `base`. */
 export const avatarUrl = (base: string, account: Account): string =>
   `${base.replace(/\/+$/, "")}/avatar/${account.platform}/${part(account.login)}`;
-
-/** What pointing at a cast member's channel link says: who plays them, or their login. */
-export const channelTitle = (member: Pick<CastMember, "player" | "account">): string =>
-  member.player ? `Played by ${member.player}` : (member.account?.login ?? "");

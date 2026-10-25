@@ -45,9 +45,11 @@ export function activityLabel(a: Activity): string {
   return name ? `${sentence(a.kind)}: ${name}` : sentence(a.kind);
 }
 
-/** A cast member's role and aliases, as the cast list says them: "Streamer · also Mar, M". */
+/** A cast member's role and aliases, as the cast list says them: "Streamer · also Mar, M". An alias
+ *  that is their name, or their player's (already in the name they're listed by, castNames.ts), isn't repeated. */
 export function castDetail(m: CastMember): string {
-  const aliases = m.aliases.filter((a) => a.trim() && a.toLowerCase() !== m.name.toLowerCase());
+  const said = [m.name, m.player ?? ""].map((n) => n.trim().toLowerCase());
+  const aliases = m.aliases.filter((a) => a.trim() && !said.includes(a.trim().toLowerCase()));
   return [sentence(m.role), aliases.length ? `also ${aliases.join(", ")}` : ""].filter(Boolean).join(" · ");
 }
 

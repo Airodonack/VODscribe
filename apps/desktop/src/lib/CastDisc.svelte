@@ -6,7 +6,7 @@
   // is shown whole as the site has it, only clipped round as chats draw one,
   // and the disc links to their channel as their name beside it does.
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { avatarUrl, channelTitle, channelUrl } from "./accounts";
+  import { avatarUrl, channelLabel, channelUrl } from "./accounts";
   import { annotated } from "./annotated.svelte";
   import type { CastMember } from "./api";
   import { initial } from "./transcriptGroups";
@@ -16,7 +16,7 @@
     color,
     member,
   }: {
-    /** Who it's for, as the head names them. */
+    /** Who it's for, as the head names them: the initial is its first letter, the streamer's where they're named first. */
     name: string;
     /** Their cast colour; null for someone not in the cast. */
     color: string | null;
@@ -60,7 +60,7 @@
     class:pictured={loaded}
     style:background={color}
     href={url}
-    title={channelTitle(member!)}
+    title={channelLabel(account)}
     tabindex="-1"
     aria-hidden="true"
     onclick={(e) => (e.preventDefault(), openUrl(url))}>{@render face()}</a

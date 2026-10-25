@@ -10,7 +10,7 @@ import {
   parseAnnotations,
   readAccount,
 } from "./annotations.ts";
-import { AVATAR_BASE, avatarUrl, channelLabel, channelTitle, channelUrl } from "./accounts.ts";
+import { AVATAR_BASE, avatarUrl, channelLabel, channelUrl } from "./accounts.ts";
 
 const cast = [
   { name: "Marlowe", aliases: ["Mar", "M"], role: "streamer" },
@@ -66,6 +66,11 @@ test("a cast member's line has their role and other names", () => {
   assert.equal(castDetail(cast[0]), "Streamer · also Mar, M");
   assert.equal(castDetail(cast[1]), "Friend");
   assert.equal(castDetail({ name: "Bo", aliases: ["bo", ""], role: "in-game character" }), "In-game character");
+  // The streamer who plays them is named in the heading already.
+  assert.equal(
+    castDetail({ name: "Gigi", aliases: ["geega", "G"], role: "streamer", player: "GEEGA" }),
+    "Streamer · also G",
+  );
 });
 
 test("highlights closer than a glyph's width on the timeline are one glyph with their count", () => {
@@ -132,11 +137,6 @@ test("a cast member's account leads to their channel and their picture", () => {
   );
   // Escaped all the same, should a login that can't be one reach it.
   assert.equal(avatarUrl("http://h", { platform: "kick", login: "a/../b" }), "http://h/avatar/kick/a%2F..%2Fb");
-  assert.equal(
-    channelTitle({ player: "Marlowe Plays", account: { platform: "twitch", login: "m" } }),
-    "Played by Marlowe Plays",
-  );
-  assert.equal(channelTitle({ account: { platform: "twitch", login: "m" } }), "m");
 });
 
 test("a cast member's player and account are read when they can be, left out when they can't", () => {

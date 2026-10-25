@@ -29,7 +29,8 @@
   import { DEMO } from "./demo";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
   import { putOf } from "./edits.svelte";
-  import { speakerColor } from "./annotated";
+  import { castIndex, speakerColor } from "./annotated";
+  import { speakerName } from "./castNames";
   import { annotated } from "./annotated.svelte";
   import { highlightGlyph } from "./annotations";
   import {
@@ -358,7 +359,10 @@
                       </span>
                     </span>
                     {#if !open && row.cast.length}
-                      <span class="faces" title={row.cast.join(", ")}>
+                      <span
+                        class="faces"
+                        title={row.cast.map((name) => speakerName(cast[castIndex(cast, name)], name)).join(", ")}
+                      >
                         {#each people(row).slice(0, 4) as p, j (j)}
                           <span class="face" class:unknown={!p.color} style:background={p.color}></span>
                         {/each}

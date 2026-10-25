@@ -244,9 +244,10 @@
   ],
   "cast": [
     {
-      "name": "airodonack",
-      "aliases": [],
+      "name": "Airo",
+      "aliases": ["airodonack"],
       "role": "streamer",
+      "player": "Airodonack",
       "account": { "platform": "twitch", "login": "airodonack" }
     }
   ],

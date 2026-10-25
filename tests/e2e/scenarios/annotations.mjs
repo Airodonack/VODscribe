@@ -19,10 +19,13 @@
 // keyboard, A on the other's row asks which edit and puts it there, a group
 // too; the edit open, its pane has the highlights it holds. On a narrower
 // window the pane is a tab beside the transcript's.
-// Who plays them and their channels are in the Cast button too. A cast member with an account is
-// headed by their picture, from the image server (the run's file host,
-// lib/fileHost.mjs), their name a link to their channel; one whose picture
-// isn't there keeps their initial.
+// A character played by a streamer is named the streamer first, the
+// character after ("Vance (Marlowe)"): on their heads, in the Cast button
+// (with their channels) and in a highlight's tooltip, grouped and coloured as
+// the character. A cast member with an account is headed by their picture,
+// from the image server (the run's file host, lib/fileHost.mjs), their name a
+// link to their channel; one whose picture isn't there keeps their initial,
+// the streamer's where they're named first.
 // The Timeline panel's Imported marks toggle hides the import's chapters
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
@@ -92,7 +95,7 @@ export default {
     "annotations-pane":
       'Right of the transcript, a narrower pane lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar, Played by Marlowe Vance · twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with a coloured dot.',
+      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Vance (Marlowe)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Vance (Marlowe) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with a coloured dot.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -205,7 +208,7 @@ export default {
       MINUTE,
     ).catch(() => []);
     const names = speakers.map((s) => s.name).join(", ");
-    if (names !== "Marlowe, Ada, Marlowe, Ada") wrong.push(`the lines' speakers: ${names || "none"}`);
+    if (names !== "Vance (Marlowe), Ada, Vance (Marlowe), Ada") wrong.push(`the lines' speakers: ${names || "none"}`);
     else {
       const [marlowe, ada, mar] = speakers;
       if (speakers.some((s) => s.unknown)) wrong.push("a cast member's line has no cast colour");
@@ -230,12 +233,20 @@ export default {
     const read = chat.map(
       (l) => `${l.divider ? `[${l.divider}] ` : ""}${l.time}${l.head ? ` ${l.disc} ${l.head}` : ""}`,
     );
-    const expected = ["[💬Hello] 0 M Marlowe", "8 A Ada", "[🎮Thegame] 15", "25 M Marlowe", "[Goodbye] 35 A Ada", "45"];
+    // Marlowe is played by Vance, named first: his disc's initial is Vance's.
+    const expected = [
+      "[💬Hello] 0 V Vance (Marlowe)",
+      "8 A Ada",
+      "[🎮Thegame] 15",
+      "25 V Vance (Marlowe)",
+      "[Goodbye] 35 A Ada",
+      "45",
+    ];
     if (read.join(" | ") !== expected.join(" | ")) wrong.push(`the transcript reads ${read.join(" | ")}`);
     if (chat.some((l) => l.named)) wrong.push("a line names its speaker as well as its group's head");
 
     // The heads of those with an account: the name a link to their channel,
-    // saying who plays them; the disc their picture once it has loaded, or
+    // saying where it goes (the head itself says who plays them); the disc their picture once it has loaded, or
     // their initial when there's none (Ada's), never empty.
     const heads = await until(
       "the cast's pictures",
@@ -254,13 +265,13 @@ export default {
     ).catch(() => []);
     const want = [
       {
-        name: "Marlowe",
+        name: "Vance (Marlowe)",
         link: "https://www.twitch.tv/marlowe_live",
-        title: "Played by Marlowe Vance",
+        title: "twitch.tv/marlowe_live",
         picture: "shown",
         initial: false,
       },
-      { name: "Ada", link: "https://kick.com/ada_plays", title: "ada_plays", picture: "none", initial: true },
+      { name: "Ada", link: "https://kick.com/ada_plays", title: "kick.com/ada_plays", picture: "none", initial: true },
     ];
     for (const [i, h] of heads.entries()) {
       const w = want[i % 2];
@@ -287,8 +298,7 @@ export default {
       10_000,
     ).catch(() => []);
     if (
-      cast.join(" | ") !==
-      "Marlowe Streamer · also Mar Played by Marlowe Vance · twitch.tv/marlowe_live | Ada Friend kick.com/ada_plays"
+      cast.join(" | ") !== "Vance (Marlowe) Streamer · also Mar twitch.tv/marlowe_live | Ada Friend kick.com/ada_plays"
     )
       wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
@@ -343,6 +353,19 @@ export default {
       "chapter Goodbye",
     ];
     if (paneRows.join(" | ") !== expectedRows.join(" | ")) wrong.push(`the pane reads ${paneRows.join(" | ")}`);
+    // Who's in the first highlight, its chips in the cast's colours, their
+    // tooltip naming the streamer first ("Mar" in the file is Marlowe).
+    const chips = await app.js(
+      `const faces = document.querySelector(arguments[0])?.querySelector(".faces");
+      return faces ? { title: faces.title, colors: [...faces.querySelectorAll(".face")].map((f) => getComputedStyle(f).backgroundColor) } : null`,
+      row(funny),
+    );
+    if (chips?.title !== "Vance (Marlowe), Ada") wrong.push(`the first highlight's chips say "${chips?.title}"`);
+    else if (
+      speakers.length === 4 &&
+      JSON.stringify(chips.colors) !== JSON.stringify([speakers[0].color, speakers[1].color])
+    )
+      wrong.push(`the chips' colours ${chips.colors} aren't the speakers' ${speakers[0].color}, ${speakers[1].color}`);
     const placed =
       await app.js(`const pane = document.querySelector(".below.beside .annotations-pane")?.getBoundingClientRect();
       const text = document.querySelector("#transcript")?.getBoundingClientRect();

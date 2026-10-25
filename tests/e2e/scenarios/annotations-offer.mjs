@@ -136,7 +136,7 @@ export default {
           },
           MINUTE,
         ).catch(() => []);
-        if (names.join(", ") !== "Marlowe, Ada, Marlowe, Ada")
+        if (names.join(", ") !== "Vance (Marlowe), Ada, Vance (Marlowe), Ada")
           wrong.push(`the transcript's speakers: ${names.join(", ")}`);
         const chapters = await chaptersRead(app, "💬Hello, 🎮Thegame, Goodbye");
         if (chapters !== "💬Hello, 🎮Thegame, Goodbye") wrong.push(`the transcript's chapters: ${chapters}`);

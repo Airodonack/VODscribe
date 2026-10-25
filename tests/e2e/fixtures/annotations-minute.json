@@ -294,7 +294,7 @@
       "name": "Marlowe",
       "aliases": ["Mar"],
       "role": "streamer",
-      "player": "Marlowe Vance",
+      "player": "Vance",
       "account": {
         "platform": "twitch",
         "login": "marlowe_live"

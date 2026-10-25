@@ -31,7 +31,8 @@
   import { annotated } from "./annotated.svelte";
   import { castIndex, speakerColor } from "./annotated";
   import { GROUP_HEAD_HEIGHT, groupHeads } from "./transcriptGroups";
-  import { channelTitle, channelUrl } from "./accounts";
+  import { channelLabel, channelUrl } from "./accounts";
+  import { speakerName } from "./castNames";
   import CastDisc from "./CastDisc.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -272,8 +273,9 @@
 
   // The head over each row that starts a group of one speaker's lines (by
   // place in `rows`): a group ends at a chapter's divider, so they agree.
-  // A cast member's alias is them, headed by their name, so one person reads
-  // as one; a name not in the cast as the line has it.
+  // A cast member's alias is them, grouped by their name, so one person reads
+  // as one; a name not in the cast as the line has it. The head reads their
+  // display name (castNames.ts): the streamer first where one plays them.
   const speakerHeads = $derived(
     groupHeads(
       rows.map((row) => ({ line: row.line, divided: heads.has(row.key) })),
@@ -1139,10 +1141,11 @@
             {@const color = speakerColor(cast, group.name)}
             {@const member = cast[castIndex(cast, group.name)]}
             {@const account = member?.account}
+            {@const label = speakerName(member, group.name)}
             <!-- Who says the lines below, and when the first is: their picture, or their initial; their name links to their channel. -->
             <div class="group-head" data-time={group.start}>
               <span class="avatar-slot">
-                <CastDisc name={group.name} {color} {member} />
+                <CastDisc name={label} {color} {member} />
               </span>
               <span class="who">
                 {#if account}
@@ -1152,11 +1155,11 @@
                     class:unknown={!color}
                     style:color
                     href={url}
-                    title={channelTitle(member)}
-                    onclick={(e) => (e.preventDefault(), openUrl(url))}>{group.name}</a
+                    title={channelLabel(account)}
+                    onclick={(e) => (e.preventDefault(), openUrl(url))}>{label}</a
                   >
                 {:else}
-                  <span class="speaker" class:unknown={!color} style:color>{group.name}</span>
+                  <span class="speaker" class:unknown={!color} style:color>{label}</span>
                 {/if}
                 <span class="head-time">{formatTime(group.start)}</span>
               </span>

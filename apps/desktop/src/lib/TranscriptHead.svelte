@@ -2,6 +2,7 @@
   import { api, type CastMember, type Stretch, type Vod } from "./api";
   import { castDetail, speakerColor } from "./annotated";
   import { channelLabel, channelUrl } from "./accounts";
+  import { displayName } from "./castNames";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Popover from "./Popover.svelte";
   import { formatSpan } from "./platform";
@@ -105,18 +106,15 @@
             <li>
               <span class="swatch" style:background={speakerColor(cast, member.name)}></span>
               <span class="who">
-                <strong>{member.name}</strong>
+                <!-- The streamer who plays them is in the name ("GEEGA (Gigi)"), so only their channel follows. -->
+                <strong>{displayName(member)}</strong>
                 <span class="muted">{castDetail(member)}</span>
-                {#if member.player || member.account}
-                  {@const account = member.account}
+                {#if member.account}
+                  {@const url = channelUrl(member.account)}
                   <span class="muted"
-                    >{member.player ? `Played by ${member.player}` : ""}{member.player && account
-                      ? " · "
-                      : ""}{#if account}
-                      {@const url = channelUrl(account)}
-                      <a class="channel" href={url} onclick={(e) => (e.preventDefault(), openUrl(url))}
-                        >{channelLabel(account)}</a
-                      >{/if}</span
+                    ><a class="channel" href={url} onclick={(e) => (e.preventDefault(), openUrl(url))}
+                      >{channelLabel(member.account)}</a
+                    ></span
                   >
                 {/if}
               </span>
