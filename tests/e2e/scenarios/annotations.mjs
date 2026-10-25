@@ -107,7 +107,7 @@ export default {
     "annotations-pane":
       'On the window\'s right, a column the full height of the window lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Vance (Marlowe)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Vance (Marlowe) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with a coloured dot.',
+      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Vance (Marlowe)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Vance (Marlowe) (Streamer · also Mar, twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -300,19 +300,25 @@ export default {
       wrong.push(`the image server was asked: ${asked.join(", ")}`);
     host.stop();
 
-    // The cast, from the transcript's header.
+    // The cast, from the transcript's header: each with the disc their lines
+    // have (its initial, in their colour), then who they are.
     await app.click(".cast-toggle");
     const cast = await until(
       "the cast list",
       () =>
         app.js(`const list = document.querySelector('[role=dialog][aria-label="Cast"]');
-          return list ? [...list.querySelectorAll("li")].map((li) => li.textContent.replace(/\\s+/g, " ").trim()) : false`),
+          return list ? [...list.querySelectorAll("li")].map((li) => {
+            const disc = li.querySelector(".avatar");
+            return (disc ? disc.textContent.trim() + " " + getComputedStyle(disc).backgroundColor + ": " : "no disc: ") +
+              li.querySelector(".who").textContent.replace(/\\s+/g, " ").trim();
+          }) : false`),
       10_000,
     ).catch(() => []);
-    if (
-      cast.join(" | ") !== "Vance (Marlowe) Streamer · also Mar twitch.tv/marlowe_live | Ada Friend kick.com/ada_plays"
-    )
-      wrong.push(`the cast list: ${cast.join(" | ")}`);
+    const castWant = [
+      `V ${speakers[0]?.color}: Vance (Marlowe) Streamer · also Mar twitch.tv/marlowe_live`,
+      `A ${speakers[1]?.color}: Ada Friend kick.com/ada_plays`,
+    ];
+    if (cast.join(" | ") !== castWant.join(" | ")) wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
     await app.key("Escape");
 
@@ -365,19 +371,41 @@ export default {
       "chapter Goodbye",
     ];
     if (paneRows.join(" | ") !== expectedRows.join(" | ")) wrong.push(`the pane reads ${paneRows.join(" | ")}`);
-    // Who's in the first highlight, its chips in the cast's colours, their
-    // tooltip naming the streamer first ("Mar" in the file is Marlowe).
+    // Who's in the first highlight: their discs in the cast's colours, with
+    // the streamer's initial, their tooltip naming the streamer first ("Mar"
+    // in the file is Marlowe). They sit at the end of the row's times line,
+    // right of the times, under the title (which has the row's width).
     const chips = await app.js(
-      `const faces = document.querySelector(arguments[0])?.querySelector(".faces");
-      return faces ? { title: faces.title, colors: [...faces.querySelectorAll(".face")].map((f) => getComputedStyle(f).backgroundColor) } : null`,
+      `const row = document.querySelector(arguments[0]);
+      const faces = row?.querySelector(".faces");
+      if (!faces) return null;
+      const box = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      const times = document.createRange();
+      times.selectNodeContents(row.querySelector(".meta"));
+      return { title: faces.title,
+        discs: [...faces.querySelectorAll(".face .avatar")].map((f) => f.textContent.trim() + " " + getComputedStyle(f).backgroundColor),
+        inLine: faces.parentElement === row.querySelector(".meta-line"),
+        faces: box(faces.getBoundingClientRect()), times: box(times.getBoundingClientRect()),
+        name: box(row.querySelector(".name").getBoundingClientRect()), line: box(row.querySelector(".meta-line").getBoundingClientRect()) }`,
       row(funny),
     );
-    if (chips?.title !== "Vance (Marlowe), Ada") wrong.push(`the first highlight's chips say "${chips?.title}"`);
-    else if (
-      speakers.length === 4 &&
-      JSON.stringify(chips.colors) !== JSON.stringify([speakers[0].color, speakers[1].color])
-    )
-      wrong.push(`the chips' colours ${chips.colors} aren't the speakers' ${speakers[0].color}, ${speakers[1].color}`);
+    if (chips?.title !== "Vance (Marlowe), Ada") wrong.push(`the first highlight's discs say "${chips?.title}"`);
+    else {
+      if (
+        speakers.length === 4 &&
+        JSON.stringify(chips.discs) !== JSON.stringify([`V ${speakers[0].color}`, `A ${speakers[1].color}`])
+      )
+        wrong.push(`the discs ${chips.discs} aren't the speakers' V ${speakers[0].color}, A ${speakers[1].color}`);
+      const { faces, times, name, line } = chips;
+      if (
+        !chips.inLine ||
+        faces.left < times.right ||
+        faces.top < name.bottom ||
+        Math.abs(faces.right - line.right) > 1 ||
+        faces.bottom > line.bottom + 1
+      )
+        wrong.push(`the discs aren't at the end of the times line, under the title: ${JSON.stringify(chips)}`);
+    }
     const placed =
       await app.js(`const pane = document.querySelector(".app > .pane.side .annotations-pane")?.getBoundingClientRect();
       const main = document.querySelector(".app > .main")?.getBoundingClientRect();

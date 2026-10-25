@@ -4,7 +4,9 @@
   // (accounts.ts). The picture shows only once it has loaded, so the disc is
   // never empty: before, or when there's none, the initial is what shows. It
   // is shown whole as the site has it, only clipped round as chats draw one,
-  // and the disc links to their channel as their name beside it does.
+  // and the disc links to their channel as their name beside it does, unless
+  // it sits inside something that is a control of its own (`link`). The
+  // Cast popover and the chapters and highlights pane draw it smaller (`size`).
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { avatarUrl, channelLabel, channelUrl } from "./accounts";
   import { annotated } from "./annotated.svelte";
@@ -15,12 +17,18 @@
     name,
     color,
     member,
+    size = 22,
+    link = true,
   }: {
     /** Who it's for, as the head names them: the initial is its first letter, the streamer's where they're named first. */
     name: string;
     /** Their cast colour; null for someone not in the cast. */
     color: string | null;
     member?: CastMember;
+    /** Its width and height, in pixels; the initial is drawn to match. */
+    size?: number;
+    /** Whether it links to their channel; false inside a button, which can't hold a link. */
+    link?: boolean;
   } = $props();
 
   const account = $derived(member?.account);
@@ -51,7 +59,7 @@
   {/if}
 {/snippet}
 
-{#if account}
+{#if account && link}
   {@const url = channelUrl(account)}
   <!-- The name beside it is the same link, for the keyboard and screen readers. -->
   <a
@@ -59,6 +67,7 @@
     class:unknown={!color}
     class:pictured={loaded}
     style:background={color}
+    style:--size="{size}px"
     href={url}
     title={channelLabel(account)}
     tabindex="-1"
@@ -66,7 +75,14 @@
     onclick={(e) => (e.preventDefault(), openUrl(url))}>{@render face()}</a
   >
 {:else}
-  <span class="avatar" class:unknown={!color} style:background={color} aria-hidden="true">{@render face()}</span>
+  <span
+    class="avatar"
+    class:unknown={!color}
+    class:pictured={loaded}
+    style:background={color}
+    style:--size="{size}px"
+    aria-hidden="true">{@render face()}</span
+  >
 {/if}
 
 <style>
@@ -74,12 +90,13 @@
     position: relative;
     display: grid;
     place-items: center;
-    width: 22px;
-    height: 22px;
+    flex: none;
+    width: var(--size, 22px);
+    height: var(--size, 22px);
     border-radius: 50%;
     overflow: hidden;
     color: #fff;
-    font-size: 11px;
+    font-size: calc(var(--size, 22px) / 2);
     font-weight: 700;
     line-height: 1;
     text-decoration: none;

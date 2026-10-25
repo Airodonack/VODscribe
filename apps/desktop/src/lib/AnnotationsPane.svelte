@@ -6,9 +6,9 @@
   // it nested under it; the chapter playing, and any highlight playing, lit
   // and kept in view. (Who's who is in the transcript, over their lines.) A chapter
   // shows its highlights until it's collapsed, then how many it holds; a
-  // highlight shows its kind's emoji, title, start and length (and dots for
-  // who's in it) until it's expanded, then its kind's word too, why and cast
-  // by name. A click on a
+  // highlight shows its kind's emoji, title, start and length (and the discs
+  // of who's in it, at the end of that line) until it's expanded, then its
+  // kind's word too, why and cast by name. A click on a
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
@@ -28,6 +28,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { Put, Vod } from "./api";
   import AddToEdit from "./AddToEdit.svelte";
+  import CastDisc from "./CastDisc.svelte";
   import Popover from "./Popover.svelte";
   import { DEMO } from "./demo";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
@@ -111,8 +112,12 @@
     else collapsed.add(key);
   }
 
-  /** Who is in a highlight, in the cast's colours (null for a name not in it). */
-  const people = (row: HighlightRow) => row.cast.map((name) => ({ name, color: speakerColor(cast, name) }));
+  /** Who is in a highlight, in the cast's colours (null for a name not in it), with their disc's label (CastDisc). */
+  const people = (row: HighlightRow) =>
+    row.cast.map((name) => {
+      const member = cast[castIndex(cast, name)];
+      return { name, color: speakerColor(cast, name), member, label: speakerName(member, name) };
+    });
 
   let scroller = $state<HTMLElement>();
   const chapterEls: HTMLElement[] = $state([]);
@@ -381,22 +386,35 @@
                     <span class="emoji" title={row.category} aria-hidden="true">{highlightGlyph(row.category)}</span>
                     <span class="text">
                       <span class="name">{row.title}</span>
-                      <span class="meta muted">
-                        {formatTime(row.start)}{#if length}<span class="sep">·</span
-                          >{length}{/if}{#if open && row.category}<span class="sep">·</span>{row.category}{/if}
+                      <!-- Its times, and at the end of that line who's in it, so the title above has the row's width. -->
+                      <span class="meta-line">
+                        <span class="meta muted">
+                          {formatTime(row.start)}{#if length}<span class="sep">·</span
+                            >{length}{/if}{#if open && row.category}<span class="sep">·</span>{row.category}{/if}
+                        </span>
+                        {#if !open && row.cast.length}
+                          <span
+                            class="faces"
+                            title={people(row)
+                              .map((p) => p.label)
+                              .join(", ")}
+                          >
+                            {#each people(row).slice(0, 4) as p, j (j)}
+                              <span class="face"
+                                ><CastDisc
+                                  name={p.label}
+                                  color={p.color}
+                                  member={p.member}
+                                  size={16}
+                                  link={false}
+                                /></span
+                              >
+                            {/each}
+                            {#if row.cast.length > 4}<span class="more muted">+{row.cast.length - 4}</span>{/if}
+                          </span>
+                        {/if}
                       </span>
                     </span>
-                    {#if !open && row.cast.length}
-                      <span
-                        class="faces"
-                        title={row.cast.map((name) => speakerName(cast[castIndex(cast, name)], name)).join(", ")}
-                      >
-                        {#each people(row).slice(0, 4) as p, j (j)}
-                          <span class="face" class:unknown={!p.color} style:background={p.color}></span>
-                        {/each}
-                        {#if row.cast.length > 4}<span class="more muted">+{row.cast.length - 4}</span>{/if}
-                      </span>
-                    {/if}
                   </button>
                 </div>
                 {#if open}
@@ -404,9 +422,11 @@
                     {#if row.why}<p class="why">{row.why}</p>{/if}
                     {#if row.cast.length}
                       <p class="people">
-                        {#each people(row) as p, j (j)}{#if j}<span class="muted">, </span>{/if}<strong
-                            class:unknown={!p.color}
-                            style:color={p.color}>{p.name}</strong
+                        {#each people(row) as p, j (j)}<span class="chip"
+                            ><CastDisc name={p.label} color={p.color} member={p.member} size={16} link={false} /><strong
+                              class:unknown={!p.color}
+                              style:color={p.color}>{p.name}</strong
+                            ></span
                           >{/each}
                       </p>
                     {/if}
@@ -546,18 +566,20 @@
     margin: 0 1px;
   }
 
+  /* --row-bg: the row's background, which rings each disc in a highlight's stack (.face). */
   .pane-row {
+    --row-bg: var(--surface);
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
+    background: var(--row-bg);
   }
 
   .pane-row:hover {
-    background: var(--bg);
+    --row-bg: var(--bg);
   }
 
   /* The chapter playing, and a highlight playing, lit as the library's open VOD is. */
   .pane-row.lit {
-    background: var(--accent-soft);
+    --row-bg: var(--accent-soft);
     box-shadow: inset 3px 0 var(--accent);
   }
 
@@ -594,6 +616,8 @@
     font-weight: 400;
     text-align: left;
     justify-content: flex-start;
+    /* A button keeps to one line (app.css); a long title wraps instead of being cut off. */
+    white-space: normal;
   }
 
   /* What opens and closes a row, a chevron pointing down when it's open. */
@@ -664,27 +688,40 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Who's in a collapsed highlight: a dot each in their cast colour. */
+  /* A highlight's times, then who's in it at the far end of the line; the
+     times are what's cut short when both don't fit. */
+  .meta-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .meta-line .meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Who's in a collapsed highlight: their discs (CastDisc.svelte), each
+     overlapping the one before and ringed in the row's colour. */
   .faces {
-    margin-left: auto;
     flex: none;
     display: flex;
     align-items: center;
-    gap: 3px;
-    align-self: center;
   }
 
   .face {
-    width: 7px;
-    height: 7px;
+    display: flex;
     border-radius: 50%;
+    box-shadow: 0 0 0 1.5px var(--row-bg);
   }
 
-  .face.unknown {
-    background: var(--muted);
+  .face + .face {
+    margin-left: -4px;
   }
 
   .more {
+    margin-left: 4px;
     font-size: 11px;
   }
 
@@ -724,15 +761,15 @@
   }
 
   .text {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 1px;
     min-width: 0;
   }
 
-  /* A highlight's title over its times; the chapter playing in bold. */
-  .text .name,
-  .pane-row.lit .name {
+  /* The chapter playing in bold; a highlight's title stays regular, lit or not. */
+  .pane-row.chapter.lit .name {
     font-weight: 600;
   }
 
@@ -763,8 +800,23 @@
     margin-top: 4px;
   }
 
+  .people {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  /* A cast member's disc, then their name in their colour. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
   .people strong {
     font-weight: 600;
+    overflow-wrap: anywhere;
   }
 
   .people strong.unknown {

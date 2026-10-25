@@ -7,6 +7,7 @@
   import Popover from "./Popover.svelte";
   import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
+  import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
   import Spinner from "./Spinner.svelte";
   import Timeline from "./Timeline.svelte";
@@ -104,7 +105,7 @@
         <ul class="cast">
           {#each cast as member (member.name)}
             <li>
-              <span class="swatch" style:background={speakerColor(cast, member.name)}></span>
+              <CastDisc name={displayName(member)} color={speakerColor(cast, member.name)} {member} size={20} />
               <span class="who">
                 <!-- The streamer who plays them is in the name ("GEEGA (Gigi)"), so only their channel follows. -->
                 <strong>{displayName(member)}</strong>
@@ -234,18 +235,11 @@
     gap: 8px;
   }
 
+  /* Each with the disc their lines have in the transcript, beside their name. */
   .cast li {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     gap: 8px;
-  }
-
-  /* The colour their lines' names have in the transcript. */
-  .swatch {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
   }
 
   .who {
