@@ -808,6 +808,8 @@ export const events = {
   vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
   annotationsFound: (cb: (id: number) => void) => listen<number>("annotations-found", (e) => cb(e.payload)),
+  /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */
+  annotationsImported: (cb: (id: number) => void) => listen<number>("annotations-imported", (e) => cb(e.payload)),
   /** Which setup item ("yt-dlp", "ffmpeg", "model", "deno") and where its download is. */
   setupProgress: (cb: (item: string, progress: DownloadProgress) => void) =>
     listen<DownloadProgress & { item: string }>("setup-progress", (e) => cb(e.payload.item, e.payload)),

@@ -1,13 +1,14 @@
 // The open VOD's cast and activity, from an annotations import
 // (crates/core annotations.rs), read through `vod_annotations` once per VOD
-// and again after an import; and the import itself, from the file picker.
+// and again whenever the app says one was imported (`annotations-imported`),
+// whatever started it.
 // The timeline (Scrubber.svelte) draws the activity, the transcript
 // (Transcript.svelte) colours its lines by speaker and heads them with the
 // cast member's picture, and its header lists the cast.
 
 import { SvelteMap } from "svelte/reactivity";
 import { AVATAR_BASE } from "./accounts";
-import { api, type Vod, type VodAnnotations } from "./api";
+import { api, events, type VodAnnotations } from "./api";
 import { cuts } from "./cuts.svelte";
 
 class Annotated {
@@ -18,6 +19,10 @@ class Annotated {
 
   #avatarBase = $state<string | null>(null);
   #askedBase = false;
+
+  constructor() {
+    void events.annotationsImported((id) => this.imported(id));
+  }
 
   /**
    * The image server the cast's pictures are asked of; null until the app

@@ -6,7 +6,6 @@
 // and the marks an import brought are replaced, the user's own marks stay.
 
 import { api, type AnnotationsOffer, type Vod } from "./api";
-import { annotated } from "./annotated.svelte";
 import { settings } from "./appSettings.svelte";
 import { toast } from "./toasts.svelte";
 
@@ -54,8 +53,8 @@ class Offers {
     this.busy = true;
     this.error = null;
     try {
+      // The page reads it again on the app's word (`annotations-imported`).
       await api.fetchAnnotations(shown.vod.id);
-      annotated.imported(shown.vod.id);
       if (this.shown === shown) this.shown = null;
       toast.show(`The transcript and annotations are in “${shown.vod.title}”.`);
     } catch (e) {

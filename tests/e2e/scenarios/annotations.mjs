@@ -107,6 +107,10 @@ export default {
     writeFileSync(annotations, json);
     writeFileSync(path.join(dir, "minute-annotations.chat.json"), readFileSync(CHAT));
 
+    // The image server answers from before the import: the VOD is open from
+    // its adding, so its transcript asks for the cast's pictures as soon as
+    // the import reaches it, and a picture asked of nobody stays its initial.
+    const host = serveFiles(pictures);
     const importIt = () => app.invoke("import_annotations_file", { path: annotations });
     await importIt();
     const imported = await until(
@@ -131,8 +135,6 @@ export default {
     if (JSON.stringify(icons) !== '["💬","🎮",null]') throw new Error(`the chapters' icons: ${JSON.stringify(icons)}`);
     ctx.log(`imported: transcribed whole, chat in, ${marks.length} marks`);
 
-    // The import opens the VOD; the cast's pictures are asked for as it shows them.
-    const host = serveFiles(pictures);
     await app.openVod(vod.id);
     const wrong = [];
 

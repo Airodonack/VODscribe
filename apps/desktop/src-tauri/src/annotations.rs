@@ -73,6 +73,9 @@ async fn import(
         state.chat.push(vod.id);
     }
     emit_vod(&app, &state.db.lock().unwrap(), vod.id)?;
+    // Whatever started the import (the offer, a file, a test), the page
+    // re-reads what it shows of the VOD from here.
+    let _ = app.emit("annotations-imported", vod.id);
     Ok(Imported { vod, created })
 }
 
