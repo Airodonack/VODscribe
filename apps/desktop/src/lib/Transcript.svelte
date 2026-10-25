@@ -29,13 +29,17 @@
   import { load, save } from "./stored";
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
-  import { speakerColor } from "./annotated";
+  import { castIndex, speakerColor } from "./annotated";
+  import { GROUP_HEAD_HEIGHT, groupHeads, initial } from "./transcriptGroups";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
   // plays from it; dragging across lines selects them: a VOD's to cut
   // around (Split), an edit's to take out (Delete). The line at the
   // playhead is kept in view, playing or not, until the reader scrolls away.
+  // It reads as a chat window: a speaker's lines one after another sit under
+  // one head with their name (transcriptGroups.ts), and each chapter's start
+  // has a divider with its title.
   let {
     vod = null,
     edit = null,
@@ -249,7 +253,7 @@
   // so are the playhead and the moment pointed at on the timeline there.
   const mine = $derived(vod ? cuts.vodId === vod.id : cuts.doc?.kind === "edit" && cuts.doc.id === edit);
 
-  // Each chapter's title (cuts.svelte.ts) as a heading over the row that
+  // Each chapter's title (cuts.svelte.ts) as a divider over the row that
   // starts nearest its start: a line's, or a part not transcribed.
   const heads = $derived.by(() => {
     const out = new Map<string, Mark[]>();
@@ -263,6 +267,17 @@
     return out;
   });
 
+  // The head over each row that starts a group of one speaker's lines (by
+  // place in `rows`): a group ends at a chapter's divider, so they agree.
+  // A cast member's alias is them, headed by their name, so one person reads
+  // as one; a name not in the cast as the line has it.
+  const speakerHeads = $derived(
+    groupHeads(
+      rows.map((row) => ({ line: row.line, divided: heads.has(row.key) })),
+      (name) => cast[castIndex(cast, name)]?.name ?? name,
+    ),
+  );
+
   // Only the rows in and near the view are laid out; empty space of the right
   // height stands in for the rest, so a long VOD with a busy chat opens, toggles
   // chat and jumps around at once, however far it goes. Each row's height is
@@ -274,9 +289,9 @@
   /** Each row's key for its measured height, made once per set of rows. */
   let heightKeys = $derived(rows.map((row) => `${showChat ? "chat" : "text"}|${row.key}`));
   let width = $state(0);
-  function estimate(row: Row): number {
+  function estimate(row: Row, index: number): number {
     const textWidth = Math.max(160, (showChat ? width * 0.6 : width) - 110);
-    const head = (heads.get(row.key)?.length ?? 0) * HEAD_HEIGHT;
+    const head = (heads.get(row.key)?.length ?? 0) * HEAD_HEIGHT + (speakerHeads[index] ? GROUP_HEAD_HEIGHT : 0);
     // A gap's row says what it is in about this many characters.
     const chars = row.line ? row.line.text.length : row.gap ? 60 : 0;
     const text = chars ? head + 10 + 22.5 * Math.max(1, Math.ceil((chars * 7.8) / textWidth)) : 0;
@@ -294,7 +309,7 @@
     void windows;
     const out = new Float64Array(rows.length + 1);
     const keys = heightKeys;
-    rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(keys[i]) ?? estimate(row))));
+    rows.forEach((row, i) => (out[i + 1] = out[i] + (measured.get(keys[i]) ?? estimate(row, i))));
     return out;
   });
   /** The last row whose `at(i)` is at most `x`, or the first row (rows are in order). */
@@ -340,7 +355,7 @@
       const row = rows[index];
       if (!row || !el.isConnected) continue;
       const key = heightKeys[index];
-      const before = measured.get(key) ?? estimate(row);
+      const before = measured.get(key) ?? estimate(row, index);
       const height = el.offsetHeight;
       if (height === before) continue;
       measured.set(key, height);
@@ -1104,11 +1119,34 @@
           class:now={row.line && range[0] + k === nowRow}
         >
           {#each heads.get(key) ?? [] as chapter (chapter.id)}
-            <button class="row chapter-head" data-time={chapter.start} onclick={() => play(chapter.start)}>
-              <span class="time">{formatTime(chapter.start)}</span>
-              <span class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
+            <button
+              class="row chapter-head"
+              data-time={chapter.start}
+              onclick={() => play(chapter.start)}
+              title="Play from {formatTime(chapter.start)}"
+            >
+              <span class="rule lead"></span>
+              {#if chapter.icon}<span class="emoji" aria-hidden="true">{chapter.icon}</span>{/if}
+              <span class="title" class:untitled={!chapter.text}>{chapter.text ?? "Untitled chapter"}</span>
+              <span class="rule"></span>
             </button>
           {/each}
+          {#if speakerHeads[range[0] + k]}
+            {@const group = speakerHeads[range[0] + k]!}
+            {@const color = speakerColor(cast, group.name)}
+            <!-- Who says the lines below, and when the first is: the avatar's place holds their initial. -->
+            <div class="group-head" data-time={group.start}>
+              <span class="avatar-slot">
+                <span class="avatar" class:unknown={!color} style:background={color} aria-hidden="true"
+                  >{initial(group.name)}</span
+                >
+              </span>
+              <span class="who">
+                <span class="speaker" class:unknown={!color} style:color>{group.name}</span>
+                <span class="head-time">{formatTime(group.start)}</span>
+              </span>
+            </div>
+          {/if}
           {#if row.line}
             {@const line = row.line}
             <button
@@ -1118,14 +1156,7 @@
               onclick={(e) => onRowClick(e, line)}
             >
               <span class="time">{formatTime(line.start)}</span>
-              <span
-                >{#if line.speaker}<span
-                    class="speaker"
-                    class:unknown={!speakerColor(cast, line.speaker)}
-                    style:color={speakerColor(cast, line.speaker)}>{line.speaker}</span
-                  >
-                {/if}{line.text}</span
-              >
+              <span>{line.text}</span>
             </button>
           {:else if row.gap}
             {@render gapRow(row.gap)}
@@ -1218,10 +1249,12 @@
     max-width: 1320px;
   }
 
+  /* Columns apart; a divider or a group's head over the line sits as close
+     as it does without chat. */
   .with-chat .line {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    gap: 16px;
+    gap: 0 16px;
   }
 
   .chat {
@@ -1248,22 +1281,99 @@
     cursor: ns-resize;
   }
 
-  /* Who says the line, from an annotations import, in their colour in the cast. */
+  /* Over a group of one speaker's lines, from an annotations import: a disc
+     with their initial where their picture goes, over the lines' times, then
+     their name in their colour in the cast and when the first line is. As
+     wide as the row, as a chapter's divider is, so the chat beside the lines
+     stays beside them. */
+  .group-head {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 8px 10px 0;
+    margin: 0 -10px;
+    line-height: 1.5;
+  }
+
+  .avatar-slot {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    min-width: 56px;
+  }
+
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    user-select: none;
+  }
+
+  .avatar.unknown {
+    background: var(--muted);
+  }
+
+  .who {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
   .speaker {
-    margin-right: 0.35em;
     font-weight: 600;
+    overflow-wrap: anywhere;
   }
 
   .speaker.unknown {
+    color: var(--text);
+  }
+
+  .head-time {
+    flex: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A chapter's start: a rule across with its icon and title, muted, over its first line. */
+  .chapter-head {
+    grid-column: 1 / -1;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 12px;
+    font-weight: 600;
     color: var(--muted);
   }
 
-  /* A chapter's title, over its first line. */
-  .chapter-head {
-    grid-column: 1 / -1;
-    margin-top: 10px;
-    font-weight: 600;
-    color: var(--text);
+  .chapter-head .rule {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* As far in as the lines' times, so the title starts where their text does. */
+  .chapter-head .rule.lead {
+    flex: none;
+    width: 62px;
+  }
+
+  .chapter-head .emoji {
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    font-size: 13px;
+  }
+
+  .chapter-head .title {
+    overflow-wrap: anywhere;
   }
 
   /* A part not transcribed: it says so, and isn't a line to click. */
@@ -1271,14 +1381,9 @@
     background: none;
   }
 
-  .chapter-head .time {
-    color: var(--chapter);
-  }
-
   .chapter-head .untitled {
     font-weight: 400;
     font-style: italic;
-    color: var(--muted);
   }
 
   /* A search match brought into view (`light`): the accent, fading. */

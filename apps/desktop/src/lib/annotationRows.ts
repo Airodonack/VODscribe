@@ -1,7 +1,7 @@
 // The rows of the annotations pane (AnnotationsPane.svelte), worked out from
 // the VOD's marks (list_marks): its chapters, each running to the next one's
 // start, and its highlights, in time order, each under the chapter it starts
-// in; which chapter the playhead is in; what a highlight's length says; and
+// in; which chapter the playhead is in, and which highlights; what a highlight's length says; and
 // how the keyboard goes from row to row.
 
 import type { Mark } from "./api";
@@ -131,6 +131,15 @@ export function currentChapter(chapters: { start: number }[], time: number): num
   let found = -1;
   for (let i = 0; i < chapters.length && chapters[i].start <= time + 1e-6; i++) found = i;
   return found;
+}
+
+/** The ids of those of `highlights` playing at `time`: from their start up to
+ *  their end (one with no end isn't playing past its start). */
+export function currentHighlights(
+  highlights: { id: number; start: number; end: number | null }[],
+  time: number,
+): number[] {
+  return highlights.filter((h) => h.end !== null && h.start <= time + 1e-6 && time < h.end).map((h) => h.id);
 }
 
 /** How long a highlight lasts, as the pane says it: "7 s" under a minute,

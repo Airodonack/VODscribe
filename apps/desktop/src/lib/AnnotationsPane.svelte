@@ -1,7 +1,8 @@
 <script lang="ts">
   // A VOD's annotations as a list beside its player: its chapters (each with
-  // its emoji when the file gave one, the one playing lit and kept in view), each with the highlights that start in it
-  // nested under it, and its cast with their roles and other names. A chapter
+  // its emoji when the file gave one), each with the highlights that start in
+  // it nested under it; the chapter playing, and any highlight playing, lit
+  // and kept in view. (Who's who is in the transcript, over their lines.) A chapter
   // shows its highlights until it's collapsed, then how many it holds; a
   // highlight shows its kind's emoji, title, start and length (and dots for
   // who's in it) until it's expanded, then its kind's word too, why and cast
@@ -17,12 +18,13 @@
   import { tick, type Snippet } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { Vod } from "./api";
-  import { castDetail, speakerColor } from "./annotated";
+  import { speakerColor } from "./annotated";
   import { annotated } from "./annotated.svelte";
   import { highlightGlyph } from "./annotations";
   import {
     chapterRows,
     currentChapter,
+    currentHighlights,
     groupKey,
     hasDetail,
     highlightRows,
@@ -60,6 +62,9 @@
   const highlights = $derived(mine ? highlightRows(cuts.all) : []);
   const groups = $derived(nestRows(chapters, highlights));
   const current = $derived(mine ? currentChapter(chapters, cuts.now) : -1);
+  // The highlights playing, as a string first: it changes only when they do, not with every move of the playhead.
+  const playingIds = $derived(mine ? currentHighlights(highlights, cuts.now).join(" ") : "");
+  const playing = $derived(new Set(playingIds ? playingIds.split(" ").map(Number) : []));
 
   // Chapters are open until collapsed (by groupKey), highlights closed until expanded (by id).
   const collapsed = new SvelteSet<number>();
@@ -87,13 +92,17 @@
   let scroller = $state<HTMLElement>();
   const chapterEls: HTMLElement[] = $state([]);
 
-  // The chapter playing stays in view as it changes: scrolled within the
-  // pane only (never the page around it), and only as far as it takes.
+  // The chapter playing stays in view as it changes, or the highlight playing
+  // in it if one is (and shown): scrolled within the pane only (never the
+  // page around it), and only as far as it takes.
   $effect(() => {
-    const el = chapterEls[current];
+    const chapter = chapterEls[current];
     const box = scroller;
-    if (!el || !box) return;
+    void playingIds;
+    if (!box) return;
     void tick().then(() => {
+      const el = box.querySelector<HTMLElement>(".pane-row.highlight.lit") ?? chapter;
+      if (!el) return;
       // The rows' offsets are from the list (position: relative).
       const top = el.offsetTop;
       const head = box.querySelector<HTMLElement>(".head")?.offsetHeight ?? 0;
@@ -218,7 +227,12 @@
               {@const length = lengthLabel(row.start, row.end)}
               {@const open = expanded.has(row.id)}
               {@const detail = hasDetail(row)}
-              <div class="pane-row highlight" class:nested={chapters.length > 0} class:expanded={open}>
+              <div
+                class="pane-row highlight"
+                class:nested={chapters.length > 0}
+                class:expanded={open}
+                class:lit={playing.has(row.id)}
+              >
                 <div class="line">
                   {#if detail}
                     <button
@@ -237,6 +251,7 @@
                     data-row={rowId(row)}
                     onclick={() => onplay(row.start)}
                     onkeydown={(e) => onRowKey(e, row)}
+                    aria-current={playing.has(row.id) ? "true" : undefined}
                     title="Play from {formatTime(row.start)}"
                   >
                     <span class="emoji" title={row.category} aria-hidden="true">{highlightGlyph(row.category)}</span>
@@ -278,26 +293,8 @@
       </section>
     {/if}
 
-    {#if cast.length}
-      <section aria-label="Cast">
-        <h2 class="head"><span class="eyebrow">Cast</span> <span class="muted">{cast.length}</span></h2>
-        <ul class="cast">
-          {#each cast as member (member.name)}
-            {@const color = speakerColor(cast, member.name)}
-            <li>
-              <span class="dot" style:background={color}></span>
-              <span class="text">
-                <strong style:color>{member.name}</strong>
-                {#if castDetail(member)}<span class="meta muted">{castDetail(member)}</span>{/if}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/if}
-
-    {#if mine && !chapters.length && !highlights.length && !cast.length}
-      <p class="muted empty">This VOD has no chapters, highlights or cast.</p>
+    {#if mine && !chapters.length && !highlights.length}
+      <p class="muted empty">This VOD has no chapters or highlights.</p>
     {/if}
   </div>
 </aside>
@@ -376,7 +373,7 @@
     background: var(--bg);
   }
 
-  /* The chapter playing, lit as the library's open VOD is. */
+  /* The chapter playing, and a highlight playing, lit as the library's open VOD is. */
   .pane-row.lit {
     background: var(--accent-soft);
     box-shadow: inset 3px 0 var(--accent);
@@ -506,13 +503,6 @@
     outline-offset: -2px;
   }
 
-  .dot {
-    flex: none;
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-  }
-
   /* A highlight's kind, as its emoji, beside its title. */
   .emoji {
     flex: none;
@@ -603,25 +593,6 @@
   .vod-review {
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
-  }
-
-  .cast {
-    list-style: none;
-    margin: 0;
-    padding: 6px 0;
-  }
-
-  .cast li {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 5px 14px;
-    font-size: 13px;
-  }
-
-  .cast .dot {
-    align-self: flex-start;
-    margin-top: 5px;
   }
 
   .empty {

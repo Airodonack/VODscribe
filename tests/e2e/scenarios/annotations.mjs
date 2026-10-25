@@ -8,10 +8,12 @@
 // who's in it, its cast); a click on one goes to its start, and the header
 // names the chapter playing there, its icon first.
 // The activity band says what the VOD is doing where it's pointed at. The
-// transcript's lines name their speaker in their cast colour (an alias in the
-// same colour as the name), and the Cast button lists both, with roles and
-// aliases. Imported again, the import's marks are replaced and a chapter of
-// the user's own stays.
+// transcript reads as a chat: one speaker's lines one after another sit under
+// one head naming them in their cast colour (an alias by the cast member's
+// name), the lines in it unnamed, and each chapter has a divider with its
+// icon and title; the Cast button lists the cast, with roles and aliases.
+// Imported again, the import's marks are replaced and a chapter of the
+// user's own stays.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -52,7 +54,7 @@ export default {
     "annotations-timeline":
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
     "annotations-cast":
-      'The transcript\'s lines start with a speaker\'s name in colour ("Marlowe" and "Mar" in the same colour, "Ada" in another), and a small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
+      'The transcript\'s lines sit under headings, each a coloured circle with an initial, a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading. Thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -156,7 +158,7 @@ export default {
     ).catch(() => "(none)");
     if (chapter !== "🎮The game") wrong.push(`at 0:35 the header names the chapter "${chapter}"`);
 
-    // The speakers, in their cast colours: an alias as its name.
+    // The speakers, in their cast colours, over their groups of lines: an alias by its cast member's name.
     const speakers = await until(
       "the speakers' names",
       async () => {
@@ -167,13 +169,34 @@ export default {
       MINUTE,
     ).catch(() => []);
     const names = speakers.map((s) => s.name).join(", ");
-    if (names !== "Marlowe, Ada, Mar, Ada") wrong.push(`the lines' speakers: ${names || "none"}`);
+    if (names !== "Marlowe, Ada, Marlowe, Ada") wrong.push(`the lines' speakers: ${names || "none"}`);
     else {
       const [marlowe, ada, mar] = speakers;
       if (speakers.some((s) => s.unknown)) wrong.push("a cast member's line has no cast colour");
-      if (marlowe.color !== mar.color) wrong.push(`Marlowe is ${marlowe.color} and Mar ${mar.color}`);
+      if (marlowe.color !== mar.color) wrong.push(`Marlowe is ${marlowe.color} and Marlowe (said as Mar) ${mar.color}`);
       if (marlowe.color === ada.color) wrong.push(`Marlowe and Ada are both ${ada.color}`);
     }
+
+    // Each line, top to bottom: the head over it, if it starts a group, and the
+    // chapter's divider over it, if any. Ada's last two lines are one group,
+    // with no divider between them; the line no one is named for has no head;
+    // and no line names its speaker itself.
+    const chat = await app.js(`return [...document.querySelectorAll("#transcript .line")].flatMap((l) => {
+      const row = l.querySelector(":scope > button.row:not(.chapter-head)");
+      return row ? [{
+        time: Number(row.dataset.time),
+        head: l.querySelector(":scope > .group-head .speaker")?.textContent.trim() ?? null,
+        disc: l.querySelector(":scope > .group-head .avatar")?.textContent.trim() ?? null,
+        named: !!row.querySelector(".speaker"),
+        divider: l.querySelector(":scope > .chapter-head")?.textContent.replace(/\\s+/g, "") ?? null,
+      }] : [];
+    })`);
+    const read = chat.map(
+      (l) => `${l.divider ? `[${l.divider}] ` : ""}${l.time}${l.head ? ` ${l.disc} ${l.head}` : ""}`,
+    );
+    const expected = ["[💬Hello] 0 M Marlowe", "8 A Ada", "[🎮Thegame] 15", "25 M Marlowe", "[Goodbye] 35 A Ada", "45"];
+    if (read.join(" | ") !== expected.join(" | ")) wrong.push(`the transcript reads ${read.join(" | ")}`);
+    if (chat.some((l) => l.named)) wrong.push("a line names its speaker as well as its group's head");
 
     // The cast, from the transcript's header.
     await app.click(".cast-toggle");

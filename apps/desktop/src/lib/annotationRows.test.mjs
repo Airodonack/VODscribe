@@ -5,6 +5,7 @@ import {
   BEFORE_FIRST,
   chapterRows,
   currentChapter,
+  currentHighlights,
   hasDetail,
   highlightRows,
   lengthLabel,
@@ -61,6 +62,17 @@ test("the current chapter is the last to start by the playhead, none before the 
   assert.equal(currentChapter(rows, 120), 1);
   assert.equal(currentChapter(rows, 4000), 2);
   assert.equal(currentChapter([], 10), -1);
+});
+
+test("the highlights playing are those from their start up to their end; one with no end, none", () => {
+  const rows = highlightRows(marks);
+  // Long 7–30, Short 7–14, Later 50–60.
+  assert.deepEqual(currentHighlights(rows, 6.9), []);
+  assert.deepEqual(currentHighlights(rows, 7).sort(), [5, 6]);
+  assert.deepEqual(currentHighlights(rows, 14), [5]);
+  assert.deepEqual(currentHighlights(rows, 55), [2]);
+  assert.deepEqual(currentHighlights(rows, 60), []);
+  assert.deepEqual(currentHighlights([{ id: 9, start: 10, end: null }], 10), []);
 });
 
 test("a highlight's length reads in seconds under a minute, as a time over", () => {
