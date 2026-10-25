@@ -946,6 +946,35 @@ export default {
       Math.abs(pushed.chapter?.top ?? 99) > 1
     )
       wrong.push(`Ada's heading 10 px into Marlowe's pinned one at ${JSON.stringify(ada)}: ${JSON.stringify(pushed)}`);
+    // A row above the view turning out 30 px taller (measured as it's laid
+    // out, as scrolling up does): the view moves by as much to keep what's
+    // read in place, and in that very frame the pinned heading still touches
+    // Ada's. Read after the transcript's own measuring (its ResizeObserver
+    // was made first, so it's told first), before the frame is painted.
+    const grown = await app.js(
+      `${PINS}
+       const ada = () => from(document.querySelector('#transcript .line > .group-head[data-time="12"]'));
+       const above = [...document.querySelectorAll("#transcript .line[data-index]")]
+         .find((r) => r.getBoundingClientRect().bottom < viewTop() - 20 && r.querySelector("button.row"));
+       if (!above) throw new Error("no row laid out above the view");
+       const extra = document.createElement("div");
+       extra.style.height = "30px";
+       const painted = await new Promise((ok) => {
+         const ro = new ResizeObserver(() => { ro.disconnect(); ok({ ada: ada(), pins: pins() }); });
+         ro.observe(above);
+         above.append(extra);
+       });
+       await frames();
+       await frames();
+       const settled = { ada: ada(), pins: pins() };
+       extra.remove();
+       await frames();
+       await frames();
+       return { painted, settled };`,
+    );
+    for (const [when, at] of Object.entries(grown))
+      if (!at.pins.speaker || Math.abs(at.pins.speaker.bottom - at.ada.top) > 1)
+        wrong.push(`a row above grown 30 px, ${when}, the pinned heading and Ada's: ${JSON.stringify(at)}`);
     // "The game"'s divider (its row, with the space over it) 10 px into the pinned pair: both pushed up together.
     const divider = await app.js(`${PINS} return put('#transcript .line > .chapter-head[data-time="20"]', ${stack});`);
     const pair = await app.js(`${PINS} return pins();`);

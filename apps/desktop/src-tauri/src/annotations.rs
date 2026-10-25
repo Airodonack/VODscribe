@@ -31,19 +31,28 @@ pub(crate) struct Imported {
 pub(crate) async fn import_annotations_file(app: AppHandle, path: String) -> CmdResult<Imported> {
     let read = tauri::async_runtime::spawn_blocking(move || annotations::read(Path::new(&path), None));
     let (annotations, chat) = read.await.map_err(err)?.map_err(err)?;
-    import(app, annotations, chat).await
+    import(app, annotations, chat, None).await
 }
 
+/// Imports `annotations` (see `import_annotations`); with `onto`, only while
+/// that VOD is still in the library, checked under the same lock as the
+/// import: one taken out while its file was on its way stays out.
 async fn import(
     app: AppHandle,
     annotations: annotations::Annotations,
     chat: Option<Vec<ChatMessage>>,
+    onto: Option<i64>,
 ) -> CmdResult<Imported> {
     let task_app = app.clone();
     let brings_chat = chat.is_some();
     let (vod, created) = tauri::async_runtime::spawn_blocking(move || {
         let state = task_app.state::<AppState>();
         let db = state.db.lock().unwrap();
+        if let Some(id) = onto
+            && !db.vod(id)?.is_some_and(|vod| vod.listed)
+        {
+            anyhow::bail!("That VOD is gone.");
+        }
         db.import_annotations(&annotations, chat.as_deref())
     })
     .await
@@ -158,7 +167,8 @@ pub(crate) async fn annotations_offer(app: AppHandle, vod_id: i64) -> CmdResult<
 
 /// Fetches VOD `vod_id`'s published annotations and imports them: its
 /// transcript and the marks the last import brought are replaced, the
-/// user's own marks stay.
+/// user's own marks stay. Taken out of the library while the file came, it
+/// stays out: nothing is imported.
 #[tauri::command]
 pub(crate) async fn fetch_annotations(app: AppHandle, vod_id: i64) -> CmdResult<Imported> {
     let task_app = app.clone();
@@ -173,7 +183,7 @@ pub(crate) async fn fetch_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
     .await
     .map_err(err)?
     .map_err(err)?;
-    let imported = import(app.clone(), annotations, None).await?;
+    let imported = import(app.clone(), annotations, None, Some(vod_id)).await?;
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     db.set_annotations_imported(vod_id, version.as_deref()).map_err(err)?;

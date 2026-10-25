@@ -455,6 +455,8 @@
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });
           removing.delete(id);
+          // Its annotations offered: nothing to offer them for now.
+          if (offers.shown?.vod.id === id) offers.close();
           vods = vods.filter((v) => v.id !== id);
           if (selectedId === id) selectedId = null;
           if (playing?.vodId === id) playing = null;

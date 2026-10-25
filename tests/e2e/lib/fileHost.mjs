@@ -21,10 +21,10 @@ let serving = null;
  * (through this process's environment, which the drivers pass on).
  */
 export async function startFileHost() {
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     if (!serving) return req.socket.destroy();
     serving.requests.push({ method: req.method, path: req.url });
-    const { status, headers = {}, body = "" } = serving.answer(req.method, req.url);
+    const { status, headers = {}, body = "" } = await serving.answer(req.method, req.url);
     res.writeHead(status, { "Content-Length": Buffer.byteLength(body), ...headers });
     res.end(req.method === "HEAD" ? undefined : body);
   });
@@ -39,7 +39,8 @@ export async function startFileHost() {
 
 /**
  * Has the file host answer each request with `answer(method, path)`:
- * `{ status, headers?, body? }` (the body a string or a Buffer). Returns what it's asked from now on
+ * `{ status, headers?, body? }` (the body a string or a Buffer), or a
+ * promise of one, to hold an answer back. Returns what it's asked from now on
  * (`requests`, each `{ method, path }`) and `stop()`, after which it
  * answers nobody again.
  */

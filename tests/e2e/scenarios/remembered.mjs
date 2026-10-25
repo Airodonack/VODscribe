@@ -64,6 +64,17 @@ export default {
       10_000,
     );
     ctx.log(`set: ${JSON.stringify(want)}`);
+    // Written by the app one at a time after the page shows them (stored.ts):
+    // the restart waits for the last, as a quit that soon would lose it.
+    const kept = { "vodscribe.speed": "1.25", "vodscribe.volume": "0.4", "vodscribe.library": "hidden" };
+    await until(
+      "the choices kept",
+      async () => {
+        const all = await app.invoke("kept_choices");
+        return Object.entries(kept).every(([key, value]) => all[key] === value);
+      },
+      10_000,
+    );
 
     // Restarted: the same choices, in the same VOD's player.
     app = await ctx.restart();

@@ -448,12 +448,22 @@
     // just after a seek, the one sought may be among them.
     if (!changed) {
       if (aimed()) place();
+      caughtUp();
       return;
     }
     flushSync(() => measuredGen++);
     // Just after a seek, the moment sought stays centered; otherwise what's read stays put.
     if (aimed()) place();
     else if (shift && scroller) scroller.scrollTop += shift;
+    caughtUp();
+  }
+  /** Where the view is, now: measuring runs after the frame's scroll
+   *  events, just before it's painted, so a move it makes would otherwise
+   *  reach what's drawn from it (the pinned headings, the rows laid out) a
+   *  frame late, drawn for the old place over the rows at the new one. */
+  function caughtUp() {
+    const s = scroller;
+    if (s && s.scrollTop !== scrollTop) flushSync(() => (scrollTop = s.scrollTop));
   }
   function measure(node: HTMLElement) {
     resizes ??= new ResizeObserver(remeasure);
