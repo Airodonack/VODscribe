@@ -310,6 +310,9 @@ function newApp(e, is, { typing }) {
   // VODs and edits selected removed.
   if (!typing && is(e, "select.all")) return "select all";
   if (!typing && is(e, "library.remove")) return "remove from the library";
+  // New (App.svelte `onWindowKey`): the library and the pane's column shown or hidden.
+  if (is(e, "view.library")) return "library shown or hidden";
+  if (is(e, "view.pane")) return "pane shown or hidden";
   return null;
 }
 
@@ -337,6 +340,12 @@ const named = (e) =>
 /** Every default binding on `os`: the keys the app means. @param {Os} os */
 const meant = (os) => new Set([...buildMap(os, {}).values()].flat());
 
+/** The window's keys added since the map, on `os`. @param {Os} os */
+const windowsNow = (os) => {
+  const map = buildMap(os, {});
+  return new Set([...(map.get("view.library") ?? []), ...(map.get("view.pane") ?? [])]);
+};
+
 /**
  * Why a press that did something before the map does nothing now, or null
  * if it shouldn't have stopped. The old tests were looser than the keys the
@@ -351,12 +360,16 @@ const meant = (os) => new Set([...buildMap(os, {}).values()].flat());
  * - "Y on a Mac": ⌘Y redid; a Mac's redo is ⇧⌘Z.
  * - "< or > alone": their own key on European keyboards, which moved a
  *   selected mark a frame; US Shift+, and Shift+. still move it ten.
+ * - "the window's now": a press a player took by accident that's since the
+ *   window's own (Ctrl+Shift+B cut; it shows or hides the library).
  * @param {Os} os @param {Press} e
  */
 function dropped(os, e) {
   const binding = bindingOf(e);
   const chord = binding === null ? null : parse(binding);
-  if (!chord || meant(os).has(binding ?? "")) return null;
+  if (!chord) return null;
+  if (windowsNow(os).has(binding ?? "")) return "the window's now";
+  if (meant(os).has(binding ?? "")) return null;
   const keys = [...meant(os)].map(parse).filter((c) => c !== null && c.key === chord.key);
   /** @param {Set<string>} mods */
   const covers = (mods) => keys.some((c) => c !== null && [...c.mods].every((m) => mods.has(m)));
@@ -369,7 +382,13 @@ function dropped(os, e) {
 }
 
 /** What actions added since the map do: each on presses that did nothing before. */
-const NEW = new Set(["select all", "remove from the library", "remove clips"]);
+const NEW = new Set([
+  "select all",
+  "remove from the library",
+  "remove clips",
+  "library shown or hidden",
+  "pane shown or hidden",
+]);
 
 /** The deliberate differences met, by reason, with a press or two each. */
 /** @type {Map<string, Set<string>>} */
@@ -448,6 +467,7 @@ test("the presses let through by accident before are the ones listed", () => {
     "held as well",
     "new",
     "the other way round",
+    "the window's now",
   ]);
   const all = new Set([...met.values()].flatMap((s) => [...s]));
   for (const example of [
@@ -469,6 +489,10 @@ test("the presses let through by accident before are the ones listed", () => {
     'mac meta+"a" select all',
     'linux "Delete" remove from the library',
     'linux "Backspace" remove clips',
+    'linux ctrl+shift+"B"',
+    'mac shift+meta+"B"',
+    'linux ctrl+shift+"B" library shown or hidden',
+    'linux ctrl+alt+"b" pane shown or hidden',
   ])
     assert.ok(all.has(example), example);
 });

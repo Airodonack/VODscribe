@@ -266,6 +266,18 @@
     }
     // Ctrl/Cmd+F jumps to search from anywhere, even another text field;
     // a key of Search's that types a character there (Search on "/") is the field's.
+    // Ctrl+Shift+B (⇧⌘B) shows or hides the library, Ctrl+Alt+B (⌥⌘B) the
+    // pane's column, from anywhere: chords, so a text field has no use for them.
+    if (library && is(e, "view.library")) {
+      e.preventDefault();
+      toggleLibrary();
+      return;
+    }
+    if (roomForColumn && is(e, "view.pane")) {
+      e.preventDefault();
+      togglePane();
+      return;
+    }
     if (is(e, "search.focus") && !(typing && typesText(e))) {
       e.preventDefault();
       aside = false;
@@ -553,20 +565,39 @@
         ? "Chapters"
         : "Highlights",
   );
+  // The library and the pane's column can each be hidden, as an editor's
+  // sidebars are, to give the centre their room; the choice is remembered.
+  // The library hidden stays mounted, so files dropped anywhere still add.
+  const LIBRARY = "vodscribe.library";
+  const PANE = "vodscribe.pane";
+  let libraryHidden = $state(load(LIBRARY) === "hidden");
+  let paneHidden = $state(load(PANE) === "hidden");
+  const libraryShown = $derived(library && !libraryHidden);
+  function toggleLibrary() {
+    libraryHidden = !libraryHidden;
+    save(LIBRARY, libraryHidden ? "hidden" : "shown");
+  }
+  function togglePane() {
+    paneHidden = !paneHidden;
+    save(PANE, paneHidden ? "hidden" : "shown");
+  }
   // A column of its own once the window has the room for three: the
   // library's widest (340 px), the pane's (320 px) and a centre of 440 px
-  // between them; without the library (the website's VOD page), the pane's
-  // and the centre's.
-  const columnFrom = $derived(library ? 1100 : 760);
+  // between them; without the library (hidden, or the website's VOD page),
+  // the pane's and the centre's. Hidden, the column is gone; on a window
+  // too narrow for it, the pane is the transcript's tab whether hidden or
+  // not, as there's no column to hide.
+  const columnFrom = $derived(libraryShown ? 1100 : 760);
   let appWidth = $state(0);
-  const column = $derived(paneShown && appWidth >= columnFrom);
+  const roomForColumn = $derived(paneShown && appWidth >= columnFrom);
+  const column = $derived(roomForColumn && !paneHidden);
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
     tab = to;
     save(TAB, to);
   }
-  const tabbed = $derived(paneShown && !column);
+  const tabbed = $derived(paneShown && !roomForColumn);
   const inTab = $derived(tabbed && tab === "annotations");
   // The tabs as one control: ← and → between them, as tabs go.
   function onTabKey(e: KeyboardEvent) {
@@ -692,13 +723,32 @@
 {:else if !ready}
   <Setup status={setup} onchange={refreshSetup} />
 {:else}
-  <div class="app" class:alone={!library} class:with-pane={column} bind:clientWidth={appWidth}>
+  <div
+    class="app"
+    class:alone={!libraryShown}
+    class:library-hidden={library && libraryHidden}
+    class:with-pane={column}
+    bind:clientWidth={appWidth}
+  >
     {#if library}
       <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
+        {#if library}
+          <!-- At the toolbar's left end, by the library or where it was. -->
+          <button
+            class="icon library-toggle"
+            class:on={libraryShown}
+            onclick={toggleLibrary}
+            aria-label={libraryShown ? "Hide the library" : "Show the library"}
+            aria-pressed={libraryShown}
+            title="{libraryShown ? 'Hide the library' : 'Show the library'}{keyHint('view.library')}"
+          >
+            <Icon name="panel-left" size={18} />
+          </button>
+        {/if}
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
           <button
@@ -756,6 +806,19 @@
           aria-expanded={settingsWindow.open}
           title="Settings"><Icon name="settings" size={18} /></button
         >
+        {#if roomForColumn}
+          <!-- At the toolbar's right end, by the pane's column or where it was. -->
+          <button
+            class="icon pane-toggle"
+            class:on={column}
+            onclick={togglePane}
+            aria-label={column ? `Hide ${paneName.toLowerCase()}` : `Show ${paneName.toLowerCase()}`}
+            aria-pressed={column}
+            title="{column ? 'Hide' : 'Show'} {paneName.toLowerCase()}{keyHint('view.pane')}"
+          >
+            <Icon name="panel-right" size={18} />
+          </button>
+        {/if}
         <Modal bind:open={settingsWindow.open} label="Settings">
           <Settings
             oncleared={() => {
@@ -919,6 +982,11 @@
 
   .app.alone.with-pane {
     grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  }
+
+  /* The library hidden: still there (its drops still add), out of the grid. */
+  .app.library-hidden > :global(.library-pane) {
+    display: none;
   }
 
   /* Under the player: the transcript (or the results); on a narrow window,

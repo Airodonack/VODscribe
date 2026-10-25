@@ -151,6 +151,20 @@ export const ACTIONS = [
     scope: "app",
     defaults: { linux: ["Ctrl+a"], mac: ["Meta+a"] },
   },
+  // As an editor's sidebars: Ctrl+B is Cut here's (as video editors have it),
+  // so the left one has Shift rather than none.
+  {
+    id: "view.library",
+    label: "Show or hide the library",
+    scope: "app",
+    defaults: { linux: ["Ctrl+Shift+b"], mac: ["Shift+Meta+b"] },
+  },
+  {
+    id: "view.pane",
+    label: "Show or hide the chapters and highlights column",
+    scope: "app",
+    defaults: { linux: ["Ctrl+Alt+b"], mac: ["Alt+Meta+b"] },
+  },
   {
     id: "library.remove",
     label: "Remove the selected VODs and edits",

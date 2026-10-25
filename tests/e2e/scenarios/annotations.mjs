@@ -32,7 +32,9 @@
 // The Timeline panel's Imported marks toggle hides the import's chapters
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
-// the user's own stays.
+// the user's own stays. The library and the pane's column each hide by a
+// button at the toolbar's end, the centre taking their room, the pane's
+// column then fitting a narrower window; both stay hidden over a reload.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -378,7 +380,7 @@ export default {
       wrong.push(`the chips' colours ${chips.colors} aren't the speakers' ${speakers[0].color}, ${speakers[1].color}`);
     const placed =
       await app.js(`const pane = document.querySelector(".app > .pane.side .annotations-pane")?.getBoundingClientRect();
-      const main = document.querySelector(".main")?.getBoundingClientRect();
+      const main = document.querySelector(".app > .main")?.getBoundingClientRect();
       return pane && main ? { left: pane.left, right: pane.right, top: pane.top, bottom: pane.bottom, width: pane.width,
         mainRight: main.right, innerWidth, innerHeight } : null`);
     if (
@@ -665,6 +667,90 @@ export default {
     if (again.length !== 6 || mine.length !== 1 || mine[0].text !== "Mine")
       wrong.push(`imported again, the marks: ${JSON.stringify(again.map((m) => [m.kind, m.text, m.source]))}`);
     else ctx.log("imported again: the import's five marks anew, and the user's chapter kept");
+
+    // The library and the pane's column hidden, each by its button at the
+    // toolbar's end: the centre takes their room; with the library hidden,
+    // a window of 1000 px has room for the pane's column. Both stay hidden
+    // over a reload, and their buttons show them again.
+    const widths = () =>
+      app.js(`const width = (el) => (el && getComputedStyle(el).display !== "none" ? Math.round(el.getBoundingClientRect().width) : 0);
+        return { library: width(document.querySelector(".library-pane")), main: width(document.querySelector(".app > .main")),
+          pane: width(document.querySelector(".app > .pane.side")),
+          buttons: [...document.querySelectorAll(".toolbar .library-toggle, .toolbar .pane-toggle")].map((b) =>
+            b.classList[1] + "=" + b.getAttribute("aria-pressed")).join(" ") }`);
+    const settled = (what, check) =>
+      until(what, async () => check(await widths()) && widths(), 10_000).catch(async () => {
+        const got = await widths();
+        wrong.push(`${what}: ${JSON.stringify(got)}`);
+        return got;
+      });
+    const all = await settled("both columns", (w) => w.library > 0 && w.pane > 0);
+    await app.click(".toolbar .library-toggle");
+    const noLibrary = await settled(
+      "the library hidden, the centre wider",
+      (w) => !w.library && w.pane > 0 && w.main >= all.main + all.library - 1,
+    );
+    if (noLibrary.buttons !== "library-toggle=false pane-toggle=true")
+      wrong.push(`the library hidden, the buttons read ${noLibrary.buttons}`);
+    const narrowed = await resizeInner(app, 1000, Math.min(was.height, 760));
+    if (narrowed.width < 1100)
+      await until(
+        "the pane's column at 1000 px",
+        () => app.js(`return !!document.querySelector(".app > .pane.side")`),
+        10_000,
+      ).catch(() => wrong.push(`the library hidden, at ${narrowed.width} px the pane isn't a column`));
+    await resizeInner(app, was.width, was.height);
+    await app.click(".toolbar .pane-toggle");
+    await settled(
+      "the pane hidden too, the centre all of it",
+      (w) => !w.library && !w.pane && w.main >= all.main + all.library + all.pane - 1,
+    );
+    if (await app.js(`return !!document.querySelector(".pane-tabs")`)) wrong.push("the pane hidden left tabs");
+    await ctx.checkpoint("columns-hidden");
+    // Over a reload: the page's own storage keeps them. (Not over a restart
+    // yet: the installed app's page is served from a new port each launch,
+    // so what it stores is another origin's then.)
+    await app.js(`setTimeout(() => location.reload(), 0)`);
+    await new Promise((r) => setTimeout(r, 1000));
+    await app.loaded();
+    await until(
+      "the library after the reload",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.vod[data-key="${vod.id}"] button.main`),
+      MINUTE,
+    );
+    const after = await settled("the library still hidden after a reload", (w) => !w.library && w.main > 0);
+    if (!after.buttons.startsWith("library-toggle=false"))
+      wrong.push(`after a reload, the buttons read ${after.buttons}`);
+    // The library shown again, the VOD opened from it: the pane still hidden.
+    await app.click(".toolbar .library-toggle");
+    await app.click(`.vod[data-key="${vod.id}"] button.main`);
+    const reopened = await settled(
+      "the VOD open, the pane still hidden",
+      (w) => w.library > 0 && !w.pane && w.main > 0,
+    );
+    if (reopened.buttons !== "library-toggle=true pane-toggle=false")
+      wrong.push(`after a reload, the VOD open, the buttons read ${reopened.buttons}`);
+    await app.click(".toolbar .pane-toggle");
+    const back = await settled("both shown again", (w) => w.library > 0 && w.pane > 0);
+    if (Math.abs(back.main - all.main) > 1) wrong.push(`shown again, the centre is ${back.main} px, not ${all.main}`);
+    else ctx.log("the library and the pane hidden and shown by their buttons, and remembered over a reload");
+    // And by their keys: Ctrl+Shift+B (⇧⌘B) the library, Ctrl+Alt+B (⌥⌘B) the pane.
+    const chord = (key, shift, alt) =>
+      app.js(
+        `(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], shiftKey: arguments[1], altKey: arguments[2],
+          ctrlKey: !arguments[3], metaKey: arguments[3], bubbles: true, cancelable: true }))`,
+        key,
+        shift,
+        alt,
+        process.platform === "darwin",
+      );
+    await chord("B", true, false);
+    await settled("the library hidden by its key", (w) => !w.library && w.pane > 0);
+    await chord("b", false, true);
+    await settled("the pane hidden by its key", (w) => !w.library && !w.pane);
+    await chord("B", true, false);
+    await chord("b", false, true);
+    await settled("both shown again by their keys", (w) => w.library > 0 && w.pane > 0);
 
     if (wrong.length) throw new Error(wrong.join("; "));
   },
