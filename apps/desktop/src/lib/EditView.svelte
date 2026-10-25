@@ -959,33 +959,39 @@
   </PlayerBar>
 {/snippet}
 
+{#snippet sourceLinks()}
+  {#each sources as source (source.vodId)}
+    <button
+      class="source"
+      onclick={() => {
+        hoveredSource = null;
+        if (edit) edits.lit = { editId: edit.id, vodId: source.vodId };
+        onopenvod(source.vodId, source.first);
+      }}
+      onmouseenter={() => (hoveredSource = source.vodId)}
+      onmouseleave={() => hoveredSource === source.vodId && (hoveredSource = null)}
+      title="{source.count === 1
+        ? 'A piece comes'
+        : `${source.count} pieces come`} from “{source.title}”, lit up in the timeline · open it there"
+    >
+      <Icon name="play" size={12} />
+      <span class="name">{source.title}</span>
+      <span class="count muted">· {source.count} {source.count === 1 ? "piece" : "pieces"}</span>
+      <Icon name="external" size={11} />
+    </button>
+  {/each}
+{/snippet}
+
 {#snippet editBelow()}
-  {#if sources.length}
-    <div class="sources" aria-label="Where its pieces come from">
-      {#each sources as source (source.vodId)}
-        <button
-          class="source"
-          onclick={() => {
-            hoveredSource = null;
-            if (edit) edits.lit = { editId: edit.id, vodId: source.vodId };
-            onopenvod(source.vodId, source.first);
-          }}
-          onmouseenter={() => (hoveredSource = source.vodId)}
-          onmouseleave={() => hoveredSource === source.vodId && (hoveredSource = null)}
-          title="{source.count === 1
-            ? 'A piece comes'
-            : `${source.count} pieces come`} from “{source.title}”, lit up in the timeline · open it there"
-        >
-          <Icon name="play" size={12} />
-          <span class="name">{source.title}</span>
-          <span class="count muted">· {source.count} {source.count === 1 ? "piece" : "pieces"}</span>
-          <Icon name="external" size={11} />
-        </button>
-      {/each}
-    </div>
-  {/if}
-  {#if !snippet && clips.doc?.kind === "edit" && (clips.shown.length || clips.error || snippets.size || clips.carryingAny)}
-    <ClipStrip />
+  <!-- An edit's links to its VODs sit on its clip bar, where a VOD's bar has
+       its links to edits; a clip open in the editor has no bar, so a row of
+       their own. -->
+  {#if snippet}
+    {#if sources.length}
+      <div class="sources" aria-label="Where its pieces come from">{@render sourceLinks()}</div>
+    {/if}
+  {:else if clips.doc?.kind === "edit" && (sources.length || clips.shown.length || clips.error || snippets.size || clips.carryingAny)}
+    <ClipStrip links={sourceLinks} />
   {/if}
 {/snippet}
 
@@ -1104,7 +1110,9 @@
     color: var(--cut);
   }
 
-  /* Links back to the VODs its pieces come from, as a VOD's clip bar links to its edits. */
+  /* Links back to the VODs its pieces come from, on its clip bar (a clip in
+     the editor has them on a row of their own), looking as a VOD's clip bar's
+     links to its edits do (ClipStrip.svelte's .edit-link). */
   .sources {
     display: flex;
     align-items: center;
@@ -1120,7 +1128,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    max-width: 320px;
+    max-width: 260px;
     height: 28px;
     padding: 0 10px;
     border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -1128,6 +1136,8 @@
     background: var(--accent-soft);
     color: var(--text);
     font-size: 12px;
+    overflow: hidden;
+    cursor: pointer;
   }
 
   .source :global(svg) {
@@ -1137,6 +1147,7 @@
 
   .source .name {
     min-width: 0;
+    padding: 0 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

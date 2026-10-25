@@ -5,7 +5,8 @@
   // in the editor; F2 on its name renames it. Once its file is made, it drags
   // out of the window (into a video editor or a folder: that saves a copy),
   // or onto an edit in the library's list (or on "Make new edit" there). Each
-  // edit using this VOD is a link here too.
+  // edit using this VOD is a link here too; on an edit's bar, the links are
+  // the VODs its pieces come from (`links`).
   // The wheel scrolls the bar sideways, and so does a drag with the middle
   // button pressed, anywhere on it.
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
@@ -33,11 +34,14 @@
     vod,
     ownPlayer = false,
     onplay,
+    links,
   }: {
     vod?: Vod;
     ownPlayer?: boolean;
     /** Plays the VOD from `time` (a pill's play button; a VOD's clip bar only). */
     onplay?: (time: number) => void;
+    /** Links of the bar's owner's own, where a VOD's bar has its edits' links. */
+    links?: import("svelte").Snippet;
   } = $props();
 
   const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
@@ -213,6 +217,7 @@
       <Icon name="external" size={11} />
     </button>
   {/each}
+  {@render links?.()}
   {#each clips.shown as clip (clip.id)}
     {@const progress = clips.progress.get(clip.id)}
     {@const picked = snippets.has(itemOf(clip))}
