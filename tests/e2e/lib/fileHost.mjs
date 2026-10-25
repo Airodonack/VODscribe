@@ -1,6 +1,7 @@
-// The file host the app asks for a VOD's published annotations, played by
-// the run on this computer (crates/core annotations.rs: VODSCRIBE_ANNOTATIONS_URL
-// names it), so no scenario reaches the real one. The run starts it before
+// The file host the app asks for a VOD's published annotations, and the
+// image server its page asks for the cast's pictures, played by the run on
+// this computer (crates/core annotations.rs: VODSCRIBE_ANNOTATIONS_URL and
+// VODSCRIBE_AVATAR_URL name it), so no scenario reaches the real ones. The run starts it before
 // the first app, on a port of its own; it answers nobody (the connection
 // dropped, as when offline) until a scenario serves something with it, and
 // again after.
@@ -9,6 +10,8 @@ import { createServer } from "node:http";
 
 /** The variable the app reads the file host's address from. */
 export const FILE_HOST_ENV = "VODSCRIBE_ANNOTATIONS_URL";
+/** The variable the app reads the image server's address from: the same host, under /avatar/. */
+export const AVATAR_HOST_ENV = "VODSCRIBE_AVATAR_URL";
 
 /** What answers now, and what it has been asked since it began to. */
 let serving = null;
@@ -31,12 +34,12 @@ export async function startFileHost() {
   });
   // The run ends with process.exit; nothing waits on this.
   server.unref();
-  process.env[FILE_HOST_ENV] = `http://127.0.0.1:${server.address().port}`;
+  process.env[FILE_HOST_ENV] = process.env[AVATAR_HOST_ENV] = `http://127.0.0.1:${server.address().port}`;
 }
 
 /**
  * Has the file host answer each request with `answer(method, path)`:
- * `{ status, headers?, body? }`. Returns what it's asked from now on
+ * `{ status, headers?, body? }` (the body a string or a Buffer). Returns what it's asked from now on
  * (`requests`, each `{ method, path }`) and `stop()`, after which it
  * answers nobody again.
  */

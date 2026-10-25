@@ -1,7 +1,8 @@
 //! Importing annotations for a VOD (`vodscribe_core::annotations`): from the
 //! page's parsed file, from a file picked, or from the file host where
 //! they're published; asking the file host whether a VOD has some; and
-//! reading a VOD's cast and activity back for the page.
+//! reading a VOD's cast and activity back for the page, and where its
+//! pictures come from.
 
 use std::path::Path;
 
@@ -187,4 +188,12 @@ pub(crate) async fn fetch_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
     db.set_annotations_imported(vod_id, version.as_deref()).map_err(err)?;
     emit_vod(&app, &db, vod_id)?;
     Ok(imported)
+}
+
+/// The server the page asks for the cast's pictures when the app is pointed
+/// at another (`annotations::AVATAR_ENV`, the end-to-end tests'); None for
+/// the page's own.
+#[tauri::command]
+pub(crate) fn avatar_base() -> Option<String> {
+    annotations::avatar_base()
 }

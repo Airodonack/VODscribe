@@ -113,6 +113,54 @@ pub struct CastMember {
     #[serde(default)]
     pub aliases: Vec<String>,
     pub role: String,
+    /// The streamer behind a character, by their public name; one that isn't
+    /// a name is left out rather than the file refused.
+    #[serde(default, deserialize_with = "player", skip_serializing_if = "Option::is_none")]
+    pub player: Option<String>,
+    /// Where they stream; one `Account::read` can't take is left out.
+    #[serde(default, deserialize_with = "account", skip_serializing_if = "Option::is_none")]
+    pub account: Option<Account>,
+}
+
+/// A cast member's account: the site and their login there (Twitch's and
+/// Kick's channel name, YouTube's "@handle" or channel id). Never a picture's
+/// address: the page asks for pictures when it shows them (accounts.ts).
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub struct Account {
+    pub platform: String,
+    pub login: String,
+}
+
+/// The sites an account can be on.
+pub const ACCOUNT_PLATFORMS: [&str; 3] = ["twitch", "kick", "youtube"];
+
+impl Account {
+    /// `value` as an account: a listed platform (any case) and a login of
+    /// letters, digits and `_.-` (a YouTube handle with its "@" first),
+    /// trimmed; None for anything else. The page's `readAccount`
+    /// (annotations.ts) is the same rule.
+    pub fn read(value: &serde_json::Value) -> Option<Account> {
+        let platform = value.get("platform")?.as_str()?.trim().to_lowercase();
+        let login = value.get("login")?.as_str()?.trim();
+        if !ACCOUNT_PLATFORMS.contains(&platform.as_str()) {
+            return None;
+        }
+        let rest = if platform == "youtube" { login.strip_prefix('@').unwrap_or(login) } else { login };
+        let fits = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-');
+        if rest.is_empty() || !rest.chars().all(fits) {
+            return None;
+        }
+        Some(Account { platform, login: login.to_string() })
+    }
+}
+
+fn player<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    Ok(value.as_str().map(str::trim).filter(|p| !p.is_empty()).map(Into::into))
+}
+
+fn account<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Account>, D::Error> {
+    Ok(Account::read(&serde_json::Value::deserialize(d)?))
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
@@ -214,13 +262,24 @@ fn usable(t: f64) -> bool {
     t.is_finite() && t >= 0.0
 }
 
+/// A server named by environment variable `name`, without a trailing slash.
+fn named_server(name: &str) -> Option<String> {
+    std::env::var(name).ok().map(|b| b.trim().trim_end_matches('/').to_string()).filter(|b| !b.is_empty())
+}
+
 /// The server published annotations are asked of: `BASE_ENV`'s, if set.
 fn base_url() -> String {
-    std::env::var(BASE_ENV)
-        .ok()
-        .map(|b| b.trim().trim_end_matches('/').to_string())
-        .filter(|b| !b.is_empty())
-        .unwrap_or_else(|| BASE_URL.to_string())
+    named_server(BASE_ENV).unwrap_or_else(|| BASE_URL.to_string())
+}
+
+/// Names another server for the cast's pictures than the page's own
+/// (accounts.ts `AVATAR_BASE`): the end-to-end tests', on this computer.
+pub const AVATAR_ENV: &str = "VODSCRIBE_AVATAR_URL";
+
+/// The server the cast's pictures are asked of when `AVATAR_ENV` names one;
+/// None for the page's own.
+pub fn avatar_base() -> Option<String> {
+    named_server(AVATAR_ENV)
 }
 
 /// Where VOD `id` of `platform`'s published annotations would be on server
@@ -651,6 +710,42 @@ mod tests {
     }
 
     #[test]
+    fn a_cast_members_player_and_account_are_read_and_kept_through_an_import() {
+        let mut json = serde_json::to_value(file("youtube", "abc")).unwrap();
+        json["cast"] = serde_json::json!([
+            { "name": "Marlowe", "role": "streamer", "player": " Marlowe Plays ",
+              "account": { "platform": "Twitch", "login": " marlowe_plays " } },
+            { "name": "Ada", "role": "friend", "account": { "platform": "youtube", "login": "@ada.makes" } },
+            { "name": "Bo", "role": "friend", "player": 3, "account": { "platform": "vimeo", "login": "bo" } },
+            { "name": "Cy", "role": "friend", "player": "", "account": { "platform": "kick", "login": "../cy" } },
+            { "name": "Di", "role": "friend", "account": { "platform": "kick", "login": "@di" } },
+            { "name": "Ed", "role": "friend", "account": "ed" }
+        ]);
+        let annotations = from_value(json).expect("a player or account that can't be read isn't fatal");
+        let cast = &annotations.cast;
+        assert_eq!(cast[0].player.as_deref(), Some("Marlowe Plays"), "trimmed");
+        let twitch = Account { platform: "twitch".into(), login: "marlowe_plays".into() };
+        assert_eq!(cast[0].account.as_ref(), Some(&twitch), "the platform in lower case, the login trimmed");
+        assert_eq!(cast[1].account.as_ref().map(|a| a.login.as_str()), Some("@ada.makes"), "a YouTube handle");
+        assert_eq!((cast[2].player.as_deref(), cast[2].account.as_ref()), (None, None), "an unknown platform");
+        assert_eq!((cast[3].player.as_deref(), cast[3].account.as_ref()), (None, None), "a login that's a path");
+        assert_eq!(cast[4].account, None, "an @ is YouTube's only");
+        assert_eq!(cast[5].account, None);
+
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&annotations, None).unwrap();
+        let kept = db.vod_annotations(vod.id).unwrap().unwrap().cast;
+        assert_eq!(kept, annotations.cast, "the import keeps them as read");
+        let stored = serde_json::to_value(&kept).unwrap();
+        assert_eq!(
+            stored[1],
+            serde_json::json!({ "name": "Ada", "aliases": [], "role": "friend",
+            "account": { "platform": "youtube", "login": "@ada.makes" } }),
+            "and leaves out what's not there"
+        );
+    }
+
+    #[test]
     fn importing_again_replaces_the_import_and_keeps_the_users_marks() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let (vod, _) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
@@ -663,7 +758,13 @@ mod tests {
         let mut next = file("youtube", "abc");
         next.chapters = vec![Chapter { start: 0.0, title: "Opening".into(), icon: None }];
         next.highlights.clear();
-        next.cast.push(CastMember { name: "Ada".into(), aliases: vec![], role: "chatter".into() });
+        next.cast.push(CastMember {
+            name: "Ada".into(),
+            aliases: vec![],
+            role: "chatter".into(),
+            player: None,
+            account: None,
+        });
         next.transcript.segments.truncate(1);
         let (again, created) = db.import_annotations(&next, Some(&[message(1.0, "first")])).unwrap();
         assert_eq!((again.id, created), (vod.id, false));

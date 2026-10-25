@@ -30,7 +30,10 @@
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
   import { castIndex, speakerColor } from "./annotated";
-  import { GROUP_HEAD_HEIGHT, groupHeads, initial } from "./transcriptGroups";
+  import { GROUP_HEAD_HEIGHT, groupHeads } from "./transcriptGroups";
+  import { channelTitle, channelUrl } from "./accounts";
+  import CastDisc from "./CastDisc.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   // A VOD's transcript, or (`edit`) the open edit's: its pieces' lines
   // where they play, on its timeline, with their VODs' chat. A click on a line
@@ -1134,15 +1137,27 @@
           {#if speakerHeads[range[0] + k]}
             {@const group = speakerHeads[range[0] + k]!}
             {@const color = speakerColor(cast, group.name)}
-            <!-- Who says the lines below, and when the first is: the avatar's place holds their initial. -->
+            {@const member = cast[castIndex(cast, group.name)]}
+            {@const account = member?.account}
+            <!-- Who says the lines below, and when the first is: their picture, or their initial; their name links to their channel. -->
             <div class="group-head" data-time={group.start}>
               <span class="avatar-slot">
-                <span class="avatar" class:unknown={!color} style:background={color} aria-hidden="true"
-                  >{initial(group.name)}</span
-                >
+                <CastDisc name={group.name} {color} {member} />
               </span>
               <span class="who">
-                <span class="speaker" class:unknown={!color} style:color>{group.name}</span>
+                {#if account}
+                  {@const url = channelUrl(account)}
+                  <a
+                    class="speaker channel"
+                    class:unknown={!color}
+                    style:color
+                    href={url}
+                    title={channelTitle(member)}
+                    onclick={(e) => (e.preventDefault(), openUrl(url))}>{group.name}</a
+                  >
+                {:else}
+                  <span class="speaker" class:unknown={!color} style:color>{group.name}</span>
+                {/if}
                 <span class="head-time">{formatTime(group.start)}</span>
               </span>
             </div>
@@ -1303,23 +1318,6 @@
     min-width: 56px;
   }
 
-  .avatar {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1;
-    user-select: none;
-  }
-
-  .avatar.unknown {
-    background: var(--muted);
-  }
-
   .who {
     display: flex;
     align-items: baseline;
@@ -1334,6 +1332,14 @@
 
   .speaker.unknown {
     color: var(--text);
+  }
+
+  .speaker.channel {
+    text-decoration: none;
+  }
+
+  .speaker.channel:hover {
+    text-decoration: underline;
   }
 
   .head-time {

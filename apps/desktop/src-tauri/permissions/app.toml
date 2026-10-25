@@ -20,6 +20,7 @@ permissions = [
   "allow-annotations-offer",
   "allow-fetch-annotations",
   "allow-vod-annotations",
+  "allow-avatar-base",
   "allow-cancel-add",
   "allow-list-vods",
   "allow-add-files",

@@ -292,15 +292,22 @@
   "cast": [
     {
       "name": "Marlowe",
-      "aliases": [
-        "Mar"
-      ],
-      "role": "streamer"
+      "aliases": ["Mar"],
+      "role": "streamer",
+      "player": "Marlowe Vance",
+      "account": {
+        "platform": "twitch",
+        "login": "marlowe_live"
+      }
     },
     {
       "name": "Ada",
       "aliases": [],
-      "role": "friend"
+      "role": "friend",
+      "account": {
+        "platform": "kick",
+        "login": "ada_plays"
+      }
     }
   ],
   "activity": [

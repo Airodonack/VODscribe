@@ -25,7 +25,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: blob:",
+        "img-src": "'self' data: blob: https://img.vodscribe.com https://static-cdn.jtvnw.net https://files.kick.com https://yt3.ggpht.com https://yt3.googleusercontent.com http://127.0.0.1:*",
         "media-src": "'self' blob: http://127.0.0.1:* https://*.cloudfront.net https://*.kick.com",
         "connect-src": "'self' ipc: http://ipc.localhost https://*.cloudfront.net https://*.kick.com",
         "frame-src": "https://www.youtube-nocookie.com https://player.twitch.tv",
@@ -45,16 +45,8 @@
       "deb": { "depends": ["libasound2"] },
       "rpm": { "depends": ["alsa-lib"] }
     },
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "externalBin": [
-      "binaries/vodscribe-worker"
-    ],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "externalBin": ["binaries/vodscribe-worker"],
     "resources": ["THIRD-PARTY-NOTICES.txt"],
     "shortDescription": "Searchable transcripts for Kick, Twitch, YouTube and other VODs",
     "category": "Video",

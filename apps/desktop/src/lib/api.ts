@@ -390,6 +390,10 @@ export interface CastMember {
   name: string;
   aliases: string[];
   role: string;
+  /** The streamer behind a character, by their public name. */
+  player?: string;
+  /** Where they stream: the transcript links to the channel and shows their picture (accounts.ts). */
+  account?: { platform: "twitch" | "kick" | "youtube"; login: string };
 }
 
 /** What a VOD is doing from `start` to `end`: a game, just chatting, an event. */
@@ -561,6 +565,8 @@ export const api = {
   annotationsOffer: (vodId: number) => invoke<AnnotationsOffer>("annotations_offer", { vodId }),
   /** Fetches a VOD's published annotations and imports them (the user's own marks stay). */
   fetchAnnotations: (vodId: number) => invoke<{ vod: Vod; created: boolean }>("fetch_annotations", { vodId }),
+  /** The image server the cast's pictures come from when the app is pointed at another (tests); null for accounts.ts `AVATAR_BASE`. */
+  avatarBase: () => invoke<string | null>("avatar_base"),
   /** A VOD's cast and activity, if annotations were imported for it. */
   vodAnnotations: (vodId: number) => invoke<VodAnnotations | null>("vod_annotations", { vodId }),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */

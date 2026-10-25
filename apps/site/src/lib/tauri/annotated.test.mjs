@@ -190,3 +190,7 @@ test("a chapter's icon is read as the file has it; one that isn't one emoji is l
   assert.equal(parseAnnotations(odd).chapters[1].icon, undefined);
   assert.equal(parseAnnotations(odd).chapters[1].title, "The door");
 });
+
+test("the streamer's account is read from the file", () => {
+  assert.deepEqual(annotations.cast[0].account, { platform: "twitch", login: "airodonack" });
+});

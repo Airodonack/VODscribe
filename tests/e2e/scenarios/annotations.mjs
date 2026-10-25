@@ -19,6 +19,10 @@
 // keyboard, A on the other's row asks which edit and puts it there, a group
 // too; the edit open, its pane has the highlights it holds. On a narrower
 // window the pane is a tab beside the transcript's.
+// Who plays them and their channels are in the Cast button too. A cast member with an account is
+// headed by their picture, from the image server (the run's file host,
+// lib/fileHost.mjs), their name a link to their channel; one whose picture
+// isn't there keeps their initial.
 // The Timeline panel's Imported marks toggle hides the import's chapters
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
@@ -29,6 +33,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { MINUTE, resizeInner, until } from "../lib/app.mjs";
+import { serveFiles } from "../lib/fileHost.mjs";
 import { minute } from "../lib/fixtures.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +67,20 @@ const PANE_ROWS = `return [...document.querySelectorAll(".annotations-pane .pane
   (r.classList.contains("chapter") ? "chapter " : "highlight ") + r.querySelector(".name").textContent.trim() +
   (r.classList.contains("lit") ? "*" : ""))`;
 
+/** Marlowe's picture: four pixels square, all yellow. */
+const PICTURE = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEUlEQVR4nGP4eoQBjhiI4wAA3EIbkanqb5MAAAAASUVORK5CYII=",
+  "base64",
+);
+
+/** The image server: Marlowe's account sent on to their picture, as the real one sends the browser to the site's; anyone else's not there. */
+const pictures = (method, path) =>
+  path === "/avatar/twitch/marlowe_live"
+    ? { status: 302, headers: { Location: "/pictures/marlowe.png" } }
+    : path === "/pictures/marlowe.png"
+      ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
+      : { status: 404 };
+
 const tip = (app) =>
   app.js(`return document.querySelector(".scrubber .tip")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
 
@@ -73,7 +92,7 @@ export default {
     "annotations-pane":
       'Right of the transcript, a narrower pane lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-cast":
-      'The transcript\'s lines sit under headings, each a coloured circle with an initial, a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar) and Ada (Friend), each with a coloured dot.',
+      'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Streamer · also Mar, Played by Marlowe Vance · twitch.tv/marlowe_live) and Ada (Friend, kick.com/ada_plays), each with a coloured dot.',
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");
@@ -117,7 +136,8 @@ export default {
     if (JSON.stringify(icons) !== '["💬","🎮",null]') throw new Error(`the chapters' icons: ${JSON.stringify(icons)}`);
     ctx.log(`imported: transcribed whole, chat in, ${marks.length} marks`);
 
-    // The import opens the VOD.
+    // The import opens the VOD; the cast's pictures are asked for as it shows them.
+    const host = serveFiles(pictures);
     await app.openVod(vod.id);
     const wrong = [];
 
@@ -217,6 +237,49 @@ export default {
     if (read.join(" | ") !== expected.join(" | ")) wrong.push(`the transcript reads ${read.join(" | ")}`);
     if (chat.some((l) => l.named)) wrong.push("a line names its speaker as well as its group's head");
 
+    // The heads of those with an account: the name a link to their channel,
+    // saying who plays them; the disc their picture once it has loaded, or
+    // their initial when there's none (Ada's), never empty.
+    const heads = await until(
+      "the cast's pictures",
+      async () => {
+        const got = await app.js(`return [...document.querySelectorAll("#transcript .group-head")].map((h) => {
+          const name = h.querySelector(".speaker");
+          const img = h.querySelector(".avatar img");
+          return { name: name.textContent.trim(), link: name.tagName === "A" ? name.getAttribute("href") : null,
+            title: name.title, disc: h.querySelector(".avatar").getAttribute("href"),
+            picture: img ? (!img.complete ? "loading" : img.naturalWidth > 0 && img.classList.contains("loaded") ? "shown" : "none") : "no img",
+            initial: getComputedStyle(h.querySelector(".avatar")).color !== "rgba(0, 0, 0, 0)" };
+        })`);
+        return got.length === 4 && got.every((h) => h.picture !== "loading") && got;
+      },
+      MINUTE,
+    ).catch(() => []);
+    const want = [
+      {
+        name: "Marlowe",
+        link: "https://www.twitch.tv/marlowe_live",
+        title: "Played by Marlowe Vance",
+        picture: "shown",
+        initial: false,
+      },
+      { name: "Ada", link: "https://kick.com/ada_plays", title: "ada_plays", picture: "none", initial: true },
+    ];
+    for (const [i, h] of heads.entries()) {
+      const w = want[i % 2];
+      const got = { name: h.name, link: h.link, title: h.title, picture: h.picture, initial: h.initial };
+      if (JSON.stringify(got) !== JSON.stringify(w)) wrong.push(`head ${i + 1}: ${JSON.stringify(got)}`);
+      if (h.disc !== w.link) wrong.push(`head ${i + 1}'s disc links to ${h.disc}`);
+    }
+    if (!heads.length) wrong.push("the heads' pictures never settled");
+    const asked = [...new Set(host.requests.map((r) => `${r.method} ${r.path}`))].sort();
+    if (
+      JSON.stringify(asked) !==
+      JSON.stringify(["GET /avatar/kick/ada_plays", "GET /avatar/twitch/marlowe_live", "GET /pictures/marlowe.png"])
+    )
+      wrong.push(`the image server was asked: ${asked.join(", ")}`);
+    host.stop();
+
     // The cast, from the transcript's header.
     await app.click(".cast-toggle");
     const cast = await until(
@@ -226,7 +289,10 @@ export default {
           return list ? [...list.querySelectorAll("li")].map((li) => li.textContent.replace(/\\s+/g, " ").trim()) : false`),
       10_000,
     ).catch(() => []);
-    if (cast.join(" | ") !== "Marlowe Streamer · also Mar | Ada Friend")
+    if (
+      cast.join(" | ") !==
+      "Marlowe Streamer · also Mar Played by Marlowe Vance · twitch.tv/marlowe_live | Ada Friend kick.com/ada_plays"
+    )
       wrong.push(`the cast list: ${cast.join(" | ")}`);
     await ctx.checkpoint("annotations-cast");
     await app.key("Escape");

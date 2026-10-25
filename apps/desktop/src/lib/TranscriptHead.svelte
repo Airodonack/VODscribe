@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api, type CastMember, type Stretch, type Vod } from "./api";
   import { castDetail, speakerColor } from "./annotated";
+  import { channelLabel, channelUrl } from "./accounts";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import Popover from "./Popover.svelte";
   import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
@@ -105,6 +107,18 @@
               <span class="who">
                 <strong>{member.name}</strong>
                 <span class="muted">{castDetail(member)}</span>
+                {#if member.player || member.account}
+                  {@const account = member.account}
+                  <span class="muted"
+                    >{member.player ? `Played by ${member.player}` : ""}{member.player && account
+                      ? " · "
+                      : ""}{#if account}
+                      {@const url = channelUrl(account)}
+                      <a class="channel" href={url} onclick={(e) => (e.preventDefault(), openUrl(url))}
+                        >{channelLabel(account)}</a
+                      >{/if}</span
+                  >
+                {/if}
               </span>
             </li>
           {/each}
@@ -245,6 +259,10 @@
 
   .who .muted {
     font-size: 12px;
+  }
+
+  .channel {
+    color: var(--accent);
   }
 
   .chat-toggle {

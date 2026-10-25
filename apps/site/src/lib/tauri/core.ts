@@ -111,6 +111,8 @@ const commands: Record<string, (args: Args) => unknown> = {
     seedMarks(vodId as number);
     return marks.filter((m) => m.vod_id === vodId);
   },
+  // The cast's pictures come from the app's own server, unless the build names another.
+  avatar_base: () => __AVATAR_BASE__,
   // A VOD page's cast and activity, as the app keeps them from an import; none in the demo.
   vod_annotations: ({ vodId }) => {
     const open = annotated();

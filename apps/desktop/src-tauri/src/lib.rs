@@ -317,6 +317,7 @@ pub fn run() {
             annotations::annotations_offer,
             annotations::fetch_annotations,
             annotations::vod_annotations,
+            annotations::avatar_base,
             vods::cancel_add,
             vods::list_vods,
             vods::add_files,

@@ -2,11 +2,12 @@
 // (crates/core annotations.rs), read through `vod_annotations` once per VOD
 // and again after an import; and the import itself, from the file picker.
 // The timeline (Scrubber.svelte) draws the activity, the transcript
-// (Transcript.svelte) colours its lines by speaker, and its header lists the
-// cast.
+// (Transcript.svelte) colours its lines by speaker and heads them with the
+// cast member's picture, and its header lists the cast.
 
 import { open } from "@tauri-apps/plugin-dialog";
 import { SvelteMap } from "svelte/reactivity";
+import { AVATAR_BASE } from "./accounts";
 import { api, type Vod, type VodAnnotations } from "./api";
 import { cuts } from "./cuts.svelte";
 
@@ -15,6 +16,27 @@ class Annotated {
   #of = new SvelteMap<number, VodAnnotations | null>();
   /** How many imports each VOD has had this run: what's read of it is read again at each. */
   #imports = new SvelteMap<number, number>();
+
+  #avatarBase = $state<string | null>(null);
+  #askedBase = false;
+
+  /**
+   * The image server the cast's pictures are asked of; null until the app
+   * has said which (it may name its own, for tests), when none is asked.
+   */
+  avatarBase(): string | null {
+    if (!this.#askedBase) {
+      this.#askedBase = true;
+      // Read from a microtask, not while drawing (it changes state).
+      void Promise.resolve()
+        .then(() => api.avatarBase())
+        .then(
+          (base) => (this.#avatarBase = base ?? AVATAR_BASE),
+          () => (this.#avatarBase = AVATAR_BASE),
+        );
+    }
+    return this.#avatarBase;
+  }
 
   /** VOD `id`'s cast and activity, once read (`load`). */
   of(id: number | null | undefined): VodAnnotations | null {

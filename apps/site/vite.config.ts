@@ -9,6 +9,9 @@ import { colorMix, colorMixStyles } from "../desktop/colorMix.js";
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 // The app's version, from the Cargo workspace, for the download button and the demo.
 const version = readFileSync(here("../../Cargo.toml"), "utf8").match(/^version = "(.+)"/m)?.[1];
+// Another server for the cast's pictures than the app's AVATAR_BASE (apps/desktop/src/lib/accounts.ts), for a build
+// tried against one of its own; the app is pointed the same way, by the same variable (crates/core annotations.rs).
+const avatarBase = process.env.VODSCRIBE_AVATAR_URL?.trim().replace(/\/+$/, "") || null;
 
 export default defineConfig({
   plugins: [
@@ -33,7 +36,18 @@ export default defineConfig({
           "default-src": ["self"],
           "script-src": ["self"],
           "style-src": ["self", "unsafe-inline"],
-          "img-src": ["self", "data:", "blob:"],
+          // The cast's pictures: the image server, and the sites' own picture hosts it sends the browser to.
+          "img-src": [
+            "self",
+            "data:",
+            "blob:",
+            "https://img.vodscribe.com",
+            "https://static-cdn.jtvnw.net",
+            "https://files.kick.com",
+            "https://yt3.ggpht.com",
+            "https://yt3.googleusercontent.com",
+            ...(avatarBase ? [new URL(avatarBase).origin as `${string}://${string}.${string}`] : []),
+          ],
           // The download host: a VOD page's annotations (routes/v).
           "connect-src": ["self", "https://dl.vodscribe.com"],
           // The platforms' players, driven over postMessage (the app's embed.ts):
@@ -50,6 +64,7 @@ export default defineConfig({
     // Turns on the demo behavior in the app's components (apps/desktop/src/lib/demo.ts).
     __DEMO__: true,
     __APP_VERSION__: JSON.stringify(version),
+    __AVATAR_BASE__: JSON.stringify(avatarBase),
   },
   resolve: {
     // The app's components call Tauri; in the demo these stand-ins answer from static/demo.

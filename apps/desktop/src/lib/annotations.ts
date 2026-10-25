@@ -93,7 +93,24 @@ export type Highlight = {
 
 export type CastRole = "streamer" | "friend" | "chatter" | "in-game character" | "other" | string;
 
-export type CastMember = { name: string; aliases: string[]; role: CastRole };
+/** The sites a cast member's account can be on. */
+export const ACCOUNT_PLATFORMS = ["twitch", "kick", "youtube"] as const;
+
+/**
+ * Where a cast member streams: the site, and their login there (Twitch's and
+ * Kick's channel name; YouTube's "@handle" or channel id). Never a picture's
+ * address: pictures are asked for when shown (accounts.ts).
+ */
+export type Account = { platform: (typeof ACCOUNT_PLATFORMS)[number]; login: string };
+
+export type CastMember = {
+  name: string;
+  aliases: string[];
+  role: CastRole;
+  /** The streamer behind a character, by their public name, when it isn't `name`. */
+  player?: string;
+  account?: Account;
+};
 
 export type ActivityKind = "game" | "just chatting" | "event" | "break" | string;
 
@@ -144,7 +161,33 @@ export function parseAnnotations(value: unknown): Annotations {
     const one = oneEmoji(icon);
     return one ? { ...rest, icon: one } : rest;
   });
-  return { ...v, chapters } as Annotations;
+  // A cast member's player that isn't a name, or account on a site not listed
+  // or with a login that can't be one, is left out rather than the file refused.
+  const cast = (v.cast as Record<string, unknown>[]).map((m) => {
+    if (typeof m !== "object" || m === null) return m;
+    const { player, account, ...rest } = m;
+    const name = typeof player === "string" ? player.trim() : "";
+    const tied = readAccount(account);
+    return { ...rest, ...(name ? { player: name } : {}), ...(tied ? { account: tied } : {}) };
+  });
+  return { ...v, chapters, cast } as Annotations;
+}
+
+/**
+ * `value` as a cast member's account: a listed platform and a login of
+ * letters, digits and `_.-` (a YouTube handle with its "@" first), trimmed;
+ * null for anything else. crates/core annotations.rs `Account::read` is the
+ * same rule.
+ */
+export function readAccount(value: unknown): Account | null {
+  if (typeof value !== "object" || value === null) return null;
+  const { platform, login } = value as Record<string, unknown>;
+  if (typeof platform !== "string" || typeof login !== "string") return null;
+  const site = platform.trim().toLowerCase();
+  const name = login.trim();
+  if (!(ACCOUNT_PLATFORMS as readonly string[]).includes(site)) return null;
+  if (!(site === "youtube" ? /^@?[A-Za-z0-9_.-]+$/ : /^[A-Za-z0-9_.-]+$/).test(name)) return null;
+  return { platform: site as Account["platform"], login: name };
 }
 
 /**

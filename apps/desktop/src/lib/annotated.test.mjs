@@ -2,7 +2,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CAST_COLORS, activityColor, activityLabel, castDetail, castIndex, crowds, speakerColor } from "./annotated.ts";
-import { HIGHLIGHT_GLYPHS, UNKNOWN_GLYPH, highlightGlyph, oneEmoji, parseAnnotations } from "./annotations.ts";
+import {
+  HIGHLIGHT_GLYPHS,
+  UNKNOWN_GLYPH,
+  highlightGlyph,
+  oneEmoji,
+  parseAnnotations,
+  readAccount,
+} from "./annotations.ts";
+import { AVATAR_BASE, avatarUrl, channelLabel, channelTitle, channelUrl } from "./accounts.ts";
 
 const cast = [
   { name: "Marlowe", aliases: ["Mar", "M"], role: "streamer" },
@@ -102,5 +110,82 @@ test("a chapter's icon is one emoji, or none", () => {
     { start: 0, title: "Hello", icon: "💬" },
     { start: 10, title: "Play" },
     { start: 20, title: "Bye" },
+  ]);
+});
+
+test("a cast member's account leads to their channel and their picture", () => {
+  assert.equal(channelUrl({ platform: "twitch", login: "marlowe" }), "https://www.twitch.tv/marlowe");
+  assert.equal(channelUrl({ platform: "kick", login: "ada_plays" }), "https://kick.com/ada_plays");
+  // A handle has its own page; anything else is a channel id.
+  assert.equal(channelUrl({ platform: "youtube", login: "@ada.makes" }), "https://www.youtube.com/@ada.makes");
+  assert.equal(channelUrl({ platform: "youtube", login: "UCabc-123" }), "https://www.youtube.com/channel/UCabc-123");
+  assert.equal(channelLabel({ platform: "twitch", login: "marlowe" }), "twitch.tv/marlowe");
+  assert.equal(channelLabel({ platform: "kick", login: "ada" }), "kick.com/ada");
+  assert.equal(AVATAR_BASE, "https://img.vodscribe.com");
+  assert.equal(
+    avatarUrl(AVATAR_BASE, { platform: "twitch", login: "marlowe" }),
+    "https://img.vodscribe.com/avatar/twitch/marlowe",
+  );
+  assert.equal(
+    avatarUrl("http://127.0.0.1:9/", { platform: "youtube", login: "@ada" }),
+    "http://127.0.0.1:9/avatar/youtube/@ada",
+  );
+  // Escaped all the same, should a login that can't be one reach it.
+  assert.equal(avatarUrl("http://h", { platform: "kick", login: "a/../b" }), "http://h/avatar/kick/a%2F..%2Fb");
+  assert.equal(
+    channelTitle({ player: "Marlowe Plays", account: { platform: "twitch", login: "m" } }),
+    "Played by Marlowe Plays",
+  );
+  assert.equal(channelTitle({ account: { platform: "twitch", login: "m" } }), "m");
+});
+
+test("a cast member's player and account are read when they can be, left out when they can't", () => {
+  assert.deepEqual(readAccount({ platform: " Twitch", login: " marlowe " }), { platform: "twitch", login: "marlowe" });
+  assert.deepEqual(readAccount({ platform: "youtube", login: "@ada.makes" }), {
+    platform: "youtube",
+    login: "@ada.makes",
+  });
+  for (const odd of [
+    null,
+    "marlowe",
+    { platform: "vimeo", login: "bo" },
+    { platform: "kick", login: "../cy" },
+    { platform: "kick", login: "@di" },
+    { platform: "twitch", login: "" },
+    { platform: "twitch" },
+    { platform: 1, login: "x" },
+  ])
+    assert.equal(readAccount(odd), null, JSON.stringify(odd));
+  const file = {
+    format: "vodscribe-annotations",
+    version: 1,
+    source: { platform: "twitch", id: "v1", channel: "", title: "", duration: 60, recorded_at: null },
+    produced: { at: "", build: "" },
+    transcript: { segments: [], corrected: 0 },
+    chapters: [],
+    highlights: [],
+    cast: [
+      {
+        name: "Marlowe",
+        aliases: [],
+        role: "in-game character",
+        player: " Marlowe Plays ",
+        account: { platform: "twitch", login: "marlowe_plays" },
+      },
+      { name: "Bo", aliases: [], role: "friend", player: 3, account: { platform: "vimeo", login: "bo" } },
+      { name: "Cy", aliases: [], role: "friend" },
+    ],
+    activity: [],
+  };
+  assert.deepEqual(parseAnnotations(file).cast, [
+    {
+      name: "Marlowe",
+      aliases: [],
+      role: "in-game character",
+      player: "Marlowe Plays",
+      account: { platform: "twitch", login: "marlowe_plays" },
+    },
+    { name: "Bo", aliases: [], role: "friend" },
+    { name: "Cy", aliases: [], role: "friend" },
   ]);
 });
