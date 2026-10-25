@@ -14,6 +14,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
+import { SessionLost } from "./drivers.mjs";
 import { pageDump } from "./dump.mjs";
 import * as os from "./os.mjs";
 
@@ -25,7 +26,8 @@ export const CLICK_WAIT = 10_000;
 /**
  * Polls `check` until it returns something truthy, or fails after `timeout`
  * saying `what`; every half second, or `every` ms (a timed step's wait, for
- * a time not rounded up to the poll).
+ * a time not rounded up to the poll). A page gone for good (the driver's
+ * SessionLost) fails it at once, with what it last saw.
  */
 export async function until(what, check, timeout, { every = 500 } = {}) {
   const start = Date.now();
@@ -38,6 +40,8 @@ export async function until(what, check, timeout, { every = 500 } = {}) {
       last = await check();
       if (last) return last;
     } catch (e) {
+      if (e instanceof SessionLost)
+        throw new Error(`gave up waiting for ${what}: ${e.message} (last before: ${JSON.stringify(last)})`);
       last = e.message;
     }
     // Every few seconds: whether the page already says it can't (then waiting

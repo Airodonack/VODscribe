@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { appPid } from "./memory.mjs";
+import { appPid, processesUnder } from "./memory.mjs";
 import { watchExit } from "./procs.mjs";
 
 const MINUTE = 60_000;
@@ -50,14 +50,75 @@ function freePort() {
   });
 }
 
+/**
+ * Thrown by a driver when the app's page is gone for good: its WebDriver
+ * session ended under it, or tauri-driver isn't there. A wait gives up on it
+ * at once (lib/app.mjs's `until`) rather than poll a page that can't come
+ * back, and the next scenario starts with a new tauri-driver.
+ */
+export class SessionLost extends Error {}
+
+/**
+ * Why a failed WebDriver call means the session is gone, or null when only
+ * that call failed: `failure` is the driver's error answer ({ error, message
+ * }) or, when none came, the fetch's error. WebKitWebDriver answers "invalid
+ * session id" to every command once the app's web process has died (CI,
+ * 2026-10-25: WebKit aborted on an assertion in Skia, and a wait polled the
+ * dead session for ten minutes); a refused connection is tauri-driver gone.
+ */
+export function sessionGone(failure) {
+  if (failure?.error === "invalid session id")
+    return `the WebDriver session is gone (the app's web process ended?)${failure.message ? `: ${failure.message}` : ""}`;
+  if (failure?.cause?.code === "ECONNREFUSED") return "tauri-driver doesn't answer: it isn't running";
+  return null;
+}
+
+/**
+ * How long a new session may take: tauri-driver starting the app and the
+ * page answering. Without a limit, fetch's own (undici's headersTimeout, 300
+ * s) is what ended a start that never came.
+ */
+const SESSION_START = 2 * MINUTE;
+
 /** The tauri-driver process, shared by every scenario's session. */
 let tauriDriver;
+/** Why tauri-driver must be started again before the next session, or null. */
+let spoiled = null;
+/** Whether tauri-driver is ended with this process (once set up). */
+let stopOnExit = false;
+
+/**
+ * Ends tauri-driver with WebKitWebDriver and any app it started. An app left
+ * running takes the next one's start: the app is single-instance, so the new
+ * copy hands over to the old and quits, and the session never comes (CI,
+ * 2026-10-25: every later scenario on the shard waited 300 s for it).
+ */
+async function stopTauriDriver() {
+  const driver = tauriDriver;
+  tauriDriver = null;
+  // (Found through /proc: elsewhere, tauri-driver alone.)
+  for (const pid of process.platform === "linux" ? processesUnder(driver.pid) : []) {
+    try {
+      process.kill(Number(pid), "SIGKILL");
+    } catch {}
+  }
+  if (driver.exitCode === null && driver.signalCode === null) {
+    const ended = new Promise((resolve) => driver.once("exit", resolve));
+    driver.kill("SIGKILL");
+    await ended;
+  }
+}
 
 export async function webdriver(app) {
   // Another port for runs side by side on one computer: E2E_DRIVER_PORT.
   const port = Number(process.env.E2E_DRIVER_PORT ?? 4444);
   const base = `http://127.0.0.1:${port}`;
+  if (tauriDriver && (spoiled || tauriDriver.exitCode !== null || tauriDriver.signalCode !== null)) {
+    console.log(`tauri-driver: started again (${spoiled ?? "it had ended"})`);
+    await stopTauriDriver();
+  }
   if (!tauriDriver) {
+    spoiled = null;
     const native = process.env.NATIVE_DRIVER ? ["--native-driver", process.env.NATIVE_DRIVER] : [];
     // The native driver's port too (tauri-driver's default is 4445 for
     // every run): two runs side by side would otherwise share one
@@ -66,22 +127,57 @@ export async function webdriver(app) {
     tauriDriver = spawn(process.env.TAURI_DRIVER ?? "tauri-driver", ["--port", String(port), ...native], {
       stdio: ["ignore", "inherit", "inherit"],
     });
-    process.on("exit", () => tauriDriver.kill());
+    if (!stopOnExit) {
+      stopOnExit = true;
+      process.on("exit", () => tauriDriver?.kill());
+    }
     await waitFor("tauri-driver", () => fetch(`${base}/status`).then((r) => r.ok), MINUTE);
   }
-  const wd = async (method, url, body) => {
-    const res = await fetch(base + url, {
-      method,
-      headers: { "Content-Type": "application/json" },
-      body: body && JSON.stringify(body),
-    });
+  // Why this session is gone, once it is: every call after says so at once.
+  let lost = null;
+  const lose = (why) => {
+    lost ??= why;
+    spoiled ??= why;
+    return new SessionLost(why);
+  };
+  const wd = async (method, url, body, signal) => {
+    if (lost) throw new SessionLost(lost);
+    let res;
+    try {
+      res = await fetch(base + url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body && JSON.stringify(body),
+        signal,
+      });
+    } catch (e) {
+      const why = sessionGone(e);
+      if (why) throw lose(`${why} (${method} ${url})`);
+      throw new Error(`${method} ${url}: ${e.message}${e.cause ? ` (${e.cause.code ?? e.cause.message})` : ""}`);
+    }
     const json = await res.json();
-    if (!res.ok) throw new Error(`${method} ${url}: ${JSON.stringify(json.value ?? json)}`);
+    if (!res.ok) {
+      const value = json.value ?? json;
+      const said = `${method} ${url}: ${JSON.stringify(value)}`;
+      const why = sessionGone(value);
+      if (why) throw lose(`${why} (${said})`);
+      throw new Error(said);
+    }
     return json.value;
   };
-  const session = (
-    await wd("POST", "/session", { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } })
-  ).sessionId;
+  const limit = AbortSignal.timeout(SESSION_START);
+  let session;
+  try {
+    const caps = { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } };
+    session = (await wd("POST", "/session", caps, limit)).sessionId;
+  } catch (e) {
+    // The driver may be left waiting on that app: a new one for the next.
+    spoiled ??= "the last session didn't start";
+    if (!limit.aborted) throw e;
+    const older = appPid(app);
+    const running = older ? ` (an app of this run, pid ${older}, is still running)` : "";
+    throw new Error(`no WebDriver session in ${SESSION_START / 1000} s${running}`);
+  }
   // The app runs under the native driver, which doesn't say when it ends:
   // found by its binary under this process (Linux), and watched.
   const pid = appPid(app);
@@ -112,9 +208,16 @@ export async function webdriver(app) {
         height: height + rect.height - page.height,
       });
     },
-    close: () => {
+    close: async () => {
       proc.closedAt = Date.now();
-      return wd("DELETE", `/session/${session}`).catch(() => {});
+      await wd("DELETE", `/session/${session}`).catch(() => {});
+      // A lost session can't end its app, which would otherwise run on, in
+      // the next one's way (stopTauriDriver).
+      if (lost && proc.pid && proc.exitedAt === null) {
+        try {
+          process.kill(proc.pid, "SIGKILL");
+        } catch {}
+      }
     },
     proc,
   };

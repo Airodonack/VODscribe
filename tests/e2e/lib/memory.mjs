@@ -67,6 +67,13 @@ function tree(parent, top) {
   return under;
 }
 
+/** The pids (strings) of every process under `pid` (Linux), not `pid` itself. */
+export function processesUnder(pid) {
+  const under = tree(parents(), String(pid));
+  under.delete(String(pid));
+  return [...under];
+}
+
 /**
  * The pid (a string) of the app this run started, whose binary is `exe`
  * (Linux), or null: the one under this process (under its driver), as
