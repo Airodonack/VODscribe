@@ -8,7 +8,8 @@
   // shows its highlights until it's collapsed, then how many it holds; a
   // highlight shows its kind's emoji, title, start and length (and the discs
   // of who's in it, at the end of that line) until it's expanded, then its
-  // kind's word too, why and cast by name. A click on a
+  // kind's word too, why and cast by name (each by their own short name, a
+  // link to the channel of the streamer playing them). A click on a
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
@@ -28,6 +29,8 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { Put, Vod } from "./api";
   import AddToEdit from "./AddToEdit.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { channelLabel, channelUrl } from "./accounts";
   import CastDisc from "./CastDisc.svelte";
   import Popover from "./Popover.svelte";
   import { DEMO } from "./demo";
@@ -112,11 +115,19 @@
     else collapsed.add(key);
   }
 
-  /** Who is in a highlight, in the cast's colours (null for a name not in it), with their disc's label (CastDisc). */
+  /** Who is in a highlight, in the cast's colours (null for a name not in it), with their disc's label (CastDisc)
+   *  and the short name their chip shows: the cast's own name for them (the character, not the streamer playing
+   *  them, who is in the chip's link), or the name as the highlight wrote it for someone not in the cast. */
   const people = (row: HighlightRow) =>
     row.cast.map((name) => {
       const member = cast[castIndex(cast, name)];
-      return { name, color: speakerColor(cast, name), member, label: speakerName(member, name) };
+      return {
+        name,
+        color: speakerColor(cast, name),
+        member,
+        label: speakerName(member, name),
+        short: member?.name ?? name,
+      };
     });
 
   let scroller = $state<HTMLElement>();
@@ -422,12 +433,35 @@
                     {#if row.why}<p class="why">{row.why}</p>{/if}
                     {#if row.cast.length}
                       <p class="people">
-                        {#each people(row) as p, j (j)}<span class="chip"
-                            ><CastDisc name={p.label} color={p.color} member={p.member} size={16} link={false} /><strong
-                              class:unknown={!p.color}
-                              style:color={p.color}>{p.name}</strong
-                            ></span
-                          >{/each}
+                        {#each people(row) as p, j (j)}
+                          {@const account = p.member?.account}
+                          {#if account}
+                            {@const url = channelUrl(account)}
+                            <a
+                              class="chip"
+                              href={url}
+                              title="{p.member?.player?.trim() || p.member?.name} · {channelLabel(account)}"
+                              onclick={(e) => (e.preventDefault(), openUrl(url))}
+                              ><CastDisc
+                                name={p.label}
+                                color={p.color}
+                                member={p.member}
+                                size={16}
+                                link={false}
+                              /><strong class:unknown={!p.color} style:color={p.color}>{p.short}</strong></a
+                            >
+                          {:else}
+                            <span class="chip"
+                              ><CastDisc
+                                name={p.label}
+                                color={p.color}
+                                member={p.member}
+                                size={16}
+                                link={false}
+                              /><strong class:unknown={!p.color} style:color={p.color}>{p.short}</strong></span
+                            >
+                          {/if}
+                        {/each}
                       </p>
                     {/if}
                   </div>
@@ -806,17 +840,32 @@
     gap: 4px 10px;
   }
 
-  /* A cast member's disc, then their name in their colour. */
+  /* A cast member's disc, then their name in their colour, a link to the
+     streamer's channel when they have one. A chip is never cut short: one
+     that doesn't fit beside the one before goes to the next line whole, and
+     only a name wider than the column breaks, between its words. */
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    min-width: 0;
+    max-width: 100%;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a.chip:hover strong {
+    text-decoration: underline;
+  }
+
+  a.chip:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius);
   }
 
   .people strong {
     font-weight: 600;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
   }
 
   .people strong.unknown {

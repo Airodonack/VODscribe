@@ -16,7 +16,9 @@
 // height, the player and transcript between it and the library, the chapter
 // and highlight playing lit. Pointing at a highlight's row lights its glyph
 // and draws its line down the bar; pointing at a chapter's slice lights its
-// row. A click on a highlight's row plays it. Dragged onto "Make new edit",
+// row. A click on a highlight's row plays it; opened, it names who's in it
+// by their short names, those with an account a link to the streamer's
+// channel that leaves the row open. Dragged onto "Make new edit",
 // a highlight's row makes an edit holding it as a group named for it, one
 // band as a clip's pill goes in; from the keyboard, A on the other's row
 // asks which edit and puts it there, a group too; the edit open, its pane
@@ -143,7 +145,7 @@ export default {
       throw new Error(`the marks: ${JSON.stringify(summary)}`);
     // A highlight's cast comes with its mark; one with none has none.
     const inThem = marks.filter((m) => m.kind === "highlight").map((m) => m.cast ?? []);
-    if (JSON.stringify(inThem) !== '[["Mar","Ada"],[]]')
+    if (JSON.stringify(inThem) !== '[["Mar","Ada","Jules"],[]]')
       throw new Error(`the highlights' cast: ${JSON.stringify(inThem)}`);
     // A chapter's icon comes with its mark; one with none has none.
     const icons = marks.filter((m) => m.kind === "chapter").map((m) => m.icon ?? null);
@@ -373,7 +375,7 @@ export default {
     if (paneRows.join(" | ") !== expectedRows.join(" | ")) wrong.push(`the pane reads ${paneRows.join(" | ")}`);
     // Who's in the first highlight: their discs in the cast's colours, with
     // the streamer's initial, their tooltip naming the streamer first ("Mar"
-    // in the file is Marlowe). They sit at the end of the row's times line,
+    // in the file is Marlowe; Jules isn't in the cast, so is as written). They sit at the end of the row's times line,
     // right of the times, under the title (which has the row's width).
     const chips = await app.js(
       `const row = document.querySelector(arguments[0]);
@@ -389,11 +391,11 @@ export default {
         name: box(row.querySelector(".name").getBoundingClientRect()), line: box(row.querySelector(".meta-line").getBoundingClientRect()) }`,
       row(funny),
     );
-    if (chips?.title !== "Vance (Marlowe), Ada") wrong.push(`the first highlight's discs say "${chips?.title}"`);
+    if (chips?.title !== "Vance (Marlowe), Ada, Jules") wrong.push(`the first highlight's discs say "${chips?.title}"`);
     else {
       if (
         speakers.length === 4 &&
-        JSON.stringify(chips.discs) !== JSON.stringify([`V ${speakers[0].color}`, `A ${speakers[1].color}`])
+        JSON.stringify(chips.discs.slice(0, 2)) !== JSON.stringify([`V ${speakers[0].color}`, `A ${speakers[1].color}`])
       )
         wrong.push(`the discs ${chips.discs} aren't the speakers' V ${speakers[0].color}, A ${speakers[1].color}`);
       const { faces, times, name, line } = chips;
@@ -521,6 +523,62 @@ export default {
       wrong.push(`a click on the first highlight's row went to ${await app.shownTime()} s, not 25`),
     );
     await app.pause().catch(() => {});
+
+    // Opened, the first highlight names who's in it on chips under its why,
+    // outside the row's button: each by the cast's own name for them
+    // (Marlowe, not "Vance (Marlowe)" nor the file's "Mar"), Jules as
+    // written. One with an account is a link to the streamer's channel, its
+    // tooltip naming the streamer and where, reached from the keyboard;
+    // Jules's is no link. No chip's name is cut short. A click on a chip
+    // leaves the row open and the player where it was. (The link's own click
+    // isn't made: the opener would start the system's browser, and the page
+    // can't stand in for it, its invoke being read-only.)
+    const funnyRow = paneRow(`highlight-${funny.id}`);
+    await app.click(`${funnyRow} .chevron`);
+    const people = await until(
+      "the opened highlight's chips",
+      async () => {
+        const got = await app.js(
+          `return [...document.querySelectorAll(arguments[0] + " .detail .people .chip")].map((c) => {
+            const name = c.querySelector("strong");
+            c.focus();
+            return { tag: c.tagName, text: name?.textContent.trim(), href: c.getAttribute("href"), title: c.title,
+              focusable: document.activeElement === c, inButton: !!c.closest("button"),
+              disc: !!c.querySelector(".avatar"), cut: !name || name.scrollWidth > name.clientWidth + 1 };
+          })`,
+          funnyRow,
+        );
+        return got.length === 3 && got;
+      },
+      10_000,
+    ).catch(() => []);
+    const peopleWant = [
+      {
+        tag: "A",
+        text: "Marlowe",
+        href: "https://www.twitch.tv/marlowe_live",
+        title: "Vance · twitch.tv/marlowe_live",
+        focusable: true,
+      },
+      { tag: "A", text: "Ada", href: "https://kick.com/ada_plays", title: "Ada · kick.com/ada_plays", focusable: true },
+      { tag: "SPAN", text: "Jules", href: null, title: "", focusable: false },
+    ];
+    for (const [i, w] of peopleWant.entries()) {
+      const p = people[i];
+      const got = p && { tag: p.tag, text: p.text, href: p.href, title: p.title, focusable: p.focusable };
+      if (JSON.stringify(got) !== JSON.stringify(w) || p.inButton || !p.disc || p.cut)
+        wrong.push(`the opened highlight's chip ${i + 1}: ${JSON.stringify(p)}`);
+    }
+    await app.click(`${funnyRow} .detail span.chip strong`);
+    const stillOpen = await app.js(
+      `const row = document.querySelector(arguments[0]);
+      return { open: row?.classList.contains("expanded"), chevron: row?.querySelector(".chevron")?.getAttribute("aria-expanded") }`,
+      funnyRow,
+    );
+    if (!stillOpen.open || stillOpen.chevron !== "true")
+      wrong.push(`a click on a chip closed its highlight: ${JSON.stringify(stillOpen)}`);
+    if ((await app.shownTime()) !== 25) wrong.push(`a click on a chip moved the player to ${await app.shownTime()} s`);
+    await app.click(`${funnyRow} .chevron`);
 
     // Its row dragged onto "Make new edit": an edit holding it as a group named for it.
     await app.js(
