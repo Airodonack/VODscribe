@@ -20,7 +20,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::db::{ClipStatus, Db, now};
+use crate::db::{ClipStatus, Db, MARK_DETAIL_COLUMNS, MarkDetail, mark_detail, now};
 use crate::footage::Source;
 use crate::render::Piece;
 use crate::time::Flicks;
@@ -120,6 +120,9 @@ pub struct MarkAt {
     pub kind: String,
     pub at: Flicks,
     pub text: Option<String>,
+    /// What an imported mark brings, and where it came from; its end in
+    /// seconds of the VOD, as `at` is.
+    pub detail: MarkDetail,
 }
 
 /// An item as an `EditState` holds it: what it is and where, not which row
@@ -371,31 +374,50 @@ pub fn place_marks(pieces: &[EditPiece], marks: &[(i64, MarkAt)]) -> Vec<crate::
             let moment = m.at.seconds();
             let mut t = at;
             let mut placed = None;
-            for &(a, b) in &spans {
+            for (i, &(a, b)) in spans.iter().enumerate() {
                 if moment >= a && moment < b {
-                    placed = Some(t + moment - a);
+                    placed = Some((t + moment - a, i, t));
                 } else if m.kind == "chapter" && moment < a && moment >= p.start {
-                    placed = Some(t);
+                    placed = Some((t, i, t));
                 }
                 if placed.is_some() {
                     break;
                 }
                 t += b - a;
             }
-            if let Some(start) = placed {
+            if let Some((start, i, t)) = placed {
+                let end = m.detail.end.map(|end| placed_end(&spans[i..], t, end)).filter(|&end| end > start);
                 out.push(crate::db::Mark {
                     id: *id,
                     vod_id: m.vod_id,
                     kind: m.kind.clone(),
                     start,
                     text: m.text.clone(),
-                    detail: Default::default(),
+                    detail: MarkDetail { end, ..m.detail.clone() },
                 });
             }
         }
         at += spans.iter().map(|(a, b)| b - a).sum::<f64>();
     }
     out.sort_by(|a, b| a.start.total_cmp(&b.start).then(a.id.cmp(&b.id)));
+    out
+}
+
+/// Where a mark's `end` (seconds of its VOD) is on a clip's timeline, its
+/// start in `spans` (what plays of its piece from there on; the first plays
+/// from `t`): what plays of it up to there, so a stretch struck out of it
+/// shortens it. One that ends where its piece doesn't play (struck, or past
+/// the piece) ends where its piece last plays before then: a highlight
+/// runs as long as it's in the clip.
+fn placed_end(spans: &[(f64, f64)], mut t: f64, end: f64) -> f64 {
+    let mut out = t;
+    for &(a, b) in spans {
+        if end <= a {
+            break;
+        }
+        out = t + end.min(b) - a;
+        t += b - a;
+    }
     out
 }
 
@@ -970,7 +992,7 @@ impl Db {
                 ids.insert(item.id, db.conn.last_insert_rowid());
             }
             for m in &shown {
-                db.insert_mark(into, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+                db.insert_mark_with(into, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
             }
             db.place(into, group, index)?;
             Ok(group)
@@ -1007,10 +1029,18 @@ impl Db {
 
     /// Clip `id`'s own marks, with their ids, in the order they were made at.
     pub fn clip_marks(&self, id: i64) -> Result<Vec<(i64, MarkAt)>> {
-        let mut stmt =
-            self.conn.prepare("SELECT id, vod_id, kind, at, text FROM marks WHERE clip_id = ?1 ORDER BY at, id")?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, vod_id, kind, at, text, {MARK_DETAIL_COLUMNS} FROM marks WHERE clip_id = ?1 ORDER BY at, id"
+        ))?;
         let rows = stmt.query_map([id], |r| {
-            Ok((r.get(0)?, MarkAt { vod_id: r.get(1)?, kind: r.get(2)?, at: Flicks(r.get(3)?), text: r.get(4)? }))
+            let at = MarkAt {
+                vod_id: r.get(1)?,
+                kind: r.get(2)?,
+                at: Flicks(r.get(3)?),
+                text: r.get(4)?,
+                detail: mark_detail(r, 5)?,
+            };
+            Ok((r.get(0)?, at))
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
@@ -1045,7 +1075,7 @@ impl Db {
                 db.conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", params![piece, i as i64])?;
             }
             for m in &inside {
-                db.insert_mark(id, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+                db.insert_mark_with(id, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
             }
             Ok(id)
         };
@@ -1356,7 +1386,7 @@ impl Db {
             db.conn.execute("DELETE FROM marks WHERE clip_id = ?1", [id])?;
             for m in &state.marks {
                 if db.vod(m.vod_id)?.is_some() {
-                    db.insert_mark(id, m.vod_id, &m.kind, m.at, m.text.as_deref())?;
+                    db.insert_mark_with(id, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
                 }
             }
             Ok(())
@@ -1441,8 +1471,8 @@ impl Db {
     /// them with it.
     pub(crate) fn copy_vod_marks(&self, into: i64, vod_id: i64, start: Flicks, end: Flicks) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO marks (clip_id, vod_id, kind, at, text, source, created_at)
-             SELECT ?1, vod_id, kind, at, text, source, ?5 FROM marks
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, icon, created_at)
+             SELECT ?1, vod_id, kind, at, text, end_at, category, note, source, people, icon, ?5 FROM marks
              WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?2) AND kind != 'cut' AND at >= ?3 AND at < ?4",
             params![into, vod_id, start.0, end.0, now()],
         )?;
@@ -2238,6 +2268,80 @@ pub(crate) mod tests {
         let pieces = db.edit_pieces(other).unwrap();
         let placed: Vec<f64> = place_marks(&pieces, &db.clip_marks(other).unwrap()).iter().map(|m| m.start).collect();
         assert_eq!(placed, [2.0, 5.0]);
+    }
+
+    #[test]
+    fn imported_marks_keep_their_detail_in_an_edit() {
+        use crate::db::MarkDetail;
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let own = db.vod_clip(vod).unwrap().unwrap();
+        let imported = |end: Option<f64>, category: Option<&str>, icon: Option<&str>| MarkDetail {
+            end,
+            category: category.map(Into::into),
+            note: category.map(|_| "Why it stands out".into()),
+            cast: if category.is_some() { vec!["Marlowe".into(), "Ada".into()] } else { Vec::new() },
+            icon: icon.map(Into::into),
+            source: crate::annotations::SOURCE.into(),
+        };
+        let funny = imported(Some(14.0), Some("funny"), None);
+        let game = imported(None, None, Some("🎮"));
+        db.insert_mark_with(own, vod, "highlight", Flicks::from_seconds(10.0), Some("Ha"), &funny).unwrap();
+        db.insert_mark_with(own, vod, "chapter", Flicks::from_seconds(5.0), Some("Play"), &game).unwrap();
+        // Each mark of clip `id` as its timeline shows it: kind, start, and detail.
+        let shown = |id: i64| -> Vec<(String, f64, MarkDetail)> {
+            place_marks(&db.edit_pieces(id).unwrap(), &db.clip_marks(id).unwrap())
+                .into_iter()
+                .map(|m| (m.kind, m.start, m.detail))
+                .collect()
+        };
+        let at = |end: Option<f64>, d: &MarkDetail| MarkDetail { end, ..d.clone() };
+        // 4-20 s of the VOD: the chapter at 1 s, the highlight 6-10 s.
+        let whole =
+            vec![("chapter".to_string(), 1.0, game.clone()), ("highlight".to_string(), 6.0, at(Some(10.0), &funny))];
+
+        // A stretch put on a timeline.
+        let edit = db.add_edit("e").unwrap().id;
+        db.put(edit, &[Put::Range { vod_id: vod, start: 4.0, end: 20.0, title: None }], Onto::Timeline(None)).unwrap();
+        assert_eq!(shown(edit), whole, "put on a timeline");
+        // Undo of a change brings them back as they were.
+        let state = db.edit_state(edit).unwrap().unwrap();
+        db.restore_edit(edit, &state).unwrap();
+        assert_eq!(shown(edit), whole, "after undo");
+        // A whole VOD put in: each on its own moment.
+        let all = db.add_edit("v").unwrap().id;
+        db.put(all, &[Put::Vod { id: vod }], Onto::Timeline(None)).unwrap();
+        let on_vod = vec![("chapter".to_string(), 5.0, game.clone()), ("highlight".to_string(), 10.0, funny.clone())];
+        assert_eq!(shown(all), on_vod, "a whole VOD put");
+        // The highlight dragged onto an edit, or Make new edit (or A): it, one band.
+        let made = db.add_edit("h").unwrap().id;
+        let put = Put::Highlight { vod_id: vod, start: 10.0, end: 14.0, title: "Ha".into() };
+        db.put(made, &[put], Onto::Timeline(None)).unwrap();
+        assert_eq!(shown(made), [("highlight".to_string(), 0.0, at(Some(4.0), &funny))], "a highlight put");
+        // A clip of the VOD's clip bar put in an edit, as a group.
+        let clip = db.add_clip(vod, 4.0, 20.0, "c", true).unwrap().id;
+        assert_eq!(shown(clip), whole, "a clip of the VOD");
+        let grouped = db.add_edit("g").unwrap().id;
+        db.put(grouped, &[Put::Clip { id: clip }], Onto::Timeline(None)).unwrap();
+        assert_eq!(shown(grouped), whole, "a clip put as a group");
+        // A stretch of the edit made a clip on its bar, and a range put on the bar.
+        let bar = db.add_edit_clip(edit, 0.0, 16.0, "b", true).unwrap().id;
+        assert_eq!(shown(bar), whole, "a stretch of the edit made a clip");
+        let on_bar =
+            db.put(edit, &[Put::Range { vod_id: vod, start: 4.0, end: 20.0, title: None }], Onto::Bar).unwrap();
+        assert_eq!(shown(on_bar[0]), whole, "put on the clip bar");
+
+        // A highlight whose end is cut off ends where its stretch does; one
+        // whose middle is struck is shorter by that much.
+        let short = db.add_edit("s").unwrap().id;
+        db.add_piece(short, vod, (8.0, 12.0), "a", None).unwrap();
+        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(4.0), &funny))], "ends at the piece's end");
+        let first = db.piece_rows(short).unwrap()[0].id;
+        db.set_piece_range(first, 8.0, 20.0).unwrap();
+        db.set_piece_struck(first, &[(11.0, 12.0)]).unwrap();
+        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(5.0), &funny))], "less what's struck");
+        db.set_piece_struck(first, &[(13.0, 16.0)]).unwrap();
+        assert_eq!(shown(short), [("highlight".to_string(), 2.0, at(Some(5.0), &funny))], "to where it's struck");
     }
 
     #[test]

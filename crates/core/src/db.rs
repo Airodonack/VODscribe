@@ -869,7 +869,8 @@ pub struct Mark {
 /// (`annotations.rs`), and where it came from.
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct MarkDetail {
-    /// A highlight's end, in seconds of the VOD, when it has one.
+    /// A highlight's end, when it has one: in seconds of the timeline it's
+    /// on, as the mark's start is.
     pub end: Option<f64>,
     /// A highlight's kind: funny, hype, drama…
     pub category: Option<String>,
@@ -893,6 +894,23 @@ impl Default for MarkDetail {
 
 /// The `source` of a mark made in the app.
 pub const USER_MARK: &str = "user";
+
+/// The columns of `marks` that `mark_detail` reads, in its order.
+pub(crate) const MARK_DETAIL_COLUMNS: &str = "end_at, category, note, source, people, icon";
+
+/// A mark's detail from row `r`, its `MARK_DETAIL_COLUMNS` from column `from`
+/// on; its end in seconds of its VOD.
+pub(crate) fn mark_detail(r: &rusqlite::Row, from: usize) -> rusqlite::Result<MarkDetail> {
+    Ok(MarkDetail {
+        end: r.get::<_, Option<i64>>(from)?.map(|f| Flicks(f).seconds()),
+        category: r.get(from + 1)?,
+        note: r.get(from + 2)?,
+        source: r.get(from + 3)?,
+        // A list the app wrote; one it can't read is no one.
+        cast: r.get::<_, Option<String>>(from + 4)?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
+        icon: r.get(from + 5)?,
+    })
+}
 
 /// A line of a VOD's transcript as the transcript view shows it: no word timings.
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -1387,11 +1405,11 @@ impl Db {
 
     /// VOD `vod_id`'s marks (its own clip's), in time order.
     pub fn marks(&self, vod_id: i64) -> Result<Vec<Mark>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, vod_id, kind, at, text, end_at, category, note, source, people, icon FROM marks
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, vod_id, kind, at, text, {MARK_DETAIL_COLUMNS} FROM marks
              WHERE clip_id = (SELECT id FROM clips WHERE whole_of = ?1)
-             ORDER BY at, id",
-        )?;
+             ORDER BY at, id"
+        ))?;
         let rows = stmt.query_map([vod_id], |r| {
             Ok(Mark {
                 id: r.get(0)?,
@@ -1399,18 +1417,7 @@ impl Db {
                 kind: r.get(2)?,
                 start: Flicks(r.get(3)?).seconds(),
                 text: r.get(4)?,
-                detail: MarkDetail {
-                    end: r.get::<_, Option<i64>>(5)?.map(|f| Flicks(f).seconds()),
-                    category: r.get(6)?,
-                    note: r.get(7)?,
-                    source: r.get(8)?,
-                    // A list the app wrote; one it can't read is no one.
-                    cast: r
-                        .get::<_, Option<String>>(9)?
-                        .and_then(|j| serde_json::from_str(&j).ok())
-                        .unwrap_or_default(),
-                    icon: r.get(10)?,
-                },
+                detail: mark_detail(r, 5)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)

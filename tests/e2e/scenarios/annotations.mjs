@@ -24,8 +24,10 @@
 // a highlight's row makes an edit holding it as a group named for it, one
 // band as a clip's pill goes in; from the keyboard, A on the other's row
 // asks which edit and puts it there, a group too; the edit open, its pane
-// has the highlights it holds. On a window too narrow for three columns the
-// pane is a tab beside the transcript's.
+// has the highlights it holds, as the import made them: their kind's emoji
+// on its timeline, their length, why and who's in them in its pane, the
+// Imported marks toggle taking them off. On a window too narrow for three
+// columns the pane is a tab beside the transcript's.
 // A character played by a streamer is named the character first, the
 // streamer after ("Marlowe (Vance)"): on their heads, in the Cast button
 // (with their channels) and in a highlight's tooltip, grouped and coloured as
@@ -826,6 +828,66 @@ export default {
       ).catch(async () => app.js(PANE_ROWS));
       if (inEdit.map((r) => r.replace("*", "")).join(" | ") !== "highlight Close call | highlight The twist")
         wrong.push(`the edit's pane reads ${inEdit.join(" | ") || "nothing"}`);
+      // They keep what the import gave them: their kind's emoji on the
+      // edit's timeline, their length, why and who's in it in its pane, and
+      // the Imported marks toggle takes them off and puts them back.
+      const editGlyphs = await until(
+        "the edit's highlights' glyphs",
+        async () => {
+          const got = await app.js(`return [...document.querySelectorAll(".scrubber .emoji")].map((d) =>
+            d.dataset.category + " " + d.firstChild.textContent)`);
+          return got.length === 2 && got;
+        },
+        10_000,
+      ).catch(() => app.js(`return [...document.querySelectorAll(".scrubber .emoji")].map((d) => d.dataset.category)`));
+      if (String(editGlyphs) !== "funny 😂,drama 🍿") wrong.push(`the edit's timeline shows ${editGlyphs}`);
+      const editRow = paneRow(`highlight-${(await app.invoke("edit_marks", { id: made.id }))[0]?.id}`);
+      const meta = await app.js(
+        `const row = document.querySelector(arguments[0]);
+        return row && { meta: row.querySelector(".meta").textContent.replace(/\\s+/g, ""),
+          faces: row.querySelector(".faces")?.title ?? null }`,
+        editRow,
+      );
+      if (JSON.stringify(meta) !== JSON.stringify({ meta: "0:00·5s", faces: "Mar, Ada, Jules" }))
+        wrong.push(`in the edit, Close call's row reads ${JSON.stringify(meta)}`);
+      // Opened (a highlight with nothing to show has nothing to open).
+      const opens = await app.js(`return !!document.querySelector(arguments[0] + " .chevron")`, editRow);
+      let opened = null;
+      if (opens) {
+        await app.click(`${editRow} .chevron`);
+        opened = await until(
+          "the edit's highlight opened",
+          () =>
+            app.js(
+              `const d = document.querySelector(arguments[0] + " .detail");
+              return d && { why: d.querySelector(".why")?.textContent.trim() ?? null,
+                people: [...d.querySelectorAll(".people .chip strong")].map((c) => c.textContent.trim()) }`,
+              editRow,
+            ),
+          10_000,
+        ).catch(() => null);
+      }
+      const openedWant = { why: "everyone gasped, then laughed", people: ["Mar", "Ada", "Jules"] };
+      const openedGot = opened && { why: opened.why, people: opened.people };
+      if (JSON.stringify(openedGot) !== JSON.stringify(openedWant))
+        wrong.push(`in the edit, Close call opened shows ${JSON.stringify(openedGot)}`);
+      else ctx.log("in the edit, the highlights keep their emoji, length, why and people");
+      if (opens) await app.click(`${editRow} .chevron`);
+      await app.click("button.timeline");
+      await until(
+        "the edit's Marks toggles",
+        () => app.js(`return !!document.querySelector('[aria-label="Marks"] button')`),
+        10_000,
+      );
+      await flip();
+      await until("the edit's imported marks hidden", async () => (await onTimeline()) === 0, 10_000).catch(async () =>
+        wrong.push(`in the edit, with imported marks hidden, ${await onTimeline()} still on the timeline`),
+      );
+      await flip();
+      await until("the edit's imported marks back", async () => (await onTimeline()) === 2, 10_000).catch(async () =>
+        wrong.push(`in the edit, with imported marks shown again, ${await onTimeline()} on the timeline`),
+      );
+      await app.key("Escape");
       await app.click(`.vod[data-key="${vod.id}"] button.main`);
       await until("the VOD's pane again", async () => (await app.js(PANE_ROWS)).length === 5, 10_000).catch(() =>
         wrong.push("back on the VOD, its pane didn't come back"),
