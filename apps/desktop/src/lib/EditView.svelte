@@ -170,7 +170,7 @@
   );
   const EMPTY =
     `Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or ${os === "mac" ? "Option" : "Alt"}-drag a ` +
-    "stretch of a VOD's timeline), or use a clip's “Add to an edit”. What's put in an edit is its own copy.";
+    "stretch of a VOD's timeline). What's put in an edit is its own copy.";
 
   // The player's plan, asked for again whenever the pieces change, footage
   // of their VODs comes in, or what's downloading reaches more of them.

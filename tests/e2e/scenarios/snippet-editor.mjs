@@ -20,7 +20,7 @@ export default {
 
     // As the page gets a double-click: two clicks, then the double-click.
     await app.js(
-      `const el = document.querySelector('.chip.ready[data-clip="${clip.id}"]').firstElementChild;
+      `const el = document.querySelector('.chip.ready[data-clip="${clip.id}"] .time');
        for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
     );

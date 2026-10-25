@@ -1,10 +1,11 @@
 <script lang="ts">
   // The clip bar: the open VOD's clips as pills under the player. Clicking one
-  // picks it, as in a file manager; double-clicking it (or Enter on its name,
-  // picked) opens it in the editor; F2 on its name renames it. Once its file
-  // is made, it drags out of the window (into a video editor or a folder), or
-  // onto an edit in the library's list (or on "Make new edit" there). "Add to
-  // an edit" picks one from a list. Each edit using this VOD is a link here too.
+  // picks it, as in a file manager; its play button plays the VOD from the
+  // clip's start; double-clicking it (or Enter on its name, picked) opens it
+  // in the editor; F2 on its name renames it. Once its file is made, it drags
+  // out of the window (into a video editor or a folder: that saves a copy),
+  // or onto an edit in the library's list (or on "Make new edit" there). Each
+  // edit using this VOD is a link here too.
   // The wheel scrolls the bar sideways, and so does a drag with the middle
   // button pressed, anywhere on it.
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
@@ -15,28 +16,28 @@
   // box over them from empty space in the bar (selection.svelte.ts). The
   // keys and buttons are the same for several as for one: C or Clip makes a
   // clip of each stretch picked, Delete takes what's picked, and a pill
-  // picked with others carries them all when dragged (bulk.ts `carryChosen`)
-  // and puts them all in an edit by its "Add to an edit" button.
+  // picked with others carries them all when dragged (bulk.ts `carryChosen`).
 
-  import { api, type Clip, type Vod } from "./api";
+  import type { Clip, Vod } from "./api";
   import { clips } from "./clips.svelte";
   import { DRAG_SLOP, carry, dragFileOut } from "./dragout";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
-  import Popover from "./Popover.svelte";
   import { edits } from "./edits.svelte";
   import { keyHint } from "./keys.svelte";
-  import AddToEdit from "./AddToEdit.svelte";
-  import { carryChosen, chosenPuts } from "./bulk";
+  import { carryChosen } from "./bulk";
   import { dragBox, overlaps, snippets, toggles, type Snippet } from "./selection.svelte";
 
   let {
     vod,
     ownPlayer = false,
+    onplay,
   }: {
     vod?: Vod;
     ownPlayer?: boolean;
+    /** Plays the VOD from `time` (a pill's play button; a VOD's clip bar only). */
+    onplay?: (time: number) => void;
   } = $props();
 
   const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
@@ -89,8 +90,7 @@
     el.select();
   }
 
-  /** Picked with others (more clips, or stretches on the timeline): a drag of
-   *  it carries them all, and its "Add to an edit" puts them all in one. */
+  /** Picked with others (more clips, or stretches on the timeline): a drag of it carries them all. */
   const withOthers = (clip: Clip) => snippets.size > 1 && snippets.has(itemOf(clip));
 
   // A made clip's chip drags out once the pointer moves with the button down
@@ -151,40 +151,18 @@
     // Picked with others: all of what's picked goes, wherever it's dropped.
     if (withOthers(clip)) return carryChosen(from, e.clientX, e.clientY);
     if (!vod) return void dragFileOut([clip]);
-    carry({ vod, start: clip.start, end: clip.end, title: clip.title, ownPlayer, from, x: e.clientX, y: e.clientY });
+    carry({
+      vod,
+      start: clip.start,
+      end: clip.end,
+      title: clip.title,
+      clip: clip.id,
+      ownPlayer,
+      from,
+      x: e.clientX,
+      y: e.clientY,
+    });
   }
-  async function save(clip: Clip) {
-    try {
-      await api.saveClip(clip.id);
-    } catch (e) {
-      clips.error = String(e);
-    }
-  }
-
-  // "Add to an edit" on a pill picked with others: the edits, then where in one.
-  let addingAll = $state(false);
-  let addAllButton = $state<HTMLElement>();
-  function onAdd(e: MouseEvent, clip: Clip) {
-    const anchor = e.currentTarget as HTMLElement;
-    if (!withOthers(clip)) return void (adding = { clip, anchor });
-    addAllButton = anchor;
-    addingAll = true;
-  }
-
-  // "Add to edit": the edits to pick from, by the clip's button.
-  let adding = $state<{ clip: Clip; anchor: HTMLElement } | null>(null);
-  let added = $state<string | null>(null);
-  async function addTo(editId: number | null) {
-    const clip = adding?.clip;
-    adding = null;
-    if (!clip) return;
-    const edit = editId === null ? await edits.create() : edits.list.find((e) => e.id === editId);
-    if (!edit) return;
-    await edits.add(edit.id, clip.id);
-    added = edits.error ? null : `Added to “${edit.title}”`;
-    setTimeout(() => (added = null), 2500);
-  }
-
   // Each edit with pieces of this VOD: a link to it. An edit's pieces are
   // copies, so the pills are the bar's own, and deleting one changes no edit.
   const linked = $derived(vod ? edits.forVod(vod.id) : []);
@@ -257,7 +235,17 @@
       onmouseenter={() => vod && (clips.hovered = { start: clip.start, end: clip.end })}
       onmouseleave={() => (clips.hovered = null)}
     >
-      <span class="time">
+      {#if onplay}
+        <button
+          class="act play"
+          onclick={() => onplay(clip.start)}
+          title="Play from the clip's start"
+          aria-label="Play {clip.title}"
+        >
+          <Icon name="play" size={12} />
+        </button>
+      {/if}
+      <span class="time" class:after-play={!!onplay}>
         {#if n !== null}<span class="order">{n}</span>{/if}
         <span class="length">{formatTime(clip.length ?? clip.end - clip.start)}</span>
       </span>
@@ -299,21 +287,10 @@
       {:else if clip.status === "error"}
         <span class="bad"><Icon name="error" size={13} /></span>
       {:else if clip.status === "ready"}
-        <button class="act" onclick={() => save(clip)} title="Save a copy…" aria-label="Save a copy">
-          <Icon name="download" size={13} />
-        </button>
         <button class="act" onclick={() => clips.show(clip.id)} title="Show in folder" aria-label="Show in folder">
           <Icon name="folder" size={13} />
         </button>
       {/if}
-      <button
-        class="act"
-        onclick={(e) => onAdd(e, clip)}
-        title={withOthers(clip) ? "Add them all to an edit, in the order picked" : "Add to an edit"}
-        aria-label="Add to an edit"
-      >
-        <Icon name="plus" size={13} />
-      </button>
       <button class="act" onclick={() => clips.remove(clip.id)} title="Delete clip" aria-label="Delete clip">
         <Icon name="x" size={13} />
       </button>
@@ -333,27 +310,7 @@
   {#if clips.error}
     <span class="error-text">{clips.error}</span>
   {/if}
-  {#if added}
-    <span class="muted added">{added}</span>
-  {/if}
 </div>
-
-<AddToEdit bind:open={addingAll} anchor={addAllButton} items={chosenPuts} />
-
-<Popover
-  bind:open={() => !!adding, (open) => !open && (adding = null)}
-  anchor={adding?.anchor}
-  label="Add to an edit"
-  width={240}
-  padding={6}
->
-  <div class="pick">
-    {#each edits.list as edit (edit.id)}
-      <button onclick={() => addTo(edit.id)}>{edit.title}</button>
-    {/each}
-    <button class="new" onclick={() => addTo(null)}><Icon name="plus" size={13} /> New edit</button>
-  </div>
-</Popover>
 
 <style>
   /* A link to an edit with pieces of this VOD: tinted, dashed, with an arrow. */
@@ -458,6 +415,16 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The play button first, at the pill's round end; the length close by it. */
+  .act.play {
+    margin-left: 3px;
+    color: var(--accent);
+  }
+
+  .time.after-play {
+    padding-left: 2px;
+  }
+
   .name {
     min-width: 0;
     padding: 0 4px;
@@ -526,35 +493,5 @@
   .error-text {
     font-size: 12px;
     white-space: nowrap;
-  }
-
-  .added {
-    font-size: 12px;
-    align-self: center;
-  }
-
-  .pick {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .pick button {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    text-align: left;
-    font-size: 13px;
-  }
-
-  .pick button:hover {
-    background: var(--surface-2);
-  }
-
-  .pick .new {
-    color: var(--accent);
   }
 </style>

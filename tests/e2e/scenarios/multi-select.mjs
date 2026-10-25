@@ -3,9 +3,10 @@
 // stretch 2-3 s and then on 1-2 s: each shows its number in that order, the
 // playhead stays where it was, and C makes a clip of each, in that order, as
 // one change. The clip bar has no row of its own about what's picked: the
-// keys and the pills' own buttons are the same for several as for one. A
+// keys and the drags are the same for several as for one. A
 // plain click on a pill picks it alone, one on another picks that instead,
-// and one on the pill picked alone lets it go. The two pills Ctrl-clicked:
+// and one on the pill picked alone lets it go. A pill's play button plays the
+// VOD from the clip's start and picks nothing. The two pills Ctrl-clicked:
 // Delete takes both off the clip bar, and one undo brings both back. A box dragged from empty space in the
 // clip bar over both pills picks them; Escape lets them go. In the library:
 // three more files, Ctrl-click on one and Shift-click on another picks the
@@ -20,8 +21,8 @@
 // window the pointer is on, whatever has the focus: over the clip bar or the
 // timeline, all the clips; over the library's pane, all its rows; over the
 // main side with no clip bar, nothing, and not the page's text either. Last,
-// the two pills picked: the + on one of them (Add to an edit) puts both in an
-// edit, asking where, in the order picked.
+// the two pills picked, one of them dragged onto "Make new edit" in the
+// library: both go in a new edit, in the order picked.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -130,8 +131,8 @@ export default {
       throw new Error(`the stretches' numbers: ${JSON.stringify(numbers)}`);
     if ((await app.shownTime()) !== 3) throw new Error(`picking moved the playhead to ${await app.shownTime()} s`);
     // The clip bar says nothing of what's picked: no row there with a count
-    // or buttons of its own (C, Clip under the player, and the pills' own
-    // buttons do it).
+    // or buttons of its own (C, Clip under the player, Delete and the
+    // pills' drags do it).
     const barRow = () =>
       app.js(`
         const bar = document.querySelector(".clip-bar");
@@ -184,6 +185,18 @@ export default {
     await plainClick(made[1].id);
     await until("a plain click on the pill picked alone let it go", async () => !(await chosen()).length, 10_000);
     ctx.log("a plain click picks a pill alone, another instead, and lets go of the one picked alone");
+
+    // The play button on the 1-2 s pill (the playhead at 3 s, after the
+    // cuts): the VOD plays from 1 s, and the pill isn't picked.
+    const first = made.find((c) => Math.round(c.start) === 1);
+    if ((await app.shownTime()) < 3) throw new Error(`the playhead at ${await app.shownTime()} s before Play, not 3 s`);
+    await app.click(`.chip[data-clip="${first.id}"] button.play`);
+    await until("playing", () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`), MINUTE);
+    const at = await app.shownTime();
+    if (at < 1 || at >= 3) throw new Error(`the play button played from ${at} s, not the clip's start (1 s)`);
+    await app.pause();
+    if ((await chosen()).length) throw new Error(`the play button picked ${JSON.stringify(await chosen())}`);
+    ctx.log(`a pill's play button played from the clip's start (at ${at} s once playing), picking nothing`);
 
     // The two pills Ctrl-clicked: both picked, still no row.
     for (const clip of made)
@@ -414,9 +427,9 @@ export default {
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id))
       throw new Error("Delete on the cut removed the VOD");
 
-    // The two pills picked, 2-3 s first: the + on the second (Add to an
-    // edit) asks for an edit (a new one here), then where in it, and puts
-    // both there, in the order picked.
+    // The two pills picked, 2-3 s first, and the second dragged (in the
+    // page's events) onto "Make new edit": both go in a new edit, in the
+    // order picked.
     const editsBefore = new Set((await app.invoke("list_edits")).map((e) => e.id));
     const plainCount = (await shown()).length;
     // Made first, so picked first: 2-3 s, then 1-2 s.
@@ -429,27 +442,30 @@ export default {
         clip.id,
       );
     await until("two pills picked", async () => (await chosen()).length === 2, 10_000);
-    await app.click(`.chip[data-clip="${inOrder[1].id}"] button[aria-label="Add to an edit"]`);
-    const inMenu = (text) =>
-      app.js(
-        `const el = [...document.querySelectorAll("[role=dialog] .pick button")].find((b) => b.textContent.trim() === arguments[0]);
-         if (!el) throw new Error("no " + arguments[0] + " in the menu");
-         el.click();`,
-        text,
-      );
+    const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
+    await app.js(
+      `${AT}
+       const el = document.querySelector('.chip[data-clip="' + arguments[0] + '"] .time');
+       const r = el.getBoundingClientRect();
+       const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+       el.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x + 10, y + 10, 1)));
+       window.__drag = [x + 10, y + 10];`,
+      inOrder[1].id,
+    );
     await until(
-      "the edits to pick from",
-      () => app.js(`return !!document.querySelector("[role=dialog] .pick")`),
+      '"Make new edit", to drop on',
+      () => app.js(`return !!document.querySelector("[data-new-edit]")`),
       10_000,
     );
-    await inMenu("New edit");
-    await until(
-      "where in a new edit",
-      () =>
-        app.js(`return document.querySelector("[role=dialog] .pick .head")?.textContent.trim() === "Into a new edit:"`),
-      10_000,
+    await app.js(
+      `${AT}
+       const r = document.querySelector("[data-new-edit]").getBoundingClientRect();
+       const [x0, y0] = window.__drag;
+       const [x1, y1] = [r.left + r.width / 2, r.top + r.height / 2];
+       for (let i = 1; i <= 5; i++) window.dispatchEvent(new PointerEvent("pointermove", at(x0 + ((x1 - x0) * i) / 5, y0 + ((y1 - y0) * i) / 5, 1)));
+       window.dispatchEvent(new PointerEvent("pointerup", at(x1, y1, 0)));`,
     );
-    await inMenu("Timeline, at the end");
     const edit = await until(
       "the new edit",
       async () => (await app.invoke("list_edits")).find((e) => !editsBefore.has(e.id)),
@@ -461,7 +477,7 @@ export default {
         throw new Error(`${e.message}: the edit has ${JSON.stringify(await pieces())}`);
       },
     );
-    if ((await shown()).length !== plainCount) throw new Error("Add to an edit changed the clip bar");
-    ctx.log("the + on a pill picked with another put both in an edit, 2-3 then 1-2");
+    if ((await shown()).length !== plainCount) throw new Error("the drop on Make new edit changed the clip bar");
+    ctx.log("a pill picked with another, dragged onto Make new edit, put both in a new edit, 2-3 then 1-2");
   },
 };

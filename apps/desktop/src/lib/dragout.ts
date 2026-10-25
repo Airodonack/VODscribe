@@ -309,9 +309,12 @@ function showTarget(target: Target) {
 function dropAt(px: number, py: number, stretch: Stretch, clip: () => unknown): boolean {
   const { edit, timeline, bar } = targetAt(px, py);
   const { vodId, start, end, title } = stretch;
+  // A clip's pill goes in as the clip (`edits.add`), a stretch as a range.
+  const into = (editId: number, index?: number) =>
+    stretch.clip !== undefined ? edits.add(editId, stretch.clip, index) : edits.addRange(editId, stretch, index);
   if (edit === "new") edits.createWith(stretch);
-  else if (edit !== null) edits.addRange(edit, stretch);
-  else if (timeline && edits.openId !== null) edits.addRange(edits.openId, stretch, timeline.index);
+  else if (edit !== null) into(edit);
+  else if (timeline && edits.openId !== null) into(edits.openId, timeline.index);
   else if (bar && clips.doc?.kind === "edit")
     edits.put(clips.doc.id, [{ kind: "range", vodId, start, end, title }], true);
   else if (bar) clip();
@@ -376,6 +379,9 @@ export interface Carry {
   y: number;
   /** Its name, if it's a clip's: a copy put in an edit keeps it. */
   title?: string;
+  /** The clip it is, if it's a pill of the clip bar: an edit takes the clip
+   *  itself (a group, its own cuts kept), not a bare stretch. */
+  clip?: number;
   /** Where it came from, if coming back there ends the carry (an edit's timeline). */
   home?: CarryHome;
 }
@@ -390,7 +396,7 @@ export interface CarryHome {
  * Carries a stretch from (`x`, `y`) while the button is down: see the top of
  * this file. Resolves once it's dropped, taken out of the window, or let go.
  */
-export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, home }: Carry): Promise<void> {
+export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, clip, home }: Carry): Promise<void> {
   // A stretch of the VOD shown is made a clip through its clip bar; another's (an edit's piece) directly.
   const make = async (shown: boolean): Promise<Clip | null> => {
     if (vod.id === clips.vodId) return exportStretch(start, end, shown);
@@ -400,7 +406,7 @@ export function carry({ vod, start, end, ownPlayer, levels, from, x, y, title, h
     });
   };
   const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
-  const stretch: Stretch = { vodId: vod.id, start, end, title };
+  const stretch: Stretch = { vodId: vod.id, start, end, title, clip };
   const ghost = document.createElement("div");
   ghost.className = "carry-ghost";
   const img = document.createElement("img");

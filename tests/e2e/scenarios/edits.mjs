@@ -1,4 +1,4 @@
-// Edits: a clip added to a new edit from its pill (a group, one band); the
+// Edits: a clip's pill dragged onto "Make new edit" in the library (a group, one band); the
 // edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
 // and the second half moved first and back (Ctrl+← and →), a line's slice taken out and brought back
 // (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
@@ -17,12 +17,15 @@ import * as os from "../lib/os.mjs";
 
 const NAME = "Landing edit";
 
+/** A pointer event's fields at (x, y) with `buttons` down, in the page. */
+const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
+
 export default {
   name: "edits",
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "edit-clip-bar":
-      "An edit is open (its name at the top, with Render): under its player and timeline, on a row of its own, there is one clip pill showing a start time, a few words of its line, and small download, folder, + and × icons, none of it cut off.",
+      "An edit is open (its name at the top, with Render): under its player and timeline, on a row of its own, there is one clip pill showing a start time, a few words of its line, and small play, folder and × icons, none of it cut off.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -30,19 +33,46 @@ export default {
     await app.openPaused(vod.id);
     const clip = await app.clipOneToThree(vod.id);
 
-    // From the clip's pill: Add to an edit › New edit.
+    // The clip's pill dragged (in the page's events) onto "Make new edit",
+    // which shows in the library while it's carried.
     await until(
       "the pill",
       () => app.js(`return !!document.querySelector('.chip.ready[data-clip="${clip.id}"]')`),
       10_000,
     );
-    await app.click(`.chip.ready[data-clip="${clip.id}"] button[aria-label="Add to an edit"]`);
+    await app.js(
+      `${AT}
+       const el = document.querySelector('.chip.ready[data-clip="' + arguments[0] + '"] .time');
+       const r = el.getBoundingClientRect();
+       const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+       el.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x + 10, y + 10, 1)));
+       window.__drag = [x + 10, y + 10];`,
+      clip.id,
+    );
     await until(
-      "the Add to an edit box",
-      () => app.js(`return !!document.querySelector('[role=dialog][aria-label="Add to an edit"] button.new')`),
+      '"Make new edit", to drop on',
+      () => app.js(`return !!document.querySelector("[data-new-edit]")`),
       10_000,
     );
-    await app.click('[role=dialog][aria-label="Add to an edit"] button.new');
+    await app.js(
+      `${AT}
+       const r = document.querySelector("[data-new-edit]").getBoundingClientRect();
+       const [x0, y0] = window.__drag;
+       const [x1, y1] = [r.left + r.width / 2, r.top + r.height / 2];
+       for (let i = 1; i <= 5; i++) window.dispatchEvent(new PointerEvent("pointermove", at(x0 + ((x1 - x0) * i) / 5, y0 + ((y1 - y0) * i) / 5, 1)));
+       window.__drag = [x1, y1];`,
+    );
+    await until(
+      '"Make new edit" lit as where it would go',
+      () => app.js(`return !!document.querySelector("[data-new-edit].target")`),
+      10_000,
+    );
+    await app.js(
+      `${AT}
+       const [x, y] = window.__drag;
+       window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+    );
     const [made] = await until(
       "the new edit",
       async () => {

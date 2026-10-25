@@ -2,8 +2,9 @@
 // the library's list among the VODs (Library.svelte, EditRow.svelte), and
 // open in the player's place (EditView.svelte). Pieces get in by a clip, or a
 // stretch of the timeline, being dropped on an edit's row or on "Make new
-// edit" atop the list (dragout.ts), or with a clip's "Add to an edit"
-// (ClipStrip.svelte). A piece is a copy: changing it changes nothing else.
+// edit" atop the list (dragout.ts), or with the library's "Add to edit…"
+// for what's picked there (AddToEdit.svelte). A piece is a copy: changing it
+// changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
 import { playedSpans } from "./media";
@@ -12,8 +13,10 @@ import { api, events, type Edit, type EditPiece, type EditView, type Fetching, t
 import { clips } from "./clips.svelte";
 import { clearsStretch, stretchMade } from "./selection.svelte";
 
-/** A stretch of a VOD dropped on an edit, and its name if it was a clip's. */
-export type Stretch = { vodId: number; start: number; end: number; title?: string };
+/** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
+ *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
+ *  group, with the clip's own cuts), as `add` puts it. */
+export type Stretch = { vodId: number; start: number; end: number; title?: string; clip?: number };
 
 class Edits {
   list = $state.raw<Edit[]>([]);
@@ -103,8 +106,10 @@ class Edits {
   /** A new edit holding a stretch of a VOD, or several things picked (in their order). */
   async createWith(what: Stretch | Put[]): Promise<Edit | null> {
     const edit = await this.create();
-    if (edit && Array.isArray(what)) await this.put(edit.id, what, false);
-    else if (edit && !Array.isArray(what)) await this.addRange(edit.id, what);
+    if (!edit) return edit;
+    if (Array.isArray(what)) await this.put(edit.id, what, false);
+    else if (what.clip !== undefined) await this.add(edit.id, what.clip);
+    else await this.addRange(edit.id, what);
     return edit;
   }
 
