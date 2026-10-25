@@ -4,11 +4,20 @@
   // host's annotations/<platform>/<id>.json and .chat.json beside it, or
   // ?src=<url>), or from files dropped on the page or picked, which are read
   // here in the browser and never uploaded. The VOD pages (routes/v/[platform]/[id])
-  // show it with their source; the index (routes/v) shows it `idle`, its list
-  // (`children`) in place until a file is opened.
+  // show it with their source, as the whole page: the app's view fills the
+  // window under the site's bar (+layout.svelte), whose line carries the note
+  // and Open a file (siteBar.svelte.ts). The index (routes/v) shows it `idle`,
+  // its list (`children`) in place in a normal page, until a file is opened.
+  //
+  // Phones (under 821 px) get the VOD's title, the platform's player and a
+  // note that the rest needs a bigger screen. A proper phone layout is for
+  // later.
   import { onDestroy, onMount, untrack, type Snippet } from "svelte";
   import { parseAnnotations } from "desktop/lib/annotations.ts";
   import Demo from "#lib/Demo.svelte";
+  import { siteBar } from "#lib/siteBar.svelte.ts";
+  import { annotated } from "#lib/tauri/annotations.ts";
+  import type { EmbeddedPlayer } from "desktop/lib/embed.ts";
   import { pickDropped, type Source } from "#lib/tauri/annotated.ts";
   import { chatArrived, closeAnnotations, openAnnotations } from "#lib/tauri/annotations.ts";
 
@@ -105,11 +114,51 @@
     open(text, picked.annotations.name, chat, picked.annotations.name);
   }
 
+  // The same width the demo hides itself under (Demo.svelte).
+  let wide = $state(true);
   onMount(() => {
+    const query = matchMedia("(min-width: 821px)");
+    const sync = () => (wide = query.matches);
+    sync();
+    query.addEventListener("change", sync);
     if (source) fromUrls(source);
     else if (!idle) view = { kind: "missing" };
+    if (!idle) siteBar.pick = () => picker?.click();
+    return () => query.removeEventListener("change", sync);
   });
-  onDestroy(closeAnnotations);
+  onDestroy(() => {
+    closeAnnotations();
+    siteBar.pick = null;
+    siteBar.note = "";
+  });
+
+  $effect(() => {
+    siteBar.note =
+      idle || view.kind !== "open"
+        ? ""
+        : `From ${view.from}. Transcribing and clipping VODs of your own needs the app.`;
+  });
+
+  // The platform's player on a phone: the app's own embed, made as its player
+  // panel makes it, in the element this action is given.
+  function embed(host: HTMLElement) {
+    let player: EmbeddedPlayer | undefined;
+    let gone = false;
+    const vod = annotated()?.vod;
+    if (vod)
+      import("desktop/lib/embed.ts").then(({ createPlayer }) =>
+        createPlayer(host, vod, 0, false, (message) => (embedError = message))?.then((p) =>
+          gone ? p.destroy() : (player = p),
+        ),
+      );
+    return {
+      destroy() {
+        gone = true;
+        player?.destroy();
+      },
+    };
+  }
+  let embedError = $state<string | null>(null);
 
   // Files dropped anywhere on the page open here (the demo's own drop handling is off).
   let dragging = $state(false);
@@ -152,33 +201,50 @@
   ondrop={onDrop}
 />
 
-<main class:dragging>
-  <div class="bar">
-    <p class="muted small">
-      {#if view.kind === "open"}
-        A VOD with annotations, from {view.from}. Transcribing and clipping VODs of your own needs the app.
-      {:else}
-        {idle ? "VODs with annotations" : "A VOD with annotations"}
-      {/if}
-    </p>
-    <button class="small" onclick={() => picker?.click()}>Open a file…</button>
-    <input
-      bind:this={picker}
-      type="file"
-      accept=".json,application/json"
-      multiple
-      hidden
-      onchange={(e) => {
-        const input = e.currentTarget;
-        if (input.files) fromFiles(input.files).finally(() => (input.value = ""));
-      }}
-    />
-  </div>
+<main class:dragging class:page={idle}>
+  {#if idle}
+    <div class="bar">
+      <p class="muted small">
+        {#if view.kind === "open"}
+          A VOD with annotations, from {view.from}. Transcribing and clipping VODs of your own needs the app.
+        {:else}
+          VODs with annotations
+        {/if}
+      </p>
+      <button class="small" onclick={() => picker?.click()}>Open a file…</button>
+    </div>
+  {/if}
+  <input
+    bind:this={picker}
+    type="file"
+    accept=".json,application/json"
+    multiple
+    hidden
+    onchange={(e) => {
+      const input = e.currentTarget;
+      if (input.files) fromFiles(input.files).finally(() => (input.value = ""));
+    }}
+  />
 
   {#if view.kind === "open"}
-    {#key view.id}
-      <Demo openVod={view.id} fill />
-    {/key}
+    {#if idle || wide}
+      {#key view.id}
+        <Demo openVod={view.id} fill={!idle} />
+      {/key}
+    {:else}
+      <div class="phone">
+        <h1>{view.title}</h1>
+        {#if view.channel}<p class="muted">{view.channel}</p>{/if}
+        {#key view.id}
+          <div class="embed" use:embed></div>
+        {/key}
+        {#if embedError}<p class="error-text small">{embedError}</p>{/if}
+        <p class="caption">
+          <strong>This page needs a bigger screen for the transcript and chapters.</strong>
+          <span class="muted">Open it on a computer to read and search the VOD.</span>
+        </p>
+      </div>
+    {/if}
   {:else if view.kind === "idle"}
     {@render children?.()}
   {:else}
@@ -206,7 +272,16 @@
 </main>
 
 <style>
+  /* A VOD's page: all that is left under the site's bar. */
   main {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  main.page {
+    flex: none;
+    overflow: visible;
     max-width: 1600px;
     margin: 0 auto 32px;
     padding: 0 24px;
@@ -214,8 +289,46 @@
 
   main.dragging {
     outline: 2px dashed var(--accent);
+    outline-offset: -4px;
+  }
+
+  main.page.dragging {
     outline-offset: 4px;
     border-radius: 12px;
+  }
+
+  .phone {
+    height: 100%;
+    overflow: auto;
+    padding: 16px;
+    box-sizing: border-box;
+  }
+
+  .phone h1 {
+    font-size: 20px;
+    line-height: 1.25;
+    margin: 0 0 4px;
+  }
+
+  .phone p {
+    margin: 0 0 12px;
+  }
+
+  .embed {
+    aspect-ratio: 16 / 9;
+    margin: 12px 0;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .caption {
+    text-align: center;
+    font-size: 14px;
+  }
+
+  .caption strong {
+    display: block;
   }
 
   .bar {
@@ -236,6 +349,7 @@
 
   .message {
     max-width: 560px;
+    padding: 0 16px;
     margin: 12vh auto;
     text-align: center;
   }

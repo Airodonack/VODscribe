@@ -132,8 +132,15 @@
     text-align: left;
   }
 
+  /* A VOD's page: the window is the page under the site's bar (--bar-h,
+     +layout.svelte), so resizing the browser resizes it as it would the app. */
   .window.fill {
-    --app-height: max(480px, calc(100vh - 150px));
+    --app-height: calc(100dvh - var(--bar-h, 0px));
+    --player-max-height: calc(var(--app-height) * 0.34);
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .loading {

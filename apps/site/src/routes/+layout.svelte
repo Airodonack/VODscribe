@@ -2,32 +2,49 @@
   import "desktop/app.css";
   import "../site.css";
   import Logo from "desktop/lib/Logo.svelte";
+  import { page } from "$app/state";
   import { AUTHOR, SOURCE, SUPPORT } from "#lib/links.js";
+  import { siteBar } from "#lib/siteBar.svelte.ts";
 
   let { children } = $props();
+  // A VOD's page is the player itself: a one-line bar, the view filling the
+  // rest of the window, no footer and no page scroll (VodView.svelte).
+  const full = $derived(page.route.id === "/v/[platform]/[id]");
 </script>
 
-<header class="top">
-  <a class="brand" href="/">
-    <Logo size={28} tile />
-    <span>VODscribe</span>
-  </a>
-  <nav>
-    <a class="download-link" href="/#download">Download</a>
-    <a href={SUPPORT} target="_blank" rel="noopener">Support on Ko-fi</a>
-  </nav>
-</header>
+<div class="shell" class:full>
+  <header class="top">
+    <a class="brand" href="/">
+      <Logo size={28} tile />
+      <span>VODscribe</span>
+    </a>
+    {#if full && siteBar.note}
+      <p class="note muted">{siteBar.note}</p>
+    {/if}
+    <nav>
+      {#if full && siteBar.pick}
+        <button class="open" onclick={siteBar.pick}>Open a file…</button>
+      {/if}
+      <a class="download-link" href="/#download">Download</a>
+      {#if !full}
+        <a href={SUPPORT} target="_blank" rel="noopener">Support on Ko-fi</a>
+      {/if}
+    </nav>
+  </header>
 
-{@render children()}
+  {@render children()}
 
-<footer>
-  <span>Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
-  <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>
-  <a href="/releases">Releases</a>
-  <a href="/privacy">Privacy</a>
-  <a href="/licenses">Licenses</a>
-  <a href={SOURCE} target="_blank" rel="noopener">Source</a>
-</footer>
+  {#if !full}
+    <footer>
+      <span>Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
+      <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>
+      <a href="/releases">Releases</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/licenses">Licenses</a>
+      <a href={SOURCE} target="_blank" rel="noopener">Source</a>
+    </footer>
+  {/if}
+</div>
 
 <style>
   .top {
@@ -38,6 +55,45 @@
     max-width: 1180px;
     margin: 0 auto;
     padding: 18px 24px;
+  }
+
+  .shell.full {
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: hidden;
+    /* The bar's height, which the view under it subtracts from the window's. */
+    --bar-h: 48px;
+  }
+
+  .shell.full .top {
+    flex: none;
+    box-sizing: border-box;
+    height: var(--bar-h);
+    max-width: none;
+    margin: 0;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .note {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    font-size: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .open {
+    font-size: 13px;
+    padding: 3px 10px;
+    white-space: nowrap;
+  }
+
+  nav {
+    align-items: center;
   }
 
   .brand {
@@ -69,6 +125,10 @@
 
     nav {
       gap: 14px;
+    }
+
+    .note {
+      display: none;
     }
   }
 
