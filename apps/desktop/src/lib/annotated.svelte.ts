@@ -5,7 +5,6 @@
 // (Transcript.svelte) colours its lines by speaker and heads them with the
 // cast member's picture, and its header lists the cast.
 
-import { open } from "@tauri-apps/plugin-dialog";
 import { SvelteMap } from "svelte/reactivity";
 import { AVATAR_BASE } from "./accounts";
 import { api, type Vod, type VodAnnotations } from "./api";
@@ -59,24 +58,6 @@ class Annotated {
   async #read(id: number) {
     const got = await api.vodAnnotations(id).catch(() => null);
     this.#of.set(id, got);
-  }
-
-  /**
-   * Asks for an annotations file with the file picker and imports it: the
-   * VOD it's for is added if the library doesn't have it. Returns the VOD,
-   * or null if nothing was picked; throws the import's error.
-   */
-  async pickAndImport(): Promise<Vod | null> {
-    const picked = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: "Annotations", extensions: ["json"] }],
-    }).catch(() => null);
-    const path = Array.isArray(picked) ? picked[0] : picked;
-    if (!path) return null;
-    const { vod } = await api.importAnnotationsFile(path);
-    this.imported(vod.id);
-    return vod;
   }
 
   /** VOD `id` has had annotations imported: what's shown of it is read again. */

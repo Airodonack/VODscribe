@@ -1,6 +1,6 @@
 // An annotations file imported for a video file (fixtures/annotations-minute.json,
-// with its chat beside it): the library's "import annotations…" picks it, and
-// the VOD opens transcribed whole with what the file brought. Its three
+// with its chat beside it), the way the offer of a VOD's annotations brings
+// one in; the VOD opens transcribed whole with what the file brought. Its three
 // chapters are gray slices on the timeline, neighbours in two tints, the two
 // with an icon showing it before their title; its two highlights are their
 // kind's emoji on the bar's upper part, and pointing at one draws a line
@@ -107,16 +107,11 @@ export default {
     writeFileSync(annotations, json);
     writeFileSync(path.join(dir, "minute-annotations.chat.json"), readFileSync(CHAT));
 
-    const importIt = async () => {
-      await app.pickFiles([annotations]);
-      await app.clickText("import annotations…");
-    };
+    const importIt = () => app.invoke("import_annotations_file", { path: annotations });
     await importIt();
     const imported = await until(
       "the import",
       async () => {
-        const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-        if (error) throw new Error(`the import failed: ${error}`);
         const v = (await app.invoke("list_vods")).find((v) => v.id === vod.id);
         return v.transcribed === "all" && v.chat === "done" && v;
       },
