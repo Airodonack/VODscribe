@@ -194,3 +194,25 @@ test("a cast member's player and account are read when they can be, left out whe
     { name: "Cy", aliases: [], role: "friend" },
   ]);
 });
+
+test("a file that leaves out what the app's reader fills in is read as the app reads it", () => {
+  // crates/core annotations.rs: a segment's words, a highlight's why and cast, a cast member's aliases.
+  const read = parseAnnotations({
+    format: "vodscribe-annotations",
+    version: 1,
+    source: { platform: "twitch", id: "v1", duration: 60 },
+    transcript: { segments: [{ id: 1, start: 0, end: 2, text: "hello there", speaker: "Mar" }] },
+    chapters: [],
+    highlights: [{ start: 1, end: 5, title: "A moment", kind: "funny" }],
+    cast: [{ name: "Marlowe", role: "streamer" }],
+    activity: [],
+  });
+  assert.deepEqual(read.transcript.segments[0].words, []);
+  assert.equal(read.highlights[0].why, "");
+  assert.deepEqual(read.highlights[0].cast, []);
+  assert.deepEqual(read.cast[0].aliases, []);
+  // What the site's page does with the cast.
+  assert.equal(castIndex(read.cast, "Marlowe"), 0);
+  assert.equal(castIndex(read.cast, "Brigid"), -1);
+  assert.equal(castDetail(read.cast[0]), "Streamer");
+});

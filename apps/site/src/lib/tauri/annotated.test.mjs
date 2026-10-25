@@ -171,11 +171,11 @@ test("the host's index: VODs with a platform and id, newest first, each to its p
   );
 });
 
-test("a highlight's cast is read when it's there, left out when it isn't, refused when it isn't names", () => {
+test("a highlight's cast is read when it's there, none when it isn't (as the app fills in), refused when it isn't names", () => {
   assert.deepEqual(annotations.highlights[0].cast, ["airodonack"]);
   const without = structuredClone(fixture("v2901646294.json"));
   delete without.highlights[0].cast;
-  assert.equal(parseAnnotations(without).highlights[0].cast, undefined);
+  assert.deepEqual(parseAnnotations(without).highlights[0].cast, []);
   without.highlights[0].cast = "airodonack";
   assert.throws(() => parseAnnotations(without), /a highlight's cast isn't a list of names/);
 });

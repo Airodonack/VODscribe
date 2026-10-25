@@ -154,6 +154,14 @@ export function parseAnnotations(value: unknown): Annotations {
   for (const h of v.highlights as { cast?: unknown }[])
     if (h?.cast !== undefined && !(Array.isArray(h.cast) && h.cast.every((n) => typeof n === "string")))
       bad("a highlight's cast isn't a list of names");
+  // What the file may leave out is filled in as crates/core annotations.rs fills it in (its
+  // `#[serde(default)]`s are the rule): a segment's words, a highlight's why and cast, a cast member's aliases.
+  const segments = (transcript!.segments as Record<string, unknown>[]).map((g) =>
+    typeof g !== "object" || g === null ? g : { ...g, words: g.words ?? [] },
+  );
+  const highlights = (v.highlights as Record<string, unknown>[]).map((h) =>
+    typeof h !== "object" || h === null ? h : { ...h, why: h.why ?? "", cast: h.cast ?? [] },
+  );
   // A chapter's icon that isn't one emoji is left out, rather than the file refused.
   const chapters = (v.chapters as Record<string, unknown>[]).map((c) => {
     if (typeof c !== "object" || c === null || !("icon" in c)) return c;
@@ -168,9 +176,14 @@ export function parseAnnotations(value: unknown): Annotations {
     const { player, account, ...rest } = m;
     const name = typeof player === "string" ? player.trim() : "";
     const tied = readAccount(account);
-    return { ...rest, ...(name ? { player: name } : {}), ...(tied ? { account: tied } : {}) };
+    return {
+      ...rest,
+      aliases: rest.aliases ?? [],
+      ...(name ? { player: name } : {}),
+      ...(tied ? { account: tied } : {}),
+    };
   });
-  return { ...v, chapters, cast } as Annotations;
+  return { ...v, transcript: { ...transcript, segments }, chapters, highlights, cast } as Annotations;
 }
 
 /**
