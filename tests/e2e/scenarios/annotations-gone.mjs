@@ -20,7 +20,7 @@ import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
-const fileOf = (id) => `/annotations/dailymotion/${id}.json`;
+const fileOf = (id) => `/annotations/youtube/${id}.json`;
 
 const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, DIALOG);
 const listed = async (app, id) => (await app.invoke("list_vods")).some((v) => v.id === id);
@@ -39,7 +39,7 @@ export default {
     const FETCHED = "xe2egone";
     const ASKED = "xe2egoneasked";
     const json = readFileSync(FIXTURE, "utf8")
-      .replace('"{PLATFORM}"', '"dailymotion"')
+      .replace('"{PLATFORM}"', '"youtube"')
       .replace('"{ID}"', `"${FETCHED}"`);
     const file = held();
     const lookup = held();
