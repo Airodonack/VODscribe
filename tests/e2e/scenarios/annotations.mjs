@@ -1250,7 +1250,13 @@ export default {
     await app.key("ArrowRight", { shift: true });
     await until("the player at 1 s", async () => (await app.shownTime()) === 1, 10_000);
     await name("", "Ours");
-    const ours = (await app.invoke("list_marks", { vodId: vod.id })).find((m) => m.text === "Ours");
+    // The title is saved after its box closes (cuts.svelte.ts `setText`): a
+    // look at the library before that lands finds the chapter untitled.
+    const ours = await until(
+      "the new chapter's title saved",
+      async () => (await app.invoke("list_marks", { vodId: vod.id })).find((m) => m.text === "Ours"),
+      10_000,
+    ).catch(() => undefined);
     const drawn = await until(
       "the new chapter on the timeline",
       () => app.js(`return !!document.querySelector('[data-mark="' + arguments[0] + '"]')`, ours?.id),
