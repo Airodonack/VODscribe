@@ -6,7 +6,7 @@
 // (annotated.test.mjs).
 
 import type { ChatLine, Vod } from "desktop/lib/api.ts";
-import { LIMITS, count, hasLongText, type Annotations } from "desktop/lib/annotations.ts";
+import { LIMITS, count, hasLongText, utcSecond, type Annotations } from "desktop/lib/annotations.ts";
 import { DOWNLOAD_HOST } from "../downloads.ts";
 
 /** A line as the demo's transcripts have it: text, start, each word's start; and here, its end and speaker. */
@@ -175,8 +175,9 @@ export function vodOf(annotations: Annotations, id: number, chat: Vod["chat"]): 
     media: false,
     audio_only: false,
     published: s.recorded_at?.slice(0, 10) ?? null,
-    // The app keeps the file's time as the VOD's start when nothing better says (crates/core `db::MIGRATE_V33`).
-    started_at: s.recorded_at ?? null,
+    // The app keeps the file's time as the VOD's start when nothing better says (crates/core `db::MIGRATE_V33`),
+    // in UTC, and none for a time without its zone, which would read in the visitor's own here (povs.ts).
+    started_at: utcSecond(s.recorded_at),
     status: "done",
     progress: 1,
     error: null,

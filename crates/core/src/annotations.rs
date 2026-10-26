@@ -11,6 +11,7 @@
 //! whether a VOD's is there (one HEAD request naming the site and the VOD's
 //! id, nothing else), and `download` fetches it to import.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -740,25 +741,40 @@ impl Db {
     }
 
     /// The file's chapters and highlights become VOD `vod_id`'s marks from
-    /// the import, in place of the last import's; the user's own stay.
+    /// the import, in place of the last import's; the user's own stay, and so do
+    /// the imported ones they changed, which the file's copy doesn't join again.
     fn import_marks(&self, vod_id: i64, annotations: &Annotations) -> Result<()> {
         let clip = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
         self.change(clip, None, |db| {
             db.conn.execute("DELETE FROM marks WHERE clip_id = ?1 AND source = ?2", params![clip, SOURCE])?;
-            let from_import = || MarkDetail { source: SOURCE.into(), ..MarkDetail::default() };
-            for c in annotations.chapters.iter().filter(|c| usable(c.start)) {
+            // What's left of an earlier import is what the user changed: theirs, in place of the import's.
+            let kept: HashSet<String> = db
+                .conn
+                .prepare("SELECT imported_as FROM marks WHERE clip_id = ?1 AND imported_as IS NOT NULL")?
+                .query_map([clip], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?;
+            let key = |kind: &str, start: f64| format!("{kind} {}", Flicks::from_seconds(start).0);
+            let from_import = |kind: &str, start: f64| MarkDetail {
+                source: SOURCE.into(),
+                imported_as: Some(key(kind, start)),
+                ..MarkDetail::default()
+            };
+            let new = |kind: &str, start: f64| usable(start) && !kept.contains(&key(kind, start));
+            for c in annotations.chapters.iter().filter(|c| new("chapter", c.start)) {
                 let title = Some(c.title.trim()).filter(|t| !t.is_empty());
-                let detail =
-                    MarkDetail { icon: c.icon.as_deref().and_then(one_emoji).map(Into::into), ..from_import() };
+                let detail = MarkDetail {
+                    icon: c.icon.as_deref().and_then(one_emoji).map(Into::into),
+                    ..from_import("chapter", c.start)
+                };
                 db.insert_mark_with(clip, vod_id, "chapter", Flicks::from_seconds(c.start), title, &detail)?;
             }
-            for h in annotations.highlights.iter().filter(|h| usable(h.start)) {
+            for h in annotations.highlights.iter().filter(|h| new("highlight", h.start)) {
                 let detail = MarkDetail {
                     end: Some(h.end).filter(|e| e.is_finite() && *e > h.start),
                     category: Some(h.kind.trim().to_string()).filter(|k| !k.is_empty()),
                     note: Some(h.why.trim().to_string()).filter(|w| !w.is_empty()),
                     cast: h.cast.iter().map(|n| n.trim()).filter(|n| !n.is_empty()).map(Into::into).collect(),
-                    ..from_import()
+                    ..from_import("highlight", h.start)
                 };
                 let title = Some(h.title.trim()).filter(|t| !t.is_empty());
                 db.insert_mark_with(clip, vod_id, "highlight", Flicks::from_seconds(h.start), title, &detail)?;
@@ -1105,6 +1121,36 @@ mod tests {
     }
 
     #[test]
+    fn an_imported_mark_the_user_changed_is_not_imported_again() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
+        let find =
+            |text: &str| db.marks(vod.id).unwrap().into_iter().find(|m| m.text.as_deref() == Some(text)).unwrap();
+        // "Middle" renamed, "Big laugh" moved, then undone to the state after both (as undo does).
+        db.set_mark_text(find("Middle").id, Some("My middle")).unwrap();
+        db.move_mark(find("Big laugh").id, 6.0).unwrap();
+        let states = db.mark_states(vod.id).unwrap();
+        db.restore_marks(vod.id, &states).unwrap();
+
+        db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
+        let marks: Vec<_> =
+            db.marks(vod.id).unwrap().into_iter().map(|m| (m.start, m.text.unwrap(), m.detail.source)).collect();
+        assert_eq!(
+            marks,
+            [
+                (0.0, "Start".into(), SOURCE.into()),
+                (6.0, "Big laugh".into(), "user".into()),
+                (20.0, "My middle".into(), "user".into()),
+            ],
+            "the user's changed copies stand in for the import's"
+        );
+        // Deleted, the import brings the original back.
+        db.delete_mark(find("My middle").id).unwrap();
+        db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
+        assert_eq!(find("Middle").detail.source, SOURCE);
+    }
+
+    #[test]
     fn undo_puts_imported_marks_back_as_imported() {
         let db = Db::open(std::path::Path::new(":memory:")).unwrap();
         let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
@@ -1373,6 +1419,19 @@ mod tests {
         let (gone, _) = host(|_| ("HTTP/1.1 404 Not Found".into(), String::new()));
         let err = download_from(&gone, "youtube", "abc").unwrap_err();
         assert_eq!(err.to_string(), "The annotations for this VOD aren't there any more.");
+    }
+
+    #[test]
+    fn an_answer_for_a_deleted_vod_never_lands_on_the_next_one_given_its_id() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (old, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
+        // Deleted with its video while the file host is asked, then another VOD added: a
+        // deleted VOD's id is never given again (`vod_ids`), so the answer finds no row.
+        db.delete_vod(old.id).unwrap();
+        let (new, _) = db.add_vod(&crate::edits::tests::info("xyz")).unwrap();
+        assert_ne!(new.id, old.id);
+        db.set_annotations_found(old.id, &Found::Available { version: Some("v1".into()) }).unwrap();
+        assert_eq!(db.vod(new.id).unwrap().unwrap().annotations, Availability::Unknown);
     }
 
     #[test]

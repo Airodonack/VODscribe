@@ -152,6 +152,18 @@ test("the library's one VOD", () => {
   assert.equal(vod.chat, "pending");
 });
 
+test("the VOD's start is the file's recorded_at only when it says its zone, as the app has it", () => {
+  const at = (/** @type {string | null} */ recorded_at) =>
+    vodOf({ ...annotations, source: { ...annotations.source, recorded_at } }, 1001, "pending").started_at;
+  assert.equal(at("2026-10-14T18:00:00Z"), "2026-10-14T18:00:00Z");
+  // In any zone, kept in UTC to the nearest second (crates/core `Db::set_start_if_unknown`).
+  assert.equal(at("2026-10-14T20:00:05.6+02:00"), "2026-10-14T18:00:06Z");
+  // No zone: no telling when, so no start, and links go to channels (rather than off by the visitor's own zone).
+  assert.equal(at("2026-10-14T18:00:00"), null);
+  assert.equal(at("yesterday"), null);
+  assert.equal(at(null), null);
+});
+
 test("the host's index: VODs with a platform and id, newest first, each to its page", () => {
   const entry = (/** @type {string} */ id, /** @type {string} */ at) => ({
     platform: "twitch",

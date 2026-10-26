@@ -2283,6 +2283,7 @@ pub(crate) mod tests {
             cast: if category.is_some() { vec!["Marlowe".into(), "Ada".into()] } else { Vec::new() },
             icon: icon.map(Into::into),
             source: crate::annotations::SOURCE.into(),
+            imported_as: None,
         };
         let funny = imported(Some(14.0), Some("funny"), None);
         let game = imported(None, None, Some("🎮"));

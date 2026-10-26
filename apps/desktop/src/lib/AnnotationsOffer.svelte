@@ -36,7 +36,9 @@
         </div>
       {:else}
         <p class="title">{shown.vod.title}</p>
-        {#if shown.offer.up_to_date}
+        {#if shown.offer.up_to_date && shown.unasked}
+          <p>When last checked, this VOD had the latest transcript and annotations.</p>
+        {:else if shown.offer.up_to_date}
           <p>This VOD has the latest transcript and annotations already.</p>
         {:else}
           <p>A transcript and annotations are available for this VOD.</p>
@@ -44,6 +46,7 @@
         {#if shown.offer.local_transcript && !shown.offer.up_to_date}
           <p class="warn-text">This replaces the transcript made on this computer.</p>
         {/if}
+        {#if shown.unasked}<p class="muted small">{shown.unasked}</p>{/if}
         <p class="muted small">
           Chapters and highlights come with them; the ones you made stay.
           {#if shown.afterAdd}To find them, VODscribe sent only the VOD's site and id.{/if}

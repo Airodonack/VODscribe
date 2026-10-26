@@ -293,7 +293,8 @@
   {#if vod.annotations === "available"}
     <button
       class="row-act gift"
-      onclick={() => void offers.offer(vod, false)}
+      onclick={() => void offers.gift(vod)}
+      disabled={offers.asking}
       title="Get the transcript and annotations for this VOD"
       aria-label="Get the transcript and annotations for this VOD"
     >

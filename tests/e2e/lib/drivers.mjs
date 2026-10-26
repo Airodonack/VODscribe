@@ -17,14 +17,14 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { Script } from "node:vm";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { appPid, processesUnder } from "./memory.mjs";
+import { appPid, appPids, processesUnder } from "./memory.mjs";
 import { watchExit } from "./procs.mjs";
 
 const MINUTE = 60_000;
@@ -86,6 +86,26 @@ let tauriDriver;
 let spoiled = null;
 /** Whether tauri-driver is ended with this process (once set up). */
 let stopOnExit = false;
+/** The apps this tauri-driver's sessions started, by pid, with their binary: ended with it. */
+const sessionApps = new Map();
+
+/** How long an app may take to exit once its session is closed, before it's killed. */
+const EXIT_WAIT = 5000;
+/**
+ * How long a session's start may go without an app of its own while one of
+ * an earlier session's still runs: the new copy hands over to it and quits
+ * at once (often before it can be seen), and the session never comes.
+ */
+const HANDOVER_WAIT = 5000;
+
+/** Whether process `pid` (a number) is still the app of binary `exe`. */
+function isApp(pid, exe) {
+  try {
+    return readlinkSync(`/proc/${pid}/exe`) === realpathSync(exe);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Ends tauri-driver with WebKitWebDriver and any app it started. An app left
@@ -96,17 +116,32 @@ let stopOnExit = false;
 async function stopTauriDriver() {
   const driver = tauriDriver;
   tauriDriver = null;
-  // (Found through /proc: elsewhere, tauri-driver alone.)
+  // (Found through /proc: elsewhere, tauri-driver alone.) A tauri-driver that
+  // died has none under it any more: its apps were handed to another parent,
+  // so those its sessions found are ended by their pids.
   for (const pid of process.platform === "linux" ? processesUnder(driver.pid) : []) {
     try {
       process.kill(Number(pid), "SIGKILL");
     } catch {}
   }
+  for (const [pid, exe] of sessionApps) {
+    if (!isApp(pid, exe)) continue;
+    console.log(`tauri-driver: its app (pid ${pid}) outlived it: killed`);
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+  sessionApps.clear();
   if (driver.exitCode === null && driver.signalCode === null) {
     const ended = new Promise((resolve) => driver.once("exit", resolve));
     driver.kill("SIGKILL");
     await ended;
   }
+}
+
+/** Ends tauri-driver, if it runs, with whatever it started (as this process's exit does). */
+export async function stopWebDriver() {
+  if (tauriDriver) await stopTauriDriver();
 }
 
 export async function webdriver(app) {
@@ -166,23 +201,52 @@ export async function webdriver(app) {
     return json.value;
   };
   const limit = AbortSignal.timeout(SESSION_START);
+  // The start fails at once when its app has gone without a session (handed
+  // over to another copy still running, or ended on its own): the driver
+  // would wait out SESSION_START for it.
+  const early = new AbortController();
+  const earlier = new Set(appPids(app));
+  const asked = Date.now();
+  const seen = new Set();
+  const watch = setInterval(() => {
+    const now = appPids(app);
+    const mine = now.filter((pid) => !earlier.has(pid));
+    for (const pid of mine) seen.add(pid);
+    const others = now.filter((pid) => earlier.has(pid));
+    const after = ((Date.now() - asked) / 1000).toFixed(1);
+    const still = others.length
+      ? `another instance still running? pid ${others.join(", ")} of this run's is`
+      : "no other copy of it is running: see its output above";
+    if (seen.size && !mine.length)
+      early.abort(
+        `the app (pid ${[...seen].join(", ")}) exited ${after} s after its start, before its session started: ${still}`,
+      );
+    else if (!seen.size && others.length && Date.now() - asked > HANDOVER_WAIT)
+      early.abort(`no app of its own ${after} s after its start, before its session started: ${still}`);
+  }, 100);
   let session;
   try {
     const caps = { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } };
-    session = (await wd("POST", "/session", caps, limit)).sessionId;
+    session = (await wd("POST", "/session", caps, AbortSignal.any([limit, early.signal]))).sessionId;
   } catch (e) {
     // The driver may be left waiting on that app: a new one for the next.
     spoiled ??= "the last session didn't start";
+    if (early.signal.aborted) throw new Error(early.signal.reason);
     if (!limit.aborted) throw e;
     const older = appPid(app);
     const running = older ? ` (an app of this run, pid ${older}, is still running)` : "";
     throw new Error(`no WebDriver session in ${SESSION_START / 1000} s${running}`);
+  } finally {
+    clearInterval(watch);
   }
   // The app runs under the native driver, which doesn't say when it ends:
   // found by its binary under this process (Linux), and watched.
-  const pid = appPid(app);
+  const pid = appPids(app).find((pid) => !earlier.has(pid)) ?? appPid(app);
   const proc = { exe: app, pid: pid && Number(pid), closedAt: null, exitedAt: null, exit: null };
-  if (proc.pid) watchExit(proc);
+  if (proc.pid) {
+    watchExit(proc);
+    sessionApps.set(proc.pid, app);
+  }
   return {
     run: (body, args = []) =>
       wd("POST", `/session/${session}/execute/sync`, { script: `return (async () => { ${body} })()`, args }),
@@ -211,13 +275,20 @@ export async function webdriver(app) {
     close: async () => {
       proc.closedAt = Date.now();
       await wd("DELETE", `/session/${session}`).catch(() => {});
-      // A lost session can't end its app, which would otherwise run on, in
-      // the next one's way (stopTauriDriver).
-      if (lost && proc.pid && proc.exitedAt === null) {
+      if (!proc.pid) return;
+      // The driver answers before its app is gone: one still running takes
+      // the next session's start (stopTauriDriver), so it's waited for. A lost
+      // session can't end its app at all.
+      if (!lost) await waitFor("the app to exit", async () => proc.exitedAt !== null, EXIT_WAIT).catch(() => {});
+      if (proc.exitedAt === null) {
+        if (!lost)
+          console.log(`the app (pid ${proc.pid}) still ran ${EXIT_WAIT / 1000} s after its session closed: killed`);
         try {
           process.kill(proc.pid, "SIGKILL");
         } catch {}
+        await waitFor("the app killed", async () => proc.exitedAt !== null, EXIT_WAIT).catch(() => {});
       }
+      sessionApps.delete(proc.pid);
     },
     proc,
   };

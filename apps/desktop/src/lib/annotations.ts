@@ -312,6 +312,18 @@ export function readPov(value: unknown): Pov | null {
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
 /**
+ * `value` as crates/core `Db::set_start_if_unknown` keeps a file's time: in
+ * UTC to the nearest second ("2026-10-14T18:00:06Z"); null for a time with no
+ * zone (no telling when it was) or none at all.
+ */
+export function utcSecond(value: string | null | undefined): string | null {
+  const time = value?.trim() ?? "";
+  const ms = RFC3339.test(time) ? Date.parse(time) : NaN;
+  if (Number.isNaN(ms)) return null;
+  return new Date(Math.round(ms / 1000) * 1000).toISOString().replace(".000Z", "Z");
+}
+
+/**
  * `value` as a cast member's account: a listed platform and a login of
  * letters, digits and `_.-`, not only dots (which a path would read as
  * itself or its parent), a YouTube handle with its "@" first; trimmed; null

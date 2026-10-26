@@ -457,6 +457,8 @@ export default {
     if (quiet.requests.length)
       wrong.push(`with pictures off, the image server was asked: ${quiet.requests.map((r) => r.path).join(", ")}`);
     quiet.stop();
+    // Back on, with the image server there again: the pinned headings below show the picture too.
+    const picturesBack = serveFiles(pictures);
     await setPictures(app, true);
 
     // The Timeline panel's "Imported marks" toggle takes the import's chapters
@@ -1017,19 +1019,30 @@ export default {
     if (Math.abs(back.main - all.main) > 1) wrong.push(`shown again, the centre is ${back.main} px, not ${all.main}`);
     else ctx.log("the library and the pane hidden and shown by their buttons, and remembered over a reload");
     // And by their keys: Ctrl+Shift+B (⇧⌘B) the library, Ctrl+Alt+B (⌥⌘B) the pane.
-    const chord = (key, shift, alt) =>
+    // `repeats` more presses follow as the key held down sends them (`repeat` set), all in one go.
+    const chord = (key, shift, alt, repeats = 0) =>
       app.js(
-        `(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], shiftKey: arguments[1], altKey: arguments[2],
-          ctrlKey: !arguments[3], metaKey: arguments[3], bubbles: true, cancelable: true }))`,
+        `for (let i = 0; i <= arguments[4]; i++)
+          (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], shiftKey: arguments[1], altKey: arguments[2],
+            ctrlKey: !arguments[3], metaKey: arguments[3], repeat: i > 0, bubbles: true, cancelable: true }))`,
         key,
         shift,
         alt,
         process.platform === "darwin",
+        repeats,
       );
     await chord("B", true, false);
     await settled("the library hidden by its key", (w) => !w.library && w.pane > 0);
     await chord("b", false, true);
     await settled("the pane hidden by its key", (w) => !w.library && !w.pane);
+    await chord("B", true, false);
+    await chord("b", false, true);
+    await settled("both shown again by their keys", (w) => w.library > 0 && w.pane > 0);
+    // Held down, each chord hides its column once: the key's repeats don't show it again and again.
+    await chord("B", true, false, 3);
+    await chord("b", false, true, 3);
+    await app.js(`await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))`);
+    await settled("both hidden by their keys held down", (w) => !w.library && !w.pane);
     await chord("B", true, false);
     await chord("b", false, true);
     await settled("both shown again by their keys", (w) => w.library > 0 && w.pane > 0);
@@ -1052,7 +1065,28 @@ export default {
     if (atRest.chapter?.text !== "💬Hello" || atRest.speaker?.text !== "Marlowe (Vance)" || atRest.hidden !== "true")
       wrong.push(`mid-stretch, the pinned headings: ${JSON.stringify(atRest)}`);
     else ctx.log(`mid-stretch, pinned: ${atRest.chapter.text} over ${atRest.speaker.text}, ${atRest.bottom} px`);
+    // The pinned copy of Marlowe's heading shows his picture, as his heading does: a disc
+    // drawn anew over a picture already loaded shows it too.
+    const pinnedDiscs = () =>
+      app.js(`const disc = (el) => { const img = el?.querySelector("img");
+          return el && { pictured: el.classList.contains("pictured"), img: img && { complete: img.complete, width: img.naturalWidth, loaded: img.classList.contains("loaded"), lazy: img.loading } }; };
+        return { pinned: disc(document.querySelector("#transcript .pinned .avatar")),
+          heading: disc(document.querySelector('#transcript .line > .group-head[data-time="0"] .avatar')) };`);
+    const pictured = await until(
+      "the pinned heading's picture",
+      async () => {
+        const d = await pinnedDiscs();
+        return d.pinned?.pictured && d.heading?.pictured && d;
+      },
+      5000,
+    ).catch(async () => {
+      const d = await pinnedDiscs();
+      wrong.push(`the pinned heading's disc has no picture: ${JSON.stringify(d)}`);
+      return d;
+    });
+    ctx.log(`the pinned and real headings' discs: ${JSON.stringify(pictured)}`);
     await ctx.checkpoint("annotations-pinned");
+    picturesBack.stop();
     const stack = atRest.bottom;
     // Ada's heading 10 px into the pinned Marlowe's: he's pushed up by as much, touching it.
     const ada = await app.js(`${PINS} return put('#transcript .line > .group-head[data-time="12"]', ${stack - 10});`);

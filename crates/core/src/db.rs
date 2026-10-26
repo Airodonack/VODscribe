@@ -719,6 +719,13 @@ ALTER TABLE vods ADD COLUMN started_at TEXT;";
 const MIGRATE_V34: &str = "
 ALTER TABLE vod_annotations ADD COLUMN povs TEXT;";
 
+/// Version 35: which of an import's chapters or highlights a mark was brought
+/// in as (`imported_as`: its kind and start in the file), kept when the user
+/// changes it, so the next import doesn't add that one again beside theirs.
+/// Null for the user's own marks and for marks imported before.
+const MIGRATE_V35: &str = "
+ALTER TABLE marks ADD COLUMN imported_as TEXT;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -884,11 +891,23 @@ pub struct MarkDetail {
     /// "user" for a mark made here; "annotations" for one an import brought,
     /// which the next import replaces.
     pub source: String,
+    /// Which of an import's chapters or highlights it was brought in as, kept
+    /// after the user changes it (`MIGRATE_V35`); the page has no use for it.
+    #[serde(skip)]
+    pub imported_as: Option<String>,
 }
 
 impl Default for MarkDetail {
     fn default() -> Self {
-        Self { end: None, category: None, note: None, cast: Vec::new(), icon: None, source: USER_MARK.into() }
+        Self {
+            end: None,
+            category: None,
+            note: None,
+            cast: Vec::new(),
+            icon: None,
+            source: USER_MARK.into(),
+            imported_as: None,
+        }
     }
 }
 
@@ -896,7 +915,7 @@ impl Default for MarkDetail {
 pub const USER_MARK: &str = "user";
 
 /// The columns of `marks` that `mark_detail` reads, in its order.
-pub(crate) const MARK_DETAIL_COLUMNS: &str = "end_at, category, note, source, people, icon";
+pub(crate) const MARK_DETAIL_COLUMNS: &str = "end_at, category, note, source, people, icon, imported_as";
 
 /// A mark's detail from row `r`, its `MARK_DETAIL_COLUMNS` from column `from`
 /// on; its end in seconds of its VOD.
@@ -909,6 +928,7 @@ pub(crate) fn mark_detail(r: &rusqlite::Row, from: usize) -> rusqlite::Result<Ma
         // A list the app wrote; one it can't read is no one.
         cast: r.get::<_, Option<String>>(from + 4)?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
         icon: r.get(from + 5)?,
+        imported_as: r.get(from + 6)?,
     })
 }
 
@@ -1161,6 +1181,7 @@ impl Db {
             MIGRATE_V32,
             MIGRATE_V33,
             MIGRATE_V34,
+            MIGRATE_V35,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1461,8 +1482,9 @@ impl Db {
         detail: &MarkDetail,
     ) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, icon, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO marks (clip_id, vod_id, kind, at, text, end_at, category, note, source, people, icon, imported_as,
+                created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 clip,
                 vod_id,
@@ -1475,6 +1497,7 @@ impl Db {
                 detail.source,
                 (!detail.cast.is_empty()).then(|| serde_json::to_string(&detail.cast)).transpose()?,
                 detail.icon,
+                detail.imported_as,
                 now()
             ],
         )?;
@@ -2613,7 +2636,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2653,12 +2676,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; PRAGMA user_version = 29;"
+                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2685,12 +2708,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; PRAGMA user_version = 30;"
+                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -2714,12 +2737,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vod_annotations DROP COLUMN povs; PRAGMA user_version = 31;"
+                "ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -2737,12 +2760,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vod_annotations DROP COLUMN povs; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -2766,11 +2789,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vod_annotations DROP COLUMN povs; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }

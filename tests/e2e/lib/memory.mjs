@@ -80,12 +80,17 @@ export function processesUnder(pid) {
  * another of the same binary, such as a developer's own, isn't this run's.
  */
 export function appPid(exe) {
-  if (process.platform !== "linux") return null;
+  return appPids(exe)[0] ?? null;
+}
+
+/** The pids (strings) of every app of binary `exe` under this process (Linux; none elsewhere). */
+export function appPids(exe) {
+  if (process.platform !== "linux") return [];
   let binary;
   try {
     binary = realpathSync(exe);
   } catch {
-    return null;
+    return [];
   }
   const exeOf = (pid) => {
     try {
@@ -94,5 +99,5 @@ export function appPid(exe) {
       return null;
     }
   };
-  return [...tree(parents(), String(process.pid))].find((pid) => exeOf(pid) === binary) ?? null;
+  return [...tree(parents(), String(process.pid))].filter((pid) => exeOf(pid) === binary);
 }

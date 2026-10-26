@@ -14,6 +14,9 @@ export interface Offered {
   offer: AnnotationsOffer;
   /** Offered because it was just added: "Don't ask again" is one of the answers. */
   afterAdd: boolean;
+  /** Why the file host wasn't asked just now (asking is off, or it failed), when the
+   *  offer goes by the last check: the dialog says so. Null when it was asked. */
+  unasked: string | null;
 }
 
 class Offers {
@@ -21,18 +24,47 @@ class Offers {
   shown = $state<Offered | null>(null);
   /** Being fetched and imported. */
   busy = $state(false);
+  /** The file host being asked, for the gift button. */
+  asking = $state(false);
   error = $state<string | null>(null);
   /** "Don't ask again" was picked: the dialog says where that's undone, then closes. */
   stopped = $state(false);
 
-  /** Offers `vod`'s annotations, unless something else is offered already. */
-  async offer(vod: Vod, afterAdd: boolean) {
+  /** Offers `vod`'s annotations, as last found, unless something else is offered already. */
+  async offer(vod: Vod, afterAdd: boolean, unasked: string | null = null) {
     if (this.shown) return;
     const offer = await api.annotationsOffer(vod.id).catch(() => null);
     if (!offer || offer.available !== "available" || this.shown) return;
+    this.#show({ vod, offer, afterAdd, unasked });
+  }
+
+  #show(offered: Offered) {
     this.error = null;
     this.stopped = false;
-    this.shown = { vod, offer, afterAdd };
+    this.shown = offered;
+  }
+
+  /** The gift button: asks the file host first (when the user lets the app ask),
+   *  so "the latest already" is what the host says now, then offers them. */
+  async gift(vod: Vod) {
+    if (this.shown || this.asking) return;
+    this.asking = true;
+    try {
+      const { asked, offer } = await api.checkAnnotations(vod.id);
+      if (this.shown) return;
+      if (!asked)
+        return await this.offer(
+          vod,
+          false,
+          "VODscribe didn't ask the file host again: that's turned off in Settings › Privacy.",
+        );
+      if (offer.available !== "available") toast.show("No annotations are published for this VOD any more.");
+      else this.#show({ vod, offer, afterAdd: false, unasked: null });
+    } catch {
+      await this.offer(vod, false, "VODscribe couldn't reach the file host just now.");
+    } finally {
+      this.asking = false;
+    }
   }
 
   /** Asks the file host again about `vod` (its row's menu), and offers what's found. */

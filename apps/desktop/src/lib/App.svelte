@@ -269,14 +269,15 @@
     // a key of Search's that types a character there (Search on "/") is the field's.
     // Ctrl+Shift+B (⇧⌘B) shows or hides the library, Ctrl+Alt+B (⌥⌘B) the
     // pane's column, from anywhere: chords, so a text field has no use for them.
+    // Held down, a key repeats: one press, one toggle.
     if (library && is(e, "view.library")) {
       e.preventDefault();
-      toggleLibrary();
+      if (!e.repeat) toggleLibrary();
       return;
     }
     if (roomForColumn && is(e, "view.pane")) {
       e.preventDefault();
-      togglePane();
+      if (!e.repeat) togglePane();
       return;
     }
     if (is(e, "search.focus") && !(typing && typesText(e))) {

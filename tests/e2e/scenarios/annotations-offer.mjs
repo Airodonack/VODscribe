@@ -9,7 +9,9 @@
 // transcript's chapter dividers), and stay as left after a restart. The gift button,
 // with the file unchanged, says the VOD has the latest already and offers
 // Replace anyway (no Don't ask again); replaced, the import's marks are
-// brought anew and a chapter of the user's own stays.
+// brought anew and a chapter of the user's own stays. The gift button asks the
+// file host first: with the file published anew it offers Use; with asking
+// turned off it asks nothing and says its answer is from the last check.
 //
 // Offline: the VOD is the stand-in yt-dlp's (lib/siteVod.mjs).
 
@@ -88,9 +90,11 @@ export default {
   },
   async run(app, ctx) {
     const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
+    // The file's version, as its ETag: published anew when this changes.
+    let etag = '"v1"';
     const host = serveFiles((method, at) =>
       at === FILE
-        ? { status: 200, headers: { ETag: '"v1"', "Content-Type": "application/json" }, body: json }
+        ? { status: 200, headers: { ETag: etag, "Content-Type": "application/json" }, body: json }
         : { status: 404 },
     );
     try {
@@ -177,6 +181,40 @@ export default {
         const all = "💬Hello, 🎮Thegame, Goodbye, Mine";
         const both = await chaptersRead(app, all);
         if (both !== all) wrong.push(`replaced, the transcript's chapters: ${both}`);
+
+        // The gift button asks the file host before it answers, when asking is allowed.
+        // Off, it goes by the last check, and says so; on, a file published anew since is offered.
+        const settings = await app.invoke("get_settings");
+        const heads = () => host.requests.filter((r) => r.method === "HEAD").length;
+        await app.invoke("set_settings", { settings: { ...settings, ask_for_annotations: false } });
+        etag = '"v2"';
+        const headsBefore = heads();
+        await app.click(gift);
+        const unasked = await until("the gift button's offer, asking off", () => offer(app), 10_000);
+        if (heads() !== headsBefore) wrong.push("with asking off, the gift button asked the file host");
+        if (
+          !unasked.text.includes("When last checked, this VOD had the latest transcript and annotations.") ||
+          !unasked.text.includes("turned off in Settings › Privacy")
+        )
+          wrong.push(`with asking off, the gift button's offer says "${unasked.text}"`);
+        else ctx.log(`asking off, the gift: "${unasked.text}"`);
+        await app.clickText("Not now");
+        await until("the offer closed", async () => !(await offer(app)), 10_000);
+        await app.invoke("set_settings", { settings: { ...settings, ask_for_annotations: true } });
+        await app.click(gift);
+        const published = await until("the gift button's offer, the file published anew", () => offer(app), 10_000);
+        if (heads() !== headsBefore + 1)
+          wrong.push(`the gift button asked the file host ${heads() - headsBefore} times`);
+        if (
+          !published.text.includes("A transcript and annotations are available for this VOD.") ||
+          published.buttons.join(", ") !== "Not now, Use"
+        )
+          wrong.push(
+            `the file published anew, the gift button's offer says "${published.text}" (${published.buttons.join(", ")})`,
+          );
+        else ctx.log("published anew, the gift asked the file host and offers Use");
+        await app.clickText("Not now");
+        await until("the offer closed", async () => !(await offer(app)), 10_000);
 
         // The Marks toggles: both on at first; each hides its own.
         const first = await toggles(app);
