@@ -24,6 +24,7 @@
 // the two pills picked, one of them dragged onto "Make new edit" in the
 // library: both go in a new edit, in the order picked.
 
+import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -45,14 +46,39 @@ export default {
     await app.toLibrary();
 
     // Where the pointer is, for Ctrl+A: the OS's own pointer where it can be
-    // moved (X11), else a pointermove sent to the page.
+    // moved (X11), else a pointermove sent to the page. The key after it is
+    // the page's own event, sent by a script, not the OS's: so the page must
+    // have seen the pointer get there (a pointermove over the element, what
+    // the app goes by) before it's pressed. If it never does, the failure
+    // says where X has the pointer, not which side Ctrl+A then picked.
     const pointAt = async (selector) => {
       if (process.platform === "linux" && os.unavailable() === null) {
         const r = await os.rectOf(app, selector);
-        await os.gesture([
-          ["move", Math.round(r.x + r.w / 2), Math.round(r.y + r.h / 2)],
-          ["wait", 200],
-        ]);
+        await app.js(
+          `window.__pointerSeen = null;
+           if (!window.__pointerWatched) {
+             window.__pointerWatched = true;
+             addEventListener("pointermove", (e) => {
+               const want = window.__pointerWant;
+               window.__pointerSeen = { x: e.clientX, y: e.clientY, over: !!e.target.closest?.(want) };
+             }, true);
+           }
+           window.__pointerWant = arguments[0];`,
+          selector,
+        );
+        await os.gesture([["move", Math.round(r.x + r.w / 2), Math.round(r.y + r.h / 2)]]);
+        await until(
+          `the page to see the pointer over ${selector}`,
+          () => app.js(`return !!window.__pointerSeen?.over`),
+          10_000,
+          { every: 50 },
+        ).catch(async (e) => {
+          const x = execFileSync("xdotool", ["getmouselocation"], { encoding: "utf8" }).trim();
+          const seen = await app.js(`return window.__pointerSeen`);
+          throw new Error(
+            `${e.message}: X has the pointer at ${x}; the page's last pointermove: ${JSON.stringify(seen)}`,
+          );
+        });
       } else
         await app.js(
           `const el = document.querySelector(arguments[0]);
