@@ -3,10 +3,15 @@
 //! libraries without the app depending on them.
 //!
 //! Usage: vodscribe-worker --model <dir> --provider cpu|cuda --ffmpeg <path>
-//!                         [--batch <chunks per decode>] [--start <secs>] [--end <secs>] <audio>
+//!                         [--batch <chunks per decode>] [--start <secs>] [--end <secs>]
+//!                         [--exit-on-stdin-close] <audio>
 //!
 //! Prints JSON lines to stdout: `{"ready":true}` once the model has loaded,
 //! then `{"end":<secs>,"words":[...]}` per batch of audio. Exits non-zero on error.
+//!
+//! With --exit-on-stdin-close (the app's way), stdin is a pipe from the app,
+//! which never writes to it: when it closes, the app is gone (quit, crashed or
+//! killed) and the worker stops at once.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -30,12 +35,14 @@ struct Args {
     /// Where to stop, in seconds; None: the end of the audio.
     end: Option<f64>,
     batch: usize,
+    exit_on_stdin_close: bool,
 }
 
 fn parse_args() -> Result<Args> {
     let mut args = std::env::args().skip(1);
     let (mut model, mut provider, mut ffmpeg, mut audio, mut start, mut end, mut batch) =
         (None, Provider::Cpu, None, None, 0.0, None, 1);
+    let mut exit_on_stdin_close = false;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--model" => model = args.next().map(PathBuf::from),
@@ -43,6 +50,7 @@ fn parse_args() -> Result<Args> {
             "--start" => start = args.next().context("--start needs a value")?.parse().context("--start")?,
             "--end" => end = Some(args.next().context("--end needs a value")?.parse().context("--end")?),
             "--batch" => batch = args.next().context("--batch needs a value")?.parse().context("--batch")?,
+            "--exit-on-stdin-close" => exit_on_stdin_close = true,
             "--provider" => {
                 provider = match args.next().as_deref() {
                     Some("cpu") => Provider::Cpu,
@@ -62,6 +70,7 @@ fn parse_args() -> Result<Args> {
         start,
         end,
         batch,
+        exit_on_stdin_close,
     })
 }
 
@@ -106,6 +115,13 @@ fn check_onnxruntime_is_the_pack_copy() -> Result<()> {
 
 fn run() -> Result<()> {
     let args = parse_args()?;
+    // Stopped any other way than by its own quit (a crash, a kill), the app
+    // can't stop its worker, which would otherwise run on till its next
+    // batch's words found no one to read them (a minute or more on a slow
+    // computer), and its ffmpeg after it.
+    if args.exit_on_stdin_close {
+        vodscribe_core::tools::exit_when_stdin_closes();
+    }
     #[cfg(windows)]
     if args.provider == Provider::Cuda {
         check_onnxruntime_is_the_pack_copy()?;

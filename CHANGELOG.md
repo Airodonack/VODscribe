@@ -28,6 +28,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - On a Twitch VOD, pressing I (or O) right after clicking the timeline starts the selection where you clicked. It started at 0:00 if Twitch's player was still loading there, so the whole VOD was selected.
   - Text in the search filter is easier to read when the search text sets it (such as in:chat or within:30s): the descriptions under Audio and Chat and the units beside Within were faded twice over and hard to make out, in the dark theme most of all. Chatters' names, in search results and chat, keep their own colour but are always easy to read: a name in a dark colour, such as Twitch's default blue, is lighter on the dark theme, and one in a pale colour darker on the light theme.
   - The choices VODscribe remembers, such as the volume, the speed, captions on or off, whether chat shows and whether the library and the chapters and highlights column are hidden, now last after VODscribe restarts. In the app as installed they never did: since 0.1.1, every restart forgot them.
+  - When VODscribe crashes or is ended from outside (a task manager, a log-out) while it transcribes, the transcription stops with it instead of running on for a while in the background. Something started in the instant you quit, such as a download or an export, now stops too.
 
 ## 0.6.0 — 2026-10-24
 

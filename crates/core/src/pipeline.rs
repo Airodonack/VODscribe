@@ -421,6 +421,8 @@ fn run_worker(
     let mut cmd = tools::command(&spec.program);
     cmd.arg("--model").arg(&spec.model_dir).args(["--provider", spec.provider]);
     cmd.args(["--batch", &spec.batch.to_string()]);
+    // It stops when its stdin closes (`_app_alive` below).
+    cmd.arg("--exit-on-stdin-close");
     // The worker's times are the file's: a section's 0 is its start.
     cmd.arg("--ffmpeg").arg(ffmpeg).args(["--start", &format!("{:.3}", start - audio.offset)]);
     if let Some(end) = end {
@@ -436,12 +438,16 @@ fn run_worker(
         cmd.env(var, std::env::join_paths(paths)?);
     }
     let mut child = cmd
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("start {}", tools::shown(&spec.program)))?;
     let _tracked = tools::track(&child);
+    // Never written to: the worker stops when it closes, which it does
+    // however this process ends, even where quitting's `stop_tracked` never
+    // runs (a crash, a kill) or runs before the worker is tracked.
+    let _app_alive = child.stdin.take();
 
     // sherpa-onnx logs to stderr; keep the tail for error messages.
     let stderr_thread = tools::drain(child.stderr.take().unwrap());
@@ -968,8 +974,10 @@ mod tests {
         let audio = Audio { path: "audio".into(), offset: 0.0 };
         let stopped = run_worker(&mut db, &vod, ask, &spec, Path::new("ffmpeg"), &audio, &cancel, &mut |_, _| {});
         assert!(stopped.is_err());
+        let args = fs::read_to_string(dir.join("args")).unwrap();
+        assert!(args.contains("--exit-on-stdin-close"), "{args}");
         assert_eq!(
-            fs::read_to_string(dir.join("args")).unwrap().trim().split(' ').skip(8).collect::<Vec<_>>(),
+            args.trim().split(' ').skip(9).collect::<Vec<_>>(),
             ["--start", "8.000", "--end", "25.000", "audio"]
         );
         // "old b" went with the first batch; "old c", beyond it, stays; the

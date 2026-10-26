@@ -1,6 +1,12 @@
 // Quitting while a file transcribes: nothing the app started goes on after
 // it, nor the app itself, and at the next start the transcription carries
 // on to the end.
+//
+// Under WebDriver (Linux) the driver ends the app's process from outside
+// when the session closes, so its own quit never runs: there, this checks
+// that the worker stops with the app however it ends (it watches its stdin,
+// a pipe from the app). Through the test hook (Windows, macOS) it's the
+// app's quit.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";

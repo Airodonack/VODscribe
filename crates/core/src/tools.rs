@@ -301,44 +301,81 @@ pub fn kill_tree(child: &mut std::process::Child) {
 /// The processes `track`ed, by id: the long-running ones (downloads,
 /// transcription, encodes, the player's decoders), stopped with what they
 /// started when the app quits (`stop_tracked`).
-static TRACKED: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
+static TRACKED: std::sync::Mutex<Registry> = std::sync::Mutex::new(Registry::new());
+
+struct Registry {
+    ids: Vec<u32>,
+    /// Set by `stop_tracked`: what's tracked from then on is stopped at once.
+    /// A process started as the app quits (spawned, not yet tracked, when
+    /// `stop_tracked` ran, or started by a job after it) would otherwise run
+    /// on after the app.
+    stopping: bool,
+}
+
+impl Registry {
+    const fn new() -> Self {
+        Registry { ids: Vec::new(), stopping: false }
+    }
+}
 
 /// A tracked process, untracked when dropped: held beside its `Child` (made
 /// after it, so dropped first), till it's been waited for.
-pub struct Tracked(u32);
+pub struct Tracked(&'static std::sync::Mutex<Registry>, u32);
 
 /// Tracks `child` (made by `command`) until the returned guard is dropped.
 pub fn track(child: &std::process::Child) -> Tracked {
-    TRACKED.lock().unwrap().push(child.id());
-    Tracked(child.id())
+    track_in(&TRACKED, child)
+}
+
+fn track_in(registry: &'static std::sync::Mutex<Registry>, child: &std::process::Child) -> Tracked {
+    let stopping = {
+        let mut tracked = registry.lock().unwrap();
+        if !tracked.stopping {
+            tracked.ids.push(child.id());
+        }
+        tracked.stopping
+    };
+    if stopping {
+        stop_ids(&[child.id()]);
+    }
+    Tracked(registry, child.id())
 }
 
 impl Drop for Tracked {
     fn drop(&mut self) {
-        TRACKED.lock().unwrap().retain(|&id| id != self.0);
+        self.0.lock().unwrap().ids.retain(|&id| id != self.1);
     }
 }
 
 /// Stops every process tracked now, and what each started, and waits (a
 /// little) till they're gone: for quitting, so no download or transcription
-/// goes on after the app. Processes started after it are tracked as usual.
+/// goes on after the app. Any tracked after it are stopped as they are.
 pub fn stop_tracked() {
-    stop_tracked_where(|_| true)
+    stop_in(&TRACKED, |_| true, true)
 }
 
 /// `stop_tracked` for the tracked processes `which` picks (a test stops only
-/// its own, as others run beside it).
-fn stop_tracked_where(which: impl Fn(u32) -> bool) {
+/// its own, as others run beside it); `for_good`: and every one tracked after.
+fn stop_in(registry: &std::sync::Mutex<Registry>, which: impl Fn(u32) -> bool, for_good: bool) {
+    // Under one lock with `track`'s: each process is either taken here or
+    // tracked after `stopping` is set, and so stopped there.
     let ids: Vec<u32> = {
-        let mut tracked = TRACKED.lock().unwrap();
-        let (ids, kept) = tracked.drain(..).partition(|&id| which(id));
-        *tracked = kept;
+        let mut tracked = registry.lock().unwrap();
+        tracked.stopping |= for_good;
+        let (ids, kept) = tracked.ids.drain(..).partition(|&id| which(id));
+        tracked.ids = kept;
         ids
     };
+    stop_ids(&ids);
+}
+
+/// Stops processes `ids` (each tracked, so leading its own group on Unix) and
+/// what they started, and waits a little till they're gone.
+fn stop_ids(ids: &[u32]) {
     #[cfg(unix)]
     {
         // Each leads its own process group (`command`).
-        for &id in &ids {
+        for &id in ids {
             // SAFETY: plain syscalls on a process group of ours.
             unsafe { libc::killpg(id as libc::pid_t, libc::SIGKILL) };
         }
@@ -355,13 +392,32 @@ fn stop_tracked_where(which: impl Fn(u32) -> bool) {
         let windows = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
         let mut kill = command(&Path::new(&windows).join(r"System32\taskkill.exe"));
         kill.args(["/T", "/F"]);
-        for id in &ids {
+        for id in ids {
             kill.args(["/PID", &id.to_string()]);
         }
         if !ids.is_empty() {
             let _ = kill.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
         }
     }
+}
+
+/// Ends this process, and what it started (`stop_tracked`), once its stdin
+/// closes: for a sidecar whose stdin is a pipe from the app, which closes
+/// however the app ends, a crash or a kill included.
+pub fn exit_when_stdin_closes() {
+    std::thread::spawn(|| {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        stop_tracked();
+        // At once, without the libraries' exit handlers, which would run
+        // while the other threads are still at work in them.
+        #[cfg(unix)]
+        // SAFETY: ends the process; nothing after it runs.
+        unsafe {
+            libc::_exit(1)
+        };
+        #[cfg(not(unix))]
+        std::process::exit(1);
+    });
 }
 
 /// A `Command` that doesn't flash a console window on Windows.
@@ -484,7 +540,7 @@ mod tests {
         let mut other = command(&script).arg(&other_out).spawn().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
         let id = child.id();
-        stop_tracked_where(|tracked| tracked == id);
+        stop_in(&TRACKED, |tracked| tracked == id, false);
         let _ = child.wait();
         let written = std::fs::read_dir(&tracked_out).unwrap().count();
         assert!(written > 0, "it was writing");
@@ -495,6 +551,31 @@ mod tests {
         assert!(std::fs::read_dir(&other_out).unwrap().count() > before, "what isn't tracked runs on");
         kill_tree(&mut other);
         drop(guard);
+    }
+
+    /// A process started as the app quits: spawned before `stop_tracked`
+    /// ran and tracked after it (or started by a job after it). It stops
+    /// too, rather than running on after the app.
+    #[cfg(unix)]
+    #[test]
+    fn what_is_tracked_once_quitting_began_stops_too() {
+        static REGISTRY: std::sync::Mutex<Registry> = std::sync::Mutex::new(Registry::new());
+        let mut child = command(Path::new("/bin/sh")).args(["-c", "sleep 30"]).spawn().unwrap();
+        stop_in(&REGISTRY, |_| true, true);
+        let guard = track_in(&REGISTRY, &child);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let stopped = loop {
+            match child.try_wait().unwrap() {
+                Some(_) => break true,
+                None if std::time::Instant::now() > until => break false,
+                None => std::thread::sleep(std::time::Duration::from_millis(20)),
+            }
+        };
+        if !stopped {
+            kill_tree(&mut child);
+        }
+        drop(guard);
+        assert!(stopped, "it ran on after quitting began");
     }
 
     /// Like the managed yt-dlp: a launcher whose child does the work. Once
