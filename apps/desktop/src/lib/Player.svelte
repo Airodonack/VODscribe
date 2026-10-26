@@ -52,7 +52,7 @@
     const doc = { kind: "vod" as const, id: vod.id };
     return at?.time ?? nav.bringBack(doc)?.time ?? nav.lastSeen(doc)?.time ?? 0;
   });
-  // Where it opened, or was last jumped to: the moment the header links to.
+  // Where it opened, or was last jumped to: where Play starts the player.
   let from = $state(start);
 
   // A site without a player the app can show plays its VODs only here, once
@@ -86,11 +86,11 @@
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
   let collapsed = $state(false);
 
-  // Clicking the timestamp copies a link to that moment on the VOD's site.
+  // Clicking the timestamp copies a link to the playhead's moment on the VOD's site.
   let copied = $state<"ok" | "failed" | null>(null);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyLink() {
-    copied = await writeText(watchUrl(vod, from)).then(
+    copied = await writeText(watchUrl(vod, now)).then(
       () => "ok" as const,
       (e) => (console.error("copy failed", e), "failed" as const),
     );
@@ -612,9 +612,10 @@
             >{/if}{chapterNow.text}</span
         >
       {/if}
-      {#if from > 0 && isLocal}
-        <span class="stamp"><span class="time">{formatTime(from)}</span></span>
-      {:else if from > 0}
+      <!-- Where the playhead is, once it has left the start. -->
+      {#if now > 0 && isLocal}
+        <span class="stamp"><span class="time">{formatTime(now)}</span></span>
+      {:else if now > 0}
         <button
           class="stamp"
           class:copied={copied === "ok"}
@@ -622,7 +623,7 @@
           onclick={copyLink}
           title="Copy a link to this moment"
         >
-          <span class="time">{formatTime(from)}</span>
+          <span class="time">{formatTime(now)}</span>
           <Icon name={copied === "ok" ? "check" : copied === "failed" ? "error" : "copy"} size={12} />
           {#if copied}<span class="copied-text">{copied === "ok" ? "Copied" : "Couldn't copy"}</span>{/if}
         </button>
