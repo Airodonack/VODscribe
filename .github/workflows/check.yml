@@ -62,7 +62,7 @@ jobs:
       # verify.mjs turns checkpoints into JPEGs with ffmpeg, and its tests
       # make their pictures with it; Ubuntu's 4.4 does both.
       - name: FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # The end-to-end harness's own parts.
       - run: node --test tests/e2e/verify.test.mjs
       - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs tests/e2e/lib/drivers.test.mjs
