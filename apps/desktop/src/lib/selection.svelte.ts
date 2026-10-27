@@ -1,11 +1,15 @@
-// Several things picked to act on together, the same way everywhere: a
+// Several things picked to act on together, the same way everywhere, as in
+// a file manager (the rule itself is pick.ts): a plain click picks one
+// alone (a library row opens too, and stays picked while it's the open one;
+// on a clip bar's pill picked alone already, it lets it go: `only`); a
 // Ctrl-click (⌘ on a Mac) adds one or takes it out again and is where a
 // Shift-click's run starts; a Shift-click picks the run from there to here,
-// in the order they're on screen, either way; a plain click does what it
-// always has (a row opens, the timeline scrubs) and leaves the set as it is,
-// but on a clip bar's pill, as in a file manager, it picks that pill alone
-// (`only`; a double-click opens it); Escape, or a click on empty space, lets
-// it go. A box dragged over empty space (`dragBox` below) picks what it touches.
+// in the order they're on screen, either way (with Ctrl too, adding it).
+// On the timeline a plain click moves the playhead, so a stretch is picked
+// with Alt (Option on a Mac; an Alt-drag carries it) or Ctrl or Shift.
+// Escape, or a click on empty space, lets the set go: what stays picked is
+// the library's open row, as the item clicked in a file manager. A box
+// dragged over empty space (`dragBox` below) picks what it touches.
 //
 // Two sets, never both at once: the snippet set (stretches of the open VOD's
 // or edit's timeline between its cuts, and clips of its clip bar, together)
@@ -23,6 +27,7 @@
 // the order a bulk action takes them in, and with two or more picked each
 // shows its number in it. Picking never moves the playhead.
 
+import { click, howOf as how, picking, resting, step, type How, type Picked } from "./pick";
 import { listed, os } from "./platform";
 
 /** In the snippet set: a stretch between cuts of the open timeline (its time), or a clip of its clip bar. */
@@ -39,6 +44,8 @@ export class Selection<T> {
   #starting: () => void;
   /** What was picked when a box began: kept beside what it holds, if Shift was held. */
   #base: T[] = [];
+  /** The open item, picked alone when nothing else is (the library's open row); none for the snippets. */
+  #current: () => T | null = () => null;
 
   /** `same` says whether two items are one; `starting` lets go of what can't be picked beside this set. */
   constructor(same: (a: T, b: T) => boolean, starting: () => void) {
@@ -48,6 +55,43 @@ export class Selection<T> {
 
   get size(): number {
     return this.items.length;
+  }
+
+  /** Whether several things are picked to act on, more than the open item alone:
+   *  then they're outlined and numbered, and Delete, Escape and a drag are theirs. */
+  get picking(): boolean {
+    return picking(this, this.#current(), this.#same);
+  }
+
+  /** Where the open item comes from (the library's open row). */
+  follow(current: () => T | null) {
+    this.#current = current;
+  }
+
+  /** The open item changed from `was` to `now`: opening one picks it alone; closing
+   *  it (nothing open) lets it go, unless it was picked with others. */
+  opened(was: T | null, now: T | null) {
+    if (was !== null && now !== null && this.#same(was, now)) return;
+    if (now !== null || !picking(this, was, this.#same)) this.#to(resting(now));
+  }
+
+  #to(next: Picked<T>) {
+    if (picking(next, this.#current(), this.#same)) this.#starting();
+    this.items = next.items;
+    this.anchor = next.anchor;
+  }
+
+  /** A click on `item`, as `how` (pick.ts) says; `order` is what's on screen, in its order. */
+  click(item: T, how: How, order: T[]) {
+    this.#to(click(this, item, how, order, this.#same));
+  }
+
+  /** An arrow key from `from` to the next (`by` 1) or the one before; with
+   *  `extend` (Shift), the run from the anchor. What it went to, or null at an end. */
+  step(from: T, by: 1 | -1, extend: boolean, order: T[]): T | null {
+    const went = step(this, from, by, extend, order, this.#same);
+    if (went) this.#to(went.set);
+    return went?.to ?? null;
   }
 
   has(item: T): boolean {
@@ -61,30 +105,9 @@ export class Selection<T> {
     return at < 0 ? null : at + 1;
   }
 
-  /** A Ctrl-click: `item` in (last) or out, and the run's start. */
-  toggle(item: T) {
-    this.#starting();
-    this.items = this.has(item) ? this.items.filter((i) => !this.#same(i, item)) : [...this.items, item];
-    this.anchor = item;
-  }
-
-  /** A Shift-click: the run of `order` (what's on screen, in its order) from the anchor to `item`. */
-  rangeTo(item: T, order: T[]) {
-    const to = order.findIndex((o) => this.#same(o, item));
-    if (to < 0) return;
-    const anchor = this.anchor;
-    const from = anchor === null ? -1 : order.findIndex((o) => this.#same(o, anchor));
-    const start = from < 0 ? to : from;
-    this.#starting();
-    this.items = order.slice(Math.min(start, to), Math.max(start, to) + 1);
-    if (from < 0) this.anchor = item;
-  }
-
   /** Picks `list` (in its order), and only it. */
   set(list: T[]) {
-    if (list.length) this.#starting();
-    this.items = list;
-    this.anchor = list.at(-1) ?? null;
+    this.#to({ items: list, anchor: list.at(-1) ?? null });
   }
 
   /** Picks `list` too (a box drawn with Shift), after what's picked already. */
@@ -104,17 +127,11 @@ export class Selection<T> {
     this.set([...base, ...found.filter((f) => !base.some((b) => this.#same(b, f)))]);
   }
 
-  /** A plain click on `item` (it opens or plays, as ever): the set stays,
-   *  and with none, a Shift-click after runs from it. */
-  plain(item: T) {
-    if (!this.items.length) this.anchor = item;
-  }
-
-  /** A plain click where it picks (a clip bar's pill, as in a file manager):
-   *  `item` and only it, or, if it's picked alone already, nothing. */
+  /** A plain click on a clip bar's pill (or an Alt-click on a stretch): `item`
+   *  and only it, or, if it's picked alone already, nothing. */
   only(item: T) {
     if (this.items.length === 1 && this.has(item)) this.clear();
-    else this.set([item]);
+    else this.#to({ items: [item], anchor: item });
   }
 
   /** Keeps only what `still` says is there yet (a cut moved, a clip deleted another way). */
@@ -124,9 +141,11 @@ export class Selection<T> {
     if (this.anchor !== null && !still(this.anchor)) this.anchor = null;
   }
 
+  /** Lets go: the open item alone stays picked, if there's one. */
   clear() {
-    this.items = [];
-    this.anchor = null;
+    const rest = resting(this.#current());
+    this.items = rest.items;
+    this.anchor = rest.anchor;
   }
 }
 
@@ -164,6 +183,8 @@ export function stretchMade() {
 export const toggles = (e: MouseEvent | PointerEvent) => (os === "mac" ? e.metaKey : e.ctrlKey);
 /** Whether a click picks a set at all: a Ctrl (⌘) or a Shift one. */
 export const picks = (e: MouseEvent | PointerEvent) => toggles(e) || e.shiftKey;
+/** How a click picks (pick.ts), by the keys held. */
+export const howOf = (e: MouseEvent | PointerEvent): How => how(toggles(e), e.shiftKey);
 
 /** What to say a set holds: "3 clips", "2 VODs and 1 edit". */
 export function count(parts: [number, string, string][]): string {

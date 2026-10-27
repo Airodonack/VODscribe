@@ -28,7 +28,7 @@
   import { edits } from "./edits.svelte";
   import { keyHint } from "./keys.svelte";
   import { carryChosen } from "./bulk";
-  import { dragBox, overlaps, snippets, toggles, type Snippet } from "./selection.svelte";
+  import { dragBox, howOf, overlaps, snippets, type Snippet } from "./selection.svelte";
 
   let {
     vod,
@@ -47,15 +47,16 @@
   const itemOf = (clip: Clip): Snippet => ({ kind: "clip", id: clip.id });
   /** A click on a pill picks it alone (as in a file manager; on the one
    *  picked alone, lets it go), a Ctrl-click with the others, a Shift-click
-   *  the run to it. Its buttons and its name being edited keep their clicks. */
+   *  the run to it (Ctrl+Shift-click adding the run). Its buttons and its
+   *  name being edited keep their clicks. */
   function onChipClick(e: MouseEvent, clip: Clip) {
     if ((e.target as HTMLElement).closest(".act, input")) return;
     // The click a drag that didn't start leaves behind, and a double-click's
     // second: neither picks (the double-click opens it).
     if (swallowClick || e.detail > 1) return void (swallowClick = false);
-    if (e.shiftKey) snippets.rangeTo(itemOf(clip), clips.shown.map(itemOf));
-    else if (toggles(e)) snippets.toggle(itemOf(clip));
-    else snippets.only(itemOf(clip));
+    const how = howOf(e);
+    if (how === "plain") snippets.only(itemOf(clip));
+    else snippets.click(itemOf(clip), how, clips.shown.map(itemOf));
   }
   function onChipDoubleClick(e: MouseEvent, clip: Clip) {
     if (!(e.target as HTMLElement).closest(".act, input")) edits.openEdit(clip.id);

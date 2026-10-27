@@ -12,6 +12,10 @@
 // above the list (after New edit let go of before saying where, which makes
 // no edit) puts each whole on the edit's clip bar; pointing at
 // Transcribe on one lights up both, and its click asks for both.
+// Before the library: two cuts inside one of the edit's pieces, and the
+// stretch between them Alt-dragged onto its clip bar goes as itself, not as
+// the whole piece. In the library, one row clicked and another Ctrl-clicked
+// picks both, as in a file manager.
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -299,6 +303,63 @@ export default {
       await app.key("Escape");
     }
 
+    // Cuts in the edit at 1.25 and 1.75 s, inside the piece from the clip of
+    // 2-3 s; the stretch between them Alt-dragged (Option on a Mac) from the
+    // waveform onto the edit's clip bar: a clip of that stretch alone (half a
+    // second), not of the whole piece.
+    const scrubTo = (time) =>
+      app.js(
+        `${AT}
+         const bar = document.querySelector(".drop-in .scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         const y = box.top + box.height / 2;
+         bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+         window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+        time,
+      );
+    const cutsShown = () => app.js(`return document.querySelectorAll(".drop-in .scrubber .cut").length`);
+    for (const t of [1.25, 1.75]) {
+      const had = await cutsShown();
+      await scrubTo(t);
+      // The bar shows whole seconds: 0:01 for both, then a moment for the player to get there.
+      await until(`the playhead at ${t} s`, async () => (await app.shownTime()) === 1, 10_000);
+      await sleep(300);
+      await app.key("b");
+      await until("the cut", async () => (await cutsShown()) === had + 1, 10_000);
+      await app.key("Escape");
+    }
+    const onBarBefore = (await barClips()).length;
+    await app.js(
+      `${AT}
+       const bar = document.querySelector(".drop-in .scrubber");
+       const box = bar.getBoundingClientRect();
+       const x = box.left + ((1.5 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+       const y = box.top + box.height / 2;
+       bar.dispatchEvent(new PointerEvent("pointerdown", { ...at(x, y, 1), altKey: true }));
+       window.dispatchEvent(new PointerEvent("pointermove", { ...at(x + 10, y - 60, 1), altKey: true }));
+       window.__drag = [x + 10, y - 60];`,
+    );
+    await moveOnto(".clip-bar");
+    await letGo();
+    const cutOut = await until(
+      "a clip of the stretch between the cuts on the edit's clip bar",
+      async () => {
+        const list = await barClips();
+        return list.length === onBarBefore + 1 && list.at(-1);
+      },
+      15_000,
+    ).catch(async (e) => {
+      const ghost = await app.js(`return document.querySelector(".carry-ghost")?.textContent ?? null`);
+      throw new Error(
+        `${e.message}: the clip bar has ${(await barClips()).length - onBarBefore} new, the carry says ${JSON.stringify(ghost)}`,
+      );
+    });
+    if (Math.abs(cutOut.end - cutOut.start - 0.5) > 0.1)
+      throw new Error(`the Alt-dragged stretch made a clip of ${cutOut.start}-${cutOut.end}, not half a second`);
+    ctx.log(`the stretch between two cuts in a piece, Alt-dragged: a clip of ${cutOut.start}-${cutOut.end} alone`);
+    await app.key("Escape");
+
     // The library: two more files, picked; Add to edit… puts each whole on the edit's clip bar.
     const dir = path.join(ctx.out, "multi-drop");
     mkdirSync(dir, { recursive: true });
@@ -319,12 +380,16 @@ export default {
     const click = (id, mods) =>
       app.js(
         `${TOGGLE}
-         const mods = arguments[1] === "shift" ? { shiftKey: true } : toggle;
+         const mods = arguments[1] === "shift" ? { shiftKey: true } : arguments[1] === "toggle" ? toggle : {};
          document.querySelector(arguments[0] + " .main").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...mods }));`,
         row(id),
         mods,
       );
-    await click(a, "toggle");
+    // One clicked (it opens), the other Ctrl-clicked: both picked, in that
+    // order. (The first VOD open first: an add opens what it added, and a
+    // click on the open VOD closes it.)
+    await app.openVod(vod.id);
+    await click(a, "plain");
     await click(b, "toggle");
     await until(
       "the list says two VODs",
@@ -384,11 +449,12 @@ export default {
       "each VOD whole on the clip bar, in the order picked",
       async () => {
         const list = await barClips();
+        const two = list.slice(onBarBefore + 1);
         return (
-          list.length === 4 &&
-          list[2].title === titles[a] &&
-          list[3].title === titles[b] &&
-          list.slice(2).every((c) => c.start === 0 && Math.abs(c.end - vod.duration) < 0.1)
+          two.length === 2 &&
+          two[0].title === titles[a] &&
+          two[1].title === titles[b] &&
+          two.every((c) => c.start === 0 && Math.abs(c.end - vod.duration) < 0.1)
         );
       },
       15_000,

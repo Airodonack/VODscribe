@@ -24,13 +24,13 @@ import { DELETE, REMOVE, removeVod } from "./removal.svelte";
 import { count, library, snippets, type Entry, type Snippet } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
 
-/** The stretches selected, in the order they were. */
-export const chosenSegments = () =>
-  snippets.items.filter((i): i is Extract<Snippet, { kind: "segment" }> => i.kind === "segment");
+/** The stretches selected (or of `items`), in the order they were. */
+export const chosenSegments = (items = snippets.items) =>
+  items.filter((i): i is Extract<Snippet, { kind: "segment" }> => i.kind === "segment");
 
-/** The clips selected that are still in the clip bar, in the order they were. */
-export const chosenClips = () =>
-  snippets.items.flatMap((i) => (i.kind === "clip" && clips.shown.some((c) => c.id === i.id) ? [i.id] : []));
+/** The clips selected (or of `items`) that are still in the clip bar, in the order they were. */
+export const chosenClips = (items = snippets.items) =>
+  items.flatMap((i) => (i.kind === "clip" && clips.shown.some((c) => c.id === i.id) ? [i.id] : []));
 
 /** Undoes the newest change in `doc`'s history (a toast's Undo). */
 export function undoIn(doc: Doc) {
@@ -67,10 +67,10 @@ export async function removeChosenClips() {
 /** What's picked on the timeline and in the clip bar, in the order picked, as
  *  an edit takes it: of a VOD, its stretches (a clip's, with its name); of an
  *  edit, stretches of its timeline and the clips of its clip bar as they are. */
-export function chosenPuts(): Put[] {
+export function chosenPuts(items = snippets.items): Put[] {
   const doc = clips.doc;
   if (!doc) return [];
-  return snippets.items.flatMap((i): Put[] => {
+  return items.flatMap((i): Put[] => {
     if (i.kind === "segment")
       return [
         doc.kind === "vod"
@@ -88,19 +88,19 @@ export function chosenPuts(): Put[] {
 }
 
 /** What's picked in the clip bar and on the timeline, said: "2 stretches and 1 clip". */
-const chosenSaid = () =>
+const chosenSaid = (items: Snippet[]) =>
   count([
-    [chosenSegments().length, "stretch", "stretches"],
-    [chosenClips().length, "clip", "clips"],
+    [chosenSegments(items).length, "stretch", "stretches"],
+    [chosenClips(items).length, "clip", "clips"],
   ]);
 
 /** Each one picked as a clip whose file can be dragged out of the window, in
  *  the order picked: a clip's own, a stretch's made for the drag (not in the
  *  clip bar). None if one of them can't be made (those made go again). */
-async function chosenFiles(): Promise<Clip[]> {
+async function chosenFiles(items: Snippet[]): Promise<Clip[]> {
   const doc = clips.doc;
   const made: Clip[] = [];
-  for (const i of snippets.items) {
+  for (const i of items) {
     const clip =
       i.kind === "clip"
         ? (clips.shown.find((c) => c.id === i.id) ?? null)
@@ -119,14 +119,21 @@ async function chosenFiles(): Promise<Clip[]> {
 /** Carries what's picked on the timeline and in the clip bar from (`x`, `y`)
  *  (a drag of one of them, flying from `from`): see dragout.ts `carrySet`. */
 export function carryChosen(from: DOMRect, x: number, y: number) {
-  const items = chosenPuts();
+  carrySnippets(snippets.items, from, x, y);
+}
+
+/** Carries `items` (stretches of the open timeline, clips of its clip bar), as
+ *  `carryChosen` carries what's picked: a stretch between an edit's cuts
+ *  Alt-dragged goes this way, as itself rather than its whole piece. */
+export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number) {
+  const items = chosenPuts(list);
   const doc = clips.doc;
   if (!items.length || !doc) return;
   void carrySet({
     items,
-    label: chosenSaid(),
-    stretches: doc.kind === "vod" ? chosenSegments().map((s) => ({ start: s.start, end: s.end })) : [],
-    files: chosenFiles,
+    label: chosenSaid(list),
+    stretches: doc.kind === "vod" ? chosenSegments(list).map((s) => ({ start: s.start, end: s.end })) : [],
+    files: () => chosenFiles(list),
     vodId: doc.kind === "vod" ? doc.id : undefined,
     from,
     x,
@@ -283,7 +290,8 @@ export function selectionKey(e: KeyboardEvent, rows: Row[], onremove: (vodId: nu
   if (isEscape(e)) {
     // Innermost first: a mark's title being written, or a menu open, has it.
     if (cuts.editing !== null || document.querySelector("[role=dialog]")) return false;
-    if (!snippets.size && !library.size) return false;
+    // The library's open row alone isn't a set: Escape goes on to what's next.
+    if (!snippets.picking && !library.picking) return false;
     snippets.clear();
     library.clear();
     return true;
@@ -299,7 +307,8 @@ export function selectionKey(e: KeyboardEvent, rows: Row[], onremove: (vodId: nu
     // clip bar): the web view's own select-all would light up the page's text.
     return true;
   }
-  if (library.size && is(e, "library.remove")) {
+  // Not the open row alone: Delete then is the player's or the edit's.
+  if (library.picking && is(e, "library.remove")) {
     if (!e.repeat) void removeChosenEntries(rows, onremove);
     return true;
   }

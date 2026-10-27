@@ -1,19 +1,30 @@
-// Several things picked at once (selection.svelte.ts). On a transcribed
-// file: cuts at 1, 2 and 3 s (B), then Ctrl-click (⌘ on a Mac) on the
-// stretch 2-3 s and then on 1-2 s: each shows its number in that order, the
-// playhead stays where it was, and C makes a clip of each, in that order, as
-// one change. The clip bar has no row of its own about what's picked: the
-// keys and the drags are the same for several as for one. A
-// plain click on a pill picks it alone, one on another picks that instead,
-// and one on the pill picked alone lets it go. A pill's play button plays the
-// VOD from the clip's start and picks nothing. The two pills Ctrl-clicked:
-// Delete takes both off the clip bar, and one undo brings both back. A box dragged from empty space in the
-// clip bar over both pills picks them; Escape lets them go. In the library:
-// three more files, Ctrl-click on one and Shift-click on another picks the
-// run of three; the first of them removed with its own row's Remove leaves
+// Several things picked at once, as in a file manager (selection.svelte.ts,
+// pick.ts). On a transcribed file: cuts at 1, 2 and 3 s (B), then
+// Ctrl-click (⌘ on a Mac) on the stretch 2-3 s and then on 1-2 s: each shows
+// its number in that order, the playhead stays where it was, and C makes a
+// clip of each, in that order, as one change. An Alt-click (Option) on the
+// timeline picks the stretch there alone, Ctrl+Alt-click adds one, and the
+// playhead stays. The clip bar has no row of its own about what's picked:
+// the keys and the drags are the same for several as for one. A plain click
+// on a pill picks it alone, one on another picks that instead, and one on
+// the pill picked alone lets it go. A pill's play button plays the VOD from
+// the clip's start and picks nothing. One pill clicked and the other
+// Ctrl-clicked picks both: Delete takes both off the clip bar, and one undo
+// brings both back. A box dragged from empty space in the clip bar over both
+// pills picks them; Escape lets them go.
+//
+// In the library, four more files. A plain click opens a row and picks it
+// alone (nothing shows above the list for the open row alone); Shift-click
+// then picks the run from it; Ctrl-click takes one out, and Ctrl+Shift-click
+// adds the run from there to what's picked. A plain click on one of those
+// picks it alone, and a Ctrl-click on another then picks both, the open one
+// first; Escape lets go of all but the open one, so a Ctrl-click adds to it
+// again. ↓ (or ↑) on a row opens the next one alone, and Shift with the other
+// arrow picks the run back. The open one removed with its own Remove leaves
 // the set (the other two numbered 1 and 2, the list saying 2 VODs);
-// Remove… asks once, naming them, and both go (the first VOD stays); Escape
-// lets go of a row picked.
+// Remove… asks once, naming them, and both go (the first VOD and the fourth
+// file stay). With only the open row picked, Delete isn't the library's;
+// Escape lets go of a row picked beside it.
 //
 // One kind picked at a time: two pills picked, then a cut clicked, the pills
 // are let go (the bar says nothing's picked) and Delete takes the cut only;
@@ -27,6 +38,7 @@
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
@@ -188,6 +200,42 @@ export default {
       throw new Error("the stretches are still picked once clipped");
     ctx.log(`C made ${byId.join(", ")} in the order picked`);
 
+    // An Alt-click (Option on a Mac) on the timeline, not dragged, picks the
+    // stretch there alone; with Ctrl (⌘) too, adds one; the playhead stays.
+    const altAt = (time, adding = false) =>
+      app.js(
+        `${TOGGLE}
+         const bar = document.querySelector(".scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         const at = { bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, isPrimary: true, pointerId: 1, altKey: true };
+         const mods = arguments[1] ? toggle : {};
+         bar.dispatchEvent(new PointerEvent("pointerdown", { ...at, ...mods }));
+         window.dispatchEvent(new PointerEvent("pointerup", { ...at, ...mods, buttons: 0 }));`,
+        time,
+        adding,
+      );
+    const stretchesPicked = () =>
+      app.js(`return [...document.querySelectorAll(".scrubber .chosen")].map((p) => p.dataset.segment).sort().join()`);
+    const stretchesAre = (want, what) =>
+      until(what, async () => (await stretchesPicked()) === want, 10_000).catch(async (e) => {
+        throw new Error(
+          `${e.message}: picked "${await stretchesPicked()}", the ghost ${await app.js(`return !!document.querySelector(".carry-ghost")`)}`,
+        );
+      });
+    const playheadBefore = await app.shownTime();
+    await altAt(1.5);
+    await stretchesAre("1 2", "an Alt-click picked the stretch 1-2 s alone");
+    await altAt(2.5, true);
+    await stretchesAre("1 2,2 3", "a Ctrl+Alt-click added 2-3 s");
+    await altAt(2.5);
+    await stretchesAre("2 3", "an Alt-click picked 2-3 s alone");
+    if ((await app.shownTime()) !== playheadBefore)
+      throw new Error(`an Alt-click moved the playhead from ${playheadBefore} s to ${await app.shownTime()} s`);
+    await app.key("Escape");
+    await stretchesAre("", "Escape let it go");
+    ctx.log("an Alt-click picks a stretch alone, Ctrl+Alt-click adds one, the playhead staying");
+
     // A plain click on a pill picks it alone, as in a file manager; one on
     // another picks that one instead; one on the pill picked alone lets it go.
     await until("two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), 10_000);
@@ -224,19 +272,19 @@ export default {
     if ((await chosen()).length) throw new Error(`the play button picked ${JSON.stringify(await chosen())}`);
     ctx.log(`a pill's play button played from the clip's start (at ${at} s once playing), picking nothing`);
 
-    // The two pills Ctrl-clicked: both picked, still no row.
-    for (const clip of made)
-      await app.js(
-        `${TOGGLE}
-         document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
-           .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
-        clip.id,
-      );
-    await until(
-      "two pills picked",
-      () => app.js(`return document.querySelectorAll(".chip.chosen").length === 2`),
-      10_000,
+    // One pill clicked, the other Ctrl-clicked: both picked, in that order,
+    // still no row.
+    await plainClick(made[0].id);
+    await pickedAlone(made[0].id, "a plain click picked the pill alone");
+    await app.js(
+      `${TOGGLE}
+       document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
+         .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...toggle }));`,
+      made[1].id,
     );
+    await until("two pills picked", async () => (await chosen()).length === 2, 10_000).catch(async (e) => {
+      throw new Error(`${e.message} (one clicked, the other Ctrl-clicked): picked ${JSON.stringify(await chosen())}`);
+    });
     await noRow("with two pills picked");
     await ctx.checkpoint("clips-picked");
 
@@ -317,20 +365,21 @@ export default {
     if ((await shown()).length !== 2)
       throw new Error(`Delete on the cut took clips too: ${(await shown()).length} left`);
 
-    // The library: three more files, the run of them picked.
+    // The library: four more files; three of them, side by side in the list,
+    // picked in every way a file manager has.
     const dir = path.join(ctx.out, "multi-select");
     mkdirSync(dir, { recursive: true });
-    const files = ["first.mp3", "second.mp3", "third.mp3"].map((name) => {
+    const files = ["first.mp3", "second.mp3", "third.mp3", "fourth.mp3"].map((name) => {
       const file = path.join(dir, name);
       copyFileSync(ctx.fixtures.landed, file);
       return file;
     });
     const added = await app.addFiles(files);
-    const [a, b, c] = added.map((v) => v.id);
+    const [a, b, c, d] = added.map((v) => v.id);
     const row = (id) => `.list .vod[data-key="${id}"] .main`;
     await until(
-      "the three rows",
-      () => app.js(`return arguments[0].every((r) => !!document.querySelector(r))`, [row(a), row(b), row(c)]),
+      "the four rows",
+      () => app.js(`return arguments[0].every((r) => !!document.querySelector(r))`, [a, b, c, d].map(row)),
       MINUTE,
     );
 
@@ -356,7 +405,7 @@ export default {
     await focusOn(`.chip[data-clip="${made[0].id}"] .name`);
     await pointAt("aside .brand");
     await app.key("a", { cmd: true });
-    await until("Ctrl+A over the library: its rows", async () => (await listCount()) === "4 VODs", 10_000).catch(
+    await until("Ctrl+A over the library: its rows", async () => (await listCount()) === "5 VODs", 10_000).catch(
       async (e) => {
         throw new Error(`${e.message}: the list says "${await listCount()}", picked ${JSON.stringify(await chosen())}`);
       },
@@ -365,34 +414,105 @@ export default {
     await app.key("Escape");
     await until("Escape let them go", () => app.js(`return !document.querySelector(".list .vod.chosen")`), 10_000);
 
+    // A click on a row: "plain", "toggle" (Ctrl, ⌘ on a Mac), "shift", or "both" (Ctrl+Shift).
     const click = (id, mods) =>
       app.js(
         `${TOGGLE}
-         const mods = arguments[1] === "shift" ? { shiftKey: true } : toggle;
+         const mods = { plain: {}, toggle, shift: { shiftKey: true }, both: { ...toggle, shiftKey: true } }[arguments[1]];
          document.querySelector(arguments[0]).dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...mods }));`,
         row(id),
         mods,
       );
-    await click(a, "toggle");
-    await click(c, "shift");
     const listHead = () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() ?? ""`);
-    await until("the list says three VODs", async () => (await listHead()) === "3 VODs", 10_000);
-    // The rows picked, by key, with their numbers.
+    const openRow = () => app.js(`return Number(document.querySelector(".list .vod.selected")?.dataset.key ?? -1)`);
+    // The rows picked with others (outlined), by key, with their numbers.
     const numbered = () =>
       app.js(
         `return Object.fromEntries([...document.querySelectorAll(".list .vod.chosen")].map((r) => [r.dataset.key, r.querySelector(".row-order")?.textContent ?? null]))`,
       );
-    const three = await numbered();
-    if (Object.keys(three).sort().join() !== [a, b, c].sort().join())
-      throw new Error(`picked rows ${JSON.stringify(three)}, not ${a}, ${b} and ${c}`);
+    /** Waits for the list to say `want` ("" for nothing picked beside the open row), naming `what` was done. */
+    const says = (want, what) =>
+      until(`the list says "${want}"`, async () => (await listHead()) === want, 10_000).catch(async (e) => {
+        throw new Error(
+          `${e.message} (${what}): it says "${await listHead()}", outlined ${JSON.stringify(await numbered())}, open ${await openRow()}`,
+        );
+      });
+    const pickedAre = async (want, what) => {
+      const got = await numbered();
+      const keys = Object.keys(want);
+      if (Object.keys(got).length !== keys.length || keys.some((k) => got[k] !== want[k]))
+        throw new Error(`${what}: outlined ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+    };
 
-    // The one numbered 1 removed with its row's own Remove: it leaves the set.
-    const gone = Number(Object.keys(three).find((key) => three[key] === "1"));
-    const [one, two] = [a, b, c].filter((id) => id !== gone);
+    // A plain click opens a row and picks it; a Shift-click then picks the run from it.
+    await click(a, "plain");
+    await until("the clicked row open", async () => (await openRow()) === a, 10_000);
+    await says("", "one row clicked: the open one alone, nothing shown above the list");
+    await click(c, "shift");
+    await says("3 VODs", "one opened, another Shift-clicked");
+    // Ctrl-click takes the middle one out; Ctrl+Shift-click adds the run from it, keeping the rest.
+    await click(b, "toggle");
+    await says("2 VODs", "the middle one Ctrl-clicked out");
+    await click(c, "both");
+    await says("3 VODs", "Ctrl+Shift-click from the one Ctrl-clicked: its run added");
+    await pickedAre({ [a]: "1", [c]: "2", [b]: "3" }, "Ctrl+Shift-click added the run after what was picked");
+    if ((await openRow()) !== a) throw new Error(`picking opened ${await openRow()}, not left ${a} open`);
+
+    // A plain click on one picked: it alone, opened; the others let go.
+    await click(b, "plain");
+    await says("", "a plain click on one of three picked");
+    await until("the clicked row open", async () => (await openRow()) === b, 10_000);
+    // The owner's case: one clicked (opened), another Ctrl-clicked: both, the open one first.
+    await click(c, "toggle");
+    await says("2 VODs", "one opened, another Ctrl-clicked");
+    await pickedAre({ [b]: "1", [c]: "2" }, "one opened, another Ctrl-clicked");
+    // Escape lets go of the other: the open one stays picked, so a Ctrl-click adds to it again.
+    await app.key("Escape");
+    await says("", "Escape");
+    if ((await openRow()) !== b) throw new Error(`Escape closed the open row: ${await openRow()}`);
+    await click(a, "toggle");
+    await says("2 VODs", "Escape, then another Ctrl-clicked");
+    await pickedAre({ [b]: "1", [a]: "2" }, "Escape, then another Ctrl-clicked");
+    await app.key("Escape");
+    await says("", "Escape");
+    ctx.log("rows picked as in a file manager: click, Ctrl-click, Shift-click, Ctrl+Shift-click, Escape");
+
+    // The keys: ↑ or ↓ opens the row before or after, alone; with Shift, picks the run to it.
+    const keys = await app.js(`return [...document.querySelectorAll(".list .vod")].map((r) => Number(r.dataset.key))`);
+    const toward = keys.indexOf(c) > keys.indexOf(b) ? "ArrowDown" : "ArrowUp";
+    const back = toward === "ArrowDown" ? "ArrowUp" : "ArrowDown";
+    // Pressed on the row with the focus (app.key presses on the page's body).
+    const keyOn = (id, key, shift = false) =>
+      app.js(
+        `const el = document.querySelector(arguments[0]);
+         el.focus();
+         el.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[1], shiftKey: arguments[2], bubbles: true, cancelable: true }));`,
+        row(id),
+        key,
+        shift,
+      );
+    await keyOn(b, toward);
+    await until("the next row open", async () => (await openRow()) === c, 10_000).catch(async (e) => {
+      throw new Error(`${e.message} (${toward} on ${b}'s row): open ${await openRow()}`);
+    });
+    await says("", `${toward}: the row opened alone`);
+    await keyOn(c, back, true);
+    await says("2 VODs", `Shift+${back} back`);
+    // A run is in on-screen order.
+    const [upper, lower] = toward === "ArrowDown" ? [b, c] : [c, b];
+    await pickedAre({ [upper]: "1", [lower]: "2" }, `Shift+${back} back`);
+    if ((await openRow()) !== c) throw new Error(`Shift+${back} opened ${await openRow()}, not left ${c} open`);
+    ctx.log(`${toward} opened the next row; Shift+${back} picked the run back`);
+
+    // The open one removed with its own Remove: it
+    // leaves the set, the others numbered 1 and 2.
+    await click(a, "toggle");
+    await says("3 VODs", "a third Ctrl-clicked");
+    await pickedAre({ [upper]: "1", [lower]: "2", [a]: "3" }, "a third Ctrl-clicked");
     await app.answer("Remove");
-    await app.click(`.list .vod[data-key="${gone}"] button[aria-label="Remove"]`);
-    await until("its row gone", () => app.js(`return !document.querySelector(arguments[0])`, row(gone)), MINUTE);
-    await until("the list says two VODs", async () => (await listHead()) === "2 VODs", 10_000);
+    await app.click(`.list .vod[data-key="${c}"] button[aria-label="Remove"]`);
+    await until("its row gone", () => app.js(`return !document.querySelector(arguments[0])`, row(c)), MINUTE);
+    await says("2 VODs", "the open one removed by its own Remove");
     const left = await until(
       "the two left numbered 1 and 2",
       async () => {
@@ -403,10 +523,11 @@ export default {
     ).catch(async (e) => {
       throw new Error(`${e.message}: ${JSON.stringify(await numbered())}`);
     });
-    if (Object.keys(left).sort().join() !== [one, two].sort().join())
-      throw new Error(`picked rows ${JSON.stringify(left)}, not ${one} and ${two}`);
+    if (Object.keys(left).sort().join() !== [a, b].sort().join())
+      throw new Error(`picked rows ${JSON.stringify(left)}, not ${a} and ${b}`);
     await ctx.checkpoint("library-picked");
 
+    // Remove… above the list: one ask, both go.
     const before = await app.asked();
     await app.answer("Remove");
     await app.clickText("Remove…");
@@ -414,7 +535,7 @@ export default {
       "both removed",
       async () => {
         const ids = (await app.invoke("list_vods")).map((v) => v.id);
-        return !ids.includes(one) && !ids.includes(two) && ids.includes(vod.id);
+        return !ids.includes(a) && !ids.includes(b) && ids.includes(vod.id) && ids.includes(d);
       },
       MINUTE,
     );
@@ -422,9 +543,20 @@ export default {
     if (asked.length !== 1 || !String(asked[0]).includes("Remove 2 VODs?"))
       throw new Error(`Remove… asked ${JSON.stringify(asked)}`);
 
-    // Escape lets go of a row picked.
-    await click(vod.id, "toggle");
-    await until("the row picked", () => app.js(`return !!document.querySelector(".list .vod.chosen")`), 10_000);
+    // The first VOD open again, picked as the open row: Delete there isn't
+    // the library's (nothing's asked, nothing removed).
+    await app.openVod(vod.id);
+    await until("its two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), MINUTE);
+    await says("", "the first VOD opened");
+    const askedOpen = await app.asked();
+    await app.key("Delete");
+    await sleep(500);
+    const askedThen = await app.js(`return window.__e2e.asked.slice(arguments[0])`, askedOpen);
+    if (askedThen.length) throw new Error(`Delete with only the open row picked asked ${JSON.stringify(askedThen)}`);
+
+    // Escape lets go of a row picked with the open one.
+    await click(d, "toggle");
+    await says("2 VODs", "another Ctrl-clicked beside the open one");
     await app.key("Escape");
     await until(
       "Escape let it go",
@@ -434,8 +566,8 @@ export default {
 
     // A row picked, then a cut clicked: the row is let go, and Delete takes
     // the cut, asking nothing.
-    await click(vod.id, "toggle");
-    await until("the row picked", () => app.js(`return !!document.querySelector(".list .vod.chosen")`), 10_000);
+    await click(d, "toggle");
+    await says("2 VODs", "another Ctrl-clicked beside the open one");
     await clickCut();
     await until("the cut selected", () => app.js(`return !!document.querySelector(".cut.selected")`), 10_000);
     await until(

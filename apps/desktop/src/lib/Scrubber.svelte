@@ -4,7 +4,8 @@
   // and the clips made (an underline). A left click or drag only ever moves the
   // playhead; a mark's flag selects it and drags it (a frame at a time); an
   // Alt-drag (Option on a Mac) makes the stretch under the pointer a clip and
-  // drags it out of the window (dragout.ts). Holding the middle button and
+  // drags it out of the window (dragout.ts), and an Alt-click picks that
+  // stretch (selection.svelte.ts). Holding the middle button and
   // dragging pans (sideways) and zooms (up and down) about where it was
   // pressed; a middle click fits the whole VOD. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
@@ -29,7 +30,7 @@
   // and the joins between them. Its pieces are bands in a lane above it: a
   // click goes to one (the piece at the playhead is the one an edit's
   // Split and Remove act on, outlined), and dragging one (or Alt-dragging the
-  // waveform under it) moves it, with a marker where it
+  // waveform under it, where no cut parts it) moves it, with a marker where it
   // would go; pulled well above or below the timeline, it's carried out
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
   // moves that end of the piece in its VOD, a frame at a time, to make it
@@ -59,8 +60,9 @@
     tickStep,
     waveformGaps,
   } from "./media";
-  import { picks, snippets, type Snippet } from "./selection.svelte";
-  import { carryChosen } from "./bulk";
+  import { howOf, picks, snippets, type Snippet } from "./selection.svelte";
+  import type { How } from "./pick";
+  import { carryChosen, carrySnippets } from "./bulk";
   import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
   import { formatFraction, formatTime, os, playsFromFile } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
@@ -353,7 +355,10 @@
       }
     | { kind: "edge"; edge: "start" | "end"; at: number; x: number; moved: boolean }
     | { kind: "mark"; id: number; at: number; x: number; moved: boolean; away: boolean }
-    | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean };
+    | { kind: "view"; x: number; y: number; at: number; share: number; span: number; moved: boolean }
+    /** Alt held on the waveform (`piece`: an edit's, pressed on): a click picks
+     *  the stretch there (`how`, "only" for Alt alone), a drag carries it. */
+    | { kind: "alt"; x: number; y: number; at: number; how: How | "only"; piece?: number };
   let drag = $state<Drag | null>(null);
   let hover = $state<number | null>(null);
 
@@ -363,10 +368,11 @@
   /** The modifier that drags a stretch out: Alt (Option on a Mac). Ctrl stays free for selecting. */
   const dragsOut = (e: PointerEvent) => e.altKey;
 
-  // The stretches between cuts (in an edit, its pieces' ends too): a
-  // Ctrl-click (⌘ on a Mac) picks one to act on with others, a Shift-click
-  // the run of them from the last picked (selection.svelte.ts). Picking
-  // doesn't move the playhead.
+  // The stretches between cuts (in an edit, its pieces' ends too): an
+  // Alt-click (Option on a Mac) picks one alone, a Ctrl-click (⌘ on a Mac,
+  // with Alt or without) adds one to act on with others, a Shift-click the
+  // run of them from the last picked (selection.svelte.ts). Picking doesn't
+  // move the playhead.
   const segments = $derived(
     between(
       [...(named ? cuts.list.map((m) => m.start) : []), ...(pieces ?? []).slice(1).map((p) => p.start)],
@@ -383,22 +389,44 @@
     const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
     snippets.keep((i) => i.kind !== "segment" || now.some((s) => near(s.start, i.start) && near(s.end, i.end)));
   });
-  function pickAt(e: PointerEvent) {
-    const t = timeAt(e.clientX);
+  /** The stretch between cuts at `t`, as picked. */
+  function segmentAt(t: number): Extract<Snippet, { kind: "segment" }> | undefined {
     const seg = segments.find((s) => t >= s.start && t < s.end) ?? segments.at(-1);
-    if (!seg) return;
+    return seg && { kind: "segment", start: seg.start, end: seg.end };
+  }
+  function pickAt(t: number, how: How | "only") {
+    const item = segmentAt(t);
+    if (!item) return;
     const order = segments.map((s) => ({ kind: "segment" as const, start: s.start, end: s.end }));
-    const item = { kind: "segment" as const, start: seg.start, end: seg.end };
-    if (e.shiftKey) snippets.rangeTo(item, order);
-    else snippets.toggle(item);
+    if (how === "only") snippets.only(item);
+    else snippets.click(item, how, order);
+  }
+  /** Where `range` is on screen, for a carry's picture to fly from. */
+  function boxOf(range: { start: number; end: number }): DOMRect {
+    const box = bar!.getBoundingClientRect();
+    return new DOMRect(
+      box.left + Math.max(0, x(range.start)),
+      box.top,
+      Math.max(4, Math.min(width, x(range.end)) - Math.max(0, x(range.start))),
+      HEIGHT,
+    );
   }
 
   function onDown(e: PointerEvent) {
     if (e.button === 0 && picks(e) && !dragsOut(e)) {
       e.preventDefault();
-      pickAt(e);
+      pickAt(timeAt(e.clientX), howOf(e));
       return;
     }
+    /** Alt (and Ctrl or Shift, as their clicks pick) held on the waveform. */
+    const alt = (piece?: number): Drag => ({
+      kind: "alt",
+      x: e.clientX,
+      y: e.clientY,
+      at: timeAt(e.clientX),
+      how: picks(e) ? howOf(e) : "only",
+      piece,
+    });
     if (e.button === 1) {
       const at = timeAt(e.clientX);
       drag = { kind: "view", x: e.clientX, y: e.clientY, at, share: (at - viewStart) / span, span, moved: false };
@@ -430,9 +458,14 @@
         ? pieces?.find((p) => p.id === Number(band.dataset.piece))
         : pieces?.find((p) => timeAt(e.clientX) >= p.start && timeAt(e.clientX) < p.end);
       e.preventDefault();
-      // A band, or the piece anywhere with Alt: the same
-      // drag, which moves it in the timeline and carries it out past it.
-      if (piece && (band || dragsOut(e))) {
+      // Alt on the waveform: a click picks the stretch there, a drag
+      // carries it (or moves its piece, where no cut parts it: onMove).
+      if (piece && !band && dragsOut(e)) {
+        drag = alt(piece.id);
+        return;
+      }
+      // A band: dragged, it moves in the timeline and is carried out past it.
+      if (piece && band) {
         const index = pieces!.indexOf(piece);
         drag = { kind: "piece", id: piece.id, x: e.clientX, dx: 0, to: index, moved: false };
         return;
@@ -443,12 +476,9 @@
       return;
     }
     if (marking && dragsOut(e)) {
-      // With no cuts, the whole video.
-      const range = stretchAt(timeAt(e.clientX), duration);
-      if (range) {
-        e.preventDefault();
-        takeOut(range, e.clientX, e.clientY);
-      }
+      // A click picks the stretch there, a drag carries it (onMove).
+      e.preventDefault();
+      drag = alt();
       return;
     }
     const flag = (e.target as HTMLElement).closest<HTMLElement>("[data-mark]");
@@ -508,6 +538,29 @@
       if (drag?.kind === "resize") hover = null;
     }
     if (!drag) return;
+    if (drag.kind === "alt") {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_SLOP) return;
+      const { at, piece: id, x: pressX } = drag;
+      drag = null;
+      const seg = segmentAt(at);
+      if (marking) {
+        // With no cuts, the whole video.
+        const range = stretchAt(at, duration);
+        if (range) void takeOut(range, e.clientX, e.clientY);
+        return;
+      }
+      const piece = pieces?.find((p) => p.id === id);
+      if (!piece) return;
+      // A stretch between cuts in the piece goes as itself, not the whole
+      // piece (picked with others, with them).
+      const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+      if (seg && !(near(seg.start, piece.start) && near(seg.end, piece.end))) {
+        if (snippets.has(seg)) return carryChosen(boxOf(seg), e.clientX, e.clientY);
+        return carrySnippets([seg], boxOf(seg), e.clientX, e.clientY);
+      }
+      drag = { kind: "piece", id: piece.id, x: pressX, dx: 0, to: pieces!.indexOf(piece), moved: false };
+      return onMove(e);
+    }
     if (drag.kind === "view") {
       const dx = e.clientX - drag.x;
       const dy = e.clientY - drag.y;
@@ -591,13 +644,7 @@
   /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file;
    *  picked with others, what's picked (bulk.ts). */
   async function takeOut(range: { start: number; end: number }, px: number, py: number) {
-    const box = bar!.getBoundingClientRect();
-    const from = new DOMRect(
-      box.left + Math.max(0, x(range.start)),
-      box.top,
-      Math.max(4, Math.min(width, x(range.end)) - Math.max(0, x(range.start))),
-      HEIGHT,
-    );
+    const from = boxOf(range);
     if (snippets.has({ kind: "segment", ...range })) return carryChosen(from, px, py);
     taking = range;
     try {
@@ -654,6 +701,7 @@
       if (done.moved && pieces?.findIndex((p) => p.id === done.id) !== done.to) onpiece?.move(done.id, done.to);
       else if (!done.moved && piece) onseek(piece.start);
     }
+    if (done?.kind === "alt") pickAt(done.at, done.how);
     if (done?.kind === "view" && !done.moved) {
       follow = true;
       setView(0, duration);

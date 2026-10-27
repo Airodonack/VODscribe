@@ -16,7 +16,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { open } from "@tauri-apps/plugin-dialog";
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { api, type Vod } from "./api";
   import { os } from "./platform";
@@ -40,7 +40,7 @@
   import { offers } from "./offers.svelte";
   import { DRAG_SLOP } from "./dragout";
   import { keyHint } from "./keys.svelte";
-  import { count, dragBox, library, overlaps, picks, type Entry } from "./selection.svelte";
+  import { count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
 
   let {
     rows,
@@ -205,19 +205,52 @@
   let byKey = $derived(new Map(rows.map((r) => [rowKey(r), r])));
   let shown = $derived(reorder.order.map((key) => byKey.get(key)).filter((r) => r !== undefined));
 
-  // Several rows picked (selection.svelte.ts): Ctrl-click (⌘ on a Mac) or
-  // Shift-click, or a box dragged from empty space below the rows. A plain
-  // click opens a row, as ever. What's picked shows above the list, with
-  // Remove…; the open row stays the one lit at its edge.
+  // Rows picked as in a file manager (selection.svelte.ts, pick.ts): a plain
+  // click opens a row and picks it alone; Ctrl-click (⌘ on a Mac) adds one
+  // to it or takes it out, Shift-click picks the run from the last clicked,
+  // ↑ and ↓ open the row before or after (with Shift, picking the run to
+  // it), or a box is dragged from empty space below the rows. The open row
+  // is picked when nothing else is; with more picked, what's picked shows
+  // above the list, with Remove…, and the open row stays the one lit at its edge.
   const entryOf = (row: LibraryRow): Entry =>
     row.kind === "vod" ? { kind: "vod", id: row.vod.id } : { kind: "edit", id: row.edit.id };
+  const isOpen = (row: LibraryRow) => (row.kind === "vod" ? row.vod.id === selectedId : edits.openId === row.edit.id);
+  const openEntry = $derived<Entry | null>(
+    selectedId !== null
+      ? { kind: "vod", id: selectedId }
+      : edits.openId !== null
+        ? { kind: "edit", id: edits.openId }
+        : null,
+  );
+  library.follow(() => openEntry);
+  // Opened another way (the keys, an add, a link): picked alone, as if clicked.
+  let wasOpen: Entry | null = null;
+  $effect(() => {
+    const now = openEntry;
+    untrack(() => library.opened(wasOpen, now));
+    wasOpen = now;
+  });
   function onRowClick(e: MouseEvent, row: LibraryRow) {
     if ((e.target as HTMLElement).closest(".actions")) return;
-    if (!picks(e)) return void library.plain(entryOf(row));
+    const how = howOf(e);
+    if (how === "plain") {
+      // The open row clicked with others picked: it's picked alone and stays
+      // open (else its click would close a VOD). Alone, its click closes it.
+      if (isOpen(row) && library.picking) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      library.click(entryOf(row), how, shown.map(entryOf));
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
-    if (e.shiftKey) library.rangeTo(entryOf(row), shown.map(entryOf));
-    else library.toggle(entryOf(row));
+    library.click(entryOf(row), how, shown.map(entryOf));
+  }
+  /** Opens `row`, as a plain click on it does (an open VOD stays open). */
+  function openRow(row: LibraryRow) {
+    if (row.kind === "vod") onselect(row.vod.id);
+    else onopenedit(row.edit.id);
   }
   /** The rows a box drawn over the list touches, in their order. */
   const boxed = (box: DOMRect) =>
@@ -250,7 +283,7 @@
   function onRowDown(e: PointerEvent, row: LibraryRow, key: number) {
     // A clip carried over the list is dropped, not a row dragged.
     if (clips.carryingAny || (e.target as HTMLElement).closest(".actions")) return;
-    if (e.button === 0 && library.has(entryOf(row))) press = { x: e.clientX, y: e.clientY, key };
+    if (e.button === 0 && library.picking && library.has(entryOf(row))) press = { x: e.clientX, y: e.clientY, key };
     else reorder.start(e, key);
   }
   function onPointerMove(e: PointerEvent) {
@@ -281,8 +314,23 @@
   }
 
   function onRowKey(e: KeyboardEvent, key: number) {
-    if (reorder.key(e, key)) tick().then(() => reorder.rows[key]?.querySelector<HTMLElement>(".main")?.focus());
+    if (reorder.key(e, key)) return void tick().then(() => focusRow(key));
+    // ↑ and ↓ (no Alt: that reorders): the row before or after opened and
+    // picked alone; with Shift, the run from the last clicked picked, the
+    // open row staying open.
+    const by = e.key === "ArrowUp" ? -1 : e.key === "ArrowDown" ? 1 : 0;
+    if (!by || e.altKey || e.ctrlKey || e.metaKey) return;
+    const from = byKey.get(key);
+    if (!from) return;
+    e.preventDefault();
+    const order = shown.map(entryOf);
+    const to = library.step(entryOf(from), by, e.shiftKey, order);
+    const row = to && shown[order.findIndex((o) => o.kind === to.kind && o.id === to.id)];
+    if (!row) return;
+    if (!e.shiftKey && !isOpen(row)) openRow(row);
+    focusRow(rowKey(row));
   }
+  const focusRow = (key: number) => reorder.rows[key]?.querySelector<HTMLElement>(".main")?.focus();
 </script>
 
 <svelte:window
@@ -362,7 +410,7 @@
     <p class="error-text add-error">{adder.error}</p>
   {/if}
 
-  {#if vodsPicked + editsPicked}
+  {#if library.picking && vodsPicked + editsPicked}
     <!-- What's picked in the list, and what can be done with it. -->
     <div class="picked" role="status">
       <span class="count"
@@ -434,7 +482,7 @@
         class="vod"
         class:edit={row.kind === "edit"}
         class:selected={row.kind === "vod" ? row.vod.id === selectedId : edits.openId === row.edit.id}
-        class:chosen={picked}
+        class:chosen={picked && library.picking}
         class:lit={transcribeLit && row.kind === "vod" && toTranscribe.some((v) => v.id === row.vod.id)}
         class:lifted={reorder.lifted(key)}
         role="option"
