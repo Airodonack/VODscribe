@@ -11,7 +11,7 @@ import { videos } from "../lib/fixtures.mjs";
 
 const SPEED = ".bar button.speed";
 const VOLUME = '.bar input[aria-label="Volume"]';
-const TOGGLE = "button.library-toggle";
+const TOGGLE = "button.library-edge";
 
 /** What the page shows of the choices: the speed, the volume, the library shown. */
 const shown = async (app) => {
@@ -19,7 +19,7 @@ const shown = async (app) => {
     `return [
        document.querySelector(arguments[0])?.textContent.trim() ?? null,
        document.querySelector(arguments[1])?.value ?? null,
-       document.querySelector(arguments[2])?.getAttribute("aria-pressed") ?? null,
+       document.querySelector(arguments[2])?.getAttribute("aria-expanded") ?? null,
      ]`,
     SPEED,
     VOLUME,

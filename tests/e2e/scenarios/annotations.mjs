@@ -44,8 +44,10 @@
 // and highlights from the timeline (and the pane with them), and shows them
 // again. Imported again, the import's marks are replaced and a chapter of
 // the user's own stays. The library and the pane's column each hide by a
-// button at the toolbar's end, the centre taking their room, the pane's
-// column then fitting a narrower window; both stay hidden over a reload.
+// click on their edge, a strip the window's height with its chevron by the
+// player, the centre taking their room, the pane's column then fitting a
+// narrower window; a click by the scrollbar beside an edge hides nothing;
+// both stay hidden over a reload.
 // A longer transcript imported last: scrolled past a speaker's heading, the
 // chapter and the speaker stay pinned at the top; the next heading pushes
 // the pinned one out without overlapping it, a new chapter both; over lines
@@ -906,6 +908,8 @@ export default {
       await until("the column gone", () => app.js(`return !document.querySelector(".app > .pane.side")`), 10_000).catch(
         () => wrong.push(`at ${narrow.width} px the pane is still a column`),
       );
+      if (await app.js(`return !!document.querySelector(".pane-edge")`))
+        wrong.push(`at ${narrow.width} px, the pane a tab, there's an edge to hide its column`);
       const tabs = () =>
         app.js(`return [...document.querySelectorAll(".pane-tabs [role=tab]")].map((t) =>
           t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : ""))`);
@@ -952,16 +956,18 @@ export default {
       wrong.push(`imported again, the marks: ${JSON.stringify(again.map((m) => [m.kind, m.text, m.source]))}`);
     else ctx.log("imported again: the import's five marks anew, and the user's chapter kept");
 
-    // The library and the pane's column hidden, each by its button at the
-    // toolbar's end: the centre takes their room; with the library hidden,
-    // a window of 1000 px has room for the pane's column. Both stay hidden
-    // over a reload, and their buttons show them again.
+    // The library and the pane's column hidden, each by a click on its edge:
+    // the centre takes their room; with the library hidden, a window of
+    // 1000 px has room for the pane's column. Both stay hidden over a
+    // reload, and their edges show them again.
+    const LIBRARY_EDGE = ".app > .edge-strip .library-edge";
+    const PANE_EDGE = ".app > .edge-strip .pane-edge";
     const widths = () =>
       app.js(`const width = (el) => (el && getComputedStyle(el).display !== "none" ? Math.round(el.getBoundingClientRect().width) : 0);
         return { library: width(document.querySelector(".library-pane")), main: width(document.querySelector(".app > .main")),
           pane: width(document.querySelector(".app > .pane.side")),
-          buttons: [...document.querySelectorAll(".toolbar .library-toggle, .toolbar .pane-toggle")].map((b) =>
-            b.classList[1] + "=" + b.getAttribute("aria-pressed")).join(" ") }`);
+          edges: [...document.querySelectorAll(".app > .edge-strip .edge")].map((b) =>
+            b.classList[1] + "=" + b.getAttribute("aria-expanded")).join(" ") }`);
     const settled = (what, check) =>
       until(what, async () => check(await widths()) && widths(), 10_000).catch(async () => {
         const got = await widths();
@@ -969,13 +975,56 @@ export default {
         return got;
       });
     const all = await settled("both columns", (w) => w.library > 0 && w.pane > 0);
-    await app.click(".toolbar .library-toggle");
+    // Each edge the window's height, its chevron in the player's middle
+    // (measured a frame after the layout changes, hence the wait).
+    const edgesPlaced = () =>
+      app.js(`const stage = document.querySelector(".app > .main .stage")?.getBoundingClientRect();
+        return { innerHeight, stage: stage && [Math.round(stage.top), Math.round(stage.bottom)],
+          edges: [...document.querySelectorAll(".app > .edge-strip .edge")].map((b) => {
+            const r = b.getBoundingClientRect(), c = b.querySelector(".chevron").getBoundingClientRect();
+            return { top: Math.round(r.top), height: Math.round(r.height), chevron: Math.round(c.top + c.height / 2) };
+          }) }`);
+    const placedRight = (p) =>
+      p.stage &&
+      p.edges.length === 2 &&
+      p.edges.every(
+        (e) =>
+          e.top === 0 &&
+          Math.abs(e.height - p.innerHeight) <= 1 &&
+          e.chevron > p.stage[0] &&
+          e.chevron < p.stage[1] &&
+          Math.abs(e.chevron - (p.stage[0] + p.stage[1]) / 2) <= 2,
+      );
+    const edgesOk = await until("the edges placed", async () => placedRight(await edgesPlaced()), 10_000).catch(() =>
+      edgesPlaced(),
+    );
+    if (edgesOk !== true) wrong.push(`the edges: ${JSON.stringify(edgesOk)}`);
+    else ctx.log("both edges the window's height, their chevrons in the player's middle");
+    // A click by an edge's scrollbar (the library's, the transcript's): the
+    // point on the scrollbar isn't the edge's, and the few pixels between
+    // them are the edge's strip but not its button, so nothing hides.
+    const nearScrollbars = await app.js(`const at = (x, y) => document.elementFromPoint(x, y);
+        const out = [];
+        for (const [list, edge] of [[".library-pane", ".library-edge"], [".app > .main .body", ".pane-edge"]]) {
+          const box = document.querySelector(list).getBoundingClientRect();
+          const strip = document.querySelector(edge).closest(".edge-strip").getBoundingClientRect();
+          const y = Math.round(box.top + box.height / 2);
+          const onBar = at(box.right - 2, y), inGap = at(strip.left + 1, y);
+          out.push(edge + ": " + (onBar?.closest(".edge-strip") ? "on the scrollbar, the edge" : "clear") +
+            ", " + (inGap?.closest(".edge") ? "beside it, the edge's button" : "clear"));
+          inGap?.click();
+        }
+        return out.join("; ")`);
+    if (nearScrollbars !== ".library-edge: clear, clear; .pane-edge: clear, clear")
+      wrong.push(`by the scrollbars: ${nearScrollbars}`);
+    await settled("both columns after a click by the scrollbars", (w) => w.library > 0 && w.pane > 0);
+    await app.click(LIBRARY_EDGE);
     const noLibrary = await settled(
       "the library hidden, the centre wider",
       (w) => !w.library && w.pane > 0 && w.main >= all.main + all.library - 1,
     );
-    if (noLibrary.buttons !== "library-toggle=false pane-toggle=true")
-      wrong.push(`the library hidden, the buttons read ${noLibrary.buttons}`);
+    if (noLibrary.edges !== "library-edge=false pane-edge=true")
+      wrong.push(`the library hidden, the edges read ${noLibrary.edges}`);
     const narrowed = await resizeInner(app, 1000, Math.min(was.height, 760));
     if (narrowed.width < 1100)
       await until(
@@ -984,12 +1033,20 @@ export default {
         10_000,
       ).catch(() => wrong.push(`the library hidden, at ${narrowed.width} px the pane isn't a column`));
     await resizeInner(app, was.width, was.height);
-    await app.click(".toolbar .pane-toggle");
+    await app.click(PANE_EDGE);
     await settled(
       "the pane hidden too, the centre all of it",
       (w) => !w.library && !w.pane && w.main >= all.main + all.library + all.pane - 1,
     );
     if (await app.js(`return !!document.querySelector(".pane-tabs")`)) wrong.push("the pane hidden left tabs");
+    // Hidden, each edge stays at the window's edge, the window's height.
+    const atEdges =
+      await app.js(`return [...document.querySelectorAll(".app > .edge-strip")].map((s) => { const r = s.getBoundingClientRect();
+        return Math.round(r.left) + "-" + Math.round(r.right) + "x" + Math.round(r.height) }).join(" ")`);
+    const [left, right] = atEdges.split(" ");
+    const full = (edge) => edge?.endsWith(`x${was.height}`);
+    if (!left?.startsWith("0-") || !right?.includes(`-${was.width}x`) || !full(left) || !full(right))
+      wrong.push(`both hidden, the edges are at ${atEdges} in ${was.width}x${was.height}`);
     await ctx.checkpoint("columns-hidden");
     // Over a reload: the page's own storage keeps them. (Not over a restart
     // yet: the installed app's page is served from a new port each launch,
@@ -1003,21 +1060,20 @@ export default {
       MINUTE,
     );
     const after = await settled("the library still hidden after a reload", (w) => !w.library && w.main > 0);
-    if (!after.buttons.startsWith("library-toggle=false"))
-      wrong.push(`after a reload, the buttons read ${after.buttons}`);
+    if (!after.edges.startsWith("library-edge=false")) wrong.push(`after a reload, the edges read ${after.edges}`);
     // The library shown again, the VOD opened from it: the pane still hidden.
-    await app.click(".toolbar .library-toggle");
+    await app.click(LIBRARY_EDGE);
     await app.click(`.vod[data-key="${vod.id}"] button.main`);
     const reopened = await settled(
       "the VOD open, the pane still hidden",
       (w) => w.library > 0 && !w.pane && w.main > 0,
     );
-    if (reopened.buttons !== "library-toggle=true pane-toggle=false")
-      wrong.push(`after a reload, the VOD open, the buttons read ${reopened.buttons}`);
-    await app.click(".toolbar .pane-toggle");
+    if (reopened.edges !== "library-edge=true pane-edge=false")
+      wrong.push(`after a reload, the VOD open, the edges read ${reopened.edges}`);
+    await app.click(PANE_EDGE);
     const back = await settled("both shown again", (w) => w.library > 0 && w.pane > 0);
     if (Math.abs(back.main - all.main) > 1) wrong.push(`shown again, the centre is ${back.main} px, not ${all.main}`);
-    else ctx.log("the library and the pane hidden and shown by their buttons, and remembered over a reload");
+    else ctx.log("the library and the pane hidden and shown by their edges, and remembered over a reload");
     // And by their keys: Ctrl+Shift+B (⇧⌘B) the library, Ctrl+Alt+B (⌥⌘B) the pane.
     // `repeats` more presses follow as the key held down sends them (`repeat` set), all in one go.
     const chord = (key, shift, alt, repeats = 0) =>

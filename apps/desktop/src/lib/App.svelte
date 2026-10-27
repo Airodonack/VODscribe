@@ -26,6 +26,7 @@
   import { ownPlayer } from "./ownPlayer.svelte";
   import EditView from "./EditView.svelte";
   import { edits } from "./edits.svelte";
+  import EdgeStrip from "./EdgeStrip.svelte";
   import Icon from "./Icon.svelte";
   import { load, save } from "./stored";
   import Modal from "./Modal.svelte";
@@ -587,14 +588,63 @@
   }
   // A column of its own once the window has the room for three: the
   // library's widest (340 px), the pane's (320 px) and a centre of 440 px
-  // between them; without the library (hidden, or the website's VOD page),
-  // the pane's and the centre's. Hidden, the column is gone; on a window
-  // too narrow for it, the pane is the transcript's tab whether hidden or
-  // not, as there's no column to hide.
+  // between them (less their edges' 12 px each); without the library
+  // (hidden, or the website's VOD page), the pane's and the centre's.
+  // Hidden, the column is gone, its edge left; on a window too narrow for
+  // it, the pane is the transcript's tab whether hidden or not, with no
+  // edge, as there's no column to hide.
   const columnFrom = $derived(libraryShown ? 1100 : 760);
   let appWidth = $state(0);
   const roomForColumn = $derived(paneShown && appWidth >= columnFrom);
   const column = $derived(roomForColumn && !paneHidden);
+  // The grid's columns: each side column's edge (EdgeStrip.svelte) is one of
+  // its own, which stays at the window's edge while the column is hidden.
+  const columns = $derived(
+    [
+      libraryShown && "minmax(280px, 340px)",
+      library && "var(--edge-strip)",
+      "minmax(0, 1fr)",
+      roomForColumn && "var(--edge-strip)",
+      column && "minmax(260px, 320px)",
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  // The middle of the player, where the edges' chevrons go: measured again
+  // as the window, the player or what's above it changes; null without one.
+  let appEl = $state<HTMLElement>();
+  let stageMid = $state<number | null>(null);
+  $effect(() => {
+    const app = appEl;
+    const main = app?.querySelector(".app > .main");
+    if (!app || !main) return;
+    let frame = 0;
+    let stage: Element | null = null;
+    const sizes = new ResizeObserver(() => measure());
+    const measure = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const now = main.querySelector(".stage");
+        if (now !== stage) {
+          if (stage) sizes.unobserve(stage);
+          stage = now;
+          if (stage) sizes.observe(stage);
+        }
+        const box = stage?.getBoundingClientRect();
+        stageMid =
+          box && box.height > 0 ? Math.round(box.top + box.height / 2 - app.getBoundingClientRect().top) : null;
+      });
+    };
+    sizes.observe(main);
+    const changes = new MutationObserver(measure);
+    changes.observe(main, { childList: true, subtree: true });
+    measure();
+    return () => {
+      cancelAnimationFrame(frame);
+      sizes.disconnect();
+      changes.disconnect();
+    };
+  });
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
@@ -745,30 +795,25 @@
 {:else}
   <div
     class="app"
-    class:alone={!libraryShown}
     class:library-hidden={library && libraryHidden}
-    class:with-pane={column}
+    style:grid-template-columns={columns}
     bind:clientWidth={appWidth}
+    bind:this={appEl}
   >
     {#if library}
       <Library {rows} {selectedId} onselect={pick} onreorder={reorder} onopenedit={(id) => edits.openEdit(id)} />
+      <EdgeStrip
+        side="left"
+        open={libraryShown}
+        label={libraryShown ? "Hide the library" : "Show the library"}
+        hint={keyHint("view.library")}
+        mid={stageMid}
+        ontoggle={toggleLibrary}
+      />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
     <svelte:element this={DEMO ? "div" : "main"} class="main">
       <div class="toolbar">
-        {#if library}
-          <!-- At the toolbar's left end, by the library or where it was. -->
-          <button
-            class="icon library-toggle"
-            class:on={libraryShown}
-            onclick={toggleLibrary}
-            aria-label={libraryShown ? "Hide the library" : "Show the library"}
-            aria-pressed={libraryShown}
-            title="{libraryShown ? 'Hide the library' : 'Show the library'}{keyHint('view.library')}"
-          >
-            <Icon name="panel-left" size={18} />
-          </button>
-        {/if}
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
           <button
@@ -826,19 +871,6 @@
           aria-expanded={settingsWindow.open}
           title="Settings"><Icon name="settings" size={18} /></button
         >
-        {#if roomForColumn}
-          <!-- At the toolbar's right end, by the pane's column or where it was. -->
-          <button
-            class="icon pane-toggle"
-            class:on={column}
-            onclick={togglePane}
-            aria-label={column ? `Hide ${paneName.toLowerCase()}` : `Show ${paneName.toLowerCase()}`}
-            aria-pressed={column}
-            title="{column ? 'Hide' : 'Show'} {paneName.toLowerCase()}{keyHint('view.pane')}"
-          >
-            <Icon name="panel-right" size={18} />
-          </button>
-        {/if}
         <Modal bind:open={settingsWindow.open} label="Settings">
           <Settings
             oncleared={() => {
@@ -970,6 +1002,16 @@
         {/if}
       </div>
     </svelte:element>
+    {#if roomForColumn}
+      <EdgeStrip
+        side="right"
+        open={column}
+        label="{column ? 'Hide' : 'Show'} {paneName.toLowerCase()}"
+        hint={keyHint("view.pane")}
+        mid={stageMid}
+        ontoggle={togglePane}
+      />
+    {/if}
     {#if column}
       <div class="pane side" id="annotations-panel">
         {@render annotationsPane(true)}
@@ -981,32 +1023,30 @@
 {/if}
 
 <style>
+  /* The library, the main column and the chapters and highlights pane (a
+     column on the right as the library is on the left, a little narrower),
+     with an edge between each side column and the main one: their columns
+     are App's `columns`. */
   .app {
+    --edge-strip: 12px;
     display: grid;
-    grid-template-columns: minmax(280px, 340px) 1fr;
+    grid-template-columns: minmax(0, 1fr);
     /* The website's demo sets its own height. */
     height: var(--app-height, 100vh);
-  }
-
-  /* Without the library (the website's VOD page): the main column is all of it. */
-  .app.alone {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  /* The chapters and highlights pane, a column on the right as the library
-     is on the left, a little narrower; or, without the library, beside the
-     main column alone. */
-  .app.with-pane {
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
-  }
-
-  .app.alone.with-pane {
-    grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
   }
 
   /* The library hidden: still there (its drops still add), out of the grid. */
   .app.library-hidden > :global(.library-pane) {
     display: none;
+  }
+
+  /* Each side column's edge draws the line between it and the main column. */
+  .app > :global(.library-pane) {
+    border-right: none;
+  }
+
+  .app > .pane.side > :global(.annotations-pane) {
+    border-left: none;
   }
 
   /* Under the player: the transcript (or the results); on a narrow window,
