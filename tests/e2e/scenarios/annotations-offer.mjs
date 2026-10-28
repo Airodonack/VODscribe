@@ -10,7 +10,7 @@
 // with the file unchanged, says the VOD has the latest already and offers
 // Replace anyway (no Don't ask again); replaced, the import's marks are
 // brought anew and a chapter of the user's own stays. The gift button asks the
-// file host first: with the file published anew it offers Use; with asking
+// file host first: with the file published anew it offers the newer ones; with asking
 // turned off it asks nothing and says its answer is from the last check.
 //
 // Offline: the VOD is the stand-in yt-dlp's (lib/siteVod.mjs).
@@ -20,7 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { serveFiles } from "../lib/fileHost.mjs";
+import { notFilter, serveFiles } from "../lib/fileHost.mjs";
 import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -107,7 +107,8 @@ export default {
           wrong.push(`the offer says "${offered.text}"`);
         if (offered.buttons.join(", ") !== "Don't ask again, Not now, Use")
           wrong.push(`the offer's buttons: ${offered.buttons.join(", ")}`);
-        const asked = host.requests.map((r) => `${r.method} ${r.path}`);
+        // The filter the app asks for at its start (none published here) aside.
+        const asked = host.requests.filter(notFilter).map((r) => `${r.method} ${r.path}`);
         if (asked.join() !== `HEAD ${FILE}`) wrong.push(`the file host was asked: ${asked.join(", ")}`);
 
         // Use: fetched and imported.
@@ -206,13 +207,13 @@ export default {
         if (heads() !== headsBefore + 1)
           wrong.push(`the gift button asked the file host ${heads() - headsBefore} times`);
         if (
-          !published.text.includes("A transcript and annotations are available for this VOD.") ||
+          !published.text.includes("A newer transcript and annotations are available for this VOD.") ||
           published.buttons.join(", ") !== "Not now, Use"
         )
           wrong.push(
             `the file published anew, the gift button's offer says "${published.text}" (${published.buttons.join(", ")})`,
           );
-        else ctx.log("published anew, the gift asked the file host and offers Use");
+        else ctx.log("published anew, the gift asked the file host and offers the newer ones");
         await app.clickText("Not now");
         await until("the offer closed", async () => !(await offer(app)), 10_000);
 

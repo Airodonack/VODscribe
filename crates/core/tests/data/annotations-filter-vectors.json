@@ -1,0 +1,176 @@
+{
+ "about": "Test vectors for annotations/filter.bin (crates/core annotations_filter.rs has the format). keys: a key's bits in a set of that many bits and hashes. filters: whole files (hex) with keys in them and keys not. large: a set of present_count keys present_prefix + i, its file's SHA-256, and how many of absent_count keys absent_prefix + i it wrongly holds (1% is the target).",
+ "keys": [
+  {
+   "key": "twitch:v2901646294",
+   "bits": 64,
+   "hashes": 7,
+   "positions": [
+    18,
+    31,
+    44,
+    57,
+    6,
+    19,
+    32
+   ]
+  },
+  {
+   "key": "twitch:v2901646294",
+   "bits": 1000,
+   "hashes": 3,
+   "positions": [
+    650,
+    943,
+    236
+   ]
+  },
+  {
+   "key": "youtube:IaIo3d6cUuo",
+   "bits": 64,
+   "hashes": 7,
+   "positions": [
+    37,
+    34,
+    31,
+    28,
+    25,
+    22,
+    19
+   ]
+  },
+  {
+   "key": "youtube:IaIo3d6cUuo",
+   "bits": 1000,
+   "hashes": 3,
+   "positions": [
+    45,
+    330,
+    999
+   ]
+  },
+  {
+   "key": "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a",
+   "bits": 64,
+   "hashes": 7,
+   "positions": [
+    19,
+    52,
+    21,
+    54,
+    23,
+    56,
+    25
+   ]
+  },
+  {
+   "key": "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a",
+   "bits": 1000,
+   "hashes": 3,
+   "positions": [
+    579,
+    84,
+    589
+   ]
+  },
+  {
+   "key": "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a17",
+   "bits": 64,
+   "hashes": 7,
+   "positions": [
+    29,
+    12,
+    59,
+    42,
+    25,
+    8,
+    55
+   ]
+  },
+  {
+   "key": "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a17",
+   "bits": 1000,
+   "hashes": 3,
+   "positions": [
+    21,
+    4,
+    987
+   ]
+  },
+  {
+   "key": "youtube:é✓",
+   "bits": 64,
+   "hashes": 7,
+   "positions": [
+    39,
+    14,
+    53,
+    28,
+    3,
+    42,
+    17
+   ]
+  },
+  {
+   "key": "youtube:é✓",
+   "bits": 1000,
+   "hashes": 3,
+   "positions": [
+    167,
+    390,
+    613
+   ]
+  }
+ ],
+ "filters": [
+  {
+   "name": "empty",
+   "present": [],
+   "absent": [
+    "twitch:2901646294",
+    "twitch:v2901646295",
+    "youtube:iaio3d6cuuo",
+    "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a18",
+    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdee",
+    "kick:01a169a1",
+    "dailymotion:x1",
+    "twitch:v1",
+    "youtube:abc",
+    "kick:x"
+   ],
+   "file": "565341460100000040000000000000000700000000000000000000000000000000000000"
+  },
+  {
+   "name": "three VODs",
+   "present": [
+    "twitch:v2901646294",
+    "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a17",
+    "youtube:IaIo3d6cUuo",
+    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdef",
+    "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a",
+    "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a:fedcba9876543210fedcba9876543210"
+   ],
+   "absent": [
+    "twitch:2901646294",
+    "twitch:v2901646295",
+    "youtube:iaio3d6cuuo",
+    "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a18",
+    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdee",
+    "kick:01a169a1",
+    "dailymotion:x1",
+    "twitch:v1",
+    "youtube:abc",
+    "kick:x"
+   ],
+   "file": "565341460100000040000000000000000700000006000000000000006099ecb33514d24b"
+  }
+ ],
+ "large": {
+  "present_prefix": "youtube:present-",
+  "present_count": 2000,
+  "absent_prefix": "youtube:absent-",
+  "absent_count": 10000,
+  "file_sha256": "36a9a8e0b860f2bf8d66af788ac370fed7a125ef2557e1f893b81e16aa8a4c39",
+  "absent_false_positives": 98
+ }
+}

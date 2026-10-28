@@ -291,12 +291,16 @@
 <div class="actions" class:removing inert={removing}>
   <!-- Published annotations for it (offers.svelte.ts): at the left, apart from what's done to the VOD itself. -->
   {#if vod.annotations === "available"}
+    {@const label = vod.annotations_newer
+      ? "Newer annotations are published for this VOD"
+      : "Get the transcript and annotations for this VOD"}
     <button
       class="row-act gift"
+      class:newer={vod.annotations_newer}
       onclick={() => void offers.gift(vod)}
       disabled={offers.asking}
-      title="Get the transcript and annotations for this VOD"
-      aria-label="Get the transcript and annotations for this VOD"
+      title={label}
+      aria-label={label}
     >
       <Icon name="gift" size={15} />
     </button>
@@ -582,8 +586,21 @@
   }
 
   .row-act.gift {
+    position: relative;
     margin-right: auto;
     color: var(--accent);
+  }
+
+  /* Newer than what it brought in: a dot on the gift, as on an app icon with news. */
+  .row-act.gift.newer::after {
+    content: "";
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
   }
 
   /* The video's download: where Delete video is once it's here. */

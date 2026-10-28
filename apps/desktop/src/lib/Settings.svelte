@@ -424,9 +424,9 @@
             checked={askForAnnotations}
             onchange={(e) => appSettings.update({ ask_for_annotations: e.currentTarget.checked })}
           />
-          Ask the file host whether annotations exist for a VOD you add
+          Ask the file host whether annotations exist for your VODs
         </label>
-        <p class="muted hint">It sends the VOD's site and its id on that site, nothing else.</p>
+        <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
         <label class="toggle">
           <input
             type="checkbox"

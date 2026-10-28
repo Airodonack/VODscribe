@@ -1,7 +1,11 @@
 // Annotations published for a VOD, offered (AnnotationsOffer.svelte): when
 // the app finds some for a VOD just added (crates/core
 // `annotations::look_up`), from the gift button in its library row, or from
-// "Check for annotations" in the row's menu. Using them fetches the file and
+// "Check for annotations" in the row's menu. At every start, and from "Check all
+// VODs for annotations" in that menu, the app checks the whole library against
+// the file host's list of published annotations (crates/core
+// `annotations_filter`): a VOD found shows its gift button, marked when its
+// annotations are newer than the ones it brought in. Using them fetches the file and
 // imports it, as an annotations file picked would be: the VOD's transcript
 // and the marks an import brought are replaced, the user's own marks stay.
 
@@ -67,6 +71,25 @@ class Offers {
     }
   }
 
+  /** Checks the whole library (the row menu's "Check all VODs for annotations"), and says what's found. */
+  async checkLibrary() {
+    try {
+      const { asked, found, newer } = await api.checkLibraryAnnotations();
+      if (!asked) return toast.show("Looking for annotations is turned off in Settings › Privacy.");
+      const parts = [
+        found.length && `annotations for ${count(found.length)}`,
+        newer.length && `newer annotations for ${count(newer.length)}`,
+      ].filter(Boolean);
+      toast.show(
+        parts.length
+          ? `Found ${parts.join(" and ")}: use the gift button in the library.`
+          : "No new annotations for the VODs in your library.",
+      );
+    } catch {
+      toast.show("VODscribe couldn't reach the file host just now.");
+    }
+  }
+
   /** Asks the file host again about `vod` (its row's menu), and offers what's found. */
   async check(vod: Vod) {
     try {
@@ -112,5 +135,7 @@ class Offers {
     this.error = null;
   }
 }
+
+const count = (n: number) => (n === 1 ? "1 VOD" : `${n} VODs`);
 
 export const offers = new Offers();

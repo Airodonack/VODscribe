@@ -8,6 +8,7 @@ use std::path::Path;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::annotations::{self, Found, Offer, VodAnnotations};
+use vodscribe_core::annotations_filter;
 use vodscribe_core::chat::ChatMessage;
 use vodscribe_core::db::Vod;
 use vodscribe_core::settings::Settings;
@@ -163,6 +164,41 @@ pub(crate) async fn check_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
     .await
     .map_err(err)?
     .map_err(err)
+}
+
+/// Checks every VOD in the library against the file host's filter of
+/// published annotations (`annotations_filter`), which tells the host
+/// nothing of the library, and asks about only the VODs it has: each found
+/// shows its gift, one with newer annotations than it brought in marks it.
+/// Nothing when the user turned asking off; offline, an error.
+fn check_library(app: &AppHandle) -> anyhow::Result<annotations_filter::Checked> {
+    let state = app.state::<AppState>();
+    annotations_filter::check_library(&state.db, &state.paths, |id| {
+        let _ = emit_vod(app, &state.db.lock().unwrap(), id);
+    })
+}
+
+/// At every start, on a thread of its own: the filter is asked for only if it
+/// changed, so a start with nothing new published costs one small request.
+/// A failure (offline) is kept quiet.
+pub(crate) fn check_library_at_start(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Err(e) = check_library(&app)
+            && cfg!(debug_assertions)
+        {
+            eprintln!("annotations filter: {e:#}");
+        }
+    });
+}
+
+/// The library's "Check for annotations": the same check, now.
+#[tauri::command]
+pub(crate) async fn check_library_annotations(app: AppHandle) -> CmdResult<annotations_filter::Checked> {
+    tauri::async_runtime::spawn_blocking(move || check_library(&app))
+        .await
+        .map_err(err)?
+        .map_err(|e| err(anyhow::anyhow!("Couldn't check for annotations: {e:#}")))
 }
 
 /// What's known of VOD `vod_id`'s published annotations, to offer them.

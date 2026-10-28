@@ -65,7 +65,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       # The end-to-end harness's own parts.
       - run: node --test tests/e2e/verify.test.mjs
-      - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs tests/e2e/lib/drivers.test.mjs
+      - run: node --test tests/e2e/durations.test.mjs tests/e2e/merge-results.test.mjs tests/e2e/lib/budgets.test.mjs tests/e2e/lib/drivers.test.mjs tests/e2e/lib/fileHost.test.mjs
       - run: node --test apps/desktop/src/lib/events.test.mjs apps/desktop/src/lib/rows.test.mjs apps/desktop/src/lib/stretches.test.mjs apps/desktop/src/lib/follow.test.mjs apps/desktop/src/lib/transcriptGroups.test.mjs apps/desktop/src/lib/chatParts.test.mjs apps/desktop/src/lib/theme.test.mjs apps/desktop/src/lib/modules.test.mjs apps/desktop/src/lib/media.test.mjs apps/desktop/src/lib/scrubFrame.test.mjs apps/desktop/src/lib/platform.test.mjs apps/desktop/colorMix.test.mjs apps/desktop/src/lib/playerClock.test.mjs apps/desktop/src/lib/ownStatus.test.mjs apps/desktop/src/lib/settle.test.mjs apps/desktop/src/lib/playerKeys.test.mjs apps/desktop/src/lib/keymap.test.mjs apps/desktop/src/lib/queryChips.test.mjs apps/desktop/src-tauri/src/embed_shim.test.mjs apps/desktop/src/lib/nativeDriver.test.mjs apps/desktop/src/lib/annotated.test.mjs apps/desktop/src/lib/castNames.test.mjs apps/desktop/src/lib/annotationRows.test.mjs apps/desktop/src/lib/markSources.test.mjs apps/desktop/src/lib/pinned.test.mjs apps/desktop/src/lib/povs.test.mjs apps/desktop/src/lib/pick.test.mjs tests/e2e/lib/dump.test.mjs
       # Also catches app code the website's demo stand-ins don't provide.
       - run: pnpm --filter site build

@@ -63,6 +63,8 @@ export interface Vod {
   listed: boolean;
   /** Whether its annotations are published, as last asked (crates/core `db::Availability`; missing in the demo). */
   annotations?: Availability;
+  /** It brought in published annotations, and a newer version of them is published (missing in the demo). */
+  annotations_newer?: boolean;
 }
 
 export type Availability = "unknown" | "none" | "available";
@@ -74,6 +76,18 @@ export interface AnnotationsOffer {
   up_to_date: boolean;
   /** It has a transcript made on this computer, which bringing them in replaces. */
   local_transcript: boolean;
+  /** A newer version than the one it brought in is published. */
+  newer: boolean;
+}
+
+/** What a check of the whole library for published annotations found (crates/core `annotations_filter::Checked`). */
+export interface LibraryChecked {
+  /** False when nothing was asked: Settings turned asking off. */
+  asked: boolean;
+  /** VODs whose annotations were found published, never brought in. */
+  found: number[];
+  /** VODs whose annotations have a newer version published. */
+  newer: number[];
 }
 
 export type Device = "cpu" | "gpu";
@@ -574,6 +588,9 @@ export const api = {
    *  the VOD can't have any (`can_have`: only Twitch's, YouTube's and Kick's can), or Settings turned asking off. */
   checkAnnotations: (vodId: number) =>
     invoke<{ asked: boolean; can_have: boolean; offer: AnnotationsOffer }>("check_annotations", { vodId }),
+  /** Checks every VOD in the library against the file host's list of published annotations
+   *  (which tells it nothing of the library), asking about only the ones it lists. */
+  checkLibraryAnnotations: () => invoke<LibraryChecked>("check_library_annotations"),
   /** What's known of a VOD's published annotations. */
   annotationsOffer: (vodId: number) => invoke<AnnotationsOffer>("annotations_offer", { vodId }),
   /** Fetches a VOD's published annotations and imports them (the user's own marks stay). */

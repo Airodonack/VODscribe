@@ -40,6 +40,8 @@
           <p>When last checked, this VOD had the latest transcript and annotations.</p>
         {:else if shown.offer.up_to_date}
           <p>This VOD has the latest transcript and annotations already.</p>
+        {:else if shown.offer.newer}
+          <p>A newer transcript and annotations are available for this VOD.</p>
         {:else}
           <p>A transcript and annotations are available for this VOD.</p>
         {/if}

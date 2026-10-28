@@ -14,11 +14,11 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { serveFiles } from "../lib/fileHost.mjs";
+import { notFilter, serveFiles } from "../lib/fileHost.mjs";
 import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
 
 const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
-const SETTING = "Ask the file host whether annotations exist for a VOD you add";
+const SETTING = "Ask the file host whether annotations exist for your VODs";
 
 const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, DIALOG);
 const toastSays = (app) => app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
@@ -52,7 +52,7 @@ export default {
     "offer-stopped":
       'A small dialog titled "Transcript and annotations" says VODscribe won\'t ask about the VODs you add any more, and in gray that it can be turned back on in Settings › Privacy, with "Open Settings" and a highlighted "OK".',
     "lookup-setting":
-      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Ask the file host whether annotations exist for a VOD you add" with a gray line under it saying it sends the VOD\'s site and its id, nothing else.',
+      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Ask the file host whether annotations exist for your VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else.',
   },
   async run(app, ctx) {
     const host = serveFiles((method, at) =>
@@ -76,7 +76,8 @@ export default {
         if (await offerShown(app)) wrong.push("annotations were offered for a VOD with none");
         if (await app.js(`return !!document.querySelector('.vod[data-key="${none.id}"] button.gift')`))
           wrong.push("a VOD with nothing published has the gift button");
-        const asked = host.requests.map((r) => `${r.method} ${r.path}`);
+        // The filter the app asks for at its start (none published here) aside.
+        const asked = host.requests.filter(notFilter).map((r) => `${r.method} ${r.path}`);
         if (asked.join() !== "HEAD /annotations/youtube/xe2enone.json")
           wrong.push(`for the VOD with none, the file host was asked: ${asked.join(", ")}`);
 

@@ -488,7 +488,7 @@ fn named_server(name: &str) -> Option<String> {
 }
 
 /// The server published annotations are asked of: `BASE_ENV`'s, if set.
-fn base_url() -> String {
+pub(crate) fn base_url() -> String {
     named_server(BASE_ENV).unwrap_or_else(|| BASE_URL.to_string())
 }
 
@@ -529,7 +529,7 @@ pub fn can_be_published(platform: &str) -> bool {
 
 /// The client for the file host: quick to give up, since nothing waits on
 /// it but an offer. Plain HTTP only for a server named by `BASE_ENV`.
-fn agent() -> &'static ureq::Agent {
+pub(crate) fn agent() -> &'static ureq::Agent {
     static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
     AGENT.get_or_init(|| {
         ureq::Agent::config_builder()
@@ -567,7 +567,7 @@ pub fn look_up(platform: &str, id: &str) -> Result<Found> {
     look_up_at(&base_url(), platform, id)
 }
 
-fn look_up_at(base: &str, platform: &str, id: &str) -> Result<Found> {
+pub(crate) fn look_up_at(base: &str, platform: &str, id: &str) -> Result<Found> {
     match agent().head(file_url(base, platform, id)).call() {
         Ok(response) if response.status() == 200 => Ok(Found::Available { version: version_of(&response) }),
         Ok(response) => bail!("the file host answered {}", response.status()),
@@ -613,6 +613,9 @@ pub struct Offer {
     pub up_to_date: bool,
     /// It has a transcript made on this computer, which an import replaces.
     pub local_transcript: bool,
+    /// A version other than the one it brought in is published: newer, as
+    /// versions only go forward.
+    pub newer: bool,
 }
 
 impl Db {
@@ -822,6 +825,7 @@ impl Db {
             // with lines transcribed here since: what it brought in is replaced, in part or all.
             up_to_date: version.is_some() && version == imported && !local,
             local_transcript: local,
+            newer: imported.is_some() && version.is_some() && version != imported,
         })
     }
 
@@ -844,13 +848,13 @@ impl Db {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::chat::{ChatPart, Kind};
     use crate::db::ChatStatus;
     use crate::stretches::Transcribed;
 
-    fn file(platform: &str, id: &str) -> Annotations {
+    pub(crate) fn file(platform: &str, id: &str) -> Annotations {
         let json = serde_json::json!({
             "format": FORMAT,
             "version": 1,
@@ -1440,7 +1444,10 @@ mod tests {
         let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
         assert_eq!(vod.annotations, Availability::Unknown);
         let offer = db.annotations_offer(vod.id).unwrap();
-        assert_eq!(offer, Offer { available: Availability::Unknown, up_to_date: false, local_transcript: false });
+        assert_eq!(
+            offer,
+            Offer { available: Availability::Unknown, up_to_date: false, local_transcript: false, newer: false }
+        );
 
         db.set_annotations_found(vod.id, &Found::None).unwrap();
         assert_eq!(db.vod(vod.id).unwrap().unwrap().annotations, Availability::None);
@@ -1452,7 +1459,10 @@ mod tests {
         db.import_annotations(&file("youtube", "abc"), None).unwrap();
         db.set_annotations_imported(vod.id, Some("v1")).unwrap();
         let offer = db.annotations_offer(vod.id).unwrap();
-        assert_eq!(offer, Offer { available: Availability::Available, up_to_date: true, local_transcript: false });
+        assert_eq!(
+            offer,
+            Offer { available: Availability::Available, up_to_date: true, local_transcript: false, newer: false }
+        );
         // Asked again: the same file is still up to date; a new one isn't.
         db.set_annotations_found(vod.id, &v1).unwrap();
         assert!(db.annotations_offer(vod.id).unwrap().up_to_date);
@@ -1486,6 +1496,9 @@ mod tests {
         db.insert_done(vod.id, 0.0, Some(30.0), Some(crate::model::CPU_MODEL.id)).unwrap();
         let offer = db.annotations_offer(vod.id).unwrap();
         // Not "the latest already" with Replace anyway and no word of the transcript it replaces.
-        assert_eq!(offer, Offer { available: Availability::Available, up_to_date: false, local_transcript: true });
+        assert_eq!(
+            offer,
+            Offer { available: Availability::Available, up_to_date: false, local_transcript: true, newer: false }
+        );
     }
 }

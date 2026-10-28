@@ -16,6 +16,7 @@ permissions = [
   "allow-add-vod",
   "allow-import-annotations-file",
   "allow-check-annotations",
+  "allow-check-library-annotations",
   "allow-annotations-offer",
   "allow-fetch-annotations",
   "allow-vod-annotations",

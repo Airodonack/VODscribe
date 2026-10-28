@@ -540,7 +540,7 @@
 
 <AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
 
-<Popover bind:open={menuOpen} anchor={menuFor?.row} label="VOD menu" width={220} padding={4}>
+<Popover bind:open={menuOpen} anchor={menuFor?.row} label="VOD menu" width={250} padding={4}>
   <div class="menu" role="menu">
     <button
       role="menuitem"
@@ -548,6 +548,13 @@
         menuOpen = false;
         if (menuFor) void offers.check(menuFor.vod);
       }}><Icon name="gift" size={14} /> Check for annotations</button
+    >
+    <button
+      role="menuitem"
+      onclick={() => {
+        menuOpen = false;
+        void offers.checkLibrary();
+      }}><Icon name="gift" size={14} /> Check all VODs for annotations</button
     >
   </div>
 </Popover>

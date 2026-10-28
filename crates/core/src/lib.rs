@@ -3,6 +3,7 @@
 //! and indexing the transcript in SQLite for phrase search.
 
 pub mod annotations;
+pub mod annotations_filter;
 #[cfg(feature = "asr")]
 pub mod asr;
 pub mod audio;
@@ -200,6 +201,13 @@ impl Paths {
     /// stays until it's deleted, or removed from the VOD.
     pub fn media(&self) -> PathBuf {
         pipeline::media_dir(&self.work())
+    }
+
+    /// The last filter of published annotations fetched (`annotations_filter`),
+    /// with its ETag beside it in a file of the same name ending `.etag`, so the
+    /// next check asks only whether it changed.
+    pub fn annotations_filter(&self) -> PathBuf {
+        self.local.join("annotations-filter.bin")
     }
 
     pub fn model_dir(&self) -> PathBuf {

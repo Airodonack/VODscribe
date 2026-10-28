@@ -207,6 +207,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     std::thread::spawn(move || vods::sweep(&handle, None));
     let handle = app.handle().clone();
     std::thread::spawn(move || chats::run(handle, chat_rx));
+    annotations::check_library_at_start(app.handle());
     Ok(())
 }
 
@@ -340,6 +341,7 @@ pub fn run() {
             vods::add_vod,
             annotations::import_annotations_file,
             annotations::check_annotations,
+            annotations::check_library_annotations,
             annotations::annotations_offer,
             annotations::fetch_annotations,
             annotations::vod_annotations,
