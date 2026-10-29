@@ -729,6 +729,39 @@ ALTER TABLE vod_annotations ADD COLUMN povs TEXT;";
 const MIGRATE_V35: &str = "
 ALTER TABLE marks ADD COLUMN imported_as TEXT;";
 
+/// Version 36: a kept stretch (a source realized from a VOD, `add_realized`)
+/// was copied without who speaks each line and what each chat message is (a
+/// sub, a gift, a tip), how much and when it happened. Where the VOD it was
+/// kept from is still in the library (keeping a later stretch failed, so the
+/// VOD stayed), those come back from its rows; where the VOD is gone, so are
+/// they. A kept stretch's `platform_id` is `<vod>:<start>-<end>:<when>`.
+const MIGRATE_V36: &str = "
+CREATE TEMP TABLE kept AS
+    SELECT id, CAST(substr(platform_id, 1, instr(platform_id, ':') - 1) AS INTEGER) AS vod_id,
+           CAST(substr(span, 1, instr(span, '-') - 1) AS REAL) AS start,
+           CAST(substr(span, instr(span, '-') + 1) AS REAL) AS end
+    FROM (SELECT id, platform_id,
+                 substr(platform_id, instr(platform_id, ':') + 1,
+                        instr(substr(platform_id, instr(platform_id, ':') + 1), ':') - 1) AS span
+          FROM vods WHERE platform = 'realized');
+UPDATE segments SET speaker = (
+    SELECT o.speaker FROM kept JOIN segments AS o ON o.vod_id = kept.vod_id
+    WHERE kept.id = segments.vod_id AND o.speaker IS NOT NULL AND o.end > kept.start AND o.start < kept.end
+      AND abs(max(o.start - kept.start, 0) - segments.start) < 0.000001
+      AND abs(min(o.end - kept.start, kept.end - kept.start) - segments.end) < 0.000001
+    ORDER BY o.start LIMIT 1)
+WHERE speaker IS NULL AND vod_id IN (SELECT id FROM kept);
+UPDATE chat SET (kind, amount, event_time) = (
+    SELECT o.kind, o.amount, o.event_time - kept.start FROM kept JOIN chat AS o ON o.vod_id = kept.vod_id
+    WHERE kept.id = chat.vod_id AND o.kind <> 'message' AND o.author = chat.author AND o.text = chat.text
+      AND abs(o.time - kept.start - chat.time) < 0.000001
+    ORDER BY o.id LIMIT 1)
+WHERE kind = 'message' AND vod_id IN (SELECT id FROM kept) AND EXISTS (
+    SELECT 1 FROM kept JOIN chat AS o ON o.vod_id = kept.vod_id
+    WHERE kept.id = chat.vod_id AND o.kind <> 'message' AND o.author = chat.author AND o.text = chat.text
+      AND abs(o.time - kept.start - chat.time) < 0.000001);
+DROP TABLE kept;";
+
 /// Version 24: each VOD (a source) counts the pieces of clips that use it,
 /// its own clip's included, kept by triggers in the transaction of every
 /// change to `items` (cascades too). A source at zero is unused: no entry
@@ -1189,6 +1222,7 @@ impl Db {
             MIGRATE_V33,
             MIGRATE_V34,
             MIGRATE_V35,
+            MIGRATE_V36,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1761,9 +1795,11 @@ impl Db {
         let tx = self.conn.transaction()?;
         {
             let mut stmt =
-                tx.prepare("INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+                tx.prepare(&format!("INSERT INTO segments ({SEGMENT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"))?;
             for s in segments {
-                stmt.execute(params![vod_id, s.start, s.end, s.text, serde_json::to_string(&s.words)?])?;
+                // A transcription names no speaker.
+                let speaker: Option<&str> = None;
+                stmt.execute(params![vod_id, s.start, s.end, s.text, serde_json::to_string(&s.words)?, speaker])?;
             }
         }
         tx.commit()?;
@@ -2069,14 +2105,22 @@ impl Db {
     }
 }
 
+/// Every column of a transcript line, as each INSERT INTO segments names
+/// them: the transcriber's, an import's and a kept stretch's copy all go
+/// through this list, so a column added later can't be left out of one
+/// (a kept stretch lost who was speaking that way).
+pub(crate) const SEGMENT_COLUMNS: &str = "vod_id, start, end, text, words, speaker";
+
+/// Every column of a chat message, as each INSERT INTO chat names them (see
+/// `SEGMENT_COLUMNS`; a kept stretch's chat lost its subs, gifts and tips).
+pub(crate) const CHAT_COLUMNS: &str = "vod_id, time, author, color, text, parts, kind, amount, event_time";
+
 /// A VOD's chat in the library, as `chat::fetch` saves it. Holds the library's
 /// lock only while it reads or writes, not while the fetch waits on the network.
 /// Inserts `messages` as VOD `vod_id`'s, on `conn` (in a transaction the caller holds).
 pub(crate) fn insert_chat(conn: &Connection, vod_id: i64, messages: &[ChatMessage]) -> Result<()> {
-    let mut stmt = conn.prepare(
-        "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount, event_time)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-    )?;
+    let mut stmt =
+        conn.prepare(&format!("INSERT INTO chat ({CHAT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"))?;
     for m in messages {
         let parts = serde_json::to_string(&m.parts)?;
         stmt.execute(params![
@@ -2643,7 +2687,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -2688,7 +2732,7 @@ mod tests {
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -2720,7 +2764,7 @@ mod tests {
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -2749,7 +2793,7 @@ mod tests {
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -2772,7 +2816,7 @@ mod tests {
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -2800,7 +2844,7 @@ mod tests {
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 35);
+        assert_eq!(version, 36);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }

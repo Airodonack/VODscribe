@@ -416,10 +416,14 @@ impl Db {
             params![vod_id, from, to],
         )?;
         {
-            let mut stmt =
-                tx.prepare("INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+            let mut stmt = tx.prepare(&format!(
+                "INSERT INTO segments ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                crate::db::SEGMENT_COLUMNS
+            ))?;
             for s in segments {
-                stmt.execute(params![vod_id, s.start, s.end, s.text, serde_json::to_string(&s.words)?])?;
+                // A transcription names no speaker.
+                let speaker: Option<&str> = None;
+                stmt.execute(params![vod_id, s.start, s.end, s.text, serde_json::to_string(&s.words)?, speaker])?;
             }
         }
         tx.execute("UPDATE stretches SET reached = ?2 WHERE id = ?1", params![stretch_id, reached])?;

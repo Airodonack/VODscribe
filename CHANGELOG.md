@@ -35,6 +35,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - In the library, a click on a row and then a Ctrl-click (⌘-click on a Mac) on another picks both, as in a file manager. Only the second was picked, and a click on a row left what was picked before it as it was.
   - Alt-dragging (Option-dragging on a Mac) the stretch between two cuts inside one of an edit's pieces, such as a clip put in it, carries just that stretch. It carried the whole piece.
   - Opening another VOD moves less on screen while it loads: the caption strip under a site's player stays where it is, where it vanished for a moment and came back, pushing the timeline and the transcript down; and the transcript no longer says the whole VOD is "not transcribed" for an instant before its lines appear. Nothing moves any more as the chat and the chapters and highlights arrive. A VOD you've opened before opens with everything in place at once, and so do the VOD your pointer rests on in the library and the ones next to the one playing, which are read ahead. On a narrower window, the Transcript | Highlights switch changes at once.
+  - Deleting a VOD with its video while keeping the stretches its clips use turned the subs, gifts and tips in those stretches' chat into plain messages. They stay what they were now, and stretches kept that way while the VOD is still in your library get them back.
 
 ## 0.6.0 — 2026-10-24
 

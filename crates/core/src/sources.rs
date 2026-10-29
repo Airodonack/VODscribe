@@ -9,7 +9,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, params};
 
-use crate::db::{Db, now};
+use crate::db::{CHAT_COLUMNS, Db, SEGMENT_COLUMNS, now};
 use crate::edits::{PIECE_COLUMNS, PieceRow, piece_from_row, struck_json};
 use crate::time::Flicks;
 use crate::transcript::Word;
@@ -44,15 +44,17 @@ impl Db {
                 params![vod_id, start, end, end - start, now()],
             )?;
             let id = db.conn.last_insert_rowid();
-            let segments: Vec<(f64, f64, String, String)> = {
+            let segments: Vec<(f64, f64, String, String, Option<String>)> = {
                 let mut stmt = db.conn.prepare(
-                    "SELECT start, end, text, words FROM segments WHERE vod_id = ?1 AND end > ?2 AND start < ?3
-                     ORDER BY start",
+                    "SELECT start, end, text, words, speaker FROM segments
+                     WHERE vod_id = ?1 AND end > ?2 AND start < ?3 ORDER BY start",
                 )?;
-                stmt.query_map(params![vod_id, start, end], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
-                    .collect::<rusqlite::Result<_>>()?
+                stmt.query_map(params![vod_id, start, end], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                })?
+                .collect::<rusqlite::Result<_>>()?
             };
-            for (a, b, text, words) in segments {
+            for (a, b, text, words, speaker) in segments {
                 let words: Vec<Word> = serde_json::from_str::<Vec<Word>>(&words)
                     .unwrap_or_default()
                     .into_iter()
@@ -65,13 +67,14 @@ impl Db {
                     words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_string()
                 };
                 db.conn.execute(
-                    "INSERT INTO segments (vod_id, start, end, text, words) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    &format!("INSERT INTO segments ({SEGMENT_COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)"),
                     params![
                         id,
                         (a - start).max(0.0),
                         (b - start).min(end - start),
                         text,
-                        serde_json::to_string(&words)?
+                        serde_json::to_string(&words)?,
+                        speaker
                     ],
                 )?;
             }
@@ -82,10 +85,13 @@ impl Db {
                     db.insert_done(id, a - start, Some(b - start), done.model.as_deref())?;
                 }
             }
+            // Every column, in the new source's time (`CHAT_COLUMNS`).
             db.conn.execute(
-                "INSERT INTO chat (vod_id, time, author, color, text, parts)
-                 SELECT ?1, time - ?2, author, color, text, parts FROM chat
-                 WHERE vod_id = ?3 AND time >= ?2 AND time < ?4 ORDER BY time, id",
+                &format!(
+                    "INSERT INTO chat ({CHAT_COLUMNS})
+                     SELECT ?1, time - ?2, author, color, text, parts, kind, amount, event_time - ?2 FROM chat
+                     WHERE vod_id = ?3 AND time >= ?2 AND time < ?4 ORDER BY time, id"
+                ),
                 params![id, start, vod_id, end],
             )?;
             Ok(id)
@@ -146,6 +152,7 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+    use crate::chat::{ChatMessage, ChatPart, Kind};
     use crate::edits::tests::info;
     use crate::transcript::Segment;
 
@@ -194,5 +201,115 @@ mod tests {
 
         db.set_gone(new).unwrap();
         assert!(db.is_gone(new).unwrap() && !db.is_gone(vod).unwrap());
+    }
+
+    #[test]
+    fn a_kept_stretch_keeps_who_speaks_and_chat_events() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
+        db.insert_segments(
+            vod,
+            &[Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] }],
+        )
+        .unwrap();
+        db.conn.execute("UPDATE segments SET speaker = 'Marlowe' WHERE vod_id = ?1", [vod]).unwrap();
+        let sub = ChatMessage {
+            time: 13.0,
+            author: "fan".into(),
+            color: Some("#ff0000".into()),
+            parts: vec![ChatPart::Text { text: "resubbed".into() }],
+            kind: Kind::Sub,
+            amount: Some(2.0),
+            event_time: Some(12.5),
+            at: None,
+        };
+        crate::db::insert_chat(&db.conn, vod, &[sub]).unwrap();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 15.0), "p", None).unwrap();
+        let piece = db.piece_rows(edit).unwrap()[0].id;
+
+        // Kept, then the VOD deleted with its video.
+        let new = db.add_realized(vod, 10.0, 15.0).unwrap();
+        let base = db.revision(edit).unwrap().unwrap();
+        assert!(db.realize_piece(piece, new, base).unwrap());
+        db.delete_vod(vod).unwrap();
+
+        let lines = db.lines(new).unwrap();
+        assert_eq!(
+            lines.iter().map(|l| (l.start, l.text.as_str(), l.speaker.as_deref())).collect::<Vec<_>>(),
+            [(1.0, "hi", Some("Marlowe"))]
+        );
+        let subs = db.chat_of_kind(new, Kind::Sub).unwrap();
+        assert_eq!(
+            subs.iter().map(|(_, m)| (m.time, m.author.as_str(), m.amount, m.event_time)).collect::<Vec<_>>(),
+            [(3.0, "fan", Some(2.0), Some(2.5))]
+        );
+    }
+
+    #[test]
+    fn stretches_kept_while_their_vod_stays_get_back_what_the_copy_lost() {
+        let dir = crate::TempDir::new("migrate-v36");
+        let path = dir.join("library.sqlite");
+        let (vod, kept) = {
+            let mut db = Db::open(&path).unwrap();
+            let vod = db.add_vod(&info("x")).unwrap().0.id;
+            let word = |text: &str, start: f64, end: f64| Word { text: text.into(), start, end };
+            let segments = [
+                Segment { start: 9.0, end: 11.0, text: " a".into(), words: vec![word(" a", 10.5, 11.0)] },
+                Segment { start: 11.0, end: 12.0, text: " hi".into(), words: vec![word(" hi", 11.0, 12.0)] },
+            ];
+            db.insert_segments(vod, &segments).unwrap();
+            db.conn.execute("UPDATE segments SET speaker = 'S' || id WHERE vod_id = ?1", [vod]).unwrap();
+            let message =
+                |time: f64, text: &str, kind: Kind, amount: Option<f64>, event_time: Option<f64>| ChatMessage {
+                    time,
+                    author: "fan".into(),
+                    color: None,
+                    parts: vec![ChatPart::Text { text: text.into() }],
+                    kind,
+                    amount,
+                    event_time,
+                    at: None,
+                };
+            let chat = [
+                message(12.0, "hello", Kind::Message, None, None),
+                message(13.0, "resubbed", Kind::Sub, Some(2.0), Some(12.5)),
+                message(14.0, "gift", Kind::Gift, Some(5.0), None),
+            ];
+            crate::db::insert_chat(&db.conn, vod, &chat).unwrap();
+            // Kept with the copy that left columns out; its VOD stays, as when
+            // keeping the next stretch failed and nothing was removed.
+            let kept = db.add_realized(vod, 10.0, 15.0).unwrap();
+            db.conn
+                .execute_batch(&format!(
+                    "UPDATE segments SET speaker = NULL WHERE vod_id = {kept};
+                     UPDATE chat SET kind = 'message', amount = NULL, event_time = NULL WHERE vod_id = {kept};"
+                ))
+                .unwrap();
+            // One whose VOD is gone: nothing to get back.
+            let other = db.add_vod(&info("y")).unwrap().0.id;
+            crate::db::insert_chat(&db.conn, other, &[message(1.0, "tip", Kind::Tip, Some(100.0), None)]).unwrap();
+            let orphan = db.add_realized(other, 0.0, 5.0).unwrap();
+            db.conn.execute("UPDATE chat SET kind = 'message', amount = NULL WHERE vod_id = ?1", [orphan]).unwrap();
+            db.delete_vod(other).unwrap();
+            (vod, kept)
+        };
+        rusqlite::Connection::open(&path).unwrap().execute_batch("PRAGMA user_version = 35;").unwrap();
+        let db = Db::open(&path).unwrap();
+
+        let lines = db.lines(kept).unwrap();
+        let speakers: Vec<Option<String>> = db.lines(vod).unwrap().into_iter().map(|l| l.speaker).collect();
+        assert_eq!(lines.into_iter().map(|l| l.speaker).collect::<Vec<_>>(), speakers);
+        let events = |kind| {
+            db.chat_of_kind(kept, kind)
+                .unwrap()
+                .into_iter()
+                .map(|(_, m)| (m.time, m.amount, m.event_time))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(events(Kind::Sub), [(3.0, Some(2.0), Some(2.5))]);
+        assert_eq!(events(Kind::Gift), [(4.0, Some(5.0), None)]);
+        assert_eq!(events(Kind::Message).len(), 1);
     }
 }

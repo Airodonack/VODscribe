@@ -721,9 +721,10 @@ impl Db {
     /// transcribed, by the imported "model".
     fn import_transcript(&self, vod_id: i64, annotations: &Annotations) -> Result<()> {
         self.conn.execute("DELETE FROM segments WHERE vod_id = ?1", [vod_id])?;
-        let mut stmt = self.conn.prepare(
-            "INSERT INTO segments (vod_id, start, end, text, words, speaker) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "INSERT INTO segments ({}) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            crate::db::SEGMENT_COLUMNS
+        ))?;
         for s in &annotations.transcript.segments {
             if !usable(s.start) || !s.end.is_finite() || s.text.trim().is_empty() {
                 continue;
