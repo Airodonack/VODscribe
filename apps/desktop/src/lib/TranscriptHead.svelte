@@ -41,6 +41,7 @@
     timelineVod,
     lineCount,
     chatCount,
+    chatRead = true,
     chatProgress,
     chatError = $bindable(),
     hasChat,
@@ -63,6 +64,8 @@
     lineCount: number;
     /** Messages in the chat (so far, while it's fetched). */
     chatCount: number;
+    /** Whether the chat's count has been read: until then it isn't shown, rather than 0. */
+    chatRead?: boolean;
     /** How far the chat fetch is, 0 to 1, when known. */
     chatProgress: number | null;
     chatError: string | null;
@@ -201,6 +204,7 @@
     <div class="chat-head">
       <span
         class="muted chat-status"
+        class:count={vod?.chat !== "pending" && vod?.chat !== "none" && vod?.chat !== "failed" && !chatError}
         title={vod?.chat === "pending"
           ? `Fetching chat: ${chatCount.toLocaleString()} message${chatCount === 1 ? "" : "s"} so far`
           : undefined}
@@ -223,7 +227,7 @@
           >
         {:else if chatError}
           <span class="error-text">{chatError}</span>
-        {:else}
+        {:else if chatRead}
           {chatCount.toLocaleString()} message{chatCount === 1 ? "" : "s"}
         {/if}
       </span>
@@ -258,7 +262,10 @@
     border-bottom: 1px solid var(--border);
   }
 
+  /* It takes the room the others leave, so its line count, read after the
+     header first shows, moves none of them. */
   .lead {
+    flex: 1;
     display: flex;
     align-items: center;
     min-width: 0;
@@ -327,6 +334,14 @@
     font-size: 12px;
   }
 
+  /* The chat's count has room for a big one from the start, its text to the
+     right of it, so the buttons stay put as it's read (and as it grows while
+     a fetch saves). */
+  .chat-status.count {
+    flex: 0 1 8.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
   .chat-head {
     display: flex;
     align-items: center;
@@ -338,8 +353,6 @@
   .cast-anchor {
     position: relative;
     flex: none;
-    /* Beside the transcript's status, with the chat's at the far side. */
-    margin-right: auto;
   }
 
   /* The sign that the link leaves the app (castLink.svelte.ts `outside`). */

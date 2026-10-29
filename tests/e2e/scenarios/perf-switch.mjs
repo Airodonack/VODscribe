@@ -209,6 +209,35 @@ return {
 };
 `;
 
+// The page's side: clicks the heading's switch to `to` ("annotations" or
+// "transcript") and returns the time (ms) to the first frame showing it: the
+// pane with a word of the VOD's marks, or the transcript's rows; null if not
+// within WATCH_MS.
+const TAB = `
+const [to, paneText, WATCH_MS] = arguments;
+const shown = () => {
+  if (to === "annotations") {
+    const pane = document.querySelector("#annotations-panel");
+    return !!pane && pane.getBoundingClientRect().height > 0 && pane.textContent.includes(paneText);
+  }
+  const row = document.querySelector("#transcript .line");
+  return !!row && row.getBoundingClientRect().height > 0;
+};
+const button = document.querySelector("#tab-" + to);
+if (!button) throw new Error("no switch to " + to);
+const t0 = performance.now();
+button.click();
+return await new Promise((done) => {
+  const frame = () => {
+    const t = performance.now() - t0;
+    if (shown()) return done(t);
+    if (t > WATCH_MS) return done(null);
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+});
+`;
+
 /** An annotations file's copy for VOD `id`, its title and every chapter and highlight marked with `tag`. */
 function copyOf(file, chat, id, tag, out, { bare = false, chatCount = null } = {}) {
   const doc = JSON.parse(readFileSync(file, "utf8"));
@@ -347,10 +376,12 @@ export default {
       }
       report.widths[width] = { size: got, kinds };
     }
-    // What the pane and the chat cost: heavy to heavy again at the first
-    // width with the pane's column hidden, then with chat hidden too.
+    // What the pane and the chat cost: heavy to heavy again at the widest
+    // width (the pane a column of its own there, from 1440 px with the
+    // library) with the pane's column hidden, then with chat hidden too.
     {
-      await resizeInner(app, widths[0], height);
+      const wide = Math.max(...widths);
+      await resizeInner(app, wide, height);
       const [A, B, C] = ["heavy A", "heavy B", "heavy C"].map((n) => vods[n]);
       const kinds = {};
       const round = async (kind) => {
@@ -370,7 +401,7 @@ export default {
             ["first chat", s.chat],
             ["settled", r.settled],
           ])
-            if (v !== null) measures.add(`${kind} @${widths[0]}: ${step}`, ms(v), ctx.clock(), ctx.clock());
+            if (v !== null) measures.add(`${kind} @${wide}: ${step}`, ms(v), ctx.clock(), ctx.clock());
           ctx.log(
             `${kind} ${from.name} → ${to.name}: line ${ms(s.line)}, chat ${ms(s.chat)}, settled ${ms(r.settled)}, click ${r.clickMs}, busy ${JSON.stringify(r.busy)}`,
           );
@@ -383,6 +414,31 @@ export default {
       await app.click(".layout > .head .chat-toggle");
       await app.click(".edge-strip.right button");
       report.hidden = kinds;
+    }
+    // The transcript's heading's switch, on a window too narrow for the
+    // pane's column (the first width, 1280 by default): from a click on a
+    // segment to the frame that shows the other side, the pane's marks or
+    // the transcript's rows, on a heavy VOD (95 marks).
+    {
+      await resizeInner(app, widths[0], height);
+      const A = vods["heavy A"];
+      await switchTo(A);
+      await sleep(800);
+      const tabs = { annotations: [], transcript: [] };
+      if (await app.js(`return !!document.querySelector("#tab-annotations")`)) {
+        for (let i = 0; i < TIMES; i++)
+          for (const to of ["annotations", "transcript"]) {
+            await sleep(400);
+            const t = await app.js(TAB, to, A.paneText, WATCH_MS);
+            tabs[to].push(t);
+          }
+        for (const [to, list] of Object.entries(tabs)) {
+          ctx.log(`tab to ${to} @${widths[0]}: ${list.map(ms).join(", ")} ms`);
+          for (const v of list)
+            if (v !== null) measures.add(`tab to ${to} @${widths[0]}`, ms(v), ctx.clock(), ctx.clock());
+        }
+      } else ctx.log(`no transcript/pane switch at ${widths[0]} px`);
+      report.tabs = tabs;
     }
     writeFileSync(path.join(out, "switches.json"), JSON.stringify(report, null, 2));
 

@@ -21,7 +21,7 @@
   import { Marks } from "./marks.svelte";
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
-  import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, nearestLine, type Row } from "./rows";
+  import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, messagesIn, nearestLine, type Row } from "./rows";
   import { shownGaps, statusLabel, type Gap } from "./stretches";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
@@ -227,6 +227,8 @@
   let chatOpen = $state(load(CHAT_OPEN) !== "false");
   // The chat as a whole (counts and events), when it's been asked for.
   let overview = $state.raw<ChatOverview | null>(null);
+  // The length its histogram's bins divide.
+  let overviewDuration = 0;
   // An edit's chat is its pieces' VODs' where they play: shown once there's some.
   // A file's chat is one an annotations import brought.
   let hasChat = $derived(vod ? vod.platform !== "local" || vod.chat === "done" : (overview?.count ?? 0) > 0);
@@ -263,7 +265,9 @@
   }
 
   // The rows: each line with its chat, and minutes of chat where there's no line (rows.ts).
-  let rows = $derived(buildRows(lines, duration, showChat, gaps));
+  // None until the lines are read: a VOD's minutes of chat stood in for its
+  // lines meanwhile, every one of them asked for its chat.
+  let rows = $derived(read ? buildRows(lines, duration, showChat, gaps) : []);
 
   // Whether the marks open (cuts.svelte.ts) are this VOD's or edit's: then
   // so are the playhead and the moment pointed at on the timeline there.
@@ -318,10 +322,16 @@
     const text = chars ? head + 10 + 22.5 * Math.max(1, Math.ceil((chars * 7.8) / textWidth)) : 0;
     if (!showChat) return text;
     const win = windows.get(row.key);
-    if (!row.line && !row.gap && !win?.total) return 0;
-    // Before its chat is fetched, a row is guessed to hold a couple of messages.
-    const messages = win ? win.messages.length : 2;
-    const chat = messages * 21 + (win && win.total > win.messages.length ? 22 : 0) + (messages ? 4 : 0);
+    // Before its chat is fetched, a row is guessed to hold as many messages as
+    // the chat's counts say it has (a couple, before they're read).
+    const total = win
+      ? win.total
+      : overview
+        ? Math.round(messagesIn(overview.histogram, overviewDuration, row.from, row.to))
+        : 2;
+    const shown = win ? win.messages.length : Math.min(total, limitOf(row));
+    if (!row.line && !row.gap && !total) return 0;
+    const chat = shown * 21 + (total > shown ? 22 : 0) + (shown ? 4 : 0);
     return Math.max(text, chat);
   }
   /** Where each row starts in the list, and (last) where it ends. */
@@ -496,6 +506,14 @@
   /** Windows being fetched: their "more" buttons wait. */
   const loading = new SvelteSet<string>();
   let chatGen = 0;
+  // With chat shown, the rows wait for the chat of those in view: laid out
+  // before it, they grew as it came and pushed the lines out of view (a
+  // busy chat's first minutes are rows of hundreds of pixels each).
+  let chatIn = $state(false);
+  let held = $derived(showChat && !chatIn);
+  $effect(() => {
+    if (read && !showChat) chatIn = true;
+  });
 
   // A different VOD, or a different chat status, starts afresh.
   let chatOf: number | string | null = null;
@@ -532,11 +550,13 @@
     // The rows laid out, and a few more either side to have ready.
     const [from, to] = range;
     const wanted: Row[] = [];
-    rows.slice(Math.max(0, from - 10), to + 10).forEach((row) => {
+    const near = rows.slice(Math.max(0, from - 10), to + 10);
+    near.forEach((row) => {
       const key = row.key;
       if (loading.has(key)) return;
       if (!windows.has(key) || stale.has(key)) wanted.push(row);
     });
+    if (read && near.every((row) => windows.has(row.key))) chatIn = true;
     if (wanted.length === 0) return;
     for (const row of wanted) loading.add(row.key);
     const fetch = (batch: Row[], cap: number) =>
@@ -557,6 +577,7 @@
     const groups = [...byLimit];
     Promise.all(groups.map(([cap, batch]) => fetch(batch, cap))).then(
       (results) => {
+        chatIn = true;
         if (gen !== chatGen || id !== vodId) return;
         const next = new Map(windows);
         groups.forEach(([, batch], g) =>
@@ -575,6 +596,7 @@
         } else keepPlace(() => (windows = next));
       },
       (e) => {
+        chatIn = true;
         for (const row of wanted) loading.delete(row.key);
         if (gen === chatGen) chatError = String(e);
       },
@@ -617,11 +639,16 @@
       eventsAt = Date.now();
     }
     const latest = () => id === vodId && mine === (withEvents ? eventsSeq : countsSeq);
+    const over = mapDuration;
     (edit !== null
       ? api.editChatOverview(edit, mapDuration, BINS, withEvents)
       : api.chatOverview(id, mapDuration, BINS, withEvents)
     ).then(
-      (o) => latest() && (overview = { ...o, events: o.events ?? (overview?.events || []) }),
+      (o) => {
+        if (!latest()) return;
+        overviewDuration = over;
+        overview = { ...o, events: o.events ?? (overview?.events || []) };
+      },
       (e) => latest() && (chatError = String(e)),
     );
   }
@@ -802,6 +829,9 @@
     const s = root.closest<HTMLElement>(".body");
     scroller = s;
     if (!s) return;
+    // At once, not when the observer first reports: the minimap was drawn a
+    // few pixels tall in the first frame and grew to the view's height in the next.
+    railHeight = s.clientHeight;
     const ro = new ResizeObserver(() => (railHeight = s.clientHeight));
     ro.observe(s);
     return () => ro.disconnect();
@@ -809,7 +839,12 @@
   let lineTimes = $derived(lines.map((l) => l.start));
   let mapLabel = $derived(chatCount > 0 ? "How busy chat was over the VOD" : "Speech over the VOD");
   // Chat alone is enough to draw: it can be fetched before the transcript has a line.
-  let showMap = $derived((lines.length > 0 || chatCount > 0) && mapDuration > 0);
+  // From the first frame where the VOD has lines or chat to show on it, so it
+  // doesn't come as they're read, narrowing the lines beside it.
+  let showMap = $derived(
+    (lines.length > 0 || chatCount > 0 || (!!vod && (vod.transcribed !== "none" || vod.chat === "done"))) &&
+      mapDuration > 0,
+  );
 
   // The header spans the transcript and the minimap, and stays at the top.
   let headHeight = $state(0);
@@ -1212,6 +1247,7 @@
     timelineVod={chatVods[0] ?? null}
     lineCount={lines.length}
     {chatCount}
+    chatRead={overview !== null}
     {chatProgress}
     bind:chatError
     {hasChat}
@@ -1300,7 +1336,7 @@
         </p>
       {/if}
       <div bind:this={topPad} style:height="{offsets[range[0]]}px"></div>
-      {#each rows.slice(range[0], range[1]) as row, k (row.key)}
+      {#each held ? [] : rows.slice(range[0], range[1]) as row, k (row.key)}
         {@const key = row.key}
         {@const win = windows.get(key)}
         <div

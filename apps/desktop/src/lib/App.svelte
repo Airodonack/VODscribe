@@ -563,7 +563,17 @@
     chapters: cuts.shown.some((m) => m.kind === "chapter"),
     highlights: cuts.shown.some((m) => m.kind === "highlight"),
   });
-  const paneShown = $derived(cuts.isOf(paneDoc) && (paneKinds.chapters || paneKinds.highlights));
+  // While another VOD's marks are read (a few ms), whether there's a pane
+  // stays as it was: it dropped out until they came, and the centre was laid
+  // out twice, wide and then narrow again.
+  // (The marks open are the last VOD's until its player opens the next.)
+  let paneWas = false;
+  const paneShown = $derived.by(() => {
+    if (!paneDoc) return false;
+    const coming = paneDoc.kind === "edit" || playing?.vodId === paneDoc.id;
+    if (cuts.isOf(paneDoc) ? !cuts.read : coming) return paneWas;
+    return (paneWas = cuts.isOf(paneDoc) && (paneKinds.chapters || paneKinds.highlights));
+  });
   const paneName = $derived(
     paneKinds.chapters && paneKinds.highlights
       ? "Chapters and highlights"

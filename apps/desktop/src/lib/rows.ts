@@ -161,3 +161,17 @@ export function nearestLine(lines: { start: number }[], time: number): number {
   const next = lines[lo + 1];
   return next && next.start - time < Math.abs(time - lines[lo].start) ? lo + 1 : lo;
 }
+
+/** About how many chat messages a row from `from` to `to` holds, from a
+ *  histogram of the chat's counts in equal bins over `duration` seconds (the
+ *  chat's overview): the bins it covers, a part-covered bin by the part. */
+export function messagesIn(histogram: number[], duration: number, from: number, to: number): number {
+  if (!histogram.length || !(duration > 0)) return 0;
+  const size = duration / histogram.length;
+  const a = Math.max(0, from) / size;
+  const b = Math.min(duration, to) / size;
+  let sum = 0;
+  for (let i = Math.floor(a); i < Math.min(histogram.length, Math.ceil(b)); i++)
+    sum += histogram[i] * (Math.min(b, i + 1) - Math.max(a, i));
+  return sum;
+}

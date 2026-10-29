@@ -1,7 +1,7 @@
 // The transcript view's rows (rows.ts): node --test apps/desktop/src/lib/rows.test.mjs
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { FAR, buildRows, linesFrom, linesSpan, nearestLine } from "./rows.ts";
+import { FAR, buildRows, linesFrom, linesSpan, messagesIn, nearestLine } from "./rows.ts";
 
 /** @param {number} start @returns {import("./api").Line} */
 const line = (start) => ({ start, text: "hi" });
@@ -158,4 +158,15 @@ test("a drag's lines, from its ends' times, stay put as lines arrive above them"
   assert.deepEqual(linesFrom([said(1), said(5), said(5), said(9)], 5, 5), [1, 2]);
   assert.equal(linesFrom(after, 41, 49), null);
   assert.equal(linesFrom([], 0, 10), null);
+});
+
+test("a row's messages, guessed from the chat's histogram", () => {
+  // Four bins of 10 s.
+  const histogram = [10, 0, 4, 2];
+  assert.equal(messagesIn(histogram, 40, -FAR, FAR), 16);
+  assert.equal(messagesIn(histogram, 40, 0, 10), 10);
+  assert.equal(messagesIn(histogram, 40, 5, 25), 5 + 0 + 2);
+  assert.equal(messagesIn(histogram, 40, 12, 18), 0);
+  assert.equal(messagesIn([], 40, 0, 10), 0);
+  assert.equal(messagesIn(histogram, 0, 0, 10), 0);
 });

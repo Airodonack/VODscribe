@@ -26,6 +26,9 @@ class Cuts {
   vodId = $derived(this.doc?.kind === "vod" ? this.doc.id : null);
   /** Every mark, in time order. */
   all = $state.raw<Mark[]>([]);
+  /** Whether `doc`'s marks have been read since it was opened (`all` is
+   *  empty until then, not because it has none). */
+  read = $state(false);
   /** The marks shown: all the cuts, and the chapters and highlights of those
    *  the Timeline panel's Marks toggles show (layers.svelte.ts). */
   shown = $derived(shownMarks(this.all, layers.marks));
@@ -99,6 +102,7 @@ class Cuts {
     if (this.doc && docKey(this.doc) === docKey(doc)) return;
     this.doc = doc;
     this.all = [];
+    this.read = false;
     this.now = 0;
     this.playing = false;
     this.pointed = null;
@@ -131,13 +135,18 @@ class Cuts {
       (list) => {
         if (mine !== this.#seq) return;
         this.all = list;
+        this.read = true;
         // A mark gone (undone, or a save that failed) is selected or open no more.
         const there = (id: number | null) => id !== null && list.some((m) => m.id === id);
         if (!there(this.selected)) this.selected = null;
         if (!there(this.editing)) this.editing = null;
         if (!there(this.fresh)) this.fresh = null;
       },
-      (e) => mine === this.#seq && (this.error = String(e)),
+      (e) => {
+        if (mine !== this.#seq) return;
+        this.error = String(e);
+        this.read = true;
+      },
     );
   }
 
