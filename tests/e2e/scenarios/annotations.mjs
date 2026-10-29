@@ -203,9 +203,9 @@ export default {
     "annotations-pane":
       'On the window\'s right, a column the full height of the window lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
     "annotations-switch":
-      'The transcript\'s header starts with one small bordered control of two segments in small capitals, "TRANSCRIPT" in the normal text colour and "CHAPTERS & HIGHLIGHTS" in the accent colour (indigo); under the header, in the transcript\'s place, the chapters and highlights list ("Hello", "The game", "Goodbye", "Close call", "The twist"); no column on the window\'s right and no row of tabs above the header.',
+      'The transcript\'s header starts with one small bordered control of two segments in the style of the Cast and Chat buttons beside it, "Transcript" in the normal text colour and "Chapters & highlights" in the accent colour (indigo); under the header, in the transcript\'s place, the chapters and highlights list ("Hello", "The game", "Goodbye", "Close call", "The twist"); no column on the window\'s right and no row of tabs above the header.',
     "annotations-switch-empty":
-      'The transcript\'s header starts with the same two-segment control, all of it gray: "TRANSCRIPT" and "HIGHLIGHTS" in the muted gray of a label, the border gray too; the transcript\'s lines show under the header, no chapters and highlights list.',
+      'The transcript\'s header starts with the same two-segment control, its border fainter than the buttons\' beside it: "Transcript" in the normal text colour, "Highlights" dimmed as a disabled button is; the transcript\'s lines show under the header, no chapters and highlights list.',
     "annotations-pinned":
       'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
@@ -935,13 +935,15 @@ export default {
         app.js(
           `const sw = document.querySelector(arguments[0]);
           if (!sw) return null;
-          const named = (c) => { for (const v of ["--accent", "--text", "--muted", "--border"]) {
-            const probe = document.createElement("span"); probe.style.color = "var(" + v + ")"; document.body.append(probe);
-            const is = getComputedStyle(probe).color; probe.remove(); if (is === c) return v.slice(2); } return c; };
+          const named = (c) => { for (const [n, v] of [["accent", "var(--accent)"], ["text", "var(--text)"], ["muted", "var(--muted)"],
+            ["border", "var(--border)"], ["faded", "color-mix(in srgb, var(--border) 50%, transparent)"]]) {
+            const probe = document.createElement("span"); probe.style.color = v; document.body.append(probe);
+            const is = getComputedStyle(probe).color; probe.remove(); if (is === c) return n; } return c; };
           const shown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;
           const segs = [...sw.querySelectorAll("[role=tab]")];
           return { reads: segs.map((t) => t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : "")).join(" | "),
             disabled: segs.map((t) => t.disabled), text: segs.map((t) => named(getComputedStyle(t).color)),
+            dim: segs.map((t) => getComputedStyle(t).opacity),
             border: named(getComputedStyle(sw).borderTopColor), visible: shown(sw),
             eyebrow: !!document.querySelector(".body .head .eyebrow"), oldTabs: !!document.querySelector(".pane-tabs"),
             transcript: shown(document.querySelector("#transcript-panel")), pane: shown(document.querySelector(".below > #annotations-panel")),
@@ -1015,8 +1017,9 @@ export default {
         eyebrow: false,
         reads: "Transcript* | Highlights",
         disabled: [false, true],
-        text: ["muted", "muted"],
-        border: "muted",
+        text: ["text", "text"],
+        dim: ["1", "0.5"],
+        border: "faded",
         transcript: true,
         pane: false,
       });

@@ -262,35 +262,36 @@
     min-width: 0;
   }
 
-  /* The switch: one bordered control, its segments in the eyebrow's type.
-     The one showing is in the accent colour, the other in the text's; with
-     nothing in the pane, all of it is muted, as the eyebrow is. */
+  /* The switch: one control in the header's buttons' style (Cast, Chat:
+     the base button's border and radius, 12 px, 3px 8px), its two segments
+     divided by the same border, the one showing in the accent colour, the
+     other in the text's. With nothing in the pane, its border fades and its
+     second segment is disabled as any button is (half opacity), while
+     Transcript keeps the text's colour: it is what's showing. */
   .switch {
     flex: none;
     display: flex;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
+    background: var(--surface);
   }
 
   .switch button {
     border: none;
     border-radius: 0;
     background: none;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    padding: 3px 8px;
+    font-size: 12px;
     color: var(--text);
   }
 
   .switch button:first-child {
-    border-radius: calc(var(--radius-sm) - 1px) 0 0 calc(var(--radius-sm) - 1px);
+    border-radius: calc(var(--radius) - 1px) 0 0 calc(var(--radius) - 1px);
   }
 
   .switch button:last-child {
     border-left: 1px solid var(--border);
-    border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0;
+    border-radius: 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0;
   }
 
   .switch button:hover:not(:disabled, [aria-selected="true"]) {
@@ -303,16 +304,11 @@
 
   .switch.empty,
   .switch.empty button:last-child {
-    border-color: var(--muted);
+    border-color: color-mix(in srgb, var(--border) 50%, transparent);
   }
 
-  .switch.empty button,
   .switch.empty button[aria-selected="true"] {
-    color: var(--muted);
-  }
-
-  .switch button:disabled {
-    opacity: 1;
+    color: var(--text);
   }
 
   /* One line each, whatever the width: cut short rather than wrapped. */
