@@ -22,7 +22,7 @@ import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { edits, putOf, type Stretch } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretchIn } from "./media";
-import { formatTime } from "./platform";
+import { formatTime, playsFromFile } from "./platform";
 
 /** How long a press is held before it picks the clip up. */
 export const HOLD_MS = 250;
@@ -51,10 +51,6 @@ export function isOutgoing(paths: string[]): boolean {
 function forgetHidden(clip: Clip | null | undefined) {
   if (clip && !clip.shown) api.deleteClip(clip.id).catch((e) => console.error("forget dragged clip", e));
 }
-
-/** Drags the files of clips `list` out of the window together, if they're
- *  all made (pills on an edit's clip bar, one or several picked). */
-export const dragFileOut = (list: Clip[]) => dragOut(list);
 
 /**
  * Starts the system drag of the files of clips `list` (one, or several in
@@ -211,6 +207,78 @@ function drawWave(canvas: HTMLCanvasElement, levels: Uint8Array, start: number, 
     const h = Math.max(1, bars[i] * canvas.height);
     ctx.fillRect(i * 2, (canvas.height - h) / 2, 1, h);
   }
+}
+
+/** How a stretch carried is said under its picture: "0:05  1:00–1:05". */
+export const stretchSaid = (start: number, end: number) =>
+  `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
+
+/** What a ghost's card shows: stretch `start`..`end` of `vod`. */
+interface Look {
+  vod: Vod;
+  start: number;
+  end: number;
+  /** Whether the VOD plays in the app's own player (its frames can be read). */
+  ownPlayer: boolean;
+  /** The VOD's waveform, if it's at hand (else it's asked for). */
+  levels?: Uint8Array;
+}
+
+/**
+ * A carry's ghost card: `look`'s first frame over its waveform, with
+ * `caption` under them if given (a card behind another has none). Its
+ * picture and waveform come in as they're read; `image` resolves once both
+ * have (the picture, or null if there's none), and `done` lets go of what
+ * was made for it.
+ */
+function card(look: Promise<Look | null>, caption?: string) {
+  const el = document.createElement("div");
+  el.className = "carry-ghost";
+  const img = document.createElement("img");
+  img.alt = "";
+  img.width = PICTURE_WIDTH;
+  const wave = document.createElement("canvas");
+  wave.width = PICTURE_WIDTH;
+  wave.height = WAVE_HEIGHT;
+  el.append(img, wave);
+  if (caption !== undefined) {
+    const span = document.createElement("span");
+    span.textContent = caption;
+    el.append(span);
+  }
+  const drawn = look.then(async (l) => {
+    if (!l) return;
+    const levels = l.levels ?? (await api.peaks(l.vod.id).catch(() => new Uint8Array()));
+    if (levels.length) drawWave(wave, levels, l.start, l.end);
+  });
+  let own: string | null = null;
+  let gone = false;
+  const picture = look
+    .then((l) => (l ? pictureOf(l.vod, l.start, l.ownPlayer) : null))
+    .then((p) => {
+      if (p?.own) {
+        // Come after the carry was over: let go of at once.
+        if (gone) URL.revokeObjectURL(p.url);
+        else own = p.url;
+      }
+      if (p) img.src = p.url;
+      else img.remove();
+      return p
+        ? img.decode().then(
+            () => img,
+            () => null,
+          )
+        : null;
+    });
+  return {
+    el,
+    wave,
+    image: Promise.all([picture, drawn]).then(([img]) => img),
+    done() {
+      gone = true;
+      if (own) URL.revokeObjectURL(own);
+    },
+  };
 }
 
 /** The ghost's picture and waveform as one PNG, for the system's drag. */
@@ -427,39 +495,16 @@ export function carry({
       return null;
     });
   };
-  const label = `${formatTime(end - start)}  ${formatTime(start)}–${formatTime(end)}`;
+  const label = stretchSaid(start, end);
   const stretch: Stretch = { vodId: vod.id, start, end, title, clip, highlight };
-  const ghost = document.createElement("div");
-  ghost.className = "carry-ghost";
-  const img = document.createElement("img");
-  img.alt = "";
-  img.width = PICTURE_WIDTH;
-  const wave = document.createElement("canvas");
-  wave.width = PICTURE_WIDTH;
-  wave.height = WAVE_HEIGHT;
-  const waveform = levels ? Promise.resolve(levels) : api.peaks(vod.id).catch(() => new Uint8Array());
-  const drawn = waveform.then((l) => void (l.length && drawWave(wave, l, start, end)));
-  const caption = document.createElement("span");
-  caption.textContent = label;
-  ghost.append(img, wave, caption);
-  let pictureUrl: string | null = null;
-  const picture = pictureOf(vod, start, ownPlayer).then((p) => {
-    if (p?.own) pictureUrl = p.url;
-    if (p) img.src = p.url;
-    else img.remove();
-    return p
-      ? img.decode().then(
-          () => img,
-          () => null,
-        )
-      : null;
-  });
+  const front = card(Promise.resolve({ vod, start, end, ownPlayer, levels }), label);
+  const ghost = front.el;
 
   // What the system's drag needs, made while the carry goes on rather than
   // once it's out of the window, where nothing can be dropped until both are
   // there: the picture (as soon as its parts are drawn), and the clip's file
   // where cutting it is quick (from a file here: copied, not downloaded).
-  const image = Promise.all([picture, drawn]).then(([img]) => snapshot(img, wave, label));
+  const image = front.image.then((img) => snapshot(img, front.wave, label));
   let early: Promise<Clip | null> | null = ownPlayer ? make(false) : null;
 
   const place = showGhost(ghost, from, x, y);
@@ -482,7 +527,7 @@ export function carry({
       showTarget(NOWHERE);
       document.body.classList.remove("timeline-drag");
       ghost.remove();
-      if (pictureUrl) URL.revokeObjectURL(pictureUrl);
+      front.done();
       resolve();
     };
     const onMove = (e: PointerEvent) => {
@@ -567,8 +612,11 @@ export function carry({
 export interface CarrySet {
   /** What they are, as an edit takes them, in the order picked. */
   items: Put[];
-  /** What the ghost says: "3 clips". */
+  /** What the ghost says under its picture: "3 clips" (one alone: as `carry` says it). */
   label: string;
+  /** How the first few look (`Face`), in the order picked: the ghost shows
+   *  the first's picture, with up to two more behind it. */
+  faces?: Face[] | Promise<Face[]>;
   /** The open VOD's stretches among them: its clip bar keeps them as clips. */
   stretches: { start: number; end: number }[];
   /** Makes the clips whose files go out past the window's edge (one only for
@@ -580,6 +628,58 @@ export interface CarrySet {
   from: DOMRect;
   x: number;
   y: number;
+}
+
+/** How a thing carried looks in the ghost: stretch `start`..`end` of VOD
+ *  `vodId` (to the VOD's end, if no `end`). */
+export interface Face {
+  vodId: number;
+  start: number;
+  end?: number;
+}
+
+/** How many cards show behind the first in a ghost of several. */
+const BEHIND = 2;
+
+/** `faces`, the first few, as ghost cards show them; one whose VOD is gone, as none. */
+async function looksOf(faces: Face[] | Promise<Face[]>): Promise<(Look | null)[]> {
+  const list = (await faces).slice(0, 1 + BEHIND);
+  if (!list.length) return [];
+  const vods = await api.listVods().catch(() => [] as Vod[]);
+  return list.map((f) => {
+    const vod = vods.find((v) => v.id === f.vodId);
+    return vod ? { vod, start: f.start, end: f.end ?? vod.duration ?? f.start, ownPlayer: playsFromFile(vod) } : null;
+  });
+}
+
+/**
+ * The ghost of `count` things carried together, which look as `faces` says:
+ * one alone, as `carry`'s, its card captioned `label`; several, the first's
+ * card on top of up to two more (offset as a deck is), with how many more
+ * than the first in its corner ("+2").
+ */
+function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
+  const looks = looksOf(faces);
+  const front = card(
+    looks.then((l) => l[0] ?? null),
+    label,
+  );
+  const behind = Array.from({ length: Math.min(BEHIND, count - 1) }, (_, i) =>
+    card(looks.then((l) => l[i + 1] ?? null)),
+  );
+  if (!behind.length) return { el: front.el, front, behind };
+  const el = document.createElement("div");
+  el.className = "carry-stack";
+  behind.forEach((c, i) => {
+    c.el.classList.add("behind");
+    c.el.style.transform = `translate(${(i + 1) * 6}px, ${(i + 1) * 6}px)`;
+  });
+  const more = document.createElement("span");
+  more.className = "carry-more";
+  more.textContent = `+${count - 1}`;
+  front.el.append(more);
+  el.append(...behind.map((c) => c.el).reverse(), front.el);
+  return { el, front, behind };
 }
 
 /** What of `set` the place under the pointer, `target`, takes into an edit:
@@ -617,15 +717,14 @@ function dropSet(set: CarrySet, px: number, py: number): boolean {
  * new edit", the open edit's timeline (where the marker shows) or the clip
  * bar (clips there), all in the order picked, as one change. Past the
  * window's edge, the system's drag of all their files, once they're made
- * (rows of the library have none: the carry ends there). Resolves once it's
- * dropped, taken out of the window, or let go.
+ * (rows of the library have none: the carry ends there). Its ghost is
+ * `carry`'s for the first, with the next stacked behind it (`deck`), so one
+ * looks as it would carried alone. Resolves once it's dropped, taken out of
+ * the window, or let go.
  */
 export function carrySet(set: CarrySet): Promise<void> {
-  const ghost = document.createElement("div");
-  ghost.className = "carry-ghost";
-  const caption = document.createElement("span");
-  caption.textContent = set.label;
-  ghost.append(caption);
+  const shown = deck(set.faces ?? [], set.items.length, set.label);
+  const ghost = shown.el;
   const place = showGhost(ghost, set.from, set.x, set.y);
   clips.carried = set.items.length;
   document.body.classList.add("timeline-drag");
@@ -642,6 +741,7 @@ export function carrySet(set: CarrySet): Promise<void> {
       showTarget(NOWHERE);
       document.body.classList.remove("timeline-drag");
       ghost.remove();
+      for (const c of [shown.front, ...shown.behind]) c.done();
       resolve();
     };
     const onMove = (e: PointerEvent) => {
@@ -669,7 +769,7 @@ export function carrySet(set: CarrySet): Promise<void> {
       leaving = true;
       if (!set.files) return finish();
       performance.mark("carry-out");
-      ghost.classList.add("making");
+      shown.front.el.classList.add("making");
       let made: Clip[] = [];
       let dragged = false;
       try {
@@ -682,10 +782,7 @@ export function carrySet(set: CarrySet): Promise<void> {
           ready.push(done);
         }
         if (made.length && ready.length === made.length && down) {
-          const blank = document.createElement("canvas");
-          blank.width = PICTURE_WIDTH;
-          blank.height = WAVE_HEIGHT;
-          const png = await snapshot(null, blank, set.label);
+          const png = await shown.front.image.then((img) => snapshot(img, shown.front.wave, set.label));
           back = bringsBackSet(set);
           dragged = await dragOut(ready, png, () => down);
           if (!dragged) back = null;

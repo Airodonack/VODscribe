@@ -15,9 +15,10 @@ import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
 import { ask, choose } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { carrySet, exportStretch, exportStretches } from "./dragout";
+import { carrySet, exportStretch, exportStretches, stretchSaid, type Face } from "./dragout";
 import { edits } from "./edits.svelte";
 import { is } from "./keys.svelte";
+import { inEdit } from "./media";
 import { listed } from "./platform";
 import { isEscape } from "./playerKeys";
 import { DELETE, REMOVE, removeVod } from "./removal.svelte";
@@ -116,6 +117,18 @@ async function chosenFiles(items: Snippet[]): Promise<Clip[]> {
   return made;
 }
 
+/** How `item` (a stretch of the open timeline, a clip of its clip bar) looks
+ *  carried: the stretch of its VOD it starts with. */
+function faceOf(item: Snippet): Face | undefined {
+  const doc = clips.doc;
+  if (item.kind === "clip") {
+    const clip = clips.shown.find((c) => c.id === item.id);
+    return clip && { vodId: clip.vod_id, start: clip.start, end: clip.end };
+  }
+  if (doc?.kind === "vod") return { vodId: doc.id, start: item.start, end: item.end };
+  return doc && edits.openId === doc.id ? inEdit(edits.pieces, item.start, item.end) : undefined;
+}
+
 /** Carries what's picked on the timeline and in the clip bar from (`x`, `y`)
  *  (a drag of one of them, flying from `from`): see dragout.ts `carrySet`. */
 export function carryChosen(from: DOMRect, x: number, y: number) {
@@ -129,9 +142,13 @@ export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: numb
   const items = chosenPuts(list);
   const doc = clips.doc;
   if (!items.length || !doc) return;
+  const faces = list.slice(0, 3).flatMap((i) => faceOf(i) ?? []);
+  // One alone is said as a stretch carried by itself is; several, by how many.
+  const one = items.length === 1 && faces[0];
   void carrySet({
     items,
-    label: chosenSaid(list),
+    label: one ? stretchSaid(one.start, one.end ?? one.start) : chosenSaid(list),
+    faces,
     stretches: doc.kind === "vod" ? chosenSegments(list).map((s) => ({ start: s.start, end: s.end })) : [],
     files: () => chosenFiles(list),
     vodId: doc.kind === "vod" ? doc.id : undefined,
@@ -145,6 +162,19 @@ export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: numb
 export const chosenEntries = (): Put[] =>
   library.items.map((e): Put => (e.kind === "vod" ? { kind: "vod", id: e.id } : { kind: "clip", id: e.id }));
 
+/** How the first few rows of the library carried look: a VOD whole, an edit by its first piece. */
+async function entryFaces(items: Put[]): Promise<Face[]> {
+  const faces = await Promise.all(
+    items.slice(0, 3).map(async (p): Promise<Face | undefined> => {
+      if (p.kind === "vod") return { vodId: p.id, start: 0 };
+      if (p.kind !== "clip") return undefined;
+      const view = await api.getEdit(p.id).catch(() => null);
+      return view ? inEdit(view.pieces, 0, Infinity) : undefined;
+    }),
+  );
+  return faces.flatMap((f) => f ?? []);
+}
+
 /** Carries the rows picked in the library from (`x`, `y`) (a drag of one of
  *  them, flying from `from`), into an edit: see dragout.ts `carrySet`. */
 export function carryEntries(from: DOMRect, x: number, y: number) {
@@ -155,7 +185,7 @@ export function carryEntries(from: DOMRect, x: number, y: number) {
     [vods, "VOD", "VODs"],
     [items.length - vods, "edit", "edits"],
   ]);
-  void carrySet({ items, label, stretches: [], from, x, y });
+  void carrySet({ items, label, faces: entryFaces(items), stretches: [], from, x, y });
 }
 
 /**

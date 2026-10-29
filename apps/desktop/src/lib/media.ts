@@ -165,6 +165,29 @@ export function playedSpans(start: number, end: number, struck: [number, number]
   return out.filter(([a, b]) => b - a >= 0.04);
 }
 
+/**
+ * Where the stretch `from`..`to` of an edit's timeline starts in its VOD, for
+ * pieces `pieces` played end to end (each its `playedSpans`): the VOD and the
+ * stretch of it from there, no further than the span it starts in. Undefined
+ * past the edit's end.
+ */
+export function inEdit(
+  pieces: { vod_id: number; start: number; end: number; struck: [number, number][] }[],
+  from: number,
+  to: number,
+): { vodId: number; start: number; end: number } | undefined {
+  let at = 0;
+  for (const piece of pieces)
+    for (const [a, b] of playedSpans(piece.start, piece.end, piece.struck)) {
+      if (from < at + b - a - 1e-6) {
+        const start = a + Math.max(0, from - at);
+        return { vodId: piece.vod_id, start, end: Math.min(b, start + to - from) };
+      }
+      at += b - a;
+    }
+  return undefined;
+}
+
 /** What the web view's player says when a file won't play: that its format
  *  can't be (MEDIA_ERR_SRC_NOT_SUPPORTED), or that it couldn't be. */
 export function unplayable(error: Pick<MediaError, "code"> | null | undefined): string {

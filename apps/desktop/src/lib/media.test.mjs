@@ -10,6 +10,7 @@ import {
   unplayable,
   playedSpans,
   frameStart,
+  inEdit,
   inFrame,
   nudge,
   stepTime,
@@ -207,4 +208,18 @@ test("a site VOD's waveform has gaps where nothing is transcribed or fetched", (
   );
   // Ends meeting within a level: no gap between them.
   assert.deepEqual(waveformGaps([stretch(0, 100, "done"), stretch(100.05, null, "done")], 600), []);
+});
+
+test("a stretch of an edit's timeline starts in the VOD of the piece it starts in", () => {
+  /** @type {{ vod_id: number; start: number; end: number; struck: [number, number][] }[]} */
+  const pieces = [
+    { vod_id: 1, start: 10, end: 20, struck: [[12, 14]] },
+    { vod_id: 2, start: 100, end: 105, struck: [] },
+  ];
+  assert.deepEqual(inEdit(pieces, 1, 1.5), { vodId: 1, start: 11, end: 11.5 });
+  // Past the struck stretch, and no further than the span it starts in.
+  assert.deepEqual(inEdit(pieces, 3, 20), { vodId: 1, start: 15, end: 20 });
+  // At a join: the next piece's start.
+  assert.deepEqual(inEdit(pieces, 8, 9), { vodId: 2, start: 100, end: 101 });
+  assert.equal(inEdit(pieces, 13, 14), undefined);
 });

@@ -15,13 +15,20 @@
 // Before the library: two cuts inside one of the edit's pieces, and the
 // stretch between them Alt-dragged onto its clip bar goes as itself, not as
 // the whole piece. In the library, one row clicked and another Ctrl-clicked
-// picks both, as in a file manager.
+// picks both, as in a file manager. One pill of the edit's clip bar, not
+// picked, dragged onto another edit's row goes in there too. Last, what's carried shows the first
+// thing's picture: on an edit of three pieces of a video, one picked and
+// pulled off the timeline looks as a piece carried alone always has (its
+// frame, its waveform, its length and times, nothing more); all three, the
+// first's card with two stacked behind it and "+2" in its corner, captioned
+// "3 stretches".
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import { colours } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** A click's modifier that picks one: ⌘ on a Mac, Ctrl elsewhere (in the page). */
@@ -33,6 +40,13 @@ const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, cl
 
 export default {
   name: "multi-drop",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "one-piece-carried":
+      "Near the pointer, a card follows it: a flat lime-green picture, a strip for the waveform under it (empty: the video has no sound) and under that the text 0:01  0:01–0:02. No number badge on it and no other cards behind it.",
+    "three-pieces-carried":
+      "Near the pointer, a card with a flat red picture, an empty waveform strip and the text 3 stretches under it; two more cards peek out behind it, each a few pixels further right and down, and a small dark pill in the red picture's top right corner reads +2.",
+  },
   async run(app, ctx) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);
@@ -229,6 +243,44 @@ export default {
     await app.key("Escape");
     await app.key("z", { cmd: true });
     await until("one undo takes both out", async () => (await starts()).join() === "0,2,1", 10_000);
+
+    // One pill of the edit's clip bar, not picked, dragged onto another
+    // edit's row: it goes in there, as two picked do.
+    // (An edit shows in the library once it has something in it.)
+    const other = await app.invoke("create_edit");
+    await app.invoke("add_range_to_edit", { editId: other.id, vodId: vod.id, start: 0, end: 1, title: "Other" });
+    await until(
+      "the other edit's row",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.list .vod[data-key="${-other.id}"]`),
+      10_000,
+    );
+    await until(
+      "nothing picked on the clip bar",
+      () => app.js(`return !document.querySelector(".chip.chosen")`),
+      10_000,
+    );
+    await press(`.chip[data-clip="${onBar[0].id}"]`);
+    await until(
+      "the other edit's row, to drop on",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `[data-edit-drop="${other.id}"]`),
+      10_000,
+    );
+    await moveOnto(`[data-edit-drop="${other.id}"]`);
+    await until(
+      "the other edit's row lit",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `[data-edit-drop="${other.id}"].target`),
+      10_000,
+    );
+    await letGo();
+    await until(
+      "the pill in the other edit",
+      async () => (await app.invoke("get_edit", { id: other.id })).pieces.length === 2,
+      15_000,
+    );
+    ctx.log("one pill of an edit's clip bar dropped on another edit's row: in there");
+    // The click a drag leaves behind isn't taken as one for half a second
+    // (ClipStrip.svelte): the next Ctrl-click waits it out.
+    await sleep(600);
 
     // Two of the edit's pills dragged out of the window with the system's
     // mouse: one drag with both files (seen as they come back over it).
@@ -534,5 +586,101 @@ export default {
     await until("both asked for", async () => (await statuses()).every((s) => s !== "none"), 10_000);
     ctx.log(`Transcribe on one of two picked asked for both: ${(await statuses()).join(", ")}`);
     await until("both transcribed", async () => (await statuses()).every((s) => s === "done"), 10 * MINUTE);
+
+    // What's carried, as the ghost shows it: one alone as ever, several as a
+    // deck. An edit of a video's first three seconds (red, lime, blue), a
+    // piece a second each.
+    const [video] = await app.addFiles([colours(path.join(ctx.out, "fixtures"))]);
+    await until(
+      "the video's length known",
+      async () => (await app.invoke("list_vods")).find((v) => v.id === video.id)?.duration > 0,
+      MINUTE,
+    );
+    const shown = await app.invoke("create_edit");
+    for (const s of [0, 1, 2])
+      await app.invoke("add_range_to_edit", { editId: shown.id, vodId: video.id, start: s, end: s + 1 });
+    const shownRow = `.list .vod[data-key="${-shown.id}"]`;
+    await until("its row", () => app.js(`return !!document.querySelector(arguments[0])`, shownRow), 10_000);
+    await app.js(`document.querySelector(arguments[0] + " .main").click()`, shownRow);
+    await until(
+      "its timeline",
+      () => app.js(`return document.querySelectorAll(".drop-in [data-piece]").length === 3`),
+      30_000,
+    );
+    // The band of the piece at `time` on the edit's timeline.
+    const bandAt = (time) =>
+      app.js(
+        `const bar = document.querySelector(".drop-in .scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         return [...document.querySelectorAll(".drop-in [data-piece]")].find((b) => {
+           const r = b.getBoundingClientRect();
+           return r.left <= x && x < r.right;
+         })?.dataset.piece;`,
+        time,
+      );
+    // The ghost following the pointer, once its picture has come: its front
+    // card's caption, the "+N" in its corner (null: none), how many cards
+    // are behind it.
+    const ghost = (what) =>
+      until(
+        what,
+        () =>
+          app.js(`
+            const front = document.querySelector(".carry-ghost:not(.behind)");
+            const img = front?.querySelector("img");
+            if (!img?.complete || !img.naturalWidth) return false;
+            return {
+              caption: front.querySelector(":scope > span:not(.carry-more)")?.textContent ?? null,
+              more: front.querySelector(".carry-more")?.textContent ?? null,
+              behind: document.querySelectorAll(".carry-ghost.behind").length,
+              stacked: !!document.querySelector(".carry-stack"),
+            };`),
+        15_000,
+      );
+    // The carry let go of (Escape), the press ended, and nothing left picked.
+    const putDown = async () => {
+      await app.key("Escape");
+      await letGo();
+      await until("the ghost gone", () => app.js(`return !document.querySelector(".carry-ghost")`), 10_000);
+      await app.key("Escape");
+      await until(
+        "nothing picked",
+        () => app.js(`return !document.querySelector(".drop-in .scrubber .chosen")`),
+        10_000,
+      );
+    };
+
+    // The piece of 1-2 s picked by itself and pulled down off the timeline
+    // (below it, where the player's picture doesn't cover the ghost): the
+    // ghost of a piece carried alone, though it's picked.
+    await pickAt(1.5);
+    await until(
+      "one stretch picked",
+      () => app.js(`return document.querySelectorAll(".drop-in .scrubber .chosen").length === 1`),
+      10_000,
+    );
+    await press(`.drop-in [data-piece="${await bandAt(1.5)}"]`, -150);
+    const alone = await ghost("the ghost of the piece picked, with its picture");
+    if (alone.caption !== "0:01  0:01–0:02" || alone.more !== null || alone.behind || alone.stacked)
+      throw new Error(`one piece picked and carried shows ${JSON.stringify(alone)}, not the ghost of a piece alone`);
+    await ctx.checkpoint("one-piece-carried");
+    ctx.log(`one piece picked, carried: its picture and "${alone.caption}", no badge`);
+    await putDown();
+
+    // All three picked, the first (0-1 s) first, and one pulled off: a deck.
+    for (const t of [0.5, 1.5, 2.5]) await pickAt(t);
+    await until(
+      "three stretches picked",
+      () => app.js(`return document.querySelectorAll(".drop-in .scrubber .chosen").length === 3`),
+      10_000,
+    );
+    await press(`.drop-in [data-piece="${await bandAt(1.5)}"]`, -150);
+    const three = await ghost("the ghost of the three picked, with the first's picture");
+    if (three.caption !== "3 stretches" || three.more !== "+2" || three.behind !== 2 || !three.stacked)
+      throw new Error(`three pieces picked and carried show ${JSON.stringify(three)}`);
+    await ctx.checkpoint("three-pieces-carried");
+    ctx.log(`three pieces picked, carried: "${three.caption}", ${three.more}, ${three.behind} cards behind`);
+    await putDown();
   },
 };

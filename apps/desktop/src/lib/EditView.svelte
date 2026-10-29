@@ -726,14 +726,15 @@
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
-      // A band picked with others: all of what's picked goes together.
-      const band = lane.find((b) => b.id === id);
-      if (band && snippets.has({ kind: "segment", start: band.start, end: band.end }))
-        return void carryChosen(from, x, y);
       // A piece, or a group of one: a group of more doesn't go out as one clip.
       const of = pieces.filter((p) => unitOf(p) === id);
       const piece = of.length === 1 ? of[0] : undefined;
       const vod = piece && vods.get(piece.vod_id);
+      // A band picked with others: all of what's picked goes together. Picked
+      // alone, a piece goes as it would unpicked; a group of more, as what's picked.
+      const band = lane.find((b) => b.id === id);
+      const picked = band && snippets.has({ kind: "segment", start: band.start, end: band.end });
+      if (picked && (snippets.size > 1 || !piece || !vod)) return void carryChosen(from, x, y);
       if (!piece || !vod) return;
       const { start, end } = piece;
       carry({ vod, start, end, title: nameOf(piece), ownPlayer: playsFromFile(vod), from, x, y, home });

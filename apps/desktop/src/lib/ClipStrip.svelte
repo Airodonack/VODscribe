@@ -11,7 +11,8 @@
   // button pressed, anywhere on it.
   // Hovering a pill lights up its stretch on the timeline, or for an edit's
   // link, what the edit plays of the VOD. An edit's clip bar (no `vod`)
-  // has its clips of stretches of the edit: they drag out as files.
+  // has its clips of stretches of the edit: dragged, they go as picked ones
+  // do (bulk.ts `carrySnippets`), into an edit or out as files.
   //
   // Ctrl-click (⌘ on a Mac) or Shift-click pills to pick several, or drag a
   // box over them from empty space in the bar (selection.svelte.ts). The
@@ -21,13 +22,13 @@
 
   import type { Clip, Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { DRAG_SLOP, carry, dragFileOut } from "./dragout";
+  import { DRAG_SLOP, carry } from "./dragout";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
   import { edits } from "./edits.svelte";
   import { keyHint } from "./keys.svelte";
-  import { carryChosen } from "./bulk";
+  import { carryChosen, carrySnippets } from "./bulk";
   import { dragBox, howOf, overlaps, snippets, type Snippet } from "./selection.svelte";
 
   let {
@@ -155,7 +156,8 @@
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
     // Picked with others: all of what's picked goes, wherever it's dropped.
     if (withOthers(clip)) return carryChosen(from, e.clientX, e.clientY);
-    if (!vod) return void dragFileOut([clip]);
+    // On an edit's clip bar, as what's picked would go: into an edit, or out of the window as its file.
+    if (!vod) return carrySnippets([itemOf(clip)], from, e.clientX, e.clientY);
     carry({
       vod,
       start: clip.start,

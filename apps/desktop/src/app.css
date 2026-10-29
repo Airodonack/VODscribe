@@ -424,7 +424,7 @@ body.dropping iframe {
   pointer-events: none;
 }
 
-/* A stretch carried from the timeline (dragout.ts): its frame over its waveform. */
+/* A stretch carried from the timeline (dragout.ts `card`): its frame over its waveform. */
 .carry-ghost {
   position: fixed;
   z-index: 2000;
@@ -460,6 +460,37 @@ body.dropping iframe {
 /* Taken out of the window: its file is being made. */
 .carry-ghost.making {
   border-style: dashed;
+}
+
+/* Several carried together (dragout.ts `deck`): the first's card on top,
+   up to two more behind it, a few pixels right and down each, as a deck. */
+.carry-stack {
+  position: fixed;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.carry-stack .carry-ghost {
+  position: relative;
+}
+
+.carry-stack .carry-ghost.behind {
+  position: absolute;
+  inset: 0;
+}
+
+/* How many more than the first, in its corner: "+2". */
+.carry-ghost .carry-more {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
 }
 
 /* While the timeline is dragged on (scrubbing, a cut, panning, a stretch

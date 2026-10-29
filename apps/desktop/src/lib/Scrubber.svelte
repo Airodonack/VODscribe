@@ -642,10 +642,10 @@
   }
 
   /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file;
-   *  picked with others, what's picked (bulk.ts). */
+   *  picked with others, what's picked (bulk.ts); picked alone, as it would unpicked. */
   async function takeOut(range: { start: number; end: number }, px: number, py: number) {
     const from = boxOf(range);
-    if (snippets.has({ kind: "segment", ...range })) return carryChosen(from, px, py);
+    if (snippets.size > 1 && snippets.has({ kind: "segment", ...range })) return carryChosen(from, px, py);
     taking = range;
     try {
       if (vod) await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
