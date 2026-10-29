@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { fanned } from "./fanout";
 import { forget, kept, keptEach } from "./kept";
 
 /** A request's status, or a VOD's (the request its row shows; with none,
@@ -833,53 +834,59 @@ export const api = {
   clearCache: () => invoke<void>("clear_cache"),
 };
 
+// Every subscriber through one listener a name, told in subscription order
+// (fanout.ts): the kept cache below subscribes first and lets go first.
+const on = fanned<{ payload: any }>(listen as never) as <T>(
+  name: string,
+  handler: (e: { payload: T }) => void,
+) => Promise<UnlistenFn>;
+
 export const events = {
   /** The app's own player's time and state, at every change and now and then while playing. */
-  playerTime: (cb: (status: PlayerStatus) => void) => listen<PlayerStatus>("player-time", (e) => cb(e.payload)),
+  playerTime: (cb: (status: PlayerStatus) => void) => on<PlayerStatus>("player-time", (e) => cb(e.payload)),
   /** A document put back as it was by undo or redo, at the revision it's at now: what shows it reloads it. */
   restored: (cb: (doc: Doc & { revision: number }) => void) =>
-    listen<Doc & { revision: number }>("restored", (e) => cb(e.payload)),
-  vod: (cb: (vod: Vod) => void) => listen<Vod>("vod", (e) => cb(e.payload)),
+    on<Doc & { revision: number }>("restored", (e) => cb(e.payload)),
+  vod: (cb: (vod: Vod) => void) => on<Vod>("vod", (e) => cb(e.payload)),
   /** A request's progress: its VOD, itself, its status and how far within the stretch. */
   vodProgress: (cb: (id: number, stretch: number, status: Status, progress: number) => void) =>
-    listen<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
-  vodRemoved: (cb: (id: number) => void) => listen<number>("vod-removed", (e) => cb(e.payload)),
+    on<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
+  vodRemoved: (cb: (id: number) => void) => on<number>("vod-removed", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
-  annotationsFound: (cb: (id: number) => void) => listen<number>("annotations-found", (e) => cb(e.payload)),
+  annotationsFound: (cb: (id: number) => void) => on<number>("annotations-found", (e) => cb(e.payload)),
   /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */
-  annotationsImported: (cb: (id: number) => void) => listen<number>("annotations-imported", (e) => cb(e.payload)),
+  annotationsImported: (cb: (id: number) => void) => on<number>("annotations-imported", (e) => cb(e.payload)),
   /** Which setup item ("yt-dlp", "ffmpeg", "model", "deno") and where its download is. */
   setupProgress: (cb: (item: string, progress: DownloadProgress) => void) =>
-    listen<DownloadProgress & { item: string }>("setup-progress", (e) => cb(e.payload.item, e.payload)),
-  setupDone: (cb: (error: string | null) => void) => listen<string | null>("setup-done", (e) => cb(e.payload)),
+    on<DownloadProgress & { item: string }>("setup-progress", (e) => cb(e.payload.item, e.payload)),
+  setupDone: (cb: (error: string | null) => void) => on<string | null>("setup-done", (e) => cb(e.payload)),
   /** Where the GPU add-on's download is, counted across the pack and its model. */
-  gpuProgress: (cb: (progress: DownloadProgress) => void) =>
-    listen<DownloadProgress>("gpu-progress", (e) => cb(e.payload)),
-  gpuDone: (cb: (error: string | null) => void) => listen<string | null>("gpu-done", (e) => cb(e.payload)),
+  gpuProgress: (cb: (progress: DownloadProgress) => void) => on<DownloadProgress>("gpu-progress", (e) => cb(e.payload)),
+  gpuDone: (cb: (error: string | null) => void) => on<string | null>("gpu-done", (e) => cb(e.payload)),
   ytDlpProgress: (cb: (progress: DownloadProgress) => void) =>
-    listen<DownloadProgress>("yt-dlp-progress", (e) => cb(e.payload)),
+    on<DownloadProgress>("yt-dlp-progress", (e) => cb(e.payload)),
   /** How far a VOD's chat fetch is, 0..1. */
   chatProgress: (cb: (id: number, fraction: number) => void) =>
-    listen<[number, number]>("chat-progress", (e) => cb(...e.payload)),
+    on<[number, number]>("chat-progress", (e) => cb(...e.payload)),
   /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
-  chatSaved: (cb: (id: number) => void) => listen<number>("chat-saved", (e) => cb(e.payload)),
-  clip: (cb: (clip: Clip) => void) => listen<Clip>("clip", (e) => cb(e.payload)),
+  chatSaved: (cb: (id: number) => void) => on<number>("chat-saved", (e) => cb(e.payload)),
+  clip: (cb: (clip: Clip) => void) => on<Clip>("clip", (e) => cb(e.payload)),
   /** A VOD's video download: `progress` null when waiting or over, `error` if it failed. */
   videoProgress: (cb: (p: { id: number; progress: number | null; error: string | null }) => void) =>
-    listen<{ id: number; progress: number | null; error: string | null }>("video-progress", (e) => cb(e.payload)),
+    on<{ id: number; progress: number | null; error: string | null }>("video-progress", (e) => cb(e.payload)),
   clipProgress: (cb: (id: number, progress: number) => void) =>
-    listen<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
-  clipRemoved: (cb: (id: number) => void) => listen<number>("clip-removed", (e) => cb(e.payload)),
-  edit: (cb: (edit: Edit) => void) => listen<Edit>("edit", (e) => cb(e.payload)),
+    on<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
+  clipRemoved: (cb: (id: number) => void) => on<number>("clip-removed", (e) => cb(e.payload)),
+  edit: (cb: (edit: Edit) => void) => on<Edit>("edit", (e) => cb(e.payload)),
   editProgress: (cb: (id: number, progress: number) => void) =>
-    listen<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
-  editRemoved: (cb: (id: number) => void) => listen<number>("edit-removed", (e) => cb(e.payload)),
+    on<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
+  editRemoved: (cb: (id: number) => void) => on<number>("edit-removed", (e) => cb(e.payload)),
   /** The system's drag of a clip's file (out of the window) is over, dropped or not. */
-  dragEnded: (cb: () => void) => listen("drag-ended", () => cb()),
+  dragEnded: (cb: () => void) => on("drag-ended", () => cb()),
   /** How far a section downloading for edits is. */
-  footageProgress: (cb: (fetching: Fetching) => void) => listen<Fetching>("footage-progress", (e) => cb(e.payload)),
+  footageProgress: (cb: (fetching: Fetching) => void) => on<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits, or for the player (`player`), or with `error`, not. */
-  footage: (cb: (fetched: Fetched) => void) => listen<Fetched>("footage", (e) => cb(e.payload)),
+  footage: (cb: (fetched: Fetched) => void) => on<Fetched>("footage", (e) => cb(e.payload)),
 };
 
 export type { UnlistenFn };
