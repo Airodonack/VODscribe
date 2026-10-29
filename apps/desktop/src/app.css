@@ -479,25 +479,10 @@ body.dropping iframe {
   inset: 0;
 }
 
-/* Past three cards, the last one dimmed with a "…" at its corner that peeks
-   out: there are more than the deck shows (dragout.ts deck()). */
-.carry-stack .carry-ghost.behind.more {
-  filter: grayscale(1) blur(1px);
-  opacity: 0.75;
-}
-
-.carry-stack .carry-ghost.behind.more .carry-dots {
-  position: absolute;
-  right: -2px;
-  bottom: -4px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--text);
-  color: var(--surface);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 14px;
-  filter: none;
+/* Past three things, blank cards behind the three (dragout.ts deck()): the
+   pile grows with the count. A card's border and shadow, nothing on it. */
+.carry-stack .carry-ghost.behind.blank {
+  background: var(--surface);
 }
 
 /* While the timeline is dragged on (scrubbing, a cut, panning, a stretch

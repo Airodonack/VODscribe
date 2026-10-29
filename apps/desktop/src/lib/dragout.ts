@@ -640,6 +640,10 @@ export interface Face {
 
 /** How many cards show behind the first in a ghost of several. */
 const BEHIND = 2;
+/** How many blank cards show behind those, past three things: the pile's thickness, capped. */
+const BLANK = 3;
+/** How far, in pixels right and down, the pile's last card sits from the front: the same for any pile. */
+const SPREAD = 18;
 
 /** `faces`, the first few, as ghost cards show them; one whose VOD is gone, as none. */
 async function looksOf(faces: Face[] | Promise<Face[]>): Promise<(Look | null)[]> {
@@ -670,22 +674,27 @@ function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
   if (!behind.length) return { el: front.el, front, behind };
   const el = document.createElement("div");
   el.className = "carry-stack";
+  // The pile's depth stays the same, SPREAD px right and down, however many
+  // cards are in it: the more there are, the closer they stack.
+  const stacked = Math.min(BEHIND, count - 1) + Math.max(0, Math.min(BLANK, count - 1 - BEHIND));
+  const step = SPREAD / stacked;
+  const shift = (el: HTMLElement, i: number) => {
+    el.style.transform = `translate(${(i * step).toFixed(1)}px, ${(i * step).toFixed(1)}px)`;
+  };
   behind.forEach((c, i) => {
     c.el.classList.add("behind");
-    c.el.style.transform = `translate(${(i + 1) * 6}px, ${(i + 1) * 6}px)`;
+    shift(c.el, i + 1);
   });
-  el.append(...behind.map((c) => c.el).reverse(), front.el);
-  // The cards tell one, two and three apart; past three, the last card is
-  // dimmed with a "…" on it: there are more than the deck shows (the caption
-  // under the front card has the whole count).
-  if (count > 1 + BEHIND) {
-    const last = behind[behind.length - 1].el;
-    last.classList.add("more");
-    const dots = document.createElement("span");
-    dots.className = "carry-dots";
-    dots.textContent = "…";
-    last.append(dots);
-  }
+  // The cards tell one, two and three apart; past three, blank cards behind
+  // them (up to BLANK more) make the pile visibly thicker the more there
+  // are, the caption under the front card giving the count.
+  const blanks = Array.from({ length: Math.min(BLANK, count - 1 - BEHIND) }, (_, j) => {
+    const b = document.createElement("div");
+    b.className = "carry-ghost behind blank";
+    shift(b, BEHIND + 1 + j);
+    return b;
+  });
+  el.append(...blanks.reverse(), ...behind.map((c) => c.el).reverse(), front.el);
   return { el, front, behind };
 }
 
