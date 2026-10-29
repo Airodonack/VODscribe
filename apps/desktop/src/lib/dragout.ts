@@ -674,11 +674,17 @@ function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
     c.el.classList.add("behind");
     c.el.style.transform = `translate(${(i + 1) * 6}px, ${(i + 1) * 6}px)`;
   });
-  const more = document.createElement("span");
-  more.className = "carry-more";
-  more.textContent = `+${count - 1}`;
-  front.el.append(more);
   el.append(...behind.map((c) => c.el).reverse(), front.el);
+  // The cards tell one, two and three apart; past three, a "+N" where the
+  // next card would peek out counts the ones the deck can't show (the
+  // caption under the front card has the whole count).
+  if (count > 1 + BEHIND) {
+    const more = document.createElement("span");
+    more.className = "carry-more";
+    more.textContent = `+${count - 1 - BEHIND}`;
+    more.style.transform = `translate(${(BEHIND + 1) * 6}px, ${(BEHIND + 1) * 6}px)`;
+    el.append(more);
+  }
   return { el, front, behind };
 }
 

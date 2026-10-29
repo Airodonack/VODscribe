@@ -479,11 +479,12 @@ body.dropping iframe {
   inset: 0;
 }
 
-/* How many more than the first, in its corner: "+2". */
-.carry-ghost .carry-more {
+/* Past three cards, how many more: at the deck's bottom right corner, where
+   the next card would peek out (dragout.ts deck() shifts it there). */
+.carry-stack .carry-more {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  right: 0;
+  bottom: 0;
   padding: 0 6px;
   border-radius: 999px;
   background: var(--text);
