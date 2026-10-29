@@ -2,9 +2,12 @@
 // is (Player.svelte `copyLink`), on a site's VOD: the owner's test VOD on
 // Twitch (or YouTube or Kick, with E2E_SITE=youtube or kick). Opened at its
 // start and played, the stamp comes up with the time playing; after a click
-// further on the timeline, it follows. What's copied is read from the
-// clipboard command as the page sends it (the app's IPC), not back from the
-// system's clipboard, which the app may only write.
+// further on the timeline, it follows. Open on <site> beside it opens the
+// same moment. Kick's links can't name a time: on Kick, both are the VOD's
+// link with none. What's copied is read from the clipboard command as the
+// page sends it (the app's IPC), not back from the system's clipboard, which
+// the app may only write; what's opened from the opener's command, which
+// goes no further (no browser opens).
 
 import { MINUTE, until } from "../lib/app.mjs";
 
@@ -15,9 +18,13 @@ const SITES = {
 };
 const SITE = process.env.E2E_SITE || "twitch";
 
-/** The seconds in a copied link's time: YouTube's and Kick's `t=75s` or `t=75`, Twitch's `t=0h1m15s`. */
+/** The seconds in a link's time: YouTube's `t=75s`, Twitch's `t=0h1m15s`; null in a Kick link, which has none. */
 function linkTime(url) {
   const t = new URL(url).searchParams.get("t") ?? "";
+  if (SITE === "kick") {
+    if (t) throw new Error(`a Kick link with a time, which Kick ignores: ${url}`);
+    return null;
+  }
   const parts = t.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/);
   if (!t || !parts) throw new Error(`no time in the copied link ${url}`);
   return (Number(parts[1] ?? 0) * 60 + Number(parts[2] ?? 0)) * 60 + Number(parts[3] ?? 0);
@@ -44,16 +51,22 @@ export default {
     // out (to the app's IPC, as player-seek.mjs traces the player's).
     await app.js(`
       window.__copied = [];
+      window.__opened = [];
       const fetch = window.fetch;
       window.fetch = (url, init) => {
-        if (decodeURIComponent(String(url)).split("/").pop() === "plugin:clipboard-manager|write_text")
-          window.__copied.push(JSON.parse(init.body).text);
+        const command = decodeURIComponent(String(url)).split("/").pop();
+        if (command === "plugin:clipboard-manager|write_text") window.__copied.push(JSON.parse(init.body).text);
+        if (command === "plugin:opener|open_url") {
+          window.__opened.push(JSON.parse(init.body).url);
+          return Promise.resolve(new Response("null", { headers: { "Content-Type": "application/json" } }));
+        }
         return fetch(url, init);
       };`);
 
-    /** Clicks the stamp: what it showed, and the link copied, checked against the time playing. */
+    /** Clicks the stamp, then Open on <site>: what the stamp showed, and the
+     *  links copied and opened, checked against the time playing. */
     const copy = async (what) => {
-      const { shown, link, played } = await until(
+      const { shown, link, opened, played } = await until(
         `the stamp (${what})`,
         () =>
           app.js(`
@@ -62,19 +75,24 @@ export default {
             const seconds = (text) => text.split(":").reduce((total, part) => total * 60 + Number(part), 0);
             const shown = seconds(stamp.querySelector(".time").textContent);
             const played = seconds(document.querySelector("button.time .now > span:not(.widest)")?.textContent ?? "");
-            const before = window.__copied.length;
+            const before = [window.__copied.length, window.__opened.length];
             stamp.click();
+            document.querySelector("button.link.open").click();
             await new Promise((r) => setTimeout(r, 300));
-            return window.__copied.length > before && { shown, link: window.__copied.at(-1), played };`),
+            return window.__copied.length > before[0] && window.__opened.length > before[1] &&
+              { shown, link: window.__copied.at(-1), opened: window.__opened.at(-1), played };`),
         MINUTE,
       );
       const copied = linkTime(link);
-      ctx.log(`${what}: the bar at ${played} s, the stamp at ${shown} s, copied ${link}`);
-      if (Math.abs(shown - played) > 2 || Math.abs(copied - shown) > 1)
+      const open = linkTime(opened);
+      ctx.log(`${what}: the bar at ${played} s, the stamp at ${shown} s, copied ${link}, opened ${opened}`);
+      if (Math.abs(shown - played) > 2 || (copied !== null && Math.abs(copied - shown) > 1))
         throw new Error(`${what}: the bar was at ${played} s, the stamp showed ${shown} s and copied ${link}`);
+      if (open !== copied && (open === null || copied === null || Math.abs(open - copied) > 1))
+        throw new Error(`${what}: copied ${link} but Open on opened ${opened}`);
       const feedback = await app.js(`return document.querySelector("button.stamp .copied-text")?.textContent ?? ""`);
       if (feedback !== "Copied") throw new Error(`${what}: the stamp said "${feedback}", not Copied`);
-      return copied;
+      return copied ?? shown;
     };
 
     // 1. Opened at its start and played: the stamp is where it plays.

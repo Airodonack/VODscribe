@@ -647,7 +647,7 @@
         Show in folder
       </button>
     {:else}
-      <button class="link open" onclick={() => openUrl(watchUrl(vod, from))}>
+      <button class="link open" onclick={() => openUrl(watchUrl(vod, now))}>
         Open on {site}
         <Icon name="external" size={12} />
       </button>
