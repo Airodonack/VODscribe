@@ -8,8 +8,11 @@ const { fanned } = await import("./fanout.ts");
 // and not in the order it was asked for (here, the reverse), so plain
 // listeners are told in the order their registrations completed.
 function tauriLike() {
+  /** @type {{ name: string; handler: (e: { payload: unknown }) => void }[]} */
   const handlers = [];
+  /** @type {(() => void)[]} */
   const pending = [];
+  /** @type {(name: string, handler: (e: { payload: unknown }) => void) => Promise<() => void>} */
   const listen = (name, handler) =>
     new Promise((resolve) => {
       pending.push(() => {
@@ -23,6 +26,7 @@ function tauriLike() {
   const settle = () => {
     for (const finish of pending.splice(0).reverse()) finish();
   };
+  /** @type {(name: string, payload: unknown) => void} */
   const emit = (name, payload) => {
     for (const h of [...handlers]) if (h.name === name) h.handler({ payload });
   };
@@ -31,6 +35,7 @@ function tauriLike() {
 
 test("plain listeners are told in registration-completion order, not subscription order", async () => {
   const { listen, settle, emit } = tauriLike();
+  /** @type {string[]} */
   const told = [];
   const a = listen("vod", () => told.push("cache"));
   const b = listen("vod", () => told.push("page"));
@@ -43,6 +48,7 @@ test("plain listeners are told in registration-completion order, not subscriptio
 test("fanned: subscribers are told in subscription order, whatever the registration order", async () => {
   const { listen, settle, emit } = tauriLike();
   const on = fanned(listen);
+  /** @type {string[]} */
   const told = [];
   const a = on("vod", () => told.push("cache"));
   const b = on("vod", () => told.push("page"));
@@ -56,8 +62,10 @@ test("fanned: subscribers are told in subscription order, whatever the registrat
 test("fanned: one listener a name, an unlisten drops only its subscriber", async () => {
   const { listen, settle, emit } = tauriLike();
   let registrations = 0;
+  /** @type {typeof listen} */
   const counting = (name, handler) => (registrations++, listen(name, handler));
   const on = fanned(counting);
+  /** @type {[string, unknown][]} */
   const told = [];
   const a = on("vod", (e) => told.push(["cache", e.payload]));
   const b = on("vod", (e) => told.push(["page", e.payload]));
