@@ -675,15 +675,16 @@ function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
     c.el.style.transform = `translate(${(i + 1) * 6}px, ${(i + 1) * 6}px)`;
   });
   el.append(...behind.map((c) => c.el).reverse(), front.el);
-  // The cards tell one, two and three apart; past three, a "+N" where the
-  // next card would peek out counts the ones the deck can't show (the
-  // caption under the front card has the whole count).
+  // The cards tell one, two and three apart; past three, the last card is
+  // dimmed with a "…" on it: there are more than the deck shows (the caption
+  // under the front card has the whole count).
   if (count > 1 + BEHIND) {
-    const more = document.createElement("span");
-    more.className = "carry-more";
-    more.textContent = `+${count - 1 - BEHIND}`;
-    more.style.transform = `translate(${(BEHIND + 1) * 6}px, ${(BEHIND + 1) * 6}px)`;
-    el.append(more);
+    const last = behind[behind.length - 1].el;
+    last.classList.add("more");
+    const dots = document.createElement("span");
+    dots.className = "carry-dots";
+    dots.textContent = "…";
+    last.append(dots);
   }
   return { el, front, behind };
 }

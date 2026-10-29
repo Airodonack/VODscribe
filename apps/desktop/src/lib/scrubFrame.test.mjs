@@ -4,15 +4,13 @@ import { test } from "node:test";
 import { edgeShows } from "./media.ts";
 import { nearWithin, place } from "./scrubFrame.ts";
 
-test("the thumbnail and tip are centred on the line, shifted in whole at the timeline's ends", () => {
-  // 80 px of frame, a 40 px tip, on an 800 px timeline.
-  assert.deepEqual(place(100, 800, 40, 80), { frame: 60, tip: 80 });
-  // Near the left end: the frame's left edge on it, the tip still centred on the frame.
-  assert.deepEqual(place(10, 800, 40, 80), { frame: 0, tip: 20 });
-  // Near the right end, likewise.
-  assert.deepEqual(place(795, 800, 40, 80), { frame: 720, tip: 740 });
-  // A tip wider than the frame (a narrow picture) is what's kept inside.
-  assert.deepEqual(place(5, 800, 60, 20), { frame: 20, tip: 0 });
+test("the thumbnail sits to the left of the line, off it, and to the right only at the left end", () => {
+  // 80 px of frame, a 40 px tip, on an 800 px timeline: the tip centred on the line.
+  assert.deepEqual(place(200, 800, 40, 80), { frame: 112, tip: 180 });
+  // Too close to the left end for a frame on the left: on the right instead.
+  assert.deepEqual(place(50, 800, 40, 80), { frame: 58, tip: 30 });
+  // At the right end the frame still fits on the left; the tip is kept off the end.
+  assert.deepEqual(place(795, 800, 40, 80), { frame: 707, tip: 752 });
   // A timeline narrower than the frame: its left end wins.
   assert.equal(place(30, 60, 40, 80).frame, 0);
 });

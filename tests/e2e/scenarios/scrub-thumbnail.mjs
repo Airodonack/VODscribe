@@ -12,8 +12,8 @@
 // pointer resting, the exact frame. A selection begun with I keeps through
 // a click on the timeline, for O there; its edges show their frames: its
 // start the frame there, its end the frame before. The thumbnail is
-// centred on the pointer, the time tip across its lower edge, both inside
-// the timeline's bar, shifted in whole at its ends rather than cut. Dragging the
+// to the left of the pointer (to its right only at the bar's left end), the
+// time tip centred on the pointer at the bar's top, both inside the bar. Dragging the
 // playhead shows it; a finger doesn't. Rested at a moment and played from
 // there, the player takes the decoder that previewed it over: no new one
 // starts, and the screen shows the colour from there on.
@@ -67,7 +67,7 @@ const THUMBNAIL = `
   const [r, g, b] = canvas.getContext("2d").getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data;
   const tip = document.querySelector(".timeline .tip");
   return { time: Number(canvas.dataset.time), exact: canvas.dataset.exact === "true", rgb: [r, g, b],
-           tip: tip?.textContent.trim() ?? null, over: !!tip?.classList.contains("over") };`;
+           tip: tip?.textContent.trim() ?? null };`;
 
 /** In the page: where the pointer at `time` is, and the boxes of the timeline's bar, the thumbnail and the tip. */
 const PLACED = `
@@ -129,15 +129,15 @@ export default {
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "thumbnail-at-the-end":
-      "Inside the timeline, centred on the line where the pointer is (the selection's right end), a small slightly see-through thumbnail of the video shows a flat yellow frame, with a dark time tip reading 0:03 centred across its bottom edge; both sit within the timeline's bar, not over the video picture above it and not off to one side of the pointer, and a stretch from about 0:02 to 0:04 is marked as selected.",
+      "Inside the timeline, just to the left of the line where the pointer is (the selection's right end), a small slightly see-through thumbnail of the video shows a flat yellow frame; a dark time tip reading 0:03 sits at the bar's top, centred on the pointer, to the right of the thumbnail; both sit within the timeline's bar, not over the video picture above it, and a stretch from about 0:02 to 0:04 is marked as selected.",
     "light-middle":
-      "Light theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits centred on the thin hover line, inside the timeline's bar, with a dark time tip reading 0:10 centred across its bottom edge; neither is beside the line or over the video picture above the timeline.",
+      "Light theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits just to the left of the thin hover line, inside the timeline's bar, with a dark time tip reading 0:10 at the bar's top centred on the line; neither is over the video picture above the timeline.",
     "light-end":
-      "Light theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar with its right edge at the bar's right end, whole, not cut off, with a dark time tip reading 0:19 centred across its bottom edge.",
+      "Light theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar just to the left of the hover line, whole, not cut off, with a dark time tip reading 0:19 at the bar's top, kept a little in from the bar's right end.",
     "dark-middle":
-      "Dark theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits centred on the thin hover line, inside the timeline's bar, with a light time tip reading 0:10 centred across its bottom edge, readable against the dark page.",
+      "Dark theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits just to the left of the thin hover line, inside the timeline's bar, with a light time tip reading 0:10 at the bar's top centred on the line, readable against the dark page.",
     "dark-end":
-      "Dark theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar with its right edge at the bar's right end, whole, not cut off, with a light time tip reading 0:19 centred across its bottom edge.",
+      "Dark theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar just to the left of the hover line, whole, not cut off, with a light time tip reading 0:19 at the bar's top, kept a little in from the bar's right end.",
   },
   async run(app, ctx) {
     const file = colours(path.join(ctx.out, "fixtures"));
@@ -185,9 +185,10 @@ export default {
         15_000,
         { every: 100 },
       );
-    // The thumbnail centred on the pointer at `time` (within 2 px), shifted
-    // in whole at the bar's ends, inside the bar; the tip centred on it,
-    // across its lower edge, inside the bar too. Says whether it was shifted.
+    // The thumbnail to the left of the pointer at `time`, 8 px off it (within
+    // 2 px), to its right only where the bar's left end leaves no room,
+    // inside the bar; the tip centred on the pointer at the bar's top, kept
+    // 28 px off the ends, inside the bar too. Says whether it was flipped.
     const placed = async (what, time) => {
       const { x, bar, frame, tip } = await app.js(PLACED, time);
       const at = `${what}: the pointer at ${x.toFixed(1)}, the bar ${JSON.stringify(bar)}, the thumbnail ${JSON.stringify(frame)}, the tip ${JSON.stringify(tip)}`;
@@ -199,16 +200,15 @@ export default {
         r.bottom <= bar.bottom + 0.5;
       if (!inside(frame)) throw new Error(`${at}: the thumbnail passes the bar`);
       if (!inside(tip)) throw new Error(`${at}: the tip passes the bar`);
-      const half = Math.max(frame.width, tip.width) / 2;
-      const want = Math.min(Math.max(x, bar.left + half), bar.right - half);
-      const middle = (frame.left + frame.right) / 2;
-      if (Math.abs(middle - want) > 2)
-        throw new Error(`${at}: the thumbnail's middle is ${middle.toFixed(1)}, not ${want.toFixed(1)}`);
-      if (Math.abs((tip.left + tip.right) / 2 - middle) > 1)
-        throw new Error(`${at}: the tip isn't centred on the thumbnail`);
-      if (!(tip.top < frame.bottom && tip.bottom >= frame.bottom))
-        throw new Error(`${at}: the tip isn't across the thumbnail's lower edge`);
-      return Math.abs(want - x) > 0.5;
+      const flipped = x - 8 - frame.width < bar.left;
+      if (!flipped && Math.abs(frame.right - (x - 8)) > 2)
+        throw new Error(`${at}: the thumbnail's right edge is ${frame.right.toFixed(1)}, not 8 px left of the pointer`);
+      if (flipped && Math.abs(frame.left - Math.min(x + 8, bar.right - frame.width)) > 2)
+        throw new Error(`${at}: at the left end the thumbnail isn't just right of the pointer`);
+      const want = Math.min(Math.max(x, bar.left + 28), bar.right - 28);
+      if (Math.abs((tip.left + tip.right) / 2 - want) > 1.5)
+        throw new Error(`${at}: the tip isn't centred on the pointer`);
+      return flipped;
     };
 
     // 2. Hovering 2.5 s: first the storyboard's frame, the keyframe at 2 s,
@@ -370,15 +370,15 @@ export default {
         missed.push(
           `${t} s (${seen.last ? `the ${seen.last.exact ? "exact " : ""}frame at ${seen.last.time} s` : "no thumbnail"})`,
         );
-      else if (named(seen.rgb) !== colourAt(want) || !seen.over)
-        missed.push(`${t} s (${named(seen.rgb)}, the tip ${seen.over ? "over it" : "alone"})`);
+      else if (named(seen.rgb) !== colourAt(want)) missed.push(`${t} s (${named(seen.rgb)})`);
       else if (await placed(`hovering ${t} s`, t)) shifted++;
     }
     if (missed.length) throw new Error(`hovering, no keyframe at or before the pointer at ${missed.join(", ")}`);
     // The ends' moments are within the thumbnail's half-width of the bar's ends.
-    if (!shifted) throw new Error("hovering near the timeline's ends, the thumbnail was never shifted in");
+    if (!shifted)
+      throw new Error("hovering near the timeline's left end, the thumbnail was never flipped to the right");
     ctx.log(
-      `hovering 0.25-19.75 s every 0.25 s: each shows the keyframe at or before it, ${GOP} s apart, centred on the pointer (${shifted} shifted in at the ends), the tip across its lower edge`,
+      `hovering 0.25-19.75 s every 0.25 s: each shows the keyframe at or before it, ${GOP} s apart, to the left of the pointer (${shifted} flipped right at the left end), the tip centred on the pointer`,
     );
     // The hover elements at the start, the middle and the end, in each theme.
     for (const theme of ["Light", "Dark"]) {

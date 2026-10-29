@@ -20,8 +20,8 @@
 // thing's picture: on an edit of three pieces of a video, one picked and
 // pulled off the timeline looks as a piece carried alone always has (its
 // frame, its waveform, its length and times, nothing more); all three, the
-// first's card with two stacked behind it and no badge (one would count
-// what's past the three cards), captioned "3 stretches".
+// first's card with two stacked behind it, none dimmed (past three the last
+// is dimmed with a "…": more than the deck shows), captioned "3 stretches".
 
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
@@ -45,7 +45,7 @@ export default {
     "one-piece-carried":
       "Near the pointer, a card follows it: a flat lime-green picture, a strip for the waveform under it (empty: the video has no sound) and under that the text 0:01  0:01–0:02. No number badge on it and no other cards behind it.",
     "three-pieces-carried":
-      "Near the pointer, a card with a flat red picture, an empty waveform strip and the text 3 stretches under it; two more cards peek out behind it, each a few pixels further right and down, and no badge on the picture.",
+      "Near the pointer, a card with a flat red picture, an empty waveform strip and the text 3 stretches under it; two more cards peek out behind it, each a few pixels further right and down, none of them dimmed.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -631,8 +631,8 @@ export default {
             const img = front?.querySelector("img");
             if (!img?.complete || !img.naturalWidth) return false;
             return {
-              caption: front.querySelector(":scope > span:not(.carry-more)")?.textContent ?? null,
-              more: (front.closest(".carry-stack") ?? front).querySelector(".carry-more")?.textContent ?? null,
+              caption: front.querySelector(":scope > span:not(.carry-dots)")?.textContent ?? null,
+              more: !!document.querySelector(".carry-ghost.behind.more"),
               behind: document.querySelectorAll(".carry-ghost.behind").length,
               stacked: !!document.querySelector(".carry-stack"),
             };`),
@@ -662,7 +662,7 @@ export default {
     );
     await press(`.drop-in [data-piece="${await bandAt(1.5)}"]`, -150);
     const alone = await ghost("the ghost of the piece picked, with its picture");
-    if (alone.caption !== "0:01  0:01–0:02" || alone.more !== null || alone.behind || alone.stacked)
+    if (alone.caption !== "0:01  0:01–0:02" || alone.more || alone.behind || alone.stacked)
       throw new Error(`one piece picked and carried shows ${JSON.stringify(alone)}, not the ghost of a piece alone`);
     await ctx.checkpoint("one-piece-carried");
     ctx.log(`one piece picked, carried: its picture and "${alone.caption}", no badge`);
@@ -677,10 +677,10 @@ export default {
     );
     await press(`.drop-in [data-piece="${await bandAt(1.5)}"]`, -150);
     const three = await ghost("the ghost of the three picked, with the first's picture");
-    if (three.caption !== "3 stretches" || three.more !== null || three.behind !== 2 || !three.stacked)
+    if (three.caption !== "3 stretches" || three.more || three.behind !== 2 || !three.stacked)
       throw new Error(`three pieces picked and carried show ${JSON.stringify(three)}`);
     await ctx.checkpoint("three-pieces-carried");
-    ctx.log(`three pieces picked, carried: "${three.caption}", no badge, ${three.behind} cards behind`);
+    ctx.log(`three pieces picked, carried: "${three.caption}", none dimmed, ${three.behind} cards behind`);
     await putDown();
   },
 };

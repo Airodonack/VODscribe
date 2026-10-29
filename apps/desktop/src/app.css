@@ -479,19 +479,25 @@ body.dropping iframe {
   inset: 0;
 }
 
-/* Past three cards, how many more: at the deck's bottom right corner, where
-   the next card would peek out (dragout.ts deck() shifts it there). */
-.carry-stack .carry-more {
+/* Past three cards, the last one dimmed with a "…" at its corner that peeks
+   out: there are more than the deck shows (dragout.ts deck()). */
+.carry-stack .carry-ghost.behind.more {
+  filter: grayscale(1) blur(1px);
+  opacity: 0.75;
+}
+
+.carry-stack .carry-ghost.behind.more .carry-dots {
   position: absolute;
-  right: 0;
-  bottom: 0;
-  padding: 0 6px;
+  right: -2px;
+  bottom: -4px;
+  padding: 0 4px;
   border-radius: 999px;
   background: var(--text);
   color: var(--surface);
   font-size: 11px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 14px;
+  filter: none;
 }
 
 /* While the timeline is dragged on (scrubbing, a cut, panning, a stretch

@@ -1184,11 +1184,8 @@
         class="tip"
         class:wide={!!hoverMark || !!hoverActivity}
         class:noted={!!hoverMark?.note}
-        class:over={spot.frame !== null}
         bind:offsetWidth={tipWidth}
-        style:left={spot.frame !== null
-          ? `${spot.tip}px`
-          : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
+        style:left={`${spot.tip}px`}
         >{#if hoverMark}<strong>{label(hoverMark)}</strong>
           {formatTime(placed(hoverMark))}{#if endOf(hoverMark) !== null}–{formatTime(
               endOf(hoverMark)!,
@@ -1565,15 +1562,6 @@
     opacity: 0.35;
   }
 
-  /* Across the thumbnail's lower edge, centred on it (placed whole by
-     place()), the time over the picture's bottom as a video site lays it,
-     and no lower than the bar's own bottom. */
-  .tip.over {
-    top: auto;
-    bottom: 0;
-    transform: none;
-  }
-
   .tip.wide {
     max-width: 320px;
     overflow: hidden;
@@ -1847,7 +1835,6 @@
   .tip {
     position: absolute;
     top: 2px;
-    transform: translateX(-50%);
     padding: 2px 6px;
     border-radius: var(--radius-sm);
     background: var(--text);
