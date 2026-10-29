@@ -1192,7 +1192,8 @@
         href={to.href}
         title={to.title}
         tabindex={pinnedCopy ? -1 : undefined}
-        onclick={(e) => (e.preventDefault(), to.follow())}>{label}</a
+        onclick={(e) => (e.preventDefault(), to.follow())}
+        >{label}{#if to.outside}<span class="out"><Icon name="external" size={10} /></span>{/if}</a
       >
     {:else}
       <span class="speaker" class:unknown={!color} style:color>{label}</span>
@@ -1508,6 +1509,12 @@
 
   .speaker.channel:hover {
     text-decoration: underline;
+  }
+
+  /* The sign that the name's link leaves the app (castLink.svelte.ts `outside`). */
+  .out {
+    margin-left: 3px;
+    opacity: 0.7;
   }
 
   .head-time {

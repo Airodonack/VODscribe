@@ -24,8 +24,12 @@ class PovLibrary {
 
 export const povLibrary = new PovLibrary();
 
-/** A cast member's link: its address, what its tooltip says, how a click follows it, and the stream it goes to (null: their channel). */
-export type CastLink = { href: string; title: string; follow: () => void; pov: PovLink | null };
+/** A cast member's link: its address, what its tooltip says, how a click
+ *  follows it, the stream it goes to (null: their channel), and whether
+ *  following it leaves the app for the browser (`outside`; false only for a
+ *  stream the library has, opened here), which its name shows with the
+ *  external-link sign. */
+export type CastLink = { href: string; title: string; follow: () => void; pov: PovLink | null; outside: boolean };
 
 /**
  * Where `member`'s link goes at `moment` seconds into `vod` (null: no
@@ -43,11 +47,17 @@ export function castLink(
   const pov = vod ? povLink(povs, account, vod.started_at, moment) : null;
   if (!pov) {
     const url = channelUrl(account);
-    return { href: url, title: channelLabel(account), follow: () => void openUrl(url), pov: null };
+    return { href: url, title: channelLabel(account), follow: () => void openUrl(url), pov: null, outside: true };
   }
   const open = povLibrary.open;
   const here = open ? povLibrary.vods.find((v) => v.listed && isVideo(v, pov.pov.video)) : undefined;
   if (open && here)
-    return { href: pov.url, title: povTitle(pov.pov, pov.offset, true), follow: () => open(here.id, pov.offset), pov };
-  return { href: pov.url, title: pov.title, follow: () => void openUrl(pov.url), pov };
+    return {
+      href: pov.url,
+      title: povTitle(pov.pov, pov.offset, true),
+      follow: () => open(here.id, pov.offset),
+      pov,
+      outside: false,
+    };
+  return { href: pov.url, title: pov.title, follow: () => void openUrl(pov.url), pov, outside: true };
 }

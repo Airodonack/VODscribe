@@ -184,7 +184,9 @@
                       href={to.href}
                       title={to.pov ? to.title : undefined}
                       onclick={(e) => (e.preventDefault(), to.follow())}
-                      >{to.pov ? `Their stream at ${clock(to.pov.offset)}` : to.title}</a
+                      >{to.pov ? `Their stream at ${clock(to.pov.offset)}` : to.title}{#if to.outside}<span class="out"
+                          ><Icon name="external" size={10} /></span
+                        >{/if}</a
                     ></span
                   >
                 {/if}
@@ -338,6 +340,12 @@
     flex: none;
     /* Beside the transcript's status, with the chat's at the far side. */
     margin-right: auto;
+  }
+
+  /* The sign that the link leaves the app (castLink.svelte.ts `outside`). */
+  .out {
+    margin-left: 3px;
+    opacity: 0.7;
   }
 
   .cast-toggle {

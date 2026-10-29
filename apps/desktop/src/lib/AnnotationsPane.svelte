@@ -32,6 +32,7 @@
   import AddToEdit from "./AddToEdit.svelte";
   import { castLink } from "./castLink.svelte";
   import CastDisc from "./CastDisc.svelte";
+  import Icon from "./Icon.svelte";
   import Popover from "./Popover.svelte";
   import { DEMO } from "./demo";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
@@ -447,7 +448,8 @@
                                 member={p.member}
                                 size={16}
                                 link={false}
-                              /><strong class:unknown={!p.color} style:color={p.color}>{p.short}</strong></a
+                              /><strong class:unknown={!p.color} style:color={p.color}>{p.short}</strong
+                              >{#if to.outside}<span class="out"><Icon name="external" size={9} /></span>{/if}</a
                             >
                           {:else}
                             <span class="chip"
@@ -843,6 +845,12 @@
      streamer's channel (or stream) when they have one. A chip is never cut short: one
      that doesn't fit beside the one before goes to the next line whole, and
      only a name wider than the column breaks, between its words. */
+  /* The sign that the chip's link leaves the app (castLink.svelte.ts `outside`). */
+  .out {
+    margin-left: 2px;
+    opacity: 0.7;
+  }
+
   .chip {
     display: inline-flex;
     align-items: center;
