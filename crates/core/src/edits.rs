@@ -1072,11 +1072,19 @@ impl Db {
     /// Makes `from`..`to` of edit `edit`'s timeline a clip on its clip bar
     /// (only dragged out, unless `shown`): the pieces that play there, and
     /// the edit's chapters and highlights in it, copied.
+    /// A clip there already of exactly that stretch is given instead (C
+    /// pressed twice), put on the bar if `shown` and it was only dragged out.
     pub fn add_edit_clip(&self, edit: i64, from: f64, to: f64, title: &str, shown: bool) -> Result<crate::db::Clip> {
         let pieces = self.edit_pieces(edit)?;
         let parts = stretch_pieces(&pieces, from, to);
         if parts.is_empty() {
             bail!("Nothing of the edit plays there.");
+        }
+        if let Some(clip) = self.bar_clip_of(edit, &parts)? {
+            if shown && !clip.shown {
+                self.show_clip(clip.id)?;
+            }
+            return Ok(self.clip(clip.id)?.expect("on the bar"));
         }
         let marks = self.clip_marks(edit)?;
         let inside: Vec<&MarkAt> = place_marks(&pieces, &marks)
@@ -1099,6 +1107,36 @@ impl Db {
         };
         let id = if shown { self.change(edit, None, add)? } else { self.atomically(add)? };
         Ok(self.clip(id)?.expect("just inserted"))
+    }
+
+    /// The clip on edit `edit`'s clip bar of exactly what plays from `from`
+    /// to `to` of its timeline, if there's one (`add_edit_clip` gives it).
+    pub fn edit_clip_of(&self, edit: i64, from: f64, to: f64) -> Result<Option<crate::db::Clip>> {
+        let parts = stretch_pieces(&self.edit_pieces(edit)?, from, to);
+        if parts.is_empty() {
+            return Ok(None);
+        }
+        self.bar_clip_of(edit, &parts)
+    }
+
+    /// The clip on edit `edit`'s clip bar that plays just what `parts` do.
+    fn bar_clip_of(&self, edit: i64, parts: &[StretchPiece]) -> Result<Option<crate::db::Clip>> {
+        let near = |a: f64, b: f64| (a - b).abs() < 0.001;
+        let same_spans = |a: &[(f64, f64)], b: &[(f64, f64)]| {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| near(x.0, y.0) && near(x.1, y.1))
+        };
+        for clip in self.bar_clips(edit)? {
+            let pieces = self.edit_pieces(clip.id)?;
+            let same = pieces.len() == parts.len()
+                && pieces
+                    .iter()
+                    .zip(parts)
+                    .all(|(p, s)| p.vod_id == s.vod_id && same_spans(&p.spans(), &spans(s.start, s.end, &s.struck)));
+            if same {
+                return Ok(Some(clip));
+            }
+        }
+        Ok(None)
     }
 
     /// A clip on listed clip `bar`'s clip bar, made anew as `state` has it
@@ -1144,8 +1182,11 @@ impl Db {
                         index = index.map(|i| i + 1);
                     }
                     (Put::Span { clip, from, to }, _) if *clip == edit && onto == Onto::Bar => {
-                        let title = db.span_title(edit, *from, *to)?;
-                        made.push(db.add_edit_clip(edit, *from, *to, &title, true)?.id);
+                        // One on the bar already is left as it is.
+                        if db.edit_clip_of(edit, *from, *to)?.is_none() {
+                            let title = db.span_title(edit, *from, *to)?;
+                            made.push(db.add_edit_clip(edit, *from, *to, &title, true)?.id);
+                        }
                     }
                     _ => {
                         let (title, parts) = db.put_parts(item)?;
@@ -2183,6 +2224,21 @@ pub(crate) mod tests {
         let marks: Vec<_> = db.clip_marks(clip.id).unwrap().into_iter().map(|(_, m)| m.text).collect();
         assert_eq!(marks, [Some("inside".to_string())], "the edit's marks in the stretch come with it");
         assert!(db.add_edit_clip(edit, 20.0, 30.0, "d", true).is_err(), "past the end: nothing plays");
+
+        // The same stretch again (C pressed twice): the clip made already, no change.
+        let revision = db.revision(edit).unwrap().unwrap();
+        assert_eq!(db.add_edit_clip(edit, 1.0, 10.0, "c again", true).unwrap().id, clip.id);
+        assert_eq!(db.bar_clips(edit).unwrap().len(), 1);
+        assert_eq!(db.revision(edit).unwrap().unwrap(), revision, "nothing changed");
+        // One only dragged out, then clipped: that one, put on the bar.
+        let out = db.add_edit_clip(edit, 0.0, 1.0, "out", false).unwrap();
+        assert!(!out.shown);
+        let kept = db.add_edit_clip(edit, 0.0, 1.0, "out", true).unwrap();
+        assert_eq!((kept.id, kept.shown), (out.id, true));
+        assert_eq!(db.bar_clips(edit).unwrap().len(), 2);
+        // A stretch on the bar already, put there again: left as it is.
+        assert!(db.put(edit, &[Put::Span { clip: edit, from: 1.0, to: 10.0 }], Onto::Bar).unwrap().is_empty());
+        assert_eq!(db.bar_clips(edit).unwrap().len(), 2);
 
         // Made again as a state holds it (undo bringing it back).
         let state = db.edit_state(clip.id).unwrap().unwrap();

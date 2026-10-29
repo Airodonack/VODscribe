@@ -505,9 +505,11 @@ export default {
     ctx.log(`a chapter in the edit at ${chapter.start} s, then undone`);
 
     // C: the piece at the playhead (the second, 1 s long) a clip on the
-    // edit's own clip bar, its file made. Ctrl+Z takes it off, Ctrl+Shift+Z
+    // edit's own clip bar, its file made; pressed twice, and again once it's
+    // made, it's still the one clip. Ctrl+Z takes it off, Ctrl+Shift+Z
     // brings it back (made again).
     const barClips = () => app.invoke("edit_clips", { id: made.id });
+    await app.key("c");
     await app.key("c");
     const barClip = await until(
       "the edit's clip, made",
@@ -520,6 +522,10 @@ export default {
       MINUTE,
     );
     if (Math.abs(barClip.length - 1) > 0.05) throw new Error(`the clip is ${barClip.length} s long, not 1`);
+    await app.key("c");
+    await new Promise((r) => setTimeout(r, 1500));
+    const once = await barClips();
+    if (once.length !== 1) throw new Error(`C again on the same stretch: ${once.length} clips`);
     await until(
       "its pill on the edit's clip bar",
       () => app.js(`return !!document.querySelector('section.edit-view .clip-bar .chip[data-clip="${barClip.id}"]')`),

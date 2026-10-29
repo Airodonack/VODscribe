@@ -364,7 +364,8 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 
 /// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
 /// titled with what's said at its start, as one change; then each is queued
-/// to be made.
+/// to be made. A range with a clip already (C pressed twice) gives that one,
+/// made again only if it failed.
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     if ranges.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from && from >= 0.0)) {
         return Err("That's not a stretch of the edit.".into());
@@ -379,15 +380,27 @@ fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown
         for (from, to) in ranges {
             titled.push((from, to, db.span_title(edit_id, from, to).map_err(err)?));
         }
-        let mut made = Vec::new();
+        let (mut made, mut queued) = (Vec::new(), Vec::new());
         for (from, to, title) in titled {
-            made.push(db.add_edit_clip(edit_id, from, to, &title, shown).map_err(err)?);
+            let had = db.edit_clip_of(edit_id, from, to).map_err(err)?;
+            let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown).map_err(err)?;
+            match had {
+                None => queued.push(clip.id),
+                Some(had) if had.status == ClipStatus::Error => {
+                    db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None).map_err(err)?;
+                    clip = db.clip(clip.id).map_err(err)?.ok_or("That clip is gone.")?;
+                    queued.push(clip.id);
+                }
+                Some(_) => {}
+            }
+            made.push(clip);
         }
-        state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
-        made
+        history::record(app, &db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
+        (made, queued)
     };
-    for clip in &made {
-        state.clips.queue(clip.id);
+    let (made, queued) = made;
+    for id in queued {
+        state.clips.queue(id);
     }
     Ok(made)
 }

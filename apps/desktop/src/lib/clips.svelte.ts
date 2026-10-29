@@ -133,18 +133,40 @@ class Clips {
   }
 
   /**
-   * Makes `start`..`end` a clip, or gives the one made already (putting it
-   * in the clip bar if `shown`). Before the first downloaded from a site, the
-   * note on permission is answered first. Null if it's declined or fails.
+   * Makes `start`..`end` of the document whose clip bar this is (a VOD's
+   * time, or an edit's timeline) a clip, or gives the one made already
+   * (putting it in the clip bar if `shown`; one that failed is made again).
+   * Before the first downloaded from a site, the note on permission is
+   * answered first. Null if it's declined or fails.
    */
   make(start: number, end: number, shown = true): Promise<Clip | null> {
-    // Asked twice before the first is answered (E pressed twice), it's made once.
-    const key = `${this.vodId} ${start} ${end}`;
+    const doc = this.doc;
+    if (!doc) return Promise.resolve(null);
+    // Asked twice before the first is answered (C pressed twice), it's made once.
+    const key = `${docKey(doc)} ${start} ${end}`;
     const making = this.#making.get(key);
     if (making) return making;
-    const made = this.#make(start, end, shown).finally(() => this.#making.delete(key));
+    const made = (
+      doc.kind === "edit" ? this.#makeOfEdit(doc.id, start, end, shown) : this.#make(start, end, shown)
+    ).finally(() => this.#making.delete(key));
     this.#making.set(key, made);
     return made;
+  }
+
+  /** `make` on an edit's clip bar: the app gives the clip of that stretch
+   *  made already, and makes one that failed again (crates/core edits.rs
+   *  `add_edit_clip`), as `#make` does on a VOD's. */
+  async #makeOfEdit(editId: number, from: number, to: number, shown: boolean): Promise<Clip | null> {
+    try {
+      const since = this.#serial;
+      const clip = await api.addEditClip(editId, from, to, shown);
+      this.#answer(clip, since);
+      this.error = null;
+      return clip;
+    } catch (e) {
+      this.error = String(e);
+      return null;
+    }
   }
 
   async #make(start: number, end: number, shown: boolean): Promise<Clip | null> {
@@ -183,9 +205,10 @@ class Clips {
    * Makes each of `ranges` a clip in the clip bar, in their order, as `make`
    * makes one (the note on permission first, once): those not made yet as
    * one change, so undo takes them all back; any made already as `make`
-   * gives them.
+   * gives them. On an edit's clip bar, of its timeline.
    */
   async makeAll(ranges: { start: number; end: number }[]): Promise<void> {
+    if (this.doc?.kind === "edit") return this.#makeAllOfEdit(this.doc.id, ranges);
     const vodId = this.vodId;
     if (vodId === null || this.asking) return;
     const fresh = ranges.filter((r) => !this.find(r.start, r.end));
@@ -209,13 +232,13 @@ class Clips {
     }
   }
 
-  /** Makes each of `ranges` of the open edit's timeline a clip on its clip bar, in their order, as one change. */
-  async makeAllOfEdit(ranges: { start: number; end: number }[]): Promise<void> {
-    if (this.doc?.kind !== "edit") return;
+  /** `makeAll` on an edit's clip bar, as one change: a stretch with a clip
+   *  already gives that one (crates/core edits.rs `add_edit_clip`). */
+  async #makeAllOfEdit(editId: number, ranges: { start: number; end: number }[]): Promise<void> {
     try {
       const since = this.#serial;
       const made = await api.addEditClips(
-        this.doc.id,
+        editId,
         ranges.map((r) => [r.start, r.end]),
       );
       for (const clip of made) this.#answer(clip, since);
@@ -225,20 +248,13 @@ class Clips {
     }
   }
 
-  /** Makes `from`..`to` of the open edit's timeline a clip on its clip bar
-   *  (or, not `shown`, one only to drag out of the window). */
-  async makeOfEdit(from: number, to: number, shown = true): Promise<Clip | null> {
-    if (this.doc?.kind !== "edit") return null;
-    try {
-      const since = this.#serial;
-      const clip = await api.addEditClip(this.doc.id, from, to, shown);
-      this.#answer(clip, since);
-      this.error = null;
-      return clip;
-    } catch (e) {
-      this.error = String(e);
-      return null;
-    }
+  // The edit's own names for `make` and `makeAll`, for the callers that
+  // still use them; on a VOD's clip bar they make nothing, as before.
+  makeAllOfEdit(ranges: { start: number; end: number }[]): Promise<void> {
+    return this.doc?.kind === "edit" ? this.makeAll(ranges) : Promise.resolve();
+  }
+  makeOfEdit(from: number, to: number, shown = true): Promise<Clip | null> {
+    return this.doc?.kind === "edit" ? this.make(from, to, shown) : Promise.resolve(null);
   }
 
   /** Waits, while `still()`, for clip `id`'s file: the clip once made, else null.
