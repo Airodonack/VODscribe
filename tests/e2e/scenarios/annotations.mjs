@@ -26,8 +26,14 @@
 // asks which edit and puts it there, a group too; the edit open, its pane
 // has the highlights it holds, as the import made them: their kind's emoji
 // on its timeline, their length, why and who's in them in its pane, the
-// Imported marks toggle taking them off. On a window too narrow for three
-// columns the pane is a tab beside the transcript's.
+// Imported marks toggle taking them off. The window is made 1600 px wide
+// for this, three columns needing 1440. At 1280 px (half a 2560 px screen),
+// too narrow for three, the transcript's heading has a switch in its label's
+// place, one control of two segments, "Transcript" and "Chapters &
+// highlights", the one showing in the accent colour: the second shows the
+// pane in the transcript's place under the heading, and ← → go between
+// them. With the imported marks hidden (nothing in the pane), the switch is
+// greyed, its second segment can't be picked, and the transcript shows.
 // A character played by a streamer is named the character first, the
 // streamer after ("Marlowe (Vance)"): on their heads, in the Cast button
 // (with their channels) and in a highlight's tooltip, grouped and coloured as
@@ -196,6 +202,10 @@ export default {
       'Above the timeline, three gray chapter slices, neighbours in different shades, read "💬 Hello", "🎮 The game" and "Goodbye", with a thin coloured band under them; the bar has two small emoji near its top (a laughing face and popcorn), and a dark tip in the bar reads "Close call 0:25–0:30" with "everyone gasped, then laughed" under it.',
     "annotations-pane":
       'On the window\'s right, a column the full height of the window lists "Hello", "The game" and "Goodbye" with their emoji and times, "Close call" (a laughing face) and "The twist" (popcorn) indented under "The game", which is lit with "The twist".',
+    "annotations-switch":
+      'The transcript\'s header starts with one small bordered control of two segments in small capitals, "TRANSCRIPT" in the normal text colour and "CHAPTERS & HIGHLIGHTS" in the accent colour (indigo); under the header, in the transcript\'s place, the chapters and highlights list ("Hello", "The game", "Goodbye", "Close call", "The twist"); no column on the window\'s right and no row of tabs above the header.',
+    "annotations-switch-empty":
+      'The transcript\'s header starts with the same two-segment control, all of it gray: "TRANSCRIPT" and "HIGHLIGHTS" in the muted gray of a label, the border gray too; the transcript\'s lines show under the header, no chapters and highlights list.',
     "annotations-pinned":
       'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
@@ -205,6 +215,12 @@ export default {
     const dir = path.join(ctx.out, "fixtures");
     const file = minute(dir);
     await app.toLibrary();
+    // Three columns (the library, the player and transcript, the chapters and
+    // highlights) need a page 1440 px wide: wider than the window opens.
+    const opened = await app.js(`return { width: innerWidth, height: innerHeight }`);
+    const wide = await resizeInner(app, 1600, opened.height);
+    if (wide.width < 1440)
+      throw new Error(`the page is ${wide.width} px wide at most here, and three columns need 1440 px`);
     const [vod] = await app.addFiles([file]);
     // The fixture, made this file's: its source names the VOD the library made of it.
     const json = readFileSync(FIXTURE, "utf8")
@@ -898,45 +914,136 @@ export default {
       );
     }
 
-    // A window too narrow for three columns (under 1100 px): no right
-    // column; the pane is a tab beside the transcript's, the transcript's
-    // open; the other tab shows the pane in its place.
+    // Half a 2560 px screen, 1280 px: too narrow for three columns (under
+    // 1440 px), so no right column; the transcript's heading has the switch
+    // in its label's place, the transcript showing; its other segment shows
+    // the pane in the transcript's place, under the heading.
     const was = await app.js(`return { width: innerWidth, height: innerHeight }`);
-    const narrow = await resizeInner(app, 1000, Math.min(was.height, 760));
-    if (narrow.width >= 1100) ctx.log(`the window stayed ${narrow.width} px wide: no tabs to try`);
+    const narrow = await resizeInner(app, 1280, Math.min(was.height, 760));
+    if (narrow.width >= 1440) ctx.log(`the window stayed ${narrow.width} px wide: no switch to try`);
     else {
       await until("the column gone", () => app.js(`return !document.querySelector(".app > .pane.side")`), 10_000).catch(
         () => wrong.push(`at ${narrow.width} px the pane is still a column`),
       );
       if (await app.js(`return !!document.querySelector(".pane-edge")`))
         wrong.push(`at ${narrow.width} px, the pane a tab, there's an edge to hide its column`);
-      const tabs = () =>
-        app.js(`return [...document.querySelectorAll(".pane-tabs [role=tab]")].map((t) =>
-          t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : ""))`);
-      const shown = await until("the tabs", async () => (await tabs()).length === 2 && tabs(), 10_000).catch(() =>
-        tabs(),
+      // The switch: its segments ("*" the one showing), whether each can be
+      // picked, the colours of their text and of its border by name, the
+      // heading's plain label gone, and what shows under the heading.
+      const SWITCH = '.head .switch[role="tablist"]';
+      const look = () =>
+        app.js(
+          `const sw = document.querySelector(arguments[0]);
+          if (!sw) return null;
+          const named = (c) => { for (const v of ["--accent", "--text", "--muted", "--border"]) {
+            const probe = document.createElement("span"); probe.style.color = "var(" + v + ")"; document.body.append(probe);
+            const is = getComputedStyle(probe).color; probe.remove(); if (is === c) return v.slice(2); } return c; };
+          const shown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;
+          const segs = [...sw.querySelectorAll("[role=tab]")];
+          return { reads: segs.map((t) => t.textContent.trim() + (t.getAttribute("aria-selected") === "true" ? "*" : "")).join(" | "),
+            disabled: segs.map((t) => t.disabled), text: segs.map((t) => named(getComputedStyle(t).color)),
+            border: named(getComputedStyle(sw).borderTopColor), visible: shown(sw),
+            eyebrow: !!document.querySelector(".body .head .eyebrow"), oldTabs: !!document.querySelector(".pane-tabs"),
+            transcript: shown(document.querySelector("#transcript-panel")), pane: shown(document.querySelector(".below > #annotations-panel")),
+            focused: document.activeElement?.id ?? null }`,
+          SWITCH,
+        );
+      const settledLook = (what, want) =>
+        until(
+          what,
+          async () => {
+            const got = await look();
+            return got && Object.entries(want).every(([k, v]) => JSON.stringify(got[k]) === JSON.stringify(v)) && got;
+          },
+          10_000,
+        ).catch(async () => {
+          const got = await look();
+          wrong.push(`${what}: ${JSON.stringify(got)}`);
+          return got;
+        });
+      const LABEL = "Chapters & highlights";
+      const plain = { visible: true, eyebrow: false, oldTabs: false, border: "border", disabled: [false, false] };
+      await settledLook(`at ${narrow.width} px, the switch, the transcript showing`, {
+        ...plain,
+        reads: `Transcript* | ${LABEL}`,
+        text: ["accent", "text"],
+        transcript: true,
+        pane: false,
+      });
+      await app.click(`${SWITCH} #tab-annotations`);
+      await settledLook("the pane in the transcript's place, under the heading", {
+        ...plain,
+        reads: `Transcript | ${LABEL}*`,
+        text: ["text", "accent"],
+        transcript: false,
+        pane: true,
+      });
+      await ctx.checkpoint("annotations-switch");
+      // ← and →, as tabs go: the focus goes with the segment picked.
+      const press = (key) =>
+        app.js(
+          `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true, cancelable: true }))`,
+          key,
+        );
+      await app.js(`document.querySelector(arguments[0]).focus()`, `${SWITCH} #tab-annotations`);
+      await press("ArrowLeft");
+      await settledLook("← back to the transcript", {
+        reads: `Transcript* | ${LABEL}`,
+        transcript: true,
+        pane: false,
+        focused: "tab-transcript",
+      });
+      await press("ArrowRight");
+      await settledLook("→ to the pane again", {
+        reads: `Transcript | ${LABEL}*`,
+        transcript: false,
+        pane: true,
+        focused: "tab-annotations",
+      });
+      // The imported marks hidden, the pane has nothing: the switch stays,
+      // greyed, its second segment ("Highlights", as nothing names it
+      // otherwise) not to be picked, the transcript shown.
+      await app.click("button.timeline");
+      await until(
+        "the Marks toggles",
+        () => app.js(`return !!document.querySelector('[aria-label="Marks"] button')`),
+        10_000,
       );
-      if (shown.join(" | ") !== "Transcript* | Chapters and highlights")
-        wrong.push(`at ${narrow.width} px the tabs read ${shown.join(" | ") || "nothing"}`);
-      else {
-        await app.click(".pane-tabs [role=tab]:nth-child(2)");
-        const swapped = await until(
-          "the pane in the transcript's place",
-          () =>
-            app.js(`return !!document.querySelector(".annotations-pane") &&
-              getComputedStyle(document.querySelector(".body")).display === "none"`),
-          10_000,
-        ).catch(() => false);
-        if (!swapped) wrong.push("the pane's tab didn't show the pane in the transcript's place");
-        await app.click(".pane-tabs [role=tab]:nth-child(1)");
-        await until(
-          "the transcript back",
-          () =>
-            app.js(`return !document.querySelector(".annotations-pane") &&
-              getComputedStyle(document.querySelector(".body")).display !== "none"`),
-          10_000,
-        ).catch(() => wrong.push("the transcript's tab didn't bring the transcript back"));
-      }
+      await flip();
+      await settledLook("with nothing in the pane, the switch greyed", {
+        visible: true,
+        eyebrow: false,
+        reads: "Transcript* | Highlights",
+        disabled: [false, true],
+        text: ["muted", "muted"],
+        border: "muted",
+        transcript: true,
+        pane: false,
+      });
+      await app.key("Escape");
+      await ctx.checkpoint("annotations-switch-empty");
+      await app.click("button.timeline");
+      await until(
+        "the Marks toggles",
+        () => app.js(`return !!document.querySelector('[aria-label="Marks"] button')`),
+        10_000,
+      );
+      await flip();
+      await app.key("Escape");
+      // Back, the pane's segment left picked shows the pane again; the
+      // transcript's brings the transcript back.
+      await settledLook("the marks back, the pane again", { ...plain, reads: `Transcript | ${LABEL}*`, pane: true });
+      await app.click(`${SWITCH} #tab-transcript`);
+      const back = await settledLook("the transcript back", {
+        ...plain,
+        reads: `Transcript* | ${LABEL}`,
+        transcript: true,
+        pane: false,
+      });
+      if (back?.reads === `Transcript* | ${LABEL}` && back.transcript)
+        ctx.log(
+          `at ${narrow.width} px the transcript's heading switches to the pane and back, greyed with nothing in it`,
+        );
     }
     await resizeInner(app, was.width, was.height);
 
@@ -958,7 +1065,7 @@ export default {
 
     // The library and the pane's column hidden, each by a click on its edge:
     // the centre takes their room; with the library hidden, a window of
-    // 1000 px has room for the pane's column. Both stay hidden over a
+    // 1200 px has room for the pane's column. Both stay hidden over a
     // reload, and their edges show them again.
     const LIBRARY_EDGE = ".app > .edge-strip .library-edge";
     const PANE_EDGE = ".app > .edge-strip .pane-edge";
@@ -1025,10 +1132,10 @@ export default {
     );
     if (noLibrary.edges !== "library-edge=false pane-edge=true")
       wrong.push(`the library hidden, the edges read ${noLibrary.edges}`);
-    const narrowed = await resizeInner(app, 1000, Math.min(was.height, 760));
-    if (narrowed.width < 1100)
+    const narrowed = await resizeInner(app, 1200, Math.min(was.height, 760));
+    if (narrowed.width >= 1000 && narrowed.width < 1440)
       await until(
-        "the pane's column at 1000 px",
+        `the pane's column at ${narrowed.width} px`,
         () => app.js(`return !!document.querySelector(".app > .pane.side")`),
         10_000,
       ).catch(() => wrong.push(`the library hidden, at ${narrowed.width} px the pane isn't a column`));
@@ -1038,7 +1145,7 @@ export default {
       "the pane hidden too, the centre all of it",
       (w) => !w.library && !w.pane && w.main >= all.main + all.library + all.pane - 1,
     );
-    if (await app.js(`return !!document.querySelector(".pane-tabs")`)) wrong.push("the pane hidden left tabs");
+    if (await app.js(`return !!document.querySelector(".head .switch")`)) wrong.push("the pane hidden left a switch");
     // Hidden, each edge stays at the window's edge, the window's height.
     const atEdges =
       await app.js(`return [...document.querySelectorAll(".app > .edge-strip")].map((s) => { const r = s.getBoundingClientRect();

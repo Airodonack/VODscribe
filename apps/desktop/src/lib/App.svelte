@@ -23,6 +23,7 @@
   import { settingsWindow } from "./settingsWindow.svelte";
   import Setup from "./Setup.svelte";
   import Transcript from "./Transcript.svelte";
+  import type { PaneTabs } from "./TranscriptHead.svelte";
   import { ownPlayer } from "./ownPlayer.svelte";
   import EditView from "./EditView.svelte";
   import { edits } from "./edits.svelte";
@@ -553,8 +554,8 @@
   // The open VOD's chapters and highlights (or the open edit's), when it has
   // any shown, in a column of their own on the window's right, full height
   // and scrolling on its own, the library's mirror; on a window too narrow
-  // for three columns, a tab of their own beside the transcript's, the one
-  // open remembered.
+  // for three columns, the transcript's heading switches between the
+  // transcript and them, the one open remembered.
   const paneDoc = $derived<Doc | null>(
     showResults ? null : editOpen ? view : selected ? { kind: "vod", id: selected.id } : null,
   );
@@ -570,6 +571,8 @@
         ? "Chapters"
         : "Highlights",
   );
+  // The heading's switch has less room: "Chapters & highlights".
+  const paneLabel = $derived(paneKinds.chapters && paneKinds.highlights ? "Chapters & highlights" : paneName);
   // The library and the pane's column can each be hidden, as an editor's
   // sidebars are, to give the centre their room; the choice is remembered.
   // The library hidden stays mounted, so files dropped anywhere still add.
@@ -586,14 +589,15 @@
     paneHidden = !paneHidden;
     save(PANE, paneHidden ? "hidden" : "shown");
   }
-  // A column of its own once the window has the room for three: the
-  // library's widest (340 px), the pane's (320 px) and a centre of 440 px
-  // between them (less their edges' 12 px each); without the library
-  // (hidden, or the website's VOD page), the pane's and the centre's.
-  // Hidden, the column is gone, its edge left; on a window too narrow for
-  // it, the pane is the transcript's tab whether hidden or not, with no
-  // edge, as there's no column to hide.
-  const columnFrom = $derived(libraryShown ? 1100 : 760);
+  // A column of its own once the window has the room for three with a
+  // centre wide enough to read: 1440 px with the library, 1000 px without
+  // it (hidden, or the website's VOD page). Half of a 2560 px screen (1280
+  // px) squeezed the player and transcript to a strip between the two side
+  // columns, so there the pane is the transcript's tab; a full 1920 px
+  // screen keeps the column. Hidden, the column is gone, its edge left; on
+  // a window too narrow for it, the pane is the transcript's tab whether
+  // hidden or not, with no edge, as there's no column to hide.
+  const columnFrom = $derived(libraryShown ? 1440 : 1000);
   let appWidth = $state(0);
   const roomForColumn = $derived(paneShown && appWidth >= columnFrom);
   const column = $derived(roomForColumn && !paneHidden);
@@ -651,17 +655,18 @@
     tab = to;
     save(TAB, to);
   }
-  const tabbed = $derived(paneShown && !roomForColumn);
-  const inTab = $derived(tabbed && tab === "annotations");
-  // The tabs as one control: ← and → between them, as tabs go.
-  function onTabKey(e: KeyboardEvent) {
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    e.preventDefault();
-    openTab(tab === "transcript" ? "annotations" : "transcript");
-    void Promise.resolve().then(() =>
-      document.querySelector<HTMLElement>(`.pane-tabs [aria-selected="true"]`)?.focus(),
-    );
-  }
+  // Too narrow for the column, a VOD's or an edit's transcript heading has
+  // the switch between the transcript and the pane, greyed while the pane
+  // has nothing to show (so the switch stays where it is as marks come and
+  // go); the pane takes the transcript's place only while it has something.
+  // (Before the window's width is known, neither.)
+  const tabbed = $derived(paneDoc !== null && appWidth > 0 && appWidth < columnFrom);
+  const inTab = $derived(tabbed && paneShown && tab === "annotations");
+  const paneTabs = $derived<PaneTabs | null>(
+    tabbed
+      ? { open: inTab ? "annotations" : "transcript", label: paneLabel, enabled: paneShown, onopen: openTab }
+      : null,
+  );
   let pressed: { el: HTMLElement; at: number } | null = null;
   $effect(() => {
     const list = body;
@@ -893,38 +898,8 @@
         {/key}
       {/if}
 
-      {#if tabbed}
-        <div class="pane-tabs" role="tablist" aria-label="Transcript, or {paneName.toLowerCase()}">
-          <button
-            role="tab"
-            id="tab-transcript"
-            aria-selected={tab === "transcript"}
-            aria-controls="transcript-panel"
-            tabindex={tab === "transcript" ? 0 : -1}
-            onclick={() => openTab("transcript")}
-            onkeydown={onTabKey}>Transcript</button
-          >
-          <button
-            role="tab"
-            id="tab-annotations"
-            aria-selected={tab === "annotations"}
-            aria-controls="annotations-panel"
-            tabindex={tab === "annotations" ? 0 : -1}
-            onclick={() => openTab("annotations")}
-            onkeydown={onTabKey}>{paneName}</button
-          >
-        </div>
-      {/if}
       <div class="below">
-        <div
-          class="body"
-          class:away={inTab}
-          id="transcript-panel"
-          role={tabbed ? "tabpanel" : undefined}
-          aria-labelledby={tabbed ? "tab-transcript" : undefined}
-          bind:this={body}
-          onscroll={noteScroll}
-        >
+        <div class="body" class:away={inTab} bind:this={body} onscroll={noteScroll}>
           {#if showResults && searchError}
             <p class="error-text pad">{searchError}</p>
           {:else if showResults && results?.query.error}
@@ -943,7 +918,7 @@
             />
           {:else if editOpen}
             {#key edits.openId}
-              <Transcript edit={edits.openId} vods={vodsById} onplay={(time) => edits.playAt(time)} />
+              <Transcript edit={edits.openId} vods={vodsById} tabs={paneTabs} onplay={(time) => edits.playAt(time)} />
             {/key}
           {:else if selected}
             <!-- Made afresh for each VOD, so nothing of the last one (its lines, row
@@ -953,6 +928,7 @@
                 vod={selected}
                 reveal={revealing?.vod_id === selected.id ? revealing : null}
                 onrevealed={() => (revealing = null)}
+                tabs={paneTabs}
                 onplay={(time) => play(selected.id, time)}
               />
             {/key}
@@ -1070,38 +1046,11 @@
     flex: 1;
   }
 
+  /* The pane in the transcript's place: of the transcript, only its heading
+     (with the switch back) stays, over the pane. */
   .body.away {
-    display: none;
-  }
-
-  .pane-tabs {
     flex: none;
-    display: flex;
-    gap: 4px;
-    padding: 6px 12px 0;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-  }
-
-  .pane-tabs button {
-    border: none;
-    border-bottom: 2px solid transparent;
-    border-radius: 0;
-    background: none;
-    padding: 6px 10px;
-    color: var(--muted);
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .pane-tabs button:hover:not(:disabled) {
-    background: none;
-    color: var(--text);
-  }
-
-  .pane-tabs button[aria-selected="true"] {
-    color: var(--text);
-    border-bottom-color: var(--accent);
+    overflow: hidden;
   }
 
   .main {

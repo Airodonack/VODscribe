@@ -14,7 +14,7 @@
   } from "./api";
   import ChatMessage from "./ChatMessage.svelte";
   import Minimap from "./Minimap.svelte";
-  import TranscriptHead from "./TranscriptHead.svelte";
+  import TranscriptHead, { type PaneTabs } from "./TranscriptHead.svelte";
   import { layers } from "./layers.svelte";
   import { eventColor } from "./events";
   import { followTarget } from "./follow";
@@ -51,6 +51,7 @@
     vods = new Map(),
     reveal = null,
     onrevealed,
+    tabs = null,
     onplay,
   }: {
     vod?: Vod | null;
@@ -61,6 +62,10 @@
     reveal?: SearchHit | null;
     /** `reveal` taken in hand: it isn't shown again. */
     onrevealed?: () => void;
+    /** The switch between the transcript and the chapters and highlights,
+     *  on a window too narrow for their column (App.svelte); the heading
+     *  stays over the pane while it's open. */
+    tabs?: PaneTabs | null;
     onplay: (time: number) => void;
   } = $props();
 
@@ -1210,8 +1215,15 @@
     counts={marks.counts}
     eventCounts={marks.eventCounts}
     bind:height={headHeight}
+    {tabs}
   />
-  <div class="cols">
+  <div
+    class="cols"
+    class:away={tabs?.open === "annotations"}
+    id={tabs ? "transcript-panel" : undefined}
+    role={tabs ? "tabpanel" : undefined}
+    aria-labelledby={tabs ? "tab-transcript" : undefined}
+  >
     <!-- Hover only marks the timeline: the lines and messages are the buttons. -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -1375,6 +1387,10 @@
   .cols {
     display: flex;
     align-items: flex-start;
+  }
+
+  .cols.away {
+    display: none;
   }
 
   .rail {

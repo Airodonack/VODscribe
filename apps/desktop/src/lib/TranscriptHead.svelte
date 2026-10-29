@@ -1,4 +1,19 @@
+<script lang="ts" module>
+  /** The switch between the transcript and the chapters and highlights, on a
+   *  window too narrow for their column (App.svelte). */
+  export type PaneTabs = {
+    /** Which shows: the transcript, or the pane in its place. */
+    open: "transcript" | "annotations";
+    /** The pane's segment: "Highlights", "Chapters" or "Chapters & highlights". */
+    label: string;
+    /** The pane has something to show; without, its segment is greyed and can't be picked. */
+    enabled: boolean;
+    onopen: (to: "transcript" | "annotations") => void;
+  };
+</script>
+
 <script lang="ts">
+  import { tick } from "svelte";
   import { api, type CastMember, type Stretch, type Vod } from "./api";
   import { castDetail, speakerColor } from "./annotated";
   import { castLink } from "./castLink.svelte";
@@ -15,7 +30,9 @@
 
   // The transcript view's header (Transcript.svelte), across the transcript and
   // the minimap: how far transcription is, the chat's status and its Chat
-  // button, and the Timeline button. An edit's (no `vod`) has its line count,
+  // button, and the Timeline button. On a window too narrow for the chapters
+  // and highlights' column, its label is the switch between the transcript
+  // and them. An edit's (no `vod`) has its line count,
   // its Chat button, and the Timeline button of the VOD with most time in it.
   let {
     vod,
@@ -34,6 +51,7 @@
     counts,
     eventCounts,
     height = $bindable(),
+    tabs = null,
   }: {
     vod: Vod | null;
     /** Who's in the VOD, from an annotations import: the Cast button lists them. */
@@ -59,7 +77,18 @@
     eventCounts: Map<EventKind, number>;
     /** The header's height, for what's laid out below it. */
     height: number;
+    tabs?: PaneTabs | null;
   } = $props();
+
+  // The switch's two segments are tabs: ← and → between them, as tabs go,
+  // the keyboard's focus going with the one picked.
+  let switchEl = $state<HTMLElement>();
+  function onSwitchKey(e: KeyboardEvent) {
+    if (!tabs?.enabled || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+    e.preventDefault();
+    tabs.onopen(tabs.open === "transcript" ? "annotations" : "transcript");
+    void tick().then(() => switchEl?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
+  }
 
   // Why the chat fetch stopped, short enough for the header: the site's own
   // words, after what the app was doing ("Twitch wouldn't give the chat:
@@ -84,15 +113,48 @@
 </script>
 
 <div class="head" bind:offsetHeight={height}>
-  <p class="status muted" title={vod?.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
-    <span class="eyebrow">Transcript</span>
-    {#if vod?.status === "transcribing"}
-      <span class="sep">·</span><Spinner label="Transcribing" />
-      Transcribing {span}{Math.round(vod.progress * 100)}%
-    {:else if lineCount > 0}
-      <span class="sep">·</span>{lineCount} line{lineCount === 1 ? "" : "s"}
+  <div class="lead">
+    {#if tabs}
+      <!-- One control of two segments, greyed while the pane has nothing to show. -->
+      <div
+        class="switch"
+        class:empty={!tabs.enabled}
+        role="tablist"
+        aria-label="Transcript, or {tabs.label.toLowerCase()}"
+        bind:this={switchEl}
+      >
+        <button
+          role="tab"
+          id="tab-transcript"
+          aria-selected={tabs.open === "transcript"}
+          aria-controls="transcript-panel"
+          tabindex={tabs.open === "transcript" ? 0 : -1}
+          onclick={() => tabs.onopen("transcript")}
+          onkeydown={onSwitchKey}>Transcript</button
+        >
+        <button
+          role="tab"
+          id="tab-annotations"
+          aria-selected={tabs.open === "annotations"}
+          aria-controls="annotations-panel"
+          tabindex={tabs.open === "annotations" ? 0 : -1}
+          disabled={!tabs.enabled}
+          title={tabs.enabled ? undefined : "No chapters or highlights here"}
+          onclick={() => tabs.onopen("annotations")}
+          onkeydown={onSwitchKey}>{tabs.label}</button
+        >
+      </div>
     {/if}
-  </p>
+    <p class="status muted" title={vod?.status === "transcribing" ? "New lines appear as they're produced" : undefined}>
+      {#if !tabs}<span class="eyebrow">Transcript</span>{/if}
+      {#if vod?.status === "transcribing"}
+        <span class="sep">·</span><Spinner label="Transcribing" />
+        Transcribing {span}{Math.round(vod.progress * 100)}%
+      {:else if lineCount > 0}
+        <span class="sep">·</span>{lineCount} line{lineCount === 1 ? "" : "s"}
+      {/if}
+    </p>
+  </div>
   {#if cast.length}
     <div class="cast-anchor" bind:this={castAnchor}>
       <button
@@ -192,6 +254,65 @@
     padding: 8px 14px 8px 20px;
     background: var(--bg);
     border-bottom: 1px solid var(--border);
+  }
+
+  .lead {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  /* The switch: one bordered control, its segments in the eyebrow's type.
+     The one showing is in the accent colour, the other in the text's; with
+     nothing in the pane, all of it is muted, as the eyebrow is. */
+  .switch {
+    flex: none;
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+
+  .switch button {
+    border: none;
+    border-radius: 0;
+    background: none;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+
+  .switch button:first-child {
+    border-radius: calc(var(--radius-sm) - 1px) 0 0 calc(var(--radius-sm) - 1px);
+  }
+
+  .switch button:last-child {
+    border-left: 1px solid var(--border);
+    border-radius: 0 calc(var(--radius-sm) - 1px) calc(var(--radius-sm) - 1px) 0;
+  }
+
+  .switch button:hover:not(:disabled, [aria-selected="true"]) {
+    background: var(--surface-2);
+  }
+
+  .switch button[aria-selected="true"] {
+    color: var(--accent);
+  }
+
+  .switch.empty,
+  .switch.empty button:last-child {
+    border-color: var(--muted);
+  }
+
+  .switch.empty button,
+  .switch.empty button[aria-selected="true"] {
+    color: var(--muted);
+  }
+
+  .switch button:disabled {
+    opacity: 1;
   }
 
   /* One line each, whatever the width: cut short rather than wrapped. */
