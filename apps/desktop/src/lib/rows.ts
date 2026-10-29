@@ -175,3 +175,8 @@ export function messagesIn(histogram: number[], duration: number, from: number, 
     sum += histogram[i] * (Math.min(b, i + 1) - Math.max(a, i));
   return sum;
 }
+
+/** The bins the chat's counts are asked in, for the minimap and for guessing rows' heights. */
+export const CHAT_BINS = 1000;
+/** A row shows this many messages at first, so a burst of chat doesn't push the transcript apart. */
+export const CHAT_SHOWN = 8;

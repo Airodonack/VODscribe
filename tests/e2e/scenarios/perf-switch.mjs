@@ -8,6 +8,8 @@
 // more than 2 px logged with when it came. WebKit has no layout-shift API,
 // so the page measures itself, from one script that clicks and resolves when
 // it has settled (lib/app.mjs `js`), with the stretches the page was busy.
+// A VOD opened the first time is also measured after the pointer has come to
+// rest on its row (as before a click), at the first width.
 //
 // The library is long VODs as people keep them: a transcript of thousands
 // of lines with chapters, highlights and a cast, and thousands of chat
@@ -77,8 +79,19 @@ const PARTS = {
 // has none). Returns each step's time from the click (ms; null if never),
 // the jumps, and when the page was busy.
 const SWITCH = `
-const [key, paneText, PARTS, WATCH_MS, JANK_MS] = arguments;
+const [key, paneText, PARTS, WATCH_MS, JANK_MS, rest] = arguments;
 const app = document.querySelector(".app");
+// With \`rest\`, the pointer comes to rest on the row first (a few moves on
+// the spot, then still for a while), as it does before a click.
+if (rest) {
+  const row = document.querySelector('.vod[data-key="' + key + '"]');
+  const box = row.getBoundingClientRect();
+  for (let i = 0; i < 4; i++) {
+    row.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, clientX: box.left + 40 + i, clientY: box.top + box.height / 2, buttons: 0 }));
+    await new Promise((r) => setTimeout(r, 16));
+  }
+  await new Promise((r) => setTimeout(r, rest));
+}
 // What's on screen now is the old VOD's: marked, so the new one's is told apart.
 for (const el of document.querySelectorAll("#transcript, .main .stage, .layout > .head")) el.dataset.old = "1";
 const fresh = (sel) => {
@@ -277,6 +290,10 @@ export default {
       { name: "heavy C", id: "v2910708692", tag: "[C]", file: big },
       { name: "light", id: "v100000001", tag: "[L]", file: MINUTE_FIXTURE, chatCount: 40 },
       { name: "bare", id: "v100000002", tag: "[Z]", file: MINUTE_FIXTURE, chatCount: 40, bare: true },
+      // Opened only after the pointer rests on them.
+      { name: "heavy D", id: "v2910708693", tag: "[D]", file: big },
+      { name: "heavy E", id: "v2910708694", tag: "[E]", file: big },
+      { name: "heavy F", id: "v2910708695", tag: "[F]", file: big },
     ];
     const vods = {};
     for (const v of made) {
@@ -327,12 +344,12 @@ export default {
     const height = Number(process.env.E2E_SWITCH_HEIGHT || 1100);
     const measures = new Measures(ctx, "perf-switch");
     const report = { commands: costs, widths: {} };
-    const switchTo = async (v) => {
+    const switchTo = async (v, rest = 0) => {
       // A click on the row open would close it.
       if (await app.js(`return !!document.querySelector('.vod.selected[data-key="' + arguments[0] + '"]')`, v.key))
         return null;
       await sleep(400);
-      return app.js(SWITCH, v.key, v.paneText, PARTS, WATCH_MS, JANK_MS);
+      return app.js(SWITCH, v.key, v.paneText, PARTS, WATCH_MS, JANK_MS, rest);
     };
     for (const width of widths) {
       const got = await resizeInner(app, width, height);
@@ -363,6 +380,11 @@ export default {
       // Each opened once first: the first visit reads what later ones have kept.
       await switchTo(Z);
       for (const v of [A, B, C, L]) await go("first visit", Z, v).then(() => switchTo(Z));
+      if (width === widths[0])
+        for (const v of ["heavy D", "heavy E", "heavy F"].map((n) => vods[n])) {
+          note("rested first visit", Z, v, await switchTo(v, 400));
+          await switchTo(Z);
+        }
       const order = [A, B, C];
       for (let i = 0; i < TIMES + 1; i++) await go("heavy to heavy", order[i % 3], order[(i + 1) % 3]);
       await switchTo(A);

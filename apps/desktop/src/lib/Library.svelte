@@ -39,6 +39,8 @@
   import Popover from "./Popover.svelte";
   import { offers } from "./offers.svelte";
   import { DRAG_SLOP } from "./dragout";
+  import { readAhead } from "./readAhead";
+  import { restOver } from "./resting";
   import { keyHint } from "./keys.svelte";
   import { count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
 
@@ -296,6 +298,29 @@
     carryEntries(from, e.clientX, e.clientY);
   }
 
+  // A VOD's row the pointer rests on is read ahead (readAhead.ts), so a
+  // click on it opens it with its transcript, marks and chat at hand; never
+  // the one open, nor while something's carried or dragged (a button held
+  // is no rest: resting.ts `restOver`).
+  function restedOn(row: LibraryRow) {
+    if (row.kind !== "vod" || row.vod.id === selectedId) return;
+    if (press || clips.carryingAny || draggingOut()) return;
+    void readAhead(row.vod).catch(() => {});
+  }
+  // And once one is open and has settled, the VODs either side of it, the next to be opened with ↑ and ↓.
+  const AROUND_AFTER = 1500;
+  $effect(() => {
+    const id = selectedId;
+    if (id === null) return;
+    const timer = setTimeout(() => {
+      const at = shown.findIndex((r) => r.kind === "vod" && r.vod.id === id);
+      if (at < 0) return;
+      for (const row of [shown[at - 1], shown[at + 1]])
+        if (row?.kind === "vod") void readAhead(row.vod).catch(() => {});
+    }, AROUND_AFTER);
+    return () => clearTimeout(timer);
+  });
+
   // Transcribe on a VOD picked with others that can be: hovered, they all
   // light up; clicked, they're all asked for, in the order picked.
   const toTranscribe = $derived(chosenToTranscribe(rows));
@@ -507,6 +532,7 @@
           else onopenedit(row.edit.id);
         }}
         onpointerdown={(e) => onRowDown(e, row, key)}
+        use:restOver={() => restedOn(row)}
         oncontextmenu={(e) => row.kind === "vod" && openMenu(e, row.vod)}
       >
         {#if n !== null}<span class="order row-order">{n}</span>{/if}

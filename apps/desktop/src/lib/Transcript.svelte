@@ -21,7 +21,17 @@
   import { Marks } from "./marks.svelte";
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
-  import { HEAD_HEIGHT, buildRows, linesFrom, linesSpan, messagesIn, nearestLine, type Row } from "./rows";
+  import {
+    CHAT_BINS,
+    CHAT_SHOWN,
+    HEAD_HEIGHT,
+    buildRows,
+    linesFrom,
+    linesSpan,
+    messagesIn,
+    nearestLine,
+    type Row,
+  } from "./rows";
   import { shownGaps, statusLabel, type Gap } from "./stretches";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { cuts } from "./cuts.svelte";
@@ -493,9 +503,8 @@
   }
   $effect(() => () => resizes?.disconnect());
 
-  // A row shows this many messages at first, so a burst of chat doesn't push
-  // the transcript apart; each "more" shows this many more.
-  const SHOWN = 8;
+  // A row shows CHAT_SHOWN messages at first (rows.ts); each "more" shows this many more.
+  const SHOWN = CHAT_SHOWN;
   const MORE = 200;
   let windows = $state(new Map<string, ChatWindow>());
   /** Windows to fetch again: chat arrived since (a fetch is under way). */
@@ -618,7 +627,7 @@
   }
 
   // The chat as a whole: how many messages, how busy each stretch was, and the events.
-  const BINS = 1000;
+  const BINS = CHAT_BINS;
   let mapDuration = $derived(Math.max(duration, lines.at(-1)?.start ?? 0));
   /** The counts, and with `events` the subs, gifts and tips too, which
    *  otherwise keep what was had: while a fetch is saving, they're a megabyte
