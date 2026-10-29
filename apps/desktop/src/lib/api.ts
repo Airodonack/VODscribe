@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { forget, kept, keptEach } from "./kept";
 
 /** A request's status, or a VOD's (the request its row shows; with none,
  *  "done" if all of it is transcribed, else "none"). */
@@ -568,7 +569,7 @@ export const api = {
   /** Loudness, ten levels a second (crates/core `peaks`); empty if unknown. */
   peaks: (id: number) => invoke<ArrayBuffer>("peaks", { id }).then((b) => new Uint8Array(b)),
   frameRate: (id: number) => invoke<number | null>("frame_rate", { id }),
-  captions: (vodId: number) => invoke<Cue[]>("captions", { vodId }),
+  captions: (vodId: number) => keptRead(vodId, "captions", () => invoke<Cue[]>("captions", { vodId })),
   /** Edit (any clip) `id`'s captions, on its timeline. */
   editCaptions: (id: number) => invoke<Cue[]>("edit_captions", { id }),
   /** Edit (any clip) `id`'s transcript, on its timeline: only what plays. */
@@ -583,7 +584,7 @@ export const api = {
     invoke<Clip>("add_edit_clip", { editId, from, to, shown }),
   /** Makes each of `ranges` of edit `editId`'s timeline a clip, in order, as one change. */
   addEditClips: (editId: number, ranges: [number, number][]) => invoke<Clip[]>("add_edit_clips", { editId, ranges }),
-  listMarks: (vodId: number) => invoke<Mark[]>("list_marks", { vodId }),
+  listMarks: (vodId: number) => keptRead(vodId, "marks", () => invoke<Mark[]>("list_marks", { vodId })),
   /** Asks the file host again whether a VOD's annotations are published; `asked` is false when nothing was:
    *  the VOD can't have any (`can_have`: only Twitch's, YouTube's and Kick's can), or Settings turned asking off. */
   checkAnnotations: (vodId: number) =>
@@ -605,16 +606,16 @@ export const api = {
   addEditMark: (editId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     invoke<Mark>("add_edit_mark", { editId, time, kind, text }),
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
-    invoke<Mark>("add_mark", { vodId, time, kind, text }),
-  setMarkText: (id: number, text: string | null) => invoke<void>("set_mark_text", { id, text }),
+    marking(invoke<Mark>("add_mark", { vodId, time, kind, text })),
+  setMarkText: (id: number, text: string | null) => marking(invoke<void>("set_mark_text", { id, text })),
   /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
   resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** The view open (an edit or a VOD's), for the history: what changes are made from. */
   setView: (view: Doc | null) => invoke<void>("set_view", { view }),
   /** Undoes the newest change in `view`'s history (or one made from it); null if there's none. */
-  undo: (view: Doc) => invoke<Undone | null>("undo", { view }),
+  undo: (view: Doc) => marking(invoke<Undone | null>("undo", { view })),
   /** Redoes what was undone last in `view`'s history. */
-  redo: (view: Doc) => invoke<Undone | null>("redo", { view }),
+  redo: (view: Doc) => marking(invoke<Undone | null>("redo", { view })),
   /** Whether the app's own player can play here (a native screen in the window). */
   playerAvailable: () => invoke<boolean>("player_available"),
   /** Opens VOD `id`'s file in the app's own player at `at` seconds, playing if `play`. */
@@ -691,10 +692,10 @@ export const api = {
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
   dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
-  moveMark: (id: number, time: number) => invoke<void>("move_mark", { id, time }),
-  deleteMark: (id: number) => invoke<void>("delete_mark", { id }),
+  moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
+  deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
-  cancelMark: (id: number) => invoke<void>("cancel_mark", { id }),
+  cancelMark: (id: number) => marking(invoke<void>("cancel_mark", { id })),
   addClip: (vodId: number, start: number, end: number, shown = true) =>
     invoke<Clip>("add_clip", { vodId, start, end, shown }),
   /** Makes each of `ranges` of VOD `vodId` a clip in its clip bar, in order, as one change. */
@@ -772,19 +773,22 @@ export const api = {
   /** A URL that plays Twitch clip `slug`'s video, signed for a while. */
   twitchClipVideo: (slug: string) => invoke<string>("twitch_clip_video", { slug }),
   /** The transcript's lines. */
-  transcript: (vodId: number) => invoke<Line[]>("transcript", { vodId }),
+  transcript: (vodId: number) => keptRead(vodId, "lines", () => invoke<Line[]>("transcript", { vodId })),
   /** The lines starting from `from` to before `to` (null: on to the end): a stretch's, as it's transcribed. */
   transcriptRange: (vodId: number, from: number, to: number | null) =>
     invoke<Line[]>("transcript", { vodId, from, to }),
   /** What of a VOD is transcribed and asked to be, in time order. */
-  transcriptStretches: (vodId: number) => invoke<Stretch[]>("transcript_stretches", { vodId }),
+  transcriptStretches: (vodId: number) =>
+    keptRead(vodId, "stretches", () => invoke<Stretch[]>("transcript_stretches", { vodId })),
   /** Asks for `start`..`end` (null: to the end) of a VOD to be transcribed. */
   transcribeStretch: (vodId: number, start: number, end: number | null) =>
     invoke<Stretch>("transcribe_stretch", { vodId, start, end }),
   /** A VOD's chat count, messages per each of `bins` stretches of `duration`, and its
    *  events; `events: false` leaves those out (`events` is then null). */
   chatOverview: (vodId: number, duration: number, bins: number, events = true) =>
-    invoke<ChatOverview & { events: ChatLine[] | null }>("chat_overview", { vodId, duration, bins, events }),
+    keptRead(vodId, `chat overview ${duration} ${bins} ${events}`, () =>
+      invoke<ChatOverview & { events: ChatLine[] | null }>("chat_overview", { vodId, duration, bins, events }),
+    ),
   /** Edit `id`'s chat as a whole, on its timeline, as `chatOverview` gives a VOD's. */
   editChatOverview: (id: number, duration: number, bins: number, events = true) =>
     invoke<ChatOverview & { events: ChatLine[] | null }>("edit_chat_overview", { id, duration, bins, events }),
@@ -792,8 +796,14 @@ export const api = {
   editChatWindows: (id: number, ranges: [number, number][], cap: number) =>
     invoke<ChatWindow[]>("edit_chat_windows", { id, ranges, cap }),
   /** For each [from, to) in seconds, its first `cap` messages and how many it has. */
-  chatWindows: (vodId: number, ranges: [number, number][], cap: number) =>
-    invoke<ChatWindow[]>("chat_windows", { vodId, ranges, cap }),
+  chatWindows: (vodId: number, ranges: [number, number][], cap: number) => {
+    watchKept();
+    return keptEach(
+      vodId,
+      ranges.map(([from, to]) => `chat window ${from} ${to} ${cap}`),
+      (missing) => invoke<ChatWindow[]>("chat_windows", { vodId, ranges: missing.map((i) => ranges[i]), cap }),
+    );
+  },
   /** The emotes in a VOD's chat, as [name, image URL]. */
   chatEmotes: (vodId: number) => invoke<[string, string][]>("chat_emotes", { vodId }),
   /** `providers`: the ids turned on, in priority order. */
@@ -873,6 +883,37 @@ export const events = {
 };
 
 export type { UnlistenFn };
+
+// A VOD's reads kept for the session (kept.ts), each let go when what it
+// read changes: its transcript and captions as it's transcribed, its chat as
+// it's fetched, everything when its annotations are imported or it's
+// removed or changed ("vod": its status, what's transcribed, its chat's), and
+// every VOD's marks at a change to any mark here (made by mark id) or an undo.
+let watching = false;
+function watchKept() {
+  if (watching) return;
+  watching = true;
+  const isChat = (key: string) => key.startsWith("chat ");
+  const isMarks = (key: string) => key === "marks";
+  void events.vod((vod) => forget(vod.id, (key) => !isMarks(key)));
+  void events.vodProgress((id) => forget(id, (key) => !isMarks(key) && !isChat(key)));
+  void events.chatSaved((id) => forget(id, isChat));
+  void events.annotationsImported((id) => forget(id));
+  void events.vodRemoved((id) => forget(id));
+  void events.restored(() => forget(null, isMarks));
+}
+// Watched from the start, so a change is let go of before what shows it
+// (subscribed later) reads it again.
+watchKept();
+function keptRead<T>(vodId: number, key: string, read: () => Promise<T>): Promise<T> {
+  watchKept();
+  return kept(vodId, key, read);
+}
+/** A change to marks: every VOD's kept marks let go, before it and once it's made. */
+function marking<T>(change: Promise<T>): Promise<T> {
+  forget(null, (key) => key === "marks");
+  return change.finally(() => forget(null, (key) => key === "marks"));
+}
 
 const thumbUrls = new Map<string, Promise<string>>();
 
