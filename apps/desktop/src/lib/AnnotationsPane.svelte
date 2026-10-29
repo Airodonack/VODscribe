@@ -64,6 +64,7 @@
     vod,
     edit = null,
     full = false,
+    visible = true,
     onplay,
     review,
     reviewVod,
@@ -74,6 +75,8 @@
     edit?: number | null;
     /** A column of the window's own, its head as tall as the toolbar beside it. */
     full?: boolean;
+    /** Whether it shows: kept hidden as the transcript's other tab, it's brought up to date as it shows again. */
+    visible?: boolean;
     /** Plays the VOD (or the edit) from `time`. */
     onplay: (time: number) => void;
     /** What goes under each chapter and highlight row (the website's review controls). */
@@ -141,7 +144,7 @@
     const chapter = chapterEls[current];
     const box = scroller;
     void playingIds;
-    if (!box) return;
+    if (!box || !visible) return;
     void tick().then(() => {
       const el = box.querySelector<HTMLElement>(".pane-row.highlight.lit") ?? chapter;
       if (!el) return;

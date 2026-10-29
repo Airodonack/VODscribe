@@ -672,9 +672,25 @@
   // (Before the window's width is known, neither.)
   const tabbed = $derived(paneDoc !== null && appWidth > 0 && appWidth < columnFrom);
   const inTab = $derived(tabbed && paneShown && tab === "annotations");
+  // Once the pane has been the open tab for a VOD (or the pointer rests on
+  // its segment), it stays laid out, hidden, while the transcript is: the
+  // switch shows one and hides the other, as the transcript is kept; made
+  // afresh at every switch, the pane of a long VOD took a moment to come.
+  const paneKey = $derived(paneDoc ? docKey(paneDoc) : null);
+  let paneKeptFor = $state<string | null>(null);
+  $effect(() => {
+    if (inTab) paneKeptFor = paneKey;
+  });
+  const tabPane = $derived(tabbed && paneShown && (inTab || (paneKey !== null && paneKeptFor === paneKey)));
   const paneTabs = $derived<PaneTabs | null>(
     tabbed
-      ? { open: inTab ? "annotations" : "transcript", label: paneLabel, enabled: paneShown, onopen: openTab }
+      ? {
+          open: inTab ? "annotations" : "transcript",
+          label: paneLabel,
+          enabled: paneShown,
+          onopen: openTab,
+          onnear: () => (paneKeptFor = paneKey),
+        }
       : null,
   );
   let pressed: { el: HTMLElement; at: number } | null = null;
@@ -794,12 +810,12 @@
 />
 
 <!-- The chapters and highlights pane: the window's right column, or the transcript's tab. -->
-{#snippet annotationsPane(full: boolean)}
+{#snippet annotationsPane(full: boolean, visible = true)}
   {#if paneDoc?.kind === "edit"}
-    <AnnotationsPane vod={null} edit={paneDoc.id} {full} onplay={(time) => edits.playAt(time)} />
+    <AnnotationsPane vod={null} edit={paneDoc.id} {full} {visible} onplay={(time) => edits.playAt(time)} />
   {:else if selected}
     {@const vod = selected}
-    <AnnotationsPane {vod} {full} onplay={(time) => play(vod.id, time)} {review} {reviewVod} />
+    <AnnotationsPane {vod} {full} {visible} onplay={(time) => play(vod.id, time)} {review} {reviewVod} />
   {/if}
 {/snippet}
 
@@ -981,9 +997,15 @@
             </div>
           {/if}
         </div>
-        {#if inTab}
-          <div class="pane" id="annotations-panel" role="tabpanel" aria-labelledby="tab-annotations">
-            {@render annotationsPane(false)}
+        {#if tabPane}
+          <div
+            class="pane"
+            class:away={!inTab}
+            id="annotations-panel"
+            role="tabpanel"
+            aria-labelledby="tab-annotations"
+          >
+            {@render annotationsPane(false, inTab)}
           </div>
         {/if}
       </div>
@@ -1054,6 +1076,10 @@
 
   .pane > :global(aside) {
     flex: 1;
+  }
+
+  .pane.away {
+    display: none;
   }
 
   /* The pane in the transcript's place: of the transcript, only its heading

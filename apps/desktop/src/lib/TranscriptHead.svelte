@@ -9,6 +9,8 @@
     /** The pane has something to show; without, its segment is greyed and can't be picked. */
     enabled: boolean;
     onopen: (to: "transcript" | "annotations") => void;
+    /** The pointer rests on the pane's segment: it may be opened next. */
+    onnear?: () => void;
   };
 </script>
 
@@ -27,6 +29,7 @@
   import Icon from "./Icon.svelte";
   import Spinner from "./Spinner.svelte";
   import Timeline from "./Timeline.svelte";
+  import { restOver } from "./resting";
 
   // The transcript view's header (Transcript.svelte), across the transcript and
   // the minimap: how far transcription is, the chat's status and its Chat
@@ -142,6 +145,7 @@
           aria-controls="annotations-panel"
           tabindex={tabs.open === "annotations" ? 0 : -1}
           disabled={!tabs.enabled}
+          use:restOver={() => tabs.onnear?.()}
           title={tabs.enabled ? undefined : "No chapters or highlights here"}
           onclick={() => tabs.onopen("annotations")}
           onkeydown={onSwitchKey}>{tabs.label}</button

@@ -462,7 +462,10 @@
       const el = entry.target as HTMLElement;
       const index = Number(el.dataset.index);
       const row = rows[index];
-      if (!row || !el.isConnected) continue;
+      // Hidden (the pane in the transcript's place), a row has no height of
+      // its own: kept as it was, rather than every row laid out as 0 px
+      // tall, all of them then laid out, and measured again on the way back.
+      if (!row || !el.isConnected || !el.getClientRects().length) continue;
       measureHeads(el, index);
       const key = heightKeys[index];
       const before = measured.get(key) ?? estimate(row, index);

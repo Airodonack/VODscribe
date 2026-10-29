@@ -34,7 +34,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - The time beside a VOD's title, which copies a link to that moment on its site, now shows where the playhead is and copies that, in the app and on the website. It stayed on the moment you last jumped to, and a VOD played from its start never showed it at all.
   - In the library, a click on a row and then a Ctrl-click (⌘-click on a Mac) on another picks both, as in a file manager. Only the second was picked, and a click on a row left what was picked before it as it was.
   - Alt-dragging (Option-dragging on a Mac) the stretch between two cuts inside one of an edit's pieces, such as a clip put in it, carries just that stretch. It carried the whole piece.
-  - Opening another VOD moves less on screen while it loads: the caption strip under a site's player stays where it is, where it vanished for a moment and came back, pushing the timeline and the transcript down; and the transcript no longer says the whole VOD is "not transcribed" for an instant before its lines appear.
+  - Opening another VOD moves less on screen while it loads: the caption strip under a site's player stays where it is, where it vanished for a moment and came back, pushing the timeline and the transcript down; and the transcript no longer says the whole VOD is "not transcribed" for an instant before its lines appear. Nothing moves any more as the chat and the chapters and highlights arrive. A VOD you've opened before opens with everything in place at once, and so do the VOD your pointer rests on in the library and the ones next to the one playing, which are read ahead. On a narrower window, the Transcript | Highlights switch changes at once.
 
 ## 0.6.0 — 2026-10-24
 
