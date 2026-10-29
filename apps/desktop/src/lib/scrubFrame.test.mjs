@@ -2,25 +2,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { edgeShows } from "./media.ts";
-import { GAP, nearWithin, place } from "./scrubFrame.ts";
+import { nearWithin, place } from "./scrubFrame.ts";
 
-test("the thumbnail and tip sit right of the line, flipping left at the timeline's end", () => {
+test("the thumbnail and tip are centred on the line, shifted in whole at the timeline's ends", () => {
   // 80 px of frame, a 40 px tip, on an 800 px timeline.
-  assert.deepEqual(place(100, 800, 40, 80), { frame: 100 + GAP, tip: 100 + GAP + 80 + GAP, flipped: false });
-  // Just fits.
-  const fits = 800 - GAP - (80 + GAP + 40);
-  assert.equal(place(fits, 800, 40, 80).flipped, false);
-  // Past it: on the left, the frame still nearest the line.
-  const flipped = place(fits + 1, 800, 40, 80);
-  assert.equal(flipped.flipped, true);
-  assert.equal((flipped.frame ?? 0) + 80 + GAP, fits + 1);
-  assert.equal(flipped.tip + 40 + GAP, flipped.frame);
-  // Wider than the timeline's left: kept inside it.
-  assert.equal(place(100, 120, 40, 80).tip, 0);
+  assert.deepEqual(place(100, 800, 40, 80), { frame: 60, tip: 80 });
+  // Near the left end: the frame's left edge on it, the tip still centred on the frame.
+  assert.deepEqual(place(10, 800, 40, 80), { frame: 0, tip: 20 });
+  // Near the right end, likewise.
+  assert.deepEqual(place(795, 800, 40, 80), { frame: 720, tip: 740 });
+  // A tip wider than the frame (a narrow picture) is what's kept inside.
+  assert.deepEqual(place(5, 800, 60, 20), { frame: 20, tip: 0 });
+  // A timeline narrower than the frame: its left end wins.
+  assert.equal(place(30, 60, 40, 80).frame, 0);
 });
 
 test("with no thumbnail the tip is centred on the line, kept off the ends", () => {
-  assert.deepEqual(place(100, 800, 40, 0), { frame: null, tip: 80, flipped: false });
+  assert.deepEqual(place(100, 800, 40, 0), { frame: null, tip: 80 });
   assert.equal(place(3, 800, 40, 0).tip, 28 - 20);
   assert.equal(place(799, 800, 40, 0).tip, 800 - 28 - 20);
 });

@@ -11,15 +11,17 @@
 // shows the storyboard's nearest frame, then, the player open and the
 // pointer resting, the exact frame. A selection begun with I keeps through
 // a click on the timeline, for O there; its edges show their frames: its
-// start the frame there, its end the frame before. Dragging the
+// start the frame there, its end the frame before. The thumbnail is
+// centred on the pointer, the time tip across its lower edge, both inside
+// the timeline's bar, shifted in whole at its ends rather than cut. Dragging the
 // playhead shows it; a finger doesn't. Rested at a moment and played from
 // there, the player takes the decoder that previewed it over: no new one
 // starts, and the screen shows the colour from there on.
 //
 // A file with a keyframe only every few seconds (as a screen recording
 // has) shows, anywhere between two, the keyframe at or before the pointer,
-// however far back: never nothing, the tip beside it never moving back
-// over the line. A file with no picture shows the tip alone.
+// however far back: never nothing, the tip over it never moving back up
+// to the bar's top. A file with no picture shows the tip alone.
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -65,7 +67,20 @@ const THUMBNAIL = `
   const [r, g, b] = canvas.getContext("2d").getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data;
   const tip = document.querySelector(".timeline .tip");
   return { time: Number(canvas.dataset.time), exact: canvas.dataset.exact === "true", rgb: [r, g, b],
-           tip: tip?.textContent.trim() ?? null, beside: !!tip?.classList.contains("beside") };`;
+           tip: tip?.textContent.trim() ?? null, over: !!tip?.classList.contains("over") };`;
+
+/** In the page: where the pointer at `time` is, and the boxes of the timeline's bar, the thumbnail and the tip. */
+const PLACED = `
+  const bar = document.querySelector(".scrubber");
+  const box = bar.getBoundingClientRect();
+  const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+  const rect = (el) => {
+    if (!el) return null;
+    const { left, right, top, bottom, width } = el.getBoundingClientRect();
+    return { left, right, top, bottom, width };
+  };
+  return { x, bar: rect(bar), frame: rect(document.querySelector(".timeline .scrub-frame:not(.none)")),
+           tip: rect(document.querySelector(".timeline .tip")) };`;
 
 /** In the page: the pointer moved over the timeline to `time` (arguments
  *  [0]), then the first thumbnail it shows (as THUMBNAIL reads it) that is
@@ -103,10 +118,10 @@ const HOVER = `
     move("pointermove", time);
   });`;
 
-/** In the page: where the tip is, and whether it's beside a thumbnail (or its box). */
+/** In the page: where the tip is, and whether it's over a thumbnail (or its box). */
 const TIP = `
   const tip = document.querySelector(".timeline .tip");
-  return tip && { text: tip.textContent.trim(), beside: tip.classList.contains("beside"),
+  return tip && { text: tip.textContent.trim(), over: tip.classList.contains("over"),
                   box: !!document.querySelector(".timeline .scrub-frame:not(.none)") };`;
 
 export default {
@@ -114,7 +129,15 @@ export default {
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     "thumbnail-at-the-end":
-      "Inside the timeline, beside the line where the pointer is, a small thumbnail of the video shows a flat yellow frame, with a dark time tip reading 0:03 next to it; both sit within the timeline, not over the video picture above it, and a stretch from about 0:02 to 0:04 is marked as selected.",
+      "Inside the timeline, centred on the line where the pointer is (the selection's right end), a small slightly see-through thumbnail of the video shows a flat yellow frame, with a dark time tip reading 0:03 centred across its bottom edge; both sit within the timeline's bar, not over the video picture above it and not off to one side of the pointer, and a stretch from about 0:02 to 0:04 is marked as selected.",
+    "light-middle":
+      "Light theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits centred on the thin hover line, inside the timeline's bar, with a dark time tip reading 0:10 centred across its bottom edge; neither is beside the line or over the video picture above the timeline.",
+    "light-end":
+      "Light theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar with its right edge at the bar's right end, whole, not cut off, with a dark time tip reading 0:19 centred across its bottom edge.",
+    "dark-middle":
+      "Dark theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits centred on the thin hover line, inside the timeline's bar, with a light time tip reading 0:10 centred across its bottom edge, readable against the dark page.",
+    "dark-end":
+      "Dark theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar with its right edge at the bar's right end, whole, not cut off, with a light time tip reading 0:19 centred across its bottom edge.",
   },
   async run(app, ctx) {
     const file = colours(path.join(ctx.out, "fixtures"));
@@ -162,6 +185,31 @@ export default {
         15_000,
         { every: 100 },
       );
+    // The thumbnail centred on the pointer at `time` (within 2 px), shifted
+    // in whole at the bar's ends, inside the bar; the tip centred on it,
+    // across its lower edge, inside the bar too. Says whether it was shifted.
+    const placed = async (what, time) => {
+      const { x, bar, frame, tip } = await app.js(PLACED, time);
+      const at = `${what}: the pointer at ${x.toFixed(1)}, the bar ${JSON.stringify(bar)}, the thumbnail ${JSON.stringify(frame)}, the tip ${JSON.stringify(tip)}`;
+      if (!frame || !tip) throw new Error(`${at}: no thumbnail or tip`);
+      const inside = (r) =>
+        r.left >= bar.left - 0.5 &&
+        r.right <= bar.right + 0.5 &&
+        r.top >= bar.top - 0.5 &&
+        r.bottom <= bar.bottom + 0.5;
+      if (!inside(frame)) throw new Error(`${at}: the thumbnail passes the bar`);
+      if (!inside(tip)) throw new Error(`${at}: the tip passes the bar`);
+      const half = Math.max(frame.width, tip.width) / 2;
+      const want = Math.min(Math.max(x, bar.left + half), bar.right - half);
+      const middle = (frame.left + frame.right) / 2;
+      if (Math.abs(middle - want) > 2)
+        throw new Error(`${at}: the thumbnail's middle is ${middle.toFixed(1)}, not ${want.toFixed(1)}`);
+      if (Math.abs((tip.left + tip.right) / 2 - middle) > 1)
+        throw new Error(`${at}: the tip isn't centred on the thumbnail`);
+      if (!(tip.top < frame.bottom && tip.bottom >= frame.bottom))
+        throw new Error(`${at}: the tip isn't across the thumbnail's lower edge`);
+      return Math.abs(want - x) > 0.5;
+    };
 
     // 2. Hovering 2.5 s: first the storyboard's frame, the keyframe at 2 s,
     //    blue. The player is open (it opens with the file); the exact frame
@@ -219,6 +267,7 @@ export default {
     await pointer("pointermove", 4.4);
     await pointer("pointermove", 4 + half);
     const end = await shows("the end's frame while dragging it", "yellow", { exact: true, tip: "0:03" });
+    await placed("dragging the end", 4 + half);
     await ctx.checkpoint("thumbnail-at-the-end");
     await pointer("pointerup", 4 + half);
     ctx.log(`the end at 4 s: ${named(end.rgb)} at ${end.time.toFixed(4)} s, tip ${end.tip}`);
@@ -227,6 +276,7 @@ export default {
     await pointer("pointermove", 1.6);
     await pointer("pointermove", 2 + half);
     const start = await shows("the start's frame while dragging it", "blue", { exact: true, tip: "0:02" });
+    await placed("dragging the start", 2 + half);
     await pointer("pointerup", 2 + half);
     ctx.log(`the start at 2 s: ${named(start.rgb)} at ${start.time.toFixed(4)} s, tip ${start.tip}`);
     if (Math.abs(start.time - 2) > 1e-6) throw new Error(`the start shows ${start.time}, not 2 s`);
@@ -236,6 +286,7 @@ export default {
     await pointer("pointerdown", 0.5);
     await pointer("pointermove", 1.5);
     const dragged = await shows("the thumbnail while the playhead's dragged", "lime");
+    await placed("dragging the playhead", 1.5);
     await pointer("pointerup", 1.5);
     ctx.log(`dragging the playhead to 1.5 s: ${named(dragged.rgb)}`);
 
@@ -286,7 +337,8 @@ export default {
 
     // 7. A keyframe only every five seconds: hovering anywhere shows first
     //    the keyframe at or before the pointer (the one its picture there is
-    //    made from), however far back, and the tip stays beside it; the
+    //    made from), however far back, centred on the pointer (shifted in
+    //    whole near the ends), and the tip stays over its lower edge; the
     //    exact frame follows once the pointer rests. First each keyframe's
     //    own moment, so the storyboard is all made; then across the whole
     //    timeline.
@@ -310,6 +362,7 @@ export default {
       await shows(`the keyframe at ${k} s`, colourAt(k));
     }
     const missed = [];
+    let shifted = 0;
     for (let t = 0.25; t < 20; t += 0.25) {
       const want = keyframeOf(t);
       const seen = await app.js(HOVER, t, want, false, 2_000);
@@ -317,11 +370,16 @@ export default {
         missed.push(
           `${t} s (${seen.last ? `the ${seen.last.exact ? "exact " : ""}frame at ${seen.last.time} s` : "no thumbnail"})`,
         );
-      else if (named(seen.rgb) !== colourAt(want) || !seen.beside)
-        missed.push(`${t} s (${named(seen.rgb)}, the tip ${seen.beside ? "beside" : "centred"})`);
+      else if (named(seen.rgb) !== colourAt(want) || !seen.over)
+        missed.push(`${t} s (${named(seen.rgb)}, the tip ${seen.over ? "over it" : "alone"})`);
+      else if (await placed(`hovering ${t} s`, t)) shifted++;
     }
     if (missed.length) throw new Error(`hovering, no keyframe at or before the pointer at ${missed.join(", ")}`);
-    ctx.log(`hovering 0.25-19.75 s every 0.25 s: each shows the keyframe at or before it, ${GOP} s apart`);
+    // The ends' moments are within the thumbnail's half-width of the bar's ends.
+    if (!shifted) throw new Error("hovering near the timeline's ends, the thumbnail was never shifted in");
+    ctx.log(
+      `hovering 0.25-19.75 s every 0.25 s: each shows the keyframe at or before it, ${GOP} s apart, centred on the pointer (${shifted} shifted in at the ends), the tip across its lower edge`,
+    );
     // The hover elements at the start, the middle and the end, in each theme.
     for (const theme of ["Light", "Dark"]) {
       await app.openSettings("Appearance");
@@ -343,6 +401,7 @@ export default {
       ]) {
         await pointer("pointermove", t);
         await shows(`the keyframe at ${keyframeOf(t)} s`, colourAt(keyframeOf(t)));
+        await placed(`hovering ${t} s, ${theme.toLowerCase()}`, t);
         await ctx.checkpoint(`${theme.toLowerCase()}-${where}`);
       }
     }
@@ -359,8 +418,8 @@ export default {
     await pointer("pointermove", 2.5);
     await sleep(500);
     const alone = await app.js(TIP);
-    ctx.log(`a sound file: the tip ${alone?.text}, ${alone?.beside ? "beside a box" : "alone"}`);
-    if (!alone || alone.beside || alone.box) throw new Error(`a sound file's tip: ${JSON.stringify(alone)}`);
+    ctx.log(`a sound file: the tip ${alone?.text}, ${alone?.over ? "over a box" : "alone"}`);
+    if (!alone || alone.over || alone.box) throw new Error(`a sound file's tip: ${JSON.stringify(alone)}`);
     await ctx.checkpoint("no-picture");
   },
 };

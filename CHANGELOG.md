@@ -39,6 +39,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - A clip changed in the editor, so that its file has its chapters, is made again when you add a chapter in it, rename one or move one, as it is when you undo any of those. Its file kept the chapters it had before.
   - Pressing C twice on the same stretch of an edit makes one clip, as on a VOD, and pressing it again on a clip that failed tries it again. Each press made another clip.
   - On a Kick VOD, the time beside its title copies the VOD's link without a time, as Kick's links can't say one, and pointing at it says so. The link had a time Kick ignored.
+  - The small picture on the timeline now shows centred on the pointer, with the time across its lower edge, where it no longer looks like a hover that didn't go away. It sat to the right of the pointer, where a dragged clip's picture also shows. Near either end of the timeline it shifts to stay whole inside it.
 
 ## 0.6.0 — 2026-10-24
 

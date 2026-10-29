@@ -40,10 +40,11 @@
   // a spinner and how much is.
   //
   // Hovering, scrubbing or dragging a selection's edge shows a thumbnail of
-  // that moment beside the time tip (ScrubFrame.svelte), for what plays from
-  // a file here: a selection's start shows its first frame, its end the
-  // frame before it (the last one in), as the picture does while it's
-  // dragged. Not for a finger, which has no hover.
+  // that moment (ScrubFrame.svelte) centred on the pointer or the edge, the
+  // time tip across its lower edge, for what plays from a file here: a
+  // selection's start shows its first frame, its end the frame before it
+  // (the last one in), as the picture does while it's dragged. Not for a
+  // finger, which has no hover.
 
   import { onMount, untrack } from "svelte";
   import { api, events, type Stretch, type Vod } from "./api";
@@ -776,7 +777,7 @@
   });
   $effect(() => () => exact.clear());
   // The thumbnail's width, kept from one hover to the next (an empty box
-  // until its frame comes), so the tip goes beside it from the first move;
+  // until its frame comes), so the tip goes over it from the first move;
   // another VOD or edit starts with none.
   let frameWidth = $state(0);
   $effect(() => {
@@ -784,7 +785,7 @@
     untrack(() => (frameWidth = 0));
   });
   let tipWidth = $state(0);
-  const beside = $derived(
+  const spot = $derived(
     place(hover ?? 0, width, tipWidth, framed && hoverTime !== null && hover !== null ? frameWidth : 0),
   );
 
@@ -1174,7 +1175,7 @@
           doc={memo}
           time={tipTime}
           within={nearWithin(span, width)}
-          left={beside.frame ?? 0}
+          left={spot.frame ?? 0}
           exact={exact.frame}
           bind:shown={frameWidth}
         />
@@ -1183,10 +1184,10 @@
         class="tip"
         class:wide={!!hoverMark || !!hoverActivity}
         class:noted={!!hoverMark?.note}
-        class:beside={beside.frame !== null}
+        class:over={spot.frame !== null}
         bind:offsetWidth={tipWidth}
-        style:left={beside.frame !== null
-          ? `${beside.tip}px`
+        style:left={spot.frame !== null
+          ? `${spot.tip}px`
           : `${Math.min(Math.max(hover, TIP_INSET), width - TIP_INSET)}px`}
         >{#if hoverMark}<strong>{label(hoverMark)}</strong>
           {formatTime(placed(hoverMark))}{#if endOf(hoverMark) !== null}–{formatTime(
@@ -1564,8 +1565,12 @@
     opacity: 0.35;
   }
 
-  /* Beside the thumbnail, rather than centred on the hover line. */
-  .tip.beside {
+  /* Across the thumbnail's lower edge, centred on it (placed whole by
+     place()), the time over the picture's bottom as a video site lays it,
+     and no lower than the bar's own bottom. */
+  .tip.over {
+    top: auto;
+    bottom: 0;
     transform: none;
   }
 
@@ -1835,7 +1840,7 @@
     pointer-events: none;
   }
 
-  /* Inside the bar's top edge, as the thumbnail beside it, rather than above
+  /* Inside the bar's top edge, as the thumbnail is, rather than above
      it: above, it would rise into the picture's box, where the app's own
      player draws over the page. In the bar, not over a lane above it, so
      it's where the hover line and the waveform it points at are. */

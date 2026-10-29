@@ -8,8 +8,8 @@
   // request at a time, the newest moment winning. Nothing shows until a
   // frame has (`shown`, kept from one hover to the next); after that, a
   // moment with none (footage not here, the storyboard still being made
-  // there) leaves the box empty in its place, so the tip beside it stays
-  // put rather than jumping back over the line. See-through, so the
+  // there) leaves the box empty in its place, so the tip over its lower edge
+  // stays put rather than jumping back up to the bar's top. See-through, so the
   // waveform under it shows: the timeline's other picture of the video.
   //
   // `exact`, when given, is shown instead of the storyboard's: the player's
@@ -116,9 +116,10 @@
 ></canvas>
 
 <style>
-  /* Inside the timeline's bar, beside the hover line, as the tip is: above
-     it would be the picture's box, where the app's own player draws over
-     the page. Its see-through lets the waveform under it show. */
+  /* Inside the timeline's bar, centred on the hover line, the tip across its
+     lower edge: above it would be the picture's box, where the app's own
+     player draws over the page. Its see-through lets the waveform and the
+     hover line under it show. */
   .scrub-frame {
     position: absolute;
     top: 2px;
