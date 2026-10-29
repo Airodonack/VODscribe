@@ -38,6 +38,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Deleting a VOD with its video while keeping the stretches its clips use turned the subs, gifts and tips in those stretches' chat into plain messages. They stay what they were now, and stretches kept that way while the VOD is still in your library get them back.
   - A clip changed in the editor, so that its file has its chapters, is made again when you add a chapter in it, rename one or move one, as it is when you undo any of those. Its file kept the chapters it had before.
   - Pressing C twice on the same stretch of an edit makes one clip, as on a VOD, and pressing it again on a clip that failed tries it again. Each press made another clip.
+  - On a Kick VOD, the time beside its title copies the VOD's link without a time, as Kick's links can't say one, and pointing at it says so. The link had a time Kick ignored.
 
 ## 0.6.0 — 2026-10-24
 

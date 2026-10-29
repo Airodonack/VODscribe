@@ -401,7 +401,7 @@ export default {
       marloweHead("https://www.twitch.tv/marlowe_live", "twitch.tv/marlowe_live"),
       adaHead,
       { name: "Unknown", link: null, title: "", picture: "no img", initial: true },
-      marloweHead("https://www.twitch.tv/videos/1000000001?t=5s", "Vance's stream at 0:05 · twitch.tv"),
+      marloweHead("https://www.twitch.tv/videos/1000000001?t=0h0m5s", "Vance's stream at 0:05 · twitch.tv"),
       adaHead,
     ];
     for (const [i, h] of heads.entries()) {
@@ -436,7 +436,7 @@ export default {
       10_000,
     ).catch(() => []);
     const castWant = [
-      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar Their stream at 0:15 → https://www.twitch.tv/videos/1000000001?t=15s`,
+      `M ${speakers[0]?.color}: Marlowe (Vance) Streamer · also Mar Their stream at 0:15 → https://www.twitch.tv/videos/1000000001?t=0h0m15s`,
       `A ${speakers[1]?.color}: Ada Friend kick.com/ada_plays → https://kick.com/ada_plays`,
     ];
     if (cast.join(" | ") !== castWant.join(" | ")) wrong.push(`the cast list: ${cast.join(" | ")}`);
@@ -712,7 +712,7 @@ export default {
       {
         tag: "A",
         text: "Marlowe",
-        href: "https://www.twitch.tv/videos/1000000001?t=5s",
+        href: "https://www.twitch.tv/videos/1000000001?t=0h0m5s",
         title: "Vance's stream at 0:05 · twitch.tv",
         focusable: true,
       },

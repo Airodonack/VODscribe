@@ -5,6 +5,7 @@
 // Pure, so Node tests it (povs.test.mjs).
 
 import type { Account, Pov, Video } from "./annotations";
+import { formatTime, linksHaveTime, twitchNumber, twitchTime } from "./platform";
 
 /** `iso` as Unix seconds; null when there's none or it isn't a time. */
 export function unixTime(iso: string | null | undefined): number | null {
@@ -40,33 +41,17 @@ export function povOffset(pov: Pov, at: number): number {
   return Math.min(Math.max(at - start, 0), pov.duration);
 }
 
-/** A time as Twitch's links say it: 3723 → "1h2m3s", 63 → "1m3s", 3 → "3s". */
-export function twitchTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return `${h ? `${h}h` : ""}${h || m ? `${m}m` : ""}${s % 60}s`;
-}
-
 /** A time as the app shows it: 5025 → "1:23:45", 65 → "1:05" (platform.ts `formatTime`). */
-export function clock(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
-}
-
-/** A Twitch video's id as its address has it: without the "v" the app stores it with. */
-const twitchId = (id: string) => id.replace(/^v(?=\d)/, "");
+export const clock = formatTime;
 
 /** The site a video is on, as it's read out: "twitch.tv". */
 export const siteLabel = (platform: Video["platform"]): string =>
   platform === "twitch" ? "twitch.tv" : platform === "kick" ? "kick.com" : "youtube.com";
 
 /**
- * Where `pov` plays from `offset` seconds in, on its site. A Kick video's
- * address has no time of its own (none is documented): it opens at the start.
+ * Where `pov` plays from `offset` seconds in, on its site, as platform.ts
+ * `watchUrl` links a VOD in the library. A Kick video's address has no time
+ * of its own (`linksHaveTime`): it opens at the start.
  */
 export function povUrl(pov: Pov, offset: number): string {
   const { platform, id } = pov.video;
@@ -74,7 +59,7 @@ export function povUrl(pov: Pov, offset: number): string {
   const part = encodeURIComponent;
   switch (platform) {
     case "twitch":
-      return `https://www.twitch.tv/videos/${part(twitchId(id))}?t=${twitchTime(t)}`;
+      return `https://www.twitch.tv/videos/${part(twitchNumber(id))}?t=${twitchTime(t)}`;
     case "kick":
       return `https://kick.com/${part(pov.account.login.toLowerCase())}/videos/${part(id)}`;
     case "youtube":
@@ -85,7 +70,9 @@ export function povUrl(pov: Pov, offset: number): string {
 /** Whether the library's `vod` is `video`: the same site and id, a Twitch id with or without its "v". */
 export function isVideo(vod: { platform: string; platform_id: string }, video: Video): boolean {
   if (vod.platform !== video.platform) return false;
-  return video.platform === "twitch" ? twitchId(vod.platform_id) === twitchId(video.id) : vod.platform_id === video.id;
+  return video.platform === "twitch"
+    ? twitchNumber(vod.platform_id) === twitchNumber(video.id)
+    : vod.platform_id === video.id;
 }
 
 /** Where a link to another point of view goes: whose stream, how far into it, its address, and its tooltip. */
@@ -98,7 +85,7 @@ export type PovLink = { pov: Pov; offset: number; url: string; title: string };
 export function povTitle(pov: Pov, offset: number, here = false): string {
   const where = here
     ? "in your library"
-    : pov.video.platform === "kick"
+    : !linksHaveTime(pov.video.platform)
       ? "kick.com, from its start"
       : siteLabel(pov.video.platform);
   return `${pov.player}'s stream at ${clock(offset)} · ${where}`;

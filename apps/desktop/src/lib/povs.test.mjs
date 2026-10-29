@@ -1,19 +1,23 @@
 // Other points of view (povs.ts, and how a file's are read, annotations.ts): node --test apps/desktop/src/lib/povs.test.mjs
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
 import { parseAnnotations, readPov } from "./annotations.ts";
-import {
-  clock,
-  isVideo,
-  povAt,
-  povLink,
-  povOffset,
-  povTitle,
-  povUrl,
-  sameAccount,
-  twitchTime,
-  unixTime,
-} from "./povs.ts";
+import { watchUrl } from "./platform.ts";
+
+// povs.ts imports "./platform" as the page's bundler finds it; here it is the
+// .ts file it is.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith("./") && !/\\.[a-z]+$/.test(specifier) && context.parentURL?.endsWith(".ts"))
+    return next(specifier + ".ts", context);
+  return next(specifier, context);
+}`),
+);
+const { clock, isVideo, povAt, povLink, povOffset, povTitle, povUrl, sameAccount, unixTime } =
+  await import("./povs.ts");
 
 /** @typedef {import("./annotations").Pov} Pov */
 /** @type {import("./annotations").Account} */
@@ -62,12 +66,7 @@ test("the offset is the same moment, kept inside the stream", () => {
   assert.equal(povOffset(pov, start + 9000), 7200);
 });
 
-test("times as Twitch's links and the app say them", () => {
-  assert.equal(twitchTime(3723), "1h2m3s");
-  assert.equal(twitchTime(3600), "1h0m0s");
-  assert.equal(twitchTime(63.9), "1m3s");
-  assert.equal(twitchTime(3), "3s");
-  assert.equal(twitchTime(-2), "0s");
+test("times as the app says them", () => {
   assert.equal(clock(5025), "1:23:45");
   assert.equal(clock(65), "1:05");
 });
@@ -76,7 +75,7 @@ test("each site's link to a moment of a video", () => {
   assert.equal(povUrl(pov, 3723.6), "https://www.twitch.tv/videos/2906773722?t=1h2m3s", "the id without its v");
   assert.equal(
     povUrl(P({ ...pov, video: { platform: "twitch", id: "123" } }), 5),
-    "https://www.twitch.tv/videos/123?t=5s",
+    "https://www.twitch.tv/videos/123?t=0h0m5s",
   );
   const yt = P({
     ...pov,
@@ -158,4 +157,14 @@ test("a file's points of view are read, and one that can't be is left out", () =
   assert.deepEqual(parseAnnotations(file).povs, [], "a file may leave them out");
   assert.deepEqual(parseAnnotations({ ...file, povs: [ok, { ...ok, duration: -1 }] }).povs, [readPov(ok)]);
   assert.deepEqual(parseAnnotations({ ...file, povs: "none" }).povs, []);
+});
+
+test("a link to another point of view is the link the library's copy of it would give", () => {
+  const vod = (/** @type {string} */ platform, /** @type {string} */ platform_id, /** @type {string} */ url) =>
+    /** @type {any} */ ({ platform, platform_id, url });
+  const twitch = vod("twitch", "v2906773722", "https://www.twitch.tv/videos/2906773722");
+  for (const t of [0, 5, 63.9, 3723.6]) assert.equal(povUrl(pov, t), watchUrl(twitch, t));
+  const kick = P({ ...pov, account: { platform: "kick", login: "Burn_TV" }, video: { platform: "kick", id: "a1-b2" } });
+  const kickVod = vod("kick", "a1-b2", "https://kick.com/burn_tv/videos/a1-b2");
+  assert.equal(povUrl(kick, 90), watchUrl(kickVod, 90));
 });

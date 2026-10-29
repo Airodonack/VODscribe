@@ -427,7 +427,7 @@ fn has_sites_shape(platform: &str, id: &str, channel: Option<&str>) -> bool {
     match platform {
         "youtube" => id.len() == 11 && word(id),
         "twitch" => {
-            let number = id.strip_prefix('v').unwrap_or(id);
+            let number = twitch_number(id);
             (1..=20).contains(&number.len()) && number.bytes().all(|b| b.is_ascii_digit())
         }
         "kick" => {
@@ -442,12 +442,25 @@ fn has_sites_shape(platform: &str, id: &str, channel: Option<&str>) -> bool {
     }
 }
 
+/// A Twitch video's id as its address has it: without the "v" yt-dlp puts
+/// before a VOD's number; only a "v" before a digit goes, so a clip's slug
+/// keeps its own. The page's `twitchNumber` (platform.ts) is the same rule,
+/// tested with the same cases.
+fn twitch_number(id: &str) -> &str {
+    match id.strip_prefix('v') {
+        Some(number) if number.starts_with(|c: char| c.is_ascii_digit()) => number,
+        _ => id,
+    }
+}
+
 /// Where a VOD of `platform` with id `id` is watched, for a VOD an import
 /// adds to the library; None for a platform it can't be added for that way.
+/// As the page's links (platform.ts `watchUrl`) without a time; a Kick
+/// link never has one.
 fn watch_url(platform: &str, id: &str, channel: Option<&str>) -> Option<String> {
     match platform {
         "youtube" => Some(format!("https://www.youtube.com/watch?v={id}")),
-        "twitch" => Some(format!("https://www.twitch.tv/videos/{}", id.strip_prefix('v').unwrap_or(id))),
+        "twitch" => Some(format!("https://www.twitch.tv/videos/{}", twitch_number(id))),
         "kick" => channel.map(|c| format!("https://kick.com/{}/videos/{id}", c.to_lowercase())),
         _ => None,
     }
@@ -1500,6 +1513,23 @@ pub(crate) mod tests {
         assert_eq!(
             offer,
             Offer { available: Availability::Available, up_to_date: false, local_transcript: true, newer: false }
+        );
+    }
+
+    #[test]
+    fn a_twitch_id_loses_its_v_only_before_a_number() {
+        // The cases platform.test.mjs gives the page's `twitchNumber`.
+        assert_eq!(twitch_number("v2901646294"), "2901646294");
+        assert_eq!(twitch_number("2901646294"), "2901646294");
+        assert_eq!(twitch_number("vanityClip-AbCd"), "vanityClip-AbCd");
+        assert_eq!(
+            watch_url("twitch", "v2901646294", None).as_deref(),
+            Some("https://www.twitch.tv/videos/2901646294")
+        );
+        // A Kick link names no time, as the page's don't.
+        assert_eq!(
+            watch_url("kick", "01a169a1-9aa8-7653-8a9e-390e694cc11a", Some("Airodonack")).as_deref(),
+            Some("https://kick.com/airodonack/videos/01a169a1-9aa8-7653-8a9e-390e694cc11a")
         );
     }
 }

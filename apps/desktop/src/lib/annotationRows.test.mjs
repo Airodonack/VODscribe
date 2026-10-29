@@ -1,7 +1,20 @@
 // The annotations pane's rows (annotationRows.ts): node --test apps/desktop/src/lib/annotationRows.test.mjs
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
-import {
+
+// annotationRows.ts imports "./platform" as the page's bundler finds it; here it is the
+// .ts file it is.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith("./") && !/\\.[a-z]+$/.test(specifier) && context.parentURL?.endsWith(".ts"))
+    return next(specifier + ".ts", context);
+  return next(specifier, context);
+}`),
+);
+const {
   BEFORE_FIRST,
   chapterRows,
   currentChapter,
@@ -14,7 +27,7 @@ import {
   shownRows,
   sideStep,
   stepRow,
-} from "./annotationRows.ts";
+} = await import("./annotationRows.ts");
 
 /** @type {(id: number, kind: import("./api").MarkKind, start: number, extra?: object) => import("./api").Mark} */
 const mark = (id, kind, start, extra = {}) => ({ id, vod_id: 1, kind, start, text: null, ...extra });

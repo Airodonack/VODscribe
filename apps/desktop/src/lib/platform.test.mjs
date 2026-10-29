@@ -13,6 +13,9 @@ import {
   labelOf,
   listed,
   siteName,
+  twitchId,
+  twitchTime,
+  watchUrl,
 } from "./platform.ts";
 
 test("a list is written with commas and a last and", () => {
@@ -94,4 +97,30 @@ test("things being added are called by their link or file name", () => {
   assert.equal(labelOf("/home/me/Videos/talk.mp4"), "talk.mp4");
   assert.equal(labelOf("C:\\Users\\me\\talk.mkv"), "talk.mkv");
   assert.equal(labelOf("talk.mp4"), "talk.mp4");
+});
+
+test("a link to a moment on a VOD's site: Twitch's time always with its hours, none on Kick", () => {
+  const vod = (/** @type {string} */ platform, /** @type {string} */ platform_id, /** @type {string} */ url) =>
+    /** @type {any} */ ({ platform, platform_id, url });
+  assert.equal(twitchTime(3723), "1h2m3s");
+  assert.equal(twitchTime(63.9), "0h1m3s");
+  assert.equal(twitchTime(3), "0h0m3s");
+  assert.equal(twitchTime(-2), "0h0m0s");
+  const twitch = vod("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
+  assert.equal(watchUrl(twitch, 65.7), "https://www.twitch.tv/videos/2901646294?t=0h1m5s");
+  const youtube = vod("youtube", "IaIo3d6cUuo", "https://www.youtube.com/watch?v=IaIo3d6cUuo");
+  assert.equal(watchUrl(youtube, 75.2), "https://www.youtube.com/watch?v=IaIo3d6cUuo&t=75s");
+  // Kick's links name no time (none is documented): the VOD's own link.
+  const kick = vod("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
+  assert.equal(watchUrl(kick, 75), "https://kick.com/airodonack/videos/01a169a1");
+  const other = vod("rumble", "x", "https://rumble.com/v1-x.html");
+  assert.equal(watchUrl(other, 75), "https://rumble.com/v1-x.html?t=75");
+});
+
+test("a Twitch id loses its v only before a number, never a clip's slug's", () => {
+  const twitch = (/** @type {string} */ platform_id) => /** @type {any} */ ({ platform: "twitch", platform_id });
+  assert.equal(twitchId(twitch("v2901646294")), "2901646294");
+  assert.equal(twitchId(twitch("2901646294")), "2901646294");
+  assert.equal(twitchId(twitch("vanityClip-AbCd")), "vanityClip-AbCd");
+  // crates/core annotations.rs `a_twitch_id_loses_its_v_only_before_a_number` has the same cases.
 });

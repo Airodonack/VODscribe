@@ -27,6 +27,7 @@
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
   import { ownPlayer } from "./ownPlayer.svelte";
   import {
+    copyLinkTitle,
     formatFraction,
     formatTime,
     keepsVideo,
@@ -631,7 +632,7 @@
           class:copied={copied === "ok"}
           class:failed={copied === "failed"}
           onclick={copyLink}
-          title="Copy a link to this moment"
+          title={copyLinkTitle(vod)}
         >
           <span class="time">{formatTime(now)}</span>
           <Icon name={copied === "ok" ? "check" : copied === "failed" ? "error" : "copy"} size={12} />

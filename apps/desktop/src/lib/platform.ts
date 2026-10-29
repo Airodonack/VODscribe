@@ -40,14 +40,21 @@ export function formatFraction(seconds: number, digits: number): string {
   return `${formatTime(Math.floor(n / scale))}.${String(n % scale).padStart(digits, "0")}`;
 }
 
-/** 3725 -> "1h2m5s", the format Twitch uses in URLs and its player. */
+/** 3725 -> "1h2m5s", 65 -> "0h1m5s": the format Twitch uses in URLs and its
+ *  player, its hours always given. Every Twitch link the app makes uses it. */
 export function twitchTime(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m${s % 60}s`;
 }
 
-/** yt-dlp prefixes Twitch VOD ids with "v"; Twitch's URLs and player don't. */
-export const twitchId = (vod: Vod) => vod.platform_id.replace(/^v/, "");
+/** A Twitch video's id as its address has it: yt-dlp prefixes VOD ids with
+ *  "v", Twitch's URLs and player don't. Only a "v" before a number goes, so a
+ *  clip's slug keeps its own. crates/core annotations.rs `twitch_number` is
+ *  the same rule. */
+export const twitchNumber = (id: string) => id.replace(/^v(?=\d)/, "");
+
+/** `vod`'s Twitch id as its address has it (`twitchNumber`). */
+export const twitchId = (vod: Vod) => twitchNumber(vod.platform_id);
 
 /** A Twitch clip goes by its slug, where a VOD's id is a number (crates/core twitch.rs `is_clip`). */
 export const isTwitchClip = (vod: Vod) => vod.platform === "twitch" && !/^v?\d+$/.test(vod.platform_id);
@@ -103,9 +110,14 @@ export function playbackHint(): string {
   );
 }
 
-/** Link to the VOD on its own site, at `time`. */
+/** Whether a link to `platform`'s VODs can say a time to start at: not
+ *  Kick's (none is documented; it ignores one), which open at the start. */
+export const linksHaveTime = (platform: string) => platform !== "kick";
+
+/** Link to the VOD on its own site, at `time` (where its links can say one,
+ *  `linksHaveTime`). povs.ts `povUrl` builds another stream's the same way. */
 export function watchUrl(vod: Vod, time: number): string {
-  const t = Math.floor(time);
+  const t = Math.max(0, Math.floor(time));
   switch (vod.platform) {
     case "youtube":
       return `https://www.youtube.com/watch?v=${encodeURIComponent(vod.platform_id)}&t=${t}s`;
@@ -113,12 +125,22 @@ export function watchUrl(vod: Vod, time: number): string {
       // A clip's page has no time to start from.
       if (isTwitchClip(vod)) return vod.url;
       return `https://www.twitch.tv/videos/${twitchId(vod)}?t=${twitchTime(t)}`;
+    case "kick":
+      return vod.url;
     default: {
       const url = new URL(vod.url);
       url.searchParams.set("t", String(t));
       return url.toString();
     }
   }
+}
+
+/** What the stamp beside a VOD's title copies, as its tooltip says it: a
+ *  link to the moment, or on a site whose links can't say one, the VOD's. */
+export function copyLinkTitle(vod: Vod): string {
+  return linksHaveTime(vod.platform)
+    ? "Copy a link to this moment"
+    : `Copy a link to this VOD (${siteName(vod)}'s links can't say a time)`;
 }
 
 /** The video heights a download can be capped at (Settings → Storage). */

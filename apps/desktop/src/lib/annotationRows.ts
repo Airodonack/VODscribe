@@ -5,6 +5,7 @@
 // how the keyboard goes from row to row.
 
 import type { Mark } from "./api";
+import { formatTime } from "./platform";
 
 export interface ChapterRow {
   kind: "chapter";
@@ -147,11 +148,7 @@ export function currentHighlights(
 export function lengthLabel(start: number, end: number | null): string {
   if (end === null || !(end > start)) return "";
   const s = Math.round(end - start);
-  if (s < 60) return `${Math.max(1, s)} s`;
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
+  return s < 60 ? `${Math.max(1, s)} s` : formatTime(s);
 }
 
 /** Where focus goes from row `i` of `count` on `key` (ArrowUp, ArrowDown,
