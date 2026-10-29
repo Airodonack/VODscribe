@@ -236,9 +236,16 @@
   // strip under it. Asked again as the VOD changes: a stretch transcribed
   // brings its captions.
   let cues = $state.raw<Cue[]>([]);
+  // Whether they've been read: until then, whether there are any is told
+  // by what of the VOD is transcribed.
+  let cuesRead = $state(false);
   function fetchCues() {
     api.captions(vod.id).then(
-      (c) => !destroyed && (cues = c),
+      (c) => {
+        if (destroyed) return;
+        cues = c;
+        cuesRead = true;
+      },
       (e) => console.error("captions", e),
     );
   }
@@ -268,9 +275,12 @@
     drawsCaptions = p.drawsCaptions?.() ?? false;
   }
   // The caption in the strip under a site's player (never over it); the
-  // strip, empty, before the player opens.
+  // strip, empty, before the player opens. Kept from the first frame for a
+  // VOD with a transcript, before its captions are read: shown only once
+  // they were, it pushed everything below down a moment after opening.
+  const hasCues = $derived(cuesRead ? cues.length > 0 : vod.transcribed !== "none");
   const stripCue = $derived(
-    !drawsCaptions && prefs.captions && cues.length ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null,
+    !drawsCaptions && prefs.captions && hasCues ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null,
   );
   const now = $derived(reading.now);
   // The chapter playing, named in the header where there's room for it.

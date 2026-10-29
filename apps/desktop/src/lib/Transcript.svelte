@@ -102,6 +102,11 @@
   // What of the VOD is transcribed, and asked to be (stretches.ts).
   let stretches = $state.raw<Stretch[]>([]);
   let error = $state<string | null>(null);
+  // Whether the lines and stretches have been read once: until then nothing
+  // is known of what's transcribed, so neither the parts not transcribed nor
+  // the empty state show (they did for a frame or two, the whole VOD "not
+  // transcribed", before its lines replaced them).
+  let read = $state(false);
 
   // Everything is read again when the VOD changes, and when what's asked of it
   // does (a request made, started, ended); while a stretch is transcribed,
@@ -130,8 +135,8 @@
     rangeSeq++;
     if (edit !== null) {
       api.editLines(edit).then(
-        (l) => mine === seq && ((lines = l), (error = null)),
-        (e) => mine === seq && (error = String(e)),
+        (l) => mine === seq && ((lines = l), (error = null), (read = true)),
+        (e) => mine === seq && ((error = String(e)), (read = true)),
       );
       return;
     }
@@ -141,8 +146,9 @@
         lines = l;
         stretches = s;
         error = null;
+        read = true;
       },
-      (e) => mine === seq && (error = String(e)),
+      (e) => mine === seq && ((error = String(e)), (read = true)),
     );
   });
 
@@ -177,7 +183,7 @@
   // if any: rows of their own among the lines, even with none yet (a part
   // transcribed that was silence). Before anything is transcribed or asked
   // for, the empty state says so instead (stretches.ts `shownGaps`).
-  let gaps = $derived(vod ? shownGaps(stretches, vod.duration, vod.transcribed, lines.length) : []);
+  let gaps = $derived(vod && read ? shownGaps(stretches, vod.duration, vod.transcribed, lines.length) : []);
 
   /** Asks for `start` to `end` (null: the end) to be transcribed. */
   function transcribe(start: number, end: number | null) {
@@ -1269,7 +1275,7 @@
       {#if error}
         <p class="error-text">{error}</p>
       {/if}
-      {#if lines.length === 0 && gaps.length === 0}
+      {#if read && lines.length === 0 && gaps.length === 0}
         <p class="muted">
           {#if !vod}
             Nothing is said in this edit.
