@@ -3,7 +3,8 @@
 // a clip there (named "Clip name", no Render or Delete, not a row of the
 // library's list); cut a second in (B) and the rest taken out (Delete), its
 // file is made again, a second long; undone (Ctrl+Z), it's two seconds
-// again, made again too.
+// again, made again too. Split in two and so rendered as an edit, a chapter
+// added in it, renamed and moved makes it again each time.
 
 import { existsSync } from "node:fs";
 
@@ -96,5 +97,35 @@ export default {
       MINUTE,
     );
     log(`undone: two seconds, made again: ${back.file_path}`);
+
+    // Split in two pieces, it's rendered as an edit is, with the edit's
+    // chapters in its file: one added, renamed or moved makes it again, as
+    // undoing any of those does. (A clip of one piece is cut from the VOD,
+    // without chapters.)
+    const current = (what) =>
+      until(
+        `the clip made again (${what})`,
+        async () => {
+          const { edit } = await app.invoke("get_edit", { id: clip.id });
+          if (edit.status === "error") throw new Error(`it failed: ${edit.error}`);
+          return edit.status === "ready" && edit.current && existsSync(edit.file_path ?? "") && edit;
+        },
+        MINUTE,
+      );
+    const [piece] = (await app.invoke("get_edit", { id: clip.id })).pieces;
+    await app.invoke("split_piece", { id: piece.id, at: (piece.start + piece.end) / 2 });
+    await current("split in two");
+    const chapter = await app.invoke("add_edit_mark", {
+      editId: clip.id,
+      time: 0.5,
+      kind: "chapter",
+      text: "Opening",
+    });
+    await current("chapter added");
+    await app.invoke("set_mark_text", { id: chapter.id, text: "The start" });
+    await current("chapter renamed");
+    await app.invoke("move_mark", { id: chapter.id, time: 1.5 });
+    const moved = await current("chapter moved");
+    log(`chapter added, renamed and moved: made again each time, ${moved.file_path}`);
   },
 };

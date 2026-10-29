@@ -450,6 +450,12 @@ pub struct StretchPiece {
     pub title: String,
 }
 
+/// Whether a clip bar's clip of `pieces` is cut straight from its VOD (one
+/// piece, nothing struck, not a group) rather than rendered as an edit is.
+pub fn cut_whole(pieces: &[EditPiece]) -> bool {
+    matches!(pieces, [p] if p.struck.is_empty() && p.group.is_none())
+}
+
 /// What `from`..`to` of a clip of `pieces`' timeline plays, as pieces of
 /// their own: each piece it reaches, trimmed to it, with what's jumped over
 /// in between struck.
@@ -806,14 +812,26 @@ impl Db {
     /// What a file of clip `id` (titled `title`, of `pieces`) is made of: its
     /// name, what plays (each VOD's stretches, in order, to the microsecond)
     /// and its chapters. A change that leaves this as it was (a highlight, a
-    /// cut, a group opened) leaves its file as it is.
+    /// cut, a group opened) leaves its file as it is. A clip bar's clip cut
+    /// straight from its VOD (`cut_whole`) has neither name nor chapters in
+    /// its file: only what plays counts.
     pub fn made_of(&self, id: i64, title: &str, pieces: &[EditPiece]) -> Result<String> {
         let us = |t: f64| (t * 1e6).round() as i64;
         let plays: Vec<(i64, i64, i64)> =
             pieces.iter().flat_map(|p| p.spans().into_iter().map(|(a, b)| (p.vod_id, us(a), us(b)))).collect();
+        if self.is_snippet(id)? == Some(true) && cut_whole(pieces) {
+            return Ok(serde_json::to_string(&("", plays, ()))?);
+        }
         let chapters: Vec<(i64, String)> =
             self.file_chapters(id, pieces)?.into_iter().map(|(start, text)| (us(start), text)).collect();
         Ok(serde_json::to_string(&(title, plays, chapters))?)
+    }
+
+    /// Records that clip `id`'s file, just made, is of what the clip holds
+    /// now (`made_of`).
+    pub fn set_made_now(&self, id: i64) -> Result<()> {
+        let title: String = self.conn.query_row("SELECT title FROM clips WHERE id = ?1", [id], |r| r.get(0))?;
+        self.set_made_of(id, &self.made_of(id, &title, &self.edit_pieces(id)?)?)
     }
 
     /// Records that clip `id`'s file was made of `made_of` (`made_of`).
@@ -2106,6 +2124,28 @@ pub(crate) mod tests {
         assert!(current(), "and back as it was");
         db.remove_edit_stretch(edit, 1.0, 2.0).unwrap();
         assert!(!current(), "what plays changed");
+    }
+
+    #[test]
+    fn a_clip_cut_from_its_vod_is_out_of_date_only_when_what_plays_changes() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let clip = db.add_clip(vod, 10.0, 20.0, "c", true).unwrap().id;
+        db.set_edit_render(clip, ClipStatus::Ready, Some("/c.mp4"), None, None).unwrap();
+        db.set_made_now(clip).unwrap();
+        let current = || db.edit(clip).unwrap().unwrap().current;
+        assert!(current());
+        db.add_clip_mark(clip, vod, "chapter", 14.0, Some("Start")).unwrap();
+        db.add_clip_mark(clip, vod, "highlight", 15.0, None).unwrap();
+        assert!(current(), "a cut file has no chapters");
+        // In two pieces it's rendered as an edit, with its chapters.
+        let piece = db.piece_rows(clip).unwrap()[0].id;
+        assert!(db.split_piece(piece, 15.0).unwrap());
+        assert!(!current(), "rendered now");
+        db.set_made_now(clip).unwrap();
+        assert!(current());
+        db.add_clip_mark(clip, vod, "chapter", 17.0, Some("Later")).unwrap();
+        assert!(!current(), "a chapter is in a rendered file");
     }
 
     #[test]

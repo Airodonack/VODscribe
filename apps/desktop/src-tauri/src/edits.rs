@@ -225,8 +225,7 @@ fn changing(
     let doc = Doc::Edit(edit_id);
     let before = history::snapshot(&db, doc).ok().flatten();
     change(&db).map_err(err)?;
-    state.history.record(&db, doc, label, before);
-    remake_snippet(app, &db, edit_id);
+    history::record(app, &db, doc, label, before);
     view(app, &db, edit_id)
 }
 

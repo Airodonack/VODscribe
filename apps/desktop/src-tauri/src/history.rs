@@ -131,6 +131,23 @@ pub(crate) fn snapshot(db: &Db, doc: Doc) -> Result<Option<Snapshot>> {
     })
 }
 
+/// Records a change to `doc` in its history (`History::record`), and makes
+/// an edit's snippet again if the change reaches its file, as undoing or
+/// redoing it does (`changed`): changes to an edit are recorded through here,
+/// so the two directions agree.
+pub(crate) fn record(app: &AppHandle, db: &Db, doc: Doc, label: &'static str, before: Option<Snapshot>) {
+    app.state::<AppState>().history.record(db, doc, label, before);
+    changed(app, db, doc);
+}
+
+/// `doc` changed (a change, or its undo or redo): an edit's snippet is made
+/// again (`edits::remake_snippet`, which leaves it if its file is as it was).
+pub(crate) fn changed(app: &AppHandle, db: &Db, doc: Doc) {
+    if let Doc::Edit(id) = doc {
+        crate::edits::remake_snippet(app, db, id);
+    }
+}
+
 impl History {
     /// Records a change to `doc` (`label`), from `before` to what it holds now;
     /// nothing if it didn't change. Takes back what could be redone of it.
@@ -391,9 +408,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let done = Done { doc: entry.doc, label: entry.label, revision: entry.revision };
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
-    if let Doc::Edit(id) = done.doc {
-        crate::edits::remake_snippet(app, &db, id);
-    }
+    changed(app, &db, done.doc);
     let _ = app.emit("restored", Restored { doc: done.doc, revision: done.revision });
     Ok(Some(done))
 }
