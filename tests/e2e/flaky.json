@@ -1,7 +1,6 @@
 {
   "clip-format": "Ubuntu 22.04 (CI), 2026-10-23: timed out once waiting for the player at 1 s after Pause at the start; the 22.04 cell with that build then passed it 5 of 5",
   "holes": "Windows, 2026-10-23: deleting the copied file while the app still read it was refused (EPERM); the scenario now waits that out, kept here until clean rounds show it",
-  "quit-mid-job": "Linux (Debian 13), 2026-10-23: once, the worker and its ffmpeg were still running 10 s after quitting; the same build then passed twice; cause not named yet",
   "upgrade": "macOS (CI), 2026-10-23: the page lost the keyboard on the hosted runner (\"not focused\"), so Shift+→ went elsewhere; not the app",
   "transcribe-search-play": "Ubuntu 22.04, 2026-10-24: 'fetch failed' after 301 s once in the first full-lane run (passed in the fast lane minutes before on the same commit); an audio scenario on 22.04's WebKit, see the first-line playback freeze note; cause not named"
 }
