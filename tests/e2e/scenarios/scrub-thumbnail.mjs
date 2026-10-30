@@ -46,7 +46,12 @@ const POINTER = `
   const bar = document.querySelector(".scrubber");
   const box = bar.getBoundingClientRect();
   const x = box.left + ((time - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
-  const at = { clientX: x, clientY: box.top + box.height / 2, button: 0, bubbles: true, pointerId: 1, pointerType: type ?? "mouse", isPrimary: true };
+  // The button held from a press to its release, as a real pointer has it:
+  // a move between them is a drag, any other a hover.
+  if (kind === "pointerdown") window.__held = true;
+  if (kind === "pointerup") window.__held = false;
+  const buttons = window.__held ? 1 : 0;
+  const at = { clientX: x, clientY: box.top + box.height / 2, button: 0, buttons, bubbles: true, pointerId: 1, pointerType: type ?? "mouse", isPrimary: true };
   const on = target ? document.querySelector(target) : kind === "pointerdown" ? document.elementFromPoint(at.clientX, at.clientY) : window;
   on.dispatchEvent(new PointerEvent(kind, at));`;
 

@@ -23,11 +23,10 @@ import { cuts } from "./cuts.svelte";
 import { edits, putOf, type Stretch } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretchIn } from "./media";
 import { formatTime, playsFromFile } from "./platform";
+import { DRAG_SLOP } from "./pressToDrag";
 
 /** How long a press is held before it picks the clip up. */
 export const HOLD_MS = 250;
-/** How far, in pixels, a press moves before it's a drag. */
-export const DRAG_SLOP = 4;
 const FLY_MS = 150;
 
 /** The files of the clips being dragged out, so the library doesn't add

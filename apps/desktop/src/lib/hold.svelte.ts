@@ -4,7 +4,7 @@
 // closes. A plain click still does the button's own thing. A press that
 // moves first is a drag, not a hold.
 
-import { DRAG_SLOP } from "./dragout";
+import { DRAG_SLOP, holds } from "./pressToDrag";
 
 const HOLD_MS = 400;
 
@@ -61,9 +61,9 @@ export class Hold {
 
   #move = (e: PointerEvent) => {
     const press = this.#press;
-    if (press && (!(e.buttons & 1) || Math.hypot(e.clientX - press.x, e.clientY - press.y) >= DRAG_SLOP)) this.#letGo();
+    if (press && (!holds(e) || Math.hypot(e.clientX - press.x, e.clientY - press.y) >= DRAG_SLOP)) this.#letGo();
     // Its let-go missed (it happened outside the window): closed.
-    else if (this.open && this.#held && !(e.buttons & 1)) this.open = false;
+    else if (this.open && this.#held && !holds(e)) this.open = false;
     if (!this.#press && !(this.open && this.#held)) this.#stop();
   };
 

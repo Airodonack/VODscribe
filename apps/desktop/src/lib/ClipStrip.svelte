@@ -24,7 +24,8 @@
 
   import type { Clip, Vod } from "./api";
   import { clips } from "./clips.svelte";
-  import { DRAG_SLOP, carry } from "./dragout";
+  import { carry } from "./dragout";
+  import { holds, pressToDrag, type Pressed } from "./pressToDrag";
   import Icon from "./Icon.svelte";
   import { formatTime } from "./platform";
   import Spinner from "./Spinner.svelte";
@@ -56,9 +57,9 @@
    *  name being edited keep their clicks. */
   function onChipClick(e: MouseEvent, clip: Clip) {
     if ((e.target as HTMLElement).closest(".act, input")) return;
-    // The click a drag that didn't start leaves behind, and a double-click's
-    // second: neither picks (the double-click opens it).
-    if (swallowClick || e.detail > 1) return void (swallowClick = false);
+    // A double-click's second click doesn't pick (the double-click opens it).
+    // (The click a drag leaves behind never comes here: pressToDrag.)
+    if (e.detail > 1) return;
     const how = howOf(e);
     if (how === "plain") snippets.only(itemOf(clip));
     else snippets.click(itemOf(clip), how, clips.shown.map(itemOf));
@@ -106,14 +107,10 @@
   // A made clip's chip drags out once the pointer moves with the button down
   // (one picked with others, made or not, carries what's picked; picked
   // alone, it goes as it would unpicked); the click that may follow a drag
-  // that didn't start doesn't pick it.
-  let press: { clip: Clip; x: number; y: number } | null = null;
-  let swallowClick = false;
-  function onChipDown(e: PointerEvent, clip: Clip) {
-    const target = e.target as HTMLElement;
+  // doesn't pick it (pressToDrag).
+  function canDrag(e: PointerEvent, clip: Clip) {
     const ready = clip.status === "ready" || withOthers(clip);
-    if (e.button !== 0 || !ready || target.closest(".act, input")) return;
-    press = { clip, x: e.clientX, y: e.clientY };
+    return ready && !(e.target as HTMLElement).closest(".act, input");
   }
 
   // The middle button pressed anywhere on the bar (a pill too) and dragged:
@@ -146,17 +143,12 @@
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (pan && strip) {
-      // Its release missed (it happened outside the window): over.
-      if (!(e.buttons & 4)) pan = null;
-      else strip.scrollLeft = pan.left - (e.clientX - pan.x);
-      return;
-    }
-    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
-    const { clip, x, y } = press;
-    press = null;
-    swallowClick = true;
-    setTimeout(() => (swallowClick = false), 500);
+    if (!pan || !strip) return;
+    // Its release missed (it happened outside the window): over.
+    if (!holds(e, 1)) pan = null;
+    else strip.scrollLeft = pan.left - (e.clientX - pan.x);
+  }
+  function onChipDrag(e: PointerEvent, clip: Clip, { x, y }: Pressed) {
     const from = document.querySelector(`.chip[data-clip="${clip.id}"]`)?.getBoundingClientRect() ?? new DOMRect(x, y);
     // Picked with others: all of what's picked goes, wherever it's dropped.
     if (withOthers(clip)) return carryChosen(from, e.clientX, e.clientY);
@@ -197,14 +189,7 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={onKey}
-  onpointermove={onPointerMove}
-  onpointerup={() => {
-    press = null;
-    pan = null;
-  }}
-/>
+<svelte:window onkeydown={onKey} onpointermove={onPointerMove} onpointerup={() => (pan = null)} />
 
 <!-- The pointer's own ways of scrolling it (the wheel, a middle-button drag); the keys are its pills'. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -250,7 +235,7 @@
       'ready'
         ? ' · drag it into a video editor or a folder'
         : ''} · double-click to open it in the editor"
-      onpointerdown={(e) => onChipDown(e, clip)}
+      use:pressToDrag={{ press: (e) => canDrag(e, clip), start: (e, at) => onChipDrag(e, clip, at) }}
       onclickcapture={(e) => onChipClick(e, clip)}
       ondblclick={(e) => onChipDoubleClick(e, clip)}
       onmouseenter={() => vod && (clips.hovered = { start: clip.start, end: clip.end })}

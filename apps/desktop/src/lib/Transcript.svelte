@@ -21,6 +21,7 @@
   import { Marks } from "./marks.svelte";
   import { playedSpans } from "./media";
   import { formatTime } from "./platform";
+  import { pressToDrag } from "./pressToDrag";
   import {
     CHAT_BINS,
     CHAT_SHOWN,
@@ -717,12 +718,11 @@
   }
 
   // Pressing on a line and dragging across others selects them (cuts.svelte.ts:
-  // Split then cuts either side); a click without a drag still plays the line.
+  // Split then cuts either side); a click without a drag still plays the line,
+  // and the click a drag's release leaves isn't one on a line (pressToDrag).
   // Its ends are the lines' starts (rows.ts `linesFrom`), not their rows.
   let drag = $state<{ from: number; to: number } | null>(null);
   let pointer = { x: 0, y: 0 };
-  let moved = false;
-  let swallowClick = false;
   let scrolling = 0;
 
   /** The index in `rows` of the line row under the point, if any. */
@@ -733,13 +733,12 @@
   }
 
   function onRowDown(e: PointerEvent, line: Line) {
-    if (e.button !== 0 || e.pointerType === "touch") return;
+    if (e.pointerType === "touch") return false;
     drag = { from: line.start, to: line.start };
-    moved = false;
     pointer = { x: e.clientX, y: e.clientY };
   }
 
-  function onPointerMove(e: PointerEvent) {
+  function onDragMove(e: PointerEvent) {
     if (!drag) return;
     pointer = { x: e.clientX, y: e.clientY };
     follow();
@@ -751,10 +750,7 @@
     if (!drag) return;
     const i = lineRowAt(pointer.x, pointer.y);
     const at = i === null ? null : rows[i].line!.start;
-    if (at !== null && at !== drag.to) {
-      drag.to = at;
-      moved = true;
-    }
+    if (at !== null && at !== drag.to) drag.to = at;
   }
 
   function autoScroll() {
@@ -774,17 +770,14 @@
     scrolling = requestAnimationFrame(autoScroll);
   }
 
-  function onPointerUp() {
+  /** The press is over; `dragged`, the lines dragged across (one, or more) are selected. */
+  function onDragEnd(dragged: boolean) {
     if (!drag) return;
     const { from, to } = drag;
     drag = null;
     cancelAnimationFrame(scrolling);
     scrolling = 0;
-    if (!moved) return;
-    // The click that ends the drag isn't one on a line. It lands on whatever
-    // holds both ends, when they're on different lines, so it may never come.
-    swallowClick = true;
-    setTimeout(() => (swallowClick = false));
+    if (!dragged) return;
     const span = linesFrom(lines, from, to);
     if (span) select(span[0], span[1]);
   }
@@ -803,10 +796,6 @@
   }
 
   function onRowClick(e: MouseEvent, line: Line) {
-    if (swallowClick) {
-      swallowClick = false;
-      return;
-    }
     // Shift+click selects the line, or the lines from the selection's first to it.
     if (e.shiftKey) {
       const pick = mine ? cuts.selection : null;
@@ -1246,8 +1235,6 @@
   </span>
 {/snippet}
 
-<svelte:window onpointermove={onPointerMove} onpointerup={onPointerUp} onpointercancel={onPointerUp} />
-
 <div class="layout">
   <TranscriptHead
     {vod}
@@ -1370,7 +1357,12 @@
             <button
               class="row"
               data-time={line.start}
-              onpointerdown={(e) => onRowDown(e, line)}
+              use:pressToDrag={{
+                press: (e) => onRowDown(e, line),
+                start: onDragMove,
+                move: onDragMove,
+                end: onDragEnd,
+              }}
               onclick={(e) => onRowClick(e, line)}
             >
               <span class="time">{formatTime(line.start)}</span>

@@ -17,7 +17,8 @@
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
-  import { DRAG_SLOP, carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
+  import { carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
+  import { pressToDrag } from "./pressToDrag";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
@@ -752,11 +753,8 @@
   }
 
   // The rendered video, carried out of the window into an editor or a folder.
-  let outPress: { x: number; y: number } | null = null;
-  function onOutMove(e: PointerEvent) {
-    if (!outPress || !edit || Math.hypot(e.clientX - outPress.x, e.clientY - outPress.y) < DRAG_SLOP) return;
-    outPress = null;
-    api.dragEdit(edit.id).catch((err) => (edits.error = String(err)));
+  function onOutDrag() {
+    if (edit) api.dragEdit(edit.id).catch((err) => (edits.error = String(err)));
   }
 
   /** Delete edit: asked as from its row (actions.ts). */
@@ -777,7 +775,7 @@
   const renderable = $derived(edit && !snippet && edit.status !== "cutting" && segments.length ? edit.id : null);
 </script>
 
-<svelte:window onkeydown={onKey} onpointermove={onOutMove} onpointerup={() => (outPress = null)} />
+<svelte:window onkeydown={onKey} />
 
 {#if edit}
   <PlayerPanel
@@ -804,7 +802,7 @@
       {#if edit.status === "ready" && edit.file_path}
         <button
           class="out"
-          onpointerdown={(e) => e.button === 0 && (outPress = { x: e.clientX, y: e.clientY })}
+          use:pressToDrag={{ start: onOutDrag }}
           onclick={() => showEditFile(edit)}
           title="Drag it into a video editor or a folder, or click to show it in its folder"
         >

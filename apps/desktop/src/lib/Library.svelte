@@ -39,7 +39,7 @@
   import Menu, { type MenuItem } from "./Menu.svelte";
   import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
-  import { DRAG_SLOP } from "./dragout";
+  import { pressToDrag, type Pressed } from "./pressToDrag";
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
   import { keyHint } from "./keys.svelte";
@@ -305,22 +305,17 @@
 
   // A picked row dragged carries what's picked (into an edit: bulk.ts
   // `carryEntries`) rather than reordering the list; the click that ends it
-  // doesn't open the row.
-  let press: { x: number; y: number; key: number } | null = null;
-  let swallowClick = false;
+  // doesn't open the row (pressToDrag).
+  let pressing = false;
   function onRowDown(e: PointerEvent, row: LibraryRow, key: number) {
     // A clip carried over the list is dropped, not a row dragged.
-    if (clips.carryingAny || (e.target as HTMLElement).closest(".actions")) return;
-    if (e.button === 0 && library.picking && library.has(entryOf(row))) press = { x: e.clientX, y: e.clientY, key };
-    else reorder.start(e, key);
+    if (clips.carryingAny || (e.target as HTMLElement).closest(".actions")) return false;
+    pressing = e.button === 0 && library.picking && library.has(entryOf(row));
+    if (!pressing) reorder.start(e, key);
+    return pressing;
   }
-  function onPointerMove(e: PointerEvent) {
-    linkDragged = false;
-    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
-    const from = reorder.rows[press.key]?.getBoundingClientRect() ?? new DOMRect(press.x, press.y);
-    press = null;
-    swallowClick = true;
-    setTimeout(() => (swallowClick = false), 500);
+  function onRowDrag(e: PointerEvent, key: number, { x, y }: Pressed) {
+    const from = reorder.rows[key]?.getBoundingClientRect() ?? new DOMRect(x, y);
     carryEntries(from, e.clientX, e.clientY);
   }
 
@@ -330,7 +325,7 @@
   // is no rest: resting.ts `restOver`).
   function restedOn(row: LibraryRow) {
     if (row.kind !== "vod" || row.vod.id === selectedId) return;
-    if (press || clips.carryingAny || draggingOut()) return;
+    if (pressing || clips.carryingAny || draggingOut()) return;
     void readAhead(row.vod).catch(() => {});
   }
   // And once one is open and has settled, the VODs either side of it, the next to be opened with ↑ and ↓.
@@ -391,8 +386,7 @@
   ondragover={onDragOver}
   ondrop={onDrop}
   ondragleave={onDragLeave}
-  onpointermove={onPointerMove}
-  onpointerup={() => (press = null)}
+  onpointermove={() => (linkDragged = false)}
 />
 
 {#if dropping}
@@ -543,12 +537,6 @@
         bind:this={reorder.rows[key]}
         animate:flip={{ duration: reorder.flipDuration(key) }}
         onclickcapture={(e) => {
-          if (swallowClick) {
-            swallowClick = false;
-            e.preventDefault();
-            e.stopPropagation();
-            return;
-          }
           reorder.clickCapture(e);
           if (!e.defaultPrevented) onRowClick(e, row);
         }}
@@ -557,7 +545,11 @@
           if (row.kind === "vod") toggle(row.vod);
           else onopenedit(row.edit.id);
         }}
-        onpointerdown={(e) => onRowDown(e, row, key)}
+        use:pressToDrag={{
+          press: (e) => onRowDown(e, row, key),
+          start: (e, at) => onRowDrag(e, key, at),
+          end: () => (pressing = false),
+        }}
         use:restOver={() => restedOn(row)}
         oncontextmenu={(e) => openMenu(e, row)}
       >

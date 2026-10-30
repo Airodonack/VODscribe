@@ -243,13 +243,14 @@ export default {
       const i = rows.findIndex((b) => b.getBoundingClientRect().top > body.top + 120);
       const [first, last] = [rows[i], rows[i + 2]];
       if (!first || !last) return null;
-      const at = (el) => {
+      // The button held from the press to the release, as a real pointer has it.
+      const at = (el, buttons) => {
         const r = el.getBoundingClientRect();
-        return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, bubbles: true, pointerId: 1 };
+        return { clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0, buttons, bubbles: true, pointerId: 1 };
       };
-      first.dispatchEvent(new PointerEvent("pointerdown", at(first)));
-      window.dispatchEvent(new PointerEvent("pointermove", at(last)));
-      window.dispatchEvent(new PointerEvent("pointerup", at(last)));
+      first.dispatchEvent(new PointerEvent("pointerdown", at(first, 1)));
+      window.dispatchEvent(new PointerEvent("pointermove", at(last, 1)));
+      window.dispatchEvent(new PointerEvent("pointerup", at(last, 0)));
       return [Number(first.dataset.time), Number(last.dataset.time)];`);
     if (!dragged) throw new Error("no three lines in the transcript's view to drag across");
     const picked = await until(

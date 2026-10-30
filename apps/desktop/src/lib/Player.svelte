@@ -6,7 +6,8 @@
   import { edits } from "./edits.svelte";
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts, markKey } from "./cuts.svelte";
-  import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
+  import { carry, exportStretch, stretchAt } from "./dragout";
+  import { pressToDrag } from "./pressToDrag";
   import { actionsFor, copyVodLink } from "./actions";
   import { cueAt, frameStart, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
@@ -449,23 +450,12 @@
   // Clip dragged rather than clicked: the lit-up stretch carried, as a clip's
   // pill is (dragout.ts carry), with no key held: onto an edit or the clip
   // bar, or past the window's edge into another app. Pressed and let go in
-  // place, it's a click.
-  let clipPress: { x: number; y: number } | null = null;
-  let clipDragged = false;
-  function onClipDown(e: PointerEvent) {
-    if (e.button === 0 && canClip) clipPress = { x: e.clientX, y: e.clientY };
-  }
-  function onClipMove(e: PointerEvent) {
-    if (!clipPress || Math.hypot(e.clientX - clipPress.x, e.clientY - clipPress.y) < DRAG_SLOP) return;
-    // Its release missed (it happened elsewhere): a press no more.
-    if (!(e.buttons & 1)) return void (clipPress = null);
-    clipPress = null;
+  // place, it's a click; the let-go of a drag landing on the button again
+  // isn't one (pressToDrag).
+  function onClipDrag(e: PointerEvent) {
     const picked = cuts.selection;
     const range = picked ? { start: frameStart(picked.start, fps), end: frameStart(picked.end, fps) } : stretch;
     if (!range || range.end <= range.start) return;
-    // The let-go may land on the button again: not a click too (the click
-    // comes just after the carry ends).
-    clipDragged = true;
     clipHover = false;
     const from = clipButton?.getBoundingClientRect() ?? new DOMRect(e.clientX, e.clientY);
     carry({
@@ -476,11 +466,7 @@
       from,
       x: e.clientX,
       y: e.clientY,
-    }).then(() => setTimeout(() => (clipDragged = false)));
-  }
-  function onClipClick() {
-    if (clipDragged) clipDragged = false;
-    else makeClip();
+    });
   }
 
   // Full screen (the panel's, PlayerPanel.svelte): the player shown.
@@ -593,7 +579,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} onpointermove={onClipMove} onpointerup={() => (clipPress = null)} />
+<svelte:window onkeydown={onKey} />
 
 <PlayerPanel
   bind:fullscreen
@@ -764,8 +750,8 @@
         class="action clip"
         class:picking={!!cuts.selection}
         bind:this={clipButton}
-        onpointerdown={onClipDown}
-        onclick={onClipClick}
+        use:pressToDrag={{ press: () => canClip, start: onClipDrag }}
+        onclick={makeClip}
         onmouseenter={() => (clipHover = true)}
         onmouseleave={() => (clipHover = false)}
         disabled={!canClip}

@@ -37,7 +37,8 @@
   import { copyChapters } from "./actions";
   import { toast } from "./toasts.svelte";
   import { DEMO } from "./demo";
-  import { DRAG_SLOP, carry, stretchAt } from "./dragout";
+  import { carry, stretchAt } from "./dragout";
+  import { pressToDrag } from "./pressToDrag";
   import { putOf } from "./edits.svelte";
   import { castIndex, speakerColor } from "./annotated";
   import { speakerName } from "./castNames";
@@ -185,20 +186,10 @@
   }
 
   // A highlight's row pressed and moved is carried into an edit (dragout.ts),
-  // as a clip's pill is from the clip bar; the click it leaves doesn't play.
-  let press: { row: HighlightRow; x: number; y: number } | null = null;
-  let swallowClick = false;
-  function onRowDown(e: PointerEvent, row: HighlightRow) {
-    if (e.button === 0 && stretchOf(row)) press = { row, x: e.clientX, y: e.clientY };
-  }
-  function onWindowMove(e: PointerEvent) {
-    if (!press || Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_SLOP) return;
-    const { row } = press;
-    press = null;
+  // as a clip's pill is from the clip bar; the click it leaves doesn't play (pressToDrag).
+  function onRowDrag(e: PointerEvent, row: HighlightRow) {
     const put = stretchOf(row);
     if (!vod || put?.kind !== "highlight") return;
-    swallowClick = true;
-    setTimeout(() => (swallowClick = false), 500);
     const from =
       scroller?.querySelector(`[data-row="${rowId(row)}"]`)?.getBoundingClientRect() ??
       new DOMRect(e.clientX, e.clientY);
@@ -215,7 +206,6 @@
     });
   }
   function onRowClick(row: PaneRow) {
-    if (swallowClick) return void (swallowClick = false);
     onplay(row.start);
   }
 
@@ -277,8 +267,6 @@
     else void focusRow(rows[side.focus]);
   }
 </script>
-
-<svelte:window onpointermove={onWindowMove} onpointerup={() => (press = null)} />
 
 <aside class="annotations-pane" class:full aria-label="Chapters and highlights">
   <div class="lists" bind:this={scroller}>
@@ -402,7 +390,7 @@
                     data-row={rowId(row)}
                     onclick={() => onRowClick(row)}
                     onkeydown={(e) => onRowKey(e, row)}
-                    onpointerdown={(e) => onRowDown(e, row)}
+                    use:pressToDrag={{ press: () => !!stretchOf(row), start: (e) => onRowDrag(e, row) }}
                     oncontextmenu={(e) => carries && openMenu(e, row)}
                     aria-current={playing.has(row.id) ? "true" : undefined}
                     aria-keyshortcuts={carries ? "A" : undefined}

@@ -64,7 +64,8 @@
   import { howOf, picks, snippets, type Snippet } from "./selection.svelte";
   import type { How } from "./pick";
   import { carryChosen, carrySnippets } from "./bulk";
-  import { DRAG_SLOP, carry, stretchAt, type CarryHome } from "./dragout";
+  import { carry, stretchAt, type CarryHome } from "./dragout";
+  import { DRAG_SLOP, holds } from "./pressToDrag";
   import { formatFraction, formatTime, os, playsFromFile } from "./platform";
   import MarkEditor from "./MarkEditor.svelte";
   import Spinner from "./Spinner.svelte";
@@ -541,6 +542,9 @@
       if (drag?.kind === "resize") hover = null;
     }
     if (!drag) return;
+    // Its release missed (outside the window, or during the system's drag):
+    // let go where it was, and no carry begins with no button held.
+    if (!holds(e, drag.kind === "view" ? 1 : 0)) return onUp();
     if (drag.kind === "alt") {
       if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_SLOP) return;
       const { at, piece: id, x: pressX } = drag;
