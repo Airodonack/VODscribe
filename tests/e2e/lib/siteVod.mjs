@@ -67,8 +67,8 @@ export const TEST_VODS = {
   twitch: { id: "2901646294", link: "https://www.twitch.tv/videos/2901646294" },
   youtube: { id: "IaIo3d6cUuo", link: "https://www.youtube.com/watch?v=IaIo3d6cUuo" },
   kick: {
-    id: "01a169a1-9aa8-7653-8a9e-390e694cc11a",
-    link: "https://kick.com/airodonack/videos/01a169a1-9aa8-7653-8a9e-390e694cc11a",
+    id: "01a18dfb-c590-7069-b36a-97fe9266ffde",
+    link: "https://kick.com/airodonack/videos/01a18dfb-c590-7069-b36a-97fe9266ffde",
   },
 };
 
