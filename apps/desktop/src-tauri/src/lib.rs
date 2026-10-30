@@ -532,6 +532,13 @@ fn quit(app: &AppHandle) {
     // First: the player may be painting, and must stop before the program ends.
     screen::close(app);
     trace_exit("screen closed");
+    // A window closed is destroyed by now, but the display is only told when
+    // the main loop next runs, which it won't: flushed, it leaves the screen
+    // at once instead of staying up through the work below.
+    #[cfg(target_os = "linux")]
+    if let Some(display) = gtk::gdk::Display::default() {
+        display.flush();
+    }
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
         trace_exit("library's lock taken");
