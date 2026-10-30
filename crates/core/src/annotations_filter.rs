@@ -353,11 +353,6 @@ pub fn judge(filter: &Filter, vod: &Candidate) -> Judged {
     }
 }
 
-/// Whether the file host is asked about `vod`, given the set (`judge`).
-pub fn worth_asking(filter: &Filter, vod: &Candidate) -> bool {
-    judge(filter, vod) == Judged::Ask
-}
-
 /// What a check of the library found.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Checked {
@@ -1042,7 +1037,7 @@ mod tests {
         assert_eq!(judge(&same, &vod), Judged::Skip);
         // It has another: asked, as one seen in the version imported is.
         let other = Filter::of(&[exists_key("youtube", "x1"), version_key("youtube", "x1", MD5_B)]);
-        assert!(worth_asking(&other, &vod));
+        assert_eq!(judge(&other, &vod), Judged::Ask);
     }
 
     /// The set's VODs are the library's listed ones, of the sites that publish.
@@ -1057,7 +1052,7 @@ mod tests {
             seen: None,
             imported: None,
         };
-        assert!(!worth_asking(&filter, &vod("dailymotion")));
-        assert!(worth_asking(&filter, &vod("youtube")));
+        assert_eq!(judge(&filter, &vod("dailymotion")), Judged::Skip);
+        assert_eq!(judge(&filter, &vod("youtube")), Judged::Ask);
     }
 }
