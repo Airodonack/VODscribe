@@ -463,7 +463,7 @@ body.dropping iframe {
 }
 
 /* Several carried together (dragout.ts `deck`): the first's card on top,
-   up to two more behind it, a few pixels right and down each, as a deck. */
+   up to two more behind it, fanned right and down as a deck (SPREAD). */
 .carry-stack {
   position: fixed;
   z-index: 2000;

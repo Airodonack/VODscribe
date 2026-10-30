@@ -643,8 +643,8 @@ export default {
         time,
       );
     // The ghost following the pointer, once its picture has come: its front
-    // card's caption, the "+N" in its corner (null: none), how many cards
-    // are behind it.
+    // card's caption, how many cards with a picture are behind it and how
+    // many blank ones behind those, and whether it's a pile.
     const ghost = (what) =>
       until(
         what,

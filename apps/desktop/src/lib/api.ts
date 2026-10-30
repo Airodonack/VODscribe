@@ -897,9 +897,10 @@ export type { UnlistenFn };
 
 // A VOD's reads kept for the session (kept.ts), each let go when what it
 // read changes: its transcript and captions as it's transcribed, its chat as
-// it's fetched, everything when its annotations are imported or it's
-// removed or changed ("vod": its status, what's transcribed, its chat's), and
-// every VOD's marks at a change to any mark here (made by mark id) or an undo.
+// it's fetched, all but its marks when it changes ("vod": its status, what's
+// transcribed, its chat's), everything when its annotations are imported or
+// it's removed, and every VOD's marks at a change to any mark here (made by
+// mark id), an undo or a redo.
 let watching = false;
 function watchKept() {
   if (watching) return;

@@ -4,13 +4,12 @@
   // the app keeps of each file here (storyboards.rs): the keyframe at or
   // before it, however far back. Drawn into a canvas, which says the
   // moment it shows (`data-time`) and whether that's its exact frame
-  // (`data-exact`). One
-  // request at a time, the newest moment winning. Nothing shows until a
-  // frame has (`shown`, kept from one hover to the next); after that, a
-  // moment with none (footage not here, the storyboard still being made
-  // there) leaves the box empty in its place, so the tip over its lower edge
-  // stays put rather than jumping back up to the bar's top. See-through, so the
-  // waveform under it shows: the timeline's other picture of the video.
+  // (`data-exact`). One request at a time, the newest moment winning
+  // (latest.ts). Nothing shows until a frame has (`shown`, kept from one
+  // hover to the next); after that, a moment with none (footage not here,
+  // the storyboard still being made there) leaves the box empty in its
+  // place, rather than gone and back as the pointer moves. See-through, so
+  // the waveform under it shows: the timeline's other picture of the video.
   //
   // `exact`, when given, is shown instead of the storyboard's: the player's
   // own frame of the moment, once it has it.
@@ -111,8 +110,8 @@
 ></canvas>
 
 <style>
-  /* Inside the timeline's bar, centred on the hover line, the tip across its
-     lower edge: above it would be the picture's box, where the app's own
+  /* Inside the timeline's bar, beside the hover line (scrubFrame.ts `place`):
+     above it would be the picture's box, where the app's own
      player draws over the page. Its see-through lets the waveform and the
      hover line under it show. */
   .scrub-frame {

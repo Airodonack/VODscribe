@@ -731,8 +731,8 @@ async function looksOf(faces: Face[] | Promise<Face[]>): Promise<(Look | null)[]
 /**
  * The ghost of `count` things carried together, which look as `faces` says:
  * one alone, as `carry`'s, its card captioned `label`; several, the first's
- * card on top of up to two more (offset as a deck is), with how many more
- * than the first in its corner ("+2").
+ * card, captioned `label` ("3 clips"), on top of up to BEHIND more and,
+ * past those, up to BLANK blank cards, offset as a deck is.
  */
 function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
   const looks = looksOf(faces);

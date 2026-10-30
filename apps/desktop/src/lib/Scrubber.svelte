@@ -40,11 +40,11 @@
   // a spinner and how much is.
   //
   // Hovering, scrubbing or dragging a selection's edge shows a thumbnail of
-  // that moment (ScrubFrame.svelte) centred on the pointer or the edge, the
-  // time tip across its lower edge, for what plays from a file here: a
-  // selection's start shows its first frame, its end the frame before it
-  // (the last one in), as the picture does while it's dragged. Not for a
-  // finger, which has no hover.
+  // that moment (ScrubFrame.svelte) just left of the pointer or the edge
+  // (scrubFrame.ts `place`), the time tip centred on it at the bar's top,
+  // for what plays from a file here: a selection's start shows its first
+  // frame, its end the frame before it (the last one in), as the picture
+  // does while it's dragged. Not for a finger, which has no hover.
 
   import { onMount, untrack } from "svelte";
   import { api, events, type Stretch, type Vod } from "./api";
