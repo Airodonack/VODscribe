@@ -2,7 +2,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { formatTime } from "./platform.ts";
-import { covered, gaps, requestDetail, showsProgress, shownGaps, transcribeRest } from "./stretches.ts";
+import {
+  covered,
+  gaps,
+  requestDetail,
+  showsProgress,
+  shownGaps,
+  transcribeChoices,
+  transcribeRest,
+  transcribeStretchOf,
+} from "./stretches.ts";
 
 let ids = 0;
 /**
@@ -162,4 +171,22 @@ test("a row's request says its range and how many more wait", () => {
   assert.equal(requestDetail({ start: 0, end: null }, 3600, 1, formatTime), " · 1 more waiting");
   assert.equal(requestDetail({ start: 600, end: null }, null, 0, formatTime), " · from 10:00", "to an end not known");
   assert.equal(requestDetail(null, 3600, 0, formatTime), "");
+});
+
+test("the Transcribe menu offers each stretch once, near the end as well", () => {
+  /** @param {number} from @param {number | null} duration */
+  const offered = (from, duration) =>
+    transcribeChoices(from, duration).map((c) => `${c.key} ${JSON.stringify(transcribeStretchOf(c, from, duration))}`);
+  // Far from the end, every choice is a stretch of its own.
+  assert.equal(offered(600, 7200).length, 5);
+  // Ten minutes before the end, 15 min, 1 hour and to the end are all the rest: to the end says it.
+  assert.deepEqual(offered(6600, 7200), [
+    '300 {"start":6600,"end":6900}',
+    'end {"start":6600,"end":null}',
+    'whole {"start":0,"end":null}',
+  ]);
+  // From the start, to the end is the whole VOD.
+  assert.deepEqual(offered(0, 600), ['300 {"start":0,"end":300}', 'whole {"start":0,"end":null}']);
+  // With no length known, nothing reaches the end but to the end.
+  assert.equal(offered(600, null).length, 5);
 });

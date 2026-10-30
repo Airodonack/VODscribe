@@ -11,6 +11,7 @@
   import { formatSpan, formatTime } from "./platform";
   import Popover from "./Popover.svelte";
   import { load, save } from "./stored";
+  import { transcribeChoices, transcribeStretchOf, type TranscribeChoice as Choice } from "./stretches";
 
   let {
     open = $bindable(),
@@ -32,24 +33,11 @@
     onerror?: (message: string) => void;
   } = $props();
 
-  // A length in seconds, or on to the end, or all of it from the start.
-  type Choice = { key: string; label: string; length?: number; whole?: boolean };
-  const CHOICES: Choice[] = [
-    { key: "300", label: "5 min", length: 300 },
-    { key: "900", label: "15 min", length: 900 },
-    { key: "3600", label: "1 hour", length: 3600 },
-    { key: "end", label: "to the end" },
-    { key: "whole", label: "the whole VOD", whole: true },
-  ];
+  const choices = $derived(transcribeChoices(from, vod.duration));
   const LAST = "vodscribe.transcribeFor";
   let last = $state(load(LAST));
 
-  /** The stretch a choice asks for: its end null when it runs on to the VOD's end. */
-  function stretchOf(choice: Choice): { start: number; end: number | null } {
-    if (choice.whole) return { start: 0, end: null };
-    const end = choice.length === undefined ? null : from + choice.length;
-    return { start: from, end: end !== null && vod.duration && end >= vod.duration ? null : end };
-  }
+  const stretchOf = (choice: Choice) => transcribeStretchOf(choice, from, vod.duration);
 
   function describe(choice: Choice): string {
     const { start, end } = stretchOf(choice);
@@ -69,7 +57,7 @@
 <Popover bind:open {anchor} label="Transcribe from {formatTime(from)}" width={220} padding={4} {above}>
   <p class="muted head">From {formatTime(from)} for:</p>
   <div class="choices">
-    {#each CHOICES as choice (choice.key)}
+    {#each choices as choice (choice.key)}
       <button data-choice={choice.key} class:current={choice.key === last} onclick={() => pick(choice)}>
         {#if choice.key === last}<Icon name="check" size={12} />{/if}<span>{choice.label}</span><span
           class="muted range">{describe(choice)}</span

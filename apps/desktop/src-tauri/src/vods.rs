@@ -533,8 +533,9 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
     }
 }
 
-/// Deletes the video kept for VOD `id`, keeping its transcript; it then
-/// plays on its site instead.
+/// Deletes the video kept for VOD `id`, keeping its transcript. It then
+/// plays in its site's player where the app shows one, and elsewhere is
+/// downloaded again when played (`pipeline::keeps_video`).
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let remove = |work: &Path, id| remove_kept(&state.storyboards, work, id);

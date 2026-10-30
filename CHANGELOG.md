@@ -13,6 +13,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Lines picked in the transcript of a video that hasn't started playing are cut on the usual frame grid, not on that of the video open before it.
   - Pressing B twice quickly makes one cut, not two on the same frame.
   - Undo (Ctrl+Z) pressed right after a change, such as moving a mark, undoes that change, never the one before it.
+  - Near a VOD's end, the Transcribe menu lists each stretch once: lengths that would run past the end are left out, as To the end covers them.
 
 ## 0.7.0 — 2026-10-30
 
