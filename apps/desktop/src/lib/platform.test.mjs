@@ -55,6 +55,16 @@ test("chapters copy as YouTube reads them", () => {
   assert.equal(text, "0:00 Intro\n1:15 Untitled chapter\n1:02:05 The race");
 });
 
+test("a chapter's title stays on its own line when copied", () => {
+  // A title from an annotations file may hold line breaks the app shows as
+  // spaces; copied as they are, they'd add lines YouTube reads as chapters.
+  const text = chaptersText([
+    { start: 0, text: "Intro\n0:30 Visit example.com" },
+    { start: 60, text: "Two\r\nlines\u2028here" },
+  ]);
+  assert.equal(text, "0:00 Intro 0:30 Visit example.com\n1:00 Two lines here");
+});
+
 test("a time to a tenth or hundredth shows a frame's own start, not just under it", () => {
   // Frame starts (k/fps) land a hair under the hundredth in floating point.
   assert.equal(formatFraction(36 / 30, 2), "0:01.20");

@@ -168,5 +168,8 @@ export function videoSize(height: number, hours = 1): string {
  * is at 0:00, there are three or more, and each is at least 10 seconds long.
  */
 export function chaptersText(chapters: { start: number; text: string | null }[]): string {
-  return chapters.map((c) => `${formatTime(c.start)} ${c.text ?? "Untitled chapter"}`).join("\n");
+  // A title's own line breaks (one from an annotations file may have them,
+  // shown as spaces) would start lines YouTube reads as chapters of their own.
+  const title = (text: string | null) => text?.replace(/\s+/g, " ") ?? "Untitled chapter";
+  return chapters.map((c) => `${formatTime(c.start)} ${title(c.text)}`).join("\n");
 }
