@@ -30,10 +30,10 @@ test("the download host's files, by the id the app stores", () => {
   });
   // Twitch's own ids carry no "v"; one typed with it is the same VOD.
   assert.equal(storedId("twitch", "v2901646294"), "v2901646294");
-  assert.equal(storedId("youtube", "IaIo3d6cUuo"), "IaIo3d6cUuo");
+  assert.equal(storedId("youtube", "noa29qsTc4g"), "noa29qsTc4g");
   assert.equal(
-    pickSource("youtube", "IaIo3d6cUuo", new URLSearchParams(), PAGE)?.annotations,
-    "https://dl.vodscribe.com/annotations/youtube/IaIo3d6cUuo.json",
+    pickSource("youtube", "noa29qsTc4g", new URLSearchParams(), PAGE)?.annotations,
+    "https://dl.vodscribe.com/annotations/youtube/noa29qsTc4g.json",
   );
   // A platform the page doesn't know has no files to look for.
   assert.equal(pickSource("vimeo", "1", new URLSearchParams(), PAGE), null);
@@ -186,7 +186,7 @@ test("the host's index: VODs with a platform and id, newest first, each to its p
   // Twitch's page drops the "v" (pickSource puts it back); a clip's slug and other sites' ids stay.
   assert.equal(pageOf("twitch", "v2901646294"), "/v/twitch/2901646294");
   assert.equal(pageOf("twitch", "vSlugName"), "/v/twitch/vSlugName");
-  assert.equal(pageOf("youtube", "IaIo3d6cUuo"), "/v/youtube/IaIo3d6cUuo");
+  assert.equal(pageOf("youtube", "noa29qsTc4g"), "/v/youtube/noa29qsTc4g");
   assert.equal(
     pickSource("twitch", "2901646294", new URLSearchParams(), PAGE)?.annotations.endsWith("/v2901646294.json"),
     true,

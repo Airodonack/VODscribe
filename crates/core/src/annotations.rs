@@ -1378,7 +1378,7 @@ pub(crate) mod tests {
             ("kick", kick, "../marlowe"),
             ("kick", kick, "marlowe/videos"),
             ("youtube", "abc", "Marlowe"),
-            ("youtube", "IaIo3d6cUu/", "Marlowe"),
+            ("youtube", "noa29qsTc4/", "Marlowe"),
             ("twitch", "v12x", "Marlowe"),
             ("twitch", "../123", "Marlowe"),
         ];
@@ -1389,7 +1389,7 @@ pub(crate) mod tests {
             assert!(err.starts_with("The annotations file's VOD isn't one"), "{platform} {id} {channel}: {err}");
         }
         assert!(db.vods().unwrap().is_empty(), "nothing added");
-        for (platform, id) in [("kick", kick), ("youtube", "IaIo3d6cUuo"), ("twitch", "v2901646294"), ("twitch", "123")]
+        for (platform, id) in [("kick", kick), ("youtube", "noa29qsTc4g"), ("twitch", "v2901646294"), ("twitch", "123")]
         {
             let (vod, created) = db.import_annotations(&file(platform, id), None).unwrap();
             assert!(created, "{platform} {id}");

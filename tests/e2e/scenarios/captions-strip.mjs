@@ -38,7 +38,7 @@ export default {
 
     // YouTube: the strip from the start, the scrubber where it stays.
     await ctx.quit();
-    makeSiteVod(vod.id, "youtube", "IaIo3d6cUuo");
+    makeSiteVod(vod.id, "youtube", "noa29qsTc4g");
     app = await ctx.start();
     await app.toLibrary();
     await app.openVod(vod.id);
