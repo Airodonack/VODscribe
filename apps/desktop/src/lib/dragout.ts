@@ -640,8 +640,9 @@ export interface Face {
 
 /** How many cards show behind the first in a ghost of several. */
 const BEHIND = 2;
-/** How many blank cards show behind those, past three things: the pile's thickness, capped. */
-const BLANK = 3;
+/** How many blank cards show behind those, past three things: the pile's thickness, capped where
+ *  the cards' edges, SPREAD shared among them, would be under 2 px apart and merge. */
+const BLANK = 7;
 /** How far, in pixels right and down, the pile's last card sits from the front: the same for any pile. */
 const SPREAD = 18;
 
