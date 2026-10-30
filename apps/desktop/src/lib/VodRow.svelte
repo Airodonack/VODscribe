@@ -10,16 +10,17 @@
   // animate:flip has to sit directly inside its keyed list.
   import { api, type Stretch, type Vod } from "./api";
   import { demoOff } from "./demo";
-  import { ask, choose } from "./ask";
+  import { ask } from "./ask";
   import Icon from "./Icon.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatTime, hasSitePlayer, os, siteName, videoSize } from "./platform";
   import Progress from "./Progress.svelte";
   import Spinner from "./Spinner.svelte";
   import { covered as coveredBy, requestDetail, statusLabel } from "./stretches";
-  import { DELETE, REMOVE, inEdits as inEditsOf, removeVod, removing as removals } from "./removal.svelte";
+  import { inEdits as inEditsOf, removing as removals } from "./removal.svelte";
   import Thumb from "./Thumb.svelte";
   import { transcribe } from "./bulk";
   import { offers } from "./offers.svelte";
+  import { hasFile, removeEntries, showVodFile } from "./actions";
 
   let {
     vod,
@@ -192,34 +193,11 @@
   // (its text is erased, not just dropped); the row says so meanwhile, and
   // goes when it's done (removal.svelte.ts).
   const removing = $derived(removals.has(vod.id));
-  // Removing a VOD that edits use asks whether its video goes too: then the
-  // stretches they use are kept as videos of their own first.
+  // Removing it asks as removing several picked does (actions.ts): a VOD that
+  // edits use, whether its video goes too, the stretches they use kept first.
   async function remove() {
-    let deleteVideo = false;
-    if (edits.forVod(vod.id).length) {
-      const answer = await choose(
-        `Remove “${vod.title}”? Its clips leave VODscribe (their files stay in your Videos folder).${inEdits(
-          " Its pieces in ",
-          " stay: removed from the library, its video stays on this computer for them; deleted, only the stretches they use are kept.",
-        )}`,
-        REMOVE,
-        DELETE,
-        "Keep",
-      );
-      if (!answer) return;
-      deleteVideo = answer === DELETE;
-    } else if (
-      !(await ask(
-        `Remove “${vod.title}”? Its transcript and any downloaded audio or video are erased from this computer, and its clips leave VODscribe (their files stay in your Videos folder).`,
-        "Remove",
-        "Keep",
-      ))
-    ) {
-      return;
-    }
-    onremove();
     onerror(null);
-    await removeVod(vod, deleteVideo, onerror);
+    await removeEntries([vod], [], { onremove });
   }
 </script>
 
@@ -398,6 +376,16 @@
       {:else}
         <Icon name={keepError ? "warning" : "download"} size={15} />
       {/if}
+    </button>
+  {/if}
+  {#if hasFile(vod)}
+    <button
+      class="row-act"
+      onclick={() => showVodFile(vod)}
+      title="Show the file in its folder"
+      aria-label="Show in folder"
+    >
+      <Icon name="folder" size={15} />
     </button>
   {/if}
   {#if keptVideo}

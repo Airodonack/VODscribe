@@ -6,7 +6,7 @@
 
   import { untrack } from "svelte";
   import { api, type Edit } from "./api";
-  import { ask } from "./ask";
+  import { removeEntries, showEditFile } from "./actions";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
@@ -60,14 +60,8 @@
     return what;
   });
 
-  async function remove() {
-    const sure = await ask(
-      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}?`,
-      "Delete",
-      "Keep",
-    );
-    if (sure) edits.remove(edit.id);
-  }
+  /** Delete edit: asked as for several picked (actions.ts). */
+  const remove = () => void removeEntries([], [edit]);
 </script>
 
 <button
@@ -96,7 +90,7 @@
   {#if edit.status === "ready" && edit.file_path}
     <button
       class="row-act"
-      onclick={() => api.showEdit(edit.id).catch((e) => (edits.error = String(e)))}
+      onclick={() => showEditFile(edit)}
       title="Show the rendered video in its folder"
       aria-label="Show in folder"><Icon name="folder" size={15} /></button
     >

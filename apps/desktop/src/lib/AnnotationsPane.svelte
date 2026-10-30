@@ -33,7 +33,7 @@
   import { castLink } from "./castLink.svelte";
   import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
-  import Popover from "./Popover.svelte";
+  import Menu, { type MenuItem } from "./Menu.svelte";
   import { DEMO } from "./demo";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
   import { putOf } from "./edits.svelte";
@@ -233,9 +233,13 @@
     addFor = { row, el: e.currentTarget as HTMLElement };
     menuOpen = true;
   }
-  let menu = $state<HTMLElement>();
-  $effect(() => {
-    if (menuOpen) void tick().then(() => menu?.querySelector<HTMLElement>("button")?.focus());
+  const menuItems = $derived.by((): MenuItem[] => {
+    const at = addFor;
+    if (!at) return [];
+    return [
+      { label: `Play from ${formatTime(at.row.start)}`, run: () => onplay(at.row.start) },
+      { label: "Add to edit…", key: "A", run: () => addToEdit(at.row, at.el) },
+    ];
   });
   // Closed with its focus gone (the panel went with it): back on the row.
   let wasOpen = false;
@@ -492,24 +496,7 @@
 </aside>
 
 {#if addFor}
-  <Popover bind:open={menuOpen} anchor={addFor.el} label="Highlight menu" width={200} padding={4}>
-    <div class="menu" role="menu" bind:this={menu}>
-      <button
-        role="menuitem"
-        onclick={() => {
-          menuOpen = false;
-          if (addFor) onplay(addFor.row.start);
-        }}>Play from {formatTime(addFor.row.start)}</button
-      >
-      <button
-        role="menuitem"
-        onclick={() => {
-          menuOpen = false;
-          if (addFor) addToEdit(addFor.row, addFor.el);
-        }}>Add to edit…<kbd>A</kbd></button
-      >
-    </div>
-  </Popover>
+  <Menu bind:open={menuOpen} anchor={addFor.el} label="Highlight menu" items={menuItems} width={200} />
   <AddToEdit
     bind:open={adding}
     anchor={addFor.el}
@@ -530,30 +517,6 @@
     min-width: 0;
     border-left: 1px solid var(--border);
     background: var(--surface);
-  }
-
-  .menu {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: flex-start;
-    border: none;
-    background: none;
-    text-align: left;
-  }
-
-  .menu button:hover,
-  .menu button:focus-visible {
-    background: var(--surface-2);
-  }
-
-  .menu kbd {
-    margin-left: auto;
   }
 
   .meta {

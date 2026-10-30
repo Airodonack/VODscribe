@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
   import { ask } from "./ask";
@@ -9,6 +7,7 @@
   import ClipStrip from "./ClipStrip.svelte";
   import { cuts, markKey } from "./cuts.svelte";
   import { DRAG_SLOP, carry, exportStretch, stretchAt } from "./dragout";
+  import { actionsFor, copyVodLink } from "./actions";
   import { cueAt, frameStart, isUnplayable } from "./media";
   import PermissionNote from "./PermissionNote.svelte";
   import Popover from "./Popover.svelte";
@@ -35,7 +34,6 @@
     playbackHint,
     playsFromFile,
     siteName,
-    watchUrl,
   } from "./platform";
   import { nav } from "./nav.svelte";
   import { hideNote, noteHidden } from "./permission";
@@ -91,10 +89,7 @@
   let copied = $state<"ok" | "failed" | null>(null);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   async function copyLink() {
-    copied = await writeText(watchUrl(vod, now)).then(
-      () => "ok" as const,
-      (e) => (console.error("copy failed", e), "failed" as const),
-    );
+    copied = (await copyVodLink(vod, now)) ? "ok" : "failed";
     clearTimeout(copiedTimer);
     copiedTimer = setTimeout(() => (copied = null), 1500);
   }
@@ -640,16 +635,13 @@
     </div>
   {/snippet}
   {#snippet headEnd()}
-    {#if isLocal}
-      <button class="link open" onclick={() => api.showFile(vod.id).catch((e) => (error = String(e)))}>
-        Show in folder
+    <!-- Its file's folder, or its page on its site, at the playhead (actions.ts, as its row's menu has them). -->
+    {#each actionsFor( { kind: "vod", vod, at: now } ).filter((a) => a.id === "folder" || a.id === "open") as action (action.id)}
+      <button class="link open" onclick={action.run}>
+        {action.label}
+        {#if action.id === "open"}<Icon name="external" size={12} />{/if}
       </button>
-    {:else}
-      <button class="link open" onclick={() => openUrl(watchUrl(vod, now))}>
-        Open on {site}
-        <Icon name="external" size={12} />
-      </button>
-    {/if}
+    {/each}
     {#if canEmbed(vod)}
       <button
         class="icon"

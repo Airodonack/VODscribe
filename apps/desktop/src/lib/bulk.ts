@@ -11,17 +11,15 @@
 // the clip bar or the library's list, by which side of the window the
 // pointer is on (the focus's, before the pointer has moved).
 
+import { removeEntries } from "./actions";
 import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
-import { ask, choose } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { carrySet, exportStretch, exportStretches, stretchSaid, type Face } from "./dragout";
 import { edits } from "./edits.svelte";
 import { is } from "./keys.svelte";
 import { inEdit } from "./media";
-import { listed } from "./platform";
 import { isEscape } from "./playerKeys";
-import { DELETE, REMOVE, removeVod } from "./removal.svelte";
 import { count, library, snippets, type Entry, type Snippet } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
 import { undoIn } from "./undo";
@@ -236,39 +234,7 @@ export async function removeChosenEntries(rows: Row[], onremove: (vodId: number)
   const picked = (kind: Entry["kind"], id: number) => library.has({ kind, id });
   const vods = rows.flatMap((r) => (r.kind === "vod" && picked("vod", r.vod.id) ? [r.vod] : []));
   const gone = rows.flatMap((r) => (r.kind === "edit" && picked("edit", r.edit.id) ? [r.edit] : []));
-  if (!vods.length && !gone.length) return;
-  const what = count([
-    [vods.length, "VOD", "VODs"],
-    [gone.length, "edit", "edits"],
-  ]);
-  // Edits staying that use a VOD going: its video can stay for them, or go.
-  const using = [
-    ...new Set(vods.flatMap((v) => edits.forVod(v.id).filter((e) => !gone.some((g) => g.id === e.id)))),
-  ].map((e) => `“${e.title}”`);
-  const theirs = vods.length === 1 ? "Its" : "Their";
-  const vodText = vods.length
-    ? ` ${vods.length === 1 ? "The VOD's transcript" : "The VODs' transcripts"} and any downloaded audio or video are erased from this computer, and ${theirs.toLowerCase()} clips leave VODscribe (their files stay in your Videos folder).`
-    : "";
-  const editText = gone.length
-    ? ` ${gone.length === 1 ? "The edit is" : "The edits are"} deleted${gone.some((e) => e.file_path) ? ", with ".concat(gone.length === 1 ? "its video" : "their videos") : ""}.`
-    : "";
-  let deleteVideo = false;
-  if (using.length) {
-    const answer = await choose(
-      `Remove ${what}?${vodText}${editText} ${theirs} pieces in ${using.length === 1 ? "the edit" : "the edits"} ${listed(using)} stay: removed from the library, the video stays on this computer for them; deleted, only the stretches they use are kept.`,
-      REMOVE,
-      DELETE,
-      "Keep",
-    );
-    if (!answer) return;
-    deleteVideo = answer === DELETE;
-  } else if (!(await ask(`Remove ${what}?${vodText}${editText}`, "Remove", "Keep"))) return;
-  library.clear();
-  for (const edit of gone) await edits.remove(edit.id);
-  for (const vod of vods) {
-    onremove(vod.id);
-    await removeVod(vod, deleteVideo, (message) => toast.show(`Couldn't remove “${vod.title}”: ${message}`));
-  }
+  await removeEntries(vods, gone, { onremove, confirmed: () => library.clear() });
 }
 
 /** Where the pointer last was in the window, across (null before it has moved). */

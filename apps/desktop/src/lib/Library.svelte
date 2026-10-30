@@ -18,7 +18,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
-  import { api, type Vod } from "./api";
+  import { api, type Put, type Vod } from "./api";
   import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
@@ -36,7 +36,8 @@
   import { edits } from "./edits.svelte";
   import { carryEntries, chosenEntries, chosenToTranscribe, removeChosenEntries, transcribeChosen } from "./bulk";
   import AddToEdit from "./AddToEdit.svelte";
-  import Popover from "./Popover.svelte";
+  import Menu, { type MenuItem } from "./Menu.svelte";
+  import { actionsFor } from "./actions";
   import { offers } from "./offers.svelte";
   import { DRAG_SLOP } from "./dragout";
   import { readAhead } from "./readAhead";
@@ -58,16 +59,41 @@
     onopenedit: (id: number) => void;
   } = $props();
 
-  // A VOD's menu, opened by a right click on its row (or the menu key).
+  // A row's menu, opened by a right click on it (or the menu key): what can
+  // be done with its VOD or edit (actions.ts), and for a VOD from a site,
+  // asking for its annotations. Add to edit… there asks which edit, beside the row.
   let menuOpen = $state(false);
-  let menuFor = $state<{ vod: Vod; row: HTMLElement } | null>(null);
-  function openMenu(e: MouseEvent, vod: Vod) {
-    // Its one item is about VODs from sites (a file's id is this computer's own).
-    if (DEMO || vod.platform === "local") return;
+  let menuFor = $state<{ row: LibraryRow; el: HTMLElement } | null>(null);
+  let addingRow = $state(false);
+  function openMenu(e: MouseEvent, row: LibraryRow) {
+    // The web demo keeps its VODs as they are.
+    if (DEMO) return;
     e.preventDefault();
-    menuFor = { vod, row: e.currentTarget as HTMLElement };
+    menuFor = { row, el: e.currentTarget as HTMLElement };
     menuOpen = true;
   }
+  const rowPut = (row: LibraryRow): Put =>
+    row.kind === "vod" ? { kind: "vod", id: row.vod.id } : { kind: "clip", id: row.edit.id };
+  const menuItems = $derived.by((): MenuItem[] => {
+    const row = menuFor?.row;
+    if (!row) return [];
+    const addToEdit = () => (addingRow = true);
+    if (row.kind === "edit") return actionsFor({ kind: "edit", edit: row.edit }, { addToEdit });
+    const vod = row.vod;
+    const items: MenuItem[] = actionsFor(
+      { kind: "vod", vod },
+      { addToEdit, onremove: (id) => id === selectedId && onselect(null) },
+    );
+    // Annotations are published for VODs from sites (a file's id is this computer's own).
+    if (vod.platform !== "local")
+      items.splice(
+        items.length - 1,
+        0,
+        { label: "Check for annotations", icon: "gift", run: () => void offers.check(vod) },
+        { label: "Check all VODs for annotations", icon: "gift", run: () => void offers.checkLibrary() },
+      );
+    return items;
+  });
 
   let url = $state("");
   // Adding links and files, one after another (adder.svelte.ts). Its error is
@@ -533,7 +559,7 @@
         }}
         onpointerdown={(e) => onRowDown(e, row, key)}
         use:restOver={() => restedOn(row)}
-        oncontextmenu={(e) => row.kind === "vod" && openMenu(e, row.vod)}
+        oncontextmenu={(e) => openMenu(e, row)}
       >
         {#if n !== null}<span class="order row-order">{n}</span>{/if}
         {#if row.kind === "vod"}
@@ -566,46 +592,16 @@
 
 <AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
 
-<Popover bind:open={menuOpen} anchor={menuFor?.row} label="VOD menu" width={250} padding={4}>
-  <div class="menu" role="menu">
-    <button
-      role="menuitem"
-      onclick={() => {
-        menuOpen = false;
-        if (menuFor) void offers.check(menuFor.vod);
-      }}><Icon name="gift" size={14} /> Check for annotations</button
-    >
-    <button
-      role="menuitem"
-      onclick={() => {
-        menuOpen = false;
-        void offers.checkLibrary();
-      }}><Icon name="gift" size={14} /> Check all VODs for annotations</button
-    >
-  </div>
-</Popover>
+<Menu
+  bind:open={menuOpen}
+  anchor={menuFor?.el}
+  label={menuFor?.row.kind === "edit" ? "Edit menu" : "VOD menu"}
+  items={menuItems}
+  width={250}
+/>
+<AddToEdit bind:open={addingRow} anchor={menuFor?.el} items={() => (menuFor ? [rowPut(menuFor.row)] : [])} />
 
 <style>
-  .menu {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .menu button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    justify-content: flex-start;
-    border: none;
-    background: none;
-    text-align: left;
-  }
-
-  .menu button:hover,
-  .menu button:focus-visible {
-    background: var(--surface-2);
-  }
-
   aside {
     display: flex;
     flex-direction: column;

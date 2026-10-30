@@ -14,7 +14,6 @@
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
-  import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
@@ -36,6 +35,7 @@
   import Spinner from "./Spinner.svelte";
   import { toast } from "./toasts.svelte";
   import { undoIn } from "./undo";
+  import { removeEntries, showEditFile } from "./actions";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
   import { carryChosen, chosenClips, chosenSegments, clipSegments } from "./bulk";
@@ -759,14 +759,9 @@
     api.dragEdit(edit.id).catch((err) => (edits.error = String(err)));
   }
 
-  async function remove() {
-    if (!edit) return;
-    const sure = await ask(
-      `Delete the edit “${edit.title}”${edit.file_path ? " and its video" : ""}?`,
-      "Delete",
-      "Keep",
-    );
-    if (sure) edits.remove(edit.id);
+  /** Delete edit: asked as from its row (actions.ts). */
+  function remove() {
+    if (edit) void removeEntries([], [edit]);
   }
 
   onDestroy(() => {
@@ -810,7 +805,7 @@
         <button
           class="out"
           onpointerdown={(e) => e.button === 0 && (outPress = { x: e.clientX, y: e.clientY })}
-          onclick={() => api.showEdit(edit.id).catch((err) => (edits.error = String(err)))}
+          onclick={() => showEditFile(edit)}
           title="Drag it into a video editor or a folder, or click to show it in its folder"
         >
           <Icon name="film" size={14} />
