@@ -1615,11 +1615,6 @@ impl Db {
             }))
     }
 
-    /// The VOD mark `id` is on, if it's there.
-    pub fn mark_vod(&self, id: i64) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT vod_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?)
-    }
-
     /// VOD `vod_id`'s marks, to be put back later with `restore_marks` (for undo).
     pub fn mark_states(&self, vod_id: i64) -> Result<Vec<MarkState>> {
         Ok(self
@@ -1666,19 +1661,6 @@ impl Db {
         let out = f(self)?;
         tx.commit()?;
         Ok(out)
-    }
-
-    /// Puts the library in the order of `ids`, which should list every VOD.
-    pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        {
-            let mut stmt = tx.prepare("UPDATE clips SET position = ?2 WHERE whole_of = ?1")?;
-            for (i, id) in ids.iter().enumerate() {
-                stmt.execute(params![id, i as i64])?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// VOD `id`'s frame rate, once its video has been read (`set_rate`).
@@ -2243,7 +2225,7 @@ mod tests {
         let cut = db.add_mark(vod, "cut", 5.0, None).unwrap();
         db.add_mark(vod, "chapter", 1.0, Some("Intro")).unwrap();
         let before = db.mark_states(vod).unwrap();
-        assert_eq!(db.mark_vod(cut.id).unwrap(), Some(vod));
+        assert_eq!(db.mark_doc(cut.id).unwrap(), Some(MarkDoc::Vod(vod)));
 
         db.move_mark(cut.id, 7.0).unwrap();
         db.add_mark(vod, "highlight", 3.0, Some("note")).unwrap();
@@ -3150,12 +3132,12 @@ mod tests {
 
     #[test]
     fn keeps_the_library_order() {
-        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
         let a = db.add_vod(&info("a")).unwrap().0.id;
         let b = db.add_vod(&info("b")).unwrap().0.id;
         let ids = |db: &Db| db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>();
         assert_eq!(ids(&db), [b, a], "newest first");
-        db.reorder(&[a, b]).unwrap();
+        db.reorder_library(&[crate::edits::LibraryItem::Vod(a), crate::edits::LibraryItem::Vod(b)]).unwrap();
         assert_eq!(ids(&db), [a, b]);
         let c = db.add_vod(&info("c")).unwrap().0.id;
         assert_eq!(ids(&db), [c, a, b], "added on top");

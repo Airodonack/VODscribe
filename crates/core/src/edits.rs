@@ -1616,7 +1616,7 @@ impl Db {
     /// strikes stretches now (a slice taken out splits pieces), but pieces
     /// from before may have some: the tests make such pieces with it.
     #[cfg(test)]
-    pub fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
+    pub(crate) fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         let struck = struck_json(&struck_flicks(struck))?;
         self.change(edit_id, None, |db| {
