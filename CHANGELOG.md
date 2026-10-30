@@ -30,6 +30,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The chapters and highlights column has Copy chapters in its heading, as a chapter's title box has: every chapter with its time, ready for a YouTube video's description.
 - Ctrl+Q (⌘Q on a Mac) quits VODscribe, as closing its window does.
 - In an edit, holding the picture picks up the stretch at the playhead (or its piece) to carry onto an edit, the clip bar or out of the window, as on a VOD's player; and the edit's controls have a Clip button, as a VOD's do, which clips the stretch at the playhead (or what's selected) to the edit's clip bar, the same as C, and can be dragged the same way.
+- A clip can be any length; the three-hour limit is gone.
 - Fixes:
   - Ctrl+A (⌘A) with nothing to pick, such as over the library page's main side, no longer selects all the text on the page.
   - A VOD from a site whose player VODscribe can't show, played while its video downloads, no longer loses its picture when the download finishes and refuses to play on: it carries on from the video kept, where it was.

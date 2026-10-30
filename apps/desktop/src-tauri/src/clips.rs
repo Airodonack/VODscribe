@@ -30,9 +30,6 @@ use crate::history::{self, Doc};
 use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
 
-/// The longest clip: longer than any highlight, short of a whole VOD.
-const LONGEST: f64 = 3.0 * 3600.0;
-
 /// How often a cut's progress is sent.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 
@@ -309,20 +306,6 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     Ok(())
 }
 
-/// A range that can be a clip of a VOD `duration` seconds long (if known).
-fn check_range(start: f64, end: f64, duration: Option<f64>) -> CmdResult<()> {
-    if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
-        return Err("A clip has to end after it starts.".into());
-    }
-    if end - start > LONGEST {
-        return Err("A clip can be at most 3 hours long.".into());
-    }
-    if duration.is_some_and(|d| start >= d) {
-        return Err("That's past the end of the video.".into());
-    }
-    Ok(())
-}
-
 /// The history a change to `clip` goes in: that of the VOD or edit whose
 /// clip bar it's on.
 fn bar_doc(clip: &Clip) -> Doc {
@@ -367,15 +350,13 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 /// to be made. A range with a clip already (C pressed twice) gives that one,
 /// made again only if it failed.
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
-    if ranges.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from && from >= 0.0)) {
-        return Err("That's not a stretch of the edit.".into());
-    }
     let state = app.state::<AppState>();
     let made = {
         let db = state.db.lock().unwrap();
         let doc = Doc::Edit(edit_id);
         let before = history::snapshot(&db, doc).ok().flatten();
-        // Each one's title first: one that plays nothing makes none of them.
+        // Each one's title first (`span_title` checks its span): one that
+        // isn't a span of the edit makes none of them.
         let mut titled = Vec::new();
         for (from, to) in ranges {
             titled.push((from, to, db.span_title(edit_id, from, to).map_err(err)?));
@@ -440,13 +421,10 @@ fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool
     let state = app.state::<AppState>();
     let made = {
         let db = state.db.lock().unwrap();
-        let vod = db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-        let duration = vod.info.duration;
-        let ranges: Vec<(f64, f64)> =
-            ranges.into_iter().map(|(start, end)| (start, duration.map_or(end, |d| end.min(d)))).collect();
-        for &(start, end) in &ranges {
-            check_range(start, end, duration)?;
-        }
+        db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
+        // Every one checked first: one that isn't a span of the VOD makes none.
+        let ranges = ranges.into_iter().map(|(start, end)| db.vod_span(vod_id, start, end)).collect::<Result<Vec<_>>>();
+        let ranges = ranges.map_err(err)?;
         let doc = Doc::Vod(vod_id);
         let before = history::snapshot(&db, doc).ok().flatten();
         let mut made = Vec::new();
@@ -470,9 +448,6 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
     let clip = {
         let db = state.db.lock().unwrap();
         let clip = db.clip(id).map_err(err)?.ok_or("That clip is gone.")?;
-        let duration = db.vod(clip.vod_id).map_err(err)?.and_then(|v| v.info.duration);
-        let end = duration.map_or(end, |d| end.min(d));
-        check_range(start, end, duration)?;
         let doc = bar_doc(&clip);
         let before = history::snapshot(&db, doc).ok().flatten();
         db.set_clip_range(id, start, end).map_err(err)?;
@@ -1153,15 +1128,5 @@ mod tests {
         assert_eq!(gone.iter().map(|(c, _)| c.id).collect::<Vec<_>>(), [b, a]);
         assert!(db.clips(vod).unwrap().is_empty());
         assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
-    }
-
-    #[test]
-    fn ranges_must_be_clips() {
-        assert!(check_range(1.0, 2.0, Some(10.0)).is_ok());
-        assert!(check_range(2.0, 2.0, None).is_err());
-        assert!(check_range(-1.0, 2.0, None).is_err());
-        assert!(check_range(f64::NAN, 2.0, None).is_err());
-        assert!(check_range(0.0, 4.0 * 3600.0, None).is_err());
-        assert!(check_range(10.0, 12.0, Some(10.0)).is_err());
     }
 }

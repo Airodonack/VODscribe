@@ -1075,6 +1075,7 @@ impl Db {
     /// A clip there already of exactly that stretch is given instead (C
     /// pressed twice), put on the bar if `shown` and it was only dragged out.
     pub fn add_edit_clip(&self, edit: i64, from: f64, to: f64, title: &str, shown: bool) -> Result<crate::db::Clip> {
+        self.check_edit_span(edit, from, to)?;
         let pieces = self.edit_pieces(edit)?;
         let parts = stretch_pieces(&pieces, from, to);
         if parts.is_empty() {
@@ -1233,6 +1234,7 @@ impl Db {
                 (vod.info.title.clone(), vec![part(*id, 0.0, end, &vod.info.title)])
             }
             Put::Span { clip, from, to } => {
+                self.check_edit_span(*clip, *from, *to)?;
                 let parts = stretch_pieces(&self.edit_pieces(*clip)?, *from, *to);
                 anyhow::ensure!(!parts.is_empty(), "Nothing of the edit plays there.");
                 (self.span_title(*clip, *from, *to)?, parts)
@@ -1244,6 +1246,7 @@ impl Db {
     /// The name for `from`..`to` of clip `clip`'s timeline made a clip: what's
     /// said at its start.
     pub fn span_title(&self, clip: i64, from: f64, to: f64) -> Result<String> {
+        self.check_edit_span(clip, from, to)?;
         let parts = stretch_pieces(&self.edit_pieces(clip)?, from, to);
         let first = parts.first().context("Nothing of the edit plays there.")?;
         Ok(crate::clips::title(&self.words_between(first.vod_id, first.start, first.end)?, first.start))
@@ -1575,13 +1578,27 @@ impl Db {
         Ok(())
     }
 
-    /// `start`..`end` seconds of VOD `vod_id`, within it and on the flick; an
-    /// error if none of it is.
+    /// `start`..`end` seconds of VOD `vod_id` (`vod_span`), on the flick.
     fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
-        let duration = self.vod_duration(vod_id)?;
-        let (start, end) = (start.max(0.0), duration.map_or(end, |d| end.min(d)));
-        anyhow::ensure!(end > start, "That's past the end of the video.");
+        let (start, end) = self.vod_span(vod_id, start, end)?;
         Ok((Flicks::from_seconds(start), Flicks::from_seconds(end)))
+    }
+
+    /// `start`..`end` seconds of VOD `vod_id` if it's a span of it
+    /// (`clips::check_span`), its end cut at the VOD's.
+    pub fn vod_span(&self, vod_id: i64, start: f64, end: f64) -> Result<(f64, f64)> {
+        let duration = self.vod_duration(vod_id)?;
+        crate::clips::check_span(start, end, duration).map_err(anyhow::Error::msg)?;
+        Ok((start, duration.map_or(end, |d| end.min(d))))
+    }
+
+    /// Whether `from`..`to` seconds is a span of clip `clip`'s timeline (an
+    /// edit's: as long as what its pieces play), `clips::check_span`.
+    pub fn check_edit_span(&self, clip: i64, from: f64, to: f64) -> Result<()> {
+        let length: f64 = self.edit_pieces(clip)?.iter().flat_map(|p| p.spans()).map(|(a, b)| b - a).sum();
+        // An edit with nothing in it has no end to be past.
+        anyhow::ensure!(length > 0.0, "Nothing of the edit plays there.");
+        crate::clips::check_span(from, to, Some(length)).map_err(anyhow::Error::msg)
     }
 
     /// Sets piece `id` to `start`..`end` seconds of its VOD (within the VOD).
@@ -1612,6 +1629,7 @@ impl Db {
     /// (`cutting_out`); a group left empty goes too. Its cuts at either end,
     /// and any in it, go as well: where what's left meets is a real split.
     pub fn remove_edit_stretch(&self, edit: i64, from: f64, to: f64) -> Result<()> {
+        self.check_edit_span(edit, from, to)?;
         let pieces = self.edit_pieces(edit)?;
         let spent: Vec<i64> = place_marks(&pieces, &self.clip_marks(edit)?)
             .into_iter()
@@ -2459,6 +2477,75 @@ pub(crate) mod tests {
         assert!(db.change(edit + 100, None, rename("d")).is_err(), "a clip that isn't there");
     }
 
+    /// Each command that takes a span checked it its own way: some let one
+    /// start before 0, one capped a VOD's clips at 3 hours, and they said so
+    /// in different words. Every one now goes by `clips::check_span`.
+    #[test]
+    fn every_span_is_checked_the_same_way() {
+        use crate::clips::{ENDS_BEFORE_START, PAST_THE_END, check_span};
+        fn said<T>(r: Result<T>) -> Option<String> {
+            r.err().map(|e| format!("{e:#}"))
+        }
+        let refused = Some(ENDS_BEFORE_START.to_string());
+        let past = Some(PAST_THE_END.to_string());
+
+        assert_eq!(check_span(1.0, 2.0, Some(10.0)), Ok(()));
+        assert_eq!(check_span(0.0, 4.0 * 3600.0, None), Ok(()), "any length");
+        assert_eq!(check_span(2.0, 2.0, None), Err(ENDS_BEFORE_START));
+        assert_eq!(check_span(-1.0, 2.0, None), Err(ENDS_BEFORE_START));
+        assert_eq!(check_span(f64::NAN, 2.0, None), Err(ENDS_BEFORE_START));
+        assert_eq!(check_span(1.0, f64::INFINITY, None), Err(ENDS_BEFORE_START));
+        assert_eq!(check_span(10.0, 12.0, Some(10.0)), Err(PAST_THE_END));
+
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let long = db.add_vod(&VodInfo { duration: Some(5.0 * 3600.0), ..info("long") }).unwrap().0.id;
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+
+        // A VOD's clip (`add_clip`, `set_clip_range`): longer than 3 hours too.
+        let clip = db.add_clip(long, 0.0, 4.0 * 3600.0, "long", true).unwrap();
+        assert_eq!(clip.end, 4.0 * 3600.0);
+        assert_eq!(said(db.add_clip(vod, -1.0, 2.0, "c", true)), refused, "a clip from before 0");
+        assert_eq!(said(db.add_clip(vod, 600.0, 610.0, "c", true)), past);
+        assert_eq!(db.add_clip(vod, 590.0, 700.0, "c", true).unwrap().end, 600.0, "cut at the VOD's end");
+        db.set_clip_range(clip.id, 60.0, 4.5 * 3600.0).unwrap();
+        assert_eq!(said(db.set_clip_range(clip.id, -1.0, 2.0)), refused, "moved to before 0");
+        assert_eq!(said(db.set_clip_range(clip.id, 3.0, 2.0)), refused);
+        assert_eq!(said(db.set_clip_range(clip.id, 6.0 * 3600.0, 7.0 * 3600.0)), past);
+
+        // An edit's pieces (`add_piece`, `put`, `set_piece_range`).
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, long, (0.0, 4.0 * 3600.0), "long", None).unwrap();
+        assert_eq!(said(db.add_piece(edit, vod, (-1.0, 2.0), "a", None)), refused, "a piece from before 0");
+        assert_eq!(said(db.add_piece(edit, vod, (f64::NAN, 2.0), "a", None)), refused);
+        let range = |start, end| Put::Range { vod_id: vod, start, end, title: None };
+        let highlight = |start, end| Put::Highlight { vod_id: vod, start, end, title: "h".into() };
+        for onto in [Onto::Timeline(None), Onto::Bar] {
+            assert_eq!(said(db.put(edit, &[range(-1.0, 2.0)], onto)), refused, "{onto:?}");
+            assert_eq!(said(db.put(edit, &[highlight(-1.0, 2.0)], onto)), refused, "{onto:?}");
+            assert_eq!(said(db.put(edit, &[range(700.0, 710.0)], onto)), past, "{onto:?}");
+            let span = Put::Span { clip: edit, from: -1.0, to: 2.0 };
+            assert_eq!(said(db.put(edit, &[span], onto)), refused, "{onto:?}");
+        }
+        let piece = db.piece_rows(edit).unwrap()[0].id;
+        assert_eq!(said(db.set_piece_range(piece, -1.0, 2.0)), refused, "trimmed to before 0");
+        assert_eq!(said(db.set_piece_range(piece, 5.0, 4.0)), refused);
+        db.set_piece_range(piece, 0.0, 4.5 * 3600.0).unwrap();
+
+        // Spans of the edit's timeline (4.5 hours long now): a clip of one
+        // (`add_edit_clip`, its title `span_title`), taking one out
+        // (`remove_edit_stretch`, `remove_from_edit`).
+        let bar = db.add_edit_clip(edit, 0.0, 4.0 * 3600.0, "long", true).unwrap();
+        assert_eq!(db.clip(bar.id).unwrap().unwrap().length, 4.0 * 3600.0, "longer than 3 hours");
+        assert_eq!(said(db.span_title(edit, -1.0, 2.0)), refused);
+        assert_eq!(said(db.add_edit_clip(edit, -1.0, 2.0, "c", true)), refused, "an edit's clip from before 0");
+        assert_eq!(said(db.add_edit_clip(edit, 5.0 * 3600.0, 5.5 * 3600.0, "c", true)), past);
+        assert_eq!(said(db.remove_edit_stretch(edit, -1.0, 2.0)), refused, "taken out from before 0");
+        assert_eq!(said(db.remove_edit_stretch(edit, 2.0, f64::NAN)), refused);
+        assert_eq!(said(db.remove_from_edit(edit, &[(-1.0, 2.0)], &[])), refused);
+        assert_eq!(said(db.remove_from_edit(edit, &[(5.0 * 3600.0, 5.5 * 3600.0)], &[])), past);
+        assert_eq!(db.edit_pieces(edit).unwrap()[0].end, 4.5 * 3600.0, "nothing taken out");
+    }
+
     #[test]
     fn pieces_stay_within_their_vod() {
         let db = Db::open(Path::new(":memory:")).unwrap();
@@ -2489,10 +2576,11 @@ pub(crate) mod tests {
         assert_eq!(titles(&db), ["a", "b"]);
         // Grown or trimmed within the VOD, and a line struck.
         let a_piece = db.edit_pieces(edit.id).unwrap()[0].id;
-        db.set_piece_range(a_piece, -5.0, 18.0).unwrap();
+        assert!(db.set_piece_range(a_piece, -5.0, 18.0).is_err(), "not before the VOD");
+        db.set_piece_range(a_piece, 0.0, 18.0).unwrap();
         db.set_piece_struck(a_piece, &[(12.0, 14.0)]).unwrap();
         let p = &db.edit_pieces(edit.id).unwrap()[0];
-        assert_eq!((p.start, p.end), (0.0, 18.0), "not before the VOD");
+        assert_eq!((p.start, p.end), (0.0, 18.0));
         db.set_piece_range(a_piece, 10.0, 18.0).unwrap();
         let p = &db.edit_pieces(edit.id).unwrap()[0];
         assert_eq!(p.spans(), [(10.0, 12.0), (14.0, 18.0)]);

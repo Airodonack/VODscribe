@@ -1305,10 +1305,12 @@ impl Db {
     }
 
     /// Adds a clip of VOD `vod_id` from `start` to `end` seconds, after its
-    /// others on the clip bar; `shown` if it goes in the bar. A snippet: a
-    /// clip of one piece, hanging off the VOD's own clip.
+    /// others on the clip bar (a span of the VOD, `vod_span`: its end cut at
+    /// the VOD's); `shown` if it goes in the bar. A snippet: a clip of one
+    /// piece, hanging off the VOD's own clip.
     pub fn add_clip(&self, vod_id: i64, start: f64, end: f64, title: &str, shown: bool) -> Result<Clip> {
         let bar = self.vod_clip(vod_id)?.context("That VOD is gone.")?;
+        let (start, end) = self.vod_span(vod_id, start, end)?;
         let add = |db: &Db| {
             let id = db.new_clip(title, crate::edits::Place::Bar(bar))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
@@ -1368,8 +1370,11 @@ impl Db {
         Ok(stmt.query_map([], clip_from_row)?.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Moves clip `id` to `start`..`end` seconds; its file is to be made again.
+    /// Moves clip `id` to `start`..`end` seconds of its VOD (`vod_span`); its
+    /// file is to be made again.
     pub fn set_clip_range(&self, id: i64, start: f64, end: f64) -> Result<()> {
+        let clip = self.clip(id)?.context("That clip is gone.")?;
+        let (start, end) = self.vod_span(clip.vod_id, start, end)?;
         self.change(id, None, |db| {
             db.conn.execute(
                 "UPDATE items SET start = ?2, end = ?3 WHERE id = (SELECT id FROM items WHERE clip_id = ?1 AND parent IS NULL ORDER BY position, id LIMIT 1)",

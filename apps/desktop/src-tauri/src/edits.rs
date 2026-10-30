@@ -293,9 +293,6 @@ pub(crate) async fn edit_lines(app: AppHandle, id: i64) -> CmdResult<Vec<crate::
 /// there made a real split, as one change.
 #[tauri::command]
 pub(crate) async fn remove_stretch(app: AppHandle, id: i64, from: f64, to: f64) -> CmdResult<EditView> {
-    if !(from.is_finite() && to.is_finite() && to > from) {
-        return Err("That's not a stretch of the edit.".into());
-    }
     changing(&app, id, "Stretch removed", |db| db.remove_edit_stretch(id, from, to))
 }
 
@@ -358,9 +355,6 @@ pub(crate) async fn add_range_to_edit(
     index: Option<usize>,
 ) -> CmdResult<EditView> {
     let title = title.as_deref().and_then(clips::written_title);
-    if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
-        return Err("A piece has to end after it starts.".into());
-    }
     changing(&app, edit_id, "Piece added", |db| {
         db.edit(edit_id)?.context("That edit is gone.")?;
         db.vod(vod_id)?.context("That VOD is gone.")?;
@@ -384,14 +378,6 @@ pub(crate) async fn put_in_edit(
     bar: bool,
     index: Option<usize>,
 ) -> CmdResult<EditView> {
-    let fine = |a: f64, b: f64| a.is_finite() && b.is_finite() && a >= 0.0 && b > a;
-    if items.iter().any(|item| match *item {
-        edits::Put::Range { start, end, .. } | edits::Put::Highlight { start, end, .. } => !fine(start, end),
-        edits::Put::Span { from, to, .. } => !fine(from, to),
-        _ => false,
-    }) {
-        return Err("A piece has to end after it starts.".into());
-    }
     let onto = if bar { edits::Onto::Bar } else { edits::Onto::Timeline(index) };
     let label = match (bar, items.len()) {
         (true, 1) => "Clip added",
@@ -420,9 +406,6 @@ pub(crate) async fn move_piece(app: AppHandle, id: i64, index: usize) -> CmdResu
 /// Trims piece `id` to `start`..`end` of its VOD.
 #[tauri::command]
 pub(crate) async fn trim_piece(app: AppHandle, id: i64, start: f64, end: f64) -> CmdResult<EditView> {
-    if !(start.is_finite() && end.is_finite() && end > start) {
-        return Err("A piece has to end after it starts.".into());
-    }
     let edit = edit_of(&app, id)?;
     changing(&app, edit, "Piece resized", |db| db.set_piece_range(id, start, end))
 }
@@ -460,9 +443,6 @@ pub(crate) async fn remove_from_edit(
     stretches: Vec<(f64, f64)>,
     clips: Vec<i64>,
 ) -> CmdResult<EditView> {
-    if stretches.iter().any(|&(from, to)| !(from.is_finite() && to.is_finite() && to > from)) {
-        return Err("That's not a stretch of the edit.".into());
-    }
     let label = if pieces.is_empty() && stretches.is_empty() { "Clips deleted" } else { "Pieces removed" };
     changing(&app, id, label, |db| {
         db.remove_from_edit(id, &stretches, &pieces)?;

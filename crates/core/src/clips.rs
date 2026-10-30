@@ -31,6 +31,27 @@ pub fn title(words: &[Word], start: f64) -> String {
     title
 }
 
+/// Said of a span whose numbers aren't a start and a later end.
+pub const ENDS_BEFORE_START: &str = "A clip has to end after it starts.";
+/// Said of a span that starts where the video has ended.
+pub const PAST_THE_END: &str = "That's past the end of the video.";
+
+/// Whether `start`..`end` seconds can be a clip or a piece of a video (a
+/// VOD, or an edit's timeline) `end_of` seconds long, if that's known: two
+/// real times from 0 on, the end after the start, starting before the video
+/// ends. Of any length; an end past the video's is cut there by whoever keeps
+/// the span. Every span a command is given is checked here, so all of them
+/// agree on what's refused and say it the same way.
+pub fn check_span(start: f64, end: f64, end_of: Option<f64>) -> Result<(), &'static str> {
+    if !(start.is_finite() && end.is_finite() && start >= 0.0 && end > start) {
+        return Err(ENDS_BEFORE_START);
+    }
+    if end_of.is_some_and(|d| start >= d) {
+        return Err(PAST_THE_END);
+    }
+    Ok(())
+}
+
 /// A title or note as written for a clip, an edit, a piece or a mark:
 /// trimmed, at most 200 characters; None if nothing's left.
 pub fn written_title(text: &str) -> Option<String> {
@@ -196,7 +217,7 @@ pub fn cut(
     progress: impl FnMut(f64),
 ) -> Result<()> {
     if end.partial_cmp(&start) != Some(std::cmp::Ordering::Greater) {
-        bail!("A clip has to end after it starts.");
+        bail!(ENDS_BEFORE_START);
     }
     let length = end - start;
     // Cuts are at frames' times: half a millisecond early, so neither rounding
