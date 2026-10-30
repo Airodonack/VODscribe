@@ -22,8 +22,10 @@
   // Without a mouse, A asks which edit what's picked (pills and stretches of
   // the timeline) goes in (AddToEdit.svelte), as on a highlight's row.
 
+  import { untrack } from "svelte";
   import type { Clip, Vod } from "./api";
   import { clips } from "./clips.svelte";
+  import { cuts } from "./cuts.svelte";
   import { carry } from "./dragout";
   import { holds, pressToDrag, type Pressed } from "./pressToDrag";
   import Icon from "./Icon.svelte";
@@ -80,6 +82,16 @@
   $effect(() => {
     const ids = new Set(clips.shown.map((c) => c.id));
     snippets.keep((i) => i.kind !== "clip" || ids.has(i.id));
+  });
+
+  // Back from a clip open in the editor: its pill picked here, in view. Once
+  // the bar's timeline is open too, whose opening lets go of what was picked.
+  $effect(() => {
+    const id = clips.pick;
+    if (id === null || !cuts.isOf(clips.doc) || !clips.shown.some((c) => c.id === id)) return;
+    clips.pick = null;
+    untrack(() => snippets.set([{ kind: "clip", id }]));
+    strip?.querySelector(`.chip[data-clip="${id}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
 
   let renaming = $state<number | null>(null);

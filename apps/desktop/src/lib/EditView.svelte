@@ -790,6 +790,24 @@
   /** A clip of a clip bar, opened here: it's made again by itself as it
    *  changes, and is deleted from its clip bar. */
   const snippet = $derived(edit?.snippet_of != null);
+  /** For a clip open here, the clip bar it's on (a VOD's or an edit's) and its owner's name. */
+  const bar = $derived.by(() => {
+    const of = edit?.snippet_of;
+    if (!of) return null;
+    const title =
+      of.kind === "vod"
+        ? (vods.get(of.id)?.title ?? sources.find((s) => s.vodId === of.id)?.title)
+        : edits.list.find((e) => e.id === of.id)?.title;
+    return { ...of, title: title ?? (of.kind === "vod" ? "the VOD" : "the edit") };
+  });
+  /** Back to the clip bar the clip open here is on: its VOD (at the clip) or
+   *  its edit opened, the clip's pill picked there (ClipStrip.svelte). */
+  function backToBar() {
+    if (!edit || !bar) return;
+    clips.pick = edit.id;
+    if (bar.kind === "vod") onopenvod(bar.id, pieces.find((p) => p.vod_id === bar.id)?.start ?? 0);
+    else edits.openEdit(bar.id);
+  }
   /** The edit E renders, if it can be: one with pieces, not a snippet, not rendering already. */
   const renderable = $derived(edit && !snippet && edit.status !== "cutting" && segments.length ? edit.id : null);
 </script>
@@ -807,6 +825,13 @@
   >
     {#snippet head()}
       <span class="kind"><Icon name="film" size={14} /></span>
+      <!-- A clip: where it lives first, as a path to it. -->
+      {#if bar}
+        <button class="crumb" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
+          {bar.title}
+        </button>
+        <span class="crumb-sep muted" aria-hidden="true">›</span>
+      {/if}
       <input
         class="title"
         bind:value={title}
@@ -1004,11 +1029,18 @@
 {#snippet editBelow()}
   <!-- An edit's links to its VODs sit on its clip bar, where a VOD's bar has
        its links to edits; a clip open in the editor has no bar, so a row of
-       their own. -->
+       their own, after its way back to the bar it's on. -->
   {#if snippet}
-    {#if sources.length}
-      <div class="sources" aria-label="Where its pieces come from">{@render sourceLinks()}</div>
-    {/if}
+    <div class="sources" aria-label="Where it comes from">
+      {#if bar}
+        <button class="back" onclick={backToBar} title="Back to “{bar.title}”, this clip picked on its clip bar">
+          <span class="arrow" aria-hidden="true">‹</span>
+          <span class="name">Back to {bar.title}</span>
+          <span class="what muted">· clip bar</span>
+        </button>
+      {/if}
+      {@render sourceLinks()}
+    </div>
   {:else if clips.doc?.kind === "edit" && (sources.length || clips.shown.length || snippets.size || clips.carryingAny)}
     <ClipStrip links={sourceLinks} />
   {/if}
@@ -1036,6 +1068,33 @@
     margin-left: -4px;
     min-width: 0;
     width: 240px;
+  }
+
+  /* A clip's way back, before its name: its clip bar's owner, as plain text
+     that's a button; short of room, it gives way (ellipsized) well before the name. */
+  .crumb {
+    flex: 0 4 auto;
+    min-width: 0;
+    max-width: 320px;
+    padding: 3px 4px;
+    border: none;
+    background: none;
+    color: var(--muted);
+    font-size: 14px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .crumb:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+
+  .crumb-sep {
+    flex: none;
+    font-size: 14px;
   }
 
   .title:hover,
@@ -1191,6 +1250,46 @@
   }
 
   .source:hover {
+    border-style: solid;
+  }
+
+  /* Back to the clip bar a clip open here is on: grey as a clip's pill
+     (ClipStrip.svelte's .chip), dashed as a control rather than a link. */
+  .back {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 320px;
+    height: 28px;
+    padding: 0 10px;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 12px;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .back .arrow {
+    flex: none;
+    font-size: 14px;
+    line-height: 1;
+  }
+
+  .back .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .back .what {
+    flex: none;
+  }
+
+  .back:hover {
     border-style: solid;
   }
 

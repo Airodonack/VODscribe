@@ -4,7 +4,9 @@
 // library's list); cut a second in (B) and the rest taken out (Delete), its
 // file is made again, a second long; undone (Ctrl+Z), it's two seconds
 // again, made again too. Split in two and so rendered as an edit, a chapter
-// added in it, renamed and moved makes it again each time.
+// added in it, renamed and moved makes it again each time. Its head names
+// the VOD before it, and the way back under its player opens the VOD, its
+// pill picked there.
 
 import { existsSync } from "node:fs";
 
@@ -12,7 +14,12 @@ import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
   name: "snippet-editor",
-  async run(app, { fixtures, log }) {
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "clip-open":
+      "A clip is open in the editor: at the top, the VOD's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, on one row, a grey pill with a dashed border reading ‹ Back to the VOD's name · clip bar, then a dashed link to the same VOD.",
+  },
+  async run(app, { fixtures, log, checkpoint }) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);
     await app.openPaused(vod.id);
@@ -127,5 +134,22 @@ export default {
     await app.invoke("move_mark", { id: chapter.id, time: 1.5 });
     const moved = await current("chapter moved");
     log(`chapter added, renamed and moved: made again each time, ${moved.file_path}`);
+
+    // The VOD's name before the clip's; the way back opens the VOD, the clip's pill picked.
+    const { title } = (await app.invoke("list_vods")).find((v) => v.id === vod.id);
+    const crumb = await app.js(`return document.querySelector("section.edit-view .head .crumb")?.textContent.trim()`);
+    if (crumb !== title) throw new Error(`the clip's head says "${crumb}" before its name, not "${title}"`);
+    await checkpoint("clip-open");
+    await app.click("section.edit-view .sources button.back");
+    await until(
+      "the VOD back, the clip's pill picked",
+      () =>
+        app.js(
+          `return !document.querySelector("section.edit-view") && !!document.querySelector(arguments[0])`,
+          `.clip-bar .chip.chosen[data-clip="${clip.id}"]`,
+        ),
+      10_000,
+    );
+    log(`back from the clip to "${title}": its pill picked`);
   },
 };

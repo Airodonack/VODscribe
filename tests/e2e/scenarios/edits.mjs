@@ -30,6 +30,8 @@ export default {
   expects: {
     "edit-clip-bar":
       "An edit is open (its name at the top, with Render): under its player and timeline, on one row, a dashed link to the VOD its pieces come from, then one clip pill showing a start time, a few words of its line, and small play, folder and × icons, none of it cut off.",
+    "edit-clip-open":
+      "A clip is open in the editor: at the top, the edit's name in grey, a › and the clip's name, on one line, with no Render button; under its player and timeline, on one row, a grey pill with a dashed border reading ‹ Back to the edit's name · clip bar, then a dashed link to the VOD it comes from.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -722,7 +724,8 @@ export default {
     await ctx.checkpoint("edit-clip-bar");
     // Its pill double-clicked opens it in the editor as a clip (the head says
     // "Clip name", no Render), the way a VOD's does: it's no edit, so the
-    // library lists no row for it. Then back to the edit.
+    // library lists no row for it. Its head names the edit before it; the
+    // way back under its player opens the edit, its pill picked there.
     await app.js(
       `const el = document.querySelector(arguments[0]);
        const box = el.getBoundingClientRect();
@@ -744,9 +747,25 @@ export default {
       render: !!document.querySelector("section.edit-view button.make") };`);
     if (opened.row) throw new Error("the edit's clip, opened, is listed in the library");
     if (opened.render) throw new Error("the edit's clip, opened, has Render");
-    await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
-    await until("the edit back", () => app.js(`return !!document.querySelector('${title}')`), 10_000);
-    ctx.log("the edit's clip double-clicked: open as a clip, not listed");
+    const { edit: owner } = await app.invoke("get_edit", { id: made.id });
+    const crumb = await until(
+      "the edit's name before the clip's",
+      () => app.js(`return document.querySelector("section.edit-view .head .crumb")?.textContent.trim()`),
+      10_000,
+    );
+    if (crumb !== owner.title) throw new Error(`the clip's head says "${crumb}" before its name, not "${owner.title}"`);
+    await ctx.checkpoint("edit-clip-open");
+    await app.click("section.edit-view .sources button.back");
+    await until(
+      "the edit back, the clip's pill picked",
+      () =>
+        app.js(
+          `return !!document.querySelector('${title}') && !!document.querySelector(arguments[0])`,
+          `section.edit-view .chip.chosen[data-clip="${barClip.id}"]`,
+        ),
+      10_000,
+    );
+    ctx.log(`the edit's clip double-clicked: open as a clip under "${crumb}", not listed; back to the edit, picked`);
     const undoKey = (shift) => app.key("z", { cmd: true, shift });
     await undoKey(false);
     await until("the clip taken off", async () => (await barClips()).length === 0, 10_000);

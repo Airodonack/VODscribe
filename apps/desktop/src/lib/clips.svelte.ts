@@ -33,6 +33,9 @@ class Clips {
   }
   /** The stretch of the clip whose pill is hovered, lit up on the timeline. */
   hovered = $state<{ start: number; end: number } | null>(null);
+  /** A clip to pick on its bar once the bar shows it: one open in the
+   *  editor, gone back from to its bar (EditView.svelte). */
+  pick = $state<number | null>(null);
   /** A stretch being carried (dragout.ts), and whether it's over the clip bar. */
   carrying = $state<{ start: number; end: number } | null>(null);
   /** How many things picked are carried together (dragout.ts `carrySet`), while they are; else 0. */
