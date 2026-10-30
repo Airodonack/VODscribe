@@ -115,10 +115,14 @@ pub(crate) struct Opened {
     /// The frame rate at the start, if known.
     fps: Option<f64>,
     duration: f64,
+    /// Where it is, once moved where it was asked. Till this reply the page
+    /// takes none of the `player-time` events: those made while the file was
+    /// read are of what was open before (another VOD's, playing on).
+    status: Option<Status>,
 }
 
 fn opened(player: &Player) -> Opened {
-    Opened { fps: player.fps_at(0.0), duration: player.duration() }
+    Opened { fps: player.fps_at(0.0), duration: player.duration(), status: None }
 }
 
 fn status(player: &Player) -> Status {
@@ -340,7 +344,7 @@ async fn open_with(
         let open = state.player.open.lock().unwrap();
         open.as_ref().filter(|o| o.doc == doc && o.embed == embed).map(|o| opened(&o.player))
     };
-    let opened = match same {
+    let mut opened = match same {
         Some(opened) => opened,
         None => {
             let handle = app.clone();
@@ -379,7 +383,9 @@ async fn open_with(
         } else {
             o.player.pause();
         }
-        let _ = app.emit("player-time", status(&o.player));
+        let now = status(&o.player);
+        let _ = app.emit("player-time", now);
+        opened.status = Some(now);
     }
     Ok(opened)
 }

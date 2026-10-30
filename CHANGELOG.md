@@ -54,6 +54,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - A clip, a row of the library, a highlight, the Clip button or a line of the transcript pressed and let go outside the window no longer starts carrying (or selecting) when the pointer comes back over the window with no button held. And a drag of more than half a second let go where it began no longer counts as a click there too, opening the row or playing from it.
   - On a video on this computer, the time shown moves at once when → or ← (or Shift with them) moves the playhead, as it does for a click on the timeline. It waited for the new frame to be drawn.
   - An edit whose videos aren't transcribed shows the CC button, off, as a VOD does, so the player's buttons don't move once its captions come. It had no CC button until then.
+  - Opening another video on this computer (a file, a kept video, or an edit) while one plays no longer shows the previous one's time under the player for a moment, until the new one's first frame.
 
 ## 0.6.0 — 2026-10-24
 

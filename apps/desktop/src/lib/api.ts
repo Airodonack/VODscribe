@@ -125,6 +125,8 @@ export interface PlayerStretch {
 export interface PlayerOpened {
   fps: number | null;
   duration: number;
+  /** Where it is, once opened and moved where it was asked (none from a page's stand-in). */
+  status?: PlayerStatus;
 }
 
 export type ThemeChoice = "system" | "light" | "dark";

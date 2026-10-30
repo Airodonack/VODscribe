@@ -128,3 +128,26 @@ for (const order of ["the event first", "the reply first"]) {
     assert.equal(driver.playing(), true);
   });
 }
+
+test("while it opens, what the player had open before says nothing of its time; the open's reply does", async () => {
+  fakeApp.listeners.length = 0;
+  fakeApp.asked.length = 0;
+  // Another VOD's file, playing at 4 s in the player, as this one opens at its start.
+  const driver = new NativeDriver(0);
+  fakeApp.event(status(4));
+  fakeApp.event(status(4.1));
+  assert.equal(driver.time(), 0, "the time of what was open before showed");
+  assert.equal(driver.shown(), null);
+  // Its open's reply says where it is; the first frame's event, made after
+  // it but come before it, is taken after it.
+  const reply = status(0, false);
+  const frame = { ...status(0, false), shown: 0 };
+  fakeApp.event(frame);
+  driver.opened({ fps: 30, duration: 5, status: { ...reply, shown: null } });
+  assert.equal(driver.time(), 0);
+  assert.equal(driver.playing(), false);
+  assert.equal(driver.shown(), 0);
+  // From then on the player's word is taken as ever.
+  fakeApp.event(status(1));
+  assert.ok(Math.abs(driver.time() - 1) < 0.01, `at ${driver.time()}`);
+});

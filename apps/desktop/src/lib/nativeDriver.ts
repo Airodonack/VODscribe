@@ -7,7 +7,7 @@
 // stands until the sound starts), and sends what's asked; until the player is
 // open, a seek, play or speed asked is kept for then.
 
-import { api, events, type PlayerStatus, type UnlistenFn } from "./api";
+import { api, events, type PlayerOpened, type PlayerStatus, type UnlistenFn } from "./api";
 import { OwnStatus } from "./ownStatus";
 import { Clock } from "./playerClock";
 
@@ -38,11 +38,20 @@ export class NativeDriver {
    *  guess, would put the time back where it was (seen in CI); the reply,
    *  made after, is what's so. Those after the reply are newer by `seq`. */
   private pending = 0;
+  /** The newest of the player's events while this opens: until the open's
+   *  reply they may be of what it had open before (another VOD's file,
+   *  playing on while this one's is read), so they aren't taken; one made
+   *  after the reply's status is this one's, taken then. */
+  private held: PlayerStatus | null = null;
 
   constructor(start = 0) {
     this.clock = new Clock(start, false);
     events
-      .playerTime((s) => !this.gone && !this.pending && this.tell(s))
+      .playerTime((s) => {
+        if (this.gone || this.pending) return;
+        if (this.open) this.tell(s);
+        else if ((s.seq ?? 0) > (this.held?.seq ?? 0)) this.held = s;
+      })
       .then((u) => (this.gone ? u() : (this.unlisten = u)));
   }
 
@@ -87,13 +96,19 @@ export class NativeDriver {
   /** Something else is being opened, at `time`: nothing's sent until it is. */
   opening(time: number) {
     this.open = false;
+    this.held = null;
     this.wanted = null;
     this.guess(time, false);
   }
 
   /** It opened: what was asked meanwhile is done now. */
-  opened({ fps, duration }: { fps: number | null; duration: number }) {
+  opened({ fps, duration, status }: PlayerOpened) {
     this.open = true;
+    // Where it is as it opened, then anything it said since.
+    const since = this.held;
+    this.held = null;
+    if (status) this.tell(status);
+    if (since && (since.seq ?? 0) > (status?.seq ?? 0)) this.tell(since);
     this.startFps = fps;
     this.length = duration;
     api.playerSetVolume(this.quiet ? 0 : this.loud).catch(() => {});
