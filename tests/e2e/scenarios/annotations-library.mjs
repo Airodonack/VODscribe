@@ -124,11 +124,13 @@ export default {
         await ctx.checkpoint("library-newer");
         await until("the toast gone", async () => !(await app.toastSays()), MINUTE).catch(() => {});
 
-        // Nothing changed: the check, and the next start, ask only whether the filter did.
+        // Nothing changed: the check, and the next start, ask only whether the filter did;
+        // the check still counts what it knows (the gift is marked newer).
         start = host.requests.length;
         await app.rowMenu(plain.id, "Check all VODs for annotations");
-        const none = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
-        if (none !== "No new annotations for the VODs in your library.") wrong.push(`checked again: "${none}"`);
+        const again = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
+        if (again !== "Found newer annotations for 1 VOD: use the gift button in the library.")
+          wrong.push(`checked again: "${again}"`);
         if (asked(start).join(", ") !== `GET ${FILTER_PATH} since`) wrong.push(`checked again, asked: ${asked(start)}`);
         start = host.requests.length;
         app = await ctx.restart();

@@ -301,24 +301,52 @@ impl Db {
     }
 }
 
-/// Whether the file host is asked about `vod`, given the set:
+/// What a check does about a VOD, given the set (`judge`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Judged {
+    /// Nothing to ask and nothing to count: certainly nothing published, or
+    /// the version imported is the one the set has.
+    Skip,
+    /// The file host is asked about it (one HEAD).
+    Ask,
+    /// Already known to be published and never imported (its gift is
+    /// showing): counted as found, not asked again.
+    Found,
+    /// Already known to have a newer version than the one imported (it's
+    /// marked): counted as newer, not asked again.
+    Newer,
+}
+
+/// What a check does about `vod`, given the set:
 ///
-/// - not in the set: certainly nothing published; not asked.
+/// - not in the set: certainly nothing published; skipped.
 /// - in it, never imported from the file host: asked, unless it's known to
-///   be published already (its gift is showing).
-/// - in it, imported in version V: asked only when the set hasn't V (a newer
-///   one, probably), and it isn't known to have a newer one already.
-pub fn worth_asking(filter: &Filter, vod: &Candidate) -> bool {
+///   be published already (its gift is showing): then found, unasked.
+/// - in it, imported in version V and last seen in another: newer, unasked
+///   (it's marked already).
+/// - in it, imported in version V and last seen in V: asked only when the
+///   set hasn't V (a newer one, probably).
+pub fn judge(filter: &Filter, vod: &Candidate) -> Judged {
     if !can_be_published(&vod.platform) || !filter.contains(&exists_key(&vod.platform, &vod.platform_id)) {
-        return false;
+        return Judged::Skip;
     }
     match &vod.imported {
-        None => vod.available != Availability::Available,
-        Some(imported) => {
-            vod.seen.as_ref() == Some(imported)
-                && !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported)))
+        None if vod.available == Availability::Available => Judged::Found,
+        None => Judged::Ask,
+        Some(imported) if vod.seen.is_some() && vod.seen.as_ref() != Some(imported) => Judged::Newer,
+        Some(imported)
+            if vod.seen.as_ref() == Some(imported)
+                && !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported))) =>
+        {
+            Judged::Ask
         }
+        Some(_) => Judged::Skip,
     }
+}
+
+/// Whether the file host is asked about `vod`, given the set (`judge`).
+pub fn worth_asking(filter: &Filter, vod: &Candidate) -> bool {
+    judge(filter, vod) == Judged::Ask
 }
 
 /// What a check of the library found.
@@ -326,11 +354,13 @@ pub fn worth_asking(filter: &Filter, vod: &Candidate) -> bool {
 pub struct Checked {
     /// False when nothing was asked: the user turned asking off (Settings).
     pub asked: bool,
-    /// HEAD requests made, one per VOD the set had.
+    /// HEAD requests made, one per VOD the set had that wasn't known already.
     pub confirmed: usize,
-    /// VODs with annotations newly found published, never imported.
+    /// VODs with annotations published and never imported: found by this
+    /// check, or known from an earlier answer (their gift is showing).
     pub found: Vec<i64>,
-    /// VODs whose imported annotations have a newer version published.
+    /// VODs whose imported annotations have a newer version published: found
+    /// by this check, or known from an earlier answer (they're marked).
     pub newer: Vec<i64>,
 }
 
@@ -338,9 +368,10 @@ pub struct Checked {
 static CHECKING: Mutex<()> = Mutex::new(());
 
 /// Checks every VOD in the library against the published set, fetching it
-/// again if it changed, and asks the file host about each it has (see
-/// `worth_asking`), keeping each answer on its VOD and calling `changed`
-/// with the VOD's id. Nothing at all when the user turned asking off. A
+/// again if it changed, and asks the file host about each it has whose
+/// answer isn't known already (see `judge`), keeping each answer on its VOD
+/// and calling `changed` with the VOD's id; the ones known are counted from
+/// what was kept. Nothing at all when the user turned asking off. A
 /// failure to reach the file host is an error; what was answered before it is kept.
 pub fn check_library(db: &Mutex<Db>, paths: &crate::Paths, changed: impl FnMut(i64)) -> Result<Checked> {
     check_at(&annotations::base_url(), db, &paths.settings(), &paths.annotations_filter(), PAUSE, changed)
@@ -387,7 +418,19 @@ fn check_at(
         }
     };
     let candidates = db.lock().unwrap().annotations_candidates()?;
-    for vod in candidates.iter().filter(|vod| worth_asking(&filter, vod)) {
+    for vod in &candidates {
+        match judge(&filter, vod) {
+            Judged::Skip => continue,
+            Judged::Found => {
+                checked.found.push(vod.vod_id);
+                continue;
+            }
+            Judged::Newer => {
+                checked.newer.push(vod.vod_id);
+                continue;
+            }
+            Judged::Ask => {}
+        }
         if checked.confirmed > 0 {
             std::thread::sleep(pause);
         }
@@ -683,10 +726,36 @@ mod tests {
         drop(db);
 
         // Checked again (the next start, or the library's "Check for annotations"):
-        // the set is asked for only if it changed, and what's known isn't asked again.
+        // the set is asked for only if it changed, and what's known isn't asked
+        // again, though it's still counted.
         asked.lock().unwrap().clear();
         let (checked, _) = lib.check(&base);
-        assert_eq!(checked.unwrap(), Checked { asked: true, ..Checked::default() });
+        assert_eq!(checked.unwrap(), Checked { asked: true, confirmed: 0, found: vec![there], newer: vec![newer] });
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["GET /annotations/filter.bin HTTP/1.1 since \"0123456789abcdef0123456789abcdef\""]
+        );
+    }
+
+    /// A second check (the library's "Check all VODs for annotations",
+    /// pressed during or after the one at start) counts what the first
+    /// found, from the answers kept, without asking about it again: a VOD
+    /// whose gift is showing is found, one marked as having newer
+    /// annotations is newer.
+    #[test]
+    fn a_second_check_counts_what_the_first_found_without_asking_again() {
+        let lib = Library::new();
+        lib.ask(true);
+        let there = lib.add("there", None);
+        let newer = lib.add("newer", Some(&format!("\"{MD5_A}\"")));
+        let (base, asked) = file_host();
+        let (checked, _) = lib.check(&base);
+        assert_eq!(checked.unwrap(), Checked { asked: true, confirmed: 2, found: vec![there], newer: vec![newer] });
+
+        asked.lock().unwrap().clear();
+        let (checked, changed) = lib.check(&base);
+        assert_eq!(checked.unwrap(), Checked { asked: true, confirmed: 0, found: vec![there], newer: vec![newer] });
+        assert!(changed.is_empty());
         assert_eq!(
             *asked.lock().unwrap(),
             ["GET /annotations/filter.bin HTTP/1.1 since \"0123456789abcdef0123456789abcdef\""]
