@@ -289,7 +289,9 @@ export default {
 async function timeQuits(first, ctx) {
   if (first.driver.proc.stderr === undefined)
     ctx.skip("needs --driver bridge: under WebDriver the driver ends the app from outside");
-  const cannot = os.unavailable();
+  // The window count and the quit keys go through xdotool, so far.
+  const cannot =
+    os.unavailable() ?? (process.platform !== "linux" ? "the system's keys are driven on Linux only" : null);
   if (cannot) ctx.skip(cannot);
   const only = process.env.E2E_EXIT_STATES?.split(",");
   const measures = new Measures(ctx, "perf-exit");
