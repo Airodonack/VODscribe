@@ -458,9 +458,7 @@ fn check_at(
         if let Found::Available { version } = found {
             match &vod.imported {
                 None => checked.found.push(vod.vod_id),
-                Some(imported)
-                    if version.as_deref().is_some_and(|v| version_of_etag(v) != version_of_etag(imported)) =>
-                {
+                Some(imported) if version.as_deref().is_some_and(|v| !same_version(v, imported)) => {
                     checked.newer.push(vod.vod_id)
                 }
                 Some(_) => {}
