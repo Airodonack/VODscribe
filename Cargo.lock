@@ -6648,7 +6648,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vodscribe"
-version = "0.7.0-dev"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "drag",
@@ -6672,7 +6672,7 @@ dependencies = [
 
 [[package]]
 name = "vodscribe-core"
-version = "0.7.0-dev"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "bzip2 0.6.1",
@@ -6696,7 +6696,7 @@ dependencies = [
 
 [[package]]
 name = "vodscribe-player"
-version = "0.7.0-dev"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -6724,7 +6724,7 @@ dependencies = [
 
 [[package]]
 name = "vodscribe-worker"
-version = "0.7.0-dev"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "serde_json",

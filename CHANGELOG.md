@@ -2,7 +2,7 @@
 
 What changed in each release, for people who use VODscribe. The entry for the version being released is also the release notes in `latest.json` (`scripts/release.py` reads it), so write it for them, not for developers. The newest release is first; a version still being worked on is marked "(unreleased)".
 
-## 0.7.0 (unreleased)
+## 0.7.0 — 2026-10-30
 
 - The keyboard button is now at the right of the player's controls, beside the captions and full screen buttons, just above the cheat sheet it opens.
 - A video on this computer (a file or a kept video) shows its picture as soon as it opens: the first frame, or the one where you left it, instead of its library picture. Play then starts at once, without the moment of black while the video got going.
