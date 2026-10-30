@@ -5,6 +5,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.1 (unreleased)
 
 - The donation links are gone from the library and from the screen shown when no video is open.
+- The clips and edits being made, and the VODs being erased after you removed them, show at the bottom of the library, as a file manager shows its copies: a line says what's under way, with how far the clip or edit being made is, and a click on it opens the list, each with its name, what it's doing and how far, and a button to cancel it. Drag a clip or edit that's waiting up or down the list to have it made sooner or later. A clip canceled says so on the clip bar (clip that stretch again to make it); an edit canceled is left not rendered.
+- A VOD you remove from the library is erased at once, beside whatever is being made, instead of as VODscribe quits, so quitting is as quick with a VOD just removed as without one. Quit (or cancel it in the list) before it's done, and the rest is erased when VODscribe next starts.
 
 ## 0.7.0 — 2026-10-30
 

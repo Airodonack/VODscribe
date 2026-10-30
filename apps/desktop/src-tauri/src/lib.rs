@@ -17,6 +17,7 @@ mod embed;
 mod files;
 mod footage;
 mod history;
+mod job_list;
 mod jobs;
 mod loopback;
 mod media;
@@ -57,6 +58,10 @@ struct AppState {
     media: media::MediaServer,
     chat: chats::ChatQueue,
     clips: clips::Cutter,
+    /// Removed VODs being erased (`vods`).
+    sweeper: vods::Sweeper,
+    /// What the two queues above are at, for the library's list of jobs (`job_list`).
+    job_list: job_list::JobList,
     /// Edits being rendered (`edits`).
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
@@ -207,6 +212,8 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         media,
         chat,
         clips: clips::Cutter::new(),
+        sweeper: vods::Sweeper::new(),
+        job_list: job_list::JobList::new(),
         footage: footage::Footage::default(),
         videos: videos::Videos::new(),
         storyboards: storyboards::Storyboards::new(),
@@ -215,7 +222,11 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         embed: embed::Embed::default(),
         adding: Mutex::default(),
     });
+    // First, so the queues' first news (what's left from last time) is heard.
+    app.state::<AppState>().job_list.run(app.handle().clone())?;
     app.state::<AppState>().clips.run(app.handle().clone())?;
+    // What was left to erase of the VODs nothing uses any more (stopped, or the app quit first).
+    app.state::<AppState>().sweeper.run(app.handle().clone())?;
     app.state::<AppState>().videos.run(app.handle().clone())?;
     app.state::<AppState>().footage.run(app.handle().clone())?;
     app.state::<AppState>().storyboards.run(app.handle().clone())?;
@@ -223,9 +234,6 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     std::thread::spawn(move || thumbnails::cache_missing_thumbnails(handle));
     let handle = app.handle().clone();
     std::thread::spawn(move || storyboards::sweep(&handle));
-    // What quitting didn't get to of the VODs nothing uses any more.
-    let handle = app.handle().clone();
-    std::thread::spawn(move || vods::sweep(&handle, None));
     let handle = app.handle().clone();
     std::thread::spawn(move || chats::run(handle, chat_rx));
     annotations::check_library_at_start(app.handle());
@@ -455,6 +463,9 @@ pub fn run() {
             edits::split_piece,
             edits::render_edit_now,
             edits::stop_render,
+            job_list::list_jobs,
+            job_list::reorder_jobs,
+            job_list::cancel_job,
             edits::show_edit,
             edits::drag_edit,
             clips::delete_mark,
@@ -524,11 +535,11 @@ pub fn run() {
         });
 }
 
-/// As the app quits: the VODs nothing uses any more are erased (for a few
-/// seconds at most: `vods::sweep`), and what it started (downloads,
-/// transcription, encodes) stops with it rather than running on without it. The library's writes
-/// stop first, so the jobs whose processes stop don't record that as a
-/// failure: they carry on at the next start as after any quit.
+/// As the app quits: what it started (downloads, transcription, encodes,
+/// a removed VOD's erasure) stops with it rather than running on without
+/// it. The library's writes stop first, so the jobs whose processes stop
+/// don't record that as a failure: they carry on at the next start as
+/// after any quit (an erasure too: `vods::Sweeper`).
 fn quit(app: &AppHandle) {
     // First: the player may be painting, and must stop before the program ends.
     screen::close(app);
@@ -543,8 +554,6 @@ fn quit(app: &AppHandle) {
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
         trace_exit("library's lock taken");
-        vods::sweep(app, Some(&db));
-        trace_exit("unused VODs swept");
         let _ = db.stop_writes();
         trace_exit("library's writes stopped");
         // Held till the process ends.

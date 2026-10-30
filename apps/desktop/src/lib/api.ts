@@ -294,6 +294,20 @@ export interface Line {
 
 export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
 
+/** A job in the library's list (desktop job_list.rs): a clip or an edit
+ *  being made, one at a time, or a removed VOD being erased, beside them. */
+export interface Job {
+  kind: "clip" | "edit" | "erase";
+  /** The clip's or edit's id; the VOD's, for an erasure. */
+  id: number;
+  /** The clip's or edit's title; the VOD's, for an erasure. */
+  label: string;
+  /** Begun: the one each queue is at. */
+  running: boolean;
+  /** 0..1; null while it isn't known (waiting, or just begun). */
+  progress: number | null;
+}
+
 /** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */
 export interface Clip {
   id: number;
@@ -695,6 +709,13 @@ export const api = {
     invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
+  /** The jobs as they are now (then the `jobs` news). */
+  listJobs: () => invoke<Job[]>("list_jobs"),
+  /** Puts the clips and edits waiting in the order of `ids`. */
+  reorderJobs: (ids: number[]) => invoke<void>("reorder_jobs", { ids }),
+  /** Takes a job out of the list, or stops it: a clip shows it was canceled, an edit as not rendered; an
+   *  erasure goes on at the next start. */
+  cancelJob: (kind: Job["kind"], id: number) => invoke<void>("cancel_job", { kind, id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
   dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
   moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
@@ -856,6 +877,8 @@ export const events = {
   vodProgress: (cb: (id: number, stretch: number, status: Status, progress: number) => void) =>
     on<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => on<number>("vod-removed", (e) => cb(e.payload)),
+  /** The list of jobs (clips and edits being made, removed VODs being erased), whenever it changes. */
+  jobs: (cb: (jobs: Job[]) => void) => on<Job[]>("jobs", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
   annotationsFound: (cb: (id: number) => void) => on<number>("annotations-found", (e) => cb(e.payload)),
   /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */

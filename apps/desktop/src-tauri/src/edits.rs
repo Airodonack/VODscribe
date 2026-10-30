@@ -30,7 +30,7 @@ struct Progress {
 }
 
 /// News of edit `id`; of a snippet open in the editor, for its clip bar too.
-fn emit(app: &AppHandle, db: &Db, id: i64) {
+pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(edit)) = db.edit(id) {
         let snippet = edit.snippet_of.is_some();
         let _ = app.emit("edit", edit);
@@ -166,6 +166,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
             let _ = app.emit("edit-progress", Progress { id, progress });
+            crate::job_list::progressed(app, id, progress);
         }
     };
     let result = render::render(&ffmpeg, &pieces, None, &chapters, format, &out, stop, report);

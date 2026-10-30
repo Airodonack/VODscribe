@@ -248,9 +248,11 @@ function states(dir) {
         until("the chat fetched", async () => (await listed(app, s.chat.id))?.chat === "done", 3 * MINUTE),
     },
     {
-      // Removed from the library (its files kept), a VOD is erased as the
-      // app quits, for three seconds at most (vods.rs, SWEEP_AT_QUIT): here
-      // one with a long chat, each time a new one, its chat fetched whole.
+      // Removed from the library (its files kept), a VOD is erased at once,
+      // a job beside the encodes (vods.rs, Sweeper), and the quit doesn't
+      // wait for it (the rest is erased at the next start): here one with a
+      // long chat, each time a new one, its chat fetched whole, quit while
+      // it's being erased.
       name: "a VOD with a long chat just removed",
       short: "sweep",
       times: 3,

@@ -40,17 +40,23 @@ pub(crate) struct Cutter {
     /// VODs being removed: their clips still queued aren't cut (the rows go
     /// last, after the transcript and chat, which can take a while).
     removing: Arc<Mutex<HashSet<i64>>>,
+    /// Clips and edits canceled while being made (`cancel_job`): shown as
+    /// canceled once their job has ended.
+    canceled: Arc<Mutex<HashSet<i64>>>,
 }
 
 impl Cutter {
     pub(crate) fn new() -> Self {
-        Self { jobs: Jobs::new(), removing: Arc::default() }
+        Self { jobs: Jobs::new(), removing: Arc::default(), canceled: Arc::default() }
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
     /// clips left unfinished when the app last stopped.
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let removing = self.removing.clone();
+        let canceled = self.canceled.clone();
+        let news = app.clone();
+        self.jobs.watch(move || crate::job_list::changed(&news));
         let unfinished = {
             let state = app.state::<AppState>();
             let db = state.db.lock().unwrap();
@@ -74,28 +80,11 @@ impl Cutter {
             }
         }
         self.jobs.run("clips", move |id, stop| {
-            // A snippet of one piece as it came is cut; one changed in the
-            // editor (more pieces, lines struck, groups) is rendered as an edit is.
-            let snippet = {
-                let state = app.state::<AppState>();
-                let db = state.db.lock().unwrap();
-                db.is_snippet(id)
-                    .map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
-            };
-            match snippet {
-                Ok(Some(false)) => {
-                    if let Err(e) = crate::edits::render_edit(&app, id, stop) {
-                        eprintln!("edit {id}: {e:#}");
-                    }
-                    return;
-                }
-                Ok(Some(true)) => {}
-                // Gone meanwhile.
-                _ => return,
-            }
-            if let Err(e) = cut(&app, id, stop, &removing) {
-                eprintln!("clip {id}: {e:#}");
-                fail(&app, id, &e);
+            crate::job_list::begun(&app, crate::job_list::Queue::Render, id);
+            make(&app, id, stop, &removing);
+            // Canceled while it was being made: shown so now it has stopped.
+            if canceled.lock().unwrap().remove(&id) {
+                settle_canceled(&app, id);
             }
         })?;
         for clip in unfinished {
@@ -152,7 +141,87 @@ impl Cutter {
     pub(crate) fn stop(&self, id: i64) {
         self.jobs.stop_running(|&j| j == id);
     }
+
+    /// Cancels clip or edit `id` from the list of jobs: taken out of the
+    /// queue, or stopped if it's being made (its ffmpeg ended and its part
+    /// file deleted: `tools::encode`). A clip then shows it was canceled,
+    /// and an edit as not rendered (`settle_canceled`): at once if it was
+    /// waiting, once its job has ended if it was running.
+    pub(crate) fn cancel_job(&self, app: &AppHandle, id: i64) {
+        let taken = !self.jobs.take_waiting(|&j| j == id).is_empty();
+        self.canceled.lock().unwrap().insert(id);
+        if !self.jobs.stop_running(|&j| j == id) {
+            self.canceled.lock().unwrap().remove(&id);
+            if taken {
+                settle_canceled(app, id);
+            }
+        }
+    }
+
+    /// Puts the clips and edits waiting in the order of `ids` (dragged in the list of jobs).
+    pub(crate) fn reorder(&self, ids: &[i64]) {
+        self.jobs.reorder(ids, |&j| j);
+    }
+
+    /// The clip or edit being made, if one is, and those waiting, in order.
+    pub(crate) fn listed(&self) -> (Option<i64>, Vec<i64>) {
+        self.jobs.snapshot()
+    }
 }
+
+/// What the clips' queue does with clip or edit `id`: a snippet of one
+/// piece as it came is cut; one changed in the editor (more pieces, lines
+/// struck, groups), or a listed edit, is rendered as an edit is.
+fn make(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64>>) {
+    let snippet = {
+        let state = app.state::<AppState>();
+        let db = state.db.lock().unwrap();
+        db.is_snippet(id)
+            .map(|s| s.map(|s| s && db.edit_pieces(id).is_ok_and(|p| vodscribe_core::edits::cut_whole(&p))))
+    };
+    match snippet {
+        Ok(Some(false)) => {
+            if let Err(e) = crate::edits::render_edit(app, id, stop) {
+                eprintln!("edit {id}: {e:#}");
+            }
+            return;
+        }
+        Ok(Some(true)) => {}
+        // Gone meanwhile.
+        _ => return,
+    }
+    if let Err(e) = cut(app, id, stop, removing) {
+        eprintln!("clip {id}: {e:#}");
+        fail(app, id, &e);
+    }
+}
+
+/// What a clip or edit canceled from the list of jobs shows, unless it was
+/// made meanwhile: a clip (a snippet) failed, "Canceled", so it isn't made
+/// again at the next start and Clip again makes it; a listed edit as before
+/// it was asked for, not rendered (as Stop render leaves it).
+fn settle_canceled(app: &AppHandle, id: i64) {
+    let state = app.state::<AppState>();
+    let db = state.db.lock().unwrap();
+    let Ok(Some(snippet)) = db.is_snippet(id) else { return };
+    let unmade = |status| matches!(status, ClipStatus::Waiting | ClipStatus::Cutting);
+    if snippet {
+        if let Ok(Some(clip)) = db.clip(id)
+            && unmade(clip.status)
+            && db.set_edit_render(id, ClipStatus::Error, None, Some(CANCELED), None).is_ok()
+        {
+            emit(app, &db, id);
+        }
+    } else if let Ok(Some(edit)) = db.edit(id)
+        && unmade(edit.status)
+        && db.set_edit_render(id, ClipStatus::Waiting, None, None, None).is_ok()
+    {
+        crate::edits::emit(app, &db, id);
+    }
+}
+
+/// The error a clip canceled from the list of jobs shows.
+pub(crate) const CANCELED: &str = "Canceled";
 
 /// Where clip files go: VODscribe in the Videos folder, or in the app's data
 /// where there's no Videos folder.
@@ -241,6 +310,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         if last.elapsed() >= PROGRESS_EVERY {
             *last = Instant::now();
             let _ = app.emit("clip-progress", Progress { id, progress });
+            crate::job_list::progressed(app, id, progress);
         }
     };
     let result = (|| {

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reorder-jobs"
+description = "Enables the reorder_jobs command without any pre-configured scope."
+commands.allow = ["reorder_jobs"]
+
+[[permission]]
+identifier = "deny-reorder-jobs"
+description = "Denies the reorder_jobs command without any pre-configured scope."
+commands.deny = ["reorder_jobs"]

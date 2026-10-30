@@ -1263,12 +1263,19 @@ impl Db {
     /// Inserts a VOD, or returns the existing row if it was already added.
     pub fn add_vod(&self, info: &VodInfo) -> Result<(Vod, bool)> {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
-            // Taken out of the list but kept for other clips: listed again.
-            if !existing.listed {
+            if existing.listed {
+                return Ok((existing, false));
+            }
+            // Removed and erased, its row kept for the session as a gone
+            // source nothing uses (an undo may yet): what's left goes, and
+            // it's added anew rather than listed again empty.
+            if self.is_gone(existing.id)? && self.uses(existing.id)? <= 0 {
+                self.delete_vod(existing.id)?;
+            } else {
+                // Taken out of the list but kept for other clips: listed again.
                 self.atomically(|db| db.add_vod_clip(existing.id, &existing.info.title))?;
                 return Ok((self.vod(existing.id)?.expect("just found"), false));
             }
-            return Ok((existing, false));
         }
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
         let id = self.atomically(|db| {
@@ -1756,6 +1763,35 @@ impl Db {
         self.clear_some_segments(vod_id, (limit / 3).max(1))
     }
 
+    /// How many of VOD `vod_id`'s chat messages and transcript segments are
+    /// left to erase (`delete_some_of`): how far an erasure is.
+    pub fn erase_left(&self, vod_id: i64) -> Result<usize> {
+        let count = |table: &str| -> Result<usize> {
+            let sql = format!("SELECT count(*) FROM {table} WHERE vod_id = ?1");
+            Ok(self.conn.query_row(&sql, [vod_id], |r| r.get::<_, i64>(0))? as usize)
+        };
+        Ok(count("chat")? + count("segments")?)
+    }
+
+    /// Rewrites both search indexes without the entries of rows deleted
+    /// since (`tidy_index`), and empties the WAL of the old pages: a VOD's
+    /// words gone from the files, with its row (`delete_vod`) or without.
+    pub fn tidy_indexes(&self) -> Result<()> {
+        self.tidy_index("chat_fts")?;
+        self.tidy_index("segments_fts")?;
+        // Copy the change into the main file and empty the WAL, which still
+        // holds the old pages. A read on another connection at the time keeps
+        // it from finishing, so it's tried a few times.
+        for _ in 0..5 {
+            let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).unwrap_or(1);
+            if busy == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
     /// Deletes up to `limit` of VOD `vod_id`'s chat messages; how many, 0 when
     /// none are left (a part at a time: see `delete_some_of`, `LibraryChat::clear`).
     pub fn clear_some_chat(&self, vod_id: i64, limit: usize) -> Result<usize> {
@@ -1788,19 +1824,7 @@ impl Db {
     /// and the search indexes' entries for them, tidied after it's gone.
     pub fn delete_vod(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
-        self.tidy_index("chat_fts")?;
-        self.tidy_index("segments_fts")?;
-        // Copy the change into the main file and empty the WAL, which still
-        // holds the old pages. A read on another connection at the time keeps
-        // it from finishing, so it's tried a few times.
-        for _ in 0..5 {
-            let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).unwrap_or(1);
-            if busy == 0 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        Ok(())
+        self.tidy_indexes()
     }
 
     pub fn clear_segments(&self, vod_id: i64) -> Result<()> {

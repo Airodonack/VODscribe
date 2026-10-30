@@ -688,8 +688,9 @@ impl Db {
     }
 
     /// The sources nothing uses: no entry lists them and no clip holds any
-    /// of them. They go when the app next starts (not before, so what's
-    /// undone meanwhile still has them).
+    /// of them. They're erased as they're removed, their rows kept as gone
+    /// sources till the app next starts (so what's undone meanwhile still
+    /// finds them, holes), and go then.
     pub fn unused_sources(&self) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare("SELECT id FROM vods WHERE pieces <= 0 ORDER BY id")?;
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
@@ -2003,6 +2004,44 @@ pub(crate) mod tests {
         assert_eq!((again.id, new, again.listed), (vod, false, true));
         assert_eq!(db.uses(vod).unwrap(), 1);
         assert_eq!(db.next_stretch(crate::db::Status::Queued, false).unwrap().map(|(v, _)| v.id), Some(vod));
+    }
+
+    /// As a VOD removed from the library is erased at once, its row kept
+    /// for the session as a gone source (desktop vods.rs, `erase_unused`):
+    /// an undo in an edit that puts back a piece of it still finds the row
+    /// (a hole), and adding it back adds it anew, not the empty row.
+    #[test]
+    fn a_vod_erased_after_its_removal_is_added_anew_and_its_pieces_put_back_are_holes() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let had = db.edit_state(edit).unwrap().unwrap();
+        db.remove_piece(db.piece_rows(edit).unwrap()[0].id).unwrap();
+        assert!(db.remove_entry(vod).unwrap(), "used by nothing now");
+        db.set_gone(vod).unwrap();
+        assert_eq!(db.erase_left(vod).unwrap(), 0);
+        db.tidy_indexes().unwrap();
+        // Undone in the edit: the piece is back, of a gone source.
+        db.restore_edit(edit, &had).unwrap();
+        assert_eq!(db.uses(vod).unwrap(), 1);
+        assert!(db.is_gone(vod).unwrap());
+        // Taken out again; then the VOD's link added back: a new VOD, listed,
+        // not gone; the old row has gone with what was left of it, and the
+        // piece the edit had of it with it.
+        db.remove_piece(db.piece_rows(edit).unwrap()[0].id).unwrap();
+        let (again, new) = db.add_vod(&info("x")).unwrap();
+        assert!(new && again.id != vod && again.listed);
+        assert!(!db.is_gone(again.id).unwrap());
+        assert!(db.vod(vod).unwrap().is_none());
+        // One still used stays a gone source when added back (as before):
+        // listed again, its pieces holes.
+        let used = db.add_vod(&info("y")).unwrap().0.id;
+        db.add_piece(edit, used, (1.0, 2.0), "b", None).unwrap();
+        assert!(!db.remove_entry(used).unwrap());
+        db.set_gone(used).unwrap();
+        let (back, new) = db.add_vod(&info("y")).unwrap();
+        assert_eq!((back.id, new, back.listed), (used, false, true));
     }
 
     #[test]

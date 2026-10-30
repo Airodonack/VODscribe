@@ -32,6 +32,7 @@
   import FormatHint from "./FormatHint.svelte";
   import VodRow from "./VodRow.svelte";
   import EditRow from "./EditRow.svelte";
+  import Jobs from "./Jobs.svelte";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import { carryEntries, chosenEntries, chosenToTranscribe, removeChosenEntries, transcribeChosen } from "./bulk";
@@ -578,6 +579,8 @@
       {/if}
     {/each}
   </div>
+  <!-- The clips and edits being made, and VODs being erased, under the list. -->
+  <Jobs />
 </aside>
 
 <AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
