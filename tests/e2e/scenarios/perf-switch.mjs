@@ -60,7 +60,7 @@ const PARTS = {
   timeline: ".main .timeline",
   "player bar": ".main .bar",
   "clip bar": ".main .clip-bar",
-  "pane tabs": ".pane-tabs",
+  switch: ".layout > .head .switch",
   "transcript body": ".below > .body",
   "transcript head": ".layout > .head",
   "cast button": ".layout > .head .cast-toggle",
