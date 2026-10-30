@@ -43,7 +43,6 @@
     rate,
     fps,
     captionsAvailable,
-    captionsNone = false,
     captionsOn,
     fullscreen,
     canFullscreen,
@@ -63,8 +62,6 @@
     /** The player's frame rate, for the time by frame. */
     fps: number;
     captionsAvailable: boolean;
-    /** The player would show captions, but there are none: nothing is transcribed yet. */
-    captionsNone?: boolean;
     captionsOn: boolean;
     fullscreen: boolean;
     canFullscreen: boolean;
@@ -187,23 +184,22 @@
     </Popover>
   {/if}
   {@render beside?.()}
-  {#if captionsAvailable || captionsNone}
-    <button
-      class="control"
-      class:on={captionsOn && captionsAvailable}
-      onclick={() => prefs.toggleCaptions()}
-      disabled={!captionsAvailable}
-      aria-pressed={captionsOn && captionsAvailable}
-      aria-label="Captions"
-      title={!captionsAvailable
-        ? "Transcribe to get captions"
-        : captionsOn
-          ? `Hide captions${keyHint("captions.toggle")}`
-          : `Show captions${keyHint("captions.toggle")}`}
-    >
-      <Icon name="captions" size={16} />
-    </button>
-  {/if}
+  <!-- Always there, in a VOD's bar and an edit's alike, so the bar stays put; with no captions (nothing transcribed yet), off. -->
+  <button
+    class="control"
+    class:on={captionsOn && captionsAvailable}
+    onclick={() => prefs.toggleCaptions()}
+    disabled={!captionsAvailable}
+    aria-pressed={captionsOn && captionsAvailable}
+    aria-label="Captions"
+    title={!captionsAvailable
+      ? "Transcribe to get captions"
+      : captionsOn
+        ? `Hide captions${keyHint("captions.toggle")}`
+        : `Show captions${keyHint("captions.toggle")}`}
+  >
+    <Icon name="captions" size={16} />
+  </button>
   <!-- Full screen hides the legend, so its button goes too. -->
   {#if !fullscreen}
     <button

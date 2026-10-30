@@ -51,6 +51,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Undo in the message after removing pieces, lines, clips or stretches now offers Redo once it's undone, as Ctrl+Z (⌘Z) does, and says when there's nothing left to undo. It offered nothing after undoing.
   - What goes wrong with a chapter, a highlight, a cut, an edit or a clip now shows at the bottom of the window wherever you are, and stays until you close it or it's put right. In an edit, a chapter or highlight that couldn't be added, moved or renamed said nothing; Show in folder on an edit's row said nothing with a VOD open; and a clip that couldn't be made said so only in the clip bar, which isn't there while the player is hidden.
   - A clip, a row of the library, a highlight, the Clip button or a line of the transcript pressed and let go outside the window no longer starts carrying (or selecting) when the pointer comes back over the window with no button held. And a drag of more than half a second let go where it began no longer counts as a click there too, opening the row or playing from it.
+  - On a video on this computer, the time shown moves at once when → or ← (or Shift with them) moves the playhead, as it does for a click on the timeline. It waited for the new frame to be drawn.
+  - An edit whose videos aren't transcribed shows the CC button, off, as a VOD does, so the player's buttons don't move once its captions come. It had no CC button until then.
 
 ## 0.6.0 — 2026-10-24
 

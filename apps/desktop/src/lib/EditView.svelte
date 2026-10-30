@@ -18,6 +18,7 @@
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
   import { carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
+  import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
   import { pressToDrag } from "./pressToDrag";
   import { playsFromFile } from "./platform";
@@ -221,26 +222,16 @@
     // (An edit not seen yet starts at its start, not where the last one was.)
     bringTime = left?.time ?? untrack(() => nav.lastSeen(doc))?.time ?? 0;
   });
-  let poll = requestAnimationFrame(function read() {
-    poll = requestAnimationFrame(read);
-    const p = player;
-    if (!p) return;
-    reading.read(p);
-    // Still to seek to where it was left (no plan yet): the player's time is
-    // where it opened, not where the page has put the playhead meanwhile
-    // (`seekTo`), which reading it would put back, under Split and Delete.
-    if (bringTime !== null) reading.at(bringTime);
-    // Marks and the selection's ends placed elsewhere (the transcript) go on its frames.
-    cuts.fps = reading.fps;
+  drivePlayer(reading, () => (edit ? { kind: "edit", id: edit.id } : undefined), {
+    player: () => player,
+    each() {
+      // Still to seek to where it was left (no plan yet): the player's time is
+      // where it opened, not where the page has put the playhead meanwhile
+      // (`seekTo`), which reading it would put back, under Split and Delete.
+      if (bringTime !== null) reading.at(bringTime);
+    },
     // Only once it's this edit's playhead (after the seek to where it was left).
-    if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: reading.now });
-  });
-
-  // The transcript follows the playhead (cuts.svelte.ts), while its marks are this edit's.
-  $effect(() => {
-    if (!edit || !cuts.isOf({ kind: "edit", id: edit.id })) return;
-    cuts.now = reading.actual;
-    cuts.playing = reading.playing;
+    noted: () => !!edit && playsEdit === edit.id,
   });
 
   const seekTo = (time: number) => {
@@ -758,7 +749,6 @@
   }
 
   onDestroy(() => {
-    cancelAnimationFrame(poll);
     player?.destroy();
     edgeAsking.clear();
   });

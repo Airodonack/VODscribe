@@ -37,6 +37,7 @@
     siteName,
   } from "./platform";
   import { nav } from "./nav.svelte";
+  import { drivePlayer } from "./drivePlayer.svelte";
   import { hideNote, noteHidden } from "./permission";
   import { videoDownloads } from "./videos.svelte";
   import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
@@ -257,20 +258,15 @@
   let drawsCaptions = $state(untrack(() => playsHere(vod)));
   drawsOwnCaptions(untrack(() => vod)).then((draws) => !player && !destroyed && (drawsCaptions = draws));
   let playerDuration = $state(0);
-  let poll = 0;
-  function read() {
-    poll = requestAnimationFrame(read);
-    const p = player;
-    if (!p) {
-      if (controls) reading.readSound(controls);
-      return;
-    }
-    reading.read(p);
-    nav.note({ kind: "vod", id: vod.id }, { time: reading.now });
-    playerDuration = p.duration?.() ?? 0;
-    cuts.fps = reading.fps;
-    drawsCaptions = p.drawsCaptions?.() ?? false;
-  }
+  drivePlayer(reading, () => ({ kind: "vod", id: vod.id }), {
+    player: () => player,
+    // Before there's a player, the sound and speed it'll start with.
+    idle: () => controls && reading.readSound(controls),
+    each(p) {
+      playerDuration = p.duration?.() ?? 0;
+      drawsCaptions = p.drawsCaptions?.() ?? false;
+    },
+  });
   // The caption in the strip under a site's player (never over it); the
   // strip, empty, before the player opens. Kept from the first frame for a
   // VOD with a transcript, before its captions are read: shown only once
@@ -284,13 +280,6 @@
   const chapterNow = $derived(cuts.isOf({ kind: "vod", id: vod.id }) ? cuts.chapterAt(now) : undefined);
   const playing = $derived(reading.playing);
   const fps = $derived(reading.fps);
-  poll = requestAnimationFrame(read);
-  // The transcript follows the playhead (cuts.svelte.ts), while its marks are this VOD's.
-  $effect(() => {
-    if (!cuts.isOf({ kind: "vod", id: vod.id })) return;
-    cuts.now = reading.actual;
-    cuts.playing = reading.playing;
-  });
   // The VOD's length as the site said, or as the player found when the site didn't say.
   const duration = $derived(vod.duration || playerDuration);
 
@@ -478,7 +467,6 @@
 
   onDestroy(() => {
     destroyed = true;
-    cancelAnimationFrame(poll);
     clearTimeout(copiedTimer);
     void changed.then((u) => u());
     player?.destroy();
@@ -566,7 +554,8 @@
       e,
       {
         togglePlay: () => p?.togglePlay(),
-        seekBy: (s) => p?.seek(Math.max(0, p.time() + s), false),
+        // As every other move of the playhead: the time shown goes there at once.
+        seekBy: (s) => p && seekTo(Math.max(0, p.time() + s)),
         step: p?.step && ((n) => p.step!(n)),
         fullscreen,
         setFullscreen,
@@ -728,7 +717,6 @@
     rate={reading.rate}
     {fps}
     captionsAvailable={cues.length > 0}
-    captionsNone={cues.length === 0}
     captionsOn={prefs.captions}
     {fullscreen}
     canFullscreen

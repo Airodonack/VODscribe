@@ -5,7 +5,8 @@
 // second is one flat colour (fixtures colours.mp4), the screen says which
 // frame is up. One VOD's player at a time: opening another closes the
 // first. Timed: from the click on the row to its first frame on the
-// screen, and from Play to the picture moving.
+// screen, and from Play to the picture moving. Shift+→ moves the time
+// shown at once, before the new frame is drawn.
 
 import { copyFileSync } from "node:fs";
 import path from "node:path";
@@ -121,7 +122,20 @@ export default {
     // stage shows the frame where it was left (yellow) before Play.
     await app.pause();
     await app.toStart();
-    for (const target of [1, 2, 3]) {
+    // The first step forward (Shift+→) moves the time shown at once, as every
+    // other move of the playhead does, not only once the new frame is drawn:
+    // read in the page on the two frames after the key.
+    await until("the frame at 0 s shown", async () => (await state()).player?.shown === 0, 10_000);
+    const stepped = await app.js(`
+      const text = () => document.querySelector("button.time .now > span:not(.widest)")?.textContent;
+      const frame = () => new Promise((r) => requestAnimationFrame(r));
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", shiftKey: true, bubbles: true, cancelable: true }));
+      await frame();
+      await frame();
+      return text();`);
+    if (stepped !== "0:01") problems.push(`Shift+→ from 0:00: the time said ${stepped} on the next frame, not 0:01`);
+    await until("the player at 1 s", async () => (await app.shownTime()) === 1, 10_000);
+    for (const target of [2, 3]) {
       await app.key("ArrowRight", { shift: true });
       await until(`the player at ${target} s`, async () => (await app.shownTime()) === target, 10_000);
     }

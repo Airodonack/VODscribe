@@ -6,7 +6,8 @@
 // Remove and delete the video: it leaves the library, and the stretches
 // the edit uses are kept as videos of their own, which it renders); then the edit
 // deleted, after asking, and with nothing using the VOD it's erased by the
-// next start (added again, it's a new one).
+// next start (added again, it's a new one). An edit of it then, not
+// transcribed: the CC button in its bar all the same, off, as on a VOD.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
@@ -244,7 +245,16 @@ export default {
       throw new Error(`the edit's captions: ${JSON.stringify(cues)}`);
     const cc = 'section.edit-view .bar button[aria-label="Captions"]';
     const ccOn = () => app.js(`return document.querySelector(arguments[0])?.getAttribute("aria-pressed")`, cc);
-    const was = await until("the CC button", ccOn, 10_000);
+    // Its captions read (the button's off until they are).
+    const was = await until(
+      "the CC button, its captions read",
+      () =>
+        app.js(
+          `const b = document.querySelector(arguments[0]); return b && !b.disabled && b.getAttribute("aria-pressed")`,
+          cc,
+        ),
+      10_000,
+    );
     // Where the screen can be read, the picture's lower part changes with them.
     const screen =
       !os.unavailable() &&
@@ -834,5 +844,21 @@ export default {
     await app.toLibrary();
     const { vods: readded } = await app.invoke("add_files", { paths: [ctx.fixtures.landed] });
     if (readded[0]?.id === vod.id) throw new Error("the VOD nothing used was still there after a restart");
+
+    // An edit of it, not transcribed: its bar has the CC button all the same,
+    // off, as a VOD's does, so the bar doesn't change as captions come.
+    const bare = await app.invoke("create_edit");
+    await app.invoke("add_range_to_edit", { editId: bare.id, vodId: readded[0].id, start: 0, end: 2, title: "Bare" });
+    await until(
+      "its row",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.vod.edit[data-key="-${bare.id}"] button.main`),
+      MINUTE,
+    );
+    await app.click(`.vod.edit[data-key="-${bare.id}"] button.main`);
+    await until("its bar", () => app.js(`return !!document.querySelector("section.edit-view .bar")`), MINUTE);
+    const off = await app.js(`return document.querySelector(arguments[0])?.disabled ?? "none"`, cc);
+    if (off !== true)
+      throw new Error(`an edit with no captions: its CC button is ${off === "none" ? "missing" : "on"}`);
+    ctx.log("an edit with no captions: its CC button there, off");
   },
 };
