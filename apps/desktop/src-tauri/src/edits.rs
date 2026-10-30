@@ -213,7 +213,8 @@ fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
 }
 
 /// Runs `change` on the library, recording it in edit `edit_id`'s history as
-/// `label`, then gives the edit as it is now.
+/// `label` (`history::change`: all of it, or none), then gives the edit as it
+/// is now.
 fn changing(
     app: &AppHandle,
     edit_id: i64,
@@ -222,10 +223,7 @@ fn changing(
 ) -> CmdResult<EditView> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
-    let doc = Doc::Edit(edit_id);
-    let before = history::snapshot(&db, doc).ok().flatten();
-    change(&db).map_err(err)?;
-    history::record(app, &db, doc, label, before);
+    history::change(app, &db, Doc::Edit(edit_id), label, change).map_err(err)?;
     view(app, &db, edit_id)
 }
 

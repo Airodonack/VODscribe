@@ -346,44 +346,53 @@ pub(crate) async fn add_edit_clips(app: AppHandle, edit_id: i64, ranges: Vec<(f6
 }
 
 /// What `add_edit_clip` and `add_edit_clips` do: a clip of each range, each
-/// titled with what's said at its start, as one change; then each is queued
-/// to be made. A range with a clip already (C pressed twice) gives that one,
-/// made again only if it failed.
+/// titled with what's said at its start, as one change (all of them, or none
+/// if one can't be made); then each is queued to be made. A range with a
+/// clip already (C pressed twice) gives that one, made again only if it failed.
 fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
-    let made = {
+    let (made, queued) = {
         let db = state.db.lock().unwrap();
         let doc = Doc::Edit(edit_id);
-        let before = history::snapshot(&db, doc).ok().flatten();
-        // Each one's title first (`span_title` checks its span): one that
-        // isn't a span of the edit makes none of them.
-        let mut titled = Vec::new();
-        for (from, to) in ranges {
-            titled.push((from, to, db.span_title(edit_id, from, to).map_err(err)?));
-        }
+        let made = make_edit_clips_in(&db, &state.history, edit_id, ranges, shown).map_err(err)?;
+        history::changed(app, &db, doc);
+        made
+    };
+    for id in queued {
+        state.clips.queue(id);
+    }
+    Ok(made)
+}
+
+/// What `make_edit_clips` does in the library, recorded in `history`: the
+/// clips, and those of them to be made.
+fn make_edit_clips_in(
+    db: &Db,
+    history: &history::History,
+    edit_id: i64,
+    ranges: Vec<(f64, f64)>,
+    shown: bool,
+) -> Result<(Vec<Clip>, Vec<i64>)> {
+    let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
+    history.change(db, Doc::Edit(edit_id), label, |db| {
         let (mut made, mut queued) = (Vec::new(), Vec::new());
-        for (from, to, title) in titled {
-            let had = db.edit_clip_of(edit_id, from, to).map_err(err)?;
-            let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown).map_err(err)?;
+        for (from, to) in ranges {
+            let title = db.span_title(edit_id, from, to)?;
+            let had = db.edit_clip_of(edit_id, from, to)?;
+            let mut clip = db.add_edit_clip(edit_id, from, to, &title, shown)?;
             match had {
                 None => queued.push(clip.id),
                 Some(had) if had.status == ClipStatus::Error => {
-                    db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None).map_err(err)?;
-                    clip = db.clip(clip.id).map_err(err)?.ok_or("That clip is gone.")?;
+                    db.set_edit_render(clip.id, ClipStatus::Waiting, None, None, None)?;
+                    clip = db.clip(clip.id)?.context("That clip is gone.")?;
                     queued.push(clip.id);
                 }
                 Some(_) => {}
             }
             made.push(clip);
         }
-        history::record(app, &db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
-        (made, queued)
-    };
-    let (made, queued) = made;
-    for id in queued {
-        state.clips.queue(id);
-    }
-    Ok(made)
+        Ok((made, queued))
+    })
 }
 
 #[tauri::command]
@@ -415,30 +424,35 @@ pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64
 }
 
 /// What `add_clip` and `add_clips` do: a clip of each range (its end kept
-/// within the VOD), each titled with what's said in it, as one change; then
-/// each is queued to be made.
+/// within the VOD), each titled with what's said in it, as one change (all of
+/// them, or none if one can't be made); then each is queued to be made.
 fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
-    let made = {
-        let db = state.db.lock().unwrap();
-        db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-        // Every one checked first: one that isn't a span of the VOD makes none.
-        let ranges = ranges.into_iter().map(|(start, end)| db.vod_span(vod_id, start, end)).collect::<Result<Vec<_>>>();
-        let ranges = ranges.map_err(err)?;
-        let doc = Doc::Vod(vod_id);
-        let before = history::snapshot(&db, doc).ok().flatten();
-        let mut made = Vec::new();
-        for (start, end) in ranges {
-            let words = db.words_between(vod_id, start, end).map_err(err)?;
-            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown).map_err(err)?);
-        }
-        state.history.record(&db, doc, if made.len() == 1 { "Clip added" } else { "Clips added" }, before);
-        made
-    };
+    let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown).map_err(err)?;
     for clip in &made {
         state.clips.queue(clip.id);
     }
     Ok(made)
+}
+
+/// What `make_clips` does in the library, recorded in `history`.
+fn make_clips_in(
+    db: &Db,
+    history: &history::History,
+    vod_id: i64,
+    ranges: Vec<(f64, f64)>,
+    shown: bool,
+) -> Result<Vec<Clip>> {
+    db.vod(vod_id)?.context("That VOD is gone.")?;
+    let label = if ranges.len() == 1 { "Clip added" } else { "Clips added" };
+    history.change(db, Doc::Vod(vod_id), label, |db| {
+        let mut made = Vec::new();
+        for (start, end) in ranges {
+            let words = db.words_between(vod_id, start, end)?;
+            made.push(db.add_clip(vod_id, start, end, &clips::title(&words, start), shown)?);
+        }
+        Ok(made)
+    })
 }
 
 /// Moves clip `id` to `start`..`end`; its file is made again, named for the new range.
@@ -448,10 +462,8 @@ pub(crate) async fn set_clip_range(app: AppHandle, id: i64, start: f64, end: f64
     let clip = {
         let db = state.db.lock().unwrap();
         let clip = db.clip(id).map_err(err)?.ok_or("That clip is gone.")?;
-        let doc = bar_doc(&clip);
-        let before = history::snapshot(&db, doc).ok().flatten();
-        db.set_clip_range(id, start, end).map_err(err)?;
-        state.history.record(&db, doc, "Clip resized", before);
+        history::change(&app, &db, bar_doc(&clip), "Clip resized", |db| db.set_clip_range(id, start, end))
+            .map_err(err)?;
         db.clip(id).map_err(err)?.ok_or("That clip is gone.")?
     };
     state.clips.stop(id);
@@ -465,9 +477,7 @@ pub(crate) async fn keep_clip(app: AppHandle, id: i64) -> CmdResult<Clip> {
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let doc = bar_doc(&db.clip(id).map_err(err)?.ok_or("That clip is gone.")?);
-    let before = history::snapshot(&db, doc).ok().flatten();
-    db.show_clip(id).map_err(err)?;
-    state.history.record(&db, doc, "Clip added", before);
+    history::change(&app, &db, doc, "Clip added", |db| db.show_clip(id)).map_err(err)?;
     // News of it too, in order with the cutter's (the page keeps the newest).
     emit(&app, &db, id);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
@@ -479,24 +489,19 @@ pub(crate) async fn rename_clip(app: AppHandle, id: i64, title: String) -> CmdRe
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let doc = bar_doc(&db.clip(id).map_err(err)?.ok_or("That clip is gone.")?);
-    let before = history::snapshot(&db, doc).ok().flatten();
-    db.rename_clip(id, &title).map_err(err)?;
-    state.history.record(&db, doc, "Clip renamed", before);
+    history::change(&app, &db, doc, "Clip renamed", |db| db.rename_clip(id, &title)).map_err(err)?;
     emit(&app, &db, id);
     db.clip(id).map_err(err)?.ok_or_else(|| "That clip is gone.".into())
 }
 
 /// Deletes clip `id`, and its file unless that was dragged out of the app
-/// (it's someone else's then).
+/// (it's someone else's then). One only dragged out, not in the clip bar,
+/// leaves no step to undo: the bar is as it was.
 #[tauri::command]
 pub(crate) async fn delete_clip(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     let db = state.db.lock().unwrap();
     let Some(clip) = db.clip(id).map_err(err)? else { return Ok(()) };
-    let doc = bar_doc(&clip);
-    let before = history::snapshot(&db, doc).ok().flatten();
-    remove(&app, &db, id).map_err(err)?;
-    state.history.record(&db, doc, if clip.shown { "Clip deleted" } else { "Clip dropped" }, before);
-    Ok(())
+    history::change(&app, &db, bar_doc(&clip), "Clip deleted", |db| remove(&app, db, id)).map_err(err)
 }
 
 /// Deletes clips `ids` (several selected), as one change in each clip bar's
@@ -588,20 +593,15 @@ pub(crate) async fn forget_gone_clips(
     let db = state.db.lock().unwrap();
     // A change of its own in the bar's history: undone, the clips come back
     // (made again), apart from what was done before or after.
-    let before = history::snapshot(&db, doc).ok().flatten();
-    let mut taken = 0;
+    // Only those as they were when looked at (not made again meanwhile).
+    let mut taken = Vec::new();
     for (id, path) in gone {
-        // Only if it's as it was when looked at (not made again meanwhile).
-        let same = db.clip(id).map_err(err)?.is_some_and(|c| finished(&c) && c.file_path.as_deref() == Some(&*path));
-        if same {
-            remove(&app, &db, id).map_err(err)?;
-            taken += 1;
+        if db.clip(id).map_err(err)?.is_some_and(|c| finished(&c) && c.file_path.as_deref() == Some(&*path)) {
+            taken.push(id);
         }
     }
-    if taken > 0 {
-        state.history.record(&db, doc, if taken == 1 { "Clip's file deleted" } else { "Clips' files deleted" }, before);
-    }
-    Ok(())
+    let label = if taken.len() == 1 { "Clip's file deleted" } else { "Clips' files deleted" };
+    history::change(&app, &db, doc, label, |db| taken.iter().try_for_each(|&id| remove(&app, db, id))).map_err(err)
 }
 
 /// Deletes clip `id` (stopping its cut), and its file unless that was
@@ -667,16 +667,9 @@ pub(crate) async fn add_edit_mark(
     let db = state.db.lock().unwrap();
     let pieces = db.edit_pieces(edit_id).map_err(err)?;
     let (vod_id, at) = vodscribe_core::edits::source_at(&pieces, time).ok_or("A mark has to be within the edit.")?;
-    let doc = Doc::Edit(edit_id);
-    let before = history::snapshot(&db, doc).ok().flatten();
     let text = mark_text(text);
-    let id = db.add_clip_mark(edit_id, vod_id, &kind, at, text.as_deref()).map_err(err)?;
-    let label = match kind.as_str() {
-        "chapter" => "Chapter added",
-        "highlight" => "Highlight added",
-        _ => "Cut added",
-    };
-    history::record(&app, &db, doc, label, before);
+    let add = |db: &Db| db.add_clip_mark(edit_id, vod_id, &kind, at, text.as_deref());
+    let id = history::change(&app, &db, Doc::Edit(edit_id), added(&kind), add).map_err(err)?;
     Ok(Mark { id, vod_id, kind, start: time, text, detail: Default::default() })
 }
 
@@ -686,6 +679,15 @@ fn mark_history(db: &Db, id: i64) -> CmdResult<Option<Doc>> {
         MarkDoc::Vod(vod) => Doc::Vod(vod),
         MarkDoc::Edit(edit) => Doc::Edit(edit),
     }))
+}
+
+/// How undo names adding a mark of `kind`.
+fn added(kind: &str) -> &'static str {
+    match kind {
+        "chapter" => "Chapter added",
+        "highlight" => "Highlight added",
+        _ => "Cut added",
+    }
 }
 
 /// What a mark can be (`db::Mark`).
@@ -700,6 +702,7 @@ fn mark_text(text: Option<String>) -> Option<String> {
 /// two frames) unless `kind` says a chapter or a highlight, with its `text`.
 #[tauri::command]
 pub(crate) async fn add_mark(
+    app: AppHandle,
     state: State<'_, AppState>,
     vod_id: i64,
     time: f64,
@@ -715,16 +718,8 @@ pub(crate) async fn add_mark(
     }
     let db = state.db.lock().unwrap();
     db.vod(vod_id).map_err(err)?.ok_or("That VOD is gone.")?;
-    let doc = Doc::Vod(vod_id);
-    let before = history::snapshot(&db, doc).ok().flatten();
-    let mark = db.add_mark(vod_id, &kind, time, mark_text(text).as_deref()).map_err(err)?;
-    let label = match kind.as_str() {
-        "chapter" => "Chapter added",
-        "highlight" => "Highlight added",
-        _ => "Cut added",
-    };
-    state.history.record(&db, doc, label, before);
-    Ok(mark)
+    let add = |db: &Db| db.add_mark(vod_id, &kind, time, mark_text(text).as_deref());
+    history::change(&app, &db, Doc::Vod(vod_id), added(&kind), add).map_err(err)
 }
 
 /// Sets mark `id`'s title (a chapter's) or note (a highlight's).
@@ -734,7 +729,7 @@ pub(crate) async fn set_mark_text(app: AppHandle, id: i64, text: Option<String>)
 }
 
 /// Runs `change` on mark `id` (false if it's gone), recording it in its
-/// VOD's or edit's history as `label` (`history::record`).
+/// VOD's or edit's history as `label` (`history::change`).
 fn marking(
     app: &AppHandle,
     id: i64,
@@ -744,12 +739,11 @@ fn marking(
     let state = app.state::<AppState>();
     let db = state.db.lock().unwrap();
     let Some(doc) = mark_history(&db, id)? else { return Err("That mark is gone.".into()) };
-    let before = history::snapshot(&db, doc).ok().flatten();
-    if !change(&db, doc).map_err(err)? {
-        return Err("That mark is gone.".into());
-    }
-    history::record(app, &db, doc, label, before);
-    Ok(())
+    let work = |db: &Db| match change(db, doc)? {
+        true => Ok(()),
+        false => anyhow::bail!("That mark is gone."),
+    };
+    history::change(app, &db, doc, label, work).map_err(err)
 }
 
 #[tauri::command]
@@ -1099,8 +1093,33 @@ mod tests {
     /// Several clips deleted at once went one by one, a clip that was gone
     /// skipped: one that couldn't go, in the middle, left those before it
     /// deleted with no step to undo them.
+    /// Several clips made at once went in one at a time: one that failed
+    /// part-way left those before it in the library, waiting to be made, with
+    /// no step to undo them.
     #[test]
-    fn deleting_several_clips_is_all_or_none() {
+    fn making_several_clips_is_all_or_none() {
+        let (db, vod) = library();
+        let history = history::History::default();
+        assert!(make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (-1.0, 3.0)], true).is_err());
+        assert!(db.clips(vod).unwrap().is_empty(), "none made");
+        assert_eq!(history.steps(Doc::Vod(vod)), 0, "no step recorded");
+        let made = make_clips_in(&db, &history, vod, vec![(1.0, 2.0), (3.0, 90.0)], true).unwrap();
+        assert_eq!(made.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>(), [(1.0, 2.0), (3.0, 60.0)]);
+        assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
+
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
+        let doc = Doc::Edit(edit);
+        let before = history.steps(doc);
+        assert!(make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (40.0, 50.0)], true).is_err());
+        assert!(db.bar_clips(edit).unwrap().is_empty(), "none made on the edit's bar");
+        assert_eq!(history.steps(doc), before, "no step recorded");
+        let (made, queued) = make_edit_clips_in(&db, &history, edit, vec![(1.0, 2.0), (3.0, 4.0)], true).unwrap();
+        assert_eq!(made.iter().map(|c| c.id).collect::<Vec<_>>(), queued);
+        assert_eq!(history.steps(doc), before + 1);
+    }
+
+    fn library() -> (Db, i64) {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let info = vodscribe_core::fetch::VodInfo {
             platform: "youtube".into(),
@@ -1114,6 +1133,12 @@ mod tests {
             started_at: None,
         };
         let vod = db.add_vod(&info).unwrap().0.id;
+        (db, vod)
+    }
+
+    #[test]
+    fn deleting_several_clips_is_all_or_none() {
+        let (db, vod) = library();
         let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
         let b = db.add_clip(vod, 3.0, 4.0, "b", true).unwrap().id;
         let history = history::History::default();

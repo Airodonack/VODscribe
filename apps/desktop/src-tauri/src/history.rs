@@ -131,10 +131,25 @@ pub(crate) fn snapshot(db: &Db, doc: Doc) -> Result<Option<Snapshot>> {
     })
 }
 
-/// Records a change to `doc` in its history (`History::record`), and makes
-/// an edit's snippet again if the change reaches its file, as undoing or
-/// redoing it does (`changed`): changes to an edit are recorded through here,
-/// so the two directions agree.
+/// Makes a change to `doc` (`History::change`: `work`'s writes, all or
+/// none, recorded as `label`), then makes an edit's snippet again if the
+/// change reaches its file, as undoing or redoing it does (`changed`): every
+/// change goes through here, so the two directions agree.
+pub(crate) fn change<T>(
+    app: &AppHandle,
+    db: &Db,
+    doc: Doc,
+    label: &'static str,
+    work: impl FnOnce(&Db) -> Result<T>,
+) -> Result<T> {
+    let out = app.state::<AppState>().history.change(db, doc, label, work)?;
+    changed(app, db, doc);
+    Ok(out)
+}
+
+/// Records a change to `doc` already made, from `before`
+/// (`History::record`), then remakes an edit's snippet as `change` does: for
+/// a change that may take itself back instead (`cancel_mark`).
 pub(crate) fn record(app: &AppHandle, db: &Db, doc: Doc, label: &'static str, before: Option<Snapshot>) {
     app.state::<AppState>().history.record(db, doc, label, before);
     changed(app, db, doc);
@@ -149,6 +164,22 @@ pub(crate) fn changed(app: &AppHandle, db: &Db, doc: Doc) {
 }
 
 impl History {
+    /// Makes a change to `doc`: `work`'s writes, as one transaction, then
+    /// recorded as `label` (`record`). One that fails part-way leaves the
+    /// library as it was and records nothing.
+    pub(crate) fn change<T>(
+        &self,
+        db: &Db,
+        doc: Doc,
+        label: &'static str,
+        work: impl FnOnce(&Db) -> Result<T>,
+    ) -> Result<T> {
+        let before = snapshot(db, doc).ok().flatten();
+        let out = db.atomically(work)?;
+        self.record(db, doc, label, before);
+        Ok(out)
+    }
+
     /// Records a change to `doc` (`label`), from `before` to what it holds now;
     /// nothing if it didn't change. Takes back what could be redone of it.
     pub(crate) fn record(&self, db: &Db, doc: Doc, label: &'static str, before: Option<Snapshot>) {
@@ -478,6 +509,50 @@ mod tests {
         assert!(s.take_back(vod, &empty()));
         assert_eq!(History::take(&mut s, vod, false).map(|e| e.label), Some("Cut added"));
         assert!(s.undo.get(&vod).is_none_or(Vec::is_empty));
+    }
+
+    fn library() -> (Db, i64) {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let info = vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0.id;
+        (db, vod)
+    }
+
+    /// Two clips added at once went in one at a time: one that failed after
+    /// the first left that one in the library, with no step to undo it.
+    #[test]
+    fn a_change_that_fails_part_way_leaves_nothing() {
+        let (db, vod) = library();
+        let history = History::default();
+        let doc = Doc::Vod(vod);
+        let failed: Result<()> = history.change(&db, doc, "Clips added", |db| {
+            db.add_clip(vod, 1.0, 2.0, "a", true)?;
+            anyhow::bail!("the second one couldn't go in");
+        });
+        assert!(failed.is_err());
+        assert!(db.clips(vod).unwrap().is_empty(), "the first one taken back");
+        assert_eq!(history.steps(doc), 0, "no step recorded");
+
+        let made = history.change(&db, doc, "Clips added", |db| {
+            db.add_clip(vod, 1.0, 2.0, "a", true)?;
+            db.add_clip(vod, 3.0, 4.0, "b", true)
+        });
+        assert_eq!(made.unwrap().title, "b");
+        assert_eq!(db.clips(vod).unwrap().len(), 2);
+        assert_eq!(history.steps(doc), 1, "one step for both");
+        // Nothing changed (a clip only dragged out isn't in the bar): no step.
+        history.change(&db, doc, "Clip added", |db| db.add_clip(vod, 5.0, 6.0, "c", false)).unwrap();
+        assert_eq!(history.steps(doc), 1);
     }
 
     fn bar(clips: &[(i64, f64, f64, &str)]) -> Vec<BarClip> {
