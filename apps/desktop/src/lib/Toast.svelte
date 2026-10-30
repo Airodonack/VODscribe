@@ -6,8 +6,11 @@
 
 {#if toast.shown}
   {@const shown = toast.shown}
-  <div class="toast" role="status">
-    <span class="message">{shown.message}</span>
+  <div class="toast" class:error={shown.error} role={shown.error ? "alert" : "status"}>
+    {#if shown.error}<Icon name="warning" size={14} />{/if}
+    <span class="message" class:error-text={shown.error} title={shown.error ? shown.message : undefined}
+      >{shown.message}</span
+    >
     {#if shown.action}
       <button
         class="act"
@@ -42,6 +45,17 @@
     color: var(--bg);
     font-size: 13px;
     box-shadow: var(--shadow);
+  }
+
+  /* Something that went wrong: its sign in the danger colour, the words as
+     any toast's (the page's red is too dark on the toast's dark ground). */
+  .toast.error :global(svg) {
+    flex: none;
+    color: var(--danger);
+  }
+
+  .message.error-text {
+    color: inherit;
   }
 
   .message {

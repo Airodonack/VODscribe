@@ -933,9 +933,7 @@
         <Icon name="circle-minus" size={14} /> Remove {#if labelOf("edit.remove")}<kbd>{labelOf("edit.remove")}</kbd
           >{/if}
       </button>
-      {#if edits.error}
-        <span class="context error-text" title={edits.error}>{edits.error}</span>
-      {:else if edit?.status === "error" && edit.error}
+      {#if edit?.status === "error" && edit.error}
         <span class="context error-text" title={edit.error}>Couldn't render: {edit.error}</span>
       {:else}
         <span class="context muted" title={context}>{context}</span>
@@ -975,7 +973,7 @@
     {#if sources.length}
       <div class="sources" aria-label="Where its pieces come from">{@render sourceLinks()}</div>
     {/if}
-  {:else if clips.doc?.kind === "edit" && (sources.length || clips.shown.length || clips.error || snippets.size || clips.carryingAny)}
+  {:else if clips.doc?.kind === "edit" && (sources.length || clips.shown.length || snippets.size || clips.carryingAny)}
     <ClipStrip links={sourceLinks} />
   {/if}
 {/snippet}

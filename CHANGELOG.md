@@ -43,6 +43,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - The small picture on the timeline now shows just to the left of the pointer (to its right only at the timeline's left end), with the time at the top of the bar centred on the pointer as before. It sat to the right of the pointer, where what you drag also appears, so it could look like a hover that didn't go away.
   - In an edit, choosing lines in the transcript while a chapter or highlight was selected left it selected, so Delete took away the chapter or highlight instead of the lines. Choosing lines now lets go of it.
   - Undo in the message after removing pieces, lines, clips or stretches now offers Redo once it's undone, as Ctrl+Z (⌘Z) does, and says when there's nothing left to undo. It offered nothing after undoing.
+  - What goes wrong with a chapter, a highlight, a cut, an edit or a clip now shows at the bottom of the window wherever you are, and stays until you close it or it's put right. In an edit, a chapter or highlight that couldn't be added, moved or renamed said nothing; Show in folder on an edit's row said nothing with a VOD open; and a clip that couldn't be made said so only in the clip bar, which isn't there while the player is hidden.
 
 ## 0.6.0 — 2026-10-24
 

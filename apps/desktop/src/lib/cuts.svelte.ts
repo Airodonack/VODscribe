@@ -18,6 +18,7 @@ import { inOut, isEscape, markFramesOf } from "./playerKeys";
 import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
 import { changed, shownMarks, sourceOf, type MarkSources } from "./markSources";
 import { layers } from "./layers.svelte";
+import { toast } from "./toasts.svelte";
 
 class Cuts {
   /** Whose marks these are: a VOD's or an edit's. */
@@ -80,7 +81,20 @@ class Cuts {
   /** A moment the pointer is over on its timeline (Scrubber.svelte) or in its
    *  transcript (a line or a chat message), marked on the other. */
   pointed = $state<{ time: number; on: "timeline" | "transcript" } | null>(null);
-  error = $state<string | null>(null);
+  /** What last went wrong, if anything: shown as a toast (toasts.svelte.ts)
+   *  wherever the user is, as the VOD's and the edit's errors are, rather than
+   *  in one view's bar, where it went unseen from another view or with the
+   *  player collapsed. Put right (set back to null), it goes. */
+  #error = $state<string | null>(null);
+  #errorShown = 0;
+  get error() {
+    return this.#error;
+  }
+  set error(message: string | null) {
+    this.#error = message;
+    if (message) this.#errorShown = toast.error(message);
+    else toast.drop(this.#errorShown);
+  }
   #seq = 0;
 
   constructor() {

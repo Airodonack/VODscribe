@@ -315,9 +315,6 @@
   {:else if clips.carried && clips.overBar}
     <span class="drop muted">Let go to keep them as clips</span>
   {/if}
-  {#if clips.error}
-    <span class="error-text">{clips.error}</span>
-  {/if}
 </div>
 
 <style>
@@ -496,10 +493,5 @@
     to {
       left: 100%;
     }
-  }
-
-  .error-text {
-    font-size: 12px;
-    white-space: nowrap;
   }
 </style>

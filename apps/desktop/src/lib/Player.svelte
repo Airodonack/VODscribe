@@ -786,9 +786,7 @@
       >
         <Icon name="film" size={14} /> Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}
       </button>
-      {#if cuts.error}
-        <span class="context error-text" title={cuts.error}>{cuts.error}</span>
-      {:else if transcribeError}
+      {#if transcribeError}
         <span class="context error-text" title={transcribeError}>{transcribeError}</span>
       {:else}
         <span class="context muted" title={context}>{context}</span>
@@ -831,7 +829,7 @@
         come yet.
       </p>
     {/if}
-    {#if !collapsed && (clips.shown.length || clips.carryingAny || clips.error || edits.forVod(vod.id).length || snippets.size)}
+    {#if !collapsed && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}

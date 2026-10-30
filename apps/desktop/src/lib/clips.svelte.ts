@@ -7,6 +7,7 @@
 import { SvelteMap } from "svelte/reactivity";
 import { api, docKey, events, type Clip, type Doc } from "./api";
 import { hideNote, noteHidden } from "./permission";
+import { toast } from "./toasts.svelte";
 
 class Clips {
   /** Whose clip bar this is: a VOD's or an edit's. */
@@ -16,7 +17,20 @@ class Clips {
   list = $state.raw<Clip[]>([]);
   /** How far each clip being cut is, 0..1. */
   progress = new SvelteMap<number, number>();
-  error = $state<string | null>(null);
+  /** What last went wrong, if anything: shown as a toast (toasts.svelte.ts)
+   *  wherever the user is, as the VOD's and the edit's errors are, rather than
+   *  in one view's bar, where it went unseen from another view or with the
+   *  player collapsed. Put right (set back to null), it goes. */
+  #error = $state<string | null>(null);
+  #errorShown = 0;
+  get error() {
+    return this.#error;
+  }
+  set error(message: string | null) {
+    this.#error = message;
+    if (message) this.#errorShown = toast.error(message);
+    else toast.drop(this.#errorShown);
+  }
   /** The stretch of the clip whose pill is hovered, lit up on the timeline. */
   hovered = $state<{ start: number; end: number } | null>(null);
   /** A stretch being carried (dragout.ts), and whether it's over the clip bar. */

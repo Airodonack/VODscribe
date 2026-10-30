@@ -12,6 +12,7 @@ import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching, type Put } from "./api";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
+import { toast } from "./toasts.svelte";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
  *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
@@ -43,7 +44,20 @@ class Edits {
   fetching = new SvelteMap<number, Fetching>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
-  error = $state<string | null>(null);
+  /** What last went wrong, if anything: shown as a toast (toasts.svelte.ts)
+   *  wherever the user is, as the VOD's and the edit's errors are, rather than
+   *  in one view's bar, where it went unseen from another view or with the
+   *  player collapsed. Put right (set back to null), it goes. */
+  #error = $state<string | null>(null);
+  #errorShown = 0;
+  get error() {
+    return this.#error;
+  }
+  set error(message: string | null) {
+    this.#error = message;
+    if (message) this.#errorShown = toast.error(message);
+    else toast.drop(this.#errorShown);
+  }
   /** The edit whose link in a clip bar is hovered: what it plays of that VOD lights up. */
   hovered = $state<number | null>(null);
   /** An edit whose source link was followed to VOD `vodId`: what it plays of it stays lit there. */
