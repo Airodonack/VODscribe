@@ -5,12 +5,19 @@
 // has Show in folder, Add to edit… and Remove…, which asks as removing
 // several does, saying the transcript is erased. An edit's row has a menu
 // too: Add to edit… asks which edit, and Delete edit… asks before it goes.
+// A site's VOD whose video was downloaded has Show in folder too, on its
+// row and in its menu, beside Open on its site and Copy link.
+
+import { copyFileSync, mkdirSync } from "node:fs";
+import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
+import { makeSiteVod } from "../lib/data.mjs";
 
 export default {
   name: "row-menus",
-  async run(app, { fixtures, log }) {
+  async run(app, ctx) {
+    const { fixtures, log } = ctx;
     await app.toLibrary();
     const [vod] = await app.addFiles([fixtures.landed]);
     const vodRow = `.list .vod[data-key="${vod.id}"]`;
@@ -116,5 +123,29 @@ export default {
     const deleted = JSON.parse(await app.js(`return String(window.__e2e.asked.at(-1))`)).message;
     if (!deleted.startsWith(`Delete the edit “${edit.title}”`)) throw new Error(`Delete edit asked: ${deleted}`);
     log(`an edit's menu: ${editItems.join(", ")}; Add to edit… asked which, Delete edit… asked "${deleted}"`);
+
+    // A site's VOD (Dailymotion's, whose video is kept to play here) with its
+    // video downloaded: Show in folder on its row and in its menu, as a file's.
+    await ctx.quit();
+    const kept = path.join(ctx.out, "row-menus", "kept.mp3");
+    mkdirSync(path.dirname(kept), { recursive: true });
+    copyFileSync(fixtures.landed, kept);
+    makeSiteVod(vod.id, "dailymotion", "xe2erow", { mediaPath: kept });
+    app = await ctx.start();
+    await app.toLibrary();
+    await until(
+      "the downloaded video's Show in folder on its row",
+      () => app.js(`return !!document.querySelector(arguments[0] + ' button[aria-label="Show in folder"]')`, vodRow),
+      10_000,
+    ).catch(() => {
+      throw new Error("a site's VOD with its video downloaded has no Show in folder on its row");
+    });
+    await app.rowMenu(vod.id);
+    const siteItems = await menu("VOD menu");
+    for (const want of ["Show in folder", "Open on", "Copy link"])
+      if (!siteItems.some((i) => i.startsWith(want)))
+        throw new Error(`the downloaded VOD's menu has ${JSON.stringify(siteItems)}, no ${want}`);
+    await app.key("Escape");
+    log(`a downloaded site VOD's menu: ${siteItems.join(", ")}`);
   },
 };

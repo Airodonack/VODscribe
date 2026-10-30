@@ -33,9 +33,9 @@ export type Hooks = {
   onremove?: (vodId: number) => void;
 };
 
-/** Whether `vod` is a file here, so its folder can be shown. A site's
- *  video kept here isn't, yet: the app knows only the file's own path. */
-export const hasFile = (vod: Vod) => vod.source_path !== null;
+/** Whether `vod` plays from a file here, so its folder can be shown: a
+ *  file's own, or the video downloaded for a site's VOD (`media`). */
+export const hasFile = (vod: Vod) => vod.source_path !== null || vod.media;
 
 /** Shows VOD `vod`'s file in its folder; what goes wrong, as a toast. */
 export const showVodFile = (vod: Vod) => api.showFile(vod.id).catch((e) => toast.error(String(e)));
@@ -73,7 +73,8 @@ export function actionsFor(target: Target, hooks: Hooks = {}): Action[] {
   if (target.kind === "vod") {
     const { vod, at = 0 } = target;
     if (hasFile(vod)) out.push({ id: "folder", label: "Show in folder", icon: "folder", run: () => showVodFile(vod) });
-    else {
+    // A site's VOD, its video downloaded or not, links to its site.
+    if (vod.source_path === null) {
       const site = siteName(vod);
       out.push({ id: "open", label: `Open on ${site}`, icon: "external", run: () => openUrl(watchUrl(vod, at)) });
       out.push({

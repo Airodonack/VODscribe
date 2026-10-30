@@ -196,14 +196,16 @@ pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
     Ok(local::MEDIA_TYPES.iter().map(|(ext, _)| *ext).collect())
 }
 
-/// Shows a local VOD's file in the system file manager. Takes the VOD's id, not
-/// a path, so the UI can't point it anywhere else.
+/// Shows the file VOD `id` plays from here in the system file manager: a
+/// local VOD's own file, or the video downloaded for a site's
+/// (`Db::playable_path`). Takes the VOD's id, not a path, so the UI can't
+/// point it anywhere else.
 #[tauri::command]
 pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let source = state.db.lock().unwrap().vod(id).map_err(err)?.and_then(|v| v.source_path);
-    let source = source.ok_or("That VOD isn't a file on this computer.")?;
-    app.opener().reveal_item_in_dir(source).map_err(err)
+    let file = state.db.lock().unwrap().playable_path(id).map_err(err)?;
+    let file = file.ok_or("That VOD has no file on this computer.")?;
+    app.opener().reveal_item_in_dir(file).map_err(err)
 }
 
 #[tauri::command]
