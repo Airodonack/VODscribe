@@ -19,6 +19,8 @@
   // keys and buttons are the same for several as for one: C or Clip makes a
   // clip of each stretch picked, Delete takes what's picked, and a pill
   // picked with others carries them all when dragged (bulk.ts `carryChosen`).
+  // Without a mouse, A asks which edit what's picked (pills and stretches of
+  // the timeline) goes in (AddToEdit.svelte), as on a highlight's row.
 
   import type { Clip, Vod } from "./api";
   import { clips } from "./clips.svelte";
@@ -28,7 +30,9 @@
   import Spinner from "./Spinner.svelte";
   import { edits } from "./edits.svelte";
   import { keyHint } from "./keys.svelte";
-  import { carryChosen, carrySnippets } from "./bulk";
+  import { carryChosen, carrySnippets, chosenPuts } from "./bulk";
+  import AddToEdit from "./AddToEdit.svelte";
+  import { forPlayer } from "./playerKeys";
   import { dragBox, howOf, overlaps, snippets, type Snippet } from "./selection.svelte";
 
   let {
@@ -183,9 +187,18 @@
     if (clip.status === "waiting") return "Waiting to be made";
     return clip.title;
   }
+
+  // A, with something picked: which edit it goes in.
+  let adding = $state(false);
+  function onKey(e: KeyboardEvent) {
+    if (e.key.toLowerCase() !== "a" || e.ctrlKey || e.metaKey || e.altKey || !snippets.size || !forPlayer(e)) return;
+    e.preventDefault();
+    if (!e.repeat) adding = true;
+  }
 </script>
 
 <svelte:window
+  onkeydown={onKey}
   onpointermove={onPointerMove}
   onpointerup={() => {
     press = null;
@@ -316,6 +329,8 @@
     <span class="drop muted">Let go to keep them as clips</span>
   {/if}
 </div>
+
+<AddToEdit bind:open={adding} anchor={strip} items={chosenPuts} />
 
 <style>
   /* A link to an edit with pieces of this VOD: tinted, dashed, with an arrow. */
