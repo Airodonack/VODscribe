@@ -264,7 +264,8 @@
     // pane's column, from anywhere: chords, so a text field has no use for them.
     // Held down, a key repeats: one press, one toggle.
     // Ctrl+Q (⌘Q) quits, as many apps do; the app has no menu to offer it.
-    if (is(e, "app.quit")) {
+    // (On the website it's the browser's.)
+    if (!DEMO && is(e, "app.quit")) {
       e.preventDefault();
       if (!e.repeat) void api.quit();
       return;
