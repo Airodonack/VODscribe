@@ -2,10 +2,10 @@
   // A chapter's title or a highlight's note, written in a panel by its mark
   // on the timeline (Scrubber.svelte): opened by a double-click, Enter on a
   // selected one, or a new mark (cuts.svelte.ts `editing`).
-  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { untrack } from "svelte";
   import { cuts } from "./cuts.svelte";
-  import { chaptersText, formatTime } from "./platform";
+  import { formatTime } from "./platform";
+  import { copyChapters as copy } from "./actions";
   import Popover from "./Popover.svelte";
 
   /** The timeline, where the marks are drawn; `fallback` if one isn't (yet). */
@@ -37,18 +37,7 @@
   let copied = $state<string | null>(null);
   async function copyChapters() {
     const id = editing?.id;
-    const chapters = cuts.chapters.map((c) => (c.id === id ? { ...c, text: draft.trim() || null } : c));
-    try {
-      await writeText(chaptersText(chapters));
-      copied =
-        chapters[0].start >= 1
-          ? "Copied. YouTube shows chapters only when the first is at 0:00."
-          : chapters.length < 3
-            ? "Copied. YouTube shows chapters only when there are three or more."
-            : "Copied, for the video's description on YouTube.";
-    } catch (e) {
-      copied = `Couldn't copy them: ${e}`;
-    }
+    copied = await copy(cuts.chapters.map((c) => (c.id === id ? { ...c, text: draft.trim() || null } : c)));
   }
 
   // Enter, or a click away, keeps what's written; Escape doesn't, and takes

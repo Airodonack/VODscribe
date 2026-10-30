@@ -34,6 +34,8 @@
   import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
   import Menu, { type MenuItem } from "./Menu.svelte";
+  import { copyChapters } from "./actions";
+  import { toast } from "./toasts.svelte";
   import { DEMO } from "./demo";
   import { DRAG_SLOP, carry, stretchAt } from "./dragout";
   import { putOf } from "./edits.svelte";
@@ -291,6 +293,12 @@
             <span class="eyebrow">Chapters</span> <span class="muted">{chapters.length}</span>
             {#if highlights.length}<span class="sep muted">·</span><span class="eyebrow">Highlights</span>
               <span class="muted">{highlights.length}</span>{/if}
+            <!-- As the chapter title box's Copy chapters (MarkEditor.svelte), for a YouTube video's description. -->
+            <button
+              class="link copy-chapters"
+              onclick={async () => toast.show(await copyChapters(cuts.chapters))}
+              title="Copy the chapters, with their times, for a YouTube video's description">Copy chapters</button
+            >
           {:else}
             <span class="eyebrow">Highlights</span> <span class="muted">{highlights.length}</span>
           {/if}
@@ -539,6 +547,11 @@
   }
 
   /* As the transcript's header (TranscriptHead.svelte), staying at the top of its list. */
+  .copy-chapters {
+    float: right;
+    font-size: 12px;
+  }
+
   .head {
     position: sticky;
     top: 0;

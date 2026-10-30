@@ -13,7 +13,7 @@ import { ask, choose } from "./ask";
 import { clips } from "./clips.svelte";
 import { edits } from "./edits.svelte";
 import type { MenuItem } from "./Menu.svelte";
-import { linksHaveTime, listed, siteName, watchUrl } from "./platform";
+import { chaptersText, linksHaveTime, listed, siteName, watchUrl } from "./platform";
 import { DELETE, REMOVE, removeVod } from "./removal.svelte";
 import { count } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
@@ -49,6 +49,22 @@ export async function copyVodLink(vod: Vod, at = 0): Promise<boolean> {
     () => true,
     (e) => (console.error("copy failed", e), false),
   );
+}
+
+/** Copies `chapters` as a YouTube video's description lists them
+ *  (platform.ts `chaptersText`): from a chapter's title box (MarkEditor.svelte)
+ *  or the chapters pane's header (AnnotationsPane.svelte). What to say of it. */
+export async function copyChapters(chapters: { start: number; text: string | null }[]): Promise<string> {
+  try {
+    await writeText(chaptersText(chapters));
+    return chapters[0].start >= 1
+      ? "Copied. YouTube shows chapters only when the first is at 0:00."
+      : chapters.length < 3
+        ? "Copied. YouTube shows chapters only when there are three or more."
+        : "Copied, for the video's description on YouTube.";
+  } catch (e) {
+    return `Couldn't copy them: ${e}`;
+  }
 }
 
 /** The actions of `target`, in the order a menu lists them. */
