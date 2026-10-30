@@ -50,7 +50,8 @@ const ASK = `
     { doc: { kind: "edit", id: arguments[0] }, time: arguments[1], within: 0.1 });
   if (b.byteLength < 8) return null;
   const image = await createImageBitmap(new Blob([new Uint8Array(b, 8)], { type: "image/jpeg" }));
-  const canvas = new OffscreenCanvas(image.width, image.height);
+  // A document canvas: OffscreenCanvas is missing from older macOS web views.
+  const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
   const ctx = canvas.getContext("2d");
   ctx.drawImage(image, 0, 0);
   return { time: new DataView(b, 0, 8).getFloat64(0, true),

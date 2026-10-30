@@ -157,7 +157,8 @@ export default {
     const picture = await app.js(
       `const bytes = await window.__TAURI_INTERNALS__.invoke("thumbnail", { name: arguments[0] });
        const image = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
-       const canvas = new OffscreenCanvas(image.width, image.height);
+       // A document canvas: OffscreenCanvas is missing from older macOS web views.
+       const canvas = Object.assign(document.createElement("canvas"), { width: image.width, height: image.height });
        const ctx = canvas.getContext("2d");
        ctx.drawImage(image, 0, 0);
        return { size: [image.width, image.height], rgb: [...ctx.getImageData(image.width >> 1, image.height >> 1, 1, 1).data.slice(0, 3)] };`,
