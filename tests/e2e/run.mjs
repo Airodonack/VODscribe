@@ -312,6 +312,12 @@ async function runTurn({ name, run }) {
     // The app's memory at the end, with its children's (Linux; lib/memory.mjs).
     memory = current ? memoryOf(positionals[0]) : null;
     await current?.driver.close();
+    // A button or key a failed gesture left down would spoil the next scenario's.
+    try {
+      os.letGoOfAll();
+    } catch (e) {
+      console.error(`${name}: couldn't let go of what its gestures held: ${e.message}`);
+    }
   }
   const page = pages.length
     ? { pages, slowEvents: pages.flatMap((p) => p.slowEvents), frameGaps: pages.flatMap((p) => p.frameGaps) }

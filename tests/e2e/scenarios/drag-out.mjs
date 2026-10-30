@@ -133,12 +133,14 @@ export default {
         ["wait", 1500],
         ["move", edge.x, cy],
       ]);
-      const waited = await until(
+      // In an object: a drag begun within the page clock's tick (its file
+      // made during the carry) is 0 ms, which `until` would take for not yet.
+      const { waited } = await until(
         "the system's drag to start",
         () =>
           app.js(
             `const [out] = performance.getEntriesByName("carry-out"), [drag] = performance.getEntriesByName("drag-start");
-             return out && drag ? Math.round(drag.startTime - out.startTime) : false;`,
+             return out && drag ? { waited: Math.round(drag.startTime - out.startTime) } : false;`,
           ),
         30_000,
       );

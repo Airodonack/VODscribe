@@ -226,19 +226,46 @@ export async function gesture(steps) {
   if (process.platform !== "linux") throw new Error("gestures are Linux-only, so far");
   const WHEEL = { up: "4", down: "5", left: "6", right: "7" };
   for (const [what, a, b, c] of steps) {
-    if (what === "down") execFileSync("xdotool", ["mousemove", String(a), String(b), "mousedown", String(c ?? 1)]);
-    else if (what === "move") execFileSync("xdotool", ["mousemove", String(a), String(b)]);
-    else if (what === "up") execFileSync("xdotool", ["mouseup", String(a ?? 1)]);
-    else if (what === "click") execFileSync("xdotool", ["click", "--repeat", String(a ?? 1), "--delay", "80", "1"]);
+    if (what === "down") {
+      execFileSync("xdotool", ["mousemove", String(a), String(b), "mousedown", String(c ?? 1)]);
+      held.buttons.add(String(c ?? 1));
+    } else if (what === "move") execFileSync("xdotool", ["mousemove", String(a), String(b)]);
+    else if (what === "up") {
+      execFileSync("xdotool", ["mouseup", String(a ?? 1)]);
+      held.buttons.delete(String(a ?? 1));
+    } else if (what === "click") execFileSync("xdotool", ["click", "--repeat", String(a ?? 1), "--delay", "80", "1"]);
     else if (what === "wheel")
       execFileSync("xdotool", ["click", "--repeat", String(b ?? 1), "--delay", "30", WHEEL[a]]);
     else if (what === "key") execFileSync("xdotool", ["key", a]);
-    else if (what === "hold") execFileSync("xdotool", ["keydown", a]);
-    else if (what === "release") execFileSync("xdotool", ["keyup", a]);
-    else if (what === "letgo") execFileSync("xdotool", ["mousemove", String(a), String(b), "mouseup", "1"]);
-    else if (what === "wait") await new Promise((r) => setTimeout(r, a));
+    else if (what === "hold") {
+      execFileSync("xdotool", ["keydown", a]);
+      held.keys.add(a);
+    } else if (what === "release") {
+      execFileSync("xdotool", ["keyup", a]);
+      held.keys.delete(a);
+    } else if (what === "letgo") {
+      execFileSync("xdotool", ["mousemove", String(a), String(b), "mouseup", "1"]);
+      held.buttons.delete("1");
+    } else if (what === "wait") await new Promise((r) => setTimeout(r, a));
     else throw new Error(`no gesture step ${what}`);
   }
+}
+
+/** The buttons and keys gestures pressed and haven't let go of yet. */
+const held = { buttons: new Set(), keys: new Set() };
+
+/**
+ * Lets go of whatever a gesture left pressed: a scenario that fails in the
+ * middle of a drag leaves the X server's button down, and the next
+ * scenario's real click is then only a release, which clicks nothing (CI,
+ * 2026-10-29: player-picture's Play after drag-out failed mid-drag). The
+ * test runner calls it after each scenario.
+ */
+export function letGoOfAll() {
+  for (const button of held.buttons) execFileSync("xdotool", ["mouseup", button]);
+  for (const key of held.keys) execFileSync("xdotool", ["keyup", key]);
+  held.buttons.clear();
+  held.keys.clear();
 }
 
 /**
