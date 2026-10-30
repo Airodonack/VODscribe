@@ -343,12 +343,24 @@
     else cuts.toggle(now, fps, !playing);
   }
 
+  // The selection being clipped while its cuts are made: the selection is let
+  // go at once, so Clip again meanwhile (C pressed twice) is that clip too,
+  // not one of the stretch the playhead is in by the cuts there were before.
+  let cutting: Promise<{ start: number; end: number } | null> | null = null;
   /** Clip: the stretches picked on the timeline, each a clip (bulk.ts); else
    *  the selection, else the stretch the playhead is in (with no cuts, the
    *  whole video), as a clip in the clip bar. */
   async function makeClip() {
     if (chosenSegments().length) return clipSegments();
-    const range = cuts.selection ? await cuts.cutSelection() : stretch;
+    let range;
+    if (cuts.selection) {
+      const cut = (cutting = cuts.cutSelection());
+      try {
+        range = await cut;
+      } finally {
+        if (cutting === cut) cutting = null;
+      }
+    } else range = cutting ? await cutting : stretch;
     if (range) await exportStretch(range.start, range.end);
   }
   const canClip = $derived(!!cuts.selection || !!stretch || chosenSegments().length > 0);

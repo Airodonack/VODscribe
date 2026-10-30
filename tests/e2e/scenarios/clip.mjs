@@ -5,7 +5,8 @@
 // manager): back in the window, its pill goes; undone, the clip is made
 // again, and the chapter added before that goes only with the next undo.
 // Then I and O: O at 2 s selects back to the cut at 1, I at 4 s (past that
-// selection's end) makes it run from 2 to 4, and C clips just that.
+// selection's end) makes it run from 2 to 4, and C clips just that, pressed
+// twice too.
 
 import { existsSync, rmSync } from "node:fs";
 
@@ -113,16 +114,27 @@ export default {
     await app.key("ArrowRight", { shift: true });
     await to(4);
     await app.key("i");
+    // C twice, the second maybe while the first's cuts at 2 and 4 are still
+    // being made: then it's the same clip, never one of the stretch the
+    // playhead is in by the cuts there were before (from the cut at 3 s to
+    // the end, across the selection's end). Pressed once the first is done,
+    // it clips the stretch the playhead is at the start of now, 4 s on.
     await app.key("c");
-    await until(
+    await app.key("c");
+    const clipped = await until(
       "a clip of 2 to 4 s",
       async () => {
         const all = await app.invoke("list_clips", { vodId: done.id });
-        if (all.some((c) => Math.abs(c.start - 2) < 0.05 && Math.abs(c.end - 4) < 0.05)) return true;
+        if (all.some((c) => Math.abs(c.start - 2) < 0.05 && Math.abs(c.end - 4) < 0.05)) return all;
         throw new Error(`clips: ${JSON.stringify(all.map((c) => [c.start, c.end]))}`);
       },
       MINUTE,
     );
-    app.log("O then I past it: the selection ran from 2 to 4 s, and C clipped it");
+    // The second press's clip of the cuts before, had it made one, is asked for before the first's (it waits for no cut).
+    if (clipped.some((c) => Math.abs(c.start - 3) < 0.05))
+      throw new Error(
+        `C pressed again as the selection was clipped clipped the stretch from 3 s: ${JSON.stringify(clipped.map((c) => [c.start, c.end]))}`,
+      );
+    app.log("O then I past it: the selection ran from 2 to 4 s, and C clipped it, pressed twice too");
   },
 };
