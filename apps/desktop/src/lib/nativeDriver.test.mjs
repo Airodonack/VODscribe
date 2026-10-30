@@ -151,3 +151,29 @@ test("while it opens, what the player had open before says nothing of its time; 
   fakeApp.event(status(1));
   assert.ok(Math.abs(driver.time() - 1) < 0.01, `at ${driver.time()}`);
 });
+
+// The edit player keeps one driver for every edit it opens (editPlayer.ts).
+test("a reply for what was open before, come once another is opening, says nothing of its time", async () => {
+  const driver = playing();
+  driver.seek(40, false);
+  const [seek] = fakeApp.asked;
+  driver.opening(0);
+  seek.answer(status(40, false));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(driver.time(), 0, "the time of the edit open before showed");
+});
+
+test("while it opens, the new one's first frame is held even with a command of the last one's out", async () => {
+  const driver = playing();
+  driver.seek(40, false);
+  const [seek] = fakeApp.asked;
+  driver.opening(0);
+  const reply = status(0, false);
+  const frame = status(0, false);
+  fakeApp.event(frame);
+  seek.answer({ ...status(40, false), seq: reply.seq - 1 });
+  await new Promise((r) => setTimeout(r, 0));
+  driver.opened({ fps: 30, duration: 60, status: { ...reply, shown: null } });
+  assert.equal(driver.shown(), 0, "its first frame was lost");
+  assert.equal(driver.time(), 0);
+});

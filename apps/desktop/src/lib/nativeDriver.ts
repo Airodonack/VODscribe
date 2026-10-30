@@ -38,6 +38,9 @@ export class NativeDriver {
    *  guess, would put the time back where it was (seen in CI); the reply,
    *  made after, is what's so. Those after the reply are newer by `seq`. */
   private pending = 0;
+  /** Opens begun (`opening`): a command's reply sent before the newest is
+   *  of what was open then, and says nothing of what opens now. */
+  private opens = 0;
   /** The newest of the player's events while this opens: until the open's
    *  reply they may be of what it had open before (another VOD's file,
    *  playing on while this one's is read), so they aren't taken; one made
@@ -48,9 +51,10 @@ export class NativeDriver {
     this.clock = new Clock(start, false);
     events
       .playerTime((s) => {
-        if (this.gone || this.pending) return;
-        if (this.open) this.tell(s);
-        else if ((s.seq ?? 0) > (this.held?.seq ?? 0)) this.held = s;
+        if (this.gone) return;
+        if (!this.open) {
+          if ((s.seq ?? 0) > (this.held?.seq ?? 0)) this.held = s;
+        } else if (!this.pending) this.tell(s);
       })
       .then((u) => (this.gone ? u() : (this.unlisten = u)));
   }
@@ -74,15 +78,17 @@ export class NativeDriver {
   /** Sends a command whose reply says where the player is; resolves true
    *  once that's taken, false if it was refused. */
   private command(sent: Promise<PlayerStatus>): Promise<boolean> {
+    const opens = this.opens;
     this.pending++;
     return sent.then(
       (s) => {
+        if (opens !== this.opens) return false;
         this.pending--;
         this.tell(s);
         return true;
       },
       () => {
-        this.pending--;
+        if (opens === this.opens) this.pending--;
         return false;
       },
     );
@@ -96,6 +102,8 @@ export class NativeDriver {
   /** Something else is being opened, at `time`: nothing's sent until it is. */
   opening(time: number) {
     this.open = false;
+    this.opens++;
+    this.pending = 0;
     this.held = null;
     this.wanted = null;
     this.guess(time, false);
