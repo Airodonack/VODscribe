@@ -105,6 +105,12 @@ pub fn version_of_etag(etag: &str) -> String {
     etag.strip_prefix("W/").unwrap_or(etag).trim_matches('"').to_ascii_lowercase()
 }
 
+/// Whether a version is the shape of an MD5, 32 hex digits: what the file
+/// host gives as an ETag for a plain upload, the same to everyone.
+pub fn md5_shaped(version: &str) -> bool {
+    version.len() == 32 && version.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// The set (see the module's comment).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Filter {
@@ -215,7 +221,14 @@ fn fetch(base: &str, etag: Option<&str>) -> Result<Fetched> {
     match response.status().as_u16() {
         304 => Ok(Fetched::Unchanged),
         200 => {
-            let etag = response.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
+            // Kept only when it's the MD5 the host gives everyone (`version_of_etag`):
+            // any other ETag could be one made for this install, to know it again.
+            let etag = response
+                .headers()
+                .get("etag")
+                .and_then(|v| v.to_str().ok())
+                .filter(|e| md5_shaped(&version_of_etag(e)))
+                .map(str::to_string);
             let bytes = response
                 .body_mut()
                 .with_config()
@@ -500,6 +513,24 @@ mod tests {
         assert_eq!(version_key("twitch", "v1", &version_of_etag("W/\"ab\"")), "twitch:v1:ab");
     }
 
+    #[test]
+    fn an_etag_that_isnt_an_md5_isnt_kept() {
+        // Any other ETag could be one the host made for this install, to know
+        // it again at the next start: the set is read, nothing is asked about
+        // it next time (no If-None-Match), and nothing names the install.
+        assert!(md5_shaped("0123456789abcdef0123456789abcdef"));
+        assert!(!md5_shaped("set1"));
+        assert!(!md5_shaped("0123456789abcdef0123456789abcde"));
+        let set = Filter::of(&["twitch:v1"]).to_bytes();
+        let (base, asked) =
+            host(Arc::new(move |_req: &str| ("HTTP/1.1 200 OK\r\nETag: \"set1\"".to_string(), set.clone())));
+        match fetch(&base, None).unwrap() {
+            Fetched::New { etag, .. } => assert_eq!(etag, None),
+            _ => panic!("the set wasn't read as new"),
+        }
+        assert_eq!(asked.lock().unwrap().len(), 1);
+    }
+
     /// A file host on this computer: `answer(request)` (its whole head) gives
     /// the status line and headers, and the body. Returns its address and the
     /// requests' first lines, with their If-None-Match if any.
@@ -598,10 +629,13 @@ mod tests {
         host(Arc::new(move |req: &str| {
             let line = req.lines().next().unwrap_or("");
             if line.contains("/annotations/filter.bin") {
-                if req.to_ascii_lowercase().contains("if-none-match: \"set1\"") {
-                    return ("HTTP/1.1 304 Not Modified\r\nETag: \"set1\"".into(), Vec::new());
+                if req.to_ascii_lowercase().contains("if-none-match: \"0123456789abcdef0123456789abcdef\"") {
+                    return (
+                        "HTTP/1.1 304 Not Modified\r\nETag: \"0123456789abcdef0123456789abcdef\"".into(),
+                        Vec::new(),
+                    );
                 }
-                return ("HTTP/1.1 200 OK\r\nETag: \"set1\"".into(), set.clone());
+                return ("HTTP/1.1 200 OK\r\nETag: \"0123456789abcdef0123456789abcdef\"".into(), set.clone());
             }
             let etag = if line.contains("/newer.json") { MD5_B } else { MD5_A };
             if ["/there.json", "/same.json", "/newer.json"].iter().any(|f| line.contains(f)) {
@@ -649,7 +683,10 @@ mod tests {
         asked.lock().unwrap().clear();
         let (checked, _) = lib.check(&base);
         assert_eq!(checked.unwrap(), Checked { asked: true, ..Checked::default() });
-        assert_eq!(*asked.lock().unwrap(), ["GET /annotations/filter.bin HTTP/1.1 since \"set1\""]);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["GET /annotations/filter.bin HTTP/1.1 since \"0123456789abcdef0123456789abcdef\""]
+        );
     }
 
     /// A set that says "probably" when the file host says no, or says the same
@@ -705,7 +742,8 @@ mod tests {
                 // First none of them; then the set with "there" in it, published since.
                 let set = if *now.lock().unwrap() == 0 { &empty } else { &full };
                 let etag = *now.lock().unwrap();
-                return (format!("HTTP/1.1 200 OK\r\nETag: \"r{etag}\""), set.clone());
+                // MD5-shaped, as the host's are: any other ETag isn't kept.
+                return (format!("HTTP/1.1 200 OK\r\nETag: \"{etag:0>32}\""), set.clone());
             }
             (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), Vec::new())
         }));
@@ -718,7 +756,7 @@ mod tests {
             *asked.lock().unwrap(),
             [
                 "GET /annotations/filter.bin HTTP/1.1",
-                "GET /annotations/filter.bin HTTP/1.1 since \"r0\"",
+                "GET /annotations/filter.bin HTTP/1.1 since \"00000000000000000000000000000000\"",
                 "HEAD /annotations/youtube/there.json HTTP/1.1",
             ]
         );

@@ -550,6 +550,8 @@ pub(crate) fn agent() -> &'static ureq::Agent {
             .timeout_recv_response(Some(std::time::Duration::from_secs(20)))
             .timeout_recv_body(Some(std::time::Duration::from_secs(120)))
             .https_only(std::env::var_os(BASE_ENV).is_none() && !cfg!(test))
+            // The file host answers directly; a redirect could lead anywhere, the local network included.
+            .max_redirects(0)
             .build()
             .into()
     })
@@ -1394,6 +1396,17 @@ pub(crate) mod tests {
         let (vod, _) = db.add_vod(&crate::edits::tests::info("abc")).unwrap();
         let (imported, created) = db.import_annotations(&file("youtube", "abc"), None).unwrap();
         assert_eq!((imported.id, created), (vod.id, false));
+    }
+
+    #[test]
+    fn the_file_host_is_followed_to_no_other_host() {
+        // A redirect could lead anywhere, the local network included: not followed,
+        // the look-up fails, and no second request goes out.
+        let (base, asked) = host(|_| {
+            ("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/annotations/youtube/moved.json".into(), String::new())
+        });
+        assert!(look_up_at(&base, "youtube", "moved").is_err());
+        assert_eq!(asked.lock().unwrap().len(), 1);
     }
 
     #[test]

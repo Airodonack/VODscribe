@@ -45,7 +45,11 @@ export default {
     let filter = null;
     const publish = (body, round) => {
       file = body;
-      filter = { body: annotationsFilter([`youtube:${ID}`, `youtube:${ID}:${md5(body)}`]), etag: `"f${round}"` };
+      // An ETag the app keeps is MD5-shaped, as the file host's are; one per round, so a change is seen.
+      filter = {
+        body: annotationsFilter([`youtube:${ID}`, `youtube:${ID}:${md5(body)}`]),
+        etag: `"${md5(`${round}`)}"`,
+      };
     };
     const host = serveFiles((method, at, since) => {
       if (at === FILTER_PATH && filter)
