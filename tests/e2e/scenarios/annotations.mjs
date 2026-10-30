@@ -1314,47 +1314,62 @@ export default {
 
     // The playhead moved to a line under the pinned headings (a click on the
     // timeline), following: that line is brought out below them.
-    if (await app.js(`return !!document.querySelector("#transcript .follow")`)) await app.click("#transcript .follow");
-    await app.js(PRESS_AT, 24.2);
-    const nowAt = (time) =>
-      until(
-        `the line at ${time} s lit`,
-        () =>
-          app.js(
-            `return !!document.querySelector(arguments[0])`,
-            `#transcript .line.now > button.row[data-time="${time}"]`,
-          ),
-        10_000,
-      );
-    /** In the page: once the view has held still for a few frames, where line `arguments[0]` is and what's pinned. */
-    const still = (time) =>
-      app.js(
-        `${PINS}
-         let last = NaN;
-         for (let same = 0, i = 0; same < 5 && i < 200; i++) { await frames(); same = scroller.scrollTop === last ? same + 1 : 0; last = scroller.scrollTop; }
-         const line = document.querySelector('#transcript .line > button.row[data-time="' + arguments[0] + '"]');
-         return { line: line && from(line), pins: pins() };`,
-        time,
-      );
-    await nowAt(24);
-    await still(24);
-    // Line 24 s just under the view's top, under the pinned headings, the line after it too.
-    const under = await app.js(`${PINS} return put('#transcript .line > button.row[data-time="24"]', 5);`);
-    const hiding = await app.js(`${PINS} return pins();`);
-    const next = await app.js(
-      `${PINS} return from(document.querySelector('#transcript .line > button.row[data-time="24.5"]'));`,
+    // That needs a view taller than the pinned headings and a line: on a
+    // short screen (768 px, as a hosted Mac runner's) the window can't grow
+    // that tall, the transcript's view under its header is shorter than the
+    // headings, which cover all of it, and following has nowhere to put the line.
+    const room = await app.js(
+      `${PINS} const line = document.querySelector('#transcript .line > button.row[data-time="35"]');
+       return { view: Math.round(scroller.getBoundingClientRect().bottom - viewTop()), line: line.getBoundingClientRect().height };`,
     );
-    if (!(next.top < hiding.bottom))
-      ctx.log(`the line at 0:24.5 isn't under the pinned headings (${JSON.stringify({ under, next, hiding })})`);
-    await app.js(PRESS_AT, 24.7);
-    await nowAt(24.5);
-    const brought = await still(24.5);
-    if (!brought.line || brought.line.top < brought.pins.bottom - 1)
-      wrong.push(`the line the playhead moved to is under the pinned headings: ${JSON.stringify(brought)}`);
-    else
+    if (room.view < stack + room.line)
       ctx.log(
-        `the line the playhead moved to: ${brought.line.top} px down, the pinned headings ${brought.pins.bottom} px`,
+        `the transcript's view is ${room.view} px under its header, short of the pinned headings' ${stack} px and a line's ${room.line}: following under them not tried`,
       );
+    else {
+      if (await app.js(`return !!document.querySelector("#transcript .follow")`))
+        await app.click("#transcript .follow");
+      await app.js(PRESS_AT, 24.2);
+      const nowAt = (time) =>
+        until(
+          `the line at ${time} s lit`,
+          () =>
+            app.js(
+              `return !!document.querySelector(arguments[0])`,
+              `#transcript .line.now > button.row[data-time="${time}"]`,
+            ),
+          10_000,
+        );
+      /** In the page: once the view has held still for a few frames, where line `arguments[0]` is and what's pinned. */
+      const still = (time) =>
+        app.js(
+          `${PINS}
+           let last = NaN;
+           for (let same = 0, i = 0; same < 5 && i < 200; i++) { await frames(); same = scroller.scrollTop === last ? same + 1 : 0; last = scroller.scrollTop; }
+           const line = document.querySelector('#transcript .line > button.row[data-time="' + arguments[0] + '"]');
+           return { line: line && from(line), pins: pins() };`,
+          time,
+        );
+      await nowAt(24);
+      await still(24);
+      // Line 24 s just under the view's top, under the pinned headings, the line after it too.
+      const under = await app.js(`${PINS} return put('#transcript .line > button.row[data-time="24"]', 5);`);
+      const hiding = await app.js(`${PINS} return pins();`);
+      const next = await app.js(
+        `${PINS} return from(document.querySelector('#transcript .line > button.row[data-time="24.5"]'));`,
+      );
+      if (!(next.top < hiding.bottom))
+        ctx.log(`the line at 0:24.5 isn't under the pinned headings (${JSON.stringify({ under, next, hiding })})`);
+      await app.js(PRESS_AT, 24.7);
+      await nowAt(24.5);
+      const brought = await still(24.5);
+      if (!brought.line || brought.line.top < brought.pins.bottom - 1)
+        wrong.push(`the line the playhead moved to is under the pinned headings: ${JSON.stringify(brought)}`);
+      else
+        ctx.log(
+          `the line the playhead moved to: ${brought.line.top} px down, the pinned headings ${brought.pins.bottom} px`,
+        );
+    }
 
     // A click on the pinned speaker (not their name): back to where their lines start, the heading in view.
     await app.js(`${PINS} await put('#transcript .line button.row[data-time="46"]', 0);`);
