@@ -13,6 +13,7 @@ import { api, events, type Edit, type EditPiece, type EditView, type Fetching, t
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { toast } from "./toasts.svelte";
+import { saving } from "./writes";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
  *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
@@ -180,7 +181,7 @@ class Edits {
   /** Runs a change to an edit; what comes back is the edit as it is now. */
   async #change(action: Promise<EditView>): Promise<boolean> {
     try {
-      this.#show(await action);
+      this.#show(await saving(action));
       this.error = null;
       return true;
     } catch (e) {

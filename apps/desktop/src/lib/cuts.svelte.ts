@@ -19,6 +19,7 @@ import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
 import { changed, shownMarks, sourceOf, type MarkSources } from "./markSources";
 import { layers } from "./layers.svelte";
 import { toast } from "./toasts.svelte";
+import { saving } from "./writes";
 
 class Cuts {
   /** Whose marks these are: a VOD's or an edit's. */
@@ -133,6 +134,9 @@ class Cuts {
     this.fresh = null;
     this.selection = null;
     this.selectedEdge = null;
+    // Its player says its own once it shows a frame (drivePlayer.svelte.ts);
+    // until then, lines picked aren't cut on the last one's grid.
+    this.fps = DEFAULT_FPS;
     // What was picked is of the last one's timeline and clip bar.
     snippets.clear();
     this.#reload();
@@ -175,7 +179,7 @@ class Cuts {
   /** Saves a change made on screen already; on failure, shows what's saved. */
   #save(change: Promise<unknown>) {
     this.error = null;
-    change.catch((e) => {
+    saving(change).catch((e) => {
       this.error = String(e);
       this.#reload();
     });
@@ -193,7 +197,7 @@ class Cuts {
 
   /** Adds a mark of `kind` to `doc` (a VOD's or an edit's) at `start`. */
   #addTo = (doc: Doc, start: number, kind: MarkKind) =>
-    doc.kind === "vod" ? api.addMark(doc.id, start, kind) : api.addEditMark(doc.id, start, kind);
+    saving(doc.kind === "vod" ? api.addMark(doc.id, start, kind) : api.addEditMark(doc.id, start, kind));
 
   /** Whether `doc`'s marks are the ones shown (it may have been left and opened again since). */
   #showing = (doc: Doc) => this.doc !== null && docKey(this.doc) === docKey(doc);
@@ -203,6 +207,9 @@ class Cuts {
     if (!this.all.some((m) => m.id === mark.id)) this.all = this.#sorted([...this.all, mark]);
   }
 
+  /** The cuts asked for and not made yet, by document and frame. */
+  #adding = new Set<string>();
+
   /** Puts a mark on the frame showing at `time` (selected, if `select`), or takes away the one there. */
   async toggle(time: number, fps: number, select = true) {
     const doc = this.doc;
@@ -210,6 +217,11 @@ class Cuts {
     const there = this.at(time, fps);
     if (there) return this.remove(there.id);
     const start = frameStart(time, fps);
+    // B pressed again before the cut it asked for is made: that one cut, not
+    // a second on the same frame (nothing in the app's store keeps them apart).
+    const key = `${docKey(doc)}@${start}`;
+    if (this.#adding.has(key)) return;
+    this.#adding.add(key);
     try {
       const mark = await this.#addTo(doc, start, "cut");
       // Another VOD or edit open by now: the mark is that one's, not to select here.
@@ -219,6 +231,8 @@ class Cuts {
       this.error = null;
     } catch (e) {
       this.error = String(e);
+    } finally {
+      this.#adding.delete(key);
     }
   }
 
@@ -263,19 +277,25 @@ class Cuts {
 
   /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it);
    *  returns that stretch, from cut to cut. With `length`, an end at the start
-   *  or the end of what plays (an edit's) is no place for a cut and gets none. */
-  async cutSelection(length?: number): Promise<{ start: number; end: number } | null> {
+   *  or the end of what plays (an edit's) is no place for a cut and gets none,
+   *  nor does one within half a frame of `joins` (where an edit's pieces
+   *  meet, split already): they needn't fall on the frame grid, and a cut
+   *  snapped to it would leave a sliver of the piece before. */
+  async cutSelection(length?: number, joins: number[] = []): Promise<{ start: number; end: number } | null> {
     const picked = this.selection;
     const doc = this.doc;
     if (!picked) return null;
     this.clearSelection();
+    const split = (t: number) =>
+      (length !== undefined && (t <= 0 || t >= length)) || joins.some((j) => Math.abs(j - t) < 0.5 / this.fps);
     for (const t of [picked.start, picked.end]) {
-      if (length !== undefined && (t <= 0 || t >= length)) continue;
+      if (split(t)) continue;
       await this.ensure(t);
       // Another VOD or edit opened meanwhile: its own marks aren't cut, nor is a clip made.
       if (!doc || !this.#showing(doc)) return null;
     }
-    return { start: frameStart(picked.start, this.fps), end: frameStart(picked.end, this.fps) };
+    const edge = (t: number) => (split(t) ? t : frameStart(t, this.fps));
+    return { start: edge(picked.start), end: edge(picked.end) };
   }
 
   /** I or O (`key`) at `at`: the selection's in or out point there, or with
@@ -322,8 +342,12 @@ class Cuts {
   nudgeSelected(frames: number, fps: number, duration: number): number | null {
     const s = this.selection;
     if (s && this.selectedEdge) {
-      const time = nudge(s[this.selectedEdge], frames, fps, duration);
-      this.setEdge(this.selectedEdge, time);
+      const edge = this.selectedEdge;
+      let time = nudge(s[edge], frames, fps, duration);
+      // Onto the other edge, it stays a frame short: a selection of nothing
+      // could be neither cut, clipped nor deleted.
+      if (Math.abs(time - (edge === "start" ? s.end : s.start)) < 0.5 / fps) time = s[edge];
+      this.setEdge(edge, time);
       return time;
     }
     const mark = this.all.find((m) => m.id === this.selected);

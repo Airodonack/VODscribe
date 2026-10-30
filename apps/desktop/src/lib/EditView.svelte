@@ -437,7 +437,7 @@
   /** Split: a cut at both ends of the selection, else one here (or
    *  the one here taken away), as on a VOD. A delete at one makes it real. */
   async function split() {
-    if (cuts.selection) await cuts.cutSelection(total);
+    if (cuts.selection) await cuts.cutSelection(total, joins);
     else await cuts.toggle(now, fps, !reading.playing);
   }
 

@@ -7,6 +7,12 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The donation links are gone from the library and from the screen shown when no video is open.
 - The clips and edits being made, and the VODs being erased after you removed them, show at the bottom of the library, as a file manager shows its copies: a line says what's under way, with how far the clip or edit being made is, and a click on it opens the list, each with its name, what it's doing and how far, and a button to cancel it. Drag a clip or edit that's waiting up or down the list to have it made sooner or later. A clip canceled says so on the clip bar (clip that stretch again to make it); an edit canceled is left not rendered.
 - A VOD you remove from the library is erased at once, beside whatever is being made, instead of as VODscribe quits, so quitting is as quick with a VOD just removed as without one. Quit (or cancel it in the list) before it's done, and the rest is erased when VODscribe next starts.
+- Fixes:
+  - In an edit, Split (B) on a selection that ends where two pieces meet no longer leaves a sliver of the earlier piece cut off before the join.
+  - Moving a selection's edge with , and . onto the other edge stops a frame short, instead of leaving a selection of nothing that Delete and C refused.
+  - Lines picked in the transcript of a video that hasn't started playing are cut on the usual frame grid, not on that of the video open before it.
+  - Pressing B twice quickly makes one cut, not two on the same frame.
+  - Undo (Ctrl+Z) pressed right after a change, such as moving a mark, undoes that change, never the one before it.
 
 ## 0.7.0 — 2026-10-30
 

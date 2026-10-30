@@ -6,19 +6,24 @@
 import { api, type Doc } from "./api";
 import { DEMO } from "./demo";
 import { toast } from "./toasts.svelte";
+import { saved } from "./writes";
 
-/** Undoes (or redoes) the newest change in `doc`'s history, and says what it was. */
+/** Undoes (or redoes) the newest change in `doc`'s history, and says what it
+ *  was; after the changes still being saved (writes.ts), so it's never one
+ *  from before them. */
 export function undoRedo(redo: boolean, doc: Doc | null) {
   if (!doc || DEMO) return;
-  (redo ? api.redo(doc) : api.undo(doc)).then(
-    (done) =>
-      toast.show(
-        done ? `${redo ? "Redone" : "Undone"}: ${done.label}` : redo ? "Nothing to redo" : "Nothing to undo",
-        // The toast's button: on what was undone, whatever's open by then.
-        done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo, doc) } : undefined,
-      ),
-    (e) => toast.show(`Couldn't ${redo ? "redo" : "undo"}: ${e}`),
-  );
+  saved()
+    .then(() => (redo ? api.redo(doc) : api.undo(doc)))
+    .then(
+      (done) =>
+        toast.show(
+          done ? `${redo ? "Redone" : "Undone"}: ${done.label}` : redo ? "Nothing to redo" : "Nothing to undo",
+          // The toast's button: on what was undone, whatever's open by then.
+          done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo, doc) } : undefined,
+        ),
+      (e) => toast.show(`Couldn't ${redo ? "redo" : "undo"}: ${e}`),
+    );
 }
 
 /** Undoes the newest change in `doc`'s history (a toast's Undo). */
