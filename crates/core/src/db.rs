@@ -902,6 +902,19 @@ pub enum ClipBar {
     Edit { id: i64 },
 }
 
+impl ClipBar {
+    /// Whose bar a clip is on, from its `bar_of` and that clip's `whole_of`:
+    /// a VOD's bar is its own clip's (`whole_of` set), an edit's the edit's.
+    /// None for a listed clip (no `bar_of`).
+    pub(crate) fn of(bar_of: Option<i64>, bar_whole_of: Option<i64>) -> Option<ClipBar> {
+        match (bar_of, bar_whole_of) {
+            (_, Some(vod)) => Some(ClipBar::Vod { id: vod }),
+            (Some(edit), None) => Some(ClipBar::Edit { id: edit }),
+            (None, None) => None,
+        }
+    }
+}
+
 /// A mark on a VOD's timeline: a cut (`kind` "cut", between two frames), a
 /// chapter's start ("chapter": it runs to the next one) or a highlight
 /// ("highlight", a moment), with its title or note.
@@ -1025,11 +1038,7 @@ pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
-        bar: match (r.get::<_, Option<i64>>(10)?, r.get::<_, Option<i64>>(11)?) {
-            (_, Some(vod)) => Some(ClipBar::Vod { id: vod }),
-            (Some(edit), None) => Some(ClipBar::Edit { id: edit }),
-            _ => None,
-        },
+        bar: ClipBar::of(r.get(10)?, r.get(11)?),
         length: 0.0,
     };
     clip.length = clip.end - clip.start;

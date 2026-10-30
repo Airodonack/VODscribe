@@ -759,12 +759,7 @@ impl Db {
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, i64>(4)?,
                         r.get::<_, Option<i64>>(5)?,
-                        // A VOD's bar is its own clip's (whole_of); an edit's is the edit's.
-                        match (r.get::<_, Option<i64>>(6)?, r.get::<_, Option<i64>>(7)?) {
-                            (_, Some(vod)) => Some(crate::db::ClipBar::Vod { id: vod }),
-                            (Some(edit), None) => Some(crate::db::ClipBar::Edit { id: edit }),
-                            (None, None) => None,
-                        },
+                        crate::db::ClipBar::of(r.get(6)?, r.get(7)?),
                         r.get::<_, Option<String>>(8)?,
                     ))
                 },
