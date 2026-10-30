@@ -11,12 +11,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import * as os from "../lib/os.mjs";
+import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
 
-const SITES = {
-  youtube: "https://www.youtube.com/watch?v=IaIo3d6cUuo",
-  twitch: "https://www.twitch.tv/videos/2901646294",
-};
 const SITE = process.env.E2E_SITE ?? "twitch";
 const SAMPLE_MS = 50;
 const FOR_MS = 10_000;
@@ -34,18 +30,7 @@ export default {
   needs: ["network"],
   async run(app, ctx) {
     if (await app.invoke("embed_takeover")) ctx.skip("this build takes over the sites' players (site-embed)");
-    await app.toLibrary();
-    await app.type('input[aria-label="VOD link"]', SITES[SITE]);
-    await app.submit('input[aria-label="VOD link"]');
-    const vod = await until(
-      `the ${SITE} VOD in the library`,
-      async () => {
-        const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-        if (error) throw new Error(`adding it: ${error}`);
-        return (await app.invoke("list_vods")).find((v) => v.platform === SITE);
-      },
-      5 * MINUTE,
-    );
+    const vod = await addTestVod(app, SITE);
     // What their player says, as it arrives: its time, and whether it plays.
     await app.js(`window.__said = [];
       window.addEventListener("message", (e) => {
@@ -70,23 +55,8 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
       MINUTE,
     );
-    if (!os.unavailable()) {
-      os.activate();
-      const play = await os.rectOf(app, '.bar button[aria-label="Play"]');
-      os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
-    } else {
-      await app.click('.bar button[aria-label="Play"]');
-    }
+    await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    await until(
-      "their player playing",
-      async () => {
-        const t = await app.shownTime();
-        await wait(1500);
-        return (await app.shownTime()) > t;
-      },
-      2 * MINUTE,
-    );
     // Played on a while first, past the start's buffering.
     await wait(3000);
     // The time by frame.

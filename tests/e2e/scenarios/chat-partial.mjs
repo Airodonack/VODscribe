@@ -8,14 +8,10 @@
 // Twitch: src-tauri/src/e2e.rs), so this needs no network; the VOD is the
 // test Twitch VOD's library entry, made from a file added here.
 
-import { writeFileSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
-
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { makeSiteVod } from "../lib/data.mjs";
+import { TWITCH_VOD, serveChat } from "../lib/fixtures.mjs";
 
-const TWITCH_VOD = "2901646294";
 const DURATION = 4 * 3600;
 // 4,000 messages over four hours, 100 to a page: forty pages, in four slices
 // fetched at once. Longer than the transcript view lays out at first (60 rows,
@@ -28,13 +24,6 @@ const MESSAGES = Array.from({ length: 4000 }, (_, i) => ({
 }));
 // Twitch refuses every page from the twelfth on, until told otherwise.
 const FAIL_AFTER = 12;
-
-function serveChat(failAfter) {
-  writeFileSync(
-    path.join(dataDirs()[0], "e2e-chat.json"),
-    JSON.stringify({ messages: MESSAGES, fail_after: failAfter }),
-  );
-}
 
 export default {
   name: "chat-partial",
@@ -53,13 +42,13 @@ export default {
     // The entry made a Twitch VOD's, four hours long, with its chat not fetched
     // yet: the app fetches it as it starts.
     await ctx.quit();
-    serveChat(FAIL_AFTER);
-    const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
-    db.prepare(
-      `UPDATE vods SET platform = 'twitch', platform_id = ?, url = ?, title = 'Chat that stops partway',
-         duration = ?, source_path = NULL, chat = NULL, chat_error = NULL WHERE id = ?`,
-    ).run(TWITCH_VOD, `https://www.twitch.tv/videos/${TWITCH_VOD}`, DURATION, id);
-    db.close();
+    serveChat({ messages: MESSAGES }, FAIL_AFTER);
+    makeSiteVod(id, "twitch", TWITCH_VOD, {
+      title: "Chat that stops partway",
+      duration: DURATION,
+      chat: null,
+      chatError: null,
+    });
     app = await ctx.start();
     await app.toLibrary();
     await app.openVod(id);
@@ -121,7 +110,7 @@ export default {
     await ctx.checkpoint("chat-stopped");
 
     // Twitch answers again: Try again carries on, never taking away what's shown.
-    serveChat(null);
+    serveChat({ messages: MESSAGES });
     await app.clickText("Try again");
     let fewest = Infinity;
     let least = Infinity;

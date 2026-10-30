@@ -26,6 +26,70 @@ export function dataDirs() {
   }
 }
 
+/** The app's library: its database in the data folder (`dataDirs`). */
+export const libraryPath = () => path.join(dataDirs()[0], "library.sqlite");
+
+/** Each site's link to its video `id`, as a VOD added by its link holds it. */
+const SITE_LINKS = {
+  twitch: (id) => `https://www.twitch.tv/videos/${id}`,
+  youtube: (id) => `https://www.youtube.com/watch?v=${id}`,
+  kick: (id) => `https://kick.com/vodscribe/videos/${id}`,
+  dailymotion: (id) => `https://www.dailymotion.com/video/${id}`,
+};
+
+/** The columns of a VOD `makeSiteVod` sets beside its site's, by the names it takes them by. */
+const SITE_VOD_COLUMNS = {
+  title: "title",
+  channel: "channel",
+  duration: "duration",
+  chat: "chat",
+  chatError: "chat_error",
+  mediaPath: "media_path",
+};
+
+/**
+ * Makes VOD `id` (a file added here) `platform`'s video `platformId`, as if
+ * added by its link, without the network: its file gone from it (and any
+ * video kept for it), its chat known to have none unless `fields` says
+ * (`chat: null` has the app fetch it at its next start). `fields` may also
+ * set its `title`, `channel`, `duration`, `chatError` and `mediaPath` (a
+ * video downloaded for it). With the app stopped, as it reads the library
+ * at start.
+ *
+ * @param {number} id
+ * @param {string} platform
+ * @param {string} platformId
+ * @param {{ title?: string, channel?: string | null, duration?: number, chat?: string | null,
+ *   chatError?: string | null, mediaPath?: string | null }} [fields]
+ */
+export function makeSiteVod(id, platform, platformId, fields = {}) {
+  const link = SITE_LINKS[platform];
+  if (!link) throw new Error(`no link for a ${platform} VOD`);
+  const set = {
+    platform,
+    platform_id: platformId,
+    url: link(platformId),
+    source_path: null,
+    media_path: null,
+    chat: "none",
+  };
+  for (const [name, value] of Object.entries(fields)) {
+    const column = SITE_VOD_COLUMNS[name];
+    if (!column) throw new Error(`makeSiteVod doesn't set ${name}`);
+    set[column] = value;
+  }
+  const db = new DatabaseSync(libraryPath());
+  try {
+    const columns = Object.keys(set);
+    const done = db
+      .prepare(`UPDATE vods SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`)
+      .run(...columns.map((c) => set[c]), id);
+    if (done.changes !== 1) throw new Error(`no VOD ${id} in the library to make ${platform}'s`);
+  } finally {
+    db.close();
+  }
+}
+
 export function resetData() {
   const dirs = [...new Set(dataDirs())];
   const library = dirs.map((d) => path.join(d, "library.sqlite")).find(existsSync);

@@ -19,23 +19,15 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
-import { COLOURS, colours } from "../lib/fixtures.mjs";
+import { dataDirs, makeSiteVod } from "../lib/data.mjs";
+import { colourNamed, colours } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** How far a colour may be from the one meant: JPEG and YUV rounding, scaling. */
-const NEAR = 90;
 /** The piece: 1-9 s of the VOD. */
 const PIECE = [1, 9];
-
-/** The colour named for `rgb`, or "none (…)". */
-function named(rgb) {
-  const [name, , d] = COLOURS.map(([n, c]) => [n, c, os.distance(rgb, c)]).sort((a, b) => a[2] - b[2])[0];
-  return d < NEAR ? name : `none (${rgb.join(", ")})`;
-}
 
 /** In the page: the mouse moved over the edit's timeline to `time` (the edit's). */
 const POINTER = `
@@ -94,17 +86,11 @@ export default {
     // The entry made a YouTube VOD's (its chat known to have none, so
     // nothing is fetched), the file the section of it the piece needs.
     await ctx.quit();
-    const [roaming] = dataDirs();
     const footage = path.join(dataDirs().at(-1), "footage");
     mkdirSync(footage, { recursive: true });
     const section = path.join(footage, `${id}-0-${Math.round(vod.duration * 1000)}.mp4`);
     copyFileSync(own, section);
-    const db = new DatabaseSync(path.join(roaming, "library.sqlite"));
-    db.prepare(
-      `UPDATE vods SET platform = 'youtube', platform_id = 'IaIo3d6cUuo', url = 'https://www.youtube.com/watch?v=IaIo3d6cUuo',
-         title = 'A VOD from a site', source_path = NULL, chat = 'none' WHERE id = ?`,
-    ).run(id);
-    db.close();
+    makeSiteVod(id, "youtube", "IaIo3d6cUuo", { title: "A VOD from a site" });
     app = await ctx.start();
     await app.toLibrary();
     await app.click(`.vod.edit[data-key="-${edit.id}"] button.main`);
@@ -125,12 +111,12 @@ export default {
     for (let i = 0; i < 16 && !asked; i++) {
       await sleep(2500);
       const got = await app.js(ASK, edit.id, i % 2 ? 1.6 : 1.4);
-      tries.push(got ? `${named(got.rgb)} at ${got.time}` : "none");
+      tries.push(got ? `${colourNamed(got.rgb)} at ${got.time}` : "none");
       if (got) asked = got;
     }
     if (!asked) throw new Error(`the section's storyboard gave no frame, asked ${tries.length} times`);
-    ctx.log(`asked now and then: ${named(asked.rgb)} at ${asked.time} s, the answer to ask ${tries.length}`);
-    if (named(asked.rgb) !== "blue") throw new Error(`it gave ${named(asked.rgb)}, not blue`);
+    ctx.log(`asked now and then: ${colourNamed(asked.rgb)} at ${asked.time} s, the answer to ask ${tries.length}`);
+    if (colourNamed(asked.rgb) !== "blue") throw new Error(`it gave ${colourNamed(asked.rgb)}, not blue`);
     if (Math.abs(asked.time - 1) > 1e-3) throw new Error(`it gave the frame at ${asked.time} s of the edit, not 1 s`);
 
     // 2. On the timeline, the pointer moving to and fro there (never resting,
@@ -150,7 +136,7 @@ export default {
       30_000,
       { every: 100 },
     );
-    ctx.log(`moving over the section's piece: ${named(moved.rgb)} at ${moved.time} s`);
-    if (named(moved.rgb) !== "blue") throw new Error(`it shows ${named(moved.rgb)}, not blue`);
+    ctx.log(`moving over the section's piece: ${colourNamed(moved.rgb)} at ${moved.time} s`);
+    if (colourNamed(moved.rgb) !== "blue") throw new Error(`it shows ${colourNamed(moved.rgb)}, not blue`);
   },
 };

@@ -27,18 +27,11 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { COLOURS, GOP, LANDED, colours, longGop } from "../lib/fixtures.mjs";
+import { COLOURS, colourNamed, colours, GOP, LANDED, longGop } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** How far a colour may be from the one meant: JPEG and YUV rounding, scaling. */
-const NEAR = 90;
 const FPS = 30;
-
-/** The colour named for `rgb`, or "none (…)". */
-function named(rgb) {
-  const [name, , d] = COLOURS.map(([n, c]) => [n, c, os.distance(rgb, c)]).sort((a, b) => a[2] - b[2])[0];
-  return d < NEAR ? name : `none (${rgb.join(", ")})`;
-}
 
 /** In the page: the pointer (`type`, mouse by default) moved over the timeline to `time`, and pressed or let go there. */
 const POINTER = `
@@ -170,8 +163,9 @@ export default {
        return { size: [image.width, image.height], rgb: [...ctx.getImageData(image.width >> 1, image.height >> 1, 1, 1).data.slice(0, 3)] };`,
       vod.thumb,
     );
-    ctx.log(`the library picture: ${picture.size.join("x")}, ${named(picture.rgb)}`);
-    if (named(picture.rgb) !== "red") throw new Error(`the library picture is ${named(picture.rgb)}, not red`);
+    ctx.log(`the library picture: ${picture.size.join("x")}, ${colourNamed(picture.rgb)}`);
+    if (colourNamed(picture.rgb) !== "red")
+      throw new Error(`the library picture is ${colourNamed(picture.rgb)}, not red`);
     if (picture.size[1] !== 90) throw new Error(`the library picture is ${picture.size.join("x")}, not 90 tall`);
 
     const thumbnail = () => app.js(THUMBNAIL);
@@ -182,7 +176,7 @@ export default {
         async () => {
           const t = await thumbnail();
           if (!t) throw new Error("no thumbnail");
-          if (named(t.rgb) !== want) throw new Error(`it shows ${named(t.rgb)} at ${t.time}`);
+          if (colourNamed(t.rgb) !== want) throw new Error(`it shows ${colourNamed(t.rgb)} at ${t.time}`);
           if (exact && !t.exact) throw new Error(`the storyboard's frame at ${t.time}, not the exact one yet`);
           if (tip !== null && t.tip !== tip) throw new Error(`the tip says ${t.tip}`);
           return t;
@@ -222,11 +216,13 @@ export default {
     await app.openVod(vod.id);
     const hovered = await app.js(HOVER, 2.5, null, false, 15_000);
     if (!hovered.found) throw new Error("hovering 2.5 s, no thumbnail");
-    ctx.log(`hovering 2.5 s: first ${named(hovered.rgb)} from ${hovered.time} s (exact: ${hovered.exact})`);
+    ctx.log(`hovering 2.5 s: first ${colourNamed(hovered.rgb)} from ${hovered.time} s (exact: ${hovered.exact})`);
     if (hovered.exact)
       throw new Error(`hovering 2.5 s, the exact frame (${hovered.time} s) came before the storyboard's`);
-    if (named(hovered.rgb) !== "blue" || Math.abs(hovered.time - 2) > 1e-6)
-      throw new Error(`hovering 2.5 s, first ${named(hovered.rgb)} at ${hovered.time} s, not the keyframe at 2 s`);
+    if (colourNamed(hovered.rgb) !== "blue" || Math.abs(hovered.time - 2) > 1e-6)
+      throw new Error(
+        `hovering 2.5 s, first ${colourNamed(hovered.rgb)} at ${hovered.time} s, not the keyframe at 2 s`,
+      );
 
     // The player open: resting there, the exact frame on the grid.
     await app.click('.bar button[aria-label="Play"]');
@@ -242,7 +238,7 @@ export default {
     await pointer("pointermove", 2.4);
     await pointer("pointermove", 2.52);
     const rested = await shows("the exact frame at 2.52 s", "blue", { exact: true });
-    ctx.log(`rested at 2.52 s: ${named(rested.rgb)}, exact, at ${rested.time.toFixed(4)} s`);
+    ctx.log(`rested at 2.52 s: ${colourNamed(rested.rgb)}, exact, at ${rested.time.toFixed(4)} s`);
     if (Math.abs(rested.time - 2.5) > 1e-6) throw new Error(`the exact frame is at ${rested.time}, not 2.5`);
 
     // 3. A selection 2-4 s (I at 2, a click on the timeline at 4, O there:
@@ -275,7 +271,7 @@ export default {
     await placed("dragging the end", 4 + half);
     await ctx.checkpoint("thumbnail-at-the-end");
     await pointer("pointerup", 4 + half);
-    ctx.log(`the end at 4 s: ${named(end.rgb)} at ${end.time.toFixed(4)} s, tip ${end.tip}`);
+    ctx.log(`the end at 4 s: ${colourNamed(end.rgb)} at ${end.time.toFixed(4)} s, tip ${end.tip}`);
     if (Math.abs(end.time - 119 / FPS) > 1e-6) throw new Error(`the end shows ${end.time}, not the frame before 4 s`);
     await pointer("pointerdown", 2 + half, "mouse", '[data-edge="start"]');
     await pointer("pointermove", 1.6);
@@ -283,7 +279,7 @@ export default {
     const start = await shows("the start's frame while dragging it", "blue", { exact: true, tip: "0:02" });
     await placed("dragging the start", 2 + half);
     await pointer("pointerup", 2 + half);
-    ctx.log(`the start at 2 s: ${named(start.rgb)} at ${start.time.toFixed(4)} s, tip ${start.tip}`);
+    ctx.log(`the start at 2 s: ${colourNamed(start.rgb)} at ${start.time.toFixed(4)} s, tip ${start.tip}`);
     if (Math.abs(start.time - 2) > 1e-6) throw new Error(`the start shows ${start.time}, not 2 s`);
     await app.key("Escape");
 
@@ -293,7 +289,7 @@ export default {
     const dragged = await shows("the thumbnail while the playhead's dragged", "lime");
     await placed("dragging the playhead", 1.5);
     await pointer("pointerup", 1.5);
-    ctx.log(`dragging the playhead to 1.5 s: ${named(dragged.rgb)}`);
+    ctx.log(`dragging the playhead to 1.5 s: ${colourNamed(dragged.rgb)}`);
 
     // 5. A finger: no thumbnail (nor tip of one).
     await pointer("pointermove", 3.5, "touch");
@@ -334,7 +330,7 @@ export default {
       if (png) {
         // Paused where it got to: magenta from 4.5 s, cyan if it ran past 5 s first.
         const want = COLOURS[Math.min(COLOURS.length - 1, Math.floor(status.shown + 1e-6))][0];
-        const seen = named(os.colourIn(png, os.middle(await os.rectOf(app, ".player .picture"))));
+        const seen = colourNamed(os.colourIn(png, os.middle(await os.rectOf(app, ".player .picture"))));
         ctx.log(`the screen shows ${seen} (the frame at ${status.shown.toFixed(3)} s is ${want})`);
         if (seen !== want) throw new Error(`the screen shows ${seen}, not ${want}`);
       }
@@ -375,7 +371,7 @@ export default {
         missed.push(
           `${t} s (${seen.last ? `the ${seen.last.exact ? "exact " : ""}frame at ${seen.last.time} s` : "no thumbnail"})`,
         );
-      else if (named(seen.rgb) !== colourAt(want)) missed.push(`${t} s (${named(seen.rgb)})`);
+      else if (colourNamed(seen.rgb) !== colourAt(want)) missed.push(`${t} s (${colourNamed(seen.rgb)})`);
       else if (await placed(`hovering ${t} s`, t)) shifted++;
     }
     if (missed.length) throw new Error(`hovering, no keyframe at or before the pointer at ${missed.join(", ")}`);

@@ -14,7 +14,7 @@
 // run, which is slower to start).
 
 import { execFile, execFileSync } from "node:child_process";
-import { copyFileSync, writeFileSync } from "node:fs";
+import { copyFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -22,8 +22,8 @@ import { promisify } from "node:util";
 
 import { App, MINUTE, until } from "../lib/app.mjs";
 import { Measures, median } from "../lib/budgets.mjs";
-import { dataDirs } from "../lib/data.mjs";
-import { longSpeech, longVideo, minute, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
+import { libraryPath, makeSiteVod } from "../lib/data.mjs";
+import { longSpeech, longVideo, minute, serveChat, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 import { leftovers } from "../lib/procs.mjs";
 
@@ -94,7 +94,7 @@ function longChat() {
     author: `viewer${(i % 30) + 1}`,
     text: `message ${i + 1}`,
   }));
-  writeFileSync(path.join(dataDirs()[0], "e2e-chat.json"), JSON.stringify({ messages, fail_after: null }));
+  serveChat({ messages });
 }
 
 const listed = async (app, id) => (await app.invoke("list_vods")).find((v) => v.id === id);
@@ -106,11 +106,14 @@ const listed = async (app, id) => (await app.invoke("list_vods")).find((v) => v.
  */
 function chatToFetch(id, platformId) {
   longChat();
-  const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
-  db.prepare(
-    `UPDATE vods SET platform = 'twitch', platform_id = ?, url = ?, title = 'A stream with chat', channel = 'Marlowe',
-       duration = 14400, source_path = NULL, chat = NULL, chat_error = NULL WHERE id = ?`,
-  ).run(platformId, `https://www.twitch.tv/videos/${platformId}`, id);
+  makeSiteVod(id, "twitch", platformId, {
+    title: "A stream with chat",
+    channel: "Marlowe",
+    duration: 14400,
+    chat: null,
+    chatError: null,
+  });
+  const db = new DatabaseSync(libraryPath());
   db.prepare("DELETE FROM chat WHERE vod_id = ?").run(id);
   db.close();
 }

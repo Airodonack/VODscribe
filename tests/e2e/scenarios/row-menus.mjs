@@ -25,15 +25,6 @@ export default {
       throw new Error("a file's row has no Show in folder");
     });
 
-    const openMenu = (row) =>
-      app.js(
-        `const row = document.querySelector(arguments[0]);
-         row.querySelector("button.main").focus();
-         const box = row.getBoundingClientRect();
-         row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2,
-           clientX: box.left + 20, clientY: box.top + 10 }));`,
-        row,
-      );
     const menu = (label) =>
       until(
         `the ${label}`,
@@ -55,7 +46,7 @@ export default {
       );
 
     // Its menu: the focus on the first item, ↓ to the next, Escape back to the row.
-    await openMenu(vodRow);
+    await app.rowMenu(vod.id);
     const items = await menu("VOD menu");
     for (const want of ["Show in folder", "Add to edit…", "Remove…"])
       if (!items.some((i) => i.startsWith(want)))
@@ -82,7 +73,7 @@ export default {
     // Remove… asks as for several, with what's erased; Keep keeps it.
     const asked = await app.asked();
     await app.answer("Keep");
-    await openMenu(vodRow);
+    await app.rowMenu(vod.id);
     await menu("VOD menu");
     await pick("VOD menu", "Remove");
     await until("Remove to ask", async () => (await app.asked()) === asked + 1, 10_000);
@@ -102,7 +93,7 @@ export default {
       () => app.js(`return !!document.querySelector(arguments[0])`, editRow(edit.id)),
       10_000,
     );
-    await openMenu(editRow(edit.id));
+    await app.rowMenu(`-${edit.id}`);
     const editItems = await menu("Edit menu");
     for (const want of ["Add to edit…", "Delete edit…"])
       if (!editItems.some((i) => i.startsWith(want)))
@@ -118,7 +109,7 @@ export default {
     );
     await until("it closed", () => app.js(`return !document.querySelector("[role=dialog] .pick")`), 10_000);
     await app.answer("Delete");
-    await openMenu(editRow(edit.id));
+    await app.rowMenu(`-${edit.id}`);
     await menu("Edit menu");
     await pick("Edit menu", "Delete edit");
     await until("the edit gone", async () => !(await app.invoke("list_edits")).some((e) => e.id === edit.id), MINUTE);

@@ -6,10 +6,10 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "./app.mjs";
-import { dataDirs } from "./data.mjs";
+import { dataDirs, makeSiteVod } from "./data.mjs";
+import { distance } from "./os.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const LANDED = path.join(here, "..", "fixtures", "eagle-has-landed.mp3");
@@ -94,6 +94,23 @@ export const COLOURS = [
   ["gray", [128, 128, 128]],
   ["brown", [165, 42, 42]],
 ];
+
+/** How far (RGB distance) a colour seen may be from one of COLOURS and still be it. */
+export const NEAR = 90;
+
+/**
+ * The colour of COLOURS that `rgb` (seen on the screen, or in a picture) is
+ * within NEAR of, or "none (…)"; "black" first, with `black`, for a picture
+ * not drawn yet.
+ *
+ * @param {number[]} rgb
+ * @param {{ black?: boolean }} [how]
+ */
+export function colourNamed(rgb, { black = false } = {}) {
+  if (black && distance(rgb, [0, 0, 0]) < NEAR) return "black";
+  const [name, , d] = COLOURS.map(([n, c]) => [n, c, distance(rgb, c)]).sort((a, b) => a[2] - b[2])[0];
+  return d < NEAR ? name : `none (${rgb.join(", ")})`;
+}
 
 /**
  * A video whose picture says where it is: each second one flat colour
@@ -338,12 +355,13 @@ export function serveChat(fixture, failAfter = null) {
 export async function fetchChat(app, ctx, id, fixture) {
   await ctx.quit();
   serveChat(fixture);
-  const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
-  db.prepare(
-    `UPDATE vods SET platform = 'twitch', platform_id = ?, url = ?, title = 'A stream with chat', channel = ?,
-       duration = ?, source_path = NULL, chat = NULL, chat_error = NULL WHERE id = ?`,
-  ).run(TWITCH_VOD, `https://www.twitch.tv/videos/${TWITCH_VOD}`, fixture.channel, fixture.duration, id);
-  db.close();
+  makeSiteVod(id, "twitch", TWITCH_VOD, {
+    title: "A stream with chat",
+    channel: fixture.channel,
+    duration: fixture.duration,
+    chat: null,
+    chatError: null,
+  });
   app = await ctx.start();
   await app.toLibrary();
   const vod = await until(

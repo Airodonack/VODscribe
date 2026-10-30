@@ -13,8 +13,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, TIMED_POLL, until } from "../lib/app.mjs";
+import { libraryPath } from "../lib/data.mjs";
 import * as os from "../lib/os.mjs";
 
 const NAME = "Landing edit";
@@ -142,22 +144,16 @@ export default {
     // own) at 1.5 and 2.5 s, in the edit's stretch, and at 4 s, outside it:
     // once the edit next changes (the split below), its transcript has the
     // two beside it, at 0.5 and 1.5 s of the edit.
-    const library = path.join(process.env.XDG_DATA_HOME ?? "", "app.vodscribe", "library.sqlite");
-    const chatWritten = existsSync(library);
-    if (chatWritten) {
-      const { DatabaseSync } = await import("node:sqlite");
-      const db = new DatabaseSync(library);
-      const add = db.prepare(
-        "INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?, ?, ?, NULL, ?, ?)",
-      );
-      for (const [time, text] of [
-        [1.5, "liftoff"],
-        [2.5, "eagle"],
-        [4, "after"],
-      ])
-        add.run(vod.id, time, "viewer", text, JSON.stringify([{ type: "text", text }]));
-      db.close();
-    } else ctx.log("no library here to write chat into: the edit's chat isn't tried");
+    const library = libraryPath();
+    const db = new DatabaseSync(library);
+    const add = db.prepare("INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?, ?, ?, NULL, ?, ?)");
+    for (const [time, text] of [
+      [1.5, "liftoff"],
+      [2.5, "eagle"],
+      [4, "after"],
+    ])
+      add.run(vod.id, time, "viewer", text, JSON.stringify([{ type: "text", text }]));
+    db.close();
 
     // Split at the playhead, a second into the edit (its one piece, 2 s long).
     await app.toStart();
@@ -288,53 +284,50 @@ export default {
       if (changed < 0.5 || same > changed / 3) throw new Error("the edit's captions don't show over its picture");
     }
     ctx.log(`captions: ${cues.length}, the first "${cues[0].text}"`);
-    if (chatWritten) {
-      const said = await until(
-        "the edit's chat beside its transcript",
-        async () => {
-          const shown = await app.js(
-            `return [...document.querySelectorAll(".transcript .chat .message")].map((m) => m.textContent.trim())`,
-          );
-          return shown.length === 2 && shown;
-        },
-        10_000,
-      );
-      if (!said[0].includes("liftoff") || !said[1].includes("eagle")) throw new Error(`the edit's chat: ${said}`);
-      const map = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4 });
-      if (map.count !== 2 || map.histogram[1] !== 1 || map.histogram[3] !== 1)
-        throw new Error(`the edit's chat overview: ${JSON.stringify(map)}`);
-      await ctx.checkpoint("edit-chat");
-      // Its Chat button, in the transcript's header as on a VOD, hides and shows it.
-      const messages = () => app.js(`return document.querySelectorAll(".transcript .chat .message").length`);
-      await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
-      await until("the edit's chat hidden", async () => (await messages()) === 0, 10_000);
-      await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
-      await until("the edit's chat back", async () => (await messages()) === 2, 10_000);
-      ctx.log("the edit's chat: the VOD's two messages in its stretch, beside its transcript");
-      // Opened afresh, unchanged since: its chat shows at once (it's asked
-      // for again once the edit's length is known).
-      await app.click(`.vod[data-key="${vod.id}"] button.main`);
-      await until(
-        "the VOD open",
-        async () => !(await app.js(`return !!document.querySelector(arguments[0])`, title)),
-        MINUTE,
-      );
-      await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
-      await until("the edit's chat on opening it", async () => (await messages()) === 2, 10_000);
-      // A sub in its VOD's chat at 2 s: one of the edit's events, at 1 s of it.
-      const sqlite = await import("node:sqlite");
-      const events = new sqlite.DatabaseSync(library);
-      events
-        .prepare(
-          "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount) VALUES (?, 2, 'fan', NULL, 'subbed', '[]', 'sub', 1)",
-        )
-        .run(vod.id);
-      events.close();
-      const withEvents = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4, events: true });
-      if (withEvents.events?.length !== 1 || Math.abs(withEvents.events[0].time - 1) > 0.01)
-        throw new Error(`the edit's chat events: ${JSON.stringify(withEvents.events)}`);
-      ctx.log("the edit's chat events: its VOD's sub, where it plays");
-    }
+    const said = await until(
+      "the edit's chat beside its transcript",
+      async () => {
+        const shown = await app.js(
+          `return [...document.querySelectorAll(".transcript .chat .message")].map((m) => m.textContent.trim())`,
+        );
+        return shown.length === 2 && shown;
+      },
+      10_000,
+    );
+    if (!said[0].includes("liftoff") || !said[1].includes("eagle")) throw new Error(`the edit's chat: ${said}`);
+    const map = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4 });
+    if (map.count !== 2 || map.histogram[1] !== 1 || map.histogram[3] !== 1)
+      throw new Error(`the edit's chat overview: ${JSON.stringify(map)}`);
+    await ctx.checkpoint("edit-chat");
+    // Its Chat button, in the transcript's header as on a VOD, hides and shows it.
+    const messages = () => app.js(`return document.querySelectorAll(".transcript .chat .message").length`);
+    await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
+    await until("the edit's chat hidden", async () => (await messages()) === 0, 10_000);
+    await app.click(".transcript-head .chat-toggle, .head .chat-toggle");
+    await until("the edit's chat back", async () => (await messages()) === 2, 10_000);
+    ctx.log("the edit's chat: the VOD's two messages in its stretch, beside its transcript");
+    // Opened afresh, unchanged since: its chat shows at once (it's asked
+    // for again once the edit's length is known).
+    await app.click(`.vod[data-key="${vod.id}"] button.main`);
+    await until(
+      "the VOD open",
+      async () => !(await app.js(`return !!document.querySelector(arguments[0])`, title)),
+      MINUTE,
+    );
+    await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+    await until("the edit's chat on opening it", async () => (await messages()) === 2, 10_000);
+    // A sub in its VOD's chat at 2 s: one of the edit's events, at 1 s of it.
+    const events = new DatabaseSync(library);
+    events
+      .prepare(
+        "INSERT INTO chat (vod_id, time, author, color, text, parts, kind, amount) VALUES (?, 2, 'fan', NULL, 'subbed', '[]', 'sub', 1)",
+      )
+      .run(vod.id);
+    events.close();
+    const withEvents = await app.invoke("edit_chat_overview", { id: made.id, duration: 2, bins: 4, events: true });
+    if (withEvents.events?.length !== 1 || Math.abs(withEvents.events[0].time - 1) > 0.01)
+      throw new Error(`the edit's chat events: ${JSON.stringify(withEvents.events)}`);
+    ctx.log("the edit's chat events: its VOD's sub, where it plays");
     // Delete held down: its repeats remove nothing (only a press does).
     await app.js(
       `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", repeat: true, bubbles: true }))`,

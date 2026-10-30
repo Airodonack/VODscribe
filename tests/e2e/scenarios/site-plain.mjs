@@ -8,12 +8,8 @@
 // none. Not transcribed, the captions button is greyed, with no strip.
 
 import { MINUTE, until } from "../lib/app.mjs";
-import * as os from "../lib/os.mjs";
+import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
 
-const SITES = {
-  youtube: "https://www.youtube.com/watch?v=IaIo3d6cUuo",
-  twitch: "https://www.twitch.tv/videos/2901646294",
-};
 const SITE = process.env.E2E_SITE ?? "twitch";
 
 export default {
@@ -21,18 +17,7 @@ export default {
   needs: ["network"],
   async run(app, ctx) {
     if (await app.invoke("embed_takeover")) ctx.skip("this build takes over the sites' players (site-embed)");
-    await app.toLibrary();
-    await app.type('input[aria-label="VOD link"]', SITES[SITE]);
-    await app.submit('input[aria-label="VOD link"]');
-    const vod = await until(
-      `the ${SITE} VOD in the library`,
-      async () => {
-        const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-        if (error) throw new Error(`adding it: ${error}`);
-        return (await app.invoke("list_vods")).find((v) => v.platform === SITE);
-      },
-      5 * MINUTE,
-    );
+    const vod = await addTestVod(app, SITE);
     // Anything the app's frame script (embed_shim.js) says, from any frame:
     // injected, it says so even in a frame left plain ({ kind: "plain" }).
     // And the volume their player last reported (Twitch's state, YouTube's
@@ -53,28 +38,11 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
       MINUTE,
     );
-    if (!os.unavailable()) {
-      os.activate();
-      const play = await os.rectOf(app, '.bar button[aria-label="Play"]');
-      os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
-    } else {
-      await app.click('.bar button[aria-label="Play"]');
-    }
+    // Playing: the time under the player runs on, from their player's reports.
+    const started = await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const ours = () => app.invoke("player_set_speed", { speed: 1 }).catch(() => null);
     const label = () => app.js(`return document.querySelector(".bar button.control")?.getAttribute("aria-label")`);
-
-    // Playing: the time under the player runs on, from their player's reports.
-    const started = await until(
-      "their player playing",
-      async () => {
-        const t = await app.shownTime();
-        await wait(1500);
-        const t2 = await app.shownTime();
-        return t2 > t && t2;
-      },
-      2 * MINUTE,
-    );
     ctx.log(`playing: the time at ${started} s`);
     // Their frame as it is: nothing of the app's ran in it (its script says
     // so wherever it runs), and the app's own player never opened.

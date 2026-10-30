@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { MINUTE, until } from "./app.mjs";
 import { dataDirs } from "./data.mjs";
+import * as os from "./os.mjs";
 
 /** A yt-dlp answering `-J <link>` as YouTube's (or Dailymotion's) video of the link's last part. */
 const STAND_IN = `#!/bin/sh
@@ -61,18 +62,55 @@ export async function withSiteVods(ctx, fn) {
   }
 }
 
-/** Adds the stand-in's VOD `id` (YouTube's, or `site`'s) by its link, as pasted in; the VOD, once in the library. */
-export async function addSiteVod(app, id, site = null) {
+/** The test channel's VOD on each site (the project's own uploads): the only ones the tests open there. */
+export const TEST_VODS = {
+  twitch: { id: "2901646294", link: "https://www.twitch.tv/videos/2901646294" },
+  youtube: { id: "IaIo3d6cUuo", link: "https://www.youtube.com/watch?v=IaIo3d6cUuo" },
+  kick: {
+    id: "01a169a1-9aa8-7653-8a9e-390e694cc11a",
+    link: "https://kick.com/airodonack/videos/01a169a1-9aa8-7653-8a9e-390e694cc11a",
+  },
+};
+
+/**
+ * Adds the VOD at `link` as pasted in the library's box: the VOD of
+ * `platform`'s video `id` once it's in the library, within `ms` (a site's
+ * own lookup, over the network, can take minutes). What the box says went
+ * wrong fails it at once.
+ */
+export async function addByLink(app, link, platform, id, ms = MINUTE) {
   await app.toLibrary();
-  await app.type('input[aria-label="VOD link"]', linkTo(id, site));
+  await app.type('input[aria-label="VOD link"]', link);
   await app.submit('input[aria-label="VOD link"]');
   return until(
-    `VOD ${id} added`,
+    `${platform}'s VOD ${id} in the library`,
     async () => {
       const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-      if (error) throw new Error(`adding ${id}: ${error}`);
-      return (await app.invoke("list_vods")).find((v) => v.platform_id === id);
+      if (error) throw new Error(`adding ${link}: ${error}`);
+      // Twitch's VOD ids come from yt-dlp as "v" and the number (platform.ts twitchNumber).
+      const number = (v) => v.platform_id.replace(/^v(?=\d)/, "");
+      return (await app.invoke("list_vods")).find((v) => v.platform === platform && number(v) === id);
     },
-    MINUTE,
+    ms,
   );
 }
+
+/** Adds the stand-in's VOD `id` (YouTube's, or `site`'s) by its link, as pasted in; the VOD, once in the library. */
+export const addSiteVod = (app, id, site = null) => addByLink(app, linkTo(id, site), site ?? "youtube", id);
+
+/** Adds the test channel's VOD on `site` (`TEST_VODS`) by its link, over the network; the VOD, once in the library. */
+export const addTestVod = (app, site) => addByLink(app, TEST_VODS[site].link, site, TEST_VODS[site].id, 5 * MINUTE);
+
+/** Presses the bar's Play with the system's pointer where there is one: a site's player may only start for a real click. */
+export async function pressPlay(app) {
+  if (os.unavailable()) return app.click('.bar button[aria-label="Play"]');
+  os.activate();
+  const play = await os.rectOf(app, '.bar button[aria-label="Play"]');
+  os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
+}
+
+/** The dialog offering a VOD's published transcript and annotations. */
+export const OFFER = '[role="dialog"][aria-label="Transcript and annotations"]';
+
+/** Whether the offer (`OFFER`) is showing. */
+export const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, OFFER);

@@ -11,11 +11,10 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { COLOURS, colours } from "../lib/fixtures.mjs";
+import { COLOURS, colourNamed, colours, NEAR } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** How far a colour may be from the one meant: the video's own YUV rounding, scaling, the screen's colour depth. */
-const NEAR = 90;
 
 export default {
   name: "player-picture",
@@ -63,16 +62,12 @@ export default {
     const picture = native ? ".player .picture" : ".player video";
     ctx.log(`playing in ${native ? "the app's own player" : "the web view"}`);
     const shown = async () => os.colourIn(os.screenshot(), os.middle(await os.rectOf(app, picture)));
-    const named = (rgb) => {
-      const [name, , d] = COLOURS.map(([n, c]) => [n, c, os.distance(rgb, c)]).sort((a, b) => a[2] - b[2])[0];
-      return d < NEAR ? name : `none (${rgb.join(", ")})`;
-    };
     const expect = async (second) => {
       const [name] = COLOURS[second];
       const seen = await until(
         `${name} (second ${second}) on the screen`,
         async () => {
-          const now = named(await shown());
+          const now = colourNamed(await shown());
           if (now === name) return now;
           throw new Error(`the picture is ${now}`);
         },
@@ -111,9 +106,9 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Pause"]')`),
       10_000,
     );
-    const first = named(await shown());
+    const first = colourNamed(await shown());
     await sleep(1500);
-    const later = named(await shown());
+    const later = colourNamed(await shown());
     ctx.log(`playing: ${first}, then ${later}`);
     if (first === later) throw new Error(`playing, the picture stayed ${first} for 1.5 s`);
     if (native) ctx.log(await app.timeIsPicture("playing", { playing: true }));
@@ -132,7 +127,7 @@ export default {
     const stillLater = await shown();
     if (os.distance(still, stillLater) > 30)
       throw new Error(`paused, the picture changed from ${still} to ${stillLater}`);
-    ctx.log(`paused: stays ${named(still)}`);
+    ctx.log(`paused: stays ${colourNamed(still)}`);
     if (native) ctx.log(await app.timeIsPicture("paused"));
 
     // A window opened over the picture (Settings) shows there: the picture
@@ -159,7 +154,7 @@ export default {
         () => {
           const there = os.colourIn(os.screenshot(), os.middle(over));
           if (os.distance(there, background) <= 40) return true;
-          throw new Error(`the screen shows ${named(there)} there, not the panel`);
+          throw new Error(`the screen shows ${colourNamed(there)} there, not the panel`);
         },
         5_000,
       );
@@ -180,12 +175,12 @@ export default {
             const there = os.colourIn(os.screenshot(), os.middle(free));
             if (os.distance(there, dimmed) <= NEAR) return true;
             throw new Error(
-              `beside the panel the picture shows ${there.join(", ")}, not ${named(still)} dimmed (${dimmed.join(", ")})`,
+              `beside the panel the picture shows ${there.join(", ")}, not ${colourNamed(still)} dimmed (${dimmed.join(", ")})`,
             );
           },
           5_000,
         );
-        ctx.log(`beside the panel, the picture keeps its frame (${named(still)}, dimmed)`);
+        ctx.log(`beside the panel, the picture keeps its frame (${colourNamed(still)}, dimmed)`);
       }
     }
     await app.key("Escape");

@@ -18,30 +18,15 @@ import { fileURLToPath } from "node:url";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { FILTER_PATH, annotationsFilter, md5, serveFiles } from "../lib/fileHost.mjs";
-import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
+import { addSiteVod, offerShown, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const ID = "xe2elate";
 const PLAIN = "xe2eplain";
 const FILE = `/annotations/youtube/${ID}.json`;
-const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
 
 const gift = (id) => `.vod[data-key="${id}"] button.gift`;
-const toastSays = (app) => app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
-const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, DIALOG);
-
-/** Opens VOD `id`'s menu (a right click on its row) and picks `item`. */
-async function fromMenu(app, id, item) {
-  await app.js(
-    `const row = document.querySelector('.vod[data-key="' + arguments[0] + '"]');
-     const box = row.getBoundingClientRect();
-     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2,
-       clientX: box.left + 20, clientY: box.top + 10 }));`,
-    id,
-  );
-  await app.clickText(item);
-}
 
 export default {
   name: "annotations-library",
@@ -115,13 +100,13 @@ export default {
           MINUTE,
         );
         await until("the offer closed", async () => !(await offerShown(app)), 10_000);
-        await until("the toast gone", async () => !(await toastSays(app)), MINUTE).catch(() => {});
+        await until("the toast gone", async () => !(await app.toastSays()), MINUTE).catch(() => {});
 
         // Published anew: the library's check finds it, at once, with one question about the VOD.
         publish(fileOf("Published anew"), 2);
         start = host.requests.length;
-        await fromMenu(app, plain.id, "Check all VODs for annotations");
-        const found = await until("the check's toast", () => toastSays(app), MINUTE).catch(() => "");
+        await app.rowMenu(plain.id, "Check all VODs for annotations");
+        const found = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
         if (found !== "Found newer annotations for 1 VOD: use the gift button in the library.")
           wrong.push(`the library's check says "${found}"`);
         const checked = asked(start).join(", ");
@@ -133,12 +118,12 @@ export default {
         ).catch(() => false);
         if (!marked) wrong.push("the gift isn't marked newer");
         await ctx.checkpoint("library-newer");
-        await until("the toast gone", async () => !(await toastSays(app)), MINUTE).catch(() => {});
+        await until("the toast gone", async () => !(await app.toastSays()), MINUTE).catch(() => {});
 
         // Nothing changed: the check, and the next start, ask only whether the filter did.
         start = host.requests.length;
-        await fromMenu(app, plain.id, "Check all VODs for annotations");
-        const none = await until("the check's toast", () => toastSays(app), MINUTE).catch(() => "");
+        await app.rowMenu(plain.id, "Check all VODs for annotations");
+        const none = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
         if (none !== "No new annotations for the VODs in your library.") wrong.push(`checked again: "${none}"`);
         if (asked(start).join(", ") !== `GET ${FILTER_PATH} since`) wrong.push(`checked again, asked: ${asked(start)}`);
         start = host.requests.length;

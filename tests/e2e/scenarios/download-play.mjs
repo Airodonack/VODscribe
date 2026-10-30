@@ -14,10 +14,9 @@
 import { chmodSync, copyFileSync, existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { dataDirs, makeSiteVod } from "../lib/data.mjs";
 import { minute } from "../lib/fixtures.mjs";
 
 /** How many times its speed the stand-in reads the file: a minute in about 15 s. */
@@ -47,16 +46,6 @@ echo "[vodscribe-rate]1000"
 mv "$stem.mkv.part" "$stem.mkv"
 echo "[vodscribe-file]$stem.mkv"
 `;
-}
-
-/** Makes VOD `id` Dailymotion's video `platformId`, its file gone from it. */
-function makeDailymotion(id, platformId) {
-  const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
-  db.prepare(
-    `UPDATE vods SET platform = 'dailymotion', platform_id = ?, url = ?, duration = 60,
-       source_path = NULL, media_path = NULL, chat = 'none' WHERE id = ?`,
-  ).run(platformId, `https://www.dailymotion.com/video/${platformId}`, id);
-  db.close();
 }
 
 /** What's seen of the player: the stage's height, the app's player, the button, the time. */
@@ -115,7 +104,7 @@ export default {
     const added = await app.addFiles([file, second]);
     const ids = added.map((v) => v.id).sort((a, b) => a - b);
     await ctx.quit();
-    ids.forEach((id, i) => makeDailymotion(id, `xe2e${i}`));
+    ids.forEach((id, i) => makeSiteVod(id, "dailymotion", `xe2e${i}`, { duration: 60 }));
 
     const bin = path.join(dataDirs().at(-1), "bin");
     const ytDlp = path.join(bin, "yt-dlp");

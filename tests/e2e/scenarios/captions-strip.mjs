@@ -9,10 +9,9 @@
 
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { makeSiteVod } from "../lib/data.mjs";
 import { videos } from "../lib/fixtures.mjs";
 
 /** The strip (its height, null if there's none) and where the scrubber's top is. */
@@ -20,16 +19,6 @@ const layout = (app) =>
   app.js(`return {
     strip: document.querySelector(".caption-strip")?.getBoundingClientRect().height ?? null,
     scrubber: document.querySelector(".timeline")?.getBoundingClientRect().top ?? null }`);
-
-/** Makes VOD `id` the site's, its file gone from it: as if added by its link. */
-function makeSite(id, platform, platformId, url) {
-  const db = new DatabaseSync(path.join(dataDirs()[0], "library.sqlite"));
-  db.prepare(
-    `UPDATE vods SET platform = ?, platform_id = ?, url = ?, source_path = NULL, media_path = NULL, chat = 'none'
-       WHERE id = ?`,
-  ).run(platform, platformId, url, id);
-  db.close();
-}
 
 export default {
   name: "captions-strip",
@@ -49,7 +38,7 @@ export default {
 
     // YouTube: the strip from the start, the scrubber where it stays.
     await ctx.quit();
-    makeSite(vod.id, "youtube", "IaIo3d6cUuo", "https://www.youtube.com/watch?v=IaIo3d6cUuo");
+    makeSiteVod(vod.id, "youtube", "IaIo3d6cUuo");
     app = await ctx.start();
     await app.toLibrary();
     await app.openVod(vod.id);
@@ -87,7 +76,7 @@ export default {
 
     // Kick: its own <video>, under the app's controls, with the strip as well.
     await ctx.quit();
-    makeSite(vod.id, "kick", "e2e-captions-strip", "https://kick.com/vodscribe/videos/e2e-captions-strip");
+    makeSiteVod(vod.id, "kick", "e2e-captions-strip");
     app = await ctx.start();
     await app.toLibrary();
     await app.openVod(vod.id);

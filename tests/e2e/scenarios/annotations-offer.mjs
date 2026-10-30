@@ -21,13 +21,12 @@ import { fileURLToPath } from "node:url";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { notFilter, serveFiles } from "../lib/fileHost.mjs";
-import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
+import { addSiteVod, OFFER, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const ID = "xe2eoffer";
 const FILE = `/annotations/youtube/${ID}.json`;
-const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
 
 /** The offer's words and buttons, or null while there's none. */
 const offer = (app) =>
@@ -35,7 +34,7 @@ const offer = (app) =>
     `const d = document.querySelector(arguments[0]);
     return d && { text: d.querySelector(".offer")?.textContent.replace(/\\s+/g, " ").trim() ?? "",
       buttons: [...d.querySelectorAll(".offer button")].map((b) => b.textContent.trim()) }`,
-    DIALOG,
+    OFFER,
   );
 
 /** Shows VOD `id` (its transcript and timeline: YouTube's player loads only on Play). */

@@ -12,11 +12,8 @@ import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
+import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
 
-const SITES = {
-  youtube: "https://www.youtube.com/watch?v=IaIo3d6cUuo",
-  twitch: "https://www.twitch.tv/videos/2901646294",
-};
 const SITE = process.env.E2E_SITE ?? "twitch";
 
 export default {
@@ -26,18 +23,7 @@ export default {
     if (!(await app.invoke("embed_takeover")))
       ctx.skip("this build leaves the sites' players alone (no embed-takeover)");
     if (!(await app.invoke("player_available"))) ctx.skip("the app's own player doesn't draw here");
-    await app.toLibrary();
-    await app.type('input[aria-label="VOD link"]', SITES[SITE]);
-    await app.submit('input[aria-label="VOD link"]');
-    const vod = await until(
-      `the ${SITE} VOD in the library`,
-      async () => {
-        const error = await app.js(`return document.querySelector(".add-error")?.textContent.trim() ?? ""`);
-        if (error) throw new Error(`adding it: ${error}`);
-        return (await app.invoke("list_vods")).find((v) => v.platform === SITE);
-      },
-      5 * MINUTE,
-    );
+    const vod = await addTestVod(app, SITE);
     await app.openVod(vod.id);
     await until(
       "the Play button",
@@ -53,15 +39,7 @@ export default {
           `asked for the ${process.env.E2E_SCHEME} scheme; the page has the ${dark ? "dark" : "light"} one`,
         );
     }
-    // Clicked by the system's pointer where there is one: their player may
-    // only start for a real click.
-    if (!os.unavailable()) {
-      os.activate();
-      const play = await os.rectOf(app, '.bar button[aria-label="Play"]');
-      os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
-    } else {
-      await app.click('.bar button[aria-label="Play"]');
-    }
+    await pressPlay(app);
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     /** The app's player: where it is (null: none open). Its status comes
      *  back from any command; setting the speed it plays at (1, as the test

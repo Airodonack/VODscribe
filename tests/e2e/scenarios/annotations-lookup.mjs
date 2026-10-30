@@ -15,25 +15,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { notFilter, serveFiles } from "../lib/fileHost.mjs";
-import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
+import { addSiteVod, OFFER, offerShown, withSiteVods } from "../lib/siteVod.mjs";
 
-const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
 const SETTING = "Ask the file host whether annotations exist for your VODs";
-
-const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, DIALOG);
-const toastSays = (app) => app.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
-
-/** Opens VOD `id`'s menu (a right click on its row) and picks its "Check for annotations". */
-async function checkFromMenu(app, id) {
-  await app.js(
-    `const row = document.querySelector('.vod[data-key="' + arguments[0] + '"]');
-     const box = row.getBoundingClientRect();
-     row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2,
-       clientX: box.left + 20, clientY: box.top + 10 }));`,
-    id,
-  );
-  await app.clickText("Check for annotations");
-}
 
 /** The setting's box in Settings › Privacy: whether it's ticked. */
 async function settingTicked(app) {
@@ -91,7 +75,7 @@ export default {
             app.js(
               `const t = document.querySelector(arguments[0] + " .offer")?.textContent ?? "";
               return t.includes("Settings › Privacy") && t.replace(/\\s+/g, " ").trim()`,
-              DIALOG,
+              OFFER,
             ),
           10_000,
         );
@@ -106,8 +90,8 @@ export default {
         const before = host.requests.length;
         const off = await addSiteVod(app, "xe2eoff");
         await sleep(3000);
-        await checkFromMenu(app, off.id);
-        const toast = await until("the menu's toast", () => toastSays(app), 10_000).catch(() => "");
+        await app.rowMenu(off.id, "Check for annotations");
+        const toast = await until("the menu's toast", () => app.toastSays(), 10_000).catch(() => "");
         if (toast !== "Looking for annotations is turned off in Settings › Privacy.")
           wrong.push(`the menu's toast: "${toast}"`);
         if (host.requests.length !== before)
@@ -127,25 +111,25 @@ export default {
           10_000,
         );
         await app.key("Escape");
-        await checkFromMenu(app, off.id);
+        await app.rowMenu(off.id, "Check for annotations");
         const nothing = await until(
           "the menu's answer",
-          async () => (await toastSays(app)).startsWith("No annotations") && toastSays(app),
+          async () => (await app.toastSays()).startsWith("No annotations") && app.toastSays(),
           MINUTE,
-        ).catch(async () => `(${await toastSays(app)})`);
+        ).catch(async () => `(${await app.toastSays()})`);
         if (nothing !== "No annotations are published for this VOD yet.")
           wrong.push(`the menu's check says "${nothing}"`);
         if (!host.requests.some((r) => r.method === "HEAD" && r.path === "/annotations/youtube/xe2eoff.json"))
           wrong.push("the menu's check, with the setting on, didn't ask the file host");
-        await until("the toast gone", async () => !(await toastSays(app)), MINUTE).catch(() => {});
+        await until("the toast gone", async () => !(await app.toastSays()), MINUTE).catch(() => {});
 
         // Another site's VOD: never asked about, and its menu says why.
         const since = host.requests.length;
         const other = await addSiteVod(app, "xe2eother", "dailymotion");
         if (other.platform !== "dailymotion") wrong.push(`the other site's VOD is ${other.platform}'s`);
         await sleep(3000);
-        await checkFromMenu(app, other.id);
-        const why = await until("the menu's toast", () => toastSays(app), 10_000).catch(() => "");
+        await app.rowMenu(other.id, "Check for annotations");
+        const why = await until("the menu's toast", () => app.toastSays(), 10_000).catch(() => "");
         if (why !== "Annotations are only published for Twitch, YouTube and Kick VODs.")
           wrong.push(`for another site's VOD, the menu's toast: "${why}"`);
         if (host.requests.length !== since)

@@ -12,20 +12,12 @@ import { copyFileSync } from "node:fs";
 import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { COLOURS, colours } from "../lib/fixtures.mjs";
+import { colourNamed, colours } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 /** How far a colour may be from the one meant: the video's own YUV rounding, scaling, the screen's colour depth. */
-const NEAR = 90;
 /** How long after Play the screen is watched for black, in milliseconds (the first second is red). */
 const WATCHED = 900;
-
-/** The colour named for `rgb`, black, or "none (…)". */
-function named(rgb) {
-  if (os.distance(rgb, [0, 0, 0]) < NEAR) return "black";
-  const [name, , d] = COLOURS.map(([n, c]) => [n, c, os.distance(rgb, c)]).sort((a, b) => a[2] - b[2])[0];
-  return d < NEAR ? name : `none (${rgb.join(", ")})`;
-}
 
 export default {
   name: "player-open",
@@ -59,7 +51,8 @@ export default {
     // failure are still measured (and compared with a build without the change).
     const problems = [];
     const stage = ".stage .frame";
-    const shown = async () => named(os.colourIn(os.screenshot(), os.middle(await os.rectOf(app, stage))));
+    const shown = async () =>
+      colourNamed(os.colourIn(os.screenshot(), os.middle(await os.rectOf(app, stage))), { black: true });
     const state = () => app.invoke("e2e_player_state");
     /** Opens VOD `id` and waits for its stage to show `colour`, paused, in the app's player open for it. */
     const openShowing = async (id, colour, label) => {

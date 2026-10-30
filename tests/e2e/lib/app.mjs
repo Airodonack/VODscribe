@@ -281,6 +281,31 @@ export class App {
     );
   }
 
+  /** What the toast says now ("" with none showing). */
+  toastSays() {
+    return this.js(`return document.querySelector(".toast .message")?.textContent.trim() ?? ""`);
+  }
+
+  /**
+   * Opens the menu of library row `key` (a VOD's id, or an edit's id after
+   * "-": its `data-key`) as a right click does, the focus on the row first
+   * as a click leaves it; then picks `item`, if given, by its text.
+   *
+   * @param {number | string} key
+   * @param {string} [item]
+   */
+  async rowMenu(key, item) {
+    await this.js(
+      `const row = document.querySelector('.list .vod[data-key="' + arguments[0] + '"]');
+       row.querySelector("button.main")?.focus();
+       const box = row.getBoundingClientRect();
+       row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2,
+         clientX: box.left + 20, clientY: box.top + 10 }));`,
+      String(key),
+    );
+    if (item) await this.clickText(item);
+  }
+
   /** Clicks the button whose text is `text`, once it's on the page (onElement). */
   clickText(text) {
     return this.onElement(
@@ -642,13 +667,17 @@ export class App {
   }
 
   /**
-   * Plays the open VOD with the bar's Play button, whichever player it has
-   * (the app's own draws outside the page, with no <video>), and checks the
-   * time it shows runs on; returns the time it got to.
+   * Plays the open VOD with the bar's Play button (or `press`: a site's
+   * player may want the system's pointer), whichever player it has (the
+   * app's own draws outside the page, with no <video>), and checks the time
+   * it shows runs on, 2 s, within `ms` (a site's player may take a while to
+   * load); returns the time it got to.
+   *
+   * @param {{ press?: () => Promise<unknown>, ms?: number }} [how]
    */
-  async plays() {
+  async plays({ press = () => this.click('.bar button[aria-label="Play"]'), ms = MINUTE } = {}) {
     const from = await this.shownTime();
-    await this.click('.bar button[aria-label="Play"]');
+    await press();
     return until(
       "the time to run on",
       async () => {
@@ -659,7 +688,7 @@ export class App {
         const now = await this.shownTime();
         return now >= from + 2 && now;
       },
-      MINUTE,
+      ms,
     );
   }
 

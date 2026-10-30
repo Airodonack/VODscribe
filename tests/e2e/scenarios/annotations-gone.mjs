@@ -15,14 +15,12 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { serveFiles } from "../lib/fileHost.mjs";
-import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
+import { addSiteVod, offerShown, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
-const DIALOG = '[role="dialog"][aria-label="Transcript and annotations"]';
 const fileOf = (id) => `/annotations/youtube/${id}.json`;
 
-const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, DIALOG);
 const listed = async (app, id) => (await app.invoke("list_vods")).some((v) => v.id === id);
 const rowShown = (app, id) => app.js(`return !!document.querySelector('.vod[data-key="' + arguments[0] + '"]')`, id);
 
@@ -38,9 +36,7 @@ export default {
   async run(app, ctx) {
     const FETCHED = "xe2egone";
     const ASKED = "xe2egoneasked";
-    const json = readFileSync(FIXTURE, "utf8")
-      .replace('"{PLATFORM}"', '"youtube"')
-      .replace('"{ID}"', `"${FETCHED}"`);
+    const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${FETCHED}"`);
     const file = held();
     const lookup = held();
     const host = serveFiles((method, at) => {
