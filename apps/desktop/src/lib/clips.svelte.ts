@@ -262,15 +262,6 @@ class Clips {
     }
   }
 
-  // The edit's own names for `make` and `makeAll`, for the callers that
-  // still use them; on a VOD's clip bar they make nothing, as before.
-  makeAllOfEdit(ranges: { start: number; end: number }[]): Promise<void> {
-    return this.doc?.kind === "edit" ? this.makeAll(ranges) : Promise.resolve();
-  }
-  makeOfEdit(from: number, to: number, shown = true): Promise<Clip | null> {
-    return this.doc?.kind === "edit" ? this.make(from, to, shown) : Promise.resolve(null);
-  }
-
   /** Waits, while `still()`, for clip `id`'s file: the clip once made, else null.
    *  A clip of a VOD other than the one shown (`vodId`) is asked for. */
   async ready(id: number, still: () => boolean, vodId?: number): Promise<Clip | null> {

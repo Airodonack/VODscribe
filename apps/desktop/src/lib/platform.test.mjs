@@ -9,6 +9,7 @@ import {
   keepsVideo,
   videoSize,
   formatFraction,
+  formatTime,
   isTwitchClip,
   labelOf,
   listed,
@@ -133,4 +134,9 @@ test("a Twitch id loses its v only before a number, never a clip's slug's", () =
   assert.equal(twitchId(twitch("2901646294")), "2901646294");
   assert.equal(twitchId(twitch("vanityClip-AbCd")), "vanityClip-AbCd");
   // crates/core annotations.rs `a_twitch_id_loses_its_v_only_before_a_number` has the same cases.
+});
+
+test("times as the app says them", () => {
+  assert.equal(formatTime(5025), "1:23:45");
+  assert.equal(formatTime(65), "1:05");
 });

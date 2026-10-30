@@ -16,8 +16,7 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }`),
 );
-const { clock, isVideo, povAt, povLink, povOffset, povTitle, povUrl, sameAccount, unixTime } =
-  await import("./povs.ts");
+const { isVideo, povAt, povLink, povOffset, povTitle, povUrl, sameAccount, unixTime } = await import("./povs.ts");
 
 /** @typedef {import("./annotations").Pov} Pov */
 /** @type {import("./annotations").Account} */
@@ -64,11 +63,6 @@ test("the offset is the same moment, kept inside the stream", () => {
   assert.equal(povOffset(pov, at), 1800 + 83);
   assert.equal(povOffset(pov, start - 5), 0);
   assert.equal(povOffset(pov, start + 9000), 7200);
-});
-
-test("times as the app says them", () => {
-  assert.equal(clock(5025), "1:23:45");
-  assert.equal(clock(65), "1:05");
 });
 
 test("each site's link to a moment of a video", () => {

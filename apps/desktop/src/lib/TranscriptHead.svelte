@@ -21,9 +21,8 @@
   import { castLink } from "./castLink.svelte";
   import { cuts } from "./cuts.svelte";
   import { displayName } from "./castNames";
-  import { clock } from "./povs";
   import Popover from "./Popover.svelte";
-  import { formatSpan } from "./platform";
+  import { formatSpan, formatTime } from "./platform";
   import type { EventKind } from "./events";
   import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
@@ -191,8 +190,8 @@
                       href={to.href}
                       title={to.pov ? to.title : undefined}
                       onclick={(e) => (e.preventDefault(), to.follow())}
-                      >{to.pov ? `Their stream at ${clock(to.pov.offset)}` : to.title}{#if to.outside}<span class="out"
-                          ><Icon name="external" size={10} /></span
+                      >{to.pov ? `Their stream at ${formatTime(to.pov.offset)}` : to.title}{#if to.outside}<span
+                          class="out"><Icon name="external" size={10} /></span
                         >{/if}</a
                     ></span
                   >

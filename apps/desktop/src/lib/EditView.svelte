@@ -301,7 +301,7 @@
   function clipNow() {
     if (chosenSegments().length) return void clipSegments();
     const range = cuts.selection ?? stretchNow;
-    if (range) void clips.makeOfEdit(range.start, range.end);
+    if (range && clips.doc?.kind === "edit") void clips.make(range.start, range.end);
   }
 
   /** What's carried from the picture held (`hold`) or Clip dragged

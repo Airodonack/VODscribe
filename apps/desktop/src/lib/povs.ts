@@ -41,9 +41,6 @@ export function povOffset(pov: Pov, at: number): number {
   return Math.min(Math.max(at - start, 0), pov.duration);
 }
 
-/** A time as the app shows it: 5025 → "1:23:45", 65 → "1:05" (platform.ts `formatTime`). */
-export const clock = formatTime;
-
 /** The site a video is on, as it's read out: "twitch.tv". */
 export const siteLabel = (platform: Video["platform"]): string =>
   platform === "twitch" ? "twitch.tv" : platform === "kick" ? "kick.com" : "youtube.com";
@@ -88,7 +85,7 @@ export function povTitle(pov: Pov, offset: number, here = false): string {
     : !linksHaveTime(pov.video.platform)
       ? "kick.com, from its start"
       : siteLabel(pov.video.platform);
-  return `${pov.player}'s stream at ${clock(offset)} · ${where}`;
+  return `${pov.player}'s stream at ${formatTime(offset)} · ${where}`;
 }
 
 /**

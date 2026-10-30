@@ -37,7 +37,7 @@ export async function clipSegments() {
   const ranges = chosenSegments().map((s) => ({ start: s.start, end: s.end }));
   if (!ranges.length) return;
   snippets.clear();
-  if (clips.doc?.kind === "edit") await clips.makeAllOfEdit(ranges);
+  if (clips.doc?.kind === "edit") await clips.makeAll(ranges);
   else await exportStretches(ranges);
 }
 
@@ -97,7 +97,7 @@ async function chosenFiles(items: Snippet[]): Promise<Clip[]> {
       i.kind === "clip"
         ? (clips.shown.find((c) => c.id === i.id) ?? null)
         : doc?.kind === "edit"
-          ? await clips.makeOfEdit(i.start, i.end, false)
+          ? await clips.make(i.start, i.end, false)
           : await exportStretch(i.start, i.end, false);
     if (!clip) {
       for (const m of made) if (!m.shown) api.deleteClip(m.id).catch((e) => console.error("forget dragged clip", e));
