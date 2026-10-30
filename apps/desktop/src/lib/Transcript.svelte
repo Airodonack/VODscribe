@@ -19,7 +19,7 @@
   import { eventColor } from "./events";
   import { followTarget } from "./follow";
   import { Marks } from "./marks.svelte";
-  import { playedSpans } from "./media";
+  import { playedLength, playedSpans } from "./media";
   import { formatTime } from "./platform";
   import { pressToDrag } from "./pressToDrag";
   import {
@@ -85,8 +85,7 @@
     if (edit === null) return [];
     const time = new Map<number, number>();
     for (const p of edits.pieces) {
-      const played = playedSpans(p.start, p.end, p.struck).reduce((t, [a, b]) => t + b - a, 0);
-      time.set(p.vod_id, (time.get(p.vod_id) ?? 0) + played);
+      time.set(p.vod_id, (time.get(p.vod_id) ?? 0) + playedLength(p));
     }
     return [...time.entries()].sort((a, b) => b[1] - a[1]).flatMap(([id]) => (vods.get(id) ? [vods.get(id)!] : []));
   });

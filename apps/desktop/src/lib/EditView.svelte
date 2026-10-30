@@ -28,7 +28,7 @@
   import { cuts, markKey } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { PEAKS_RATE, cueAt, frameStart, playedSpans, stretchIn } from "./media";
+  import { PEAKS_RATE, cueAt, frameStart, playedLength, playedSpans, stretchIn } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
@@ -560,7 +560,7 @@
     // How much each band waits for of downloads, and how much of that is in.
     const waiting = new Map<number, { wanted: number; done: number }>();
     for (const piece of pieces) {
-      const length = pieceLength(piece);
+      const length = playedLength(piece);
       const unit = unitOf(piece);
       for (const w of pending.filter((w) => w.pieceId === piece.id)) {
         const sum = waiting.get(unit) ?? { wanted: 0, done: 0 };
@@ -745,8 +745,6 @@
     },
   };
 
-  const pieceLength = (p: EditPiece) => playedSpans(p.start, p.end, p.struck).reduce((sum, [a, b]) => sum + b - a, 0);
-
   /** Where something carried over the timeline at `x` (on screen) would go
    *  (dragout.ts): before the first of the edit's pieces (a group as one)
    *  whose middle is past it, at its start. */
@@ -761,7 +759,7 @@
     for (const piece of pieces) {
       const id = piece.group?.id ?? piece.id;
       const last = tops.at(-1);
-      const end = at + pieceLength(piece);
+      const end = at + playedLength(piece);
       if (last?.id === id) last.end = end;
       else tops.push({ id, start: at, end });
       at = end;

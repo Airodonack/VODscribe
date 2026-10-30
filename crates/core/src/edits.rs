@@ -206,6 +206,34 @@ impl EditPiece {
     }
 }
 
+/// A stretch a clip plays (`played`): `from`..`to` of its piece's VOD, from
+/// `at` seconds into the clip's timeline.
+#[derive(Debug, Clone, Copy)]
+pub struct Played<'a> {
+    pub piece: &'a EditPiece,
+    pub from: f64,
+    pub to: f64,
+    pub at: f64,
+}
+
+impl Played<'_> {
+    /// Where it ends on the clip's timeline.
+    pub fn end(&self) -> f64 {
+        self.at + self.to - self.from
+    }
+}
+
+/// What a clip of `pieces` plays, in order: each piece's spans, end to end
+/// on its timeline. The one walk of a clip's timeline.
+pub fn played(pieces: &[EditPiece]) -> impl Iterator<Item = Played<'_>> {
+    let spans = pieces.iter().flat_map(|piece| piece.spans().into_iter().map(move |(from, to)| (piece, from, to)));
+    spans.scan(0.0, |at, (piece, from, to)| {
+        let span = Played { piece, from, to, at: *at };
+        *at += to - from;
+        Some(span)
+    })
+}
+
 /// `start`..`end` less the `struck` stretches (any order, overlapping or
 /// not), leaving out slivers.
 pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
@@ -261,24 +289,20 @@ pub fn on_timeline_cut<T, U>(
 ) -> Result<Vec<(f64, f64, U)>> {
     let mut known = std::collections::HashMap::new();
     let mut out = Vec::new();
-    let mut at = 0.0;
-    for p in pieces {
-        let things = match known.entry(p.vod_id) {
+    for Played { piece, from: a, to: b, at } in played(pieces) {
+        let things = match known.entry(piece.vod_id) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(e) => e.insert(of(p.vod_id)?),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(of(piece.vod_id)?),
         };
-        for (a, b) in p.spans() {
-            for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
-                let (start, end) = (start.max(a), end.min(b));
-                if end - start < SLIVER {
-                    continue;
-                }
-                let shown = Shown { from: start, to: end, shift: at - a, at_end: end >= b - 1e-9 };
-                if let Some(shown) = cut(thing, shown) {
-                    out.push((at + start - a, at + end - a, shown));
-                }
+        for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
+            let (start, end) = (start.max(a), end.min(b));
+            if end - start < SLIVER {
+                continue;
             }
-            at += b - a;
+            let shown = Shown { from: start, to: end, shift: at - a, at_end: end >= b - 1e-9 };
+            if let Some(shown) = cut(thing, shown) {
+                out.push((at + start - a, at + end - a, shown));
+            }
         }
     }
     Ok(out)
@@ -425,18 +449,15 @@ fn placed_end(spans: &[(f64, f64)], mut t: f64, end: f64) -> f64 {
 /// `pieces`' timeline; at its very end, a millisecond before (the end
 /// itself plays nothing, and a mark there wouldn't show).
 pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
-    let mut at = 0.0;
     let mut last = None;
-    for p in pieces {
-        for (a, b) in p.spans() {
-            if time >= at && time < at + b - a {
-                return Some((p.vod_id, a + time - at));
-            }
-            at += b - a;
-            last = Some((p.vod_id, (b - 0.001).max(a)));
+    for span in played(pieces) {
+        if time >= span.at && time < span.end() {
+            return Some((span.piece.vod_id, span.from + time - span.at));
         }
+        last = Some(span);
     }
-    last.filter(|_| (time - at).abs() < 1e-6)
+    let last = last.filter(|span| (time - span.end()).abs() < 1e-6)?;
+    Some((last.piece.vod_id, (last.to - 0.001).max(last.from)))
 }
 
 /// A piece of a stretch of a clip (`stretch_pieces`): `start`..`end` of VOD
@@ -1292,29 +1313,27 @@ impl Db {
         for &(from, to) in ranges {
             let mut messages = Vec::new();
             let mut total = 0;
-            let mut at = 0.0;
-            for p in &pieces {
-                for (a, b) in p.spans() {
-                    let (s, e) = (from.max(at), to.min(at + b - a));
-                    if e > s {
-                        let (src, end) = (a + s - at, a + e - at);
-                        let [w]: [crate::db::ChatWindow; 1] =
-                            self.chat_windows(p.vod_id, &[(src, end)], cap)?.try_into().expect("one range");
-                        total += w.total;
-                        if let std::collections::hash_map::Entry::Vacant(e) = platforms.entry(p.vod_id) {
-                            e.insert(self.vod(p.vod_id)?.map(|v| v.info.platform));
-                        }
-                        for mut m in w.messages {
-                            // A moment played twice in the window: its messages once, where first played.
-                            if messages.iter().any(|seen: &crate::db::ChatLine| seen.id == m.id) {
-                                continue;
-                            }
-                            m.time = s + m.time - src;
-                            m.platform = platforms[&p.vod_id].clone();
-                            messages.push(m);
-                        }
+            for span in played(&pieces) {
+                let (s, e) = (from.max(span.at), to.min(span.end()));
+                if e <= s {
+                    continue;
+                }
+                let vod = span.piece.vod_id;
+                let (src, end) = (span.from + s - span.at, span.from + e - span.at);
+                let [w]: [crate::db::ChatWindow; 1] =
+                    self.chat_windows(vod, &[(src, end)], cap)?.try_into().expect("one range");
+                total += w.total;
+                if let std::collections::hash_map::Entry::Vacant(e) = platforms.entry(vod) {
+                    e.insert(self.vod(vod)?.map(|v| v.info.platform));
+                }
+                for mut m in w.messages {
+                    // A moment played twice in the window: its messages once, where first played.
+                    if messages.iter().any(|seen: &crate::db::ChatLine| seen.id == m.id) {
+                        continue;
                     }
-                    at += b - a;
+                    m.time = s + m.time - src;
+                    m.platform = platforms[&vod].clone();
+                    messages.push(m);
                 }
             }
             messages.truncate(cap);
@@ -1330,20 +1349,16 @@ impl Db {
         let mut known: std::collections::HashMap<i64, (Vec<crate::db::ChatLine>, Option<String>)> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        let mut at = 0.0;
-        for p in &pieces {
-            if let std::collections::hash_map::Entry::Vacant(e) = known.entry(p.vod_id) {
-                e.insert((self.chat_events(p.vod_id)?, self.vod(p.vod_id)?.map(|v| v.info.platform)));
+        for Played { piece, from: a, to: b, at } in played(&pieces) {
+            if let std::collections::hash_map::Entry::Vacant(e) = known.entry(piece.vod_id) {
+                e.insert((self.chat_events(piece.vod_id)?, self.vod(piece.vod_id)?.map(|v| v.info.platform)));
             }
-            let (events, platform) = &known[&p.vod_id];
-            for (a, b) in p.spans() {
-                for event in events.iter().filter(|e| e.time >= a && e.time < b) {
-                    let mut event = event.clone();
-                    event.time = at + event.time - a;
-                    event.platform = platform.clone();
-                    out.push(event);
-                }
-                at += b - a;
+            let (events, platform) = &known[&piece.vod_id];
+            for event in events.iter().filter(|e| e.time >= a && e.time < b) {
+                let mut event = event.clone();
+                event.time = at + event.time - a;
+                event.platform = platform.clone();
+                out.push(event);
             }
         }
         out.sort_by(|a, b| a.time.total_cmp(&b.time));
@@ -1360,17 +1375,14 @@ impl Db {
         // the count says whether it has chat at all.
         let binned = duration > 0.0 && bins > 0;
         let mut stmt = self.conn.prepare("SELECT time FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3")?;
-        let mut at = 0.0;
-        for p in self.edit_pieces(edit)? {
-            for (a, b) in p.spans() {
-                for time in stmt.query_map(params![p.vod_id, a, b], |r| r.get::<_, f64>(0))? {
-                    let t = at + time? - a;
-                    if binned {
-                        out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
-                    }
-                    count += 1;
+        let pieces = self.edit_pieces(edit)?;
+        for Played { piece, from: a, to: b, at } in played(&pieces) {
+            for time in stmt.query_map(params![piece.vod_id, a, b], |r| r.get::<_, f64>(0))? {
+                let t = at + time? - a;
+                if binned {
+                    out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
                 }
-                at += b - a;
+                count += 1;
             }
         }
         Ok((count, out))

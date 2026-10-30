@@ -34,25 +34,23 @@ export async function removeVod(vod: Vod, deleteVideo: boolean, onerror: (messag
   removing.add(vod.id);
   let anyway = false;
   for (;;) {
+    let unkept: string | null;
     try {
-      await api.deleteVod(vod.id, deleteVideo, anyway);
-      return;
+      unkept = await api.deleteVod(vod.id, deleteVideo, anyway);
     } catch (e) {
-      const text = String(e);
-      if (!text.startsWith("realize: ")) {
-        removing.delete(vod.id);
-        onerror(text);
-        return;
-      }
-      const answer = await choose(
-        `The stretches of “${vod.title}”${inEdits(vod.id, " in ", "")} couldn't be kept: ${text.slice("realize: ".length)} Deleting the video anyway leaves gaps in them.`,
-        "Try again",
-        "Delete anyway",
-        "Keep the video",
-      );
-      if (answer === "Delete anyway") anyway = true;
-      // Kept: removed from the library only.
-      else if (answer !== "Try again") deleteVideo = false;
+      removing.delete(vod.id);
+      onerror(String(e));
+      return;
     }
+    if (unkept === null) return;
+    const answer = await choose(
+      `The stretches of “${vod.title}”${inEdits(vod.id, " in ", "")} couldn't be kept: ${unkept} Deleting the video anyway leaves gaps in them.`,
+      "Try again",
+      "Delete anyway",
+      "Keep the video",
+    );
+    if (answer === "Delete anyway") anyway = true;
+    // Kept: removed from the library only.
+    else if (answer !== "Try again") deleteVideo = false;
   }
 }

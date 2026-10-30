@@ -7,7 +7,7 @@
 // changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
-import { playedSpans } from "./media";
+import { playedLength } from "./media";
 import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching, type Put } from "./api";
 import { clips } from "./clips.svelte";
@@ -203,10 +203,7 @@ class Edits {
 
   /** How long the open edit plays: its pieces' played stretches end to end. */
   get length(): number {
-    return this.pieces.reduce(
-      (sum, p) => sum + playedSpans(p.start, p.end, p.struck).reduce((t, [a, b]) => t + b - a, 0),
-      0,
-    );
+    return this.pieces.reduce((sum, p) => sum + playedLength(p), 0);
   }
 
   /** Plays the open edit from `time` (seconds of its timeline). */

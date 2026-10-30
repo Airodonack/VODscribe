@@ -8,6 +8,7 @@ import {
   frameIndex,
   isUnplayable,
   unplayable,
+  playedLength,
   playedSpans,
   frameStart,
   inEdit,
@@ -104,6 +105,17 @@ test("a seek to a cut lands a quarter of a frame into the frame it starts, short
 
 test("an edit's piece plays what isn't struck, as the render does", () => {
   assert.deepEqual(playedSpans(0, 10, []), [[0, 10]]);
+  assert.equal(
+    playedLength({
+      start: 0,
+      end: 10,
+      struck: [
+        [2, 3],
+        [6, 7],
+      ],
+    }),
+    8,
+  );
   assert.deepEqual(
     playedSpans(0, 10, [
       [6, 7],

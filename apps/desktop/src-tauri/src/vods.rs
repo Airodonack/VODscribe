@@ -257,9 +257,9 @@ async fn erase_in_parts(
 /// does now, it's erased at once, a job beside the encodes (`Sweeper`).
 ///
 /// With `delete_video`, it's erased now: first each stretch other clips use
-/// is realized (`realize_all`); if one can't be (offline, a full disk), the
-/// error says why after `REALIZE_FAILED` and nothing is removed, for the
-/// page to ask what then. With `anyway` too, it's erased without that: the
+/// is realized (`realize_all`); if one can't be (offline, a full disk),
+/// nothing is removed and the answer is why, for the page to ask what then
+/// (otherwise none). With `anyway` too, it's erased without that: the
 /// pieces other clips have of it are holes.
 #[tauri::command]
 pub(crate) async fn delete_vod(
@@ -268,14 +268,14 @@ pub(crate) async fn delete_vod(
     id: i64,
     delete_video: Option<bool>,
     anyway: Option<bool>,
-) -> CmdResult<()> {
+) -> CmdResult<Option<String>> {
     let (delete_video, anyway) = (delete_video.unwrap_or(false), anyway.unwrap_or(false));
     if delete_video && !anyway {
         let handle = app.clone();
-        tauri::async_runtime::spawn_blocking(move || realize_all(&handle, id))
-            .await
-            .map_err(err)?
-            .map_err(|e| format!("{REALIZE_FAILED}{e:#}"))?;
+        let realized = tauri::async_runtime::spawn_blocking(move || realize_all(&handle, id)).await.map_err(err)?;
+        if let Err(e) = realized {
+            return Ok(Some(format!("{e:#}")));
+        }
     }
     state.chat.stop(id);
     state.history.forget(crate::history::Doc::Vod(id));
@@ -311,11 +311,8 @@ pub(crate) async fn delete_vod(
         state.sweeper.removed(id);
     }
     let _ = app.emit("vod-removed", id);
-    Ok(())
+    Ok(None)
 }
-
-/// What the error of a `delete_vod` whose realizing failed starts with.
-const REALIZE_FAILED: &str = "realize: ";
 
 /// Erases VOD `id`'s files, footage and pictures (its transcript and chat
 /// erased already); then the VOD itself if nothing uses it and it isn't to

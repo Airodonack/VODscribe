@@ -777,9 +777,10 @@ export const api = {
   libraryOrder: () => invoke<LibraryItem[]>("library_order"),
   reorderLibrary: (items: LibraryItem[]) => invoke<void>("reorder_library", { items }),
   /** Takes a VOD out of the library; with `deleteVideo`, erases it now, first keeping the stretches edits
-   *  use (failing with "realize: …" if it can't), or not (`anyway`: those pieces become holes). */
+   *  use, or not (`anyway`: those pieces become holes). If they can't be kept, nothing is removed and
+   *  the answer is why; otherwise null. */
   deleteVod: (id: number, deleteVideo = false, anyway = false) =>
-    invoke<void>("delete_vod", { id, deleteVideo, anyway }),
+    invoke<string | null>("delete_vod", { id, deleteVideo, anyway }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
   /** Ends request `id` alone, keeping the lines it wrote. */
