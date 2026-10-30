@@ -1,16 +1,15 @@
-// What can be done with a VOD, an edit or a clip, wherever it shows: the
-// library's rows and their right-click menus (Library.svelte, VodRow.svelte,
-// EditRow.svelte), the player's header (Player.svelte, EditView.svelte), a
-// clip's pill (ClipStrip.svelte). Each surface shows those it has room for,
-// from this one list, so one doesn't have an action its sibling lacks. And
-// removing, from a row, a header or several picked (bulk.ts), asks one way
-// (`confirmRemove`) and goes one way (`removeEntries`).
+// What can be done with a VOD or an edit, wherever it shows: the library's
+// rows and their right-click menus (Library.svelte, VodRow.svelte,
+// EditRow.svelte), the player's header (Player.svelte, EditView.svelte).
+// Each surface shows those it has room for, from this one list, so one
+// doesn't have an action its sibling lacks. And removing, from a row, a
+// header or several picked (bulk.ts), asks one way (`confirmRemove`) and
+// goes one way (`removeEntries`).
 
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { api, type Clip, type Edit, type Vod } from "./api";
+import { api, type Edit, type Vod } from "./api";
 import { ask, choose } from "./ask";
-import { clips } from "./clips.svelte";
 import { edits } from "./edits.svelte";
 import type { MenuItem } from "./Menu.svelte";
 import { chaptersText, linksHaveTime, listed, siteName, watchUrl } from "./platform";
@@ -19,8 +18,7 @@ import { count } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
 
 /** What the actions are of. A VOD's link is to `at` seconds in (its start if not given). */
-export type Target =
-  { kind: "vod"; vod: Vod; at?: number } | { kind: "edit"; edit: Edit } | { kind: "clip"; clip: Clip };
+export type Target = { kind: "vod"; vod: Vod; at?: number } | { kind: "edit"; edit: Edit };
 
 /** One action: a menu's item, with the name a surface finds it by. */
 export type Action = MenuItem & { id: "folder" | "open" | "copy" | "add" | "remove" };
@@ -92,7 +90,7 @@ export function actionsFor(target: Target, hooks: Hooks = {}): Action[] {
       danger: true,
       run: () => void removeEntries([vod], [], { onremove: hooks.onremove }),
     });
-  } else if (target.kind === "edit") {
+  } else {
     const { edit } = target;
     if (edit.status === "ready" && edit.file_path)
       out.push({ id: "folder", label: "Show in folder", icon: "folder", run: () => showEditFile(edit) });
@@ -104,10 +102,6 @@ export function actionsFor(target: Target, hooks: Hooks = {}): Action[] {
       danger: true,
       run: () => void removeEntries([], [edit]),
     });
-  } else {
-    const { clip } = target;
-    if (clip.status === "ready")
-      out.push({ id: "folder", label: "Show in folder", icon: "folder", run: () => clips.show(clip.id) });
   }
   return out;
 }
