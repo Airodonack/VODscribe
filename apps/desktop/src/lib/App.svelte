@@ -44,6 +44,7 @@
   import { cuts } from "./cuts.svelte";
   import { clips } from "./clips.svelte";
   import { toast } from "./toasts.svelte";
+  import { undoRedo as undoRedoIn } from "./undo";
   import Toast from "./Toast.svelte";
   import AnnotationsOffer from "./AnnotationsOffer.svelte";
   import { offers } from "./offers.svelte";
@@ -220,21 +221,11 @@
     if (e.type === "mouseup") e.button === 3 ? nav.goBack() : nav.goForward();
   }
 
-  /** Undoes (or redoes) the newest change in the view's history, and says what it was. */
-  function undoRedo(redo: boolean, on?: Doc) {
+  /** Undoes (or redoes) the newest change in the view's history, and says what it was (undo.ts). */
+  function undoRedo(redo: boolean) {
     // Playing a search result shows its VOD (marks, clip bar) without
     // selecting it: what's changed there is undone there too.
-    const doc = on ?? view ?? (playing && edits.openId === null ? { kind: "vod" as const, id: playing.vodId } : null);
-    if (!doc || DEMO) return;
-    (redo ? api.redo(doc) : api.undo(doc)).then(
-      (done) =>
-        toast.show(
-          done ? `${redo ? "Redone" : "Undone"}: ${done.label}` : redo ? "Nothing to redo" : "Nothing to undo",
-          // The toast's button: on what was undone, whatever's open by then.
-          done ? { label: redo ? "Undo" : "Redo", run: () => undoRedo(!redo, doc) } : undefined,
-        ),
-      (e) => toast.show(`Couldn't ${redo ? "redo" : "undo"}: ${e}`),
-    );
+    undoRedoIn(redo, view ?? (playing && edits.openId === null ? { kind: "vod" as const, id: playing.vodId } : null));
   }
 
   function onWindowKey(e: KeyboardEvent) {

@@ -24,6 +24,7 @@ import { isEscape } from "./playerKeys";
 import { DELETE, REMOVE, removeVod } from "./removal.svelte";
 import { count, library, snippets, type Entry, type Snippet } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
+import { undoIn } from "./undo";
 
 /** The stretches selected (or of `items`), in the order they were. */
 export const chosenSegments = (items = snippets.items) =>
@@ -32,14 +33,6 @@ export const chosenSegments = (items = snippets.items) =>
 /** The clips selected (or of `items`) that are still in the clip bar, in the order they were. */
 export const chosenClips = (items = snippets.items) =>
   items.flatMap((i) => (i.kind === "clip" && clips.shown.some((c) => c.id === i.id) ? [i.id] : []));
-
-/** Undoes the newest change in `doc`'s history (a toast's Undo). */
-export function undoIn(doc: Doc) {
-  api.undo(doc).then(
-    (done) => done && toast.show(`Undone: ${done.label}`),
-    (e) => toast.show(`Couldn't undo: ${e}`),
-  );
-}
 
 /** A clip in the clip bar of each stretch selected, in the order they were, as one change; the set then goes. */
 export async function clipSegments() {

@@ -42,6 +42,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - On a Kick VOD, the time beside its title copies the VOD's link without a time, as Kick's links can't say one, and pointing at it says so. The link had a time Kick ignored.
   - The small picture on the timeline now shows just to the left of the pointer (to its right only at the timeline's left end), with the time at the top of the bar centred on the pointer as before. It sat to the right of the pointer, where what you drag also appears, so it could look like a hover that didn't go away.
   - In an edit, choosing lines in the transcript while a chapter or highlight was selected left it selected, so Delete took away the chapter or highlight instead of the lines. Choosing lines now lets go of it.
+  - Undo in the message after removing pieces, lines, clips or stretches now offers Redo once it's undone, as Ctrl+Z (⌘Z) does, and says when there's nothing left to undo. It offered nothing after undoing.
 
 ## 0.6.0 — 2026-10-24
 

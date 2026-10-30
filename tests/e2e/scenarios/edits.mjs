@@ -530,6 +530,28 @@ export default {
       },
       10_000,
     );
+    // The toast's Undo brings the line back and then offers Redo, which takes
+    // it out again (undo.ts, as Ctrl+Z's toast does); Ctrl+Z then brings it back.
+    const toastButton = (label) =>
+      until(
+        `the toast's ${label}`,
+        () =>
+          app.js(
+            `const b = document.querySelector(".toast button.act");
+             if (b?.textContent.trim() !== arguments[0]) return false;
+             b.click();
+             return true;`,
+            label,
+          ),
+        10_000,
+      ).catch(async (e) => {
+        const says = await app.js(`return document.querySelector(".toast")?.textContent.trim() ?? "(no toast)"`);
+        throw new Error(`${e.message}: the toast says "${says}"`);
+      });
+    await toastButton("Undo");
+    await until("the line back from the toast", async () => Math.abs((await lengthNow()) - playedThen) < 0.01, 10_000);
+    await toastButton("Redo");
+    await until("the line out again from the toast", async () => (await lengthNow()) < playedThen - 0.01, 10_000);
     await app.key("z", { cmd: true });
     await until(
       "the line back",
@@ -540,7 +562,7 @@ export default {
       },
       10_000,
     );
-    ctx.log("a chapter selected, then a line: Delete took the line, the chapter stayed");
+    ctx.log("a chapter selected, then a line: Delete took the line, the chapter stayed; the toast's Undo, then Redo");
 
     // The selection's edges show on the edit's timeline as on a VOD's: the
     // end dragged later, then a frame back with "," (its edge selected by the

@@ -35,6 +35,7 @@
   import Scrubber, { type LanePiece } from "./Scrubber.svelte";
   import Spinner from "./Spinner.svelte";
   import { toast } from "./toasts.svelte";
+  import { undoIn } from "./undo";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
   import { carryChosen, chosenClips, chosenSegments, clipSegments } from "./bulk";
@@ -391,14 +392,6 @@
       }
     });
   });
-
-  /** Undoes the newest change in `doc`'s history (from the toast's Undo). */
-  function undoIn(doc: Doc) {
-    api.undo(doc).then(
-      (done) => done && toast.show(`Undone: ${done.label}`),
-      (e) => toast.show(`Couldn't undo: ${e}`),
-    );
-  }
 
   /** Moves the piece at the playhead a place earlier (-1) or later (1), the
    *  playhead with it, so pressing again moves it on. */
