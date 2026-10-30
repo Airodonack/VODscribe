@@ -3,7 +3,7 @@
   import "../site.css";
   import Logo from "desktop/lib/Logo.svelte";
   import { page } from "$app/state";
-  import { AUTHOR, SOURCE, SUPPORT } from "#lib/links.js";
+  import { AUTHOR, SOURCE } from "#lib/links.js";
   import { siteBar } from "#lib/siteBar.svelte.ts";
 
   let { children } = $props();
@@ -49,9 +49,6 @@
         <button class="open" onclick={siteBar.pick}>Open a file…</button>
       {/if}
       <a class="download-link" href="/#download">Download</a>
-      {#if !full}
-        <a href={SUPPORT} target="_blank" rel="noopener">Support on Ko-fi</a>
-      {/if}
     </nav>
   </header>
 
@@ -60,7 +57,6 @@
   {#if !full}
     <footer>
       <span>Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
-      <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>
       <a href="/releases">Releases</a>
       <a href="/privacy">Privacy</a>
       <a href="/licenses">Licenses</a>

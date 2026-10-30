@@ -7,8 +7,6 @@ export const releaseNotes = (version: string) => `${RELEASES}#${version.split(/[
 /** Credits and licenses; the installers also include THIRD-PARTY-NOTICES.txt. */
 export const LICENSES = `${SITE}/licenses`;
 export const AUTHOR = "Airodonack";
-/** Where "Made by" links: donations that cover hosting and code signing. */
-export const SUPPORT = "https://ko-fi.com/airodonack";
 /** The code, on GitHub. */
 export const SOURCE = "https://github.com/Airodonack/VODscribe";
 /** Bug reports and ideas; a public tracker, no account needed to read it. */

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SUPPORT } from "#lib/links.js";
+  import { ISSUES } from "#lib/links.js";
 </script>
 
 <svelte:head>
@@ -101,12 +101,6 @@
     Twitch's or Kick's own picture.
   </p>
 
-  <h2>Donations</h2>
-  <p>
-    Support goes through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>, under its own privacy policy. I see
-    what Ko-fi shows creators: the name and message you choose to leave.
-  </p>
-
   <h2>Questions</h2>
-  <p>Send a message through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>.</p>
+  <p>Open an issue on <a href={ISSUES} target="_blank" rel="noopener">GitHub</a>.</p>
 </article>

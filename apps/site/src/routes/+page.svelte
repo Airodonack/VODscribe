@@ -4,7 +4,7 @@
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
-  import { ISSUES, SOURCE, SUPPORT, UNSIGNED } from "#lib/links.js";
+  import { ISSUES, SOURCE, UNSIGNED } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
@@ -20,7 +20,7 @@
   const FAQ = [
     {
       q: "Is it free?",
-      a: "Yes. No account, no ads, no trial. If it saves you time, you can chip in on Ko-fi to help cover hosting and code signing.",
+      a: "Yes. No account, no ads, no trial.",
     },
     {
       q: "Do my VODs or transcripts get uploaded anywhere?",
@@ -88,9 +88,6 @@
       <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
         <Icon name="download" size={18} />
         {primary ? `Download for ${primary.label}` : os === "mac" ? "Download for macOS" : "Download"}
-      </a>
-      <a class="button big" href={SUPPORT} target="_blank" rel="noopener">
-        <span class="heart">❤︎</span> Support on Ko-fi
       </a>
     </div>
     <p class="small muted">Free for Windows, macOS and Linux</p>
@@ -259,10 +256,6 @@
   .big {
     padding: 12px 22px;
     font-size: 16px;
-  }
-
-  .heart {
-    color: #e5484d;
   }
 
   .small {

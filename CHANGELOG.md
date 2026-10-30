@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.7.1 (unreleased)
 
+- The donation links are gone from the library and from the screen shown when no video is open.
+
 ## 0.7.0 — 2026-10-30
 
 - The keyboard button is now at the right of the player's controls, beside the captions and full screen buttons, just above the cheat sheet it opens.

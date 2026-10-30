@@ -31,8 +31,7 @@
   import Icon from "./Icon.svelte";
   import { load, save } from "./stored";
   import Modal from "./Modal.svelte";
-  import { AUTHOR, SUPPORT } from "./links";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { AUTHOR } from "./links";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
@@ -981,11 +980,7 @@
                   {/if}
                 {/if}
               </div>
-              <button class="credit" onclick={() => openUrl(SUPPORT)}>
-                Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-                  >Help cover hosting on Ko-fi</span
-                >
-              </button>
+              <span class="credit">Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
             </div>
           {/if}
         </div>
@@ -1158,34 +1153,15 @@
   }
 
   .credit {
-    gap: 0;
     margin: auto 0 18px;
-    border: none;
-    background: none;
     color: var(--muted);
     font-size: 12px;
     font-weight: 400;
   }
 
-  .credit:hover:not(:disabled) {
-    color: var(--text);
-  }
-
-  .credit:hover .cta {
-    text-decoration: underline;
-  }
-
   .heart {
     color: #e5484d;
     margin: 0 3px;
-  }
-
-  .credit .sep {
-    margin: 0 8px;
-  }
-
-  .cta {
-    color: var(--accent);
   }
 
   .pad {

@@ -22,7 +22,7 @@
   import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
-  import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
+  import { AUTHOR, SITE, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
   import { Adder } from "./adder.svelte";
   import { annotated } from "./annotated.svelte";
@@ -394,7 +394,7 @@
 {/if}
 
 <aside class="library-pane">
-  <!-- Sibling buttons, since buttons can't nest: the site link fills the
+  <!-- Sibling elements, since buttons can't nest: the site link fills the
        header, the credit sits on top of it under the name, and the version
        number at the right, linking to what's new in it. -->
   <div class="brand">
@@ -410,9 +410,7 @@
         title="What's new in {version.split(/[_+-]/)[0]}">v{version}</button
       >
     {/if}
-    <button class="credit" onclick={() => openUrl(SUPPORT)} title="Support VODscribe on Ko-fi">
-      Made by {AUTHOR}
-    </button>
+    <span class="credit">Made by {AUTHOR}</span>
   </div>
 
   <UpdateBanner />
@@ -673,11 +671,6 @@
     font-size: 11px;
     font-weight: 400;
     line-height: 16px;
-  }
-
-  .credit:hover:not(:disabled) {
-    color: var(--accent);
-    text-decoration: underline;
   }
 
   form {
