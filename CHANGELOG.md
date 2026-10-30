@@ -42,7 +42,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - The time beside a VOD's title, which copies a link to that moment on its site, now shows where the playhead is and copies that, in the app and on the website, and Open on Twitch (or YouTube) beside it opens that moment too. Both stayed on the moment you last jumped to, and a VOD played from its start never showed the time at all.
   - In the library, a click on a row and then a Ctrl-click (⌘-click on a Mac) on another picks both, as in a file manager. Only the second was picked, and a click on a row left what was picked before it as it was.
   - Alt-dragging (Option-dragging on a Mac) the stretch between two cuts inside one of an edit's pieces, such as a clip put in it, carries just that stretch. It carried the whole piece.
-  - Opening another VOD moves less on screen while it loads: the caption strip under a site's player stays where it is, where it vanished for a moment and came back, pushing the timeline and the transcript down; the transcript no longer says the whole VOD is "not transcribed" for an instant before its lines appear; and nothing moves any more as the chat and the chapters and highlights arrive.
+  - Opening another VOD moves less on screen while it loads: the caption strip under a site's player stays where it is, where it vanished for a moment and came back, pushing the timeline and the transcript down; the transcript no longer says the whole VOD is "not transcribed" for an instant before its lines appear; and much less moves as the chat and the chapters and highlights arrive (the chat's minimap still shifts a little).
   - Deleting a VOD with its video while keeping the stretches its clips use turned the subs, gifts and tips in those stretches' chat into plain messages. They stay what they were now, and stretches kept that way while the VOD is still in your library get them back.
   - A clip changed in the editor, so that its file has its chapters, is made again when you add a chapter in it, rename one or move one, as it is when you undo any of those. Its file kept the chapters it had before.
   - Pressing C twice on the same stretch of an edit makes one clip, as on a VOD, and pressing it again on a clip that failed tries it again. Each press made another clip.
@@ -58,7 +58,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - An edit whose videos aren't transcribed shows the CC button, off, as a VOD does, so the player's buttons don't move once its captions come. It had no CC button until then.
   - Opening another video on this computer (a file, a kept video, or an edit) while one plays no longer shows the previous one's time under the player for a moment, until the new one's first frame.
   - Copying chapters keeps each on its own line: a chapter title with a line break in it, as one from annotations can have, added lines YouTube read as chapters of their own.
-||||||| parent of 0feadc5 (Pressing C again while a selection is being cut clips the same stretch)
+    ||||||| parent of 0feadc5 (Pressing C again while a selection is being cut clips the same stretch)
   - Pressing C twice on a selection, or clicking Clip twice, makes one clip of it. A second press before the first had cut the selection's ends also clipped the stretch the playhead was in, between the cuts there were before.
 
 ## 0.6.0 — 2026-10-24
