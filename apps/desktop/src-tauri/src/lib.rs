@@ -444,7 +444,8 @@ pub fn run() {
             player::player_still,
             player::player_frame,
             player::player_preview,
-            player::player_decoders_started,
+            #[cfg(feature = "e2e")]
+            e2e::player_decoders_started,
             #[cfg(feature = "e2e")]
             e2e::e2e_player_state,
             #[cfg(feature = "e2e")]

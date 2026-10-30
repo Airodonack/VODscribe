@@ -9,6 +9,11 @@ publish.workspace = true
 name = "vodscribe-play"
 path = "src/bin/play.rs"
 
+[features]
+# Counts kept for the tests (`decode::video_starts`): its own tests and the
+# app's end-to-end build (the desktop crate's `e2e`), never a release.
+counts = []
+
 [dependencies]
 anyhow = "1"
 cpal = "0.18.2"
@@ -44,3 +49,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes", "CFData"] }
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColor", "CGColorSpace", "CGDataProvider", "CGImage"] }
 objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CATransaction", "objc2-core-foundation", "objc2-core-graphics"] }
+
+# Its own tests read the counts (`counts` above).
+[dev-dependencies]
+vodscribe-player = { path = ".", features = ["counts"] }

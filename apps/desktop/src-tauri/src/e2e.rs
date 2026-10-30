@@ -84,6 +84,13 @@ pub(crate) fn start(app: &AppHandle) {
     std::thread::spawn(move || loopback::serve(listener, "e2e", usize::MAX, loopback::MAX_BODY, Arc::new(answer)));
 }
 
+/// How many video decoders the player has started since the app did: that
+/// play where the pointer rested started none (scrub-thumbnail.mjs).
+#[tauri::command]
+pub(crate) fn player_decoders_started() -> u64 {
+    vodscribe_player::decode::video_starts()
+}
+
 /// What the app's player is at (`player::Seen`), for the tests' page dump
 /// (tests/e2e/lib/dump.mjs). Async, so it runs off the main thread: a
 /// stuck player can't hold the window up while it's asked.

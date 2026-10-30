@@ -536,13 +536,6 @@ pub(crate) async fn player_preview(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// How many video decoders the player has started since the app did: for
-/// the end-to-end tests, that play where the pointer rested started none.
-#[tauri::command]
-pub(crate) fn player_decoders_started() -> u64 {
-    vodscribe_player::decode::video_starts()
-}
-
 /// `rgb` (`fw` by `fh`) scaled to `w` by `h` as RGBA onto `out`: each pixel
 /// the bilinear mix at its centre (at half size, the mean of four); more
 /// than halved, the mean of all the pixels it covers, which bilinear's four

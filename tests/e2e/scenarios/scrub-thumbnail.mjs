@@ -307,7 +307,10 @@ export default {
     await pointer("pointermove", 4.6);
     await pointer("pointermove", 4.5 + half);
     await shows("the exact frame at 4.5 s", "magenta", { exact: true });
-    const before = await app.invoke("player_decoders_started");
+    // The count is the e2e build's (CI's Linux lane drives the release package).
+    const counts = await app.hasE2e();
+    const decoders = () => (counts ? app.invoke("player_decoders_started") : null);
+    const before = await decoders();
     await pointer("pointerdown", 4.5 + half);
     await pointer("pointerup", 4.5 + half);
     await app.click('.bar button[aria-label="Play"]');
@@ -317,7 +320,7 @@ export default {
       10_000,
     );
     const status = await app.invoke("player_pause");
-    const after = await app.invoke("player_decoders_started");
+    const after = await decoders();
     ctx.log(`played from 4.5 s to ${status.shown?.toFixed(3)} s: decoders started ${before}, then ${after}`);
     if (after !== before) throw new Error(`play where the pointer rested started ${after - before} new decoder(s)`);
     if (!(status.shown >= 4.5 - 1e-6)) throw new Error(`the picture is at ${status.shown}, not from 4.5 s on`);

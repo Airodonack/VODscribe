@@ -160,10 +160,12 @@ const AHEAD: usize = 4;
 static FRAMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Video decoders started (`Video::from`) since the program began.
+#[cfg(feature = "counts")]
 static VIDEO_STARTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many video decoders (ffmpeg processes) have been started: for tests
 /// that a frame was played from one already running rather than a new one.
+#[cfg(feature = "counts")]
 pub fn video_starts() -> u64 {
     VIDEO_STARTS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -308,6 +310,7 @@ impl Video {
             scale
         };
         let output = ["-vf", &filters, "-fps_mode", "cfr", "-r", &rate, "-f", "rawvideo", "-pix_fmt", "yuv420p"];
+        #[cfg(feature = "counts")]
         VIDEO_STARTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         start(&self.ffmpeg, &self.path, seek, "0:v:0", &output, move |mut out, tx| {
             let (cw, ch) = chroma(width, height);

@@ -762,8 +762,6 @@ export const api = {
         pixels: new ImageData(new Uint8ClampedArray(b, 20, w * h * 4), w, h),
       };
     }),
-  /** How many video decoders the player has started (for the end-to-end tests). */
-  playerDecodersStarted: () => invoke<number>("player_decoders_started"),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
