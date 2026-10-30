@@ -720,6 +720,33 @@ export default {
       10_000,
     );
     await ctx.checkpoint("edit-clip-bar");
+    // Its pill double-clicked opens it in the editor as a clip (the head says
+    // "Clip name", no Render), the way a VOD's does: it's no edit, so the
+    // library lists no row for it. Then back to the edit.
+    await app.js(
+      `const el = document.querySelector(arguments[0]);
+       const box = el.getBoundingClientRect();
+       const at = { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + box.height / 2 };
+       for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { ...at, detail }));
+       el.dispatchEvent(new MouseEvent("dblclick", { ...at, detail: 2 }));`,
+      `section.edit-view .chip[data-clip="${barClip.id}"]`,
+    );
+    await until(
+      "the clip open in the editor",
+      () =>
+        app.js(
+          `return document.querySelector("section.edit-view input.title")?.getAttribute("aria-label") === "Clip name"`,
+        ),
+      10_000,
+    );
+    const opened = await app.js(`return {
+      row: !!document.querySelector('.list .vod[data-key="${-barClip.id}"]'),
+      render: !!document.querySelector("section.edit-view button.make") };`);
+    if (opened.row) throw new Error("the edit's clip, opened, is listed in the library");
+    if (opened.render) throw new Error("the edit's clip, opened, has Render");
+    await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
+    await until("the edit back", () => app.js(`return !!document.querySelector('${title}')`), 10_000);
+    ctx.log("the edit's clip double-clicked: open as a clip, not listed");
     const undoKey = (shift) => app.key("z", { cmd: true, shift });
     await undoKey(false);
     await until("the clip taken off", async () => (await barClips()).length === 0, 10_000);

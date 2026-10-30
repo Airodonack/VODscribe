@@ -332,8 +332,8 @@ export interface Edit {
   length: number;
   /** The VODs its pieces are of. */
   vod_ids: number[];
-  /** A clip on a clip bar opened in the editor: the VOD whose bar it's on; null for an edit. */
-  snippet_of: number | null;
+  /** A clip on a clip bar opened in the editor: whose bar it's on, a VOD's or an edit's; null for an edit. */
+  snippet_of: Doc | null;
   /** What it plays of each VOD, in order: its pieces less what's struck. */
   ranges: { vod_id: number; start: number; end: number }[];
 }

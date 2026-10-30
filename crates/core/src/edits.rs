@@ -52,9 +52,9 @@ pub struct Edit {
     pub vod_ids: Vec<i64>,
     /// What it plays of each VOD, in order: its pieces less what's struck.
     pub ranges: Vec<EditRange>,
-    /// A snippet (a clip on a clip bar, opened in the editor): the VOD whose
-    /// bar it's on. None for a listed clip.
-    pub snippet_of: Option<i64>,
+    /// A snippet (a clip on a clip bar, opened in the editor): whose bar it's
+    /// on, a VOD's or an edit's. None for a listed clip.
+    pub snippet_of: Option<crate::db::ClipBar>,
 }
 
 /// A stretch of a VOD an edit plays (`Edit::ranges`).
@@ -748,7 +748,7 @@ impl Db {
             .conn
             .query_row(
                 "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision,
-                        (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of
+                        c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -759,8 +759,13 @@ impl Db {
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, i64>(4)?,
                         r.get::<_, Option<i64>>(5)?,
-                        r.get::<_, Option<i64>>(6)?,
-                        r.get::<_, Option<String>>(7)?,
+                        // A VOD's bar is its own clip's (whole_of); an edit's is the edit's.
+                        match (r.get::<_, Option<i64>>(6)?, r.get::<_, Option<i64>>(7)?) {
+                            (_, Some(vod)) => Some(crate::db::ClipBar::Vod { id: vod }),
+                            (Some(edit), None) => Some(crate::db::ClipBar::Edit { id: edit }),
+                            (None, None) => None,
+                        },
+                        r.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
@@ -2205,6 +2210,22 @@ pub(crate) mod tests {
         assert!(current());
         db.add_clip_mark(clip, vod, "chapter", 17.0, Some("Later")).unwrap();
         assert!(!current(), "a chapter is in a rendered file");
+    }
+
+    #[test]
+    fn a_clip_on_any_clip_bar_is_a_snippet_not_an_edit() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 10.0), "a", None).unwrap();
+        let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
+        let of_edit = db.add_edit_clip(edit, 1.0, 2.0, "e", true).unwrap().id;
+        let snippet_of = |id| db.edit(id).unwrap().unwrap().snippet_of;
+        assert_eq!(snippet_of(of_vod), Some(crate::db::ClipBar::Vod { id: vod }));
+        // Opened in the editor, the page lists what isn't a snippet as an edit.
+        assert_eq!(snippet_of(of_edit), Some(crate::db::ClipBar::Edit { id: edit }), "an edit's bar");
+        assert_eq!(snippet_of(edit), None, "a listed edit");
+        assert_eq!(db.edits().unwrap().iter().map(|e| e.id).collect::<Vec<_>>(), [edit]);
     }
 
     #[test]
