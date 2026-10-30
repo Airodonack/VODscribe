@@ -40,6 +40,10 @@
 //! then the m bits, m / 8 bytes, nothing after: bit j is bit `j % 8` (the
 //! least significant first) of byte `j / 8`.
 //!
+//! A set whose bits would say yes to more than `MAX_FALSE_POSITIVES` of the
+//! keys not in it (the share of bits set, to the power k) is refused: broken
+//! or made that way, it would have the app ask about most of the library.
+//!
 //! A key's k bits: d = SHA-256 of the key's UTF-8 bytes; h1 = d's bytes 0-7
 //! and h2 = its bytes 8-15, each as a little-endian u64, h2 with its lowest
 //! bit set (so it's never 0); bit i (from 0 to k - 1) is
@@ -77,6 +81,9 @@ pub const MIN_BITS: u64 = 64;
 pub const MAX_HASHES: u32 = 32;
 /// The largest set read: 16 MB holds well over ten million VODs.
 pub const MAX_FILTER_BYTES: u64 = 16 * 1024 * 1024;
+/// The most a set read may be wrong about a key not in it: five times what a
+/// producer sizes it for (`sized`).
+pub const MAX_FALSE_POSITIVES: f64 = 0.05;
 /// The pause between two VODs' HEAD requests in one check, so a library
 /// with many VODs newly published never asks in a burst.
 pub const PAUSE: Duration = Duration::from_millis(500);
@@ -154,6 +161,11 @@ impl Filter {
         }
         if !(1..=MAX_HASHES).contains(&hashes) {
             bail!("the annotations filter's {hashes} hashes aren't 1 to {MAX_HASHES}");
+        }
+        let set: u64 = data.iter().map(|b| u64::from(b.count_ones())).sum();
+        let wrong = (set as f64 / bits as f64).powi(hashes as i32);
+        if wrong > MAX_FALSE_POSITIVES {
+            bail!("the annotations filter says yes to about {:.0}% of the VODs not in it", wrong * 100.0);
         }
         Ok(Filter { bits, hashes, items, data: data.to_vec() })
     }
@@ -359,12 +371,16 @@ fn check_at(
     };
     let candidates = db.lock().unwrap().annotations_candidates()?;
     for vod in candidates.iter().filter(|vod| worth_asking(&filter, vod)) {
-        // Turned off while the check went on: nothing more is asked.
+        if checked.confirmed > 0 {
+            std::thread::sleep(pause);
+        }
+        // Turned off while the check went on (the pause included): nothing more is asked.
         if !may_ask(settings) {
             break;
         }
-        if checked.confirmed > 0 {
-            std::thread::sleep(pause);
+        // Taken out of the library meanwhile: not asked about.
+        if !db.lock().unwrap().vod(vod.vod_id)?.is_some_and(|v| v.listed) {
+            continue;
         }
         checked.confirmed += 1;
         let found = annotations::look_up_at(base, &vod.platform, &vod.platform_id)?;
@@ -732,6 +748,88 @@ mod tests {
         assert_eq!(checked.unwrap(), Checked { asked: true, ..Checked::default() });
         assert_eq!(asked.lock().unwrap().len(), 1);
         assert!(!lib.cache().exists());
+    }
+
+    /// A set that says yes to (nearly) every key: whether broken or made to,
+    /// it would have the app ask about every VOD in the library, which is
+    /// what the set is there to keep from the file host. It's refused.
+    #[test]
+    fn a_set_that_says_yes_to_everything_is_refused() {
+        let lib = Library::new();
+        lib.ask(true);
+        for id in ["a", "b", "c"] {
+            lib.add(id, None);
+        }
+        let mut full = Filter::sized(0);
+        full.data.fill(0xff);
+        let set = full.to_bytes();
+        let (base, asked) = host(Arc::new(move |req: &str| {
+            if req.starts_with("GET") {
+                return ("HTTP/1.1 200 OK\r\nETag: \"all\"".into(), set.clone());
+            }
+            ("HTTP/1.1 404 Not Found".into(), Vec::new())
+        }));
+        let (checked, _) = lib.check(&base);
+        assert_eq!(*asked.lock().unwrap(), ["GET /annotations/filter.bin HTTP/1.1"]);
+        assert!(checked.unwrap_err().to_string().contains("says yes to"));
+        assert!(!lib.cache().exists(), "a refused set isn't kept");
+        // Half its bits set with one hash: one VOD in two would be asked about.
+        let mut half = Filter::sized(1000);
+        half.hashes = 1;
+        half.data.iter_mut().step_by(2).for_each(|b| *b = 0xff);
+        assert!(Filter::parse(&half.to_bytes()).is_err());
+        // A set sized for its keys, full to its 1%, is read.
+        let keys: Vec<String> = (0..10_000).map(|i| format!("twitch:v{i}")).collect();
+        assert!(Filter::parse(&Filter::of(&keys).to_bytes()).is_ok());
+    }
+
+    /// Asking turned off during the pause between two VODs' requests: the
+    /// second isn't asked about. (The switch is turned off a while after the
+    /// first request, well inside the pause, so the order is certain.)
+    #[test]
+    fn asking_turned_off_during_the_pause_asks_nothing_more() {
+        let lib = Library::new();
+        lib.ask(true);
+        lib.add("there", None);
+        lib.add("newer", Some(&format!("\"{MD5_A}\"")));
+        let (base, asked) = file_host();
+        let settings = lib.settings();
+        let checked = check_at(&base, &lib.db, &lib.settings(), &lib.cache(), Duration::from_millis(600), |_| {
+            let settings = settings.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                Settings { ask_for_annotations: false, ..Settings::default() }.save(&settings).unwrap();
+            });
+        });
+        assert_eq!(checked.unwrap().confirmed, 1);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["GET /annotations/filter.bin HTTP/1.1", "HEAD /annotations/youtube/there.json HTTP/1.1"]
+        );
+    }
+
+    /// A VOD taken out of the library while a check goes on (it waits
+    /// between two requests) isn't asked about after.
+    #[test]
+    fn a_vod_removed_during_a_check_isnt_asked_about() {
+        let lib = Library::new();
+        lib.ask(true);
+        let first = lib.add("there", None);
+        let second = lib.add("same", None);
+        let (base, asked) = file_host();
+        let mut changed = Vec::new();
+        let checked = check_at(&base, &lib.db, &lib.settings(), &lib.cache(), Duration::ZERO, |id| {
+            changed.push(id);
+            if id == first {
+                lib.db.lock().unwrap().remove_entry(second).unwrap();
+            }
+        });
+        assert_eq!(checked.unwrap().found, [first]);
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["GET /annotations/filter.bin HTTP/1.1", "HEAD /annotations/youtube/there.json HTTP/1.1"]
+        );
+        assert_eq!(changed, [first]);
     }
 
     /// The set's VODs are the library's listed ones, of the sites that publish.
