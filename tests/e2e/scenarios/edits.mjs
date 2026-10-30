@@ -485,6 +485,125 @@ export default {
       10_000,
     );
     await ctx.checkpoint("edit-chapter");
+
+    // The edit's selection is the marks' one (cuts.svelte.ts), as a VOD's.
+    // With the chapter selected, a line chosen in the transcript (Shift+click
+    // ends in the select() a drag across lines does; a drag across both
+    // lines would take the chapter's too) lets go of it: Delete takes the
+    // line out, and the chapter stays.
+    const bandAt = `section.edit-view .chapters [data-chapter="${chapter.id}"]`;
+    await app.js(
+      `const band = document.querySelector(arguments[0]);
+       const box = band.getBoundingClientRect();
+       const at = { bubbles: true, cancelable: true, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2, button: 0, isPrimary: true, pointerId: 1 };
+       band.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1 }));
+       window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`,
+      bandAt,
+    );
+    await until(
+      "the chapter selected",
+      () => app.js(`return !!document.querySelector(arguments[0] + ".selected")`, bandAt),
+      10_000,
+    );
+    const shiftClickFirst = () =>
+      app.js(
+        `document.querySelector(arguments[0]).dispatchEvent(new MouseEvent("click", { shiftKey: true, bubbles: true }))`,
+        rows,
+      );
+    await shiftClickFirst();
+    await until(
+      "the line selected",
+      () => app.js(`return !!document.querySelector(".transcript .line.picked")`),
+      10_000,
+    );
+    const playedThen = await lengthNow();
+    const linesThen = await lineCount();
+    await app.key("Delete");
+    await until(
+      "the line taken out, not the chapter",
+      async () => {
+        const kept = (await editMarks()).some((m) => m.id === chapter.id);
+        const length = await lengthNow();
+        if (!kept) throw new Error("Delete took the chapter selected before the line, not the line");
+        if (length < playedThen - 0.01) return true;
+        throw new Error(`the edit still plays ${length} s`);
+      },
+      10_000,
+    );
+    await app.key("z", { cmd: true });
+    await until(
+      "the line back",
+      async () => {
+        const [length, count] = [await lengthNow(), await lineCount()];
+        if (Math.abs(length - playedThen) < 0.01 && count === linesThen) return true;
+        throw new Error(`${length} s of ${playedThen} s, ${count} lines of ${linesThen}`);
+      },
+      10_000,
+    );
+    ctx.log("a chapter selected, then a line: Delete took the line, the chapter stayed");
+
+    // The selection's edges show on the edit's timeline as on a VOD's: the
+    // end dragged later, then a frame back with "," (its edge selected by the
+    // drag), and Escape lets go of it.
+    await shiftClickFirst();
+    const EDIT_SELECTION = `
+      const bar = document.querySelector("section.edit-view .scrubber");
+      const picked = bar?.querySelector(".selection");
+      if (!picked) return null;
+      const box = bar.getBoundingClientRect();
+      const { left, right } = picked.getBoundingClientRect();
+      const time = (x) => Number(bar.dataset.viewStart) + ((x - box.left) / box.width) * Number(bar.dataset.span);
+      return [time(left), time(right)];`;
+    const lineSpan = await until("the line's stretch on the timeline", () => app.js(EDIT_SELECTION), 10_000);
+    const endAt = 'section.edit-view .scrubber [data-edge="end"]';
+    await until(
+      "the selection's end to drag",
+      () => app.js(`return !!document.querySelector(arguments[0])`, endAt),
+      10_000,
+    ).catch(() => {
+      throw new Error("the edit's selection has no edges to drag");
+    });
+    const dragEdge = (kind, time) =>
+      app.js(
+        `const [kind, time, target] = arguments;
+         const bar = document.querySelector("section.edit-view .scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((time - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         const at = { clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: kind === "pointerup" ? 0 : 1, bubbles: true, cancelable: true, pointerId: 1, pointerType: "mouse", isPrimary: true };
+         (kind === "pointerdown" ? document.querySelector(target) : window).dispatchEvent(new PointerEvent(kind, at));`,
+        kind,
+        time,
+        endAt,
+      );
+    const goal = lineSpan[1] + 0.5;
+    await dragEdge("pointerdown", lineSpan[1]);
+    await dragEdge("pointermove", (lineSpan[1] + goal) / 2);
+    await dragEdge("pointermove", goal);
+    await dragEdge("pointerup", goal);
+    const dragged = await until(
+      "the end dragged later",
+      async () => {
+        const at = await app.js(EDIT_SELECTION);
+        if (at && Math.abs(at[0] - lineSpan[0]) < 0.05 && Math.abs(at[1] - goal) < 0.1) return at;
+        throw new Error(`the selection is ${JSON.stringify(at)}, from ${JSON.stringify(lineSpan)}`);
+      },
+      10_000,
+    );
+    await app.key(",");
+    const nudged = await until(
+      "the end a frame back",
+      async () => {
+        const at = await app.js(EDIT_SELECTION);
+        if (at && at[1] < dragged[1] - 0.005 && at[1] > dragged[1] - 0.1) return at;
+        throw new Error(`the selection is ${JSON.stringify(at)}, dragged to ${JSON.stringify(dragged)}`);
+      },
+      10_000,
+    );
+    await app.key("Escape");
+    await until("the selection let go", async () => (await app.js(EDIT_SELECTION)) === null, 10_000);
+    ctx.log(
+      `the edit's selection: its end dragged ${lineSpan[1].toFixed(2)} → ${dragged[1].toFixed(2)} s, a frame back to ${nudged[1].toFixed(2)} s`,
+    );
     // Its title, then the chapter: two steps back.
     for (const step of ["its title undone", "the chapter undone"]) {
       await app.key("z", { cmd: true });

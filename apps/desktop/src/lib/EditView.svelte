@@ -17,7 +17,7 @@
   import { ask } from "./ask";
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
-  import { editShortcuts, forPlayer, inOut, isEscape, transportKey } from "./playerKeys";
+  import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
   import { DRAG_SLOP, carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -227,6 +227,8 @@
     // where it opened, not where the page has put the playhead meanwhile
     // (`seekTo`), which reading it would put back, under Split and Delete.
     if (bringTime !== null) reading.at(bringTime);
+    // Marks and the selection's ends placed elsewhere (the transcript) go on its frames.
+    cuts.fps = reading.fps;
     // Only once it's this edit's playhead (after the seek to where it was left).
     if (edit && playsEdit === edit.id) nav.note({ kind: "edit", id: edit.id }, { time: reading.now });
   });
@@ -301,7 +303,7 @@
    *  marks, or the piece), a clip on the edit's clip bar. */
   function clipNow() {
     if (chosenSegments().length) return void clipSegments();
-    const range = edits.selection ?? stretchNow;
+    const range = cuts.selection ?? stretchNow;
     if (range) void clips.makeOfEdit(range.start, range.end);
   }
 
@@ -417,11 +419,8 @@
   /** Split: a cut at both ends of the selection, else one here (or
    *  the one here taken away), as on a VOD. A delete at one makes it real. */
   async function split() {
-    const picked = edits.selection;
-    if (!picked) return void cuts.toggle(now, fps, !reading.playing);
-    edits.selection = null;
-    for (const t of [picked.start, picked.end])
-      if (t > 0 && t < total && !cuts.at(t, fps)) await cuts.toggle(t, fps, false);
+    if (cuts.selection) await cuts.cutSelection(total);
+    else await cuts.toggle(now, fps, !reading.playing);
   }
 
   // Full screen (the panel's, PlayerPanel.svelte).
@@ -470,12 +469,7 @@
     const end = is(e, "selection.in") ? "i" : is(e, "selection.out") ? "o" : null;
     if (end) {
       const stops = [...lane.flatMap((u) => [u.start, u.end]), ...cuts.list.map((m) => m.start)];
-      const picked = total ? inOut(end, frameStart(now, fps), edits.selection, stops, total) : null;
-      if (picked) {
-        edits.selection = picked;
-        // The arrows go on moving the playhead, not a mark.
-        cuts.selected = null;
-      }
+      cuts.inOut(end, frameStart(now, fps), stops, total);
       e.preventDefault();
       return;
     }
@@ -499,9 +493,7 @@
       e.preventDefault();
       return;
     }
-    if (isEscape(e) && edits.selection) {
-      edits.selection = null;
-    } else if (isEscape(e) && openGroup !== null) {
+    if (isEscape(e) && openGroup !== null) {
       openGroup = null;
     } else if ((is(e, "edit.remove") || is(e, "clips.remove")) && snippets.size) {
       // What's picked on the timeline and in the clip bar goes, at once.
@@ -511,7 +503,7 @@
       // selected in the transcript go, or else the piece at the playhead.
       if (e.repeat) {
         // Nothing more.
-      } else if (edits.selection) removeSelection();
+      } else if (cuts.selection) removeSelection();
       else removeHere();
     } else if (
       !transportKey(
@@ -895,7 +887,6 @@
         pieces={lane}
         {pending}
         selectedPiece={atNow ? unitOf(atNow.piece) : null}
-        picked={edits.selection}
         marks
         removing={removeHover ? (stretchNow ?? null) : null}
         {joins}

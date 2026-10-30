@@ -795,12 +795,10 @@
     const { start, end } = linesSpan(lines, Math.min(a, b), Math.max(a, b), duration);
     // The lines selected (Split then cuts either side of them, or in an edit
     // Delete takes them out), and the playhead to their start, showing the
-    // VOD in the player if it wasn't.
-    if (vod) {
-      cuts.open(vod.id);
-      cuts.selection = { start, end };
-      cuts.selected = null;
-    } else edits.selection = { start, end };
+    // VOD in the player if it wasn't. The selection is the marks' (cuts.svelte.ts),
+    // so a mark selected lets go: Delete is then the lines'.
+    if (vod) cuts.open(vod.id);
+    if (mine) cuts.selection = { start, end };
     play(start);
   }
 
@@ -811,15 +809,14 @@
     }
     // Shift+click selects the line, or the lines from the selection's first to it.
     if (e.shiftKey) {
-      const pick = !vod ? edits.selection : cuts.vodId === vod.id ? cuts.selection : null;
+      const pick = mine ? cuts.selection : null;
       const at = lines.indexOf(line);
       select(pick ? nearestLine(lines, pick.start) : at, at);
       return;
     }
     const time = line.start;
     // A click elsewhere than the selection's edges lets go of it.
-    if (!vod) edits.selection = null;
-    else if (cuts.vodId === vod.id) cuts.clearSelection();
+    if (mine) cuts.clearSelection();
     play(time);
   }
 
@@ -829,7 +826,7 @@
       const start = row.line?.start;
       return start !== undefined && start >= Math.min(drag.from, drag.to) && start <= Math.max(drag.from, drag.to);
     }
-    const pick = !vod ? edits.selection : cuts.vodId === vod.id ? cuts.selection : null;
+    const pick = mine ? cuts.selection : null;
     return !!pick && !!row.line && row.line.start >= pick.start - 0.01 && row.line.start < pick.end - 0.01;
   }
 

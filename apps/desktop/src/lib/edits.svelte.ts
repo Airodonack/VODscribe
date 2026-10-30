@@ -11,7 +11,7 @@ import { playedSpans } from "./media";
 import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching, type Put } from "./api";
 import { clips } from "./clips.svelte";
-import { clearsStretch, stretchMade } from "./selection.svelte";
+import { cuts } from "./cuts.svelte";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
  *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
@@ -52,27 +52,12 @@ class Edits {
   dropTarget = $state<number | "new" | null>(null);
   /** Where on the open edit's timeline a carried clip would go (its time there), while it's over it. */
   inserting = $state<number | null>(null);
-  /** A stretch of the open edit's timeline chosen in its transcript: what Delete takes out.
-   *  Made, it lets go of a set picked (selection.svelte.ts). */
-  #selection = $state<{ start: number; end: number } | null>(null);
-  get selection() {
-    return this.#selection;
-  }
-  set selection(picked: { start: number; end: number } | null) {
-    this.#selection = picked;
-    if (picked) stretchMade();
-  }
   /** Where the open edit's player was asked to go (a transcript line clicked), once each. */
   wanted = $state.raw<{ time: number } | null>(null);
   /** A clip of a clip bar open in the editor (not in the library's list). */
   #snippet = $state.raw<Edit | null>(null);
   #started = false;
   #seq = 0;
-
-  constructor() {
-    // A set picked lets go of the stretch.
-    clearsStretch(() => (this.selection = null));
-  }
 
   get open(): Edit | undefined {
     return (
@@ -186,7 +171,7 @@ class Edits {
     this.lit = null;
     this.openId = id;
     this.pieces = [];
-    this.selection = null;
+    if (cuts.doc?.kind === "edit") cuts.clearSelection();
     this.wanted = null;
     this.error = null;
     if (id !== null) this.#load(id);
@@ -205,11 +190,12 @@ class Edits {
     this.wanted = { time };
   }
 
-  /** Takes the selected stretch out of the open edit, as one change (undo brings it back). */
+  /** Takes the stretch selected (cuts.svelte.ts, the open edit's) out of
+   *  it, as one change (undo brings it back). */
   async removeSelection(): Promise<boolean> {
-    const pick = this.selection;
-    if (this.openId === null || !pick) return false;
-    this.selection = null;
+    const pick = cuts.selection;
+    if (this.openId === null || !pick || !cuts.isOf({ kind: "edit", id: this.openId })) return false;
+    cuts.clearSelection();
     return this.#change(api.removeStretch(this.openId, pick.start, pick.end));
   }
 
@@ -217,7 +203,7 @@ class Edits {
    *  become a real split), as one change. */
   async removeStretch(from: number, to: number): Promise<boolean> {
     if (this.openId === null) return false;
-    this.selection = null;
+    if (cuts.isOf({ kind: "edit", id: this.openId })) cuts.clearSelection();
     return this.#change(api.removeStretch(this.openId, from, to));
   }
 

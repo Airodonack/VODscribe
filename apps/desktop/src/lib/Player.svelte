@@ -23,7 +23,7 @@
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { demoOff, keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
-  import { forPlayer, inOut, isEscape, transportKey, vodShortcuts } from "./playerKeys";
+  import { forPlayer, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
   import { ownPlayer } from "./ownPlayer.svelte";
   import {
@@ -534,14 +534,12 @@
     // video editors; with none, I or O begins one.
     const end = is(e, "selection.in") ? "i" : is(e, "selection.out") ? "o" : null;
     if (end) {
-      const stops = cuts.list.map((m) => m.start);
-      const picked = duration ? inOut(end, frameStart(now, fps), cuts.selection, stops, duration) : null;
-      // The arrows go on moving the playhead, not an edge or a mark.
-      if (picked) {
-        cuts.selection = picked;
-        cuts.selectedEdge = null;
-        cuts.selected = null;
-      }
+      cuts.inOut(
+        end,
+        frameStart(now, fps),
+        cuts.list.map((m) => m.start),
+        duration,
+      );
       e.preventDefault();
       return;
     }

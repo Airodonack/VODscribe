@@ -14,7 +14,7 @@
 import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
 import { is } from "./keys.svelte";
-import { isEscape, markFramesOf } from "./playerKeys";
+import { inOut, isEscape, markFramesOf } from "./playerKeys";
 import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
 import { changed, shownMarks, sourceOf, type MarkSources } from "./markSources";
 import { layers } from "./layers.svelte";
@@ -51,15 +51,23 @@ class Cuts {
   editing = $state<number | null>(null);
   /** The mark just added whose title or note is being written: Escape takes it away. */
   fresh: number | null = null;
-  /** A stretch picked (in the transcript) but not cut yet: Split cuts both its ends.
-   *  Made, it lets go of a set picked (selection.svelte.ts). */
+  /** A stretch picked (in the transcript, or with I and O) but not cut yet,
+   *  of the VOD or edit open (`doc`), the one selection both players,
+   *  the transcript and the timeline share: Split cuts both its ends, and in
+   *  an edit Delete takes it out. Its edges drag on the timeline and move a
+   *  frame at a time once selected (`selectedEdge`). Made, it lets go of a
+   *  set picked (selection.svelte.ts) and of the mark selected. */
   #selection = $state<{ start: number; end: number } | null>(null);
   get selection() {
     return this.#selection;
   }
   set selection(picked: { start: number; end: number } | null) {
     this.#selection = picked;
-    if (picked) stretchMade();
+    if (picked) {
+      stretchMade();
+      // Delete is then the selection's, not a mark's left selected.
+      this.selected = null;
+    }
   }
   /** The selection's edge selected, to drag or move a frame at a time. */
   selectedEdge = $state<"start" | "end" | null>(null);
@@ -240,18 +248,33 @@ class Cuts {
   }
 
   /** Cuts both ends of the selection, which then goes (the stretch between the cuts shows it);
-   *  returns that stretch, from cut to cut. */
-  async cutSelection(): Promise<{ start: number; end: number } | null> {
+   *  returns that stretch, from cut to cut. With `length`, an end at the start
+   *  or the end of what plays (an edit's) is no place for a cut and gets none. */
+  async cutSelection(length?: number): Promise<{ start: number; end: number } | null> {
     const picked = this.selection;
     const doc = this.doc;
     if (!picked) return null;
     this.clearSelection();
-    await this.ensure(picked.start);
-    // Another VOD or edit opened meanwhile: its own marks aren't cut, nor is a clip made.
-    if (!doc || !this.#showing(doc)) return null;
-    await this.ensure(picked.end);
-    if (!doc || !this.#showing(doc)) return null;
+    for (const t of [picked.start, picked.end]) {
+      if (length !== undefined && (t <= 0 || t >= length)) continue;
+      await this.ensure(t);
+      // Another VOD or edit opened meanwhile: its own marks aren't cut, nor is a clip made.
+      if (!doc || !this.#showing(doc)) return null;
+    }
     return { start: frameStart(picked.start, this.fps), end: frameStart(picked.end, this.fps) };
+  }
+
+  /** I or O (`key`) at `at`: the selection's in or out point there, or with
+   *  none a new one from there to the next of `stops` (cuts, an edit's piece
+   *  ends) or the end of `length`. The arrows then go on moving the
+   *  playhead, not an edge or a mark. False if there's nothing to select. */
+  inOut(key: "i" | "o", at: number, stops: number[], length: number): boolean {
+    const picked = length ? inOut(key, at, this.selection, stops, length) : null;
+    if (!picked) return false;
+    this.selection = picked;
+    this.selectedEdge = null;
+    this.selected = null;
+    return true;
   }
 
   clearSelection() {

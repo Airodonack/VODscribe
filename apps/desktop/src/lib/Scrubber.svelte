@@ -116,7 +116,6 @@
     fps,
     highlight = [],
     removing = null,
-    picked = null,
     inserting = null,
     marks = false,
     ranges = [],
@@ -164,8 +163,6 @@
     highlight?: { start: number; end: number }[];
     /** A stretch to light up as going: the piece Remove would take out, while it's hovered. */
     removing?: { start: number; end: number } | null;
-    /** An edit's lines selected in its transcript: the stretch Delete takes out. */
-    picked?: { start: number; end: number } | null;
     /** Where on an edit's timeline something carried over it would go (dragout.ts), marked as a piece moved is. */
     inserting?: number | null;
     /** An edit's chapters and highlights show (cuts.svelte.ts has the edit open). */
@@ -436,11 +433,16 @@
     }
     touch = e.pointerType === "touch";
     if (e.button !== 0) return;
-    const onMark = named && !!(e.target as HTMLElement).closest("[data-mark], [data-chapter]");
+    // A mark, or an edge of the selection (cuts.svelte.ts, a VOD's or an edit's).
+    const onMark = named && !!(e.target as HTMLElement).closest("[data-mark], [data-chapter], [data-edge]");
     if (!marking && !onMark) {
       // Anywhere but a mark lets go of the one selected (as on a VOD's), so
-      // Delete and Remove act on the piece or stretch, not on it.
-      if (named) cuts.selected = null;
+      // Delete and Remove act on the piece or stretch, not on it, and of the
+      // selection's edge, so the arrows move the playhead.
+      if (named) {
+        cuts.selected = null;
+        cuts.selectedEdge = null;
+      }
       // A band's edge: resizing that piece.
       const grip = (e.target as HTMLElement).closest<HTMLElement>("[data-grip]");
       const gripped =
@@ -755,7 +757,7 @@
   // selection's edge being dragged (its end: the frame before it).
   const tipTime = $derived.by(() => {
     const s = cuts.selection;
-    if (marking && drag?.kind === "edge" && drag.moved && s) return edgeShows(drag.edge, s[drag.edge], fps);
+    if (named && drag?.kind === "edge" && drag.moved && s) return edgeShows(drag.edge, s[drag.edge], fps);
     return hoverTime;
   });
   // A thumbnail where the footage plays from a file here (a file, a kept
@@ -1009,13 +1011,16 @@
         style:width={widthPct(Math.max(current.start, viewStart), Math.min(current.end, viewStart + span))}
       ></div>
     {/if}
-    {#if marking && cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
+    <!-- The selection (cuts.svelte.ts), a VOD's or an edit's, with its edges to drag. -->
+    {#if named && cuts.selection && cuts.selection.end > viewStart && cuts.selection.start < viewStart + span}
       {@const picked = cuts.selection}
       <div
         class="selection"
         style:left={pct(Math.max(picked.start, viewStart))}
         style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-        title="Selected: Split{keyHint('cut.here')} cuts both ends"
+        title={marking
+          ? `Selected: Split${keyHint("cut.here")} cuts both ends`
+          : `Selected: Delete${keyHint("edit.remove")} takes it out, Split${keyHint("cut.here")} cuts both ends`}
       ></div>
       {#each ["start", "end"] as const as edge (edge)}
         {#if picked[edge] >= viewStart && picked[edge] <= viewStart + span}
@@ -1029,14 +1034,6 @@
           >
         {/if}
       {/each}
-    {/if}
-    {#if !marking && picked && picked.end > viewStart && picked.start < viewStart + span}
-      <div
-        class="selection"
-        style:left={pct(Math.max(picked.start, viewStart))}
-        style:width={widthPct(Math.max(picked.start, viewStart), Math.min(picked.end, viewStart + span))}
-        title="Selected: Delete takes it out"
-      ></div>
     {/if}
     {#each chosen as seg (`${seg.start} ${seg.end}`)}
       {#if seg.end > viewStart && seg.start < viewStart + span}
