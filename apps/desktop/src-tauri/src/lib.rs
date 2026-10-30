@@ -505,6 +505,7 @@ pub fn run() {
             setup::set_playable,
             vods::delete_video,
             setup::clear_cache,
+            quit_app,
         ])
         .build(context())
         .expect("error while building tauri application")
@@ -553,6 +554,14 @@ fn quit(app: &AppHandle) {
     trace_exit("started processes stopped");
     files::delete_leftovers();
     trace_exit("leftover files deleted");
+}
+
+/// Quits, as closing the window does (Ctrl+Q, ⌘Q): the event loop ends and
+/// `quit` runs its work.
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    trace_exit("quit asked for by key");
+    app.exit(0);
 }
 
 /// Opens `path` as ffmpeg does, for tests: on Windows without sharing its

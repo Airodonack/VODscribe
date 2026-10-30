@@ -263,6 +263,12 @@
     // Ctrl+Shift+B (⇧⌘B) shows or hides the library, Ctrl+Alt+B (⌥⌘B) the
     // pane's column, from anywhere: chords, so a text field has no use for them.
     // Held down, a key repeats: one press, one toggle.
+    // Ctrl+Q (⌘Q) quits, as many apps do; the app has no menu to offer it.
+    if (is(e, "app.quit")) {
+      e.preventDefault();
+      if (!e.repeat) void api.quit();
+      return;
+    }
     if (library && is(e, "view.library")) {
       e.preventDefault();
       if (!e.repeat) toggleLibrary();

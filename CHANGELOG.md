@@ -28,6 +28,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Every row in the library has a menu, opened with a right click (or the menu key): a VOD's has Show in folder for a file on this computer, or Open on Twitch (YouTube, Kick) and Copy link for a VOD from a site, then Add to edit…, Check for annotations and Remove…; an edit's has Show in folder once it's rendered, Add to edit… and Delete edit…. ↑ and ↓ move through a menu, Enter picks, and Escape closes it. A file's row also has a Show in folder button, as a rendered edit's row has. Removing a VOD from its row asks as removing several does, and says its transcript and any downloaded audio or video are erased from this computer.
 - With clips picked in the clip bar, or stretches picked on the timeline, press A to pick the edit they go in, and where in it, without dragging them, as A does on a highlight.
 - The chapters and highlights column has Copy chapters in its heading, as a chapter's title box has: every chapter with its time, ready for a YouTube video's description.
+- Ctrl+Q (⌘Q on a Mac) quits VODscribe, as closing its window does.
 - Fixes:
   - Ctrl+A (⌘A) with nothing to pick, such as over the library page's main side, no longer selects all the text on the page.
   - A VOD from a site whose player VODscribe can't show, played while its video downloads, no longer loses its picture when the download finishes and refuses to play on: it carries on from the video kept, where it was.

@@ -166,6 +166,12 @@ export const ACTIONS = [
     defaults: { linux: ["Ctrl+Alt+b"], mac: ["Alt+Meta+b"] },
   },
   {
+    id: "app.quit",
+    label: "Quit VODscribe",
+    scope: "app",
+    defaults: { linux: ["Ctrl+q"], mac: ["Meta+q"] },
+  },
+  {
     id: "library.remove",
     label: "Remove the selected VODs and edits",
     scope: "app",

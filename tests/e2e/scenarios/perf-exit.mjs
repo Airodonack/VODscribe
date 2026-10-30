@@ -293,7 +293,7 @@ async function timeQuits(first, ctx) {
   let app = first;
   const running = async () => (app ??= await ctx.start());
 
-  // Ctrl+Q, as many apps quit: said either way.
+  // Ctrl+Q quits, as in many apps (keymap.ts app.quit).
   await app.toLibrary();
   os.activate(app.driver.proc);
   execFileSync("xdotool", ["key", "ctrl+q"]);
@@ -302,14 +302,16 @@ async function timeQuits(first, ctx) {
     ctx.log("Ctrl+Q quits the app");
     await ctx.quit();
     app = null;
-  } else ctx.log("Ctrl+Q: no quit (the app still runs 2 s after)");
+  } else throw new Error("Ctrl+Q didn't quit: the app still runs 2 s after");
 
   const summary = [];
   for (const state of states(path.join(ctx.out, "fixtures"))) {
     if (only && !only.includes(state.short)) continue;
-    const why = await state.setup?.(await running(), ctx);
+    // Started if the Ctrl+Q check above (or a state before) left it quit.
+    const up = await running();
+    const why = await state.setup?.(up, ctx);
     // A setup that quit the app (to change its library) leaves it to be started.
-    if (app.driver.proc.exitedAt !== null) app = null;
+    if (up.driver.proc.exitedAt !== null) app = null;
     if (why) {
       ctx.log(`${state.name}: not timed (${why})`);
       continue;
