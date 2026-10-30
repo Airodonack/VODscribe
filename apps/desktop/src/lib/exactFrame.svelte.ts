@@ -5,52 +5,48 @@
 // moment winning; the moment moving on lets the one shown go.
 
 import { api, type Doc } from "./api";
+import { latest } from "./latest";
 import { FRAME_HEIGHT } from "./scrubFrame";
 
 /** How long the pointer stands still before the exact frame is asked for, in ms. */
 export const REST_MS = 120;
 
+/** The exact frame of a moment: its time, and its picture. */
+type Frame = { time: number; image: ImageBitmap } | null;
+
 export class ExactFrame {
-  frame = $state.raw<{ time: number; image: ImageBitmap } | null>(null);
+  frame = $state.raw<Frame>(null);
   #wanted: { doc: Doc; time: number } | null = null;
   #timer: ReturnType<typeof setTimeout> | undefined;
-  #asking = false;
+  #asking = latest<{ doc: Doc; time: number }, Frame>({
+    async fetch(want) {
+      const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
+      const tall = Math.ceil(FRAME_HEIGHT * ratio);
+      const got = await api.playerPreview(want.doc, want.time, tall * 4, tall);
+      return got?.exact ? { time: got.time, image: await createImageBitmap(got.pixels) } : null;
+    },
+    got: (frame) => (this.frame = frame),
+    free: (frame) => frame?.image.close(),
+    // Not in the app (the site's demo), or the player closed meanwhile: the storyboard's frame stays.
+    failed() {},
+  });
 
   /** The moment shown is `time` of `doc` (none: nothing shows). */
   want(doc: Doc | undefined, time: number | null) {
     if (!doc || time === null) return this.clear();
     const w = this.#wanted;
     if (w && w.doc.kind === doc.kind && w.doc.id === doc.id && w.time === time) return;
-    this.#wanted = { doc, time };
-    this.frame = null;
-    clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => this.#ask(), REST_MS);
+    const want = { doc, time };
+    // Moved on: the frame shown, or coming, goes.
+    this.clear();
+    this.#wanted = want;
+    this.#timer = setTimeout(() => this.#asking.want(want), REST_MS);
   }
 
   clear() {
     clearTimeout(this.#timer);
     this.#wanted = null;
     this.frame = null;
-  }
-
-  async #ask() {
-    if (this.#asking || !this.#wanted) return;
-    this.#asking = true;
-    const want = this.#wanted;
-    try {
-      const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
-      const tall = Math.ceil(FRAME_HEIGHT * ratio);
-      const got = await api.playerPreview(want.doc, want.time, tall * 4, tall);
-      if (this.#wanted !== want || !got?.exact) return;
-      const image = await createImageBitmap(got.pixels);
-      if (this.#wanted === want) this.frame = { time: got.time, image };
-      else image.close();
-    } catch (e) {
-      // Not in the app (the site's demo), or the player closed meanwhile: the storyboard's frame stays.
-    } finally {
-      this.#asking = false;
-      // Moved on while asking, and stood still again since: the newest.
-      if (this.#wanted && this.#wanted !== want && !this.frame) this.#ask();
-    }
+    this.#asking.clear();
   }
 }

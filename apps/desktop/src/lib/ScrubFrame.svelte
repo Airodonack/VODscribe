@@ -17,6 +17,7 @@
 
   import { onDestroy } from "svelte";
   import { api, type Doc } from "./api";
+  import { latest } from "./latest";
   import { FRAME_HEIGHT } from "./scrubFrame";
 
   let {
@@ -44,7 +45,6 @@
   let at = $state<number | null>(null);
   let isExact = $state(false);
   const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
-  let gone = false;
 
   function draw(image: ImageBitmap, time: number, exactly: boolean) {
     if (!canvas || !image.height) return;
@@ -64,43 +64,38 @@
     isExact = false;
   }
 
-  let wanted: { doc: Doc; time: number; within: number } | null = null;
-  let asking = false;
-  async function ask() {
-    if (asking || !wanted) return;
-    asking = true;
-    const want = wanted;
-    try {
+  // The storyboard's frame of each moment, one asked at a time (latest.ts);
+  // one come for a moment since moved on from still shows while the newest
+  // is asked: a frame near the pointer beats none.
+  type Found = { time: number; image: ImageBitmap } | null;
+  const asking = latest<{ doc: Doc; time: number; within: number }, Found>({
+    async fetch(want) {
       const found = await api.storyboardFrame(want.doc, want.time, want.within);
-      const image = found && (await createImageBitmap(new Blob([found.jpeg as BlobPart], { type: "image/jpeg" })));
-      if (gone || exact) {
-        image?.close();
-        return;
-      }
-      if (found && image) draw(image, found.time, false);
+      if (!found) return null;
+      return {
+        time: found.time,
+        image: await createImageBitmap(new Blob([found.jpeg as BlobPart], { type: "image/jpeg" })),
+      };
+    },
+    got(found) {
+      // The exact frame is shown instead.
+      if (exact) return;
+      if (found) draw(found.image, found.time, false);
       else clear();
-      image?.close();
-    } catch (e) {
-      // Not in the app (the site's demo), or no frame to read: none shows.
-      clear();
-    } finally {
-      asking = false;
-      if (wanted !== want) ask();
-    }
-  }
-
-  $effect(() => {
-    wanted = { doc, time, within };
-    ask();
+    },
+    free: (found) => found?.image.close(),
+    between: true,
+    // Not in the app (the site's demo), or no frame to read: none shows.
+    failed: () => clear(),
   });
+
+  $effect(() => asking.want({ doc, time, within }));
 
   $effect(() => {
     if (exact) draw(exact.image, exact.time, true);
   });
 
-  onDestroy(() => {
-    gone = true;
-  });
+  onDestroy(() => asking.clear());
 </script>
 
 <canvas

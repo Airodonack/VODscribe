@@ -18,6 +18,7 @@
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
   import { carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
+  import { latest } from "./latest";
   import { pressToDrag } from "./pressToDrag";
   import { playsFromFile } from "./platform";
   import { EditPlayer, type EditPlayback } from "./editPlayer";
@@ -656,41 +657,35 @@
     else overlay.show(null);
   });
   onDestroy(() => overlay.show(null));
-  let edgeWanted: { vodId: number; at: number; label: string } | null = null;
-  let edgeAsking = false;
+  // The new edge's frame, one asked at a time (latest.ts); one come for a
+  // moment since moved on from still shows while the newest is asked.
+  const edgeAsking = latest<{ vodId: number; at: number }, string | null>({
+    async fetch(want) {
+      const bytes = await api.vodFrame(want.vodId, want.at, 960);
+      return bytes.length ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: "image/jpeg" })) : null;
+    },
+    got(url) {
+      if (!edgeFrame) return;
+      edgeFrame.url = url;
+      edgeFrame.missing = !url;
+    },
+    free: (url) => url && URL.revokeObjectURL(url),
+    between: true,
+    failed: (e) => console.error("edge frame", e),
+  });
   function showEdge(id: number, side: "start" | "end", at: number | null) {
     const piece = pieces.find((p) => p.id === id);
     if (at === null || !piece) {
-      edgeWanted = null;
-      if (edgeFrame?.url) URL.revokeObjectURL(edgeFrame.url);
+      edgeAsking.clear();
       edgeFrame = null;
       return;
     }
     // The last frame is the one just before the end.
     const frameAt = side === "start" ? at : Math.max(0, at - 1 / fps);
     const label = `New ${side === "start" ? "first" : "last"} frame · ${formatFraction(at, 1)}`;
-    edgeWanted = { vodId: piece.vod_id, at: frameAt, label };
     if (!edgeFrame) edgeFrame = { url: null, label };
     else edgeFrame.label = label;
-    askEdge();
-  }
-  async function askEdge() {
-    if (edgeAsking || !edgeWanted) return;
-    edgeAsking = true;
-    const want = edgeWanted;
-    try {
-      const bytes = await api.vodFrame(want.vodId, want.at, 960);
-      if (!edgeWanted || !edgeFrame) return;
-      const url = bytes.length ? URL.createObjectURL(new Blob([bytes as BlobPart], { type: "image/jpeg" })) : null;
-      if (edgeFrame.url) URL.revokeObjectURL(edgeFrame.url);
-      edgeFrame.url = url;
-      edgeFrame.missing = !url;
-    } catch (e) {
-      console.error("edge frame", e);
-    } finally {
-      edgeAsking = false;
-      if (edgeWanted && edgeWanted !== want) askEdge();
-    }
+    edgeAsking.want({ vodId: piece.vod_id, at: frameAt });
   }
 
   const onpiece = {
@@ -765,6 +760,7 @@
   onDestroy(() => {
     cancelAnimationFrame(poll);
     player?.destroy();
+    edgeAsking.clear();
   });
 
   const progress = $derived(edit ? edits.progress.get(edit.id) : undefined);

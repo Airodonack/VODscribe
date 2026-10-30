@@ -10,6 +10,7 @@
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
+  import { latest } from "./latest";
   import { formatTime, os } from "./platform";
   import Spinner from "./Spinner.svelte";
 
@@ -29,28 +30,29 @@
 
   // Its picture: its first frame (edit_thumb), kept until the next one's in;
   // asked again when its first piece changes, or footage of it comes in.
+  // One asked at a time, the newest winning (latest.ts).
   let picture = $state<string | null>(null);
   const first = $derived.by(() => {
     const r = edit.ranges[0];
     return r ? `${r.vod_id} ${r.start} ${edits.footage.get(r.vod_id) ?? 0}` : null;
   });
-  $effect(() => {
-    let stale = false;
-    if (first === null) {
-      untrack(() => replace(null));
-      return;
-    }
-    api.editThumb(untrack(() => edit.id)).then(
-      (bytes) => !stale && bytes.length && replace(URL.createObjectURL(new Blob([bytes as BlobPart]))),
-      () => {},
-    );
-    return () => (stale = true);
+  const asking = latest<number, string>({
+    async fetch(id) {
+      const bytes = await api.editThumb(id);
+      // None yet (its footage isn't here): the one before stays, as on a failure.
+      if (!bytes.length) throw new Error("no picture yet");
+      return URL.createObjectURL(new Blob([bytes as BlobPart]));
+    },
+    got: (url) => (picture = url),
+    free: (url) => URL.revokeObjectURL(url),
   });
-  function replace(url: string | null) {
-    if (picture) URL.revokeObjectURL(picture);
-    picture = url;
-  }
-  $effect(() => () => picture && URL.revokeObjectURL(picture));
+  $effect(() => {
+    if (first === null) {
+      picture = null;
+      untrack(() => asking.clear());
+    } else asking.want(untrack(() => edit.id));
+  });
+  $effect(() => () => asking.clear());
   const meta = $derived.by(() => {
     if (edit.pieces === 0) return "Empty";
     const what = `${edit.pieces} piece${edit.pieces === 1 ? "" : "s"} · ${formatTime(edit.length)}`;
