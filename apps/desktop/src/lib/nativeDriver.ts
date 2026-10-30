@@ -76,7 +76,8 @@ export class NativeDriver {
   }
 
   /** Sends a command whose reply says where the player is; resolves true
-   *  once that's taken, false if it was refused. */
+   *  once that's taken, false if it was refused or something else began
+   *  opening before the reply (`opens`), which then isn't taken. */
   private command(sent: Promise<PlayerStatus>): Promise<boolean> {
     const opens = this.opens;
     this.pending++;

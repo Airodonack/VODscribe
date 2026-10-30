@@ -7,11 +7,13 @@
 // VODSCRIBE_TRACE_EXIT set (lib.rs, trace_exit), read here from the bridge
 // driver's `proc.stderr`. No budget: the numbers are for comparing builds.
 //
+// First, Ctrl+Q pressed in the library quits the app (not timed).
+//
 // Through the bridge driver only (--driver bridge): under WebDriver the
-// driver ends the app from outside, so its own quit never runs. X11 only
-// (xdotool). A site's VOD's embed isn't among the states: its player needs
-// the network. E2E_EXIT_STATES=idle,playing picks states (a debug build's
-// run, which is slower to start).
+// driver ends the app from outside, so its own quit never runs. Linux
+// under X11 only (xdotool). A site's VOD's embed isn't among the states:
+// its player needs the network. E2E_EXIT_STATES=idle,playing picks states
+// (a debug build's run, which is slower to start).
 
 import { execFile, execFileSync } from "node:child_process";
 import { copyFileSync } from "node:fs";
