@@ -812,19 +812,27 @@ export function carrySet(set: CarrySet): Promise<void> {
 }
 
 /**
- * A press held still on a player's picture carries the stretch between cuts
- * that the playhead is in, flying from the timeline to the pointer; a press
- * let go first is a click, which plays or pauses (`toggle`). The picture's
- * pointer handlers, for a player of `vod()` whose time is `time()` in a VOD
- * `length()` long, its picture `box()`; `stop()` when the player goes.
+ * What a press held on a VOD's picture carries: the stretch between cuts
+ * that the playhead (`time`, in a VOD `length` long) is in, flying from the
+ * timeline (or the picture, `box`); none with no cuts.
  */
-export function holdToCarry(
-  vod: () => Vod,
-  time: () => number,
-  length: () => number,
-  box: () => HTMLElement | undefined,
-  toggle: () => void,
-) {
+export function stretchCarry(vod: Vod, time: number, length: number, box: HTMLElement | undefined) {
+  const range = stretchAt(time, length);
+  if (!range || !cuts.list.length) return null;
+  return (x: number, y: number) => {
+    const from = rectOf(range.start, range.end) ?? box?.getBoundingClientRect();
+    if (from) carry({ vod, start: range.start, end: range.end, ownPlayer: true, from, x, y });
+  };
+}
+
+/**
+ * A press held still on a player's picture carries what `carryAt()` says
+ * (`stretchCarry` on a VOD's; on an edit's, the stretch or piece at the
+ * playhead), started at the pointer; a press let go first is a click,
+ * which plays or pauses (`toggle`). The picture's pointer handlers; `stop()`
+ * when the player goes.
+ */
+export function holdToCarry(carryAt: () => ((x: number, y: number) => void) | null | undefined, toggle: () => void) {
   let hold: ReturnType<typeof setTimeout> | undefined;
   let held = false;
   let pointer = { x: 0, y: 0 };
@@ -832,15 +840,13 @@ export function holdToCarry(
   return {
     down(e: PointerEvent) {
       if (e.button !== 0) return;
-      const range = stretchAt(time(), length());
       held = false;
       pointer = { x: e.clientX, y: e.clientY };
-      if (!range || !cuts.list.length) return;
+      const start = carryAt();
+      if (!start) return;
       hold = setTimeout(() => {
         held = true;
-        const from = rectOf(range.start, range.end) ?? box()?.getBoundingClientRect();
-        if (from)
-          carry({ vod: vod(), start: range.start, end: range.end, ownPlayer: true, from, x: pointer.x, y: pointer.y });
+        start(pointer.x, pointer.y);
       }, HOLD_MS);
     },
     move(e: PointerEvent) {

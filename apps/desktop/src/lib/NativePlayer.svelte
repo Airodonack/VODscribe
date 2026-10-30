@@ -9,7 +9,7 @@
 
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
-  import { holdToCarry } from "./dragout";
+  import { holdToCarry, stretchCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
   import { NativeDriver } from "./nativeDriver";
@@ -172,11 +172,8 @@
   // in out (dragout.ts); a click plays or pauses.
   let picture = $state<HTMLDivElement>();
   const press = holdToCarry(
-    () => vod,
-    () => now(),
     // The VOD's length, as the timeline's: the file's may differ by a little.
-    () => vod.duration || mediaDuration(),
-    () => picture,
+    () => stretchCarry(vod, now(), vod.duration || mediaDuration(), picture),
     () => togglePlay(),
   );
 </script>

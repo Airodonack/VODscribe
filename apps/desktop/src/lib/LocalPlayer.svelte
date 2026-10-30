@@ -9,7 +9,7 @@
   import { landingSeeks } from "./mediaSeek";
   import { onDestroy, onMount } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
-  import { holdToCarry } from "./dragout";
+  import { holdToCarry, stretchCarry } from "./dragout";
   import { DEFAULT_FPS, cueAt, elementSound, stepTime, unplayable } from "./media";
   import { prefs } from "./playerPrefs.svelte";
 
@@ -157,11 +157,8 @@
   // in out (dragout.ts); a click plays or pauses.
   let picture = $state<HTMLDivElement>();
   const press = holdToCarry(
-    () => vod,
-    () => video?.currentTime ?? 0,
     // The VOD's length, as the timeline's: the file's may differ by a little.
-    () => vod.duration || mediaDuration(),
-    () => picture,
+    () => stretchCarry(vod, video?.currentTime ?? 0, vod.duration || mediaDuration(), picture),
     () => togglePlay(),
   );
 

@@ -1,7 +1,8 @@
 // Edits: a clip's pill dragged onto "Make new edit" in the library (a group, one band); the
 // edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
 // and the second half moved first and back (Ctrl+← and →), a line's slice taken out and brought back
-// (Ctrl+Z), rendered to a file (E); all of it still there after a restart;
+// (Ctrl+Z), its picture held and carried onto another edit's row, a clip
+// made with its Clip button, rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
 // Remove and delete the video: it leaves the library, and the stretches
 // the edit uses are kept as videos of their own, which it renders); then the edit
@@ -655,12 +656,55 @@ export default {
     );
     ctx.log(`a chapter in the edit at ${chapter.start} s, then undone`);
 
-    // C: the piece at the playhead (the second, 1 s long) a clip on the
-    // edit's own clip bar, its file made; pressed twice, and again once it's
-    // made, it's still the one clip. Ctrl+Z takes it off, Ctrl+Shift+Z
-    // brings it back (made again).
+    // Held on the edit's picture, the piece at the playhead is carried, as
+    // on a VOD's player: onto another edit's row, it goes in there.
+    const other = await app.invoke("create_edit");
+    await app.invoke("add_range_to_edit", { editId: other.id, vodId: vod.id, start: 0, end: 1, title: "Other" });
+    // (Where it drops shows over the row while something's carried.)
+    const otherRow = `[data-edit-drop="${other.id}"]`;
+    await until(
+      "the other edit's row",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.list .vod[data-key="${-other.id}"]`),
+      MINUTE,
+    );
+    const held = await app.js(
+      `${AT}
+       const frame = document.querySelector("section.edit-view .frame");
+       const r = frame.getBoundingClientRect();
+       const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
+       frame.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+       await new Promise((done) => setTimeout(done, 500));
+       const carried = !!document.querySelector(".carry-ghost");
+       const drop = document.querySelector(arguments[0]);
+       if (!drop) {
+         window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));
+         return { carried, lit: "no row to drop on" };
+       }
+       const row = drop.getBoundingClientRect();
+       const [x1, y1] = [row.left + row.width / 2, row.top + row.height / 2];
+       for (let i = 1; i <= 5; i++) window.dispatchEvent(new PointerEvent("pointermove", at(x + ((x1 - x) * i) / 5, y + ((y1 - y) * i) / 5, 1)));
+       await new Promise((done) => requestAnimationFrame(done));
+       const lit = !!document.querySelector(arguments[0] + ".target");
+       window.dispatchEvent(new PointerEvent("pointerup", at(x1, y1, 0)));
+       frame.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+       return { carried, lit };`,
+      otherRow,
+    );
+    if (!held.carried || held.lit !== true) throw new Error(`the edit's picture held: ${JSON.stringify(held)}`);
+    await until(
+      "the piece in the other edit",
+      async () => (await app.invoke("get_edit", { id: other.id })).pieces.length >= 2,
+      10_000,
+    );
+    await app.invoke("delete_edit", { id: other.id });
+    ctx.log("the edit's picture held: its piece carried onto another edit's row, in there");
+
+    // Clip (the button), then C: the piece at the playhead (the second, 1 s
+    // long) a clip on the edit's own clip bar, its file made; pressed twice,
+    // and again once it's made, it's still the one clip. Ctrl+Z takes it off,
+    // Ctrl+Shift+Z brings it back (made again).
     const barClips = () => app.invoke("edit_clips", { id: made.id });
-    await app.key("c");
+    await app.click("section.edit-view .bar button.clip");
     await app.key("c");
     const barClip = await until(
       "the edit's clip, made",

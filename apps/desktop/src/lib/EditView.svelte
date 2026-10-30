@@ -17,7 +17,7 @@
   import { keysForApp } from "./demo";
   import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
-  import { carry, dropsInEdit, type CarryHome, type Insertion } from "./dragout";
+  import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
   import { pressToDrag } from "./pressToDrag";
@@ -41,7 +41,7 @@
   import { removeEntries, showEditFile } from "./actions";
   import { nav } from "./nav.svelte";
   import * as overlay from "./screenOverlay";
-  import { carryChosen, chosenClips, chosenSegments, clipSegments } from "./bulk";
+  import { carryChosen, carrySnippets, chosenClips, chosenSegments, clipSegments } from "./bulk";
   import { count, snippets } from "./selection.svelte";
 
   let {
@@ -279,6 +279,9 @@
     return `Piece ${n} of ${pieces.length} · ${nameOf(atNow.piece)} · ${atNow.piece.vod_title}${where}${hole}`;
   });
 
+  let clipButton = $state<HTMLButtonElement>();
+  const clipBox = () => clipButton?.getBoundingClientRect();
+
   /** Remove is hovered: the piece it would take out lights up on the timeline. */
   let removeHover = $state(false);
 
@@ -300,6 +303,35 @@
     const range = cuts.selection ?? stretchNow;
     if (range) void clips.makeOfEdit(range.start, range.end);
   }
+
+  /** What's carried from the picture held (`hold`) or Clip dragged
+   *  (`clip`: the selection first, as C clips it), started at the pointer:
+   *  a stretch between splits as itself, a piece whole as its band pulled
+   *  off the timeline carries (`onpiece.carry`). None with nothing at the playhead. */
+  function carryNow(what: "hold" | "clip", from?: () => DOMRect | undefined) {
+    if (what === "clip" && chosenSegments().length) {
+      return (x: number, y: number) => {
+        const box = from?.() ?? host?.getBoundingClientRect();
+        if (box) carryChosen(box, x, y);
+      };
+    }
+    const picked = what === "clip" ? cuts.selection : null;
+    const range = picked ?? stretchNow;
+    const unit = unitNow;
+    if (!range || !unit || snippet) return null;
+    return (x: number, y: number) => {
+      const box = from?.() ?? rectOf(range.start, range.end) ?? host?.getBoundingClientRect();
+      if (!box) return;
+      if (!picked && stretchNow?.whole) onpiece.carry(unit.id, x, y, box);
+      else carrySnippets([{ kind: "segment", start: range.start, end: range.end }], box, x, y);
+    };
+  }
+  // A press held still on the picture carries the stretch at the playhead,
+  // as on a VOD's; a click plays or pauses.
+  const hold = holdToCarry(
+    () => carryNow("hold"),
+    () => player?.togglePlay(),
+  );
 
   /** Delete with nothing selected: the stretch at the playhead between split
    *  marks (which become a real split), or else the piece. */
@@ -697,7 +729,7 @@
     },
     resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
     resizing: showEdge,
-    carry(id: number, x: number, y: number, from: DOMRect, home: CarryHome) {
+    carry(id: number, x: number, y: number, from: DOMRect, home?: CarryHome) {
       // A piece, or a group of one: a group of more doesn't go out as one clip.
       const of = pieces.filter((p) => unitOf(p) === id);
       const piece = of.length === 1 ? of[0] : undefined;
@@ -749,6 +781,7 @@
   }
 
   onDestroy(() => {
+    hold.stop();
     player?.destroy();
     edgeAsking.clear();
   });
@@ -831,9 +864,17 @@
 
 {#snippet editStage()}
   <div class="stage">
-    <!-- A click on the picture plays or pauses, as on a VOD's player. -->
+    <!-- A click on the picture plays or pauses, and a press held carries, as on a VOD's player. -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="frame" bind:this={host} onclick={() => player?.togglePlay()}></div>
+    <div
+      class="frame"
+      bind:this={host}
+      onclick={hold.click}
+      onpointerdown={hold.down}
+      onpointermove={hold.move}
+      onpointerup={hold.up}
+      onpointercancel={hold.up}
+    ></div>
     {#if !segments.length}
       <p class="hint">{EMPTY}</p>
     {:else if playError}
@@ -911,6 +952,22 @@
       >
         <Icon name="circle-minus" size={14} /> Remove {#if labelOf("edit.remove")}<kbd>{labelOf("edit.remove")}</kbd
           >{/if}
+      </button>
+      <button
+        class="action clip"
+        class:picking={!!cuts.selection}
+        bind:this={clipButton}
+        use:pressToDrag={{
+          press: () => !!carryNow("clip"),
+          start: (e) => carryNow("clip", clipBox)?.(e.clientX, e.clientY),
+        }}
+        onclick={clipNow}
+        disabled={!atNow || snippet}
+        title="Clip the stretch at the playhead (or the selection, or each one picked), to the edit's clip bar{keyHint(
+          'clip.make',
+        )}. Or drag it: onto an edit, or straight into your video editor."
+      >
+        <Icon name="film" size={14} /> Clip {#if labelOf("clip.make")}<kbd>{labelOf("clip.make")}</kbd>{/if}
       </button>
       {#if edit?.status === "error" && edit.error}
         <span class="context error-text" title={edit.error}>Couldn't render: {edit.error}</span>
@@ -1070,6 +1127,20 @@
 
   .split :global(svg) {
     color: var(--cut);
+  }
+
+  /* Clip as on a VOD's bar: in the selection's color while there's one to clip. */
+  .clip :global(svg) {
+    color: var(--accent);
+  }
+
+  .clip.picking:not(:disabled) {
+    color: var(--pick);
+    background: color-mix(in srgb, var(--pick) 14%, transparent);
+  }
+
+  .clip.picking :global(svg) {
+    color: var(--pick);
   }
 
   /* Links back to the VODs its pieces come from, on its clip bar (a clip in
