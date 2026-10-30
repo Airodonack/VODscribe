@@ -720,7 +720,7 @@
       // alone, a piece goes as it would unpicked; a group of more, as what's picked.
       const band = lane.find((b) => b.id === id);
       const picked = band && snippets.has({ kind: "segment", start: band.start, end: band.end });
-      if (picked && (snippets.size > 1 || !piece || !vod)) return void carryChosen(from, x, y);
+      if (picked && (snippets.size > 1 || !piece || !vod)) return void carryChosen(from, x, y, home);
       if (!piece || !vod) return;
       const { start, end } = piece;
       carry({ vod, start, end, title: nameOf(piece), ownPlayer: playsFromFile(vod), from, x, y, home });

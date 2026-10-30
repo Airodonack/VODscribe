@@ -15,7 +15,7 @@ import { removeEntries } from "./actions";
 import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { carrySet, exportStretch, exportStretches, stretchSaid, type Face } from "./dragout";
+import { carrySet, exportStretch, exportStretches, stretchSaid, type CarryHome, type Face } from "./dragout";
 import { edits } from "./edits.svelte";
 import { is } from "./keys.svelte";
 import { inEdit } from "./media";
@@ -121,15 +121,16 @@ function faceOf(item: Snippet): Face | undefined {
 }
 
 /** Carries what's picked on the timeline and in the clip bar from (`x`, `y`)
- *  (a drag of one of them, flying from `from`): see dragout.ts `carrySet`. */
-export function carryChosen(from: DOMRect, x: number, y: number) {
-  carrySnippets(snippets.items, from, x, y);
+ *  (a drag of one of them, flying from `from`; back over `home`, if given, the
+ *  carry ends and it takes the press on): see dragout.ts `carrySet`. */
+export function carryChosen(from: DOMRect, x: number, y: number, home?: CarryHome) {
+  carrySnippets(snippets.items, from, x, y, home);
 }
 
 /** Carries `items` (stretches of the open timeline, clips of its clip bar), as
  *  `carryChosen` carries what's picked: a stretch between an edit's cuts
  *  Alt-dragged goes this way, as itself rather than its whole piece. */
-export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number) {
+export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number, home?: CarryHome) {
   const items = chosenPuts(list);
   const doc = clips.doc;
   if (!items.length || !doc) return;
@@ -143,6 +144,7 @@ export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: numb
     stretches: doc.kind === "vod" ? chosenSegments(list).map((s) => ({ start: s.start, end: s.end })) : [],
     files: () => chosenFiles(list),
     vodId: doc.kind === "vod" ? doc.id : undefined,
+    home,
     from,
     x,
     y,

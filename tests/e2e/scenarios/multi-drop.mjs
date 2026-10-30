@@ -4,7 +4,9 @@
 // Ctrl-clicked (⌘ on a Mac), 2-3 first, and one dragged onto the edit's row
 // in the library: both go at the end of its timeline, in the order picked.
 // The edit opened: two of its pieces picked on its timeline, one pulled off
-// it and let go on its clip bar: a clip of each, in that order. Those two
+// it (brought back over the timeline, the carry ends there, as one piece's
+// does; pulled off again, it's both again) and let go on its clip bar: a
+// clip of each, in that order. Those two
 // pills picked the other way round and dragged onto the timeline's start:
 // they go in there, before the rest, as one step one undo takes back. Then
 // (Linux) the two pills dragged out of the window with the system's mouse:
@@ -196,7 +198,28 @@ export default {
         const r = b.getBoundingClientRect();
         return r.left <= x && x < r.right;
       })?.dataset.piece;`);
-    await press(`.drop-in [data-piece="${band}"]`, 120);
+    // Pulled down, toward the clip bar under it: on the way there it doesn't
+    // cross the timeline again, which would end the carry.
+    await press(`.drop-in [data-piece="${band}"]`, -120);
+    await until("the two carried", () => app.js(`return !!document.querySelector(".carry-stack")`), 10_000);
+    // Brought back over the timeline, the carry ends there and the press
+    // moves the piece again, as one carried alone does; pulled off once more,
+    // both are carried again.
+    await moveOnto(".drop-in .scrubber", 0.9);
+    await until(
+      "the carry over, back on its timeline",
+      () => app.js(`return !document.querySelector(".carry-stack, .carry-ghost")`),
+      10_000,
+    );
+    await moveOnto(".drop-in .scrubber", 0.5);
+    await app.js(
+      `${AT}
+       const [x, y] = window.__drag;
+       const bottom = document.querySelector(".drop-in .scrubber").getBoundingClientRect().bottom;
+       window.dispatchEvent(new PointerEvent("pointermove", at(x, bottom + 120, 1)));
+       window.__drag = [x, bottom + 120];`,
+    );
+    await until("the two carried again", () => app.js(`return !!document.querySelector(".carry-stack")`), 10_000);
     await until(
       "the edit's clip bar, to drop on",
       () => app.js(`return !!document.querySelector(".clip-bar")`),

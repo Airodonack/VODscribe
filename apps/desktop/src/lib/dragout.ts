@@ -371,29 +371,6 @@ function showTarget(target: Target) {
   edits.inserting = target.timeline?.time ?? null;
 }
 
-/** Puts `stretch` where it was dropped (`targetAt`): in an edit, a new edit, on
- *  the open edit's timeline, or the clip bar (a VOD's: `clip` makes it a clip
- *  there; an edit's takes a clip of it); false if nothing was there. */
-function dropAt(px: number, py: number, stretch: Stretch, clip: () => unknown): boolean {
-  const { edit, timeline, bar } = targetAt(px, py);
-  const { vodId, start, end, title } = stretch;
-  // A clip's pill goes in as the clip (`edits.add`) and a highlight as a
-  // group named for it, both one band; a stretch as a range.
-  const into = (editId: number, index?: number) =>
-    stretch.clip !== undefined
-      ? edits.add(editId, stretch.clip, index)
-      : stretch.highlight
-        ? edits.put(editId, [putOf(stretch)], false, index)
-        : edits.addRange(editId, stretch, index);
-  if (edit === "new") edits.createWith(stretch);
-  else if (edit !== null) into(edit);
-  else if (timeline && edits.openId !== null) into(edits.openId, timeline.index);
-  else if (bar && clips.doc?.kind === "edit")
-    edits.put(clips.doc.id, [{ kind: "range", vodId, start, end, title }], true);
-  else if (bar) clip();
-  return edit !== null || timeline !== null || bar;
-}
-
 /** What's being dragged out as files, while it is: brought back over the
  *  window, it can still go where a carry inside could (`over` lights up
  *  what's under the pointer, `dropped` puts it there). `kept` once a clip
@@ -418,24 +395,6 @@ export function backLeft() {
 export function backDropped(x: number, y: number) {
   backLeft();
   back?.dropped(x, y);
-}
-
-/** Brought back over the window, the stretch `stretch` goes where a carry of it would; `clip` keeps it as a clip. */
-function bringsBack(stretch: Stretch, clip: () => unknown) {
-  const b: NonNullable<typeof back> = {
-    over(x, y) {
-      // The drop targets show as for a carry (EditRow, the new-edit row).
-      clips.carrying = { start: stretch.start, end: stretch.end };
-      showTarget(targetAt(x, y));
-    },
-    dropped(x, y) {
-      dropAt(x, y, stretch, () => {
-        b.kept = true;
-        return clip();
-      });
-    },
-  };
-  return b;
 }
 
 export interface Carry {
@@ -468,6 +427,188 @@ export interface CarryHome {
   back: (x: number, y: number) => void;
 }
 
+/** A carry's ghost: its front card (`card`) and those behind it (`deck`), on `el`. */
+interface Ghost {
+  el: HTMLElement;
+  front: ReturnType<typeof card>;
+  behind: ReturnType<typeof card>[];
+}
+
+/** What's carried (`carry`, one thing; `carrySet`, several), as the one way of carrying them (`carryWith`) needs it. */
+interface Payload {
+  /** What an edit takes of it, in order. */
+  items: Put[];
+  /** Its stretches of the open VOD: a VOD's clip bar keeps them as clips. */
+  stretches: { start: number; end: number }[];
+  ghost: Ghost;
+  /** The ghost as one PNG, for the system's drag. */
+  image: () => Promise<Uint8Array | undefined>;
+  /** Says what's carried (`clips.carrying`, the stretch; `clips.carried`, how many). */
+  lift: () => void;
+  /** Puts it on `target`, a place that takes something of it (`takerAt`); true
+   *  if the clips `made` for a drag out are kept (a VOD's clip bar shows them). */
+  put: (target: Target, made: Promise<Clip[]> | null) => boolean;
+  /** Makes the clips whose files go out past the window's edge (not in the
+   *  clip bar: only for the drag); with none, the carry ends there. */
+  files?: () => Promise<Clip[]>;
+  /** Whether those are made as the carry begins (where that's quick: from a file here), not at the edge. */
+  early?: boolean;
+  /** The VOD they're clips of, if it's one: made in the format clips are made in. */
+  vodId?: number;
+  /** Where it came from, if coming back there ends the carry. */
+  home?: CarryHome;
+  /** Where on screen the thing pressed is, for the ghost to fly from, and the pointer. */
+  from: DOMRect;
+  x: number;
+  y: number;
+}
+
+/** What of `p` the place under the pointer, `target`, takes into an edit:
+ *  on the open edit's timeline, not its own stretches (that would copy them
+ *  in place), nor an edit into itself. (A VOD's clip bar takes its stretches.) */
+function takes(p: { items: Put[] }, target: Target): Put[] {
+  const into = target.edit === "new" ? null : target.timeline ? edits.openId : target.edit;
+  const own = (put: Put) => (put.kind === "clip" && put.id === into) || (!!target.timeline && put.kind === "span");
+  if (target.edit !== null || target.timeline) return p.items.filter((put) => !own(put));
+  return target.bar && clips.doc?.kind === "edit" ? p.items : [];
+}
+
+/** What under (`px`, `py`) takes something of `p`; nothing, if nothing would
+ *  go there: only that lights up as where it drops. */
+function takerAt(p: Payload, px: number, py: number): Target {
+  const target = targetAt(px, py);
+  const vodBar = target.bar && clips.doc?.kind === "vod";
+  return (vodBar ? p.stretches.length : takes(p, target).length) ? target : NOWHERE;
+}
+
+/** Brought back over the window, `p`'s system drag goes where a carry of it would. */
+function bringsBack(p: Payload) {
+  const b: NonNullable<typeof back> = {
+    over(x, y) {
+      p.lift();
+      showTarget(takerAt(p, x, y));
+    },
+    dropped(x, y) {
+      if (p.put(takerAt(p, x, y), null)) b.kept = true;
+    },
+  };
+  return b;
+}
+
+/**
+ * Carries `p` from (`x`, `y`) while the button is down: see the top of this
+ * file. Resolves once it's dropped, taken out of the window, or let go.
+ */
+function carryWith(p: Payload): Promise<void> {
+  const ghost = p.ghost.el;
+  const place = showGhost(ghost, p.from, p.x, p.y);
+  p.lift();
+  document.body.classList.add("timeline-drag");
+  // Text the press began selecting (a pill's name) isn't carried along.
+  window.getSelection()?.removeAllRanges();
+
+  return new Promise((resolve) => {
+    let down = true;
+    let leaving = false;
+    // Made ahead for the system's drag, where that's quick, rather than once
+    // it's out of the window, where nothing can be dropped until it's there.
+    let early = p.early && p.files ? p.files() : null;
+    const forgetAll = (made: Promise<Clip[]> | null) => made?.then((list) => list.forEach(forgetHidden));
+    const finish = () => {
+      // Made ahead for a drag out that didn't come: they go.
+      forgetAll(early);
+      early = null;
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("keydown", onKey, true);
+      clips.carrying = null;
+      clips.carried = 0;
+      showTarget(NOWHERE);
+      document.body.classList.remove("timeline-drag");
+      ghost.remove();
+      for (const c of [p.ghost.front, ...p.ghost.behind]) c.done();
+      resolve();
+    };
+    const onMove = (e: PointerEvent) => {
+      if (leaving) return;
+      const box = p.home?.el.getBoundingClientRect();
+      if (
+        p.home &&
+        box &&
+        e.clientX >= box.left &&
+        e.clientX <= box.right &&
+        e.clientY >= box.top &&
+        e.clientY <= box.bottom
+      ) {
+        finish();
+        p.home.back(e.clientX, e.clientY);
+        return;
+      }
+      place(e.clientX, e.clientY);
+      showTarget(takerAt(p, e.clientX, e.clientY));
+      if (atEdge(e)) takeOut();
+    };
+    const onUp = (e: PointerEvent) => {
+      down = false;
+      if (leaving) return;
+      // A drop on a VOD's clip bar keeps the clips made ahead (the same
+      // stretches): waited for, then shown. Anywhere else they go, as in finish.
+      const ahead = early;
+      early = null;
+      finish();
+      if (!p.put(takerAt(p, e.clientX, e.clientY), ahead)) forgetAll(ahead);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !leaving) {
+        e.preventDefault();
+        finish();
+      }
+    };
+    // Past the window's edge: the system's drag of the files, once each is
+    // made (and in the format clips are made in), if the button's still down.
+    const takeOut = async () => {
+      leaving = true;
+      const ahead = early;
+      early = null;
+      if (!p.files) return finish();
+      // From here to "drag-start" is what's waited at the edge (tests time it).
+      performance.mark("carry-out");
+      clips.overBar = false;
+      p.ghost.front.el.classList.add("making");
+      let made: Clip[] = [];
+      let dragged = false;
+      try {
+        made = await (ahead ?? p.files());
+        const ready: Clip[] = [];
+        for (const clip of made) {
+          const cut = down ? await clips.ready(clip.id, () => down, p.vodId) : null;
+          const done = cut && p.vodId !== undefined ? await inFormat(cut, p.vodId, () => down) : cut;
+          if (!done) break;
+          ready.push(done);
+        }
+        // The files can be ready as the edge is crossed (a short clip from a
+        // file here, on a slow machine); the release then arrives during the
+        // waits below, so the button is checked again before the drag is
+        // asked for (dragOut), not only here.
+        if (made.length && ready.length === made.length && down) {
+          const png = await p.image();
+          back = bringsBack(p);
+          dragged = await dragOut(ready, png, () => down);
+          if (!dragged) back = null;
+        }
+      } finally {
+        finish();
+        // Let go before their files were ready, or before the drag began:
+        // the clips made only for the drag go (dragOut forgets them, after one).
+        if (!dragged) made.forEach(forgetHidden);
+      }
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("keydown", onKey, true);
+  });
+}
+
 /**
  * Carries a stretch from (`x`, `y`) while the button is down: see the top of
  * this file. Resolves once it's dropped, taken out of the window, or let go.
@@ -497,113 +638,42 @@ export function carry({
   const label = stretchSaid(start, end);
   const stretch: Stretch = { vodId: vod.id, start, end, title, clip, highlight };
   const front = card(Promise.resolve({ vod, start, end, ownPlayer, levels }), label);
-  const ghost = front.el;
-
-  // What the system's drag needs, made while the carry goes on rather than
-  // once it's out of the window, where nothing can be dropped until both are
-  // there: the picture (as soon as its parts are drawn), and the clip's file
-  // where cutting it is quick (from a file here: copied, not downloaded).
+  // The picture for the system's drag, made as soon as its parts are drawn.
   const image = front.image.then((img) => snapshot(img, front.wave, label));
-  let early: Promise<Clip | null> | null = ownPlayer ? make(false) : null;
-
-  const place = showGhost(ghost, from, x, y);
-  clips.carrying = { start, end };
-  document.body.classList.add("timeline-drag");
-  // Text the press began selecting (a pill's name) isn't carried along.
-  window.getSelection()?.removeAllRanges();
-
-  return new Promise((resolve) => {
-    let down = true;
-    let leaving = false;
-    const finish = () => {
-      // Made ahead for a drag out that didn't come: it goes.
-      early?.then(forgetHidden);
-      early = null;
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("keydown", onKey, true);
-      clips.carrying = null;
-      showTarget(NOWHERE);
-      document.body.classList.remove("timeline-drag");
-      ghost.remove();
-      front.done();
-      resolve();
-    };
-    const onMove = (e: PointerEvent) => {
-      if (leaving) return;
-      const box = home?.el.getBoundingClientRect();
-      if (
-        home &&
-        box &&
-        e.clientX >= box.left &&
-        e.clientX <= box.right &&
-        e.clientY >= box.top &&
-        e.clientY <= box.bottom
-      ) {
-        finish();
-        home.back(e.clientX, e.clientY);
-        return;
+  // A clip's pill goes in as the clip (`edits.add`) and a highlight as a
+  // group named for it, both one band; a stretch as a range.
+  const into = (editId: number, index?: number) =>
+    clip !== undefined
+      ? edits.add(editId, clip, index)
+      : highlight
+        ? edits.put(editId, [putOf(stretch)], false, index)
+        : edits.addRange(editId, stretch, index);
+  return carryWith({
+    items: [clip !== undefined ? { kind: "clip", id: clip } : putOf(stretch)],
+    stretches: [{ start, end }],
+    ghost: { el: front.el, front, behind: [] },
+    image: () => image,
+    lift: () => (clips.carrying = { start, end }),
+    put({ edit, timeline, bar }, made) {
+      if (edit === "new") edits.createWith(stretch);
+      else if (edit !== null) into(edit);
+      else if (timeline && edits.openId !== null) into(edits.openId, timeline.index);
+      else if (bar && clips.doc?.kind === "edit")
+        edits.put(clips.doc.id, [{ kind: "range", vodId: vod.id, start, end, title }], true);
+      else if (bar) {
+        void (made ?? Promise.resolve([])).then(() => make(true));
+        return true;
       }
-      place(e.clientX, e.clientY);
-      showTarget(targetAt(e.clientX, e.clientY));
-      if (atEdge(e)) takeOut();
-    };
-    const onUp = (e: PointerEvent) => {
-      down = false;
-      if (leaving) return;
-      // A drop on the clip bar keeps the clip made ahead (the same stretch):
-      // it's waited for, then shown. Anywhere else it goes, as in finish.
-      const ahead = early;
-      early = null;
-      let kept = false;
-      finish();
-      dropAt(e.clientX, e.clientY, stretch, () => {
-        kept = true;
-        return (ahead ?? Promise.resolve(null)).then(() => make(true));
-      });
-      if (!kept) ahead?.then(forgetHidden);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !leaving) {
-        e.preventDefault();
-        finish();
-      }
-    };
-    // Past the window's edge: the system's drag of the clip's file, made for it.
-    const takeOut = async () => {
-      leaving = true;
-      // From here to "drag-start" is what's waited at the edge (tests time it).
-      performance.mark("carry-out");
-      clips.overBar = false;
-      ghost.classList.add("making");
-      let made: Clip | null = null;
-      let dragged = false;
-      const ahead = early;
-      early = null;
-      try {
-        made = await (ahead ?? make(false));
-        const cut = made && (await clips.ready(made.id, () => down, vod.id));
-        const ready = cut && (await inFormat(cut, vod.id, () => down));
-        // Its file can be ready as the edge is crossed (a short clip from a
-        // file here, on a slow machine); the release then arrives during the
-        // waits below, so the button is checked again before the drag is
-        // asked for (dragOut), not only here.
-        const png = ready && down ? await image : null;
-        if (ready && down) {
-          back = bringsBack(stretch, () => make(true));
-          dragged = await dragOut([ready], png ?? undefined, () => down);
-          if (!dragged) back = null;
-        }
-      } finally {
-        finish();
-        // Let go before its file was ready, or before the drag began: the
-        // clip made only for the drag goes (dragOut forgets it, after a drag).
-        if (!dragged) forgetHidden(made);
-      }
-    };
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("keydown", onKey, true);
+      return false;
+    },
+    // Its file is cut ahead where that's quick (from a file here: copied, not downloaded).
+    files: () => make(false).then((c) => (c ? [c] : [])),
+    early: ownPlayer,
+    vodId: vod.id,
+    home,
+    from,
+    x,
+    y,
   });
 }
 
@@ -623,6 +693,8 @@ export interface CarrySet {
   files?: () => Promise<Clip[]>;
   /** The open VOD, if it's its: the files are made in the format clips are made in. */
   vodId?: number;
+  /** Where it came from, if coming back there ends the carry (an edit's timeline). */
+  home?: CarryHome;
   /** Where on screen the item pressed is, for the ghost to fly from. */
   from: DOMRect;
   x: number;
@@ -698,35 +770,6 @@ function deck(faces: Face[] | Promise<Face[]>, count: number, label: string) {
   return { el, front, behind };
 }
 
-/** What of `set` the place under the pointer, `target`, takes into an edit:
- *  on the open edit's timeline, not its own stretches (that would copy them
- *  in place), nor an edit into itself. (A VOD's clip bar takes its stretches.) */
-function takes(set: CarrySet, target: Target): Put[] {
-  const into = target.edit === "new" ? null : target.timeline ? edits.openId : target.edit;
-  const own = (p: Put) => (p.kind === "clip" && p.id === into) || (!!target.timeline && p.kind === "span");
-  if (target.edit !== null || target.timeline) return set.items.filter((p) => !own(p));
-  return target.bar && clips.doc?.kind === "edit" ? set.items : [];
-}
-
-/** What under (`px`, `py`) takes something of `set`; nothing, if nothing would go there. */
-function setTargetAt(set: CarrySet, px: number, py: number): Target {
-  const target = targetAt(px, py);
-  const vodBar = target.bar && clips.doc?.kind === "vod";
-  return (vodBar ? set.stretches.length : takes(set, target).length) ? target : NOWHERE;
-}
-
-/** Puts `set` where it was dropped, at (`px`, `py`), as one change; false if nothing took it. */
-function dropSet(set: CarrySet, px: number, py: number): boolean {
-  const target = setTargetAt(set, px, py);
-  const items = takes(set, target);
-  if (target.edit === "new") edits.createWith(items);
-  else if (target.edit !== null) edits.put(target.edit, items, false);
-  else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
-  else if (target.bar && clips.doc?.kind === "edit") edits.put(clips.doc.id, items, true);
-  else if (target.bar) void exportStretches(set.stretches);
-  return target.edit !== null || target.timeline !== null || target.bar;
-}
-
 /**
  * Carries several things picked from (`x`, `y`) while the button is down, as
  * `carry` carries one: onto an edit's row (at the end of its timeline), "Make
@@ -739,97 +782,33 @@ function dropSet(set: CarrySet, px: number, py: number): boolean {
  * the window, or let go.
  */
 export function carrySet(set: CarrySet): Promise<void> {
-  const shown = deck(set.faces ?? [], set.items.length, set.label);
-  const ghost = shown.el;
-  const place = showGhost(ghost, set.from, set.x, set.y);
-  clips.carried = set.items.length;
-  document.body.classList.add("timeline-drag");
-  window.getSelection()?.removeAllRanges();
-
-  return new Promise((resolve) => {
-    let down = true;
-    let leaving = false;
-    const finish = () => {
-      window.removeEventListener("pointermove", onMove, true);
-      window.removeEventListener("pointerup", onUp, true);
-      window.removeEventListener("keydown", onKey, true);
-      clips.carried = 0;
-      showTarget(NOWHERE);
-      document.body.classList.remove("timeline-drag");
-      ghost.remove();
-      for (const c of [shown.front, ...shown.behind]) c.done();
-      resolve();
-    };
-    const onMove = (e: PointerEvent) => {
-      if (leaving) return;
-      place(e.clientX, e.clientY);
-      showTarget(setTargetAt(set, e.clientX, e.clientY));
-      if (atEdge(e)) takeOut();
-    };
-    const onUp = (e: PointerEvent) => {
-      down = false;
-      if (leaving) return;
-      finish();
-      dropSet(set, e.clientX, e.clientY);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !leaving) {
-        e.preventDefault();
-        finish();
+  const ghost = deck(set.faces ?? [], set.items.length, set.label);
+  return carryWith({
+    items: set.items,
+    stretches: set.stretches,
+    ghost,
+    image: () => ghost.front.image.then((img) => snapshot(img, ghost.front.wave, set.label)),
+    lift: () => (clips.carried = set.items.length),
+    put(target) {
+      const items = takes(set, target);
+      if (target.edit === "new") edits.createWith(items);
+      else if (target.edit !== null) edits.put(target.edit, items, false);
+      else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
+      else if (target.bar && clips.doc?.kind === "edit") edits.put(clips.doc.id, items, true);
+      else if (target.bar) {
+        // On a VOD's clip bar, the clips made for a drag out are the ones kept.
+        void exportStretches(set.stretches);
+        return true;
       }
-    };
-    // Past the window's edge: the system's drag of all their files, once
-    // each is made (and in the format clips are made in), if the button's
-    // still down by then.
-    const takeOut = async () => {
-      leaving = true;
-      if (!set.files) return finish();
-      performance.mark("carry-out");
-      shown.front.el.classList.add("making");
-      let made: Clip[] = [];
-      let dragged = false;
-      try {
-        made = await set.files();
-        const ready: Clip[] = [];
-        for (const clip of made) {
-          const cut = down ? await clips.ready(clip.id, () => down) : null;
-          const done = cut && set.vodId !== undefined ? await inFormat(cut, set.vodId, () => down) : cut;
-          if (!done) break;
-          ready.push(done);
-        }
-        if (made.length && ready.length === made.length && down) {
-          const png = await shown.front.image.then((img) => snapshot(img, shown.front.wave, set.label));
-          back = bringsBackSet(set);
-          dragged = await dragOut(ready, png, () => down);
-          if (!dragged) back = null;
-        }
-      } finally {
-        finish();
-        // Let go before their files were ready, or before the drag began:
-        // the clips made only for the drag go (dragOut forgets them, after one).
-        if (!dragged) made.forEach(forgetHidden);
-      }
-    };
-    window.addEventListener("pointermove", onMove, true);
-    window.addEventListener("pointerup", onUp, true);
-    window.addEventListener("keydown", onKey, true);
+      return false;
+    },
+    files: set.files,
+    vodId: set.vodId,
+    home: set.home,
+    from: set.from,
+    x: set.x,
+    y: set.y,
   });
-}
-
-/** Brought back over the window, `set`'s system drag goes where a carry of it would. */
-function bringsBackSet(set: CarrySet) {
-  const b: NonNullable<typeof back> = {
-    over(x, y) {
-      clips.carried = set.items.length;
-      showTarget(setTargetAt(set, x, y));
-    },
-    dropped(x, y) {
-      // On a VOD's clip bar, the clips made for the drag are the ones kept.
-      if (setTargetAt(set, x, y).bar && clips.doc?.kind === "vod") b.kept = true;
-      dropSet(set, x, y);
-    },
-  };
-  return b;
 }
 
 /**
