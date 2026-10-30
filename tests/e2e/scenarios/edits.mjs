@@ -785,7 +785,7 @@ export default {
     await app.js(`window.dispatchEvent(new Event("focus"))`);
     await until("the clip gone with its file", async () => (await barClips()).length === 0, 10_000);
     await undoKey(false);
-    await until(
+    const barKept = await until(
       "the clip back after its file went",
       async () => {
         const [c] = await barClips();
@@ -915,12 +915,31 @@ export default {
       `the VOD removed with its video: the edit's pieces kept (VODs ${realized.map((p) => p.vod_id)}), rendered again over ${renderedBefore}`,
     );
 
-    // Deleted from its row, after asking.
+    // Deleted from its row, after asking: the clip on its clip bar goes with
+    // it, as a VOD's clips do: its file deleted, out of the library, and the
+    // page told ("clip-removed").
+    const [onBar] = await app.invoke("edit_clips", { id: kept.id });
+    if (onBar?.id !== barKept.id || !existsSync(onBar.file_path ?? ""))
+      throw new Error(`before the edit's deleted, its clip bar has ${JSON.stringify(onBar)}`);
+    await app.js(
+      `window.__clipsRemoved = [];
+       const internals = window.__TAURI_INTERNALS__;
+       const handler = internals.transformCallback((e) => window.__clipsRemoved.push(e.payload));
+       await internals.invoke("plugin:event|listen", { event: "clip-removed", target: { kind: "Any" }, handler });`,
+    );
     const asked = await app.asked();
     await app.answer("Delete");
     await app.click(`.vod.edit[data-key="-${kept.id}"] button[aria-label="Delete edit"]`);
     await until("the edit gone", async () => (await app.invoke("list_edits")).length === 0, MINUTE);
     if ((await app.asked()) !== asked + 1) throw new Error("deleting didn't ask first");
+    await until("its clip's file gone with it", () => !existsSync(onBar.file_path), 10_000);
+    const records = new DatabaseSync(libraryPath());
+    const row = records.prepare("SELECT id FROM clips WHERE id = ?").get(onBar.id);
+    records.close();
+    if (row) throw new Error(`its clip ${onBar.id} is still in the library`);
+    const told = await app.js("return window.__clipsRemoved");
+    if (!told.includes(onBar.id)) throw new Error(`the page was told of ${JSON.stringify(told)}, not clip ${onBar.id}`);
+    ctx.log(`the edit deleted: its clip ${onBar.id} with it, file and all (${onBar.file_path})`);
 
     // Nothing uses the VOD now: erased by the time the app is back.
     app = await ctx.restart();

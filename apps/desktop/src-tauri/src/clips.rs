@@ -622,7 +622,7 @@ pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
 /// What's left of clip `id` once it's gone from the library: its file
 /// (unless it was dragged out of the app, `handed_out`: another app's then)
 /// and its thumbnail deleted, and the page told.
-fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
+pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, handed_out: bool) {
     if let Some(path) = file.filter(|_| !handed_out) {
         delete_file(path);
     }
@@ -1153,6 +1153,36 @@ mod tests {
         assert!(on_bar_of(&db, of_vod, vod), "a clip of the VOD's bar");
         assert!(!on_bar_of(&db, of_edit, vod), "a clip of the edit's bar");
         assert!(!on_bar_of(&db, edit, vod), "the edit");
+    }
+
+    /// Deleting an edit took the clips on its clip bar out of the library
+    /// (the database's cascade) but left their files in the clips folder,
+    /// their cuts running and the page not told: they go as a VOD's do.
+    #[test]
+    fn deleting_an_edit_releases_its_bar_clips() {
+        let (db, vod) = library();
+        let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
+        let a = db.add_edit_clip(edit, 1.0, 2.0, "a", true).unwrap().id;
+        let b = db.add_edit_clip(edit, 3.0, 4.0, "b", true).unwrap();
+        assert!(db.set_clip_file(b.id, b.start, b.end, ClipStatus::Ready, Some("/clips/b.mp4"), None).unwrap());
+        let b = b.id;
+        db.hand_out_clip(b).unwrap();
+        let stopped = std::cell::RefCell::new(Vec::new());
+        let stop = |id| stopped.borrow_mut().push(id);
+
+        // Not an edit (a VOD's own clip): nothing goes, none stopped.
+        assert!(crate::edits::delete_edit_in(&db, of_vod, stop).is_err());
+        assert_eq!(db.bar_clips(edit).unwrap().len(), 2);
+        assert!(stopped.borrow().is_empty());
+
+        let gone = crate::edits::delete_edit_in(&db, edit, stop).unwrap();
+        let clips: Vec<_> = gone.clips.iter().map(|(c, out)| (c.id, c.file_path.as_deref(), *out)).collect();
+        assert_eq!(clips, [(a, None, false), (b, Some("/clips/b.mp4"), true)], "its clips, b dragged out");
+        assert_eq!(*stopped.borrow(), [a, b], "their cuts stopped");
+        assert!(db.edit(edit).unwrap().is_none() && db.clip(a).unwrap().is_none() && db.clip(b).unwrap().is_none());
+        assert_eq!(db.clips(vod).unwrap().len(), 1, "the VOD's own clip stays");
     }
 
     #[test]

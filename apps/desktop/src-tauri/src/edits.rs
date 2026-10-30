@@ -300,27 +300,59 @@ pub(crate) async fn rename_edit(app: AppHandle, id: i64, title: String) -> CmdRe
     changing(&app, id, "Edit renamed", |db| db.rename_edit(id, &title))
 }
 
-/// Deletes edit `id`, and its video if it was rendered.
+/// Deletes edit `id`, and its video if it was rendered; the clips on its
+/// clip bar go with it, as a VOD's do.
 #[tauri::command]
 pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let file = {
+    let gone = {
         let db = state.db.lock().unwrap();
-        let file = db.edit(id).map_err(err)?.and_then(|e| e.file_path);
-        // Its file stays if another app took it (dragged out).
-        let handed_out = db.edit_handed_out(id, false).map_err(err)?;
-        if !db.delete_edit(id).map_err(err)? {
-            return Err("That isn't an edit.".into());
-        }
+        let gone = delete_edit_in(&db, id, |clip| state.clips.stop(clip)).map_err(err)?;
         state.history.forget(Doc::Edit(id));
-        file.filter(|_| !handed_out)
+        gone
     };
     // Its render stops (one that ends now finds it gone, and deletes its file).
     state.clips.cancel(id);
-    if let Some(file) = file {
+    if let Some(file) = gone.file {
         crate::files::delete_file(file);
+    }
+    // Its clips' files once they're out of the library, as `clips::remove`
+    // does for one.
+    for (clip, handed_out) in gone.clips {
+        crate::clips::after_delete(&app, clip.id, clip.file_path, handed_out);
     }
     let _ = app.emit("edit-removed", id);
     Ok(())
+}
+
+/// What `delete_edit` takes away with an edit: its video's file, unless
+/// another app took it (dragged out), and the clips that were on its clip
+/// bar, each with whether its file was dragged out (another app's then).
+pub(crate) struct EditGone {
+    pub file: Option<String>,
+    pub clips: Vec<(vodscribe_core::db::Clip, bool)>,
+}
+
+/// What `delete_edit` does in the library: edit `id` deleted with the clips
+/// on its clip bar, in one transaction (all of it goes, or none of it does),
+/// then `stop` given each clip's id (its file being made is stopped). An
+/// error if it isn't an edit.
+pub(crate) fn delete_edit_in(db: &Db, id: i64, stop: impl Fn(i64)) -> Result<EditGone> {
+    let gone = db.atomically(|db| {
+        let file = db.edit(id)?.and_then(|e| e.file_path);
+        let handed_out = db.edit_handed_out(id, false)?;
+        let mut clips = Vec::new();
+        for clip in db.bar_clips(id)? {
+            let out = db.clip_handed_out(clip.id)?;
+            db.delete_clip(clip.id)?;
+            clips.push((clip, out));
+        }
+        anyhow::ensure!(db.delete_edit(id)?, "That isn't an edit.");
+        Ok(EditGone { file: file.filter(|_| !handed_out), clips })
+    })?;
+    for (clip, _) in &gone.clips {
+        stop(clip.id);
+    }
+    Ok(gone)
 }
 
 /// Puts a copy of clip `clip_id` in edit `edit_id` as a group, at `index`

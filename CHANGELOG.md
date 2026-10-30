@@ -60,6 +60,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Copying chapters keeps each on its own line: a chapter title with a line break in it, as one from annotations can have, added lines YouTube read as chapters of their own.
   - Pressing C twice on a selection, or clicking Clip twice, makes one clip of it. A second press before the first had cut the selection's ends also clipped the stretch the playhead was in, between the cuts there were before.
   - A clip on an edit's clip bar is still made when the VOD it's cut from is removed from the library meanwhile. It stopped, and showed as being made until VODscribe restarted.
+  - Deleting an edit also deletes the clips on its clip bar, with their files (unless you dragged one out of VODscribe), as deleting a VOD does with its clips. They left the library, but their files stayed in the clips folder.
 
 ## 0.6.0 — 2026-10-24
 
