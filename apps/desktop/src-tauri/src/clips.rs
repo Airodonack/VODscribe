@@ -133,12 +133,7 @@ impl Cutter {
     /// could take a while).
     pub(crate) fn stop_vod(&self, db: &Db, vod_id: i64) {
         self.removing.lock().unwrap().insert(vod_id);
-        // Snippets of it only: edits keep their pieces of it.
-        let of_vod = |id: i64| {
-            db.is_snippet(id).ok().flatten() == Some(true)
-                && db.clip(id).ok().flatten().is_some_and(|c| c.vod_id == vod_id)
-        };
-        self.jobs.stop_running(|&id| of_vod(id));
+        self.jobs.stop_running(|&id| on_bar_of(db, id, vod_id));
     }
 
     /// VOD `vod_id`'s removal is over: gone, or still there if it failed. Its
@@ -304,6 +299,14 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     }
     delete_leftovers();
     Ok(())
+}
+
+/// Whether clip `id` goes with VOD `vod_id` as it's taken out of the
+/// library (`Cutter::stop_vod`).
+fn on_bar_of(db: &Db, id: i64, vod_id: i64) -> bool {
+    // The clips of its own clip bar only, which go with it: edits keep their
+    // pieces of it, and their clip bars' clips too.
+    db.clip(id).ok().flatten().is_some_and(|c| c.bar == Some(ClipBar::Vod { id: vod_id }))
 }
 
 /// The history a change to `clip` goes in: that of the VOD or edit whose
@@ -1134,6 +1137,22 @@ mod tests {
         };
         let vod = db.add_vod(&info).unwrap().0.id;
         (db, vod)
+    }
+
+    /// A clip on an edit's clip bar of a VOD taken out of the library stays,
+    /// as the edit's pieces of it do: its cut went on stopped, and was never
+    /// queued again (only the VOD's own bar is), so it showed being cut until
+    /// the app next started.
+    #[test]
+    fn taking_a_vod_out_stops_only_the_clips_of_its_own_bar() {
+        let (db, vod) = library();
+        let of_vod = db.add_clip(vod, 1.0, 2.0, "v", true).unwrap().id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
+        let of_edit = db.add_edit_clip(edit, 1.0, 2.0, "e", true).unwrap().id;
+        assert!(on_bar_of(&db, of_vod, vod), "a clip of the VOD's bar");
+        assert!(!on_bar_of(&db, of_edit, vod), "a clip of the edit's bar");
+        assert!(!on_bar_of(&db, edit, vod), "the edit");
     }
 
     #[test]
