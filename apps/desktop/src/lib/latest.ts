@@ -25,6 +25,8 @@ export function latest<A, T>(o: Latest<A, T>) {
   let wanted: { arg: A } | null = null;
   let asking = false;
   let shown: { value: T } | null = null;
+  /** Clears so far: what was asked before one is for what was let go of. */
+  let clears = 0;
 
   const letGo = () => {
     if (shown) o.free?.(shown.value);
@@ -34,7 +36,8 @@ export function latest<A, T>(o: Latest<A, T>) {
     if (asking || !wanted) return;
     asking = true;
     const want = wanted;
-    const current = () => wanted === want || (!!o.between && wanted !== null);
+    const since = clears;
+    const current = () => wanted === want || (!!o.between && wanted !== null && clears === since);
     try {
       const value = await o.fetch(want.arg);
       if (!current()) o.free?.(value);
@@ -45,7 +48,8 @@ export function latest<A, T>(o: Latest<A, T>) {
         if (before) o.free?.(before.value);
       }
     } catch (e) {
-      if (current()) o.failed?.(e, want.arg);
+      // Only the one still wanted: one moved on from is followed by the newest.
+      if (wanted === want) o.failed?.(e, want.arg);
     } finally {
       asking = false;
       // Moved on while asking: the newest.
@@ -59,6 +63,7 @@ export function latest<A, T>(o: Latest<A, T>) {
     },
     clear() {
       wanted = null;
+      clears++;
       letGo();
     },
   };

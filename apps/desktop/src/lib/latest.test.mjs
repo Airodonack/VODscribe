@@ -105,3 +105,33 @@ test("a failure is told only for the one still wanted, and the newest is asked a
   await new Promise((done) => setTimeout(done));
   assert.deepEqual(failed, ["b"]);
 });
+
+test("between: what was asked before a clear isn't shown for what's wanted after it", async () => {
+  // An edge of an edit's piece let go of (clear), and another dragged
+  // before the first one's frame came: that frame is the old edge's.
+  const w = watched(true);
+  w.l.want("first edge");
+  w.l.clear();
+  w.l.want("second edge");
+  await w.answer(0, "first edge's frame");
+  assert.deepEqual(w.shown, []);
+  assert.deepEqual(w.freed, ["first edge's frame"]);
+  await w.answer(1, "second edge's frame");
+  assert.deepEqual(w.shown, ["second edge's frame"]);
+});
+
+test("between: a moment moved on from that fails says nothing; the newest is asked", async () => {
+  const r = requests();
+  /** @type {string[]} */
+  const failed = [];
+  const l = latest({ fetch: r.fetch, got() {}, between: true, failed: (_e, arg) => failed.push(arg) });
+  l.want("a");
+  l.want("b");
+  r.asked[0].reject(new Error("no"));
+  await new Promise((done) => setTimeout(done));
+  assert.deepEqual(failed, []);
+  assert.deepEqual(
+    r.asked.map((a) => a.arg),
+    ["a", "b"],
+  );
+});
