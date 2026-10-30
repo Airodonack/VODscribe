@@ -41,8 +41,12 @@ function powershell(script, env = {}) {
   });
 }
 
-/** Why the OS layer can't run here, or null if it can. */
-export function unavailable() {
+/**
+ * Why the OS layer can't run here, or null if it can. With `linuxOnly`, what
+ * a scenario drives through it that is driven on Linux only so far ("drags",
+ * "the system's keys"): elsewhere, that is why.
+ */
+export function unavailable({ linuxOnly = null } = {}) {
   // Under Wayland the app's window is Wayland's: x11grab and xdotool would
   // see and click Xwayland's screen instead (DISPLAY is set there too).
   if (process.platform === "linux" && process.env.WAYLAND_DISPLAY && process.env.GDK_BACKEND !== "x11")
@@ -55,6 +59,7 @@ export function unavailable() {
       return "no xdotool";
     }
   }
+  if (linuxOnly && process.platform !== "linux") return `${linuxOnly} are driven on Linux only, so far`;
   return null;
 }
 

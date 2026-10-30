@@ -17,6 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { MINUTE, until } from "../lib/app.mjs";
@@ -218,7 +219,8 @@ export default {
 
         // The Marks toggles: both on at first; each hides its own.
         const first = await toggles(app);
-        if (JSON.stringify(first) !== '{"Your marks":true,"Imported marks":true}')
+        // Field by field: a page's object may come back with its keys in another order (Windows, macOS 12).
+        if (!isDeepStrictEqual(first, { "Your marks": true, "Imported marks": true }))
           wrong.push(`the Marks toggles start ${JSON.stringify(first)}`);
         await toggle(app, "Imported marks");
         const mineOnly = await chaptersRead(app, "Mine");
@@ -235,7 +237,7 @@ export default {
         app = await ctx.restart();
         await show(app, vod.id);
         const kept = await toggles(app);
-        if (JSON.stringify(kept) !== '{"Your marks":false,"Imported marks":true}')
+        if (!isDeepStrictEqual(kept, { "Your marks": false, "Imported marks": true }))
           wrong.push(`after a restart, the Marks toggles are ${JSON.stringify(kept)}`);
         await toggle(app, "Your marks");
         const back = await chaptersRead(app, all);

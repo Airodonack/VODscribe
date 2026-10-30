@@ -66,6 +66,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { serveFiles } from "../lib/fileHost.mjs";
@@ -868,7 +869,8 @@ export default {
           faces: row.querySelector(".faces")?.title ?? null }`,
         editRow,
       );
-      if (JSON.stringify(meta) !== JSON.stringify({ meta: "0:00·5s", faces: "Mar, Ada, Jules" }))
+      // Field by field: a page's object may come back with its keys in another order (Windows, macOS 12).
+      if (!isDeepStrictEqual(meta, { meta: "0:00·5s", faces: "Mar, Ada, Jules" }))
         wrong.push(`in the edit, Close call's row reads ${JSON.stringify(meta)}`);
       // Opened (a highlight with nothing to show has nothing to open).
       const opens = await app.js(`return !!document.querySelector(arguments[0] + " .chevron")`, editRow);

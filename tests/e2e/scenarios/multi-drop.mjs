@@ -307,7 +307,7 @@ export default {
 
     // Two of the edit's pills dragged out of the window with the system's
     // mouse: one drag with both files (seen as they come back over it).
-    const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+    const why = os.unavailable({ linuxOnly: "drags" });
     if (why) ctx.log(`no drag out of the window: ${why}`);
     else await dragOutBoth();
     async function dragOutBoth() {
