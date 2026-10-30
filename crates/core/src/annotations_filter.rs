@@ -331,8 +331,9 @@ pub enum Judged {
 ///   be published already (its gift is showing): then found, unasked.
 /// - in it, imported in version V and last seen in another: newer, unasked
 ///   (it's marked already).
-/// - in it, imported in version V and last seen in V: asked only when the
-///   set hasn't V (a newer one, probably).
+/// - in it, imported in version V and last seen in V, or in none since (the
+///   file host said none was published): asked only when the set hasn't V
+///   (a newer one, probably).
 pub fn judge(filter: &Filter, vod: &Candidate) -> Judged {
     if !can_be_published(&vod.platform) || !filter.contains(&exists_key(&vod.platform, &vod.platform_id)) {
         return Judged::Skip;
@@ -342,7 +343,9 @@ pub fn judge(filter: &Filter, vod: &Candidate) -> Judged {
         None => Judged::Ask,
         Some(imported) => match vod.seen.as_deref() {
             Some(seen) if !same_version(seen, imported) => Judged::Newer,
-            Some(_) if !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported))) => {
+            // Seen in V, or in none since (the file host said none was published,
+            // and the set has it again): asked when the set hasn't V.
+            _ if !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported))) => {
                 Judged::Ask
             }
             _ => Judged::Skip,
@@ -766,6 +769,38 @@ mod tests {
             *asked.lock().unwrap(),
             ["GET /annotations/filter.bin HTTP/1.1 since \"0123456789abcdef0123456789abcdef\""]
         );
+    }
+
+    /// A VOD whose imported annotations were taken down (the file host said
+    /// 404 when its row was checked) and published again later in another
+    /// version: the check asks about it and finds it newer. Published again
+    /// in the version imported, it isn't asked about.
+    #[test]
+    fn annotations_taken_down_and_published_again_are_found_newer() {
+        for (published, asked_about) in [(MD5_B, true), (MD5_A, false)] {
+            let lib = Library::new();
+            lib.ask(true);
+            let back = lib.add("back", Some(&format!("\"{MD5_A}\"")));
+            lib.db.lock().unwrap().set_annotations_found(back, &Found::None).unwrap();
+            let set =
+                Filter::of(&[exists_key("youtube", "back"), version_key("youtube", "back", published)]).to_bytes();
+            let (base, asked) = host(Arc::new(move |req: &str| {
+                if req.lines().next().unwrap_or("").contains("filter.bin") {
+                    return (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), set.clone());
+                }
+                (format!("HTTP/1.1 200 OK\r\nETag: W/\"{published}\""), Vec::new())
+            }));
+            let (checked, _) = lib.check(&base);
+            let checked = checked.unwrap();
+            let mut want = vec!["GET /annotations/filter.bin HTTP/1.1"];
+            if asked_about {
+                want.push("HEAD /annotations/youtube/back.json HTTP/1.1");
+                assert_eq!(checked, Checked { asked: true, confirmed: 1, found: vec![], newer: vec![back] });
+            } else {
+                assert_eq!(checked, Checked { asked: true, ..Checked::default() });
+            }
+            assert_eq!(*asked.lock().unwrap(), want, "published in {published}");
+        }
     }
 
     /// A set that says "probably" when the file host says no, or says the same
