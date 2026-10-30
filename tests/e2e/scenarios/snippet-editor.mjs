@@ -6,7 +6,8 @@
 // again, made again too. Split in two and so rendered as an edit, a chapter
 // added in it, renamed and moved makes it again each time. Its head names
 // the VOD before it, and the way back under its player opens the VOD, its
-// pill picked there.
+// pill picked there. Opened again and deleted while it's open, the editor
+// closes.
 
 import { existsSync } from "node:fs";
 
@@ -151,5 +152,19 @@ export default {
       10_000,
     );
     log(`back from the clip to "${title}": its pill picked`);
+
+    // Opened again, as at the start.
+    await app.js(
+      `const el = document.querySelector('.chip.ready[data-clip="${clip.id}"] .time');
+       for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
+       el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
+    );
+    await until("the clip open again", () => app.js(`return !!document.querySelector(arguments[0])`, name), MINUTE);
+
+    // Deleted from its clip bar while it's open: the editor closes, as an
+    // edit's does when it's deleted.
+    await app.invoke("delete_clip", { id: clip.id });
+    await until("the editor closed", () => app.js(`return !document.querySelector("section.edit-view")`), 10_000);
+    log("deleted while open: the editor closed");
   },
 };

@@ -21,6 +21,28 @@ import * as os from "../lib/os.mjs";
 
 const NAME = "Landing edit";
 
+/** Double-clicks clip `id`'s pill on the open edit's clip bar (as the page
+ *  gets one: two clicks, then the double-click), and waits for the clip open
+ *  in the editor. */
+async function openPill(app, id) {
+  await app.js(
+    `const el = document.querySelector(arguments[0]);
+     const box = el.getBoundingClientRect();
+     const at = { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + box.height / 2 };
+     for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { ...at, detail }));
+     el.dispatchEvent(new MouseEvent("dblclick", { ...at, detail: 2 }));`,
+    `section.edit-view .chip[data-clip="${id}"]`,
+  );
+  await until(
+    "the clip open in the editor",
+    () =>
+      app.js(
+        `return document.querySelector("section.edit-view input.title")?.getAttribute("aria-label") === "Clip name"`,
+      ),
+    10_000,
+  );
+}
+
 /** A pointer event's fields at (x, y) with `buttons` down, in the page. */
 const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
 
@@ -726,22 +748,7 @@ export default {
     // "Clip name", no Render), the way a VOD's does: it's no edit, so the
     // library lists no row for it. Its head names the edit before it; the
     // way back under its player opens the edit, its pill picked there.
-    await app.js(
-      `const el = document.querySelector(arguments[0]);
-       const box = el.getBoundingClientRect();
-       const at = { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + box.height / 2 };
-       for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { ...at, detail }));
-       el.dispatchEvent(new MouseEvent("dblclick", { ...at, detail: 2 }));`,
-      `section.edit-view .chip[data-clip="${barClip.id}"]`,
-    );
-    await until(
-      "the clip open in the editor",
-      () =>
-        app.js(
-          `return document.querySelector("section.edit-view input.title")?.getAttribute("aria-label") === "Clip name"`,
-        ),
-      10_000,
-    );
+    await openPill(app, barClip.id);
     const opened = await app.js(`return {
       row: !!document.querySelector('.list .vod[data-key="${-barClip.id}"]'),
       render: !!document.querySelector("section.edit-view button.make") };`);
@@ -915,9 +922,10 @@ export default {
       `the VOD removed with its video: the edit's pieces kept (VODs ${realized.map((p) => p.vod_id)}), rendered again over ${renderedBefore}`,
     );
 
-    // Deleted from its row, after asking: the clip on its clip bar goes with
-    // it, as a VOD's clips do: its file deleted, out of the library, and the
-    // page told ("clip-removed").
+    // Deleted from its row, after asking, with the clip on its clip bar open
+    // in the editor: the clip goes with it, as a VOD's clips do: its file
+    // deleted, out of the library, and the page told ("clip-removed"), which
+    // closes the editor.
     const [onBar] = await app.invoke("edit_clips", { id: kept.id });
     if (onBar?.id !== barKept.id || !existsSync(onBar.file_path ?? ""))
       throw new Error(`before the edit's deleted, its clip bar has ${JSON.stringify(onBar)}`);
@@ -927,6 +935,13 @@ export default {
        const handler = internals.transformCallback((e) => window.__clipsRemoved.push(e.payload));
        await internals.invoke("plugin:event|listen", { event: "clip-removed", target: { kind: "Any" }, handler });`,
     );
+    await app.click(`.vod.edit[data-key="-${kept.id}"] button.main`);
+    await until(
+      "the edit open, its clip on its bar",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `section.edit-view .chip[data-clip="${onBar.id}"]`),
+      MINUTE,
+    );
+    await openPill(app, onBar.id);
     const asked = await app.asked();
     await app.answer("Delete");
     await app.click(`.vod.edit[data-key="-${kept.id}"] button[aria-label="Delete edit"]`);
@@ -939,7 +954,8 @@ export default {
     if (row) throw new Error(`its clip ${onBar.id} is still in the library`);
     const told = await app.js("return window.__clipsRemoved");
     if (!told.includes(onBar.id)) throw new Error(`the page was told of ${JSON.stringify(told)}, not clip ${onBar.id}`);
-    ctx.log(`the edit deleted: its clip ${onBar.id} with it, file and all (${onBar.file_path})`);
+    await until("the editor closed", () => app.js(`return !document.querySelector("section.edit-view")`), 10_000);
+    ctx.log(`the edit deleted: its clip ${onBar.id} with it, file and all (${onBar.file_path}), its editor closed`);
 
     // Nothing uses the VOD now: erased by the time the app is back.
     app = await ctx.restart();

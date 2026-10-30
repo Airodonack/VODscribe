@@ -92,6 +92,14 @@ class Edits {
       nav.forget({ kind: "edit", id });
       this.#gone(id);
     });
+    // A clip of a clip bar open in the editor closes when the clip is
+    // deleted (from its bar, or with the edit or VOD whose bar it's on), as
+    // an edit does.
+    events.clipRemoved((id) => {
+      if (this.openId !== id || this.list.some((e) => e.id === id)) return;
+      nav.forget({ kind: "edit", id });
+      this.#gone(id);
+    });
     events.footageProgress((f) => this.fetching.set(f.vod_id, f));
     events.footage(({ vod_id, error }) => {
       this.fetching.delete(vod_id);
@@ -139,6 +147,7 @@ class Edits {
 
   #gone(id: number) {
     this.list = this.list.filter((e) => e.id !== id);
+    if (this.#snippet?.id === id) this.#snippet = null;
     if (this.openId === id) {
       this.openId = null;
       this.pieces = [];

@@ -61,6 +61,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Pressing C twice on a selection, or clicking Clip twice, makes one clip of it. A second press before the first had cut the selection's ends also clipped the stretch the playhead was in, between the cuts there were before.
   - A clip on an edit's clip bar is still made when the VOD it's cut from is removed from the library meanwhile. It stopped, and showed as being made until VODscribe restarted.
   - Deleting an edit also deletes the clips on its clip bar, with their files (unless you dragged one out of VODscribe), as deleting a VOD does with its clips. They left the library, but their files stayed in the clips folder.
+  - A clip open in the editor closes when it's deleted, from its clip bar or with the edit or VOD whose clip bar it's on. It stayed open, though it was gone.
 
 ## 0.6.0 — 2026-10-24
 
