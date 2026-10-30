@@ -1,5 +1,5 @@
 """Tests for release.py's changelog and version parsing, verify-release.py's
-signature checks, and ready-to-release.py's next development version:
+signature checks, and ready-to-release.py's changelog, ledger and next version checks:
 python3 -I -m unittest scripts/test_release.py"""
 
 import base64
@@ -176,6 +176,52 @@ class SignatureTest(unittest.TestCase):
         forged = sig_file.replace("file:installer", "file:other")
         self.assertIn("trusted comment", verify.minisign_ok(public_file, forged, file_hash) or "")
 
+
+
+class EntryShape(unittest.TestCase):
+    def test_fixes_last_as_sub_bullets(self):
+        self.assertEqual(ready.entry_problems("- New.\n- Also new.\n- Fixes:\n  - A fix.\n  - Another."), [])
+        self.assertEqual(ready.entry_problems("- New only."), [])
+
+    def test_new_behaviour_under_fixes(self):
+        self.assertEqual(len(ready.entry_problems("- Fixes:\n  - A fix.\n- New, below the fixes.")), 1)
+        self.assertEqual(len(ready.entry_problems("- Fixes:\n  - A fix.\n- Fixes:\n  - Another.")), 1)
+
+    def test_a_fix_above_fixes(self):
+        self.assertEqual(len(ready.entry_problems("- New.\n  - A fix out of place.\n- Fixes:\n  - A fix.")), 1)
+
+    def test_the_real_entry(self):
+        root = Path(__file__).resolve().parent.parent
+        version = release.cargo_version((root / "Cargo.toml").read_text()).split("-")[0]
+        body, _ = release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
+        self.assertEqual(ready.entry_problems(body), [])
+
+
+class Ledgers(unittest.TestCase):
+    def ledgers(self, scenarios, durations, flaky=None, budgets=None):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        e2e = Path(folder.name)
+        (e2e / "scenarios").mkdir()
+        for name in scenarios:
+            (e2e / "scenarios" / f"{name}.mjs").write_text("")
+        (e2e / "durations.json").write_text(json.dumps(durations))
+        (e2e / "flaky.json").write_text(json.dumps(flaky or {}))
+        (e2e / "budgets.json").write_text(json.dumps({"about": "", "linux": {"scenarios": budgets or {}}}))
+        self.e2e = e2e
+        return ready.ledger_problems(e2e)
+
+    def test_in_step(self):
+        self.assertEqual(self.ledgers(["a", "b"], {"a": 1, "b": 2}, {"a": "why"}, {"b": {}}), [])
+
+    def test_a_scenario_with_no_time(self):
+        self.assertEqual(self.ledgers(["a", "b"], {"a": 1}), [])
+        self.assertEqual(ready.unmeasured(self.e2e), ["b"])
+
+    def test_names_of_scenarios_gone(self):
+        problems = self.ledgers(["a"], {"a": 1, "old": 3}, {"gone": "why"}, {"perf-old": {}})
+        self.assertEqual(len(problems), 3)
+        self.assertTrue(all("aren't there" in p for p in problems))
 
 
 class NextDevelopmentVersion(unittest.TestCase):
