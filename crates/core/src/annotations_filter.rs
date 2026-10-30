@@ -363,6 +363,10 @@ fn check_at(
         return Ok(checked);
     }
     let _one = CHECKING.lock().unwrap_or_else(|e| e.into_inner());
+    // Turned off while it waited for another check: nothing is asked, not even the set.
+    if !may_ask(settings) {
+        return Ok(checked);
+    }
     checked.asked = true;
     let kept = load_kept(cache);
     let filter = match fetch(base, kept.as_ref().map(|(_, etag)| etag.as_str()))? {
@@ -759,6 +763,49 @@ mod tests {
                 "GET /annotations/filter.bin HTTP/1.1 since \"00000000000000000000000000000000\"",
                 "HEAD /annotations/youtube/there.json HTTP/1.1",
             ]
+        );
+    }
+
+    /// Asking turned off while a check waits for another (the library's
+    /// "Check for annotations" pressed during the one at start): it asks the
+    /// file host nothing, not even for the set, and says asking is off.
+    #[test]
+    fn a_check_waiting_for_another_asks_nothing_once_asking_is_turned_off() {
+        let lib = Library::new();
+        lib.ask(true);
+        lib.add("there", None);
+        let set = published();
+        // The first check's question about "there" is answered only when the test says.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = Mutex::new(held);
+        let (base, asked) = host(Arc::new(move |req: &str| {
+            let line = req.lines().next().unwrap_or("");
+            if line.contains("filter.bin") {
+                if req.to_ascii_lowercase().contains("if-none-match: \"set1\"") {
+                    return ("HTTP/1.1 304 Not Modified\r\nETag: \"set1\"".into(), Vec::new());
+                }
+                return ("HTTP/1.1 200 OK\r\nETag: \"set1\"".into(), set.clone());
+            }
+            let _ = held.lock().unwrap().recv();
+            (format!("HTTP/1.1 200 OK\r\nETag: \"{MD5_A}\""), Vec::new())
+        }));
+        let (first, second) = std::thread::scope(|s| {
+            let first = s.spawn(|| lib.check(&base).0);
+            while !asked.lock().unwrap().iter().any(|l| l.starts_with("HEAD")) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            // The second has found asking on, and waits for the first.
+            let second = s.spawn(|| lib.check(&base).0);
+            std::thread::sleep(Duration::from_millis(300));
+            lib.ask(false);
+            release.send(()).unwrap();
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_eq!(first.unwrap().confirmed, 1);
+        assert_eq!(second.unwrap(), Checked::default(), "the second check asked, with asking off");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            ["GET /annotations/filter.bin HTTP/1.1", "HEAD /annotations/youtube/there.json HTTP/1.1"]
         );
     }
 
