@@ -738,23 +738,17 @@
   }
 
   // Selecting a VOD opens its player paused, ready to jump around.
-  /** Out of the open edit to VOD `vodId`, paused at `time` (a source link was
-   *  followed); what the edit plays of it stays lit (`edits.lit`). */
-  function openVodAt(vodId: number, time: number) {
-    const lit = edits.lit;
+  /** Out of the open edit to VOD `vodId`, paused at `time`: from an edit's
+   *  source link, what the edit plays of it staying lit (`keepLit`:
+   *  `edits.lit`), or from a cast member's link to their stream at a moment
+   *  (castLink.svelte.ts), which brings back a search's results set aside
+   *  (`bringResults`: over it, if the box has words), as picking it from the
+   *  list does. */
+  function openVodAt(vodId: number, time: number, { keepLit = false, bringResults = false } = {}) {
+    const lit = keepLit ? edits.lit : null;
     edits.openEdit(null);
     edits.lit = lit;
-    selectedId = vodId;
-    if (playing?.vodId === vodId) playing.at = { time, play: false };
-    else playing = { vodId, at: { time, play: false } };
-  }
-
-  /** Another streamer's VOD the library has, from a cast member's link to
-   *  their stream at a moment (castLink.svelte.ts): opened, paused at `time`. */
-  function openPov(vodId: number, time: number) {
-    edits.lit = null;
-    edits.openEdit(null);
-    aside = false;
+    if (bringResults) aside = false;
     selectedId = vodId;
     if (playing?.vodId === vodId) playing.at = { time, play: false };
     else playing = { vodId, at: { time, play: false } };
@@ -762,7 +756,7 @@
   // The website has no library of the visitor's own: its links to other streams go to their sites.
   $effect(() => {
     povLibrary.vods = DEMO ? [] : vods;
-    povLibrary.open = DEMO ? null : openPov;
+    povLibrary.open = DEMO ? null : (vodId, time) => openVodAt(vodId, time, { bringResults: true });
   });
 
   /** Opens VOD `id` (or none), paused where its playhead was left this session (its start if it's new),
@@ -908,7 +902,7 @@
       {/if}
 
       {#if editOpen}
-        <EditView vods={vodsById} onopenvod={openVodAt} />
+        <EditView vods={vodsById} onopenvod={(vodId, time) => openVodAt(vodId, time, { keepLit: true })} />
       {:else if playing && playingVod}
         {#key playing.vodId}
           <Player vod={playingVod} at={playing.at} />

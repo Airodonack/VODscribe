@@ -1,6 +1,8 @@
 // A, with clips picked in the clip bar, asks which edit they go in, without
 // a mouse to drag them (AddToEdit.svelte, as on a highlight's row): two pills
-// picked, A, New edit, Timeline: both go in it, in the order picked.
+// picked, A, New edit, Timeline: both go in it, in the order picked. The
+// edit's source link then opens the VOD where its first piece starts, what
+// the edit plays of it lit.
 
 import { MINUTE, until } from "../lib/app.mjs";
 
@@ -74,5 +76,30 @@ export default {
     const spans = pieces.map((p) => `${Math.round(p.start)}-${Math.round(p.end)}`);
     if (spans.join() !== "2-3,0-1") throw new Error(`the edit has ${spans.join(", ")}, not 2-3, 0-1`);
     log(`A put the two picked clips in "${edit.title}": ${spans.join(", ")}`);
+
+    // The edit open, its source link followed (App.svelte `openVodAt`): the
+    // VOD opens, paused where the edit's first piece of it starts, with what
+    // the edit plays of it lit on its timeline.
+    await app.click(`.vod.edit[data-key="-${edit.id}"] button.main`);
+    await until(
+      "the edit open",
+      () => app.js(`return !!document.querySelector("section.edit-view button.source")`),
+      MINUTE,
+    );
+    await app.js(`document.querySelector("section.edit-view button.source").click()`);
+    await until(
+      "the VOD open, what the edit plays of it lit",
+      async () => {
+        const [edit, lit] = await app.js(
+          `return [!!document.querySelector("section.edit-view"), document.querySelectorAll(".scrubber .lit.used").length]`,
+        );
+        if (!edit && lit === 2 && (await app.shownTime()) === 2) return true;
+        throw new Error(
+          `the edit view ${edit ? "still open" : "closed"}, ${lit} stretches lit, at ${await app.shownTime()} s`,
+        );
+      },
+      MINUTE,
+    );
+    log("its source link opened the VOD at 2 s, both of its stretches lit");
   },
 };
