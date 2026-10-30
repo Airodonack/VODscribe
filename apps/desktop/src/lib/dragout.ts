@@ -23,7 +23,7 @@ import { cuts } from "./cuts.svelte";
 import { edits, putOf, type Stretch } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretchIn } from "./media";
 import { formatTime, playsFromFile } from "./platform";
-import { DRAG_SLOP } from "./pressToDrag";
+import { DRAG_SLOP, holds } from "./pressToDrag";
 
 /** How long a press is held before it picks the clip up. */
 export const HOLD_MS = 250;
@@ -520,6 +520,7 @@ function carryWith(p: Payload): Promise<void> {
       early = null;
       window.removeEventListener("pointermove", onMove, true);
       window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onCancel, true);
       window.removeEventListener("keydown", onKey, true);
       clips.carrying = null;
       clips.carried = 0;
@@ -529,7 +530,15 @@ function carryWith(p: Payload): Promise<void> {
       for (const c of [p.ghost.front, ...p.ghost.behind]) c.done();
       resolve();
     };
+    // Let go where the page didn't see it (outside the window, or on a
+    // question the system asked at the edge): the carry is over, dropped
+    // nowhere, and no drag out begins.
+    const letGo = () => {
+      down = false;
+      if (!leaving) finish();
+    };
     const onMove = (e: PointerEvent) => {
+      if (!holds(e)) return letGo();
       if (leaving) return;
       const box = p.home?.el.getBoundingClientRect();
       if (
@@ -558,6 +567,7 @@ function carryWith(p: Payload): Promise<void> {
       finish();
       if (!p.put(takerAt(p, e.clientX, e.clientY), ahead)) forgetAll(ahead);
     };
+    const onCancel = () => letGo();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !leaving) {
         e.preventDefault();
@@ -605,6 +615,7 @@ function carryWith(p: Payload): Promise<void> {
     };
     window.addEventListener("pointermove", onMove, true);
     window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onCancel, true);
     window.addEventListener("keydown", onKey, true);
   });
 }
