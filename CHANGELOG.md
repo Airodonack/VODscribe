@@ -58,7 +58,6 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - An edit whose videos aren't transcribed shows the CC button, off, as a VOD does, so the player's buttons don't move once its captions come. It had no CC button until then.
   - Opening another video on this computer (a file, a kept video, or an edit) while one plays no longer shows the previous one's time under the player for a moment, until the new one's first frame.
   - Copying chapters keeps each on its own line: a chapter title with a line break in it, as one from annotations can have, added lines YouTube read as chapters of their own.
-    ||||||| parent of 0feadc5 (Pressing C again while a selection is being cut clips the same stretch)
   - Pressing C twice on a selection, or clicking Clip twice, makes one clip of it. A second press before the first had cut the selection's ends also clipped the stretch the playhead was in, between the cuts there were before.
 
 ## 0.6.0 — 2026-10-24

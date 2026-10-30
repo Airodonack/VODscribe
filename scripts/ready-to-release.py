@@ -77,6 +77,9 @@ def entry_problems(body: str) -> list[str]:
     fixes = lines.index("- Fixes:") if "- Fixes:" in lines else len(lines)
     if any(line.startswith("  - ") for line in lines[:fixes]):
         problems.append('it has sub-bullets above "- Fixes:": a fix goes under it')
+    # A merge's or a rebase's conflict left in, which the releases page would show.
+    if any(re.match(r"\s*(<{7}|\|{7}|={7}|>{7})( |$)", line) for line in lines):
+        problems.append("it has a merge conflict's marker left in")
     return problems
 
 

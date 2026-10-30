@@ -190,6 +190,10 @@ class EntryShape(unittest.TestCase):
     def test_a_fix_above_fixes(self):
         self.assertEqual(len(ready.entry_problems("- New.\n  - A fix out of place.\n- Fixes:\n  - A fix.")), 1)
 
+    def test_a_merge_conflicts_marker(self):
+        body = "- New.\n- Fixes:\n  - A fix.\n    ||||||| parent of 0123abc (A fix)\n  - Another."
+        self.assertEqual(len(ready.entry_problems(body)), 1)
+
     def test_the_real_entry(self):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text()).split("-")[0]
