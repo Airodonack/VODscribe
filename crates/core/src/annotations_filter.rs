@@ -105,6 +105,13 @@ pub fn version_of_etag(etag: &str) -> String {
     etag.strip_prefix("W/").unwrap_or(etag).trim_matches('"').to_ascii_lowercase()
 }
 
+/// Whether two ETags name the same version (`version_of_etag`): the file
+/// host gives `W/"<md5>"` when it compresses its answer and `"<md5>"` when
+/// it doesn't, for the same file.
+pub fn same_version(a: &str, b: &str) -> bool {
+    version_of_etag(a) == version_of_etag(b)
+}
+
 /// Whether a version is the shape of an MD5, 32 hex digits: what the file
 /// host gives as an ETag for a plain upload, the same to everyone.
 pub fn md5_shaped(version: &str) -> bool {
@@ -333,14 +340,13 @@ pub fn judge(filter: &Filter, vod: &Candidate) -> Judged {
     match &vod.imported {
         None if vod.available == Availability::Available => Judged::Found,
         None => Judged::Ask,
-        Some(imported) if vod.seen.is_some() && vod.seen.as_ref() != Some(imported) => Judged::Newer,
-        Some(imported)
-            if vod.seen.as_ref() == Some(imported)
-                && !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported))) =>
-        {
-            Judged::Ask
-        }
-        Some(_) => Judged::Skip,
+        Some(imported) => match vod.seen.as_deref() {
+            Some(seen) if !same_version(seen, imported) => Judged::Newer,
+            Some(_) if !filter.contains(&version_key(&vod.platform, &vod.platform_id, &version_of_etag(imported))) => {
+                Judged::Ask
+            }
+            _ => Judged::Skip,
+        },
     }
 }
 
@@ -984,6 +990,26 @@ mod tests {
             ["GET /annotations/filter.bin HTTP/1.1", "HEAD /annotations/youtube/there.json HTTP/1.1"]
         );
         assert_eq!(changed, [first]);
+    }
+
+    /// A VOD imported in `"<md5>"` and last seen as `W/"<MD5>"` (the host
+    /// compressed its answer) is imported in the version it was seen in.
+    #[test]
+    fn a_version_seen_weak_or_in_capitals_is_the_one_imported() {
+        let vod = Candidate {
+            vod_id: 1,
+            platform: "youtube".into(),
+            platform_id: "x1".into(),
+            available: Availability::Available,
+            seen: Some(format!("W/\"{}\"", MD5_A.to_ascii_uppercase())),
+            imported: Some(format!("\"{MD5_A}\"")),
+        };
+        // The set has the version imported: nothing to ask, nothing newer.
+        let same = Filter::of(&[exists_key("youtube", "x1"), version_key("youtube", "x1", MD5_A)]);
+        assert_eq!(judge(&same, &vod), Judged::Skip);
+        // It has another: asked, as one seen in the version imported is.
+        let other = Filter::of(&[exists_key("youtube", "x1"), version_key("youtube", "x1", MD5_B)]);
+        assert!(worth_asking(&other, &vod));
     }
 
     /// The set's VODs are the library's listed ones, of the sites that publish.

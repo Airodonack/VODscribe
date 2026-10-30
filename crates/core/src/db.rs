@@ -784,9 +784,7 @@ END;";
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
     "id, platform, platform_id, url, title, channel, duration, thumbnail, published, started_at, added_at,
-     note, thumb, source_path, media_path, chat, chat_error, annotations,
-     annotations_imported IS NOT NULL AND annotations_version IS NOT NULL
-         AND annotations_version IS NOT annotations_imported AS annotations_newer,
+     note, thumb, source_path, media_path, chat, chat_error, annotations, annotations_version, annotations_imported,
      EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
      (SELECT json_group_array(json_array(s.id, s.vod_id, s.start, s.end, s.status, s.progress, s.reached, s.error, s.model))
@@ -832,7 +830,14 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
         chat_error: r.get("chat_error")?,
         listed: r.get("listed")?,
         annotations: Availability::parse(r.get::<_, Option<String>>("annotations")?.as_deref()),
-        annotations_newer: r.get("annotations_newer")?,
+        // Versions as the file host names them (`same_version`), not as given.
+        annotations_newer: match (
+            r.get::<_, Option<String>>("annotations_version")?,
+            r.get::<_, Option<String>>("annotations_imported")?,
+        ) {
+            (Some(seen), Some(imported)) => !crate::annotations_filter::same_version(&seen, &imported),
+            _ => false,
+        },
     })
 }
 

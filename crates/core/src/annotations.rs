@@ -835,13 +835,16 @@ impl Db {
                 params![vod_id, crate::model::IMPORTED_MODEL],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )?;
+        // Without a version from the server, or none kept from the import, there's no telling.
+        let same =
+            version.as_deref().zip(imported.as_deref()).map(|(v, i)| crate::annotations_filter::same_version(v, i));
         Ok(Offer {
             available: Availability::parse(available.as_deref()),
-            // Without a version from the server, there's no telling: never up to date. Nor
-            // with lines transcribed here since: what it brought in is replaced, in part or all.
-            up_to_date: version.is_some() && version == imported && !local,
+            // Never up to date with no telling, nor with lines transcribed here since:
+            // what it brought in is replaced, in part or all.
+            up_to_date: same == Some(true) && !local,
             local_transcript: local,
-            newer: imported.is_some() && version.is_some() && version != imported,
+            newer: same == Some(false),
         })
     }
 
@@ -1498,6 +1501,28 @@ pub(crate) mod tests {
         // A server that gives no version can't be told up to date.
         db.set_annotations_imported(vod.id, None).unwrap();
         assert!(!db.annotations_offer(vod.id).unwrap().up_to_date);
+    }
+
+    /// The file host gives a file's ETag as `"<md5>"`, or `W/"<md5>"` when it
+    /// compresses the answer: the same file, whichever way it's given.
+    #[test]
+    fn a_version_given_weak_or_in_capitals_is_the_same_file() {
+        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let (vod, _) = db.import_annotations(&file("youtube", "abcdefghijk"), None).unwrap();
+        db.set_annotations_imported(vod.id, Some("\"0123456789abcdef0123456789abcdef\"")).unwrap();
+        let seen = Found::Available { version: Some("W/\"0123456789ABCDEF0123456789ABCDEF\"".into()) };
+        db.set_annotations_found(vod.id, &seen).unwrap();
+        let offer = db.annotations_offer(vod.id).unwrap();
+        assert_eq!(
+            offer,
+            Offer { available: Availability::Available, up_to_date: true, local_transcript: false, newer: false }
+        );
+        assert!(!db.vod(vod.id).unwrap().unwrap().annotations_newer);
+        // Another file is still newer.
+        let other = Found::Available { version: Some("W/\"fedcba9876543210fedcba9876543210\"".into()) };
+        db.set_annotations_found(vod.id, &other).unwrap();
+        assert!(db.annotations_offer(vod.id).unwrap().newer);
+        assert!(db.vod(vod.id).unwrap().unwrap().annotations_newer);
     }
 
     #[test]
