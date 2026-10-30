@@ -51,7 +51,8 @@ pub(crate) fn start(app: &AppHandle) {
     {
         let waiting = waiting.clone();
         app.listen_any("e2e-answer", move |event| {
-            let payload = event.payload().to_owned();
+            // The answer's text, as the page wrote it (`run`).
+            let Ok(payload) = serde_json::from_str::<String>(event.payload()) else { return };
             if let Ok(Answer { id }) = serde_json::from_str(&payload)
                 && let Some(to) = waiting.lock().unwrap().remove(&id)
             {
@@ -118,11 +119,13 @@ fn run(app: &AppHandle, waiting: &Waiting, id: u64, body: &str) -> (u16, String)
   let answer;
   try {{
     const value = await (async function () {{ {body} }}).apply(null, {args});
-    answer = {{ id: {id}, ok: true, value: value === undefined ? null : value }};
-    JSON.stringify(answer);
+    answer = JSON.stringify({{ id: {id}, ok: true, value: value === undefined ? null : value }});
   }} catch (e) {{
-    answer = {{ id: {id}, ok: false, value: String((e && e.message) || e) }};
+    answer = JSON.stringify({{ id: {id}, ok: false, value: String((e && e.message) || e) }});
   }}
+  // Sent as text: an object would be read into the app's JSON values, whose
+  // keys come out sorted by name, and a test comparing an object's text
+  // would see its keys in another order than WebDriver gives them.
   await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", {{ event: "e2e-answer", payload: answer }});
 }})();"#,
         body = run.script,
