@@ -14,6 +14,9 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Pressing B twice quickly makes one cut, not two on the same frame.
   - Undo (Ctrl+Z) pressed right after a change, such as moving a mark, undoes that change, never the one before it.
   - Near a VOD's end, the Transcribe menu lists each stretch once: lengths that would run past the end are left out, as To the end covers them.
+  - A click anywhere on a row in the library, not only on its title, lets ↑ and ↓ move to the row before or after.
+  - Reload, in the right-click menu, brings back what was open, where it was, instead of leaving the app with nothing open while the video's player carried on.
+  - Switching the transcript's heading to Highlights (or Chapters) and back keeps the transcript where you had scrolled it, instead of starting again at the top.
 
 ## 0.7.0 — 2026-10-30
 

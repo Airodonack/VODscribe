@@ -974,6 +974,17 @@ export default {
         transcript: true,
         pane: false,
       });
+      // The transcript scrolled by the reader (a wheel turned over it: it no
+      // longer follows the playhead), to come back to where it was.
+      const BODY = ".below > .body";
+      const scrolled = await app.js(
+        `const body = document.querySelector(arguments[0]);
+        body.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true }));
+        body.scrollTop = Math.round((body.scrollHeight - body.clientHeight) / 2);
+        return { top: body.scrollTop, room: body.scrollHeight - body.clientHeight };`,
+        BODY,
+      );
+      if (scrolled.top < 40) ctx.log(`the transcript has ${scrolled.room} px to scroll: its place isn't checked`);
       await app.click(`${SWITCH} #tab-annotations`);
       await settledLook("the pane in the transcript's place, under the heading", {
         ...plain,
@@ -989,6 +1000,9 @@ export default {
           `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true, cancelable: true }))`,
           key,
         );
+      // A while on the pane (past the transcript's 2 s), then back: the
+      // transcript is where the reader left it.
+      await new Promise((r) => setTimeout(r, 3000));
       await app.js(`document.querySelector(arguments[0]).focus()`, `${SWITCH} #tab-annotations`);
       await press("ArrowLeft");
       await settledLook("← back to the transcript", {
@@ -997,6 +1011,12 @@ export default {
         pane: false,
         focused: "tab-transcript",
       });
+      if (scrolled.top >= 40) {
+        const top = await app.js(`return document.querySelector(arguments[0]).scrollTop`, BODY);
+        if (Math.abs(top - scrolled.top) > 2)
+          wrong.push(`back from the pane after 3 s, the transcript is scrolled to ${top} px, not ${scrolled.top}`);
+        else ctx.log(`back from the pane after 3 s, the transcript is where it was left (${top} px)`);
+      }
       await press("ArrowRight");
       await settledLook("→ to the pane again", {
         reads: `Transcript | ${LABEL}*`,
@@ -1173,9 +1193,9 @@ export default {
     );
     const after = await settled("the library still hidden after a reload", (w) => !w.library && w.main > 0);
     if (!after.edges.startsWith("library-edge=false")) wrong.push(`after a reload, the edges read ${after.edges}`);
-    // The library shown again, the VOD opened from it: the pane still hidden.
+    // The library shown again, the VOD open again by itself (a reload comes
+    // back to where it was): the pane still hidden.
     await app.click(LIBRARY_EDGE);
-    await app.click(`.vod[data-key="${vod.id}"] button.main`);
     const reopened = await settled(
       "the VOD open, the pane still hidden",
       (w) => w.library > 0 && !w.pane && w.main > 0,
@@ -1222,6 +1242,11 @@ export default {
     const longFile = path.join(dir, "minute-annotations-long.json");
     writeFileSync(longFile, JSON.stringify(long));
     await app.invoke("import_annotations_file", { path: longFile });
+    // From its top: the reload brought the VOD back where it was left, its
+    // transcript following the playhead there (a wheel turned: no longer).
+    await app.js(`const body = document.querySelector(".below > .body");
+      body.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      body.scrollTop = 0;`);
     await until(
       "the longer transcript",
       () => app.js(`return !!document.querySelector('#transcript .line button.row[data-time="0.5"]')`),

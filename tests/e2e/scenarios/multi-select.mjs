@@ -504,6 +504,44 @@ export default {
     if ((await openRow()) !== c) throw new Error(`Shift+${back} opened ${await openRow()}, not left ${c} open`);
     ctx.log(`${toward} opened the next row; Shift+${back} picked the run back`);
 
+    // A real click anywhere on a row, outside its title (its status, the
+    // space around it), gives the row the keyboard: the system's ↓ (or ↑)
+    // then opens the next, as after a click on its title.
+    if (process.platform === "linux" && os.unavailable() === null) {
+      await app.js(`document.activeElement?.blur()`);
+      // A point of the row's own, under no button of it.
+      const spot = await app.js(
+        `const row = document.querySelector(arguments[0]);
+         const box = row.getBoundingClientRect();
+         for (let y = box.bottom - 2; y > box.top; y -= 2)
+           for (let x = box.right - 2; x > box.left; x -= 4) {
+             const at = document.elementFromPoint(x, y);
+             if (at && at.closest(".vod") === row && !at.closest("button")) return { x: x - box.left, y: y - box.top };
+           }
+         return null;`,
+        `.list .vod[data-key="${b}"]`,
+      );
+      if (!spot) throw new Error("no place on the row outside its buttons to click");
+      await app.focused();
+      const box = await os.rectOf(app, `.list .vod[data-key="${b}"]`);
+      os.click(box.x + spot.x * box.scale, box.y + spot.y * box.scale, box.scale);
+      await until("the row clicked open", async () => (await openRow()) === b, 10_000);
+      await os.gesture([
+        ["key", toward === "ArrowDown" ? "Down" : "Up"],
+        ["wait", 300],
+      ]);
+      await until("the next row open", async () => (await openRow()) === c, 10_000).catch(async (e) => {
+        const focus = await app.js(`return document.activeElement?.outerHTML.slice(0, 80) ?? null`);
+        throw new Error(
+          `${e.message}: a click on the row at ${JSON.stringify(spot)}, then ${toward}, left ${await openRow()} open (the focus on ${focus})`,
+        );
+      });
+      ctx.log(`a click on the row outside its title, then the system's ${toward}: the next row opened`);
+      // The run picked back again, as before this.
+      await keyOn(c, back, true);
+      await says("2 VODs", `Shift+${back} back again`);
+    }
+
     // The open one removed with its own Remove: it
     // leaves the set, the others numbered 1 and 2.
     await click(a, "toggle");

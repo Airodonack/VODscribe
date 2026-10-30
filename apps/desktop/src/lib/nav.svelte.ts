@@ -44,6 +44,8 @@ export interface Step {
 
 /** The most steps kept each way. */
 const KEEP = 100;
+/** Where the page keeps them over a reload (`keep`, `restore`). */
+const KEPT = "vodscribe.nav";
 
 const key = (doc: Doc | null) => (doc ? docKey(doc) : "none");
 const same = (a: Doc | null, b: Doc | null) => key(a) === key(b);
@@ -150,6 +152,36 @@ class Nav {
     this.forward = keep(this.forward);
     while (this.back.length && samePlace(this.back.at(-1)!, here)) this.back = this.back.slice(0, -1);
     while (this.forward.length && samePlace(this.forward.at(-1)!, here)) this.forward = this.forward.slice(0, -1);
+  }
+
+  /** Keeps where the app is, and the steps back and forward, for the page
+   *  loaded again in this one's place (`restore`): the web view's own
+   *  Reload, in its right-click menu, starts the page afresh while the app
+   *  (and its player) carries on. Kept for this window only, not past a quit. */
+  keep() {
+    const kept = { here: this.#leaving(), back: this.back, forward: this.forward };
+    try {
+      sessionStorage.setItem(KEPT, JSON.stringify(kept));
+    } catch {
+      // Nothing kept: the page starts at the library, as at a start.
+    }
+  }
+
+  /** The page loaded again (`keep`): back to where it was, as it was left,
+   *  with its steps back and forward. False if nothing was kept. */
+  restore(): boolean {
+    let kept: { here: Step; back: Step[]; forward: Step[] } | null = null;
+    try {
+      kept = JSON.parse(sessionStorage.getItem(KEPT) ?? "null");
+      sessionStorage.removeItem(KEPT);
+    } catch {
+      return false;
+    }
+    if (!kept?.here) return false;
+    this.back = kept.back ?? [];
+    this.forward = kept.forward ?? [];
+    this.#take(kept.here);
+    return true;
   }
 
   #leaving(): Step {

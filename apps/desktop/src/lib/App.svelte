@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack, type Snippet } from "svelte";
+  import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import {
     api,
     docKey,
@@ -416,6 +416,11 @@
     );
     // What this computer plays, for videos kept from other sites; in the background.
     void savePlayable();
+    if (!DEMO) {
+      const keep = () => nav.keep();
+      window.addEventListener("pagehide", keep);
+      unlisten.push(() => window.removeEventListener("pagehide", keep));
+    }
     unlisten.push(
       await events.vod(
         afterLoad((vod) => {
@@ -467,7 +472,10 @@
     try {
       await refreshSetup();
       await reload();
+      // The page reloaded (the web view's own Reload): back where it was.
+      // Its player carried on meanwhile and is opened again with it.
       if (openVod !== null) select(openVod);
+      else if (!DEMO) nav.restore();
     } finally {
       // The busy cursor (app.css `html.starting`) goes once the library is in.
       document.documentElement.classList.remove("starting");
@@ -679,6 +687,23 @@
     if (inTab) paneKeptFor = paneKey;
   });
   const tabPane = $derived(tabbed && paneShown && (inTab || (paneKey !== null && paneKeptFor === paneKey)));
+  // How far the transcript was scrolled when the pane took its place, put
+  // back when it's shown again: hidden, it has no height, and its scroll
+  // went back to the top. Kept before the pane is laid out in its place.
+  let leftAt: { key: string | null; top: number } | null = null;
+  let wasInTab = false;
+  $effect.pre(() => {
+    const away = inTab;
+    untrack(() => {
+      if (away === wasInTab) return;
+      wasInTab = away;
+      if (away) leftAt = { key: paneKey, top: body?.scrollTop ?? 0 };
+      else if (leftAt && leftAt.key === paneKey && leftAt.top > 0) {
+        const top = leftAt.top;
+        void tick().then(() => bringScroll(top));
+      }
+    });
+  });
   const paneTabs = $derived<PaneTabs | null>(
     tabbed
       ? {

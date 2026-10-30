@@ -543,6 +543,9 @@
           if ((e.target as HTMLElement).closest("button")) return;
           if (row.kind === "vod") toggle(row.vod);
           else onopenedit(row.edit.id);
+          // Clicked anywhere on it, the row has the keyboard (↑ and ↓), as
+          // a click on its title gives it.
+          focusRow(key);
         }}
         use:pressToDrag={{
           press: (e) => onRowDown(e, row, key),
