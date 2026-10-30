@@ -44,7 +44,7 @@ const fakeApp = {
   },
 };
 Object.assign(globalThis, { fakeApp });
-const { NativeDriver } = await import("./nativeDriver.ts");
+const { afterClose, NativeDriver } = await import("./nativeDriver.ts");
 
 let seq = 0;
 /** A status as the app makes them, each with the next `seq`. @param {number} time */
@@ -176,4 +176,26 @@ test("while it opens, the new one's first frame is held even with a command of t
   driver.opened({ fps: 30, duration: 60, status: { ...reply, shown: null } });
   assert.equal(driver.shown(), 0, "its first frame was lost");
   assert.equal(driver.time(), 0);
+});
+
+test("the next view's open is sent only once the last one's close is answered", async () => {
+  fakeApp.asked.length = 0;
+  new NativeDriver(0).destroy();
+  const opened = afterClose(() => fakeApp.command("playerOpen", [2, 3, false]));
+  await new Promise((r) => setTimeout(r, 0));
+  // Sent together, the two could reach the app the other way round, and the
+  // close would cancel the open ("closed while opening").
+  assert.deepEqual(
+    fakeApp.asked.map((a) => a.name),
+    ["playerClose"],
+  );
+  fakeApp.asked[0].answer(status(0));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(
+    fakeApp.asked.map((a) => a.name),
+    ["playerClose", "playerOpen"],
+  );
+  const reply = { fps: 30, duration: 12 };
+  fakeApp.asked[1].answer(/** @type {any} */ (reply));
+  assert.equal(await opened, reply);
 });

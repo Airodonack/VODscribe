@@ -12,7 +12,7 @@
   import { holdToCarry, stretchCarry } from "./dragout";
   import * as overlay from "./screenOverlay";
   import { cueAt } from "./media";
-  import { NativeDriver } from "./nativeDriver";
+  import { afterClose, NativeDriver } from "./nativeDriver";
   import Screen from "./Screen.svelte";
   import Thumb from "./Thumb.svelte";
   import { prefs } from "./playerPrefs.svelte";
@@ -90,7 +90,8 @@
       clearTimeout(askingSoon);
       asking = null;
     };
-    api.playerOpen(vod.id, start, autoplay).then(
+    // Gone before the last view's player closed: not opened at all.
+    afterClose(() => (destroyed ? Promise.reject(new Error("closed")) : api.playerOpen(vod.id, start, autoplay))).then(
       (opened) => {
         answered();
         if (destroyed) return;

@@ -11,6 +11,17 @@ import { api, events, type PlayerOpened, type PlayerStatus, type UnlistenFn } fr
 import { OwnStatus } from "./ownStatus";
 import { Clock } from "./playerClock";
 
+/** The last close sent (`destroy`). The player's requests can reach the app
+ *  in another order than they were sent, and a close taken after the next
+ *  view's open began cancels that open ("closed while opening"): an open
+ *  waits for the close before it (`afterClose`). */
+let closing: Promise<unknown> = Promise.resolve();
+
+/** Sends `open` once the last close sent has been answered. */
+export function afterClose<T>(open: () => Promise<T>): Promise<T> {
+  return closing.then(open);
+}
+
 /** A status the page took (`seq` null: its own guess), as the tests see it. */
 type Taken = { seq: number | null; time: number; playing: boolean };
 
@@ -222,6 +233,6 @@ export class NativeDriver {
   destroy() {
     this.gone = true;
     this.unlisten?.();
-    api.playerClose().catch(() => {});
+    closing = api.playerClose().catch(() => {});
   }
 }

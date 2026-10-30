@@ -6,7 +6,8 @@
 // frame is up. One VOD's player at a time: opening another closes the
 // first. Timed: from the click on the row to its first frame on the
 // screen, and from Play to the picture moving. Shift+→ moves the time
-// shown at once, before the new frame is drawn.
+// shown at once, before the new frame is drawn. The close of the VOD left,
+// held back so it reaches the app after the next one's open, doesn't cancel it.
 
 import { copyFileSync } from "node:fs";
 import path from "node:path";
@@ -134,7 +135,17 @@ export default {
     }
     await until("the frame at 3 s shown", async () => (await state()).player?.shown === 3, 10_000);
     await openShowing(second.id, "red", "another opened");
+    // The close of the VOD left can reach the app after the open of the next
+    // has begun (the web view's requests aren't taken strictly in the order
+    // sent): that mustn't cancel the open. Forced here: the close held back.
+    await app.js(`const send = window.fetch;
+      window.__e2eFetch = send;
+      window.fetch = (url, init) =>
+        String(url).includes("player_close")
+          ? new Promise((r) => setTimeout(r, 300)).then(() => send(url, init))
+          : send(url, init);`);
     await openShowing(first.id, "yellow", "back where it was left");
+    await app.js(`window.fetch = window.__e2eFetch;`);
 
     if (problems.length) throw new Error(problems.join("; "));
   },

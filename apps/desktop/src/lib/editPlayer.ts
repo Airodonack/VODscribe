@@ -5,7 +5,7 @@
 
 import { mount, unmount } from "svelte";
 import { api, type PlayerStretch } from "./api";
-import { NativeDriver } from "./nativeDriver";
+import { afterClose, NativeDriver } from "./nativeDriver";
 import { prefs } from "./playerPrefs.svelte";
 import Screen from "./Screen.svelte";
 
@@ -52,7 +52,9 @@ export class EditPlayer implements EditPlayback {
     if (this.editId !== id) {
       this.editId = id;
       this.driver.opening(from);
-      this.openingEdit = api.playerOpenEdit(id, from, false).then(
+      this.openingEdit = afterClose(() =>
+        this.gone ? Promise.reject(new Error("closed")) : api.playerOpenEdit(id, from, false),
+      ).then(
         (opened) => {
           if (this.gone || this.editId !== id) return;
           this.driver.opened(opened);
