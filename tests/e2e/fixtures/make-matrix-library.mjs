@@ -98,8 +98,8 @@ const VODS = [
   {
     id: 2,
     platform: "youtube",
-    platform_id: "IaIo3d6cUuo",
-    url: "https://www.youtube.com/watch?v=IaIo3d6cUuo",
+    platform_id: "noa29qsTc4g",
+    url: "https://www.youtube.com/watch?v=noa29qsTc4g",
     title: "Building a lighthouse on the cliff",
     channel: "Airodonack",
     duration: 90,

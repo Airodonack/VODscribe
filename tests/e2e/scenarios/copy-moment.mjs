@@ -12,7 +12,7 @@
 import { MINUTE, until } from "../lib/app.mjs";
 
 const SITES = {
-  youtube: "https://www.youtube.com/watch?v=IaIo3d6cUuo",
+  youtube: "https://www.youtube.com/watch?v=noa29qsTc4g",
   twitch: "https://www.twitch.tv/videos/2901646294",
   kick: "https://kick.com/airodonack/videos/01a18dfb-c590-7069-b36a-97fe9266ffde",
 };

@@ -91,7 +91,7 @@ export default {
     mkdirSync(footage, { recursive: true });
     const section = path.join(footage, `${id}-0-${Math.round(vod.duration * 1000)}.mp4`);
     copyFileSync(own, section);
-    makeSiteVod(id, "youtube", "IaIo3d6cUuo", { title: "A VOD from a site" });
+    makeSiteVod(id, "youtube", "noa29qsTc4g", { title: "A VOD from a site" });
     app = await ctx.start();
     await app.toLibrary();
     await app.click(`.vod.edit[data-key="-${edit.id}"] button.main`);

@@ -65,7 +65,7 @@ export async function withSiteVods(ctx, fn) {
 /** The test channel's VOD on each site (the project's own uploads): the only ones the tests open there. */
 export const TEST_VODS = {
   twitch: { id: "2901646294", link: "https://www.twitch.tv/videos/2901646294" },
-  youtube: { id: "IaIo3d6cUuo", link: "https://www.youtube.com/watch?v=IaIo3d6cUuo" },
+  youtube: { id: "noa29qsTc4g", link: "https://www.youtube.com/watch?v=noa29qsTc4g" },
   kick: {
     id: "01a18dfb-c590-7069-b36a-97fe9266ffde",
     link: "https://kick.com/airodonack/videos/01a18dfb-c590-7069-b36a-97fe9266ffde",

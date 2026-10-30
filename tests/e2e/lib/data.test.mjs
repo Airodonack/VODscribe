@@ -63,7 +63,7 @@ test("a file's VOD is made a site's, its file gone and its chat known to have no
 });
 
 test("the fields given are set, a chat to fetch and a video kept among them", () => {
-  makeSiteVod(1, "youtube", "IaIo3d6cUuo", {
+  makeSiteVod(1, "youtube", "noa29qsTc4g", {
     title: "A stream",
     channel: "Marlowe",
     duration: 14400,
@@ -71,7 +71,7 @@ test("the fields given are set, a chat to fetch and a video kept among them", ()
     mediaPath: "/kept.mp4",
   });
   const got = vod();
-  assert.equal(got.url, "https://www.youtube.com/watch?v=IaIo3d6cUuo");
+  assert.equal(got.url, "https://www.youtube.com/watch?v=noa29qsTc4g");
   assert.deepEqual(
     [got.title, got.channel, got.duration, got.chat, got.media_path],
     ["A stream", "Marlowe", 14400, null, "/kept.mp4"],

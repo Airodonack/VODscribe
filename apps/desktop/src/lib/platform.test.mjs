@@ -119,8 +119,8 @@ test("a link to a moment on a VOD's site: Twitch's time always with its hours, n
   assert.equal(twitchTime(-2), "0h0m0s");
   const twitch = vod("twitch", "v2901646294", "https://www.twitch.tv/videos/2901646294");
   assert.equal(watchUrl(twitch, 65.7), "https://www.twitch.tv/videos/2901646294?t=0h1m5s");
-  const youtube = vod("youtube", "IaIo3d6cUuo", "https://www.youtube.com/watch?v=IaIo3d6cUuo");
-  assert.equal(watchUrl(youtube, 75.2), "https://www.youtube.com/watch?v=IaIo3d6cUuo&t=75s");
+  const youtube = vod("youtube", "noa29qsTc4g", "https://www.youtube.com/watch?v=noa29qsTc4g");
+  assert.equal(watchUrl(youtube, 75.2), "https://www.youtube.com/watch?v=noa29qsTc4g&t=75s");
   // Kick's links name no time (none is documented): the VOD's own link.
   const kick = vod("kick", "01a169a1", "https://kick.com/airodonack/videos/01a169a1");
   assert.equal(watchUrl(kick, 75), "https://kick.com/airodonack/videos/01a169a1");

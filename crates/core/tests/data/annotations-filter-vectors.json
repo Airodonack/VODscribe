@@ -26,27 +26,27 @@
    ]
   },
   {
-   "key": "youtube:IaIo3d6cUuo",
+   "key": "youtube:noa29qsTc4g",
    "bits": 64,
    "hashes": 7,
    "positions": [
+    62,
+    11,
+    24,
     37,
-    34,
-    31,
-    28,
-    25,
-    22,
-    19
+    50,
+    63,
+    12
    ]
   },
   {
-   "key": "youtube:IaIo3d6cUuo",
+   "key": "youtube:noa29qsTc4g",
    "bits": 1000,
    "hashes": 3,
    "positions": [
-    45,
-    330,
-    999
+    366,
+    227,
+    704
    ]
   },
   {
@@ -98,7 +98,7 @@
    ]
   },
   {
-   "key": "youtube:é✓",
+   "key": "youtube:\u00e9\u2713",
    "bits": 64,
    "hashes": 7,
    "positions": [
@@ -112,7 +112,7 @@
    ]
   },
   {
-   "key": "youtube:é✓",
+   "key": "youtube:\u00e9\u2713",
    "bits": 1000,
    "hashes": 3,
    "positions": [
@@ -129,9 +129,9 @@
    "absent": [
     "twitch:2901646294",
     "twitch:v2901646295",
-    "youtube:iaio3d6cuuo",
+    "youtube:noa29qstc4g",
     "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a18",
-    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdee",
+    "youtube:noa29qsTc4g:0123456789abcdef0123456789abcdee",
     "kick:01a169a1",
     "dailymotion:x1",
     "twitch:v1",
@@ -145,24 +145,24 @@
    "present": [
     "twitch:v2901646294",
     "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a17",
-    "youtube:IaIo3d6cUuo",
-    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdef",
+    "youtube:noa29qsTc4g",
+    "youtube:noa29qsTc4g:0123456789abcdef0123456789abcdef",
     "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a",
     "kick:01a169a1-9aa8-7653-8a9e-390e694cc11a:fedcba9876543210fedcba9876543210"
    ],
    "absent": [
     "twitch:2901646294",
     "twitch:v2901646295",
-    "youtube:iaio3d6cuuo",
+    "youtube:noa29qstc4g",
     "twitch:v2901646294:3cd25f19ef8297733a8ef9f7f9898a18",
-    "youtube:IaIo3d6cUuo:0123456789abcdef0123456789abcdee",
+    "youtube:noa29qsTc4g:0123456789abcdef0123456789abcdee",
     "kick:01a169a1",
     "dailymotion:x1",
     "twitch:v1",
     "youtube:abc",
     "kick:x"
    ],
-   "file": "565341460100000040000000000000000700000006000000000000006099ecb33514d24b"
+   "file": "56534146010000004000000000000000070000000600000000000000501dacabb334d6cb"
   }
  ],
  "large": {
