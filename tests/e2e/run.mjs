@@ -170,8 +170,10 @@ rmSync(path.join(out, "checkpoints"), { recursive: true, force: true });
 const durations = readDurations(path.join(here, "durations.json"));
 let chosen = names.filter((n) => !only || only.includes(n));
 if (shard) {
+  // Every shard starts from setup too: a shard dealt without it began cold,
+  // and its first scenario's fixtures found no ffmpeg (CI, 2026-10-30).
   const mine = deal(chosen, durations, shard.count)[shard.index - 1].names;
-  chosen = chosen.filter((n) => mine.includes(n));
+  chosen = chosen.filter((n) => mine.includes(n) || order.includes(n));
 }
 if (parallel > 1) {
   const merged = await runWorkers(chosen);
