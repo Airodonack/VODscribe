@@ -92,6 +92,27 @@ fn err(e: impl Into<anyhow::Error>) -> String {
     format!("{:#}", e.into())
 }
 
+/// With VODSCRIBE_TRACE_EXIT set, each step of quitting goes to stderr with
+/// the milliseconds since the first (the quit asked for), so where quitting's
+/// time goes can be read (tests/e2e/scenarios/perf-exit.mjs). The first line
+/// says when that was, in milliseconds since the epoch, to line the steps up
+/// with the process's end as seen from outside.
+fn trace_exit(step: &str) {
+    use std::sync::{LazyLock, OnceLock};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("VODSCRIBE_TRACE_EXIT").is_some());
+    static BEGAN: OnceLock<Instant> = OnceLock::new();
+    if !*ON {
+        return;
+    }
+    let began = BEGAN.get_or_init(|| {
+        let epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+        eprintln!("exit trace: began at {} ms since the epoch", epoch.as_millis());
+        Instant::now()
+    });
+    eprintln!("exit trace: {:.1} ms {step}", began.elapsed().as_secs_f64() * 1000.0);
+}
+
 /// The arguments WebView2's browser starts with on Windows: wry's own, plus any
 /// in WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. WebView2 ignores that variable
 /// once an app passes arguments itself, which wry always does, and it's how
@@ -304,6 +325,7 @@ pub fn run() {
             main.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { .. } = event {
                     screen::close(&closing);
+                    trace_exit("screen closed, before the window goes");
                 }
             });
             // Behind the page, the window's background is the theme's (--bg in
@@ -486,10 +508,18 @@ pub fn run() {
         ])
         .build(context())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                quit(app);
+        .run(|app, event| match event {
+            tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { .. }, .. } => {
+                trace_exit("window close asked for")
             }
+            tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::Destroyed, .. } => trace_exit("window destroyed"),
+            tauri::RunEvent::ExitRequested { .. } => trace_exit("exit asked for"),
+            tauri::RunEvent::Exit => {
+                trace_exit("event loop ended");
+                quit(app);
+                trace_exit("quit's work done: the process ends");
+            }
+            _ => {}
         });
 }
 
@@ -501,15 +531,21 @@ pub fn run() {
 fn quit(app: &AppHandle) {
     // First: the player may be painting, and must stop before the program ends.
     screen::close(app);
+    trace_exit("screen closed");
     if let Some(state) = app.try_state::<AppState>() {
         let db = state.db.lock().unwrap_or_else(|e| e.into_inner());
+        trace_exit("library's lock taken");
         vods::sweep(app, Some(&db));
+        trace_exit("unused VODs swept");
         let _ = db.stop_writes();
+        trace_exit("library's writes stopped");
         // Held till the process ends.
         std::mem::forget(db);
     }
     vodscribe_core::tools::stop_tracked();
+    trace_exit("started processes stopped");
     files::delete_leftovers();
+    trace_exit("leftover files deleted");
 }
 
 /// Opens `path` as ffmpeg does, for tests: on Windows without sharing its

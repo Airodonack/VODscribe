@@ -13,7 +13,8 @@
 //   (on Windows, only a build with the `e2e` feature lets it in).
 // - bridge: the app's own test hook (src-tauri/src/e2e.rs), in a build made
 //   with the `e2e` feature, for macOS, whose webview has no WebDriver, and
-//   Windows.
+//   Windows. Its `proc` also has `stderr`: the end of what the app wrote
+//   there (passed on to this process's as it comes).
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -294,6 +295,9 @@ export async function webdriver(app) {
   };
 }
 
+/** How much of the app's stderr the bridge keeps (characters, the last). */
+const STDERR_KEPT = 64 * 1024;
+
 export async function bridge(app) {
   const port = await freePort();
   const token = randomBytes(24).toString("hex");
@@ -302,10 +306,14 @@ export async function bridge(app) {
   const exe = app.endsWith(".app") ? path.join(app, "Contents", "MacOS", path.basename(app, ".app")) : app;
   const child = spawn(exe, [], {
     env: { ...process.env, VODSCRIBE_E2E_PORT: String(port), VODSCRIBE_E2E_TOKEN: token },
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: ["ignore", "inherit", "pipe"],
   });
   let exited = null;
-  const proc = { exe, pid: child.pid, closedAt: null, exitedAt: null, exit: null };
+  const proc = { exe, pid: child.pid, closedAt: null, exitedAt: null, exit: null, stderr: "" };
+  child.stderr.on("data", (chunk) => {
+    process.stderr.write(chunk);
+    proc.stderr = (proc.stderr + chunk).slice(-STDERR_KEPT);
+  });
   child.on("exit", (code, signal) => {
     exited = signal ?? code;
     proc.exitedAt = Date.now();

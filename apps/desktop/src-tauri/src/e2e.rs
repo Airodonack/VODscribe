@@ -71,7 +71,10 @@ pub(crate) fn start(app: &AppHandle) {
             }
             "/quit" => {
                 let app = app.clone();
-                return Response::empty(200).then(move || app.exit(0));
+                return Response::empty(200).then(move || {
+                    crate::trace_exit("quit asked for (test hook)");
+                    app.exit(0)
+                });
             }
             _ => (404, String::new()),
         };

@@ -159,6 +159,19 @@ export function minute(dir) {
   ]);
 }
 
+/**
+ * Three minutes of 720p picture and a tone, made in `dir` once: a clip of
+ * all of it takes the app seconds to make, long enough to quit in the middle of.
+ */
+export function longVideo(dir) {
+  mkdirSync(dir, { recursive: true });
+  return make(dir, "three-minutes.mp4", [
+    ...["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=180"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:duration=180", "-c:a", "aac", "-shortest"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"],
+  ]);
+}
+
 /** The test Twitch VOD's id: a VOD made from a file is given it, and chat() as its chat. */
 export const TWITCH_VOD = "2901646294";
 
