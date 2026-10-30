@@ -42,6 +42,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Deleting a VOD with its video while keeping the stretches its clips use turned the subs, gifts and tips in those stretches' chat into plain messages. They stay what they were now, and stretches kept that way while the VOD is still in your library get them back.
   - A clip changed in the editor, so that its file has its chapters, is made again when you add a chapter in it, rename one or move one, as it is when you undo any of those. Its file kept the chapters it had before.
   - Pressing C twice on the same stretch of an edit makes one clip, as on a VOD, and pressing it again on a clip that failed tries it again. Each press made another clip.
+  - Quitting with a video on this computer open no longer takes two seconds, with the window left on screen meanwhile.
   - On a Kick VOD, the time beside its title copies the VOD's link without a time, as Kick's links can't say one, and pointing at it says so. The link had a time Kick ignored.
   - The small picture on the timeline now shows just to the left of the pointer (to its right only at the timeline's left end), with the time at the top of the bar centred on the pointer as before. It sat to the right of the pointer, where what you drag also appears, so it could look like a hover that didn't go away.
   - In an edit, choosing lines in the transcript while a chapter or highlight was selected left it selected, so Delete took away the chapter or highlight instead of the lines. Choosing lines now lets go of it.

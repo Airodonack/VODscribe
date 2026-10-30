@@ -380,10 +380,7 @@ fn stop_ids(ids: &[u32]) {
             unsafe { libc::killpg(id as libc::pid_t, libc::SIGKILL) };
         }
         let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        // SAFETY: as above; signal 0 only asks whether any is left.
-        while ids.iter().any(|&id| unsafe { libc::killpg(id as libc::pid_t, 0) } == 0)
-            && std::time::Instant::now() < until
-        {
+        while ids.iter().any(|&id| group_left(id)) && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
@@ -455,6 +452,28 @@ pub fn command(program: &Path) -> Command {
 /// Where macOS keeps the certificates it trusts, as a file.
 #[cfg(target_os = "macos")]
 const MAC_CERTIFICATES: &str = "/etc/ssl/cert.pem";
+
+/// Whether any of process group `id`, led by our child `id` and sent
+/// SIGKILL, is left. Not once its leader has ended: the rest of the group
+/// had the signal with it, and the leader stays a zombie till its owner
+/// waits for it, which as the app quits may never be (the player's decoder,
+/// whose player isn't dropped). Waiting for that zombie held every quit with
+/// a file open up for the whole two seconds.
+#[cfg(unix)]
+fn group_left(id: u32) -> bool {
+    // SAFETY: signal 0 only asks whether any of the group is left.
+    if unsafe { libc::killpg(id as libc::pid_t, 0) } != 0 {
+        return false;
+    }
+    // SAFETY: a zeroed siginfo_t is valid to write into; WNOWAIT leaves the
+    // child to be waited for (reaped) by its owner, as before.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let found = unsafe {
+        libc::waitid(libc::P_PID, id as libc::id_t, &mut info, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT)
+    };
+    // SAFETY: filled in by waitid (zero when the child hasn't ended).
+    !(found == 0 && unsafe { info.si_pid() } == id as libc::pid_t)
+}
 
 /// Runs ffmpeg's `cmd`, which writes to `part` and was given `-progress
 /// pipe:1`, reporting how far it is through `length` seconds of output from 0
@@ -576,6 +595,23 @@ mod tests {
         }
         drop(guard);
         assert!(stopped, "it ran on after quitting began");
+    }
+
+    /// A process its owner doesn't wait for as the app quits (the player's
+    /// decoder, held by a player that's never dropped): once stopped it's a
+    /// zombie till then, which mustn't hold the quit up.
+    #[cfg(unix)]
+    #[test]
+    fn quitting_doesnt_wait_for_a_stopped_process_no_one_waits_for() {
+        static REGISTRY: std::sync::Mutex<Registry> = std::sync::Mutex::new(Registry::new());
+        let mut child = command(Path::new("/bin/sh")).args(["-c", "sleep 30"]).spawn().unwrap();
+        let guard = track_in(&REGISTRY, &child);
+        let began = std::time::Instant::now();
+        stop_in(&REGISTRY, |_| true, true);
+        let took = began.elapsed();
+        let _ = child.wait();
+        drop(guard);
+        assert!(took < std::time::Duration::from_millis(500), "the quit waited {took:?} for it");
     }
 
     /// Like the managed yt-dlp: a launcher whose child does the work. Once
