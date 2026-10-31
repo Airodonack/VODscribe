@@ -9,9 +9,9 @@
 // nothing happens. Taken past the window's edge, it becomes the system's drag
 // of the clip's file, into a video editor or a folder: a clip without a pill,
 // forgotten once the drag's over (the file is the other app's then). Its file
-// is made as the carry begins where that's quick (the VOD plays from a file
-// here), else at the edge, and the drag starts once it's there, if the button
-// is still down. Brought back over the window, the system's drag lands where
+// (each one's, for several picked) is made as the carry begins where that's
+// quick (the VOD plays from a file here), first in the queue, else at the
+// edge, and the drag starts once it's there, if the button is still down. Brought back over the window, the system's drag lands where
 // a carry would (`backOver`, `backDropped`): on the clip bar it keeps the clip.
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type Put, type Vod } from "./api";
@@ -702,6 +702,8 @@ export interface CarrySet {
   /** Makes the clips whose files go out past the window's edge (one only for
    *  the drag isn't in the clip bar); none for rows of the library. */
   files?: () => Promise<Clip[]>;
+  /** Whether those are made as the carry begins (where that's quick: from a file here), not at the edge. */
+  early?: boolean;
   /** The open VOD, if it's its: the files are made in the format clips are made in. */
   vodId?: number;
   /** Where it came from, if coming back there ends the carry (an edit's timeline). */
@@ -800,20 +802,22 @@ export function carrySet(set: CarrySet): Promise<void> {
     ghost,
     image: () => ghost.front.image.then((img) => snapshot(img, ghost.front.wave, set.label)),
     lift: () => (clips.carried = set.items.length),
-    put(target) {
+    put(target, made) {
       const items = takes(set, target);
       if (target.edit === "new") edits.createWith(items);
       else if (target.edit !== null) edits.put(target.edit, items, false);
       else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
       else if (target.bar && clips.doc?.kind === "edit") edits.put(clips.doc.id, items, true);
       else if (target.bar) {
-        // On a VOD's clip bar, the clips made for a drag out are the ones kept.
-        void exportStretches(set.stretches);
+        // On a VOD's clip bar, the clips made for a drag out are the ones
+        // kept: those made ahead waited for first, so they're not made twice.
+        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches));
         return true;
       }
       return false;
     },
     files: set.files,
+    early: set.early,
     vodId: set.vodId,
     home: set.home,
     from: set.from,

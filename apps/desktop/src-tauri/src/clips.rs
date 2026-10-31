@@ -97,6 +97,27 @@ impl Cutter {
         self.jobs.push(id);
     }
 
+    /// Queues clips `ids`, just made: in the clip bar (`shown`), last; made
+    /// only to be dragged out of the window, first, ahead of those waiting,
+    /// in their order, since the drag waits for their files (the one being
+    /// made goes on: one encode at a time).
+    pub(crate) fn queue_made(&self, ids: &[i64], shown: bool) {
+        if shown {
+            for &id in ids {
+                self.queue(id);
+            }
+        } else {
+            for &id in ids.iter().rev() {
+                self.queue_first(id);
+            }
+        }
+    }
+
+    /// Queues clip `id` first, or moves it there if it's waiting.
+    pub(crate) fn queue_first(&self, id: i64) {
+        self.jobs.push_front(id, |&j| j == id);
+    }
+
     /// Queues clip `id` unless it's waiting already; once is enough.
     pub(crate) fn queue_once(&self, id: i64) {
         self.jobs.push_once(id, |&j| j == id);
@@ -431,9 +452,7 @@ fn make_edit_clips(app: &AppHandle, edit_id: i64, ranges: Vec<(f64, f64)>, shown
         history::changed(app, &db, doc);
         made
     };
-    for id in queued {
-        state.clips.queue(id);
-    }
+    state.clips.queue_made(&queued, shown);
     Ok(made)
 }
 
@@ -502,9 +521,7 @@ pub(crate) async fn add_clips(app: AppHandle, vod_id: i64, ranges: Vec<(f64, f64
 fn make_clips(app: &AppHandle, vod_id: i64, ranges: Vec<(f64, f64)>, shown: bool) -> CmdResult<Vec<Clip>> {
     let state = app.state::<AppState>();
     let made = make_clips_in(&state.db.lock().unwrap(), &state.history, vod_id, ranges, shown).map_err(err)?;
-    for clip in &made {
-        state.clips.queue(clip.id);
-    }
+    state.clips.queue_made(&made.iter().map(|c| c.id).collect::<Vec<_>>(), shown);
     Ok(made)
 }
 
@@ -1162,6 +1179,33 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clip made only to be dragged out was queued last, behind every clip
+    /// and edit render waiting, and the drag waited for all of them.
+    #[test]
+    fn a_clip_made_for_a_drag_out_is_made_next() {
+        let cutter = Cutter::new();
+        let (began, order) = mpsc::channel();
+        let (go, wait) = mpsc::channel::<()>();
+        let wait = Mutex::new(wait);
+        cutter
+            .jobs
+            .run("cutter-test", move |id, _| {
+                began.send(id).unwrap();
+                if id == 1 {
+                    wait.lock().unwrap().recv().unwrap();
+                }
+            })
+            .unwrap();
+        cutter.queue_made(&[1], true);
+        assert_eq!(order.recv_timeout(Duration::from_secs(5)), Ok(1));
+        // While 1 is being made: two for the clip bar, then two for a drag.
+        cutter.queue_made(&[2, 3], true);
+        cutter.queue_made(&[8, 9], false);
+        go.send(()).unwrap();
+        let next: Vec<_> = (0..4).map(|_| order.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
+        assert_eq!(next, [8, 9, 2, 3], "the drag's in the order picked, then the rest as they were");
+    }
 
     /// Several clips deleted at once went one by one, a clip that was gone
     /// skipped: one that couldn't go, in the middle, left those before it

@@ -130,7 +130,7 @@ Object.assign(globalThis, {
     querySelector: () => null,
   },
 });
-const { carry } = await import("./dragout.ts");
+const { carry, carrySet } = await import("./dragout.ts");
 
 /** @param {number} x @param {number} y @param {number} [buttons] */
 const move = (x, y, buttons = 1) => send({ type: "pointermove", clientX: x, clientY: y, buttons });
@@ -189,4 +189,86 @@ test("at the window's edge, a question the system asks takes the release: no dra
   fake.answer(true);
   await done;
   assert.deepEqual(fake.dragged, [], "the system's drag was asked for with no button held");
+});
+
+/** Two stretches picked, carried from (100, 100); `files` makes their clips. @param {boolean} early @param {() => Promise<unknown[]>} files */
+const carriedSet = (early, files) =>
+  carrySet(
+    /** @type {Parameters<typeof carrySet>[0]} */ (
+      /** @type {unknown} */ ({
+        items: [],
+        label: "2 stretches",
+        stretches: [
+          { start: 0, end: 5 },
+          { start: 5, end: 10 },
+        ],
+        files,
+        early,
+        vodId: 1,
+        from: { left: 0, top: 0, width: 10, height: 10 },
+        x: 100,
+        y: 100,
+      })
+    ),
+  );
+/** Two clips only for a drag, made. */
+const pair = () => [
+  { id: 3, start: 0, end: 5, shown: false, status: "waiting", file_path: null },
+  { id: 4, start: 5, end: 10, shown: false, status: "waiting", file_path: null },
+];
+const tick = () => new Promise((r) => setTimeout(r, 20));
+
+// (Let go just past the edge, before their files are made: no system drag,
+// whose minute-long timers would hold the test up.)
+test("several picked from a file here: their files are made as the carry begins, not again at the edge", async () => {
+  reset();
+  let asked = 0;
+  const done = carriedSet(true, async () => (asked++, pair()));
+  assert.equal(asked, 1, "not made as the carry began");
+  move(120, 120);
+  move(0, 300);
+  up(-5, 300);
+  await done;
+  assert.equal(asked, 1, "made again at the edge");
+  assert.deepEqual(fake.dragged, []);
+});
+
+test("several picked from a site: their files are made only at the edge", async () => {
+  reset();
+  let asked = 0;
+  const done = carriedSet(false, async () => (asked++, pair()));
+  move(120, 120);
+  await tick();
+  assert.equal(asked, 0, "made before the edge");
+  move(0, 300);
+  up(-5, 300);
+  await done;
+  assert.equal(asked, 1);
+});
+
+test("several made ahead, dropped on a VOD's clip bar: kept once they're made, not made twice", async () => {
+  reset();
+  /** @type {(list: unknown[]) => void} */
+  let finish = () => {};
+  const makeAll = fake.clips.makeAll;
+  /** @type {unknown[]} */
+  const kept = [];
+  fake.clips.makeAll = /** @type {typeof makeAll} */ (
+    /** @type {unknown} */ (async (/** @type {unknown} */ ranges) => void kept.push(ranges))
+  );
+  try {
+    const done = carriedSet(true, () => new Promise((r) => (finish = r)));
+    move(120, 120);
+    under = { closest: (/** @type {string} */ s) => (s === ".clip-bar" ? {} : null) };
+    move(300, 300);
+    up(300, 300);
+    await done;
+    await tick();
+    assert.deepEqual(kept, [], "kept before those made ahead were there");
+    finish(pair());
+    await tick();
+    assert.equal(kept.length, 1);
+  } finally {
+    fake.clips.makeAll = makeAll;
+  }
 });
