@@ -34,3 +34,18 @@ strip = false
 # text-to-speech (and its GPL-3.0 espeak-ng); see third_party/README.md.
 [patch.crates-io]
 sherpa-onnx-sys = { path = "third_party/sherpa-onnx-sys" }
+# Servo's layout reads scrollbar-width, scrollbar-color and scrollbar-gutter,
+# which stylo 0.22.0 hides from Servo; the servo runtime's fork of stylo exposes
+# them. A [patch] only counts in the root workspace, so it is repeated here,
+# for every crate of stylo's workspace (or two copies of the shared ones build).
+selectors = { path = "/mnt/data/servo-spike/stylo/selectors" }
+servo_arc = { path = "/mnt/data/servo-spike/stylo/servo_arc" }
+stylo = { path = "/mnt/data/servo-spike/stylo/style" }
+stylo_atoms = { path = "/mnt/data/servo-spike/stylo/stylo_atoms" }
+stylo_derive = { path = "/mnt/data/servo-spike/stylo/style_derive" }
+stylo_dom = { path = "/mnt/data/servo-spike/stylo/stylo_dom" }
+stylo_malloc_size_of = { path = "/mnt/data/servo-spike/stylo/malloc_size_of" }
+stylo_static_prefs = { path = "/mnt/data/servo-spike/stylo/stylo_static_prefs" }
+stylo_traits = { path = "/mnt/data/servo-spike/stylo/style_traits" }
+to_shmem = { path = "/mnt/data/servo-spike/stylo/to_shmem" }
+to_shmem_derive = { path = "/mnt/data/servo-spike/stylo/to_shmem_derive" }
