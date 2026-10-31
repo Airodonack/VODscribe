@@ -17,6 +17,7 @@ import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 import { SessionLost } from "./drivers.mjs";
 import { pageDump } from "./dump.mjs";
 import * as os from "./os.mjs";
+import { heightFor } from "./screen.mjs";
 
 export const MINUTE = 60_000;
 
@@ -844,6 +845,12 @@ export class App {
  * caller tests at what it got; it never throws for the size.
  */
 export async function resizeInner(app, width, height) {
+  // On a short screen (E2E_SCREEN, lib/screen.mjs) no taller than it gives.
+  return sizePage(app, width, heightFor(width, height, app.log));
+}
+
+/** Resizes the page as resizeInner does, whatever the screen. */
+export async function sizePage(app, width, height) {
   const size = () => app.js(`return innerWidth + "x" + innerHeight`);
   const before = await size();
   await app.driver.resize(width, height);

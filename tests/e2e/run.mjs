@@ -79,7 +79,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { isUnplayable } from "../../apps/desktop/src/lib/media.ts";
-import { App, clock, watchWith } from "./lib/app.mjs";
+import { App, clock, sizePage, watchWith } from "./lib/app.mjs";
 import { dataDirs, resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import { deal, parseShard, readDurations } from "./lib/durations.mjs";
@@ -88,6 +88,7 @@ import { memoryOf } from "./lib/memory.mjs";
 import * as os from "./lib/os.mjs";
 import { preflight } from "./lib/preflight.mjs";
 import * as profile from "./lib/profile.mjs";
+import * as screen from "./lib/screen.mjs";
 import { startFileHost } from "./lib/fileHost.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -128,6 +129,11 @@ const shard = opts.shard ? parseShard(opts.shard) : null;
 const worker = process.env.E2E_WORKER;
 
 const out = process.env.E2E_OUT ?? path.join(here, "out");
+// A short screen to size the page as (E2E_SCREEN, lib/screen.mjs), named at
+// the start: a name it doesn't know fails the run, not each scenario.
+const short = screen.shortScreen();
+if (short && !worker)
+  console.log(`screen: ${short.name}, the page ${short.opened} px tall at most, ${short.held} after a resize`);
 const fixtures = { landed: path.join(here, "fixtures", "eagle-has-landed.mp3") };
 // The file host the app asks for annotations, before any app starts (lib/fileHost.mjs).
 await startFileHost();
@@ -213,6 +219,7 @@ async function runTurn({ name, run }) {
   // This run's folder for its measures: <scenario>, then <scenario>-2, …
   const measures = path.join(perfOut, run === 1 ? name : `${name}-${run}`);
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
+  screen.newScenario();
   // The app as it is now: `ctx.restart()` (for what must survive one) replaces it.
   let current;
   // What the page measured, from each start of the app (App.pageMeasures),
@@ -248,6 +255,14 @@ async function runTurn({ name, run }) {
     const first = !steps.some((s) => /^start to/.test(s.name));
     const step = `${first ? "start" : "restart"} to first screen${current.app.reloaded ? " (reloaded)" : ""}`;
     timing(step, Math.round((clock() - from) * 1000), from);
+    // On a short screen the window opens no taller than it has room for.
+    if (short) {
+      const page = await current.app.js(`return { width: innerWidth, height: innerHeight }`);
+      if (page.height > short.opened) {
+        const got = await sizePage(current.app, page.width, short.opened);
+        log(`opened at ${got.width}x${got.height} (${short.name})`);
+      }
+    }
     return current.app;
   };
   const ctx = {
