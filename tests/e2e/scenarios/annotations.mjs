@@ -1003,8 +1003,20 @@ export default {
       // A while on the pane (past the transcript's 2 s), then back: the
       // transcript is where the reader left it.
       await new Promise((r) => setTimeout(r, 3000));
+      // Where it is in the first frame drawn after the key: the switch shows
+      // the transcript again at the top, and puts its scroll back before that
+      // frame is painted (App.svelte, in the frame's animation callbacks). Read
+      // any sooner, it's still at the top: the check read it so, about one
+      // run in three (2026-10-31).
       await app.js(`document.querySelector(arguments[0]).focus()`, `${SWITCH} #tab-annotations`);
-      await press("ArrowLeft");
+      const atOnce = await app.js(
+        `const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+        await frame();
+        await frame();
+        return document.querySelector(arguments[0]).scrollTop;`,
+        BODY,
+      );
       await settledLook("← back to the transcript", {
         reads: `Transcript* | ${LABEL}`,
         transcript: true,
@@ -1013,9 +1025,14 @@ export default {
       });
       if (scrolled.top >= 40) {
         const top = await app.js(`return document.querySelector(arguments[0]).scrollTop`, BODY);
-        if (Math.abs(top - scrolled.top) > 2)
-          wrong.push(`back from the pane after 3 s, the transcript is scrolled to ${top} px, not ${scrolled.top}`);
-        else ctx.log(`back from the pane after 3 s, the transcript is where it was left (${top} px)`);
+        if (Math.abs(atOnce - scrolled.top) > 2 || Math.abs(top - scrolled.top) > 2)
+          wrong.push(
+            `back from the pane after 3 s, the transcript is scrolled to ${atOnce} px in the first frame and ${top} px after, not ${scrolled.top}`,
+          );
+        else
+          ctx.log(
+            `back from the pane after 3 s, the transcript is where it was left (${top} px), from the first frame`,
+          );
       }
       await press("ArrowRight");
       await settledLook("→ to the pane again", {
