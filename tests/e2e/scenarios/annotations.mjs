@@ -172,7 +172,7 @@ const pictures = (method, path) =>
       ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
       : { status: 404 };
 
-const PICTURES = "Load streamers' pictures from img.vodscribe.com";
+const PICTURES = "Enable streamer avatars from img.vodscribe.com";
 
 /** Turns the cast's pictures on or off in Settings › Privacy, and closes Settings. */
 async function setPictures(app, on) {

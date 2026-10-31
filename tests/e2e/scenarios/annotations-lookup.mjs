@@ -17,7 +17,7 @@ import { MINUTE, until } from "../lib/app.mjs";
 import { notFilter, serveFiles } from "../lib/fileHost.mjs";
 import { addSiteVod, OFFER, offerShown, withSiteVods } from "../lib/siteVod.mjs";
 
-const SETTING = "Ask the file host whether annotations exist for your VODs";
+const SETTING = "Enable VODscription annotations for VODs";
 
 /** The setting's box in Settings › Privacy: whether it's ticked. */
 async function settingTicked(app) {
@@ -36,7 +36,7 @@ export default {
     "offer-stopped":
       'A small dialog titled "Transcript and annotations" says VODscribe won\'t ask about the VODs you add any more, and in gray that it can be turned back on in Settings › Privacy, with "Open Settings" and a highlighted "OK".',
     "lookup-setting":
-      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Ask the file host whether annotations exist for your VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else.',
+      'Settings at Privacy: under the paragraphs about privacy, an unticked box "Enable VODscription annotations for VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else.',
   },
   async run(app, ctx) {
     const host = serveFiles((method, at) =>

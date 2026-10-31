@@ -424,7 +424,7 @@
             checked={askForAnnotations}
             onchange={(e) => appSettings.update({ ask_for_annotations: e.currentTarget.checked })}
           />
-          Ask the file host whether annotations exist for your VODs
+          Enable VODscription annotations for VODs
         </label>
         <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
         <label class="toggle">
@@ -433,11 +433,11 @@
             checked={loadCastPictures}
             onchange={(e) => appSettings.update({ load_cast_pictures: e.currentTarget.checked })}
           />
-          Load streamers' pictures from img.vodscribe.com
+          Enable streamer avatars from img.vodscribe.com
         </label>
         <p class="muted hint">
           It gets the streamer's site and login, and your IP address, and passes you on to Twitch's or Kick's own
-          picture. Off, their initials show instead.
+          picture. Off, their initials show in the transcript and Cast instead, and nothing beside a channel's name.
         </p>
         {#if dataDir}
           <p class="muted hint">Your library is in:</p>
