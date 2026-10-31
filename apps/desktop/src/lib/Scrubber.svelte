@@ -36,7 +36,8 @@
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
   // moves that end of the piece in its VOD, a frame at a time, to make it
   // shorter or longer: only that piece, the pieces past that edge moving
-  // aside as it goes, and the player shows the frame the edge is on. Footage still downloading
+  // aside as it goes, a dashed guide down the waveform at the edge, and the
+  // player shows the frame the edge is on. Footage still downloading
   // (a VOD from a site) is darker until it's in, and its piece's band shows
   // a spinner and how much is.
   //
@@ -697,6 +698,15 @@
     return 0;
   }
 
+  // Where the edge being resized is on the edit's timeline, for a guide down
+  // the waveform there: what the edge lines up with shows, to the frame.
+  const guideAt = $derived.by(() => {
+    const r = resized;
+    const piece = r && pieces?.find((p) => p.id === r.id);
+    if (!r || !piece) return null;
+    return r.side === "end" ? piece.end + (r.end - r.from.end) : piece.start + (r.start - r.from.start);
+  });
+
   /** A time in a VOD to a tenth of a second: 1:02.4. */
   const tenths = (t: number) => formatFraction(t, 1);
 
@@ -1110,6 +1120,10 @@
         ></span>
       {/if}
     {/each}
+    {#if guideAt !== null && guideAt >= viewStart && guideAt <= viewStart + span}
+      <!-- The edge of the piece being resized, down the waveform. -->
+      <span class="size-guide" style:left={pct(guideAt)}></span>
+    {/if}
     {#if going !== null && going >= viewStart && going <= viewStart + span}
       <span class="playhead going" style:left={pct(going)}></span>
     {/if}
@@ -1823,6 +1837,16 @@
     bottom: 0;
     width: 1px;
     background: var(--cut);
+    pointer-events: none;
+  }
+
+  /* The edge of a piece being resized, carried down across the waveform. */
+  .size-guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed var(--text);
     pointer-events: none;
   }
 

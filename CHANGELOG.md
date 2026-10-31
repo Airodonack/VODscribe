@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - A VOD you remove from the library is erased at once, beside whatever is being made, instead of as VODscribe quits, so quitting is as quick with a VOD just removed as without one. Quit (or cancel it in the list) before it's done, and the rest is erased when VODscribe next starts.
 - Dragging several picked stretches out of a video on this computer starts sooner: their clips are made from the moment you pick them up, first in line, instead of once the drag reaches the window's edge.
 - Alt-dragging (Option-dragging on a Mac) a stretch of the timeline lights the stretch you picked up with a dashed outline as soon as the drag starts, so it's plain what you're carrying. Picked up from outside what's picked, it's carried by itself and the others are let go, as in a file manager.
+- Dragging the edge of a piece on an edit's timeline (or a clip's, in the editor) draws a dashed line down the waveform where the edge is, so you can line it up with what you hear and see there.
 - Fixes:
   - In an edit, Split (B) on a selection that ends where two pieces meet no longer leaves a sliver of the earlier piece cut off before the join.
   - Moving a selection's edge with , and . onto the other edge stops a frame short, instead of leaving a selection of nothing that Delete and C refused.

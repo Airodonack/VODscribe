@@ -1,6 +1,6 @@
 // Edits: a clip's pill dragged onto "Make new edit" in the library (a group, one band); the
 // edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
-// and the second half moved first and back (Ctrl+← and →), a line's slice taken out and brought back
+// and the second half moved first and back (Ctrl+← and →), a piece's end dragged showing a dashed guide at it, a line's slice taken out and brought back
 // (Ctrl+Z), its picture held and carried onto another edit's row, a clip
 // made with its Clip button, rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
@@ -398,6 +398,46 @@ export default {
       10_000,
     );
     await until("the playhead back at 1 s", async () => (await app.shownTime()) === 1, 10_000);
+
+    // A piece's end dragged: a dashed guide down the waveform where the
+    // edge being moved is, from its first move; the drag cancelled, the
+    // guide goes and the edit is as it was.
+    const sizedBefore = JSON.stringify(pieces(await edit()));
+    const guide = await app.js(
+      `${AT}
+       const grip = document.querySelector("section.edit-view .piece .grip.end");
+       const band = grip.closest(".piece");
+       const g = grip.getBoundingClientRect();
+       const [x0, y0] = [g.left + g.width / 2, g.top + g.height / 2];
+       grip.dispatchEvent(new PointerEvent("pointerdown", at(x0, y0, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x0 - 20, y0, 1)));
+       await new Promise((r) => requestAnimationFrame(() => r()));
+       const wave = document.querySelector("section.edit-view .scrubber").getBoundingClientRect();
+       const line = document.querySelector("section.edit-view .scrubber .size-guide");
+       const l = line?.getBoundingClientRect();
+       const out = { edge: band.getBoundingClientRect().right, wave: [wave.top, wave.bottom],
+         guide: l ? { x: l.left, top: l.top, bottom: l.bottom, style: getComputedStyle(line).borderLeftStyle } : null };
+       window.dispatchEvent(new PointerEvent("pointercancel", at(x0 - 20, y0, 0)));
+       return out;`,
+    );
+    const g = guide.guide;
+    if (
+      !g ||
+      Math.abs(g.x - guide.edge) > 1.5 ||
+      g.style !== "dashed" ||
+      Math.abs(g.top - guide.wave[0]) > 1 ||
+      Math.abs(g.bottom - guide.wave[1]) > 1
+    )
+      throw new Error(
+        `a piece's end dragged: the guide ${JSON.stringify(g)}, the edge at ${guide.edge} px, the waveform ${guide.wave}`,
+      );
+    await until(
+      "the guide gone once cancelled",
+      () => app.js(`return !document.querySelector("section.edit-view .size-guide")`),
+      10_000,
+    );
+    if (JSON.stringify(pieces(await edit())) !== sizedBefore) throw new Error("a cancelled resize changed the edit");
+    ctx.log(`resizing a piece: a dashed guide at ${Math.round(g.x)} px, on its edge (${Math.round(guide.edge)} px)`);
 
     // Remove hovered: the piece it would take out (the one at the playhead)
     // lights up on the timeline, and goes dark as the pointer leaves.
