@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,7 +66,8 @@ createServer(async (req, res) => {
   if (req.url === "/status") return send(res, 200, { ready: true });
   if (req.method === "POST" && req.url === "/session") {
     const exe = JSON.parse(body).capabilities.alwaysMatch["tauri:options"].application;
-    const app = spawn(exe, [process.env.FAKE_APP_SCRIPT], { stdio: ["ignore", "pipe", "inherit"] });
+    const script = exe.endsWith("python") ? process.env.FAKE_APP_THREADS_SCRIPT : process.env.FAKE_APP_SCRIPT;
+    const app = spawn(exe, [script], { stdio: ["ignore", "pipe", "inherit"] });
     // An app that exits before its page answers leaves the request waiting.
     app.stdout.once("data", () => { const id = String(next++); apps.set(id, app); send(res, 200, { sessionId: id }); });
     return;
@@ -77,6 +87,28 @@ lock.on("error", () => setTimeout(() => process.exit(0), linger));
 lock.listen(Number(process.env.FAKE_LOCK), "127.0.0.1", () => process.stdout.write("ready\\n"));
 process.on("SIGTERM", () => setTimeout(() => process.exit(0), 1500));
 setInterval(() => {}, 1000);
+`;
+
+// A stand-in app whose quit ends its first thread before the others, as a
+// process's exit can: its first thread then reads as a zombie while another
+// still runs and holds its lock (python's, for a thread of its own to end).
+const FAKE_APP_THREADS = `
+import ctypes, os, signal, socket, sys, threading, time
+lock = socket.socket()
+lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+lock.bind(("127.0.0.1", int(os.environ["FAKE_LOCK"])))
+lock.listen()
+print("ready", flush=True)
+def last():
+    time.sleep(1.5)
+    os._exit(0)
+def quit(*_):
+    threading.Thread(target=last).start()
+    # The first thread ends alone (the exit system call, not exit_group).
+    ctypes.CDLL(None).syscall(60, 0)
+signal.signal(signal.SIGTERM, quit)
+while True:
+    time.sleep(1)
 `;
 
 /** Whether process `pid` runs (a zombie doesn't). */
@@ -105,6 +137,7 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
     writeFileSync(path.join(dir, "driver.mjs"), FAKE_DRIVER);
     writeFileSync(path.join(dir, "app.mjs"), FAKE_APP);
     writeFileSync(path.join(dir, "linger"), "0");
+    writeFileSync(path.join(dir, "app.py"), FAKE_APP_THREADS);
     // The app is found by its binary: a copy of node's of its own.
     app = path.join(dir, "vodscribe");
     copyFileSync(process.execPath, app);
@@ -115,6 +148,7 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
     Object.assign(process.env, {
       TAURI_DRIVER: driver,
       FAKE_APP_SCRIPT: path.join(dir, "app.mjs"),
+      FAKE_APP_THREADS_SCRIPT: path.join(dir, "app.py"),
       FAKE_LINGER_FILE: path.join(dir, "linger"),
       FAKE_LOCK: String(await freePort()),
       E2E_DRIVER_PORT: String(await freePort()),
@@ -131,6 +165,27 @@ describe("sessions against a stand-in tauri-driver", { skip: process.platform !=
     assert.ok(pid && running(pid), "the app is found");
     await one.close();
     assert.equal(running(pid), false, "the app still runs after close()");
+  });
+
+  test("a session closed has its app ended, every thread of it, before the next starts", async (t) => {
+    // Found by its binary as the app is: python's, under a name of its own.
+    const python = ["/usr/bin/python3", "/usr/local/bin/python3"].find((p) => existsSync(p));
+    if (!python) return t.skip("no python3");
+    const threaded = path.join(dir, "python");
+    symlinkSync(python, threaded);
+    try {
+      const one = await webdriver(threaded);
+      await one.close();
+      // Its lock free: a copy started now doesn't find it held and hand over.
+      const free = await new Promise((resolve) => {
+        const probe = createServer();
+        probe.once("error", () => resolve(false));
+        probe.listen(Number(process.env.FAKE_LOCK), "127.0.0.1", () => probe.close(() => resolve(true)));
+      });
+      assert.ok(free, "close() returned with a thread of the app still holding its lock");
+    } finally {
+      rmSync(threaded, { force: true });
+    }
   });
 
   /** A session's start that fails: what it said, and how long it took. */
