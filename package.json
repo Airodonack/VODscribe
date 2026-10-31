@@ -11,5 +11,8 @@
     "format": "pnpm --recursive format",
     "lint": "pnpm --recursive lint",
     "site": "pnpm --filter site dev"
+  },
+  "devDependencies": {
+    "yaml": "2.8.1"
   }
 }
