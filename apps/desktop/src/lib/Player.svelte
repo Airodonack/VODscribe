@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChannelDisc from "./ChannelDisc.svelte";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
   import { ask } from "./ask";
@@ -594,7 +595,11 @@
       <strong title={vod.title}>{vod.title}</strong>
       <span class="meta muted">
         <span class="platform {vod.platform}">{site}</span>
-        {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
+        {#if vod.channel}<span class="sep">·</span><ChannelDisc
+            vodId={vod.id}
+            channel={vod.channel}
+            size={16}
+          />{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if chapterNow?.text}

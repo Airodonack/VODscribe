@@ -60,7 +60,13 @@ export default {
         return { status: 200, headers: { ETag: `"${md5(file)}"`, "Content-Type": "application/json" }, body: file };
       return { status: 404 };
     });
-    const asked = (from = 0) => host.requests.slice(from).map((r) => `${r.method} ${r.path}${r.since ? " since" : ""}`);
+    // The file host's questions: the image server is the same host here, and
+    // the library row of a VOD with annotations asks it for the channel's picture.
+    const asked = (from = 0) =>
+      host.requests
+        .slice(from)
+        .filter((r) => !r.path.startsWith("/avatar/"))
+        .map((r) => `${r.method} ${r.path}${r.since ? " since" : ""}`);
     try {
       await withSiteVods(ctx, async (app) => {
         const wrong = [];

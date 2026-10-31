@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChannelDisc from "./ChannelDisc.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
   import { hideNote, noteHidden } from "./permission";
   import PermissionNote from "./PermissionNote.svelte";
@@ -218,7 +219,11 @@
     <span class="title">{vod.title}</span>
     <span class="meta muted">
       <span class="platform {vod.platform}">{platform}</span>
-      {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
+      {#if vod.channel}<span class="sep">·</span><ChannelDisc
+          vodId={vod.id}
+          channel={vod.channel}
+          size={14}
+        />{vod.channel}{/if}
     </span>
   </span>
 </button>

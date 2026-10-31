@@ -7,6 +7,7 @@ import {
   activityLabel,
   castDetail,
   castIndex,
+  channelMember,
   crowds,
   isVoice,
   speakerColor,
@@ -310,4 +311,25 @@ test("a file of a million highlights is refused before the page draws any", () =
   assert.throws(() => parseAnnotations(file), {
     message: "This annotations file is too big: it has more than 5,000 highlights.",
   });
+});
+
+test("the channel's streamer is found by name, player or login, any case, a streamer first", () => {
+  /** @param {string} login */
+  const twitch = (login) => ({ platform: /** @type {const} */ ("twitch"), login });
+  /** @type {import("./api").CastMember[]} */
+  const cast = [
+    { name: "Ada", aliases: [], role: "friend", account: twitch("ada_plays") },
+    { name: "Mr. C", aliases: [], role: "in-game character", player: "Burn", account: twitch("burn") },
+    { name: "Burn", aliases: [], role: "streamer", account: twitch("burn") },
+    { name: "Jules", aliases: [], role: "friend" },
+    { name: "Voice", aliases: [], role: "tts", account: twitch("voice") },
+  ];
+  assert.equal(channelMember(cast, " burn ")?.name, "Burn");
+  assert.equal(channelMember(cast, "ADA_PLAYS")?.name, "Ada");
+  assert.equal(channelMember(cast.slice(0, 2), "Burn")?.name, "Mr. C");
+  // No account, a voice, no channel: no one.
+  assert.equal(channelMember(cast, "Jules"), undefined);
+  assert.equal(channelMember(cast, "Voice"), undefined);
+  assert.equal(channelMember(cast, null), undefined);
+  assert.equal(channelMember(cast, "Marlowe"), undefined);
 });

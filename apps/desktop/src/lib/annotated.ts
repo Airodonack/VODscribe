@@ -60,6 +60,20 @@ export function castDetail(m: CastMember): string {
 }
 
 /**
+ * The cast member whose channel the VOD is on, by the channel's name: the one
+ * with an account whose name, player or login is `channel` (any case), a
+ * streamer first. Their picture goes beside the channel's name in the VOD's
+ * heading and its library row. Undefined when none has an account.
+ */
+export function channelMember(cast: CastMember[], channel: string | null | undefined): CastMember | undefined {
+  const key = channel?.trim().toLowerCase();
+  if (!key) return undefined;
+  const is = (n: string | undefined) => n?.trim().toLowerCase() === key;
+  const found = cast.filter((m) => m.account && !isVoice(m) && (is(m.name) || is(m.player) || is(m.account.login)));
+  return found.find((m) => m.role.trim().toLowerCase() === "streamer") ?? found[0];
+}
+
+/**
  * Highlights close together on a timeline, as one glyph each: walking them
  * in order of `x` (where each is drawn, in pixels), one less than `within`
  * from the first of the group before joins it. The first of each group is
