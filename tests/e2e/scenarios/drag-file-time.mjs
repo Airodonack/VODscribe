@@ -13,13 +13,13 @@
 // made, the stretch's not); last, a stretch carried while two long clips
 // wait to be made ahead of it. Linux (X11) with Nautilus only, so far.
 
-import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
+import { findIn, noFileManager, openFileManager, probeDuration, setFormat, windowsOf } from "../lib/fileManager.mjs";
 import { longVideo, minute } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -34,19 +34,11 @@ const SLACK = 0.1;
 export default {
   name: "drag-file-time",
   async run(app, ctx) {
-    const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+    const why = noFileManager();
     if (why) ctx.skip(why);
-    try {
-      execFileSync("sh", ["-c", "command -v nautilus"], { stdio: "ignore" });
-    } catch {
-      ctx.skip("no nautilus to drop on");
-    }
     const work = path.join(ctx.out, "drag-file-time");
     rmSync(work, { recursive: true, force: true });
     const dest = path.join(work, "drop-here");
-    const home = path.join(work, "home");
-    mkdirSync(dest, { recursive: true });
-    mkdirSync(home, { recursive: true });
     const fixtures = path.join(ctx.out, "fixtures");
     const files = [minute(fixtures), longVideo(fixtures)];
 
@@ -64,46 +56,9 @@ export default {
     );
 
     // Nautilus on the folder, its own home (never the user's), beside the app's window.
-    const page = await os.windowRect(app);
-    const [screenW] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" })
-      .trim()
-      .split(" ")
-      .map(Number);
-    const fm = { x: page.x + page.w + 20, y: Math.max(0, page.y), w: 600, h: 500 };
-    if (fm.x + fm.w > screenW) fm.x = page.x - 20 - fm.w;
-    if (fm.x < 0)
-      ctx.skip(
-        `no room for a file manager beside the window (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
-      );
-    const nautilus = spawn("nautilus", ["--new-window", dest], {
-      env: {
-        ...process.env,
-        HOME: home,
-        XDG_CONFIG_HOME: path.join(home, ".config"),
-        XDG_DATA_HOME: path.join(home, ".local", "share"),
-        XDG_CACHE_HOME: path.join(home, ".cache"),
-      },
-      stdio: "ignore",
-    });
+    const nautilus = await openFileManager(app, ctx, dest, path.join(work, "home"));
     try {
-      const win = await until(
-        "Nautilus's window",
-        () => {
-          try {
-            return execFileSync("xdotool", ["search", "--onlyvisible", "--name", "^drop-here"], { encoding: "utf8" })
-              .trim()
-              .split("\n")[0];
-          } catch {
-            return false;
-          }
-        },
-        MINUTE,
-      );
-      execFileSync("xdotool", ["windowsize", win, String(fm.w), String(fm.h)]);
-      execFileSync("xdotool", ["windowmove", win, String(fm.x), String(fm.y)]);
-      await sleep(1000);
-      const drop = { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) };
-      os.activate(app.driver.proc);
+      const { drop } = nautilus;
 
       // The marks the page sets, in wall-clock time, and the press's.
       await app.js(
@@ -304,57 +259,7 @@ export default {
         ]);
       }
     } finally {
-      nautilus.kill();
+      nautilus.close();
     }
   },
 };
-
-/** The X windows of process `pid` that show. */
-function windowsOf(pid) {
-  try {
-    return execFileSync("xdotool", ["search", "--onlyvisible", "--pid", String(pid)], { encoding: "utf8" })
-      .split("\n")
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
-/** The file named `name` somewhere under `dir`, or null. */
-function findIn(dir, name) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const at = path.join(dir, entry.name);
-    if (entry.isFile() && entry.name === name) return at;
-    if (entry.isDirectory()) {
-      const found = findIn(at, name);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
-/** A video file's length in seconds, as ffprobe reads it. */
-function probeDuration(file) {
-  const out = execFileSync(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
-    { encoding: "utf8" },
-  );
-  return Number(out.trim());
-}
-
-/** Clips made as `format` ("MP4" or "MOV"), chosen in Settings. */
-async function setFormat(app, format) {
-  await app.openSettings("Storage");
-  await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Clip format"]')`), MINUTE);
-  await app.js(
-    `[...document.querySelectorAll('[role="radiogroup"][aria-label="Clip format"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
-    format,
-  );
-  await until(
-    `${format} chosen`,
-    async () => (await app.invoke("get_settings")).clip_format === format.toLowerCase(),
-    10_000,
-  );
-  await app.key("Escape");
-}
