@@ -1150,13 +1150,18 @@ export default {
     );
     if (await app.js(`return !!document.querySelector(".head .switch")`)) wrong.push("the pane hidden left a switch");
     // Hidden, each edge stays at the window's edge, the window's height.
-    const atEdges =
-      await app.js(`return [...document.querySelectorAll(".app > .edge-strip")].map((s) => { const r = s.getBoundingClientRect();
-        return Math.round(r.left) + "-" + Math.round(r.right) + "x" + Math.round(r.height) }).join(" ")`);
+    // (Against the page's size now: a window taller than the screen's room,
+    // as it opens on a short screen, comes back from a resize shorter than
+    // it was, the system keeping it on the screen.)
+    const { atEdges, page } =
+      await app.js(`return { page: { width: innerWidth, height: innerHeight }, atEdges: [...document.querySelectorAll(".app > .edge-strip")].map((s) => { const r = s.getBoundingClientRect();
+        return Math.round(r.left) + "-" + Math.round(r.right) + "x" + Math.round(r.height) }).join(" ") }`);
+    if (page.width !== was.width || page.height !== was.height)
+      ctx.log(`the page came back from 1200 px wide at ${page.width}x${page.height}, not ${was.width}x${was.height}`);
     const [left, right] = atEdges.split(" ");
-    const full = (edge) => edge?.endsWith(`x${was.height}`);
-    if (!left?.startsWith("0-") || !right?.includes(`-${was.width}x`) || !full(left) || !full(right))
-      wrong.push(`both hidden, the edges are at ${atEdges} in ${was.width}x${was.height}`);
+    const full = (edge) => edge?.endsWith(`x${page.height}`);
+    if (!left?.startsWith("0-") || !right?.includes(`-${page.width}x`) || !full(left) || !full(right))
+      wrong.push(`both hidden, the edges are at ${atEdges} in ${page.width}x${page.height}`);
     await ctx.checkpoint("columns-hidden");
     // Over a reload: the page's own storage keeps them. (Not over a restart
     // yet: the installed app's page is served from a new port each launch,
@@ -1225,108 +1230,116 @@ export default {
       () => app.js(`return !!document.querySelector('#transcript .line button.row[data-time="0.5"]')`),
       MINUTE,
     );
-    // Marlowe's 13th line at the top: his heading is above, and pinned.
-    await app.js(`${PINS} await put('#transcript .line button.row[data-time="6"]', 0);`);
-    const atRest = await app.js(`${PINS} return pins();`);
-    if (atRest.chapter?.text !== "💬Hello" || atRest.speaker?.text !== "Marlowe (Vance)" || atRest.hidden !== "true")
-      wrong.push(`mid-stretch, the pinned headings: ${JSON.stringify(atRest)}`);
-    else ctx.log(`mid-stretch, pinned: ${atRest.chapter.text} over ${atRest.speaker.text}, ${atRest.bottom} px`);
-    // The pinned copy of Marlowe's heading shows his picture, as his heading does: a disc
-    // drawn anew over a picture already loaded shows it too.
-    const pinnedDiscs = () =>
-      app.js(`const disc = (el) => { const img = el?.querySelector("img");
-          return el && { pictured: el.classList.contains("pictured"), img: img && { complete: img.complete, width: img.naturalWidth, loaded: img.classList.contains("loaded"), lazy: img.loading } }; };
-        return { pinned: disc(document.querySelector("#transcript .pinned .avatar")),
-          heading: disc(document.querySelector('#transcript .line > .group-head[data-time="0"] .avatar')) };`);
-    const pictured = await until(
-      "the pinned heading's picture",
-      async () => {
-        const d = await pinnedDiscs();
-        return d.pinned?.pictured && d.heading?.pictured && d;
-      },
-      5000,
-    ).catch(async () => {
-      const d = await pinnedDiscs();
-      wrong.push(`the pinned heading's disc has no picture: ${JSON.stringify(d)}`);
-      return d;
-    });
-    ctx.log(`the pinned and real headings' discs: ${JSON.stringify(pictured)}`);
-    await ctx.checkpoint("annotations-pinned");
-    picturesBack.stop();
-    const stack = atRest.bottom;
-    // Ada's heading 10 px into the pinned Marlowe's: he's pushed up by as much, touching it.
-    const ada = await app.js(`${PINS} return put('#transcript .line > .group-head[data-time="12"]', ${stack - 10});`);
-    const pushed = await app.js(`${PINS} return pins();`);
-    if (
-      pushed.speaker?.text !== "Marlowe (Vance)" ||
-      Math.abs(pushed.speaker.bottom - ada.top) > 1 ||
-      Math.abs(pushed.speaker.top - (atRest.speaker.top - 10)) > 1 ||
-      Math.abs(pushed.chapter?.top ?? 99) > 1
-    )
-      wrong.push(`Ada's heading 10 px into Marlowe's pinned one at ${JSON.stringify(ada)}: ${JSON.stringify(pushed)}`);
-    // A row above the view turning out 30 px taller (measured as it's laid
-    // out, as scrolling up does): the view moves by as much to keep what's
-    // read in place, and in that very frame the pinned heading still touches
-    // Ada's. Read after the transcript's own measuring (its ResizeObserver
-    // was made first, so it's told first), before the frame is painted.
-    const grown = await app.js(
-      `${PINS}
-       const ada = () => from(document.querySelector('#transcript .line > .group-head[data-time="12"]'));
-       const above = [...document.querySelectorAll("#transcript .line[data-index]")]
-         .find((r) => r.getBoundingClientRect().bottom < viewTop() - 20 && r.querySelector("button.row"));
-       if (!above) throw new Error("no row laid out above the view");
-       const extra = document.createElement("div");
-       extra.style.height = "30px";
-       const painted = await new Promise((ok) => {
-         const ro = new ResizeObserver(() => { ro.disconnect(); ok({ ada: ada(), pins: pins() }); });
-         ro.observe(above);
-         above.append(extra);
-       });
-       await frames();
-       await frames();
-       const settled = { ada: ada(), pins: pins() };
-       extra.remove();
-       await frames();
-       await frames();
-       return { painted, settled };`,
-    );
-    for (const [when, at] of Object.entries(grown))
-      if (!at.pins.speaker || Math.abs(at.pins.speaker.bottom - at.ada.top) > 1)
-        wrong.push(`a row above grown 30 px, ${when}, the pinned heading and Ada's: ${JSON.stringify(at)}`);
-    // "The game"'s divider (its row, with the space over it) 10 px into the pinned pair: both pushed up together.
-    const divider = await app.js(`${PINS} return put('#transcript .line > .chapter-head[data-time="20"]', ${stack});`);
-    const pair = await app.js(`${PINS} return pins();`);
-    const rowTop = divider.top - 10;
-    if (
-      pair.chapter?.text !== "💬Hello" ||
-      pair.speaker?.text !== "Ada" ||
-      Math.abs(pair.chapter.top + 10) > 1 ||
-      Math.abs(pair.bottom - rowTop) > 1
-    )
-      wrong.push(
-        `"The game"'s divider 10 px into the pinned pair at ${JSON.stringify(divider)}: ${JSON.stringify(pair)}`,
-      );
-    // Over the lines no one is named for: the chapter, and Unknown under it.
-    await app.js(`${PINS} await put('#transcript .line button.row[data-time="35"]', 0);`);
-    const unnamed = await app.js(`${PINS} return pins();`);
-    if (unnamed.chapter?.text !== "🎮Thegame" || unnamed.speaker?.text !== "Unknown")
-      wrong.push(`over lines no one is named for, pinned: ${JSON.stringify(unnamed)}`);
-
-    // The playhead moved to a line under the pinned headings (a click on the
-    // timeline), following: that line is brought out below them.
-    // That needs a view taller than the pinned headings and a line: on a
-    // short screen (768 px, as a hosted Mac runner's) the window can't grow
-    // that tall, the transcript's view under its header is shorter than the
-    // headings, which cover all of it, and following has nowhere to put the line.
+    // The headings pinned at the transcript's top need a view taller than
+    // them and a line: on a short screen (768 px, as a hosted Mac runner's)
+    // the window can't grow that tall, the transcript's view under its header
+    // is shorter than the headings, which would cover all of it, and there is
+    // no line under them to pin them over or to bring out below them.
     const room = await app.js(
-      `${PINS} const line = document.querySelector('#transcript .line > button.row[data-time="35"]');
-       return { view: Math.round(scroller.getBoundingClientRect().bottom - viewTop()), line: line.getBoundingClientRect().height };`,
+      `${PINS} scroller.scrollTop = 0; await frames();
+       const box = (sel) => document.querySelector(sel).getBoundingClientRect();
+       const chapter = box('#transcript .line > .chapter-head[data-time="0"]'), speaker = box('#transcript .line > .group-head[data-time="0"]');
+       return { view: Math.round(scroller.getBoundingClientRect().bottom - viewTop()),
+         headings: Math.round(speaker.bottom - chapter.top), line: Math.round(box('#transcript .line > button.row[data-time="0.5"]').height) };`,
     );
-    if (room.view < stack + room.line)
+    if (room.view < room.headings + room.line)
       ctx.log(
-        `the transcript's view is ${room.view} px under its header, short of the pinned headings' ${stack} px and a line's ${room.line}: following under them not tried`,
+        `the transcript's view is ${room.view} px under its header, short of its headings' ${room.headings} px and a line's ${room.line}: the pinned headings not tried`,
       );
     else {
+      // Marlowe's 13th line at the top: his heading is above, and pinned.
+      await app.js(`${PINS} await put('#transcript .line button.row[data-time="6"]', 0);`);
+      const atRest = await app.js(`${PINS} return pins();`);
+      if (atRest.chapter?.text !== "💬Hello" || atRest.speaker?.text !== "Marlowe (Vance)" || atRest.hidden !== "true")
+        wrong.push(`mid-stretch, the pinned headings: ${JSON.stringify(atRest)}`);
+      else ctx.log(`mid-stretch, pinned: ${atRest.chapter.text} over ${atRest.speaker.text}, ${atRest.bottom} px`);
+      // The pinned copy of Marlowe's heading shows his picture, as his heading does: a disc
+      // drawn anew over a picture already loaded shows it too.
+      const pinnedDiscs = () =>
+        app.js(`const disc = (el) => { const img = el?.querySelector("img");
+            return el && { pictured: el.classList.contains("pictured"), img: img && { complete: img.complete, width: img.naturalWidth, loaded: img.classList.contains("loaded"), lazy: img.loading } }; };
+          return { pinned: disc(document.querySelector("#transcript .pinned .avatar")),
+            heading: disc(document.querySelector('#transcript .line > .group-head[data-time="0"] .avatar')) };`);
+      const pictured = await until(
+        "the pinned heading's picture",
+        async () => {
+          const d = await pinnedDiscs();
+          return d.pinned?.pictured && d.heading?.pictured && d;
+        },
+        5000,
+      ).catch(async () => {
+        const d = await pinnedDiscs();
+        wrong.push(`the pinned heading's disc has no picture: ${JSON.stringify(d)}`);
+        return d;
+      });
+      ctx.log(`the pinned and real headings' discs: ${JSON.stringify(pictured)}`);
+      await ctx.checkpoint("annotations-pinned");
+      picturesBack.stop();
+      const stack = atRest.bottom;
+      // Ada's heading 10 px into the pinned Marlowe's: he's pushed up by as much, touching it.
+      const ada = await app.js(`${PINS} return put('#transcript .line > .group-head[data-time="12"]', ${stack - 10});`);
+      const pushed = await app.js(`${PINS} return pins();`);
+      if (
+        pushed.speaker?.text !== "Marlowe (Vance)" ||
+        Math.abs(pushed.speaker.bottom - ada.top) > 1 ||
+        Math.abs(pushed.speaker.top - (atRest.speaker.top - 10)) > 1 ||
+        Math.abs(pushed.chapter?.top ?? 99) > 1
+      )
+        wrong.push(
+          `Ada's heading 10 px into Marlowe's pinned one at ${JSON.stringify(ada)}: ${JSON.stringify(pushed)}`,
+        );
+      // A row above the view turning out 30 px taller (measured as it's laid
+      // out, as scrolling up does): the view moves by as much to keep what's
+      // read in place, and in that very frame the pinned heading still touches
+      // Ada's. Read after the transcript's own measuring (its ResizeObserver
+      // was made first, so it's told first), before the frame is painted.
+      const grown = await app.js(
+        `${PINS}
+         const ada = () => from(document.querySelector('#transcript .line > .group-head[data-time="12"]'));
+         const above = [...document.querySelectorAll("#transcript .line[data-index]")]
+           .find((r) => r.getBoundingClientRect().bottom < viewTop() - 20 && r.querySelector("button.row"));
+         if (!above) throw new Error("no row laid out above the view");
+         const extra = document.createElement("div");
+         extra.style.height = "30px";
+         const painted = await new Promise((ok) => {
+           const ro = new ResizeObserver(() => { ro.disconnect(); ok({ ada: ada(), pins: pins() }); });
+           ro.observe(above);
+           above.append(extra);
+         });
+         await frames();
+         await frames();
+         const settled = { ada: ada(), pins: pins() };
+         extra.remove();
+         await frames();
+         await frames();
+         return { painted, settled };`,
+      );
+      for (const [when, at] of Object.entries(grown))
+        if (!at.pins.speaker || Math.abs(at.pins.speaker.bottom - at.ada.top) > 1)
+          wrong.push(`a row above grown 30 px, ${when}, the pinned heading and Ada's: ${JSON.stringify(at)}`);
+      // "The game"'s divider (its row, with the space over it) 10 px into the pinned pair: both pushed up together.
+      const divider = await app.js(
+        `${PINS} return put('#transcript .line > .chapter-head[data-time="20"]', ${stack});`,
+      );
+      const pair = await app.js(`${PINS} return pins();`);
+      const rowTop = divider.top - 10;
+      if (
+        pair.chapter?.text !== "💬Hello" ||
+        pair.speaker?.text !== "Ada" ||
+        Math.abs(pair.chapter.top + 10) > 1 ||
+        Math.abs(pair.bottom - rowTop) > 1
+      )
+        wrong.push(
+          `"The game"'s divider 10 px into the pinned pair at ${JSON.stringify(divider)}: ${JSON.stringify(pair)}`,
+        );
+      // Over the lines no one is named for: the chapter, and Unknown under it.
+      await app.js(`${PINS} await put('#transcript .line button.row[data-time="35"]', 0);`);
+      const unnamed = await app.js(`${PINS} return pins();`);
+      if (unnamed.chapter?.text !== "🎮Thegame" || unnamed.speaker?.text !== "Unknown")
+        wrong.push(`over lines no one is named for, pinned: ${JSON.stringify(unnamed)}`);
+
+      // The playhead moved to a line under the pinned headings (a click on the
+      // timeline), following: that line is brought out below them.
       if (await app.js(`return !!document.querySelector("#transcript .follow")`))
         await app.click("#transcript .follow");
       await app.js(PRESS_AT, 24.2);
@@ -1369,21 +1382,21 @@ export default {
         ctx.log(
           `the line the playhead moved to: ${brought.line.top} px down, the pinned headings ${brought.pins.bottom} px`,
         );
-    }
 
-    // A click on the pinned speaker (not their name): back to where their lines start, the heading in view.
-    await app.js(`${PINS} await put('#transcript .line button.row[data-time="46"]', 0);`);
-    const before = await app.js(`${PINS} return pins();`);
-    if (before.speaker?.text !== "Ada") wrong.push(`at 0:46, pinned: ${JSON.stringify(before)}`);
-    else {
-      await app.js(`document.querySelector("#transcript .pinned .pinned-speaker .head-time").click();`);
-      const returned = await app.js(
-        `${PINS} await frames(); await frames();
-         const head = document.querySelector('#transcript .line > .group-head[data-time="40"]');
-         return { head: head && from(head), pins: pins() };`,
-      );
-      if (!returned.head || returned.head.top < returned.pins.bottom - 1 || returned.head.top > 80)
-        wrong.push(`a click on the pinned Ada: ${JSON.stringify(returned)}`);
+      // A click on the pinned speaker (not their name): back to where their lines start, the heading in view.
+      await app.js(`${PINS} await put('#transcript .line button.row[data-time="46"]', 0);`);
+      const before = await app.js(`${PINS} return pins();`);
+      if (before.speaker?.text !== "Ada") wrong.push(`at 0:46, pinned: ${JSON.stringify(before)}`);
+      else {
+        await app.js(`document.querySelector("#transcript .pinned .pinned-speaker .head-time").click();`);
+        const returned = await app.js(
+          `${PINS} await frames(); await frames();
+           const head = document.querySelector('#transcript .line > .group-head[data-time="40"]');
+           return { head: head && from(head), pins: pins() };`,
+        );
+        if (!returned.head || returned.head.top < returned.pins.bottom - 1 || returned.head.top > 80)
+          wrong.push(`a click on the pinned Ada: ${JSON.stringify(returned)}`);
+      }
     }
 
     // The import's first chapter renamed (N on its frame opens its title):
