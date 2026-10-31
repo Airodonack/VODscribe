@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
-import { longVideo, serveChat, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
+import { longVideo, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
 
 /** Quitting with an erasure under way takes no longer than this, ms (the process gone; a debug build's). */
 const QUIT_WITHIN = 2000;
@@ -36,15 +36,35 @@ function partFiles() {
   return found;
 }
 
-/** A chat far longer than Twitch's test one: 120,000 messages, seconds to erase a part at a time. */
-function longChat() {
-  serveChat({
-    messages: Array.from({ length: 120_000 }, (_, i) => ({
-      time: i * 0.12,
-      author: `viewer${(i % 30) + 1}`,
-      text: `message ${i + 1}`,
-    })),
-  });
+/** How many chat messages the removed VOD has: enough that its erasure,
+ *  a part of 1000 at a time, is still under way at the quit. */
+const MESSAGES = 120_000;
+/** Writing them takes no longer than this, ms (a second or two here; CI's runners are slower). */
+const WRITE_WITHIN = 30_000;
+
+/**
+ * Writes MESSAGES chat messages into the library for VOD `id`, with the app
+ * stopped, as a fetch would have saved them; returns how long it took, ms.
+ * Written, not fetched: the chat fixture is served only by a build with the
+ * e2e feature (e2e.rs), and CI drives the release package, where the fetch
+ * would go to Twitch and never be "done" with this chat (it timed out there,
+ * 2026-10-31).
+ */
+function writeLongChat(id) {
+  const began = Date.now();
+  const db = new DatabaseSync(libraryPath());
+  try {
+    const add = db.prepare("INSERT INTO chat (vod_id, time, author, color, text, parts) VALUES (?, ?, ?, NULL, ?, ?)");
+    db.exec("BEGIN");
+    for (let i = 0; i < MESSAGES; i++) {
+      const text = `message ${i + 1}`;
+      add.run(id, i * 0.12, `viewer${(i % 30) + 1}`, text, JSON.stringify([{ type: "text", text }]));
+    }
+    db.exec("COMMIT");
+  } finally {
+    db.close();
+  }
+  return Date.now() - began;
 }
 
 /** What's left in the library of VOD `id`: its row (null if gone) and how many chat messages. With the app stopped or not. */
@@ -177,8 +197,8 @@ export default {
       if (m.status !== "error" || m.error !== "Canceled") throw new Error(`a clip canceled is ${JSON.stringify(m)}`);
     await until("no part files", () => partFiles().length === 0 || null, 10_000);
 
-    // A site's VOD with its video kept here and a long chat (fetched at the
-    // next start, from the fixture).
+    // A site's VOD with its video kept here and a long chat, written into
+    // the library while the app is stopped.
     const [site] = await app.addFiles([videos(dir).video]);
     await ctx.quit();
     const title = "A stream with chat";
@@ -186,26 +206,22 @@ export default {
     mkdirSync(media, { recursive: true });
     const kept = path.join(media, `${title} [${String(site.id).padStart(6, "0")}].mp4`);
     copyFileSync(videos(dir).video, kept);
-    longChat();
     makeSiteVod(site.id, "twitch", TWITCH_VOD, {
       title,
       channel: "Marlowe",
-      // As long as the chat (longChat's last message is at four hours).
+      // As long as the chat (its last message is at four hours).
       duration: 14400,
-      chat: null,
+      chat: "done",
       chatError: null,
       mediaPath: kept,
     });
+    const wrote = writeLongChat(site.id);
+    const messages = leftOf(site.id).chat;
+    log(`${messages} chat messages written in ${wrote} ms`);
+    if (messages !== MESSAGES) throw new Error(`${messages} chat messages in the library, not ${MESSAGES}`);
+    if (wrote > WRITE_WITHIN) throw new Error(`writing the chat took ${wrote} ms: fewer messages, or a faster way`);
     app = await ctx.start();
     await app.toLibrary();
-    await until(
-      "its chat fetched",
-      async () => (await app.invoke("list_vods")).find((v) => v.id === site.id)?.chat === "done",
-      3 * MINUTE,
-    );
-    const messages = leftOf(site.id).chat;
-    if (messages < 100_000)
-      throw new Error(`only ${messages} chat messages kept: the erasure would be too quick to see`);
 
     // Removed: the erasure shows at once, waited for in the page (it can be
     // over in a second or two), and the app quit during it.
