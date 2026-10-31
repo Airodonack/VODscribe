@@ -35,17 +35,18 @@ strip = false
 [patch.crates-io]
 sherpa-onnx-sys = { path = "third_party/sherpa-onnx-sys" }
 # Servo's layout reads scrollbar-width, scrollbar-color and scrollbar-gutter,
-# which stylo 0.22.0 hides from Servo; the servo runtime's fork of stylo exposes
-# them. A [patch] only counts in the root workspace, so it is repeated here,
-# for every crate of stylo's workspace (or two copies of the shared ones build).
-selectors = { path = "/mnt/data/servo-spike/stylo/selectors" }
-servo_arc = { path = "/mnt/data/servo-spike/stylo/servo_arc" }
-stylo = { path = "/mnt/data/servo-spike/stylo/style" }
-stylo_atoms = { path = "/mnt/data/servo-spike/stylo/stylo_atoms" }
-stylo_derive = { path = "/mnt/data/servo-spike/stylo/style_derive" }
-stylo_dom = { path = "/mnt/data/servo-spike/stylo/stylo_dom" }
-stylo_malloc_size_of = { path = "/mnt/data/servo-spike/stylo/malloc_size_of" }
-stylo_static_prefs = { path = "/mnt/data/servo-spike/stylo/stylo_static_prefs" }
-stylo_traits = { path = "/mnt/data/servo-spike/stylo/style_traits" }
-to_shmem = { path = "/mnt/data/servo-spike/stylo/to_shmem" }
-to_shmem_derive = { path = "/mnt/data/servo-spike/stylo/to_shmem_derive" }
+# which stylo 0.22.0 hides from Servo; branch vodscribe/v0.22.0 of the
+# Airodonack/stylo fork exposes them. A [patch] only counts in the root
+# workspace, so it is repeated here, for every crate of stylo's workspace (or
+# two copies of the shared ones build).
+selectors = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+servo_arc = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_atoms = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_derive = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_dom = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_malloc_size_of = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_static_prefs = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+stylo_traits = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+to_shmem = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+to_shmem_derive = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
