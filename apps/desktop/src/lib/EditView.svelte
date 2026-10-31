@@ -85,6 +85,10 @@
     return out;
   });
   const total = $derived(segments.reduce((sum, s) => sum + s.length, 0));
+  // How long its timeline is, for what selects all of it (Ctrl+A: bulk.ts).
+  $effect(() => {
+    if (edit && cuts.isOf({ kind: "edit", id: edit.id })) cuts.length = total;
+  });
   // The real splits: wherever what plays jumps, between pieces or over a
   // stretch struck out.
   const joins = $derived(segments.slice(1).map((s) => s.at));

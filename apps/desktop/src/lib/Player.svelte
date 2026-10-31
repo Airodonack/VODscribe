@@ -283,6 +283,10 @@
   const fps = $derived(reading.fps);
   // The VOD's length as the site said, or as the player found when the site didn't say.
   const duration = $derived(vod.duration || playerDuration);
+  // How long its timeline is, for what selects all of it (Ctrl+A: bulk.ts).
+  $effect(() => {
+    if (cuts.isOf({ kind: "vod", id: vod.id })) cuts.length = duration;
+  });
 
   /** Moves the playhead, starting the player there (paused) if it isn't yet. */
   function seekTo(time: number) {

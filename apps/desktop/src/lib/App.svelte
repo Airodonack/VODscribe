@@ -818,7 +818,7 @@
 
 <svelte:window
   onkeydown={onWindowKey}
-  onpointermove={(e) => pointerAt(e.clientX)}
+  onpointermove={(e) => pointerAt(e.clientX, e.clientY)}
   ondragover={keepDropsInApp}
   ondrop={keepDropsInApp}
   onmousedown={onMouseNav}

@@ -29,10 +29,11 @@
 //
 // One kind picked at a time: two pills picked, then a cut clicked, the pills
 // are let go (the bar says nothing's picked) and Delete takes the cut only;
-// the same with a library row picked. Ctrl+A (⌘A) picks by the side of the
-// window the pointer is on, whatever has the focus: over the clip bar or the
-// timeline, all the clips; over the library's pane, all its rows; over the
-// main side with no clip bar, nothing, and not the page's text either. Last,
+// the same with a library row picked. Ctrl+A (⌘A) picks by where the
+// pointer is, whatever has the focus: over the clip bar, all the clips; over
+// the timeline, the whole timeline selected (no clips); over the library's
+// pane, all its rows; over the main side with nothing open, nothing, and not
+// the page's text either. Last,
 // the two pills picked, one of them dragged onto "Make new edit" in the
 // library: both go in a new edit, in the order picked.
 
@@ -427,19 +428,32 @@ export default {
     await until("its two pills", () => app.js(`return document.querySelectorAll(".chip.ready").length === 2`), MINUTE);
     const focusOn = (selector) => app.js(`document.querySelector(arguments[0]).focus()`, selector);
     const listCount = () => app.js(`return document.querySelector("aside .picked .count")?.textContent.trim() ?? ""`);
-    for (const over of [".clip-bar", ".scrubber"]) {
-      await focusOn(row(a));
-      await pointAt(over);
-      await app.key("a", { cmd: true });
-      await until(`Ctrl+A over ${over}: the clips`, async () => (await chosen()).length === 2, 10_000).catch(
-        async (e) => {
-          throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}, the list "${await listCount()}"`);
-        },
+    await focusOn(row(a));
+    await pointAt(".clip-bar");
+    await app.key("a", { cmd: true });
+    await until(`Ctrl+A over the clip bar: the clips`, async () => (await chosen()).length === 2, 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}, the list "${await listCount()}"`);
+      },
+    );
+    if (await listCount()) throw new Error(`Ctrl+A over the clip bar picked rows too: "${await listCount()}"`);
+    await app.key("Escape");
+    await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
+    // Over the timeline: all of it selected, from its start to its end, and no clips.
+    await focusOn(row(a));
+    await pointAt(".scrubber");
+    await app.key("a", { cmd: true });
+    const whole = () =>
+      app.js(`const s = document.querySelector(".scrubber .selection");
+              return s && { left: parseFloat(s.style.left), width: parseFloat(s.style.width) };`);
+    const all = await until("Ctrl+A over the timeline: all of it selected", whole, 10_000);
+    if (all.left > 0.5 || all.width < 99.5) throw new Error(`Ctrl+A over the timeline selected ${JSON.stringify(all)}`);
+    if ((await chosen()).length || (await listCount()))
+      throw new Error(
+        `Ctrl+A over the timeline picked ${JSON.stringify(await chosen())}, the list "${await listCount()}"`,
       );
-      if (await listCount()) throw new Error(`Ctrl+A over ${over} picked rows too: "${await listCount()}"`);
-      await app.key("Escape");
-      await until("Escape let them go", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
-    }
+    await app.key("Escape");
+    await until("Escape let it go", async () => !(await whole()), 10_000);
     await focusOn(`.chip[data-clip="${made[0].id}"] .name`);
     await pointAt("aside .brand");
     await app.key("a", { cmd: true });

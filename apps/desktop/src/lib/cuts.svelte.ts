@@ -75,6 +75,9 @@ class Cuts {
   selectedEdge = $state<"start" | "end" | null>(null);
   /** The open VOD's or edit's frame rate, as its player says, for marks placed elsewhere. */
   fps = DEFAULT_FPS;
+  /** How long its timeline is (the VOD's length, the edit's pieces end to
+   *  end), as its player says: what Ctrl+A selects (bulk.ts). */
+  length = $state(0);
   /** Where its player is (the time it shows) and whether it plays, as its
    *  player says: the transcript follows it (Transcript.svelte). */
   now = $state(0);
@@ -126,6 +129,7 @@ class Cuts {
     this.doc = doc;
     this.all = [];
     this.read = false;
+    this.length = 0;
     this.now = 0;
     this.playing = false;
     this.pointed = null;
