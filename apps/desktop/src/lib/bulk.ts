@@ -123,21 +123,21 @@ function faceOf(item: Snippet): Face | undefined {
 /** Carries what's picked on the timeline and in the clip bar from (`x`, `y`)
  *  (a drag of one of them, flying from `from`; back over `home`, if given, the
  *  carry ends and it takes the press on): see dragout.ts `carrySet`. */
-export function carryChosen(from: DOMRect, x: number, y: number, home?: CarryHome) {
-  carrySnippets(snippets.items, from, x, y, home);
+export function carryChosen(from: DOMRect, x: number, y: number, home?: CarryHome): Promise<void> {
+  return carrySnippets(snippets.items, from, x, y, home);
 }
 
 /** Carries `items` (stretches of the open timeline, clips of its clip bar), as
  *  `carryChosen` carries what's picked: a stretch between an edit's cuts
  *  Alt-dragged goes this way, as itself rather than its whole piece. */
-export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number, home?: CarryHome) {
+export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number, home?: CarryHome): Promise<void> {
   const items = chosenPuts(list);
   const doc = clips.doc;
-  if (!items.length || !doc) return;
+  if (!items.length || !doc) return Promise.resolve();
   const faces = list.slice(0, 3).flatMap((i) => faceOf(i) ?? []);
   // One alone is said as a stretch carried by itself is; several, by how many.
   const one = items.length === 1 && faces[0];
-  void carrySet({
+  return carrySet({
     items,
     label: one ? stretchSaid(one.start, one.end ?? one.start) : chosenSaid(list),
     faces,

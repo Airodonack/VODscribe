@@ -4,7 +4,8 @@
 // its number in that order, the playhead stays where it was, and C makes a
 // clip of each, in that order, as one change. An Alt-click (Option) on the
 // timeline picks the stretch there alone, Ctrl+Alt-click adds one, and the
-// playhead stays. The clip bar has no row of its own about what's picked:
+// playhead stays; with one picked, an Alt-drag from another stretch lets go
+// of it, and the stretch the drag grabs is lit as grabbed until let go. The clip bar has no row of its own about what's picked:
 // the keys and the drags are the same for several as for one. A plain click
 // on a pill picks it alone, one on another picks that instead, and one on
 // the pill picked alone lets it go. A pill's play button plays the VOD from
@@ -53,6 +54,8 @@ export default {
   expects: {
     "stretches-numbered":
       "On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there).",
+    "stretch-grabbed":
+      "On the timeline the stretch from about 0:02 to 0:03 has a dashed outline over a light shade, and no other stretch is outlined or numbered; a small card with a picture and a waveform, saying its length, sits near it, carried.",
   },
   async run(app, ctx) {
     await app.toLibrary();
@@ -235,6 +238,41 @@ export default {
     await app.key("Escape");
     await stretchesAre("", "Escape let it go");
     ctx.log("an Alt-click picks a stretch alone, Ctrl+Alt-click adds one, the playhead staying");
+
+    // With 1-2 s picked, an Alt-drag from 2-3 s lets go of the pick, and the
+    // stretch it grabs is lit as grabbed from the drag's start, a look apart
+    // from the picked one's; let go (Escape), nothing's lit or picked.
+    await altAt(1.5);
+    await stretchesAre("1 2", "an Alt-click picked 1-2 s");
+    const grab = await app.js(
+      `const bar = document.querySelector(".scrubber");
+       const box = bar.getBoundingClientRect();
+       const x = box.left + ((2.5 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+       const at = (x, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons, isPrimary: true, pointerId: 1, altKey: true });
+       bar.dispatchEvent(new PointerEvent("pointerdown", at(x, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x + 12, 1)));
+       await new Promise((r) => requestAnimationFrame(() => r()));
+       const seen = (selector) => [...document.querySelectorAll(selector)].map((p) => p.dataset.segment).sort().join();
+       return { picked: seen(".scrubber .chosen"), grabbed: seen(".scrubber .grabbed"),
+         ghost: !!document.querySelector(".carry-ghost") };`,
+    );
+    await ctx.checkpoint("stretch-grabbed");
+    await app.js(
+      `window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+       window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, buttons: 0, isPrimary: true, pointerId: 1 }));`,
+    );
+    if (grab.picked !== "" || grab.grabbed !== "2 3" || !grab.ghost)
+      throw new Error(
+        `an Alt-drag from 2-3 s with 1-2 s picked: picked "${grab.picked}", lit as grabbed "${grab.grabbed}", ` +
+          (grab.ghost ? "carried" : "not carried"),
+      );
+    await until(
+      "the grabbed stretch dark once let go",
+      () => app.js(`return !document.querySelector(".scrubber .grabbed, .carry-ghost")`),
+      10_000,
+    );
+    await stretchesAre("", "nothing picked after the carry");
+    ctx.log("an Alt-drag from another stretch lets go of the pick and lights the one it grabs");
 
     // A plain click on a pill picks it alone, as in a file manager; one on
     // another picks that one instead; one on the pill picked alone lets it go.
