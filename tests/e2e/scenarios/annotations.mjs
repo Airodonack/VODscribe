@@ -71,6 +71,7 @@ import { isDeepStrictEqual } from "node:util";
 import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { serveFiles } from "../lib/fileHost.mjs";
 import { minute } from "../lib/fixtures.mjs";
+import * as os from "../lib/os.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
@@ -193,6 +194,23 @@ async function setPictures(app, on) {
   await app.key("Escape");
 }
 
+/**
+ * The system's own pointer moved off the app's page, where this layer can
+ * move it (X11), onto what's above the page (the title bar) or else below
+ * it. The page hears it as well as the pointer these steps make up: resting
+ * where the timeline's tip pops up, it was under the tip as it appeared and
+ * out from under it as it moved, and the timeline heard that as the
+ * pointer leaving it, so the tip went (2 runs in 10 on a 613 px page, the
+ * system's pointer at 600,392 in it, just above the bar; 2026-10-30).
+ */
+async function systemPointerOff(app) {
+  if (os.unavailable({ linuxOnly: "the system's pointer" })) return;
+  const page = await os.windowRect(app);
+  await os.gesture([["move", page.x + 1, page.y > 0 ? page.y - 1 : page.y + page.h]]);
+  // Heard by the page before the steps point at anything: nothing in it under the pointer.
+  await until("the system's pointer off the page", () => app.js(`return !document.querySelector(":hover")`), 5000);
+}
+
 const tip = (app) =>
   app.js(`return document.querySelector(".scrubber .tip")?.textContent.replace(/\\s+/g, " ").trim() ?? ""`);
 
@@ -285,6 +303,7 @@ export default {
     if (shown !== "funny 😂 1, drama 🍿 1") wrong.push(`the highlights' glyphs: ${shown}`);
 
     // Pointing at the first: a line down the bar, and its title, times and why in the tip.
+    await systemPointerOff(app);
     await app.js(POINT, ".scrubber .emoji[data-category=funny]");
     const said = await until(
       "the highlight's tip",
