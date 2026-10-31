@@ -310,6 +310,11 @@ function newApp(e, is, { typing }) {
   // VODs and edits selected removed.
   if (!typing && is(e, "select.all")) return "select all";
   if (!typing && is(e, "library.remove")) return "remove from the library";
+  // New (copyPaste.ts, from App.svelte `onWindowKey`): Ctrl+C, Ctrl+X and
+  // Ctrl+V, which were the web view's alone (outside text fields: nothing).
+  if (!typing && is(e, "edit.copy")) return "copy";
+  if (!typing && is(e, "edit.cut")) return "cut out";
+  if (!typing && is(e, "edit.paste")) return "paste";
   // New (App.svelte `onWindowKey`): the library and the pane's column shown or hidden.
   if (is(e, "view.library")) return "library shown or hidden";
   if (is(e, "view.pane")) return "pane shown or hidden";
@@ -317,7 +322,7 @@ function newApp(e, is, { typing }) {
 }
 
 const KEYS = [
-  ..."aAbBcCtTiIoOmMnNeEzZyYfFkKjJlLqQ ,.<>[]{};",
+  ..."aAbBcCtTiIoOmMnNeEzZyYfFkKjJlLqQvVxX ,.<>[]{};",
   "ArrowLeft",
   "ArrowRight",
   "ArrowUp",
@@ -388,6 +393,9 @@ const NEW = new Set([
   "remove clips",
   "library shown or hidden",
   "pane shown or hidden",
+  "copy",
+  "cut out",
+  "paste",
 ]);
 
 /** The deliberate differences met, by reason, with a press or two each. */

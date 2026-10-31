@@ -126,6 +126,7 @@ test("a legend's columns are its own groups, in order, none long", () => {
     { keys: ["B"], does: "cut here, or selection ends" },
     { keys: ["I", "O"], does: "selection start, end" },
     { keys: ["C"], does: "clip the stretch" },
+    { keys: ["Ctrl", "+", "C", "V"], does: "copy, paste" },
     { keys: ["Ctrl", "+", "←", "→"], does: "move the piece" },
     { keys: ["Delete"], does: "remove the stretch or piece" },
     { keys: ["E"], does: "render" },
@@ -149,6 +150,7 @@ const cutting = [
   { keys: ["B"], does: "cut here" },
   { keys: ["I", "O"], does: "selection start, end" },
   { keys: ["C"], does: "clip the stretch" },
+  { keys: ["Ctrl", "+", "C", "V"], does: "copy, paste" },
   { keys: ["T"], does: "transcribe" },
   { keys: ["Alt", "+", "drag"], does: "drag a clip out" },
 ];
@@ -186,6 +188,7 @@ test("the default legends", () => {
   assert.deepEqual(keysOf(mac, "undo"), ["⌘", "Z"]);
   assert.deepEqual(keysOf(mac, "redo"), ["⇧", "⌘", "Z"]);
   assert.deepEqual(keysOf(mac, "drag a clip out"), ["Option", "+", "drag"]);
+  assert.deepEqual(keysOf(mac, "copy, paste"), ["⌘", "C", "V"]);
 });
 
 test("a rebound key shows in the legend; an action with none drops out", () => {

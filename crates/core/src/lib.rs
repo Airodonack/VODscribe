@@ -9,6 +9,7 @@ pub mod asr;
 pub mod audio;
 pub mod chat;
 pub mod choices;
+pub mod clipboard;
 pub mod clips;
 pub mod db;
 pub mod deps;

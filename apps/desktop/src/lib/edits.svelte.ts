@@ -67,8 +67,9 @@ class Edits {
   dropTarget = $state<number | "new" | null>(null);
   /** Where on the open edit's timeline a carried clip would go (its time there), while it's over it. */
   inserting = $state<number | null>(null);
-  /** Where the open edit's player was asked to go (a transcript line clicked), once each. */
-  wanted = $state.raw<{ time: number } | null>(null);
+  /** Where the open edit's player was asked to go (a transcript line clicked:
+   *  playing; the end of what was pasted: not), once each. */
+  wanted = $state.raw<{ time: number; play?: boolean } | null>(null);
   /** A clip of a clip bar open in the editor (not in the library's list). */
   #snippet = $state.raw<Edit | null>(null);
   #started = false;
@@ -176,6 +177,11 @@ class Edits {
   #show(view: EditView) {
     this.#put(view.edit);
     if (view.edit.id === this.openId) this.pieces = view.pieces;
+  }
+
+  /** Shows `view`, what a change made elsewhere (a paste: copyPaste.ts) left the edit as. */
+  took(view: EditView) {
+    this.#show(view);
   }
 
   /** Runs a change to an edit; what comes back is the edit as it is now. */

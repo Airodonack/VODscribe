@@ -9,6 +9,7 @@ mod annotations;
 mod app_server;
 mod chats;
 mod choices;
+mod clipboard;
 mod clips;
 #[cfg(feature = "e2e")]
 mod e2e;
@@ -71,6 +72,8 @@ struct AppState {
     storyboards: storyboards::Storyboards,
     /// What can be undone and redone (`history`).
     history: history::History,
+    /// What Ctrl+C copied last (`clipboard`).
+    clipboard: Mutex<Option<clipboard::Clipboard>>,
     /// The app's own player, playing a VOD's file (player.rs).
     player: player::Native,
     /// What a site's player appends, played by `player` (embed.rs).
@@ -218,6 +221,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         videos: videos::Videos::new(),
         storyboards: storyboards::Storyboards::new(),
         history: history::History::default(),
+        clipboard: Mutex::default(),
         player: player::Native::default(),
         embed: embed::Embed::default(),
         adding: Mutex::default(),
@@ -422,6 +426,9 @@ pub fn run() {
             edits::add_to_edit,
             edits::add_range_to_edit,
             edits::put_in_edit,
+            clipboard::copy_items,
+            clipboard::copied_text,
+            clipboard::paste_items,
             edits::edit_thumb,
             storyboards::storyboard_frame,
             footage::vod_frame,

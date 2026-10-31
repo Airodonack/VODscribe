@@ -12,7 +12,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Dragging the edge of a piece on an edit's timeline (or a clip's, in the editor) draws a dashed line down the waveform where the edge is, so you can line it up with what you hear and see there.
 - When a VOD's annotations name the streamer whose channel it is, their picture shows beside the channel's name under the VOD's title and in its row in the library, as it does in Cast. With streamer avatars turned off in Settings › Privacy, nothing shows there (no initial, unlike the transcript and Cast).
 - The two settings in Settings › Privacy are now called "Enable VODscription annotations for VODs" and "Enable streamer avatars from img.vodscribe.com". They work as before.
-- Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline; over the clip bar it still selects all the clips, and over the library its list.
+- Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline, ready to copy; over the clip bar it still selects all the clips, and over the library its list.
+- Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them as new clips on a clip bar, or into an edit at the playhead; the copy is the clip as it was, so changing or deleting the original changes nothing pasted. A clip already made is pasted ready, its video copied. Ctrl+X (⌘X) copies the clips picked and takes them off their bar, or out of the edit. What's copied also goes on the system's clipboard as a line of text for each, with a link to the moment for a site's VOD.
 - Fixes:
   - In an edit, Split (B) on a selection that ends where two pieces meet no longer leaves a sliver of the earlier piece cut off before the join.
   - Moving a selection's edge with , and . onto the other edge stops a frame short, instead of leaving a selection of nothing that Delete and C refused.

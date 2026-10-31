@@ -11,7 +11,7 @@
 //! changes is a new file; the one before goes, unless it was dragged out to
 //! another app (`handed_out`), which may link to it where it is.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self};
@@ -43,11 +43,14 @@ pub(crate) struct Cutter {
     /// Clips and edits canceled while being made (`cancel_job`): shown as
     /// canceled once their job has ended.
     canceled: Arc<Mutex<HashSet<i64>>>,
+    /// Clips pasted from a copy whose file was made: given a copy of that
+    /// file when their turn comes, rather than made again (`copy_file`).
+    copies: Arc<Mutex<HashMap<i64, crate::clipboard::CopiedFile>>>,
 }
 
 impl Cutter {
     pub(crate) fn new() -> Self {
-        Self { jobs: Jobs::new(), removing: Arc::default(), canceled: Arc::default() }
+        Self { jobs: Jobs::new(), removing: Arc::default(), canceled: Arc::default(), copies: Arc::default() }
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
@@ -55,6 +58,7 @@ impl Cutter {
     pub(crate) fn run(&self, app: AppHandle) -> Result<()> {
         let removing = self.removing.clone();
         let canceled = self.canceled.clone();
+        let copies = self.copies.clone();
         let news = app.clone();
         self.jobs.watch(move || crate::job_list::changed(&news));
         let unfinished = {
@@ -81,7 +85,17 @@ impl Cutter {
         }
         self.jobs.run("clips", move |id, stop| {
             crate::job_list::begun(&app, crate::job_list::Queue::Render, id);
-            make(&app, id, stop, &removing);
+            // A pasted clip whose copy had its file: a copy of that, if it's still the same.
+            let copy = copies.lock().unwrap().remove(&id);
+            let copied = copy.is_some_and(|file| {
+                crate::clipboard::copy_file(&app, id, &file).unwrap_or_else(|e| {
+                    eprintln!("clip {id}: copying its file: {e:#}");
+                    false
+                })
+            });
+            if !copied {
+                make(&app, id, stop, &removing);
+            }
             // Canceled while it was being made: shown so now it has stopped.
             if canceled.lock().unwrap().remove(&id) {
                 settle_canceled(&app, id);
@@ -95,6 +109,12 @@ impl Cutter {
 
     pub(crate) fn queue(&self, id: i64) {
         self.jobs.push(id);
+    }
+
+    /// Clip `id`, just pasted, is to be given a copy of `file` when its turn
+    /// comes (queue it after), not made: the copy's file, made already.
+    pub(crate) fn copy_file(&self, id: i64, file: crate::clipboard::CopiedFile) {
+        self.copies.lock().unwrap().insert(id, file);
     }
 
     /// Queues clips `ids`, just made: in the clip bar (`shown`), last; made
@@ -258,7 +278,7 @@ fn thumbs_dir(app: &AppHandle) -> PathBuf {
     app.state::<AppState>().paths.local.join("clip-thumbs")
 }
 
-fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
+pub(crate) fn thumb_path(app: &AppHandle, id: i64) -> PathBuf {
     thumbs_dir(app).join(format!("{id}.png"))
 }
 
@@ -268,7 +288,7 @@ struct Progress {
     progress: f64,
 }
 
-fn emit(app: &AppHandle, db: &Db, id: i64) {
+pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(clip)) = db.clip(id) {
         let _ = app.emit("clip", clip);
     }

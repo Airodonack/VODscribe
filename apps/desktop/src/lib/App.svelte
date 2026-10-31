@@ -52,6 +52,7 @@
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
+  import { clipboardKey } from "./copyPaste";
   import AnnotationsPane from "./AnnotationsPane.svelte";
   import { povLibrary } from "./castLink.svelte";
   import type { PaneRow } from "./annotationRows";
@@ -254,6 +255,13 @@
     // Ctrl+A (⌘A) selects all of the clip bar or the list, by the side the
     // pointer is on (bulk.ts).
     if (!typing && selectionKey(e, rows, (id) => selectedId === id && pick(null))) {
+      e.preventDefault();
+      return;
+    }
+    // Ctrl+C, Ctrl+X and Ctrl+V (⌘ on a Mac): the selection or what's
+    // picked copied, and pasted where the pointer is (copyPaste.ts); a text
+    // field's are its own.
+    if (!typing && clipboardKey(e, (id) => vodsById.get(id))) {
       e.preventDefault();
       return;
     }

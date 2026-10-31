@@ -206,7 +206,7 @@ pub(crate) struct EditView {
     pieces: Vec<EditPiece>,
 }
 
-fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
+pub(crate) fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
     let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
     let pieces = pieces(app, db, id).map_err(err)?;
     let _ = app.emit("edit", edit.clone());

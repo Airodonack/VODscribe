@@ -23,7 +23,7 @@
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { demoOff, keysForApp } from "./demo";
-  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
+  import { is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
   import { ownPlayer } from "./ownPlayer.svelte";
@@ -39,6 +39,7 @@
   } from "./platform";
   import { nav } from "./nav.svelte";
   import { drivePlayer } from "./drivePlayer.svelte";
+  import { legendBindings } from "./copyPaste";
   import { hideNote, noteHidden } from "./permission";
   import { videoDownloads } from "./videos.svelte";
   import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
@@ -589,7 +590,7 @@
 
 <PlayerPanel
   bind:fullscreen
-  shortcuts={vodShortcuts(framed, os, bindingsOf)}
+  shortcuts={vodShortcuts(framed, os, legendBindings)}
   controls={canEmbed(vod) && !collapsed ? vodControls : undefined}
   {stage}
   {below}

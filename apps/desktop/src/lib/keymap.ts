@@ -206,6 +206,28 @@ export const ACTIONS = [
     defaults: all("c"),
   },
   { id: "clips.remove", label: "Remove the selected clips", scope: "player", defaults: all("Delete", "Backspace") },
+  // Ctrl+C and Ctrl+V as everywhere (C alone clips): a copy of the selection
+  // or what's picked, pasted where the pointer is (copyPaste.ts).
+  {
+    id: "edit.copy",
+    label: "Copy the selection, or what's picked",
+    scope: "player",
+    legend: "cutting",
+    defaults: { linux: ["Ctrl+c"], mac: ["Meta+c"] },
+  },
+  {
+    id: "edit.cut",
+    label: "Cut: copy what's picked and remove it",
+    scope: "player",
+    defaults: { linux: ["Ctrl+x"], mac: ["Meta+x"] },
+  },
+  {
+    id: "edit.paste",
+    label: "Paste: on the clip bar, or in an edit at the playhead",
+    scope: "player",
+    legend: "cutting",
+    defaults: { linux: ["Ctrl+v"], mac: ["Meta+v"] },
+  },
   {
     id: "transcribe.here",
     label: "Transcribe the selection, or the whole VOD",

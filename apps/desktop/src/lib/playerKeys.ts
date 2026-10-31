@@ -176,6 +176,7 @@ function shortcuts(edit: boolean, framed: boolean, os: Os, bindings: Bindings): 
     ...by("cut.here", edit ? "cut here, or selection ends" : "cut here"),
     ...by("selection.in", "selection start, end", first("selection.in", "selection.out")),
     ...by("clip.make", "clip the stretch"),
+    ...by("edit.copy", "copy, paste", first("edit.copy", "edit.paste")),
     ...(edit
       ? [
           ...by("edit.pieceEarlier", "move the piece", first("edit.pieceEarlier", "edit.pieceLater")),

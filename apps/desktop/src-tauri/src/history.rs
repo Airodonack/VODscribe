@@ -347,10 +347,14 @@ enum BarStep<'a, M> {
     Add(&'a BarClip<M>),
 }
 
-/// The clip in `list` that is `clip`: of its id, or else made of the same
-/// (a clip made again by an undo has a new id).
-fn find<'a, M: Made>(list: &'a [BarClip<M>], clip: &BarClip<M>) -> Option<&'a BarClip<M>> {
-    list.iter().find(|c| c.id == clip.id).or_else(|| list.iter().find(|c| c.made.same(&clip.made)))
+/// The clip in `list` that is `clip`, one of `beside`: of its id, or else
+/// made of the same (a clip made again by an undo has a new id), but not one
+/// that is another of `beside` by its id (two clips of one stretch, a pill
+/// pasted beside itself, are two).
+fn find<'a, M: Made>(list: &'a [BarClip<M>], clip: &BarClip<M>, beside: &[BarClip<M>]) -> Option<&'a BarClip<M>> {
+    list.iter().find(|c| c.id == clip.id).or_else(|| {
+        list.iter().find(|c| c.made.same(&clip.made) && !beside.iter().any(|b| b.id == c.id && b.id != clip.id))
+    })
 }
 
 impl<M: Made> BarClip<M> {
@@ -366,18 +370,18 @@ impl<M: Made> BarClip<M> {
 fn bar_steps<'a, M: Made>(from: &[BarClip<M>], to: &'a [BarClip<M>], now: &[BarClip<M>]) -> Vec<BarStep<'a, M>> {
     let mut steps = Vec::new();
     for want in to {
-        if find(from, want).is_some_and(|was| was.same(want)) {
+        if find(from, want, to).is_some_and(|was| was.same(want)) {
             continue;
         }
-        match find(now, want) {
+        match find(now, want, to) {
             Some(clip) if clip.same(want) => {}
             Some(clip) if clip.made.same(&want.made) => steps.push(BarStep::Rename(clip.id, &want.title)),
             Some(clip) => steps.push(BarStep::Remake(clip.id, want)),
             None => steps.push(BarStep::Add(want)),
         }
     }
-    for was in from.iter().filter(|was| find(to, was).is_none()) {
-        if let Some(clip) = find(now, was) {
+    for was in from.iter().filter(|was| find(to, was, from).is_none()) {
+        if let Some(clip) = find(now, was, from) {
             steps.push(BarStep::Remove(clip.id));
         }
     }
@@ -577,6 +581,21 @@ mod tests {
         let added = bar(&[(1, 1.0, 3.0, "a"), (3, 8.0, 9.0, "d")]);
         assert_eq!(bar_steps(&added, &with, &added), [BarStep::Remove(3)]);
         assert_eq!(bar_steps(&added, &with, &with), []);
+    }
+
+    /// A second clip of the same stretch and title on one bar (a pill
+    /// pasted beside itself): undone, the copy goes and the first stays;
+    /// redone, a copy is made again. Matched by what it's made of alone,
+    /// the copy was taken for the first and neither step happened.
+    #[test]
+    fn a_copy_beside_its_original_is_undone_and_redone_on_its_own() {
+        let one = bar(&[(1, 1.0, 2.0, "a")]);
+        let two = bar(&[(1, 1.0, 2.0, "a"), (2, 1.0, 2.0, "a")]);
+        assert_eq!(bar_steps(&two, &one, &two), [BarStep::Remove(2)]);
+        assert_eq!(bar_steps(&one, &two, &one), [BarStep::Add(&two[1])]);
+        // Undone and redone, the copy has a new id: undone again, that one goes.
+        let again = bar(&[(1, 1.0, 2.0, "a"), (5, 1.0, 2.0, "a")]);
+        assert_eq!(bar_steps(&two, &one, &again), [BarStep::Remove(5)]);
     }
 
     /// The edit's clip bar had an undo of its own, which made a clip's file

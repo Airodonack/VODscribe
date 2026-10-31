@@ -15,7 +15,7 @@
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { keysForApp } from "./demo";
-  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
+  import { is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
   import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
@@ -43,6 +43,7 @@
   import * as overlay from "./screenOverlay";
   import { carryChosen, carrySnippets, chosenClips, chosenSegments, clipSegments } from "./bulk";
   import { count, snippets } from "./selection.svelte";
+  import { legendBindings } from "./copyPaste";
 
   let {
     vods,
@@ -417,7 +418,7 @@
       if (bringTime !== null || !player) seekTo(wanted.time);
       else {
         reading.at(wanted.time);
-        player.seek(wanted.time, true);
+        player.seek(wanted.time, wanted.play ?? true);
       }
     });
   });
@@ -820,7 +821,7 @@
   <PlayerPanel
     bind:fullscreen
     label="edit-view"
-    shortcuts={editShortcuts(!!player?.step, os, bindingsOf)}
+    shortcuts={editShortcuts(!!player?.step, os, legendBindings)}
     stage={editStage}
     controls={editControls}
     below={editBelow}

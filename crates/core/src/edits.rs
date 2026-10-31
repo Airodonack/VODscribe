@@ -27,7 +27,7 @@ use crate::time::Flicks;
 use crate::transcript::{Cue, Segment, Word};
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
-const SLIVER: f64 = 0.04;
+pub(crate) const SLIVER: f64 = 0.04;
 /// How near a stretch's end a cut is to be at it: within half a
 /// frame (at 25 fps), as marks sit on frames and lines end where they end.
 const AT_END: f64 = 0.02;
@@ -907,7 +907,7 @@ impl Db {
         })
     }
 
-    fn vod_duration(&self, vod_id: i64) -> Result<Option<f64>> {
+    pub(crate) fn vod_duration(&self, vod_id: i64) -> Result<Option<f64>> {
         Ok(self.conn.query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0)).optional()?.flatten())
     }
 
@@ -989,12 +989,7 @@ impl Db {
     /// items as they are, with ids of their own, titled as `from` is. It's
     /// the group's own from then on: changing `from` changes nothing here.
     pub fn add_group(&self, into: i64, from: i64, index: Option<usize>) -> Result<i64> {
-        let title: String = self
-            .conn
-            .query_row("SELECT title FROM clips WHERE id = ?1", [from], |r| r.get(0))
-            .optional()?
-            .context("That clip is gone.")?;
-        let items = self.item_rows(from)?;
+        let state = self.edit_state(from)?.context("That clip is gone.")?;
         anyhow::ensure!(into != from, "A clip can't go inside itself.");
         // Its chapters and highlights that show in it come too, on the same
         // moments (cuts are where its own stretches were, not its).
@@ -1004,39 +999,60 @@ impl Db {
             .filter(|m| m.kind != "cut")
             .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
             .collect();
-        self.change(into, None, |db| {
-            db.conn.execute(
-                "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
-                params![into, title],
+        self.change(into, None, |db| db.insert_group(into, &EditState { marks: shown, ..state }, index))
+    }
+
+    /// Puts what `state` holds in clip `into` as a group titled as it is, at
+    /// `index` of its top level (or last), with `state`'s marks: a clip
+    /// dropped in (`add_group`), or one pasted (`Db::paste`). Not a change of
+    /// its own: the caller's. The group's id.
+    pub(crate) fn insert_group(&self, into: i64, state: &EditState, index: Option<usize>) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
+            params![into, state.title],
+        )?;
+        let group = self.conn.last_insert_rowid();
+        self.insert_items(into, state, Some(group))?;
+        for m in &state.marks {
+            self.insert_mark_with(into, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
+        }
+        self.place(into, group, index)?;
+        Ok(group)
+    }
+
+    /// Inserts `state`'s items in clip `into`, with ids of their own, those
+    /// at its top level in group `parent` (None: at the clip's top level,
+    /// unplaced, for the caller to `place`). Its marks aren't; the new
+    /// top-level items' ids, in order.
+    pub(crate) fn insert_items(&self, into: i64, state: &EditState, parent: Option<i64>) -> Result<Vec<i64>> {
+        let mut ids: Vec<i64> = Vec::with_capacity(state.items.len());
+        let mut top = Vec::new();
+        for (i, item) in state.items.iter().enumerate() {
+            let within = item.parent.map_or(parent, |p| ids.get(p).copied());
+            let position = state.items[..i].iter().filter(|o| o.parent == item.parent).count() as i64;
+            self.conn.execute(
+                "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    into,
+                    within,
+                    position,
+                    if item.vod_id.is_some() { "piece" } else { "group" },
+                    item.vod_id,
+                    item.start.map(|f| f.0),
+                    item.end.map(|f| f.0),
+                    struck_json(&item.struck)?,
+                    item.title,
+                    item.origin.map(|f| f.0)
+                ],
             )?;
-            let group = db.conn.last_insert_rowid();
-            let mut ids = std::collections::HashMap::new();
-            for item in &items {
-                let parent = item.parent.map_or(Some(group), |p| ids.get(&p).copied());
-                db.conn.execute(
-                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![
-                        into,
-                        parent,
-                        item.position,
-                        if item.vod_id.is_some() { "piece" } else { "group" },
-                        item.vod_id,
-                        item.start.map(|f| f.0),
-                        item.end.map(|f| f.0),
-                        struck_json(&item.struck)?,
-                        item.title,
-                        item.origin.map(|f| f.0)
-                    ],
-                )?;
-                ids.insert(item.id, db.conn.last_insert_rowid());
+            let id = self.conn.last_insert_rowid();
+            ids.push(id);
+            if item.parent.is_none() {
+                top.push(id);
             }
-            for m in &shown {
-                db.insert_mark_with(into, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
-            }
-            db.place(into, group, index)?;
-            Ok(group)
-        })
+        }
+        Ok(top)
     }
 
     /// Puts `start`..`end` of VOD `vod_id` in clip `into` as a group titled
@@ -1109,12 +1125,7 @@ impl Db {
             }
             return Ok(self.clip(clip.id)?.expect("on the bar"));
         }
-        let marks = self.clip_marks(edit)?;
-        let inside: Vec<&MarkAt> = place_marks(&pieces, &marks)
-            .iter()
-            .filter(|m| m.kind != "cut" && m.start >= from && m.start < to)
-            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at))
-            .collect();
+        let inside = self.marks_inside(edit, &pieces, from, to)?;
         let add = |db: &Db| {
             let id = db.new_clip(title, Place::Bar(edit))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
@@ -1130,6 +1141,18 @@ impl Db {
         };
         let id = if shown { self.change(edit, None, add)? } else { self.atomically(add)? };
         Ok(self.clip(id)?.expect("just inserted"))
+    }
+
+    /// Clip `clip`'s chapters and highlights (of `pieces`, its pieces) whose
+    /// moments play in `from`..`to` of its timeline: what a stretch of it
+    /// made a clip, or copied, brings.
+    pub(crate) fn marks_inside(&self, clip: i64, pieces: &[EditPiece], from: f64, to: f64) -> Result<Vec<MarkAt>> {
+        let marks = self.clip_marks(clip)?;
+        Ok(place_marks(pieces, &marks)
+            .iter()
+            .filter(|m| m.kind != "cut" && m.start >= from && m.start < to)
+            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
+            .collect())
     }
 
     /// The clip on edit `edit`'s clip bar of exactly what plays from `from`
@@ -1228,7 +1251,7 @@ impl Db {
 
     /// What `item` (not a clip of an edit's clip bar) plays, as pieces, and
     /// its name: a stretch's own or for what's said at its start, a VOD's title.
-    fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
+    pub(crate) fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
         let part = |vod_id, start, end, title: &str| StretchPiece {
             vod_id,
             start,
@@ -1578,7 +1601,7 @@ impl Db {
 
     /// Numbers item `id`'s siblings in clip `clip_id` (the items in the same
     /// group, or at the top level) in order, with `id` at `index` (or last).
-    fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
+    pub(crate) fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM items WHERE clip_id = ?1 AND id != ?2
                AND parent IS (SELECT parent FROM items WHERE id = ?2) ORDER BY position, id",
@@ -1592,7 +1615,7 @@ impl Db {
     }
 
     /// `start`..`end` seconds of VOD `vod_id` (`vod_span`), on the flick.
-    fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
+    pub(crate) fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
         let (start, end) = self.vod_span(vod_id, start, end)?;
         Ok((Flicks::from_seconds(start), Flicks::from_seconds(end)))
     }

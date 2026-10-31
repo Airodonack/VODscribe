@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { fanned } from "./fanout";
 import { forget, kept, keptEach } from "./kept";
+import type { CopiedSaid } from "./clipboardText";
 
 /** A request's status, or a VOD's (the request its row shows; with none,
  *  "done" if all of it is transcribed, else "none"). */
@@ -398,6 +399,16 @@ export interface EditView {
 /** A row of the library's list (crates/core `edits::LibraryItem`): VODs and edits share one order. */
 export type LibraryItem = { kind: "vod" | "edit"; id: number };
 
+/** What a paste made (`api.pasteItems`): the clips on the bar, or the edit as it is now and the stretch pasted. */
+export interface Pasted {
+  clips: Clip[];
+  view: EditView | null;
+  span: [number, number] | null;
+  /** Pieces left out, their VOD gone; copies left out, of another VOD. */
+  dropped: number;
+  refused: number;
+}
+
 export type MarkKind = "cut" | "chapter" | "highlight";
 
 /** A mark on a VOD's timeline (crates/core `db::Mark`): a cut between two
@@ -683,6 +694,14 @@ export const api = {
   addToEdit: (editId: number, clipId: number, index?: number) =>
     invoke<EditView>("add_to_edit", { editId, clipId, index }),
   /** Puts `start`..`end` of VOD `vodId` in edit `editId`, named `title` (else for what's said). */
+  /** Copies `items` (what's selected or picked) as they are now, for Ctrl+V; what to say and write of each. */
+  copyItems: (items: Put[]) => invoke<CopiedSaid[]>("copy_items", { items }),
+  /** What was written to the system's clipboard for the last copy: a paste goes ahead while it holds it. */
+  copiedText: (text: string) => invoke<void>("copied_text", { text }),
+  /** Pastes the last copy into `target`: on its clip bar if `bar`, else in its timeline at `at` seconds (in place of
+   *  `replace`); null if nothing was pasted (nothing copied, or `text`, what the system's clipboard holds, isn't the copy's). */
+  pasteItems: (target: Doc, bar: boolean, at: number | null, replace: [number, number] | null, text: string) =>
+    invoke<Pasted | null>("paste_items", { target, bar, at, replace, text }),
   /** Puts `items` (several picked) in edit `editId`, in order, as one change: on its clip bar if `bar`, else on its timeline at `index` (or last). */
   putInEdit: (editId: number, items: Put[], bar: boolean, index?: number) =>
     invoke<EditView>("put_in_edit", { editId, items, bar, index }),

@@ -125,6 +125,18 @@ class Clips {
   #serial = 0;
   #news = new Map<number, number>();
 
+  /** How far the clips' news has come: `answered` takes what a command
+   *  sent at this point answers. */
+  get news(): number {
+    return this.#serial;
+  }
+
+  /** Puts `made`, a command's answer (a paste: copyPaste.ts) to one sent when
+   *  the news was at `since` (`news`), unless news of each has come since. */
+  answered(made: Clip[], since: number) {
+    for (const clip of made) this.#answer(clip, since);
+  }
+
   /** Puts `clip`, a command's answer to one sent when the news was at `since`,
    *  unless news of it has come since. */
   #answer(clip: Clip, since: number) {
