@@ -8,7 +8,7 @@ import { test } from "node:test";
 // globalThis.fake for the test to read; pressToDrag is the .ts file it is.
 const fakes = {
   "./api": `export const api = globalThis.fake.api;
-    export const events = { dragEnded: async () => () => {} };
+    export const events = { dragEnded: async (cb) => ((globalThis.fake.ended = cb), () => {}) };
     export const thumbUrl = async () => null;`,
   "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
   "./resolveHint.svelte": `export const formatHint = { dragged() {} };`,
@@ -63,6 +63,14 @@ const editRow = (id) => ({
 const fake = {
   /** @type {((made: boolean) => void) | null} */
   answer: null,
+  /** What the page does as the system's drag ends. @type {((e: { delivered: boolean, failed: string | null }) => void) | null} */
+  ended: null,
+  /** Whether the system's drag can begin before the files are made. */
+  beforeMade: true,
+  /** @type {number[]} */
+  deleted: [],
+  /** @type {number[]} */
+  waited: [],
   /** @type {unknown[][]} */
   added: [],
   /** @type {unknown[]} */
@@ -72,7 +80,9 @@ const fake = {
     peaks: async () => new Uint8Array(),
     /** @param {unknown} ids */
     dragClips: async (ids) => void fake.dragged.push(ids),
-    deleteClip: async () => {},
+    dragBeforeMade: async () => fake.beforeMade,
+    /** @param {number} id */
+    deleteClip: async (id) => void fake.deleted.push(id),
     addClip: async () => null,
     setClipRange: async () => null,
     listVods: async () => [],
@@ -92,7 +102,10 @@ const fake = {
     /** @param {number} start @param {number} end @param {boolean} shown */
     make: async (start, end, shown) => ({ id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" }),
     /** @param {number} id @param {() => boolean} held */
-    ready: async (id, held) => (held() ? { id, start: 0, end: 900, status: "ready", file_path: "/c.mp4" } : null),
+    ready: async (id, held) => (
+      fake.waited.push(id),
+      held() ? { id, start: 0, end: 900, status: "ready", file_path: "/c.mp4" } : null
+    ),
     move: async () => {},
     makeAll: async () => {},
   },
@@ -152,7 +165,12 @@ const carried = (end) =>
 function reset() {
   fake.added.length = 0;
   fake.dragged.length = 0;
+  fake.deleted.length = 0;
+  fake.waited.length = 0;
   fake.answer = null;
+  fake.ended = null;
+  fake.beforeMade = true;
+  fake.clips.error = null;
   under = null;
 }
 
@@ -271,4 +289,45 @@ test("several made ahead, dropped on a VOD's clip bar: kept once they're made, n
   } finally {
     fake.clips.makeAll = makeAll;
   }
+});
+
+test("past the edge before its files are made: the system's drag begins at once, and they're forgotten only once it's over", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  assert.deepEqual(fake.dragged, [[3, 4]], "the drag didn't begin with the clips being made");
+  assert.deepEqual(fake.waited, [], "waited for the files at the edge");
+  await tick();
+  assert.deepEqual(fake.deleted, [], "forgotten before the drag was over");
+  fake.ended?.({ delivered: true, failed: null });
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4]);
+  assert.equal(fake.clips.error, null);
+});
+
+test("a drag whose file couldn't be made says so once it's over", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: false, failed: "no footage" });
+  await tick();
+  assert.equal(fake.clips.error, "Couldn't make the clip: no footage");
+  assert.deepEqual(fake.deleted, [3, 4]);
+});
+
+test("where the system can't wait for the files, the drag begins once they're made", async () => {
+  reset();
+  fake.beforeMade = false;
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  assert.deepEqual(fake.waited, [3, 4], "didn't wait for the files");
+  assert.deepEqual(fake.dragged, [[3, 4]]);
+  fake.ended?.({ delivered: true, failed: null });
+  await tick();
 });

@@ -402,6 +402,7 @@ pub fn run() {
             clips::forget_gone_clips,
             clips::show_clip,
             clips::drag_clip,
+            clips::drag_before_made,
             clips::save_clip,
             clips::list_marks,
             clips::add_mark,

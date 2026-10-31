@@ -139,6 +139,19 @@ fn status(player: &Player) -> Status {
     }
 }
 
+/// Tells the page where the player is, from the main thread, where Tauri
+/// sends it at once: while a drag out waits for its files in a main loop run
+/// inside an ask (clips.rs `start_drag`), what the player's own thread tells
+/// waits in Tauri's queue until that ends, and the time shown would stand.
+#[cfg(target_os = "linux")]
+pub(crate) fn retell(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let Ok(open) = state.player.open.try_lock() else { return };
+    if let Some(o) = open.as_ref() {
+        let _ = app.emit("player-time", status(&o.player));
+    }
+}
+
 /// Whether there's a player here: a screen to draw on.
 #[tauri::command]
 pub(crate) fn player_available(app: AppHandle) -> bool {

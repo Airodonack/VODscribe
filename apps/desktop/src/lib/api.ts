@@ -309,6 +309,13 @@ export interface Job {
   progress: number | null;
 }
 
+/** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
+ *  whether they went to another app, and if they never came, why. */
+export interface DragEnded {
+  delivered: boolean;
+  failed: string | null;
+}
+
 /** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */
 export interface Clip {
   id: number;
@@ -760,6 +767,8 @@ export const api = {
   /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */
   dragClips: (ids: number[], image?: Uint8Array) =>
     invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(",") } }),
+  /** Whether a clip can be dragged out before its file is made (handed over once it is). */
+  dragBeforeMade: () => invoke<boolean>("drag_before_made"),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
   frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
   /** The app's own player's frame showing now, as width, height (4 bytes each,
@@ -926,8 +935,9 @@ export const events = {
   editProgress: (cb: (id: number, progress: number) => void) =>
     on<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
   editRemoved: (cb: (id: number) => void) => on<number>("edit-removed", (e) => cb(e.payload)),
-  /** The system's drag of a clip's file (out of the window) is over, dropped or not. */
-  dragEnded: (cb: () => void) => on("drag-ended", () => cb()),
+  /** The system's drag of a clip's file (out of the window) is over, dropped or not: once
+   *  its files went where it was dropped, or couldn't (`DragEnded`). */
+  dragEnded: (cb: (ended: DragEnded) => void) => on<DragEnded>("drag-ended", (e) => cb(e.payload)),
   /** How far a section downloading for edits is. */
   footageProgress: (cb: (fetching: Fetching) => void) => on<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits, or for the player (`player`), or with `error`, not. */

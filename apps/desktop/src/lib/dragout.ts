@@ -11,10 +11,13 @@
 // forgotten once the drag's over (the file is the other app's then). Its file
 // (each one's, for several picked) is made as the carry begins where that's
 // quick (the VOD plays from a file here), first in the queue, else at the
-// edge, and the drag starts once it's there, if the button is still down. Brought back over the window, the system's drag lands where
-// a carry would (`backOver`, `backDropped`): on the clip bar it keeps the clip.
+// edge. The system's drag begins at the edge at once, while the button is
+// down, the file handed over once it's made (where the system can wait for
+// it: `beforeMade`); else it begins once the file's there. Brought back over
+// the window, the system's drag lands where a carry would (`backOver`,
+// `backDropped`): on the clip bar it keeps the clip.
 
-import { api, events, thumbUrl, type Clip, type ClipFormat, type Put, type Vod } from "./api";
+import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
 import { formatHint } from "./resolveHint.svelte";
 import { ask } from "./ask";
@@ -32,7 +35,6 @@ const FLY_MS = 150;
 /** The files of the clips being dragged out, so the library doesn't add
  *  them if they're dropped back on the window (Library.svelte). */
 let outgoing: string[] = [];
-let forget: ReturnType<typeof setTimeout> | undefined;
 
 /** While a clip's file is being dragged out (until the system's drag is
  *  over): brought back over the window, it isn't something dropped in to add. */
@@ -45,6 +47,10 @@ export function isOutgoing(paths: string[]): boolean {
   return outgoing.length > 0 && paths.length > 0 && paths.every((p) => outgoing.includes(p));
 }
 
+/** Whether the system's drag can begin before the files are made (the app
+ *  hands them over once they are); else it waits for them. */
+const beforeMade = () => api.dragBeforeMade().catch(() => false);
+
 /** Forgets `clip` if it was made only to be dragged out (no pill in the clip
  *  bar); its file stays, if it was handed out. */
 function forgetHidden(clip: Clip | null | undefined) {
@@ -53,39 +59,41 @@ function forgetHidden(clip: Clip | null | undefined) {
 
 /**
  * Starts the system drag of the files of clips `list` (one, or several in
- * one drag), if they're all made, showing `image` (a PNG) if given; while
- * `held()`, the button is still down. True if the drag was asked for (then
- * its end, "drag-ended", forgets a clip made only for it); false if the
- * button was let go first, when nothing is asked and the clips are the
- * caller's to forget.
+ * one drag), made or (`beforeMade`) being made, showing `image` (a PNG) if
+ * given; while `held()`, the button is still down. True if the drag was
+ * asked for (then its end, "drag-ended", forgets a clip made only for it);
+ * false if the button was let go first, when nothing is asked and the clips
+ * are the caller's to forget.
  */
 async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = () => true): Promise<boolean> {
-  if (!list.length || list.some((c) => c.status !== "ready" || !c.file_path)) return false;
-  outgoing = list.map((c) => c.file_path!);
-  clearTimeout(forget);
-  forget = setTimeout(() => (outgoing = []), 60_000);
+  if (!list.length || list.some((c) => c.status === "error")) return false;
+  outgoing = list.filter((c) => c.status === "ready" && c.file_path).map((c) => c.file_path!);
   out = true;
   // Over a moment after the system says so (events about the drag can come
-  // just after), or at the latest in a minute; unless another's begun.
+  // just after), unless another's begun. The system says so only once the
+  // files went where they were dropped, or couldn't: however long their
+  // making takes, they're not forgotten before.
   const mine = ++drags;
   let stop: (() => void) | undefined;
-  const over = () => {
-    clearTimeout(limit);
+  const over = (ended?: DragEnded) => {
     stop?.();
+    if (ended?.failed) clips.error = `Couldn't make the clip: ${ended.failed}`;
     // Made only for this: forgotten (the file stays, if it was handed out);
     // unless it was brought back and dropped on the clip bar, which keeps it.
     if (!back?.kept) list.forEach(forgetHidden);
     back = null;
     backLeft();
-    setTimeout(() => mine === drags && (out = false), 1000);
+    setTimeout(() => {
+      if (mine !== drags) return;
+      out = false;
+      outgoing = [];
+    }, 1000);
   };
-  const limit = setTimeout(over, 60_000);
   stop = await events.dragEnded(over).catch(() => undefined);
   // Let go while that was set up (the release was already on its way when
   // the edge was crossed): a drag begun now, with no button down, would
   // never end. Nothing begun; undone as if never asked.
   if (!held()) {
-    clearTimeout(limit);
     stop?.();
     backLeft();
     if (mine === drags) out = false;
@@ -99,6 +107,9 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     )
     .catch((e) => {
       console.error("drag", e);
+      // Refused: said, unless it's only that the button came up first
+      // (clips.rs `start_drag`), a drag that never was.
+      if (!/released/.test(String(e))) clips.error = String(e);
       over();
     });
   formatHint.dragged();
@@ -108,15 +119,24 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
 /** The format clip `clip`'s file is in, by its extension. */
 const formatOf = (clip: Clip): ClipFormat => (/\.(mov|wav)$/i.test(clip.file_path ?? "") ? "mov" : "mp4");
 
-/** Clip `clip` (of VOD `vodId`) in the format clips are made in now: made
- *  again if it's in the other, while `still()`. */
-async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promise<Clip | null> {
+/** Clip `clip` (of VOD `vodId`) to be in the format clips are made in now:
+ *  as it is, or (made in the other) being made again; null if it can't be. */
+async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
   await settings.load();
   const want = settings.value?.clip_format ?? "mp4";
-  if (formatOf(clip) === want) return clip;
-  if (clips.vodId === vodId) await clips.move(clip.id, clip.start, clip.end);
-  else if (!(await api.setClipRange(clip.id, clip.start, clip.end).catch(() => null))) return null;
-  return clips.ready(clip.id, still, vodId);
+  if (clip.status !== "ready" || formatOf(clip) === want) return clip;
+  if (clips.vodId === vodId) {
+    await clips.move(clip.id, clip.start, clip.end);
+    return { ...clip, status: "waiting", file_path: null };
+  }
+  return api.setClipRange(clip.id, clip.start, clip.end).catch(() => null);
+}
+
+/** Clip `clip` (of VOD `vodId`) in the format clips are made in now, once
+ *  made (again, if it was in the other), while `still()`. */
+async function inFormat(clip: Clip, vodId: number, still: () => boolean): Promise<Clip | null> {
+  const want = await remade(clip, vodId);
+  return want && (want === clip ? clip : clips.ready(clip.id, still, vodId));
 }
 
 /** The stretch between marks that `time` is in, of a VOD `duration` seconds long. */
@@ -574,8 +594,9 @@ function carryWith(p: Payload): Promise<void> {
         finish();
       }
     };
-    // Past the window's edge: the system's drag of the files, once each is
-    // made (and in the format clips are made in), if the button's still down.
+    // Past the window's edge: the system's drag of the files (in the format
+    // clips are made in), if the button's still down: at once, or once each
+    // is made where the system can't wait for them (`beforeMade`).
     const takeOut = async () => {
       leaving = true;
       const ahead = early;
@@ -587,12 +608,16 @@ function carryWith(p: Payload): Promise<void> {
       p.ghost.front.el.classList.add("making");
       let made: Clip[] = [];
       let dragged = false;
+      const promised = beforeMade();
       try {
         made = await (ahead ?? p.files());
+        const waits = !(await promised);
         const ready: Clip[] = [];
         for (const clip of made) {
-          const cut = down ? await clips.ready(clip.id, () => down, p.vodId) : null;
-          const done = cut && p.vodId !== undefined ? await inFormat(cut, p.vodId, () => down) : cut;
+          if (!down) break;
+          const cut = waits ? await clips.ready(clip.id, () => down, p.vodId) : clip;
+          const want = (c: Clip) => (waits ? inFormat(c, p.vodId!, () => down) : remade(c, p.vodId!));
+          const done = cut && p.vodId !== undefined ? await want(cut) : cut;
           if (!done) break;
           ready.push(done);
         }

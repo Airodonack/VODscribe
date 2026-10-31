@@ -43,6 +43,7 @@ permissions = [
   "allow-forget-gone-clips",
   "allow-show-clip",
   "allow-drag-clip",
+  "allow-drag-before-made",
   "allow-save-clip",
   "allow-list-marks",
   "allow-add-mark",
