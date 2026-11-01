@@ -11,6 +11,9 @@ unless:
              main carries the next version with -dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
              entry, Cargo.lock agrees, and its tag doesn't exist yet
+  commit     HEAD is the "Version X.Y.Z" commit and its body carries the entry
+             (the tag goes on it and nothing else: a fix after it makes the
+             release the next patch number)
   changelog  the entry's new behaviour comes first and its fixes last, as
              sub-bullets under one closing "- Fixes:" bullet
   e2e        the end-to-end tests' ledgers (tests/e2e: durations.json,
@@ -83,6 +86,23 @@ def entry_problems(body: str) -> list[str]:
     return problems
 
 
+def commit_problems(subject: str, message: str, version: str, entry: str) -> list[str]:
+    """What's wrong with the commit to tag: it is the version commit, and its
+    body carries the changelog entry (GitHub's view of the tag shows the
+    commit, so the message is the release notes). v0.6.0 and v0.7.0 were
+    tagged on e2e fixes pushed after the version commit; a fix after it
+    makes the release the next patch number, with a new version commit."""
+    problems = []
+    if subject.strip() != f"Version {version}":
+        problems.append(f'HEAD is "{subject.strip()}", not "Version {version}": the tag goes on the version commit, last before the tag')
+        return problems
+    body = {line.strip() for line in message.splitlines()}
+    missing = [line.strip() for line in entry.splitlines() if line.strip().startswith("- ") and line.strip() not in body]
+    if missing:
+        problems.append(f"the version commit's body lacks {len(missing)} line(s) of CHANGELOG.md's entry, first: {missing[0][:60]}")
+    return problems
+
+
 def scenarios(e2e: Path) -> set[str]:
     """The end-to-end scenarios in `e2e` (tests/e2e)."""
     return {p.stem for p in (e2e / "scenarios").glob("*.mjs")}
@@ -141,6 +161,7 @@ def main() -> None:
     elif not body:
         problems.append(f"CHANGELOG.md's entry for {version} is empty")
     problems += [f"CHANGELOG.md's entry for {version}: {p}" for p in entry_problems(body)]
+    problems += commit_problems(run("git", "log", "-1", "--format=%s"), run("git", "log", "-1", "--format=%b"), version.split("-")[0], body)
     e2e = release.ROOT / "tests" / "e2e"
     problems += ledger_problems(e2e)
     # Not a reason to wait, but worth doing with the pre-release round.

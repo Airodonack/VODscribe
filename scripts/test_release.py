@@ -45,6 +45,18 @@ First release.
 
 
 class ChangelogEntry(unittest.TestCase):
+    def test_the_tag_goes_on_the_version_commit(self):
+        entry = "- A new thing.\n- Fixes:\n  - A fixed thing.\n"
+        ok = "Version 0.7.1"
+        self.assertEqual(ready.commit_problems(ok, entry, "0.7.1", entry), [])
+        self.assertEqual(ready.commit_problems(ok, entry + "\nMore detail.\n", "0.7.1", entry), [])
+        fix = ready.commit_problems("e2e: a scenario waits longer", "A fix.", "0.7.1", entry)
+        self.assertEqual(len(fix), 1)
+        self.assertIn('not "Version 0.7.1"', fix[0])
+        short = ready.commit_problems(ok, "- A new thing.\n", "0.7.1", entry)
+        self.assertEqual(len(short), 1)
+        self.assertIn("lacks 2 line(s)", short[0])
+
     def test_matches_the_exact_version(self):
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.1"), ("- One.\n- Two.", False))
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.0"), ("First release.", False))
