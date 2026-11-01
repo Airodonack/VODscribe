@@ -174,6 +174,7 @@ export function vodOf(annotations: Annotations, id: number, chat: Vod["chat"]): 
     source_path: null,
     media: false,
     audio_only: false,
+    partial: false,
     published: s.recorded_at?.slice(0, 10) ?? null,
     // The app keeps the file's time as the VOD's start when nothing better says (crates/core `db::MIGRATE_V33`),
     // in UTC, and none for a time without its zone, which would read in the visitor's own here (povs.ts).

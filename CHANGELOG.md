@@ -26,6 +26,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - A click anywhere on a row in the library, not only on its title, lets ↑ and ↓ move to the row before or after.
   - Reload, in the right-click menu, brings back what was open, where it was, instead of leaving the app with nothing open while the video's player carried on.
   - Switching the transcript's heading to Highlights (or Chapters) and back keeps the transcript where you had scrolled it, instead of starting again at the top.
+  - Show in folder now works while a VOD's download is still in progress (or paused, or stopped by an error), showing the partial file as it is.
 
 ## 0.7.0 — 2026-10-30
 

@@ -31,9 +31,10 @@ export type Hooks = {
   onremove?: (vodId: number) => void;
 };
 
-/** Whether `vod` plays from a file here, so its folder can be shown: a
- *  file's own, or the video downloaded for a site's VOD (`media`). */
-export const hasFile = (vod: Vod) => vod.source_path !== null || vod.media;
+/** Whether `vod` has a file here, so its folder can be shown: a file's
+ *  own, the video downloaded for a site's VOD (`media`), or its download
+ *  so far (`partial`). */
+export const hasFile = (vod: Vod) => vod.source_path !== null || vod.media || vod.partial;
 
 /** Shows VOD `vod`'s file in its folder; what goes wrong, as a toast. */
 export const showVodFile = (vod: Vod) => api.showFile(vod.id).catch((e) => toast.error(String(e)));

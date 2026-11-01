@@ -6,13 +6,16 @@
 // several does, saying the transcript is erased. An edit's row has a menu
 // too: Add to edit… asks which edit, and Delete edit… asks before it goes.
 // A site's VOD whose video was downloaded has Show in folder too, on its
-// row and in its menu, beside Open on its site and Copy link.
+// row and in its menu, beside Open on its site and Copy link. So has one
+// whose download is paused part way, for the part file as it is; with no
+// part file, neither, and the app says there's no file.
 
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { makeSiteVod } from "../lib/data.mjs";
+import { dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
 
 export default {
   name: "row-menus",
@@ -147,5 +150,62 @@ export default {
         throw new Error(`the downloaded VOD's menu has ${JSON.stringify(siteItems)}, no ${want}`);
     await app.key("Escape");
     log(`a downloaded site VOD's menu: ${siteItems.join(", ")}`);
+
+    // A YouTube VOD whose transcription is paused while its audio downloads.
+    // With no part file yet: no Show in folder, and the app says so if asked.
+    // The reveal itself isn't asked for: it would open the system's file
+    // manager on the test's desktop.
+    await ctx.quit();
+    makeSiteVod(vod.id, "youtube", "noa29qsTc4g");
+    const db = new DatabaseSync(libraryPath());
+    try {
+      db.prepare("DELETE FROM stretches WHERE vod_id = ?").run(vod.id);
+      db.prepare("INSERT INTO stretches (vod_id, start, end, status, progress) VALUES (?, 0, NULL, 'paused', 0.3)").run(
+        vod.id,
+      );
+    } finally {
+      db.close();
+    }
+    const hasButton = () =>
+      app.js(`return !!document.querySelector(arguments[0] + ' button[aria-label="Show in folder"]')`, vodRow);
+    app = await ctx.start();
+    await app.toLibrary();
+    await until(
+      "the paused VOD's row",
+      async () => (await app.invoke("list_vods")).find((v) => v.id === vod.id)?.status === "paused",
+      10_000,
+    );
+    await until("its row", () => app.js(`return !!document.querySelector(arguments[0])`, vodRow), 10_000);
+    if (await hasButton()) throw new Error("a paused download with no part file has Show in folder on its row");
+    await app.rowMenu(vod.id);
+    const noPart = await menu("VOD menu");
+    await app.key("Escape");
+    if (noPart.some((i) => i.startsWith("Show in folder")))
+      throw new Error(`a paused download with no part file has Show in folder in its menu: ${JSON.stringify(noPart)}`);
+    const refused = await app.invoke("show_file", { id: vod.id }).then(
+      () => "shown",
+      (e) => e.message,
+    );
+    if (!refused.includes("That VOD has no file on this computer."))
+      throw new Error(`Show in folder with no file answered: ${refused}`);
+
+    // Its part files (yt-dlp's, at the audio's stem in the work folder):
+    // Show in folder on its row and in its menu.
+    await ctx.quit();
+    const work = path.join(dataDirs().at(-1), "work");
+    mkdirSync(work, { recursive: true });
+    writeFileSync(path.join(work, `${vod.id}.f140.m4a.part`), Buffer.alloc(1000));
+    writeFileSync(path.join(work, `${vod.id}.f251.webm.part`), Buffer.alloc(5000));
+    app = await ctx.start();
+    await app.toLibrary();
+    await until("the partial download's Show in folder on its row", hasButton, 10_000).catch(() => {
+      throw new Error("a paused download with a part file has no Show in folder on its row");
+    });
+    await app.rowMenu(vod.id);
+    const partItems = await menu("VOD menu");
+    await app.key("Escape");
+    if (!partItems.some((i) => i.startsWith("Show in folder")))
+      throw new Error(`a paused download's menu has ${JSON.stringify(partItems)}, no Show in folder`);
+    log("a paused download: no Show in folder without a part file (the app says it has none), and with one");
   },
 };

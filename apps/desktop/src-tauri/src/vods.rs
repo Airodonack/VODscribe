@@ -196,21 +196,27 @@ pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
     Ok(local::MEDIA_TYPES.iter().map(|(ext, _)| *ext).collect())
 }
 
-/// Shows the file VOD `id` plays from here in the system file manager: a
-/// local VOD's own file, or the video downloaded for a site's
-/// (`Db::playable_path`). Takes the VOD's id, not a path, so the UI can't
-/// point it anywhere else.
+/// Shows the file VOD `id` is on this computer as in the system file
+/// manager: a local VOD's own file, the video downloaded for a site's, or
+/// the part of a download so far, as it is (`pipeline::file_on_disk`).
+/// Takes the VOD's id, not a path, so the UI can't point it anywhere else.
 #[tauri::command]
 pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let file = state.db.lock().unwrap().playable_path(id).map_err(err)?;
+    let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths.work(), id).map_err(err)?;
     let file = file.ok_or("That VOD has no file on this computer.")?;
     app.opener().reveal_item_in_dir(file).map_err(err)
 }
 
 #[tauri::command]
 pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
-    crate::with_reads(app, |db| db.listed_vods()).await
+    let work = app.state::<AppState>().paths.work();
+    crate::with_reads(app, move |db| {
+        let mut vods = db.listed_vods()?;
+        vods.iter_mut().for_each(|vod| pipeline::mark_partial(&work, vod));
+        Ok(vods)
+    })
+    .await
 }
 
 /// The library's list, VODs and edits, in its order.

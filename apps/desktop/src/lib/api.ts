@@ -40,6 +40,8 @@ export interface Vod {
   media: boolean;
   /** What plays here is audio alone (by its file type): no picture to show. */
   audio_only: boolean;
+  /** Its download, begun and not finished, has a part file here, which Show in folder shows as it is (crates/core `Vod::partial`). */
+  partial: boolean;
   published: string | null;
   /** When it started, RFC 3339 in UTC to the second: by its chat, else the site, else an annotations file (crates/core `db::MIGRATE_V33`). */
   started_at: string | null;

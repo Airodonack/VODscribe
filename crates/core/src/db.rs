@@ -106,6 +106,10 @@ pub struct Vod {
     /// It brought in published annotations, and another version of them is
     /// published since (`annotations::Offer::newer`).
     pub annotations_newer: bool,
+    /// Its download is under way, waiting, paused or failed part way, with a
+    /// part file on this computer and nothing kept yet: the app shows that
+    /// file as it is (`pipeline::mark_partial`). False as read from the library.
+    pub partial: bool,
 }
 
 /// Whether annotations are published for a VOD, as the app last found out.
@@ -838,6 +842,7 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             (Some(seen), Some(imported)) => !crate::annotations_filter::same_version(&seen, &imported),
             _ => false,
         },
+        partial: false,
     })
 }
 

@@ -171,7 +171,8 @@ fn allow_images_from(csp: &mut Option<tauri::utils::config::Csp>, base: &str) {
 }
 
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
-    if let Some(vod) = db.vod(id).map_err(err)? {
+    if let Some(mut vod) = db.vod(id).map_err(err)? {
+        vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths.work(), &mut vod);
         let _ = app.emit("vod", vod);
     }
     Ok(())
