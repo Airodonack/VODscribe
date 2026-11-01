@@ -19,6 +19,8 @@ export const PLATFORMS = ["twitch", "youtube", "kick"];
 export interface Source {
   annotations: string;
   chat: string;
+  /** Its waveform, if one was published beside it. */
+  peaks: string;
   /** From `?src=`, rather than the download host. */
   custom: boolean;
 }
@@ -53,16 +55,22 @@ export function indexEntries(value: unknown): IndexEntry[] {
 export const pageOf = (platform: string, id: string) =>
   `/v/${encodeURIComponent(platform)}/${encodeURIComponent(platform === "twitch" ? id.replace(/^v(?=\d+$)/, "") : id)}`;
 
-/** The chat file beside an annotations file at `url`: its name with .chat.json for .json. */
-export const chatBeside = (url: string) => {
+/** The file named `ending` beside an annotations file at `url`: its name with `ending` for .json. */
+const beside = (url: string, ending: string) => {
   const at = new URL(url);
-  at.pathname = `${at.pathname.replace(/\.json$/, "")}.chat.json`;
+  at.pathname = `${at.pathname.replace(/\.json$/, "")}${ending}`;
   return at.toString();
 };
 
+/** The chat file beside an annotations file at `url`: its name with .chat.json for .json. */
+export const chatBeside = (url: string) => beside(url, ".chat.json");
+
+/** The waveform beside an annotations file at `url`: its name with .peaks for .json. */
+export const peaksBeside = (url: string) => beside(url, ".peaks");
+
 /**
  * Where the page at /v/<platform>/<id> reads from: the URL in `?src=` (and
- * the chat beside it), resolved against the page, or else the download host,
+ * the chat and waveform beside it), resolved against the page, or else the download host,
  * where the app looks too (crates/core annotations.rs `file_url`). Null for a
  * platform the page doesn't know.
  */
@@ -75,11 +83,16 @@ export function pickSource(
   const src = search.get("src");
   if (src) {
     const annotations = new URL(src, page).toString();
-    return { annotations, chat: chatBeside(annotations), custom: true };
+    return { annotations, chat: chatBeside(annotations), peaks: peaksBeside(annotations), custom: true };
   }
   if (!PLATFORMS.includes(platform) || !id) return null;
   const path = `annotations/${encodeURIComponent(platform)}/${encodeURIComponent(storedId(platform, id))}`;
-  return { annotations: `${DOWNLOAD_HOST}/${path}.json`, chat: `${DOWNLOAD_HOST}/${path}.chat.json`, custom: false };
+  return {
+    annotations: `${DOWNLOAD_HOST}/${path}.json`,
+    chat: `${DOWNLOAD_HOST}/${path}.chat.json`,
+    peaks: `${DOWNLOAD_HOST}/${path}.peaks`,
+    custom: false,
+  };
 }
 
 /**

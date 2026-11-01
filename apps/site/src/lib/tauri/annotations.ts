@@ -22,6 +22,8 @@ export interface Annotated {
   cast: CastMember[];
   activity: Activity[];
   povs: Pov[];
+  /** Where a waveform published beside the annotations file would be, or null (a file dropped). */
+  peaks: string | null;
 }
 
 let current: Annotated | null = null;
@@ -36,9 +38,14 @@ export const annotated = (): Annotated | null => current;
 /**
  * Opens `annotations` as the library's one VOD, with its chat if it's in
  * (`chat`), or still coming (undefined: `chatArrived` brings it), or none
- * (null). Returns the VOD's id.
+ * (null); `peaks` is where its waveform may be (`Source.peaks`). Returns
+ * the VOD's id.
  */
-export function openAnnotations(annotations: Annotations, chat: unknown | null | undefined): number {
+export function openAnnotations(
+  annotations: Annotations,
+  chat: unknown | null | undefined,
+  peaks: string | null = null,
+): number {
   const lines = chat ? chatOf(chat) : [];
   const id = ++lastId;
   current = {
@@ -50,6 +57,7 @@ export function openAnnotations(annotations: Annotations, chat: unknown | null |
     cast: annotations.cast,
     activity: annotations.activity,
     povs: annotations.povs ?? [],
+    peaks,
   };
   return id;
 }

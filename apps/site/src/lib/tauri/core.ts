@@ -3,6 +3,7 @@
 // their controls are grayed out (apps/desktop/src/lib/demo.ts).
 
 import * as backend from "./backend";
+import { storedId } from "./annotated";
 import { annotated } from "./annotations";
 import type { SearchFilter } from "desktop/lib/api.ts";
 import { changed } from "desktop/lib/markSources.ts";
@@ -165,17 +166,34 @@ const commands: Record<string, (args: Args) => unknown> = {
   cancel_mark: ({ id }) => void (marks = marks.filter((m) => m.id !== id)),
   // Edits are made in the app only.
   list_edits: () => [],
-  // Waveforms made from each VOD's audio (scripts/export-demo.py --peaks);
-  // none where there's no file.
-  // A VOD's page has none: its timeline is flat.
+  // Waveforms made from each VOD's audio (scripts/export-demo.py --peaks).
+  // A VOD opened from its annotations has the demo's waveform when it's one
+  // of the demo's VODs, else the one published beside its annotations file
+  // if there is one. None where there's no file: the timeline is flat.
   peaks: async ({ id }) => {
-    if (annotated()) return new ArrayBuffer(0);
-    const res = await fetch(`/demo/${id}.peaks`);
-    // (A missing file can come back as the site's page.)
-    const html = res.headers.get("content-type")?.startsWith("text/html");
-    return res.ok && !html ? res.arrayBuffer() : new ArrayBuffer(0);
+    const open = annotated();
+    if (!open) return peaksAt(`/demo/${id}.peaks`);
+    const { platform, platform_id } = open.vod;
+    const same = (v: { platform: string; platform_id: string }) =>
+      v.platform === platform && storedId(v.platform, v.platform_id) === storedId(platform, platform_id);
+    const demo = (await backend.demoVods().catch(() => [])).find(same);
+    if (demo) return peaksAt(`/demo/${demo.id}.peaks`);
+    return open.peaks ? peaksAt(open.peaks) : new ArrayBuffer(0);
   },
 };
+
+/** The waveform file at `url`, or none when it's missing or can't be fetched. */
+async function peaksAt(url: string): Promise<ArrayBuffer> {
+  try {
+    const res = await fetch(url);
+    // (A missing file can come back as the site's page.)
+    const html = res.headers.get("content-type")?.startsWith("text/html");
+    return res.ok && !html ? await res.arrayBuffer() : new ArrayBuffer(0);
+  } catch {
+    // Unreachable, or a host's answer without CORS headers.
+    return new ArrayBuffer(0);
+  }
+}
 
 export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
   const command = commands[cmd];

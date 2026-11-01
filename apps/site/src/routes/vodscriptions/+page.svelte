@@ -6,6 +6,7 @@
   // button and an email link (ComingSoon.svelte). Everything about the page
   // is in this folder, and its address is PREMIUM (lib/links.ts).
   import Icon from "desktop/lib/Icon.svelte";
+  import Logo from "desktop/lib/Logo.svelte";
   import { CONTACT_EMAIL, PREMIUM } from "#lib/links.js";
   import ComingSoon from "./ComingSoon.svelte";
   import OfferDemo from "./OfferDemo.svelte";
@@ -69,18 +70,22 @@
   <meta property="og:description" content={DESCRIPTION} />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://vodscribe.com{PREMIUM}" />
-  <meta property="og:image" content="https://vodscribe.com/og.jpg" />
+  <meta property="og:image" content="https://vodscribe.com/og-vodscriptions.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
   <link rel="canonical" href="https://vodscribe.com{PREMIUM}" />
   <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://vodscribe.com/og-vodscriptions.jpg" />
 </svelte:head>
 
 <main>
   <section class="hero">
-    <h1>VODscriptions</h1>
-    <p class="lead">
-      Every VOD on your channel, with its chapters, highlights and who's speaking, usually within hours of the stream's
-      end. Your viewers and clippers see them for free, in VODscribe and on this site.
-    </p>
+    <!-- The service's mark and name, set as the header sets the app's, at display size. -->
+    <h1>
+      <Logo size={84} tile mark="vodscriptions" />
+      <span>VODscriptions</span>
+    </h1>
+    <p class="lead">Chapters, highlights and who's speaking, for every VOD on your channel.</p>
   </section>
 
   <section class="offer">
@@ -103,6 +108,10 @@
     </div>
 
     <div class="side">
+      <p class="intro">
+        Every VOD on your channel, with its chapters, highlights and who's speaking, usually within hours of the
+        stream's end. Your viewers and clippers see them for free, in VODscribe and on this site.
+      </p>
       <ul class="parts">
         {#each PARTS as part (part.name)}
           <li>
@@ -183,16 +192,30 @@
     text-align: center;
   }
 
+  /* The header's wordmark (+layout.svelte .brand) at display size: the mark
+     beside the name, one above the other on a phone. */
   h1 {
-    margin: 0 0 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    margin: 0 0 20px;
     font-size: clamp(34px, 6vw, 56px);
+    font-weight: 700;
     line-height: 1.08;
     letter-spacing: -0.03em;
   }
 
+  @media (max-width: 560px) {
+    h1 {
+      flex-direction: column;
+      gap: 14px;
+    }
+  }
+
   .lead {
     margin: 0 auto;
-    max-width: 640px;
+    max-width: 720px;
     font-size: 19px;
     color: var(--muted);
   }
@@ -268,6 +291,10 @@
     .narrow {
       display: block;
     }
+  }
+
+  .intro {
+    margin: 0 0 24px;
   }
 
   .parts {

@@ -24,7 +24,7 @@
     try {
       const res = source && (await fetch(source.annotations));
       if (!source || !res?.ok) throw new Error(`no VODscription (${res?.status ?? "no source"})`);
-      const id = openAnnotations(parseAnnotations(await res.json()), undefined);
+      const id = openAnnotations(parseAnnotations(await res.json()), undefined, source.peaks);
       vod = id;
       // The chat after, as on a VOD's page; a VOD without one has none.
       try {
