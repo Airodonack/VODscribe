@@ -1,9 +1,11 @@
 // The releases page (routes/releases) reads CHANGELOG.md at build time: each
 // "## <version> — <date>" heading, the "- " changes under it (each with any
 // indented "  - " items under it: the fixes, under "Fixes:"), and any plain
-// text before them ("First release."). A version still being worked on
-// ("## 0.3.0 (unreleased)") is left out, since the site is published on every
-// push, before the release is.
+// text before them, the entry's lead ("First release."). A version still being
+// worked on ("## 0.3.0 (unreleased)") is left out, since the site is published
+// on every push, before the release is. The page shows each change's first
+// sentence plainly and the rest quieter (`sentences`), and the fixes folded
+// under their count (`counts`).
 
 export interface Release {
   version: string;
@@ -44,6 +46,43 @@ export function releases(markdown: string): Release[] {
     }
   }
   return out;
+}
+
+/** The change that holds the fixes, as its items. */
+export function isFixes(change: Change): boolean {
+  return change.text === "Fixes:";
+}
+
+/** How many changes (other than "Fixes:" itself) and fixes a release has. */
+export function counts(release: Release): { changes: number; fixes: number } {
+  const fixes = release.changes.filter(isFixes);
+  return {
+    changes: release.changes.length - fixes.length,
+    fixes: fixes.reduce((n, change) => n + change.items.length, 0),
+  };
+}
+
+/** "9 changes, 12 fixes", "1 change", "3 fixes"; empty when there's neither. */
+export function countsText(release: Release): string {
+  const { changes, fixes } = counts(release);
+  return [plural(changes, "change", "changes"), plural(fixes, "fix", "fixes")].filter(Boolean).join(", ");
+}
+
+export function plural(n: number, one: string, many: string): string {
+  return n === 0 ? "" : `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * A change's text as its first sentence and the rest: split at the first ". "
+ * followed by a capital letter (outside a `code` run), or not at all.
+ */
+export function sentences(text: string): { first: string; rest: string } {
+  const end = /\. (?=[A-Z])/g;
+  for (let m = end.exec(text); m; m = end.exec(text)) {
+    const before = text.slice(0, m.index + 1);
+    if ((before.match(/`/g) ?? []).length % 2 === 0) return { first: before, rest: text.slice(m.index + 2) };
+  }
+  return { first: text, rest: "" };
 }
 
 /** A change's text as plain runs and `code` runs. */
