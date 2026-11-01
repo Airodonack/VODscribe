@@ -42,3 +42,8 @@ updates:
       # Matches the Node version in .nvmrc (24); bump together.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # Pinned to 2.12.2: from 2.12.3 the bundler's RPM library refuses a
+      # version with a hyphen, and main carries "<next>-dev" between releases
+      # (CI's Linux job failed on it). Bumped by hand once the version scheme
+      # or the bundler changes; the installer template moves with it.
+      - dependency-name: "@tauri-apps/cli"
