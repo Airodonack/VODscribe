@@ -68,12 +68,12 @@
   <title>VODscribe: from VOD to clip in a minute</title>
   <meta
     name="description"
-    content="Paste a VOD link from Twitch, YouTube, Kick and more, spot the best moments at a glance and drag them straight into your editor. Free for Windows, macOS and Linux."
+    content="Paste a Twitch, YouTube or Kick link, spot the best moments at a glance and drag them straight into your editor. Free for Windows, macOS and Linux."
   />
   <meta property="og:title" content="VODscribe: from VOD to clip in a minute" />
   <meta
     property="og:description"
-    content="Paste a VOD link from Twitch, YouTube, Kick and more, spot the best moments at a glance and drag them straight into your editor."
+    content="Paste a Twitch, YouTube or Kick link, spot the best moments at a glance and drag them straight into your editor."
   />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://vodscribe.com/" />
@@ -86,8 +86,7 @@
   <section class="hero">
     <h1>From VOD to clip in a minute</h1>
     <p class="lead">
-      Paste a VOD link from Twitch, YouTube, Kick and more. Spot the best moments at a glance. Drag them straight into
-      your editor. Free, forever.
+      Paste a link. Spot the best moments at a glance. Drag them straight into your editor. Free, forever.
     </p>
     <div class="ctas">
       <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
