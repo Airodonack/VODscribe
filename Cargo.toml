@@ -34,19 +34,22 @@ strip = false
 # text-to-speech (and its GPL-3.0 espeak-ng); see third_party/README.md.
 [patch.crates-io]
 sherpa-onnx-sys = { path = "third_party/sherpa-onnx-sys" }
-# Servo's layout reads scrollbar-width, scrollbar-color and scrollbar-gutter,
-# which stylo 0.22.0 hides from Servo; branch vodscribe/v0.22.0 of the
-# Airodonack/stylo fork exposes them. A [patch] only counts in the root
-# workspace, so it is repeated here, for every crate of stylo's workspace (or
-# two copies of the shared ones build).
-selectors = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-servo_arc = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_atoms = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_derive = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_dom = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_malloc_size_of = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_static_prefs = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-stylo_traits = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-to_shmem = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
-to_shmem_derive = { git = "https://github.com/Airodonack/stylo", rev = "b5c009c00c159d11d9c01f4c01957f4b2290b767" }
+
+# Servo's layout reads scrollbar-gutter and accent-color, which Servo's own
+# stylo hides from it; branch vodscribe/main of the Airodonack/stylo fork
+# exposes them. Servo takes stylo from its git repository, so this patches
+# that source. A [patch] only counts in the root workspace, so it is repeated
+# here, for every crate of stylo's workspace (or two copies of the shared ones
+# build). Same block as tauri-runtime-servo's Cargo.toml.
+[patch."https://github.com/servo/stylo"]
+selectors = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+servo_arc = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_atoms = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_derive = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_dom = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_malloc_size_of = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_static_prefs = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+stylo_traits = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+to_shmem = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
+to_shmem_derive = { git = "https://github.com/Airodonack/stylo", rev = "e3320a1f1a72f2ed8aca91769b5edfb86c46a543" }
