@@ -32,6 +32,10 @@
       a: "Kick, Twitch and YouTube links: past broadcasts, highlights, clips and uploads. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, and their video is kept on your computer to play. It also takes video and audio files from your computer.",
     },
     {
+      q: "Can I use the clips in my editor?",
+      a: "Yes, in any editor that takes a video file. Drag a clip, or a stretch you picked, out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 files (H.264 and AAC), which nearly every editor reads; Settings › Storage can make them MOV (DNxHR) instead, which scrubs more smoothly and is what DaVinci Resolve needs on Linux.",
+    },
+    {
       q: "Does it show the chat?",
       a: "Yes, for Kick, Twitch and YouTube livestreams: the chat replay sits beside the transcript, lined up with what was being said, and search covers it too. A timeline shows how busy chat was over the whole stream, and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
     },
@@ -61,15 +65,15 @@
 </script>
 
 <svelte:head>
-  <title>VODscribe: search everything said in your VODs</title>
+  <title>VODscribe: from VOD to clip in a minute</title>
   <meta
     name="description"
-    content="VODscribe transcribes Kick, Twitch and YouTube VODs, and videos from other sites, on your computer, so you can find any moment by what was said. Free for Windows, macOS and Linux."
+    content="Paste a VOD link from Twitch, YouTube, Kick and more, spot the best moments at a glance and drag them straight into your editor. Free for Windows, macOS and Linux."
   />
-  <meta property="og:title" content="VODscribe: search everything said in your VODs" />
+  <meta property="og:title" content="VODscribe: from VOD to clip in a minute" />
   <meta
     property="og:description"
-    content="Transcribe Kick, Twitch and YouTube VODs on your computer and find any moment by what was said."
+    content="Paste a VOD link from Twitch, YouTube, Kick and more, spot the best moments at a glance and drag them straight into your editor."
   />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://vodscribe.com/" />
@@ -80,10 +84,10 @@
 
 <main>
   <section class="hero">
-    <h1>Search everything said in your VODs</h1>
+    <h1>From VOD to clip in a minute</h1>
     <p class="lead">
-      VODscribe transcribes Kick, Twitch and YouTube VODs on your computer. Find any moment by what was said, and jump
-      straight to it.
+      Paste a VOD link from Twitch, YouTube, Kick and more. Spot the best moments at a glance. Drag them straight into
+      your editor. Free, forever.
     </p>
     <div class="ctas">
       <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
@@ -97,7 +101,10 @@
   <section class="demo">
     <p class="demo-intro">
       <strong>Try it here with the transcribed VODs below.</strong>
-      <span class="muted">Search them, or pick one to play. Transcribing your own VODs needs the app.</span>
+      <span class="muted"
+        >Search them, or pick one to play. Transcribing your own VODs needs the app. In the app, any line you find is a
+        clip two keys later.</span
+      >
     </p>
     <div class="wide">
       <Demo />
@@ -105,7 +112,7 @@
     <div class="narrow">
       <img
         src="/screenshot.jpg"
-        alt="VODscribe with a NASA VOD open and every mention of “heat shield” found"
+        alt="VODscribe with a NASA VOD open and its transcript searched for “heat shield”"
         width="1132"
         height="623"
       />
@@ -118,25 +125,30 @@
 
   <section class="features">
     <div>
+      <Icon name="scissors" size={22} />
+      <h2>Clips straight into your editor</h2>
+      <p class="muted">
+        Mark a stretch on the timeline, or pick lines in the transcript, and drag it out as a file into your video
+        editor or a folder. Several picked stretches go out together, in order. Edits put pieces of one VOD or many
+        together.
+      </p>
+    </div>
+    <div>
+      <Icon name="layers" size={22} />
+      <h2>Chapters and highlights</h2>
+      <p class="muted">
+        Where a channel has a VODscription, its VODs come with chapters, the moments chat reacted to and who was
+        speaking, on the timeline and beside the transcript.
+        <a href={PREMIUM}>About VODscriptions</a>
+      </p>
+    </div>
+    <div>
       <Icon name="search" size={22} />
-      <h2>Every word, searchable</h2>
+      <h2>Every word and chat message, searchable</h2>
       <p class="muted">
-        Type a phrase to see every time it was said or written in chat, across all your VODs. Click one to play from
-        there.
+        The transcript and the chat replay, lined up. Type a phrase to find every time it was said or typed, across all
+        your VODs, and see on a timeline where chat went wild.
       </p>
-    </div>
-    <div>
-      <Icon name="message" size={22} />
-      <h2>Chat beside the transcript</h2>
-      <p class="muted">
-        The stream's chat, lined up with what was said, and a timeline of where it went wild: laughs, hype, subs and
-        tips.
-      </p>
-    </div>
-    <div>
-      <Icon name="film" size={22} />
-      <h2>Kick, Twitch, YouTube and more</h2>
-      <p class="muted">Paste a link or drop a video file, then transcribe it when you want its transcript.</p>
     </div>
     <div>
       <Icon name="shield" size={22} />
