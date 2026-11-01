@@ -25,13 +25,13 @@
 </script>
 
 <svelte:head>
-  <title>VODs with annotations · VODscribe</title>
+  <title>VODs with VODscriptions · VODscribe</title>
   <meta name="description" content="VODs with their transcripts, chat and chapters, to read and play on VODscribe." />
 </svelte:head>
 
 <VodView idle>
   <div class="index">
-    <h1>VODs with annotations</h1>
+    <h1>VODs with VODscriptions</h1>
     {#if error}
       <p class="error-text">{error}</p>
     {:else if entries === null}

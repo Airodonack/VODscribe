@@ -109,8 +109,8 @@ export async function pressPlay(app) {
   os.click(play.x + play.w / 2, play.y + play.h / 2, play.scale);
 }
 
-/** The dialog offering a VOD's published transcript and annotations. */
-export const OFFER = '[role="dialog"][aria-label="Transcript and annotations"]';
+/** The dialog offering a VOD's VODscription (its published annotations). */
+export const OFFER = '[role="dialog"][aria-label="VODscription"]';
 
 /** Whether the offer (`OFFER`) is showing. */
 export const offerShown = (app) => app.js(`return !!document.querySelector(arguments[0])`, OFFER);

@@ -85,12 +85,16 @@
         kind: "error",
         message: source.custom
           ? `Couldn't load ${source.annotations}. This page can load files from this site and dl.vodscribe.com; drop others on it instead.`
-          : "Couldn't load this VOD's annotations: they may not be on VODscribe, or the connection failed.",
+          : "Couldn't load this VOD's VODscription: it may not be on VODscribe, or the connection failed.",
       };
       return;
     }
     if (res.status === 404 || res.status === 403) return void (view = { kind: "missing" });
-    if (!res.ok) return void (view = { kind: "error", message: `Couldn't load the annotations (${res.status}).` });
+    if (!res.ok)
+      return void (view = {
+        kind: "error",
+        message: `Couldn't load the ${source.custom ? "annotations file" : "VODscription"} (${res.status}).`,
+      });
     const id = open(await res.text(), "The annotations file", undefined, where);
     if (id === null) return;
     // The chat comes after: the transcript and player are usable meanwhile.
@@ -192,7 +196,7 @@
         : ''}: the VOD with its transcript, chat and chapters, on VODscribe."
     />
   {:else if !idle}
-    <title>A VOD with annotations · VODscribe</title>
+    <title>A VOD with its VODscription · VODscribe</title>
   {/if}
 </svelte:head>
 
@@ -207,9 +211,9 @@
     <div class="bar">
       <p class="muted small">
         {#if view.kind === "open"}
-          A VOD with annotations, from {view.from}. Transcribing and clipping VODs of your own needs the app.
+          A VOD with its VODscription, from {view.from}. Transcribing and clipping VODs of your own needs the app.
         {:else}
-          VODs with annotations
+          VODs with VODscriptions
         {/if}
       </p>
       <button class="small" onclick={() => picker?.click()}>Open a file…</button>
@@ -246,7 +250,7 @@
       {:else if view.kind === "missing"}
         <h1>No VOD here</h1>
         <p class="muted">
-          There are no annotations for this VOD on VODscribe. Check the link, or open an annotations file from your
+          There's no VODscription for this VOD on VODscribe. Check the link, or open an annotations file from your
           computer: it's read here, in your browser, and isn't uploaded.
         </p>
       {:else}

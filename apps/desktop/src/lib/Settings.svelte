@@ -414,9 +414,9 @@
         </p>
         <p class="muted hint">
           VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, to
-          check for updates and, unless you turn them off below, to look for annotations and to show the pictures of the
-          streamers they name. Those parts and updates are checked before they're used, to make sure they haven't been
-          tampered with. Video files from your computer never leave it.
+          check for updates and, unless you turn them off below, to look for VODscriptions and to show the pictures of
+          the streamers they name. Those parts and updates are checked before they're used, to make sure they haven't
+          been tampered with. Video files from your computer never leave it.
         </p>
         <label class="toggle">
           <input

@@ -1,7 +1,7 @@
 // Annotations published for a VOD from a site (lib/fileHost.mjs serves
 // fixtures/annotations-minute.json as that VOD's): adding the VOD asks the
-// file host about it, once, and the app offers them: "A transcript and
-// annotations are available for this VOD", Use, Not now, Don't ask again.
+// file host about it, once, and the app offers them: "A VODscription is
+// available for this VOD", Use, Not now, Don't ask again.
 // Use fetches the file and imports it: the transcript reads as the file's,
 // under its speakers' names, with its chapters, and the
 // library row has the gift button. The Timeline panel's Marks toggles hide
@@ -84,9 +84,9 @@ export default {
   name: "annotations-offer",
   expects: {
     "offer-after-add":
-      'A small dialog titled "Transcript and annotations" over the app: the VOD\'s title in bold, "A transcript and annotations are available for this VOD.", a line in small gray print, and a row of buttons: "Don\'t ask again" as a link at the left, then "Not now" and a highlighted "Use".',
+      'A small dialog titled "VODscription" over the app: the VOD\'s title in bold, "A VODscription is available for this VOD: a transcript, chapters and highlights.", a line in small gray print, and a row of buttons: "Don\'t ask again" as a link at the left, then "Not now" and a highlighted "Use".',
     "offer-gift":
-      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "Transcript and annotations" says the VOD has the latest transcript and annotations already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again".',
+      'In the library, the VOD\'s row has a gift icon at the left of its row of buttons. A small dialog titled "VODscription" says the VOD has the latest VODscription already, with "Not now" and a highlighted "Replace anyway", and no "Don\'t ask again".',
   },
   async run(app, ctx) {
     const json = readFileSync(FIXTURE, "utf8").replace('"{PLATFORM}"', '"youtube"').replace('"{ID}"', `"${ID}"`);
@@ -103,7 +103,7 @@ export default {
         const offered = await until("the offer", () => offer(app), MINUTE);
         await ctx.checkpoint("offer-after-add");
         const wrong = [];
-        if (!offered.text.includes("A transcript and annotations are available for this VOD."))
+        if (!offered.text.includes("A VODscription is available for this VOD: a transcript, chapters and highlights."))
           wrong.push(`the offer says "${offered.text}"`);
         if (offered.buttons.join(", ") !== "Don't ask again, Not now, Use")
           wrong.push(`the offer's buttons: ${offered.buttons.join(", ")}`);
@@ -156,7 +156,7 @@ export default {
         await app.click(gift);
         const again = await until("the offer from the gift button", () => offer(app), 10_000);
         await ctx.checkpoint("offer-gift");
-        if (!again.text.includes("This VOD has the latest transcript and annotations already."))
+        if (!again.text.includes("This VOD has the latest VODscription already."))
           wrong.push(`the gift button's offer says "${again.text}"`);
         if (again.buttons.join(", ") !== "Not now, Replace anyway")
           wrong.push(`the gift button's offer's buttons: ${again.buttons.join(", ")}`);
@@ -194,7 +194,7 @@ export default {
         const unasked = await until("the gift button's offer, asking off", () => offer(app), 10_000);
         if (heads() !== headsBefore) wrong.push("with asking off, the gift button asked the file host");
         if (
-          !unasked.text.includes("When last checked, this VOD had the latest transcript and annotations.") ||
+          !unasked.text.includes("When last checked, this VOD had the latest VODscription.") ||
           !unasked.text.includes("turned off in Settings › Privacy")
         )
           wrong.push(`with asking off, the gift button's offer says "${unasked.text}"`);
@@ -207,7 +207,7 @@ export default {
         if (heads() !== headsBefore + 1)
           wrong.push(`the gift button asked the file host ${heads() - headsBefore} times`);
         if (
-          !published.text.includes("A newer transcript and annotations are available for this VOD.") ||
+          !published.text.includes("A newer VODscription is available for this VOD.") ||
           published.buttons.join(", ") !== "Not now, Use"
         )
           wrong.push(

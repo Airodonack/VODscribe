@@ -727,7 +727,7 @@ mod tests {
         assert!(db.annotations_offer(same).unwrap().up_to_date);
         drop(db);
 
-        // Checked again (the next start, or the library's "Check for annotations"):
+        // Checked again (the next start, or the library's "Check for a VODscription"):
         // the set is asked for only if it changed, and what's known isn't asked
         // again, though it's still counted.
         asked.lock().unwrap().clear();
@@ -739,7 +739,7 @@ mod tests {
         );
     }
 
-    /// A second check (the library's "Check all VODs for annotations",
+    /// A second check (the library's "Check all VODs for VODscriptions",
     /// pressed during or after the one at start) counts what the first
     /// found, from the answers kept, without asking about it again: a VOD
     /// whose gift is showing is found, one marked as having newer
@@ -870,7 +870,7 @@ mod tests {
     }
 
     /// Asking turned off while a check waits for another (the library's
-    /// "Check for annotations" pressed during the one at start): it asks the
+    /// "Check for a VODscription" pressed during the one at start): it asks the
     /// file host nothing, not even for the set, and says asking is off.
     #[test]
     fn a_check_waiting_for_another_asks_nothing_once_asking_is_turned_off() {

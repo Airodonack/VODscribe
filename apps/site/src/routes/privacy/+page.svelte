@@ -63,11 +63,12 @@
       other sites play from your computer.
     </li>
     <li>
-      <strong>Look for annotations, unless you turn it off.</strong> When you add a Kick, Twitch or YouTube VOD, it asks dl.vodscribe.com
-      whether annotations (a transcript, chapters, highlights and who's speaking) are published for it, naming only the site
-      and the VOD's id there. At every start it also downloads from there one small list of every VOD with annotations (again
-      only when the list has changed) and checks your library against it on your computer; only a VOD the list has is asked
-      about, the same way. If you choose to use them, it downloads them from there. Turn it off in Settings → Privacy.
+      <strong>Look for VODscriptions, unless you turn it off.</strong> When you add a Kick, Twitch or YouTube VOD, it asks
+      dl.vodscribe.com whether a VODscription (a transcript, chapters, highlights and who's speaking) is published for it,
+      naming only the site and the VOD's id there. At every start it also downloads from there one small list of every VOD
+      with a VODscription (again only when the list has changed) and checks your library against it on your computer; only
+      a VOD the list has is asked about, the same way. If you choose to use one, it downloads it from there. Turn it off in
+      Settings → Privacy.
     </li>
     <li>
       <strong>Show the pictures of the streamers annotations name, unless you turn it off.</strong> For each, it asks img.vodscribe.com,

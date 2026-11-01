@@ -275,8 +275,8 @@
   <!-- Published annotations for it (offers.svelte.ts): at the left, apart from what's done to the VOD itself. -->
   {#if vod.annotations === "available"}
     {@const label = vod.annotations_newer
-      ? "Newer annotations are published for this VOD"
-      : "Get the transcript and annotations for this VOD"}
+      ? "A newer VODscription is available for this VOD"
+      : "Get the VODscription for this VOD"}
     <button
       class="row-act gift"
       class:newer={vod.annotations_newer}

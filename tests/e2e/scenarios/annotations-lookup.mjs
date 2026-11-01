@@ -3,7 +3,7 @@
 // then nothing offered and no gift button. One it has something for:
 // offered, and Don't ask again turns the setting off, the dialog then
 // saying where it's turned back on. With the setting off, a VOD added is
-// never asked about, and its menu's "Check for annotations" says asking is
+// never asked about, and its menu's "Check for a VODscription" says asking is
 // turned off; turned back on in Settings › Privacy, the same item asks, and
 // says when there's nothing. A VOD from another site (Dailymotion) is never
 // asked about, the setting on: the file host has only Twitch's, YouTube's and
@@ -34,7 +34,7 @@ export default {
   name: "annotations-lookup",
   expects: {
     "offer-stopped":
-      'A small dialog titled "Transcript and annotations" says VODscribe won\'t ask about the VODs you add any more, and in gray that it can be turned back on in Settings › Privacy, with "Open Settings" and a highlighted "OK".',
+      'A small dialog titled "VODscription" says VODscribe won\'t ask about the VODs you add any more, and in gray that it can be turned back on in Settings › Privacy, with "Open Settings" and a highlighted "OK".',
     "lookup-setting":
       'Settings at Privacy: under the paragraphs about privacy, an unticked box "Enable VODscription annotations for VODs" with a gray line under it saying it sends the VOD\'s site and its id, nothing else.',
   },
@@ -90,10 +90,9 @@ export default {
         const before = host.requests.length;
         const off = await addSiteVod(app, "xe2eoff");
         await sleep(3000);
-        await app.rowMenu(off.id, "Check for annotations");
+        await app.rowMenu(off.id, "Check for a VODscription");
         const toast = await until("the menu's toast", () => app.toastSays(), 10_000).catch(() => "");
-        if (toast !== "Looking for annotations is turned off in Settings › Privacy.")
-          wrong.push(`the menu's toast: "${toast}"`);
+        if (toast !== "VODscription is turned off in Settings › Privacy.") wrong.push(`the menu's toast: "${toast}"`);
         if (host.requests.length !== before)
           wrong.push(`with the setting off, the file host was asked: ${JSON.stringify(host.requests.slice(before))}`);
         if (await settingTicked(app)) wrong.push("Settings shows the setting on after Don't ask again");
@@ -111,14 +110,13 @@ export default {
           10_000,
         );
         await app.key("Escape");
-        await app.rowMenu(off.id, "Check for annotations");
+        await app.rowMenu(off.id, "Check for a VODscription");
         const nothing = await until(
           "the menu's answer",
-          async () => (await app.toastSays()).startsWith("No annotations") && app.toastSays(),
+          async () => (await app.toastSays()).startsWith("There's no VODscription") && app.toastSays(),
           MINUTE,
         ).catch(async () => `(${await app.toastSays()})`);
-        if (nothing !== "No annotations are published for this VOD yet.")
-          wrong.push(`the menu's check says "${nothing}"`);
+        if (nothing !== "There's no VODscription for this VOD yet.") wrong.push(`the menu's check says "${nothing}"`);
         if (!host.requests.some((r) => r.method === "HEAD" && r.path === "/annotations/youtube/xe2eoff.json"))
           wrong.push("the menu's check, with the setting on, didn't ask the file host");
         await until("the toast gone", async () => !(await app.toastSays()), MINUTE).catch(() => {});
@@ -128,9 +126,9 @@ export default {
         const other = await addSiteVod(app, "xe2eother", "dailymotion");
         if (other.platform !== "dailymotion") wrong.push(`the other site's VOD is ${other.platform}'s`);
         await sleep(3000);
-        await app.rowMenu(other.id, "Check for annotations");
+        await app.rowMenu(other.id, "Check for a VODscription");
         const why = await until("the menu's toast", () => app.toastSays(), 10_000).catch(() => "");
-        if (why !== "Annotations are only published for Twitch, YouTube and Kick VODs.")
+        if (why !== "VODscription is only for Twitch, YouTube and Kick VODs.")
           wrong.push(`for another site's VOD, the menu's toast: "${why}"`);
         if (host.requests.length !== since)
           wrong.push(`for another site's VOD, the file host was asked: ${JSON.stringify(host.requests.slice(since))}`);

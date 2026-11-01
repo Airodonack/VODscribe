@@ -90,8 +90,8 @@
       items.splice(
         items.length - 1,
         0,
-        { label: "Check for annotations", icon: "gift", run: () => void offers.check(vod) },
-        { label: "Check all VODs for annotations", icon: "gift", run: () => void offers.checkLibrary() },
+        { label: "Check for a VODscription", icon: "gift", run: () => void offers.check(vod) },
+        { label: "Check all VODs for VODscriptions", icon: "gift", run: () => void offers.checkLibrary() },
       );
     return items;
   });

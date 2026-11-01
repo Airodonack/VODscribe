@@ -1,8 +1,8 @@
 // Annotations published for a VOD, offered (AnnotationsOffer.svelte): when
 // the app finds some for a VOD just added (crates/core
 // `annotations::look_up`), from the gift button in its library row, or from
-// "Check for annotations" in the row's menu. At every start, and from "Check all
-// VODs for annotations" in that menu, the app checks the whole library against
+// "Check for a VODscription" in the row's menu. At every start, and from "Check all
+// VODs for VODscriptions" in that menu, the app checks the whole library against
 // the file host's list of published annotations (crates/core
 // `annotations_filter`): a VOD found shows its gift button, marked when its
 // annotations are newer than the ones it brought in. Using them fetches the file and
@@ -62,7 +62,7 @@ class Offers {
           false,
           "VODscribe didn't ask the file host again: that's turned off in Settings › Privacy.",
         );
-      if (offer.available !== "available") toast.show("No annotations are published for this VOD any more.");
+      if (offer.available !== "available") toast.show("There's no VODscription for this VOD any more.");
       else this.#show({ vod, offer, afterAdd: false, unasked: null });
     } catch {
       await this.offer(vod, false, "VODscribe couldn't reach the file host just now.");
@@ -71,19 +71,18 @@ class Offers {
     }
   }
 
-  /** Checks the whole library (the row menu's "Check all VODs for annotations"), and says what's found. */
+  /** Checks the whole library (the row menu's "Check all VODs for VODscriptions"), and says what's found. */
   async checkLibrary() {
     try {
       const { asked, found, newer } = await api.checkLibraryAnnotations();
-      if (!asked) return toast.show("Looking for annotations is turned off in Settings › Privacy.");
-      const parts = [
-        found.length && `annotations for ${count(found.length)}`,
-        newer.length && `newer annotations for ${count(newer.length)}`,
-      ].filter(Boolean);
+      if (!asked) return toast.show("VODscription is turned off in Settings › Privacy.");
+      const parts = [found.length && offered("", found.length), newer.length && offered("newer ", newer.length)].filter(
+        Boolean,
+      );
       toast.show(
         parts.length
           ? `Found ${parts.join(" and ")}: use the gift button in the library.`
-          : "No new annotations for the VODs in your library.",
+          : "No new VODscriptions for the VODs in your library.",
       );
     } catch {
       toast.show("VODscribe couldn't reach the file host just now.");
@@ -94,9 +93,9 @@ class Offers {
   async check(vod: Vod) {
     try {
       const { asked, can_have, offer } = await api.checkAnnotations(vod.id);
-      if (!can_have) toast.show("Annotations are only published for Twitch, YouTube and Kick VODs.");
-      else if (!asked) toast.show("Looking for annotations is turned off in Settings › Privacy.");
-      else if (offer.available !== "available") toast.show("No annotations are published for this VOD yet.");
+      if (!can_have) toast.show("VODscription is only for Twitch, YouTube and Kick VODs.");
+      else if (!asked) toast.show("VODscription is turned off in Settings › Privacy.");
+      else if (offer.available !== "available") toast.show("There's no VODscription for this VOD yet.");
       else await this.offer(vod, false);
     } catch (e) {
       toast.show(String(e));
@@ -112,7 +111,7 @@ class Offers {
       // The page reads it again on the app's word (`annotations-imported`).
       await api.fetchAnnotations(shown.vod.id);
       if (this.shown === shown) this.shown = null;
-      toast.show(`The transcript and annotations are in “${shown.vod.title}”.`);
+      toast.show(`“${shown.vod.title}” has its VODscription now.`);
     } catch (e) {
       // Closed meanwhile: said in a toast instead.
       if (this.shown === shown) this.error = String(e);
@@ -136,6 +135,8 @@ class Offers {
   }
 }
 
-const count = (n: number) => (n === 1 ? "1 VOD" : `${n} VODs`);
+/** "a VODscription for 1 VOD", "newer VODscriptions for 3 VODs": what the library check found. */
+const offered = (kind: string, n: number) =>
+  n === 1 ? `a ${kind}VODscription for 1 VOD` : `${kind}VODscriptions for ${n} VODs`;
 
 export const offers = new Offers();
