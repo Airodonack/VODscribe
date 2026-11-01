@@ -113,11 +113,27 @@ export default {
 
     // The VOD's playhead left at 4 s, to find there again after the edit.
     await app.toStart();
+    // Each seek the steps make, as the media element tells them (no round trips meanwhile).
+    await app.js(`const m = document.querySelector("video, audio"); window.__seeks = [];
+      if (m) for (const type of ["seeking", "seeked"])
+        m.addEventListener(type, () => window.__seeks.push(type[4] === "e" ? "+" + m.currentTime.toFixed(3) : ">" + m.currentTime.toFixed(3)));`);
     for (let i = 0; i < 4; i++) await app.key("ArrowRight", { shift: true });
     await until("the VOD at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+    // Where the VOD's player is by the page's own reckoning, without the e2e
+    // feature: the media element's time (a file's sound plays in the web
+    // view's), the time button, the row's "Play from" and the stamp.
+    const where = () =>
+      app.js(`const m = document.querySelector("video, audio");
+        const text = (q) => document.querySelector(q)?.textContent.trim() ?? null;
+        return JSON.stringify({ media: m ? { time: m.currentTime, seeking: m.seeking, paused: m.paused } : null, seeks: window.__seeks?.join(" "),
+          button: text("button.time .now > span:not(.widest)"), stamp: text(".stamp .time"),
+          from: [...document.querySelectorAll("button")].map((b) => b.textContent.trim()).find((t) => t.startsWith("Play from")) ?? null })`);
+    const atFour = await where();
 
     // Opened from its row (the search cleared: results take the main area).
     await app.type('input[placeholder="Search for a phrase…"]', "");
+    const leaving = await where();
+    ctx.log(`the VOD at 4 s: ${atFour}; as it was left: ${leaving}`);
     await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
     const title = 'section.edit-view input.title[aria-label="Edit name"]';
     await until("the edit open", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
@@ -135,7 +151,11 @@ export default {
     });
     // Back to the VOD: where its playhead was left, not its start; then the edit again.
     await app.click(`.vod[data-key="${vod.id}"] button.main`);
-    await until("the VOD where it was left, at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+    await until("the VOD where it was left, at 4 s", async () => (await app.shownTime()) === 4, 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}; at 4 s: ${atFour}; left: ${leaving}; back: ${await where()}`);
+      },
+    );
     await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
     await until("the edit open again", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
 
