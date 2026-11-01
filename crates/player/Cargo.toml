@@ -30,7 +30,7 @@ vodscribe-core = { path = "../core" }
 [target.'cfg(target_os = "linux")'.dependencies]
 gdkwayland-sys = "0.18.2"
 gdkx11-sys = "0.18.2"
-glib = "0.18"
+glib = "0.22"
 gtk = "0.18"
 wayland-backend = { version = "0.3.17", features = ["client_system", "dlopen"] }
 wayland-client = "0.31.15"
