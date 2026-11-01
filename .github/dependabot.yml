@@ -20,6 +20,11 @@ updates:
       # prebuilt libraries, so it's bumped by hand with new hashes.
       - dependency-name: sherpa-onnx
       - dependency-name: sherpa-onnx-sys
+      # Must be the glib that gtk 0.18 (Tauri's) is built on: the drag's
+      # nested main loop and the player's windows hand glib types to gtk, and
+      # a second glib's types aren't gtk's. Moves with gtk, bumped by hand.
+      - dependency-name: glib
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # The pnpm workspace (apps/*).
   - package-ecosystem: npm
