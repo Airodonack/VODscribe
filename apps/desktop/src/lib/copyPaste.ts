@@ -1,29 +1,36 @@
-// Ctrl+C, Ctrl+X and Ctrl+V (⌘ on a Mac), from the window's keys
-// (App.svelte `onWindowKey`, before either player), the app's own copies
-// (src-tauri clipboard.rs): what's copied is the selection (I and O, lines
-// picked, Ctrl+A), or else what's picked on the timeline and the clip bar,
-// or else the library's rows picked, as it is at that moment; a paste makes
-// a copy of that, however the original has changed since, or if it's gone.
-// It goes where Ctrl+A would select (where.ts): over the clip bar, a clip
-// of each thing copied on it; elsewhere on the main side, an edit's
-// timeline at the playhead (a selection there replaced), or a VOD's clip
-// bar (a VOD's timeline takes no pieces). The system's clipboard gets a
-// line of text for each (clipboardText.ts), and a paste goes ahead only
-// while it still holds that: something copied since, in any app, is what's
-// meant.
+// Ctrl+C, Ctrl+X and Ctrl+V (⌘ on a Mac), the app's own copies (src-tauri
+// clipboard.rs): Ctrl+C and Ctrl+X from the window's keys (App.svelte
+// `onWindowKey`, before either player), Ctrl+V from the paste the web view
+// makes of it (`clipboardPaste`, the page's `paste` event). What's copied
+// is the selection (I and O, lines picked, Ctrl+A), or else what's picked
+// on the timeline and the clip bar, or else the library's rows picked, as
+// it is at that moment; a paste makes a copy of that, however the original
+// has changed since, or if it's gone. It goes where Ctrl+A would select
+// (where.ts): over the clip bar, a clip of each thing copied on it;
+// elsewhere on the main side, an edit's timeline at the playhead, or after
+// the stretch selected there (never in its place: the pasted stretch is
+// selected then, so pasting again lines copies up in order), or a VOD's
+// clip bar (a VOD's timeline takes no pieces). The system's clipboard gets
+// a line of text for each (clipboardText.ts), and a paste goes ahead only
+// if what it brings is still that: something copied since, in any app, is
+// what's meant.
+//
+// The clipboard is never read by the app itself, only handed over by the
+// paste a person makes: macOS asks the user whether to allow an app that
+// reads it on its own.
 //
 // In a text field the keys are the field's, and with text of the page
 // selected (a chat message) Ctrl+C is the web view's own copy. On the
 // website (the demo) they're the browser's.
 
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { tick } from "svelte";
 import { api, type Doc, type Put, type Vod } from "./api";
 import { chosenClips, chosenEntries, chosenSegments, removeChosenClips, whereKeys } from "./bulk";
 import { copiedSaid, copiedText, pastedSaid } from "./clipboardText";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
-import { DEMO } from "./demo";
+import { DEMO, keysForApp } from "./demo";
 import { edits } from "./edits.svelte";
 import { bindingsOf, is } from "./keys.svelte";
 import type { ActionId } from "./keymap";
@@ -48,8 +55,10 @@ const textSelected = () => {
 /**
  * Ctrl+C, Ctrl+X or Ctrl+V, outside a text field: true if `e` was one and
  * the app's (its default is then to be prevented, so the web view's own
- * copy or paste does nothing more). `vodOf` finds the library's VODs, for
- * the text copied. A key held down is one press.
+ * copy does nothing more). `vodOf` finds the library's VODs, for the text
+ * copied. A key held down is one press. Ctrl+V is left to the web view,
+ * which makes a paste of it (`clipboardPaste`); a held one's repeats are
+ * taken, so they paste nothing more.
  */
 export function clipboardKey(e: KeyboardEvent, vodOf: (id: number) => Vod | undefined): boolean {
   if (DEMO) return false;
@@ -57,10 +66,7 @@ export function clipboardKey(e: KeyboardEvent, vodOf: (id: number) => Vod | unde
   const cut = is(e, "edit.cut");
   if (!paste && !cut && !is(e, "edit.copy")) return false;
   if ((e.target as HTMLElement | null)?.closest?.("[role=dialog]")) return false;
-  if (paste) {
-    if (!e.repeat) void pasteHere();
-    return true;
-  }
+  if (paste) return e.repeat;
   // The page's text selected: the web view's copy. A mark selected: nothing of the app's to copy.
   if (textSelected() || cuts.selected !== null) return false;
   if (!e.repeat) void copyPicked(cut, vodOf);
@@ -144,36 +150,41 @@ async function cutOut(
   toast.show(`${said} (a VOD's stretch stays)`);
 }
 
-/** Ctrl+V: what was copied last, pasted where Ctrl+A would select
- *  (`whereKeys`); nothing at all if the system's clipboard holds something
- *  else since, or nothing was copied. */
-async function pasteHere() {
+/**
+ * The page's `paste` (Ctrl+V let through by `clipboardKey`, or Edit › Paste
+ * on a Mac), outside a text field: the text it brings, pasted as the app's
+ * copy (`pasteHere`) if it's that copy's. What a text field or a dialog
+ * takes is theirs; on the website, the browser's.
+ */
+export function clipboardPaste(e: ClipboardEvent) {
+  if (DEMO || e.defaultPrevented || !keysForApp()) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.closest?.("input, textarea, select, [contenteditable], [role=dialog]")) return;
+  if (document.querySelector('[aria-modal="true"]')) return;
+  e.preventDefault();
+  // Windows's clipboard may give the lines back ended as \r\n; the copy's are \n.
+  const text = e.clipboardData?.getData("text/plain").replace(/\r\n/g, "\n") ?? "";
+  if (text) void pasteHere(text);
+}
+
+/** Ctrl+V of `text`: what was copied last, pasted where Ctrl+A would select
+ *  (`whereKeys`); nothing at all if `text` isn't that copy's (something else
+ *  copied since), or nothing was copied. */
+async function pasteHere(text: string) {
   const into = whereKeys();
   const doc = cuts.doc;
   if (!into || into === "library" || !doc) return;
-  let text: string;
-  try {
-    text = await readText();
-  } catch {
-    // Nothing there as text (an image copied elsewhere, or nothing): not ours.
-    return;
-  }
   // A clip open in the editor has no bar of its own: its timeline. Over the
   // clip bar, the bar's; a VOD's timeline takes no pieces: its bar.
   const snippet = doc.kind === "edit" && edits.open?.id === doc.id && edits.open.snippet_of !== null;
   const onBar = !snippet && (into === "clips" || doc.kind === "vod");
   const target = onBar ? clips.doc : doc;
   if (!target) return;
-  const replace = !onBar && cuts.isOf(target) ? cuts.selection : null;
+  // On a timeline, after the stretch selected (never in its place), else at the playhead.
+  const selected = !onBar && cuts.isOf(target) ? cuts.selection : null;
   try {
     const since = clips.news;
-    const pasted = await api.pasteItems(
-      target,
-      onBar,
-      onBar ? null : cuts.now,
-      replace ? [replace.start, replace.end] : null,
-      text,
-    );
+    const pasted = await api.pasteItems(target, onBar, onBar ? null : (selected?.end ?? cuts.now), text);
     if (!pasted) return;
     if (pasted.view) edits.took(pasted.view);
     if (onBar) {
@@ -184,10 +195,10 @@ async function pasteHere() {
         .querySelector(`.clip-bar .chip[data-clip="${pasted.clips[0]?.id}"]`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     } else if (pasted.span && cuts.isOf(target)) {
-      // Selected, the playhead at its end: the next paste follows it, as a caret.
+      // Selected, the playhead at its start: the next paste goes after it.
       const [start, end] = pasted.span;
       cuts.selection = { start, end };
-      edits.wanted = { time: end, play: false };
+      edits.wanted = { time: start, play: false };
     }
     toast.show(pastedSaid({ ...pasted, clips: pasted.clips.length }), { label: "Undo", run: () => undoIn(target) });
   } catch (e) {

@@ -6,7 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 The clips and edits being made now show in a list at the foot of the library, where you can follow them, cancel one or move it up the line. Copy, cut and paste work on clips, and on Linux a clip dragged out of the window goes at once. The service that brings a VOD its annotations is called VODscription from now on.
 
-- Ctrl+C and Ctrl+V copy and paste clips. Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them as new clips on a clip bar, or into an edit at the playhead. A paste is the clip as it was when copied, with its video if it was already made, whatever happens to the original after.
+- Ctrl+C and Ctrl+V copy and paste clips. Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them as new clips on a clip bar, or into an edit at the playhead. A paste is the clip as it was when copied, with its video if it was already made, whatever happens to the original after. With a stretch selected on an edit's timeline, the paste goes in after it and is selected, so pasting again builds a sequence.
 - Cut clips with Ctrl+X. Ctrl+X (⌘X) copies the clips picked and takes them off their bar, or out of the edit.
 - Copied clips go on the clipboard too. Each is a line of text, with a link to the moment for a site's VOD.
 - Ctrl+A can select the whole timeline. Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline, ready to copy; over the clip bar it still selects all the clips, and over the library its list.

@@ -12,7 +12,10 @@
 //
 // In a new edit holding the stretch 1-2 s, the playhead half-way and the
 // pointer on its timeline, Ctrl+V splits its piece there and puts the pill
-// in between as a group, selected; one undo gives the one piece back. A
+// in between as a group, selected, the playhead at its start; Ctrl+V again,
+// with that selected, puts a second copy after it (nothing replaced), now
+// selected, the playhead at its start; an undo for each gives the one
+// piece back. A
 // stretch of the edit copied, the edit then trimmed, pasted on its clip bar
 // is a clip of the stretch as it was copied. A second file's whole timeline
 // copied and pasted in the edit: the edit holds both VODs; on the first
@@ -20,13 +23,16 @@
 // editor takes a paste at its playhead, and is made again. Ctrl+X on a pill
 // takes it off its bar, and Ctrl+V brings a copy back. Something else
 // copied since (the clipboard's text not the copy's): Ctrl+V does nothing.
-// In a text field Ctrl+C and Ctrl+V are the field's. A third file's
+// In a text field Ctrl+C and Ctrl+V (and the paste it makes) are the
+// field's. A third file's
 // stretch copied, the file then removed with nothing using it: pasted, the
 // app says its VOD is gone and the edit stays as it was.
 //
-// The clipboard is the page's: its plugin's commands are answered in the
-// page (the text written is kept there, and read back from there), so the
-// system's clipboard is never touched, here or on a runner.
+// The clipboard is the page's: its plugin's write is answered in the page
+// (the text written is kept there), and Ctrl+V is its key, let through to
+// the web view, then the paste the web view makes of it, bringing that
+// text (the app never reads the clipboard itself); so the system's
+// clipboard is never touched, here or on a runner.
 
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -51,7 +57,7 @@ export default {
     await app.pause();
     await app.toStart();
 
-    // The clipboard plugin's commands answered in the page; the news of each
+    // The clipboard plugin's write answered in the page; the news of each
     // clip (its "clip" events) noted, to tell a copied file from one cut.
     await app.js(`
       window.__clip = { text: "", writes: [] };
@@ -65,7 +71,6 @@ export default {
           window.__clip.writes.push(window.__clip.text);
           return answer(null);
         }
-        if (command === "plugin:clipboard-manager|read_text") return answer(window.__clip.text);
         return fetch(url, init);
       };
       const internals = window.__TAURI_INTERNALS__;
@@ -94,7 +99,23 @@ export default {
         selector,
       );
     const copy = () => app.key("c", { cmd: true });
-    const paste = () => app.key("v", { cmd: true });
+    // Ctrl+V as the web view has it: the key, which the app must leave to the
+    // web view (not taken), then the paste the web view makes of it, with
+    // what the clipboard holds.
+    const paste = async () => {
+      await app.focused();
+      const taken = await app.js(
+        `const mac = /Mac/.test(navigator.platform);
+         const key = new KeyboardEvent("keydown", { key: "v", ctrlKey: !mac, metaKey: mac, bubbles: true, cancelable: true });
+         document.body.dispatchEvent(key);
+         if (key.defaultPrevented) return true;
+         const data = new DataTransfer();
+         data.setData("text/plain", window.__clip.text);
+         document.body.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+         return false;`,
+      );
+      if (taken) throw new Error("the app took Ctrl+V's key, so the web view would make no paste of it");
+    };
     const undo = (redo = false) => app.key("z", { cmd: true, shift: redo });
     // The selection on the timeline, as drawn: its left and width, in percent of what shows.
     const selection = () =>
@@ -270,11 +291,52 @@ export default {
       !near(at, half, 0.15)
     )
       throw new Error(`pasted at ${half.toFixed(2)} s: ${shape.join(", ")}`);
-    const pastedSpan = await until("the pasted stretch selected", selection, 10_000);
-    if (!near(pastedSpan.width, 50, 3)) throw new Error(`the selection after the paste: ${JSON.stringify(pastedSpan)}`);
+    // The playhead on the open timeline, in seconds of it.
+    const playhead = () =>
+      app.js(`const bar = document.querySelector(".scrubber");
+              const p = bar?.querySelector(".playhead:not(.going)");
+              return p && Number(bar.dataset.viewStart) + (parseFloat(p.style.left) / 100) * Number(bar.dataset.span);`);
+    /** Waits for the stretch `from`-`to` of a timeline `total` s long selected, the playhead at `from`. */
+    const pastedSelected = (what, from, to, total) =>
+      until(
+        what,
+        async () => {
+          const s = await selection();
+          const head = await playhead();
+          return (
+            s &&
+            near(s.left, (from / total) * 100, 3) &&
+            near(s.width, ((to - from) / total) * 100, 3) &&
+            head !== null &&
+            near(head, from, 0.1) && { s, head }
+          );
+        },
+        10_000,
+      );
+    await pastedSelected("the pasted stretch selected, the playhead at its start", at, at + 1, 2);
     ctx.log(`Ctrl+V on the edit's timeline at ${half.toFixed(2)} s: ${shape.join(", ")}`);
+    // Again, with that stretch selected: a second copy after it, nothing replaced.
+    await paste();
+    const queued = await until("four pieces", async () => ((await pieces()).length === 4 ? pieces() : null), 10_000);
+    const lined = queued.map(
+      (p) => `${p.start.toFixed(2)}-${p.end.toFixed(2)}${p.group ? ` in “${p.group.title}”` : ""}`,
+    );
+    if (
+      queued[0].id !== split[0].id ||
+      queued[1].id !== split[1].id ||
+      !queued[2].group ||
+      queued[2].group.id === split[1].group.id ||
+      !near(queued[2].start, split[1].start, 0.001) ||
+      !near(queued[2].end, split[1].end, 0.001) ||
+      queued[3].id !== split[2].id
+    )
+      throw new Error(`pasted again after the selection: ${lined.join(", ")}`);
+    const next = await pastedSelected("the second copy selected, the playhead at its start", at + 1, at + 2, 3);
+    ctx.log(`Ctrl+V with the first copy selected: ${lined.join(", ")}; the playhead at ${next.head.toFixed(2)} s`);
     await undo();
-    await until("one undo: the one piece back", async () => (await pieces()).length === 1, 10_000);
+    await until("an undo: the second copy gone", async () => (await pieces()).length === 3, 10_000);
+    await undo();
+    await until("another: the one piece back", async () => (await pieces()).length === 1, 10_000);
     await app.key("Escape");
 
     // 6. A stretch of the edit copied, the edit then changed: pasted on its
@@ -424,15 +486,21 @@ export default {
        field.focus();
        field.select();
        const mac = /Mac/.test(navigator.platform);
-       return ["c", "v"].map((key) => {
+       const keys = ["c", "v"].map((key) => {
          const e = new KeyboardEvent("keydown", { key, ctrlKey: !mac, metaKey: mac, bubbles: true, cancelable: true });
          field.dispatchEvent(e);
          return e.defaultPrevented;
-       });`,
+       });
+       // The paste Ctrl+V makes there, of the app's own copy (the text written before "hello").
+       const data = new DataTransfer();
+       data.setData("text/plain", window.__clip.writes.at(-2));
+       const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+       field.dispatchEvent(paste);
+       return [...keys, paste.defaultPrevented];`,
       field,
     );
     await new Promise((r) => setTimeout(r, 500));
-    if (taken.some(Boolean)) throw new Error(`in a text field, the app took Ctrl+C or Ctrl+V: ${taken}`);
+    if (taken.some(Boolean)) throw new Error(`in a text field, the app took Ctrl+C, Ctrl+V or the paste: ${taken}`);
     if ((await written()).at(-1) !== "hello") throw new Error("Ctrl+C in a text field copied the app's selection");
     if ((await barClips()).length !== 1) throw new Error("Ctrl+V in a text field pasted on the clip bar");
     await app.type(field, "");

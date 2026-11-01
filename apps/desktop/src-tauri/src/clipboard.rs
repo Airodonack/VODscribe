@@ -170,7 +170,8 @@ pub(crate) struct Pasted {
 
 /// Pastes what was copied last into `target` (a VOD or an edit, or a clip
 /// open in the editor): on its clip bar if `bar`, else in its timeline at
-/// `at` seconds, in place of `replace` if given; as one change undo takes
+/// `at` seconds (the playhead, or the end of the stretch selected: a paste
+/// goes in after a selection, never in its place); as one change undo takes
 /// back whole. Nothing (None) if nothing was copied, or the system's
 /// clipboard now holds something other than the copy's `text`.
 #[tauri::command]
@@ -179,7 +180,6 @@ pub(crate) async fn paste_items(
     target: Doc,
     bar: bool,
     at: Option<f64>,
-    replace: Option<(f64, f64)>,
     text: String,
 ) -> CmdResult<Option<Pasted>> {
     let state = app.state::<AppState>();
@@ -191,7 +191,7 @@ pub(crate) async fn paste_items(
     let onto = match (target, bar) {
         (Doc::Vod(vod), true) => Paste::Bar(db.vod_clip(vod).map_err(err)?.ok_or("That VOD is gone.")?),
         (Doc::Edit(id), true) => Paste::Bar(id),
-        (Doc::Edit(id), false) => Paste::Timeline { clip: id, at: at.unwrap_or(0.0), replace },
+        (Doc::Edit(id), false) => Paste::Timeline { clip: id, at: at.unwrap_or(0.0) },
         (Doc::Vod(_), false) => return Err("A VOD's timeline takes no pieces: paste on its clip bar.".into()),
     };
     let label = match (bar, held.len()) {

@@ -52,7 +52,7 @@
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
-  import { clipboardKey } from "./copyPaste";
+  import { clipboardKey, clipboardPaste } from "./copyPaste";
   import AnnotationsPane from "./AnnotationsPane.svelte";
   import { povLibrary } from "./castLink.svelte";
   import type { PaneRow } from "./annotationRows";
@@ -259,8 +259,9 @@
       return;
     }
     // Ctrl+C, Ctrl+X and Ctrl+V (⌘ on a Mac): the selection or what's
-    // picked copied, and pasted where the pointer is (copyPaste.ts); a text
-    // field's are its own.
+    // picked copied, and pasted where the pointer is (copyPaste.ts; Ctrl+V
+    // goes on to the web view, whose paste brings the text); a text field's
+    // are its own.
     if (!typing && clipboardKey(e, (id) => vodsById.get(id))) {
       e.preventDefault();
       return;
@@ -832,6 +833,7 @@
   onmousedown={onMouseNav}
   onmouseup={onMouseNav}
 />
+<svelte:document onpaste={clipboardPaste} />
 
 <!-- The chapters and highlights pane: the window's right column, or the transcript's tab. -->
 {#snippet annotationsPane(full: boolean, visible = true)}

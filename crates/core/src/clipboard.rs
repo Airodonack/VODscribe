@@ -37,9 +37,9 @@ pub enum Paste {
     /// clip of its own, after the others.
     Bar(i64),
     /// In clip `clip`'s timeline (an edit's, or a snippet open in the
-    /// editor) at `at` seconds of it; with `replace`, that stretch of it
-    /// taken out first and the copies put where it began.
-    Timeline { clip: i64, at: f64, replace: Option<(f64, f64)> },
+    /// editor) at `at` seconds of it: the playhead, or the end of the
+    /// stretch selected (a paste goes in after it, never in its place).
+    Timeline { clip: i64, at: f64 },
 }
 
 /// What a paste did.
@@ -212,24 +212,17 @@ impl Db {
                     Ok(made)
                 })?;
             }
-            Paste::Timeline { clip, at, replace } => {
+            Paste::Timeline { clip, at } => {
                 let kept: Vec<Copied> = kept.into_iter().map(|(_, c)| c).collect();
-                out.span = Some(self.change(clip, None, |db| db.paste_in(clip, at, replace, &kept))?);
+                out.span = Some(self.change(clip, None, |db| db.paste_in(clip, at, &kept))?);
             }
         }
         Ok(out)
     }
 
-    /// `Paste::Timeline`'s writes: the stretch replaced taken out, the piece
-    /// at the moment split there, the copies in. The stretch they play.
-    fn paste_in(&self, clip: i64, at: f64, replace: Option<(f64, f64)>, items: &[Copied]) -> Result<(f64, f64)> {
-        let at = match replace {
-            Some((from, to)) => {
-                self.remove_edit_stretch(clip, from, to)?;
-                from
-            }
-            None => at,
-        };
+    /// `Paste::Timeline`'s writes: the piece at the moment split there, the
+    /// copies in. The stretch they play.
+    fn paste_in(&self, clip: i64, at: f64, items: &[Copied]) -> Result<(f64, f64)> {
         let (mut index, start) = self.insertion(clip, at)?;
         let mut length = 0.0;
         for c in items {
@@ -413,9 +406,7 @@ mod tests {
         // A clip of the VOD's bar open in the editor: the same.
         assert_eq!(pasted.clips[0].1, 1, "the second copy's");
         let pill = pasted.clips[0].0;
-        assert!(
-            db.paste(Paste::Timeline { clip: pill, at: 0.5, replace: None }, std::slice::from_ref(&theirs)).is_err()
-        );
+        assert!(db.paste(Paste::Timeline { clip: pill, at: 0.5 }, std::slice::from_ref(&theirs)).is_err());
         // An edit takes any VOD's.
         let edit = db.add_edit("e").unwrap().id;
         db.paste(Paste::Bar(edit), &[theirs]).unwrap();
@@ -439,7 +430,7 @@ mod tests {
         assert_eq!(pasted.dropped, 1);
         assert_eq!(shape(&db, pasted.clips[0].0), [(vod, 0.0, 10.0, None)]);
         let before = db.edit_state(target).unwrap();
-        let gone = db.paste(Paste::Timeline { clip: target, at: 0.0, replace: None }, &[theirs]).unwrap_err();
+        let gone = db.paste(Paste::Timeline { clip: target, at: 0.0 }, &[theirs]).unwrap_err();
         assert_eq!(gone.to_string(), "The VOD it was copied from is gone.");
         assert_eq!(db.edit_state(target).unwrap(), before, "nothing changed");
     }
@@ -452,8 +443,7 @@ mod tests {
         db.add_piece(edit, vod, (1.0, 2.0), "a", None).unwrap();
         let copy = db.copy_of(&Put::Clip { id: pill }).unwrap();
         let before = db.edit_state(edit).unwrap().unwrap();
-        let pasted =
-            db.paste(Paste::Timeline { clip: edit, at: 0.5, replace: None }, std::slice::from_ref(&copy)).unwrap();
+        let pasted = db.paste(Paste::Timeline { clip: edit, at: 0.5 }, std::slice::from_ref(&copy)).unwrap();
         assert_eq!(pasted.span, Some((0.5, 1.5)));
         assert_eq!(
             shape(&db, edit),
@@ -464,32 +454,44 @@ mod tests {
         assert_eq!(shape(&db, edit), [(vod, 1.0, 2.0, None)]);
 
         // Inside a group: at its nearer edge, the group left whole.
-        db.paste(Paste::Timeline { clip: edit, at: 1.0, replace: None }, std::slice::from_ref(&copy)).unwrap();
+        db.paste(Paste::Timeline { clip: edit, at: 1.0 }, std::slice::from_ref(&copy)).unwrap();
         let stretch = db.copy_of(&Put::Range { vod_id: vod, start: 5.0, end: 6.0, title: None }).unwrap();
-        let pasted =
-            db.paste(Paste::Timeline { clip: edit, at: 1.8, replace: None }, std::slice::from_ref(&stretch)).unwrap();
+        let pasted = db.paste(Paste::Timeline { clip: edit, at: 1.8 }, std::slice::from_ref(&stretch)).unwrap();
         assert_eq!(pasted.span, Some((2.0, 3.0)));
         assert_eq!(
             shape(&db, edit),
             [(vod, 1.0, 2.0, None), (vod, 1.0, 2.0, Some("Hello".into())), (vod, 5.0, 6.0, None)]
         );
-        // A stretch selected is replaced by what's pasted.
-        let pasted =
-            db.paste(Paste::Timeline { clip: edit, at: 0.0, replace: Some((0.25, 0.75)) }, &[stretch]).unwrap();
-        assert_eq!(pasted.span, Some((0.25, 1.25)));
-        assert_eq!(
-            shape(&db, edit),
-            [
-                (vod, 1.0, 1.25, None),
-                (vod, 5.0, 6.0, None),
-                (vod, 1.75, 2.0, None),
-                (vod, 1.0, 2.0, Some("Hello".into())),
-                (vod, 5.0, 6.0, None)
-            ]
-        );
         // A VOD's own timeline takes nothing.
         let own = db.vod_clip(vod).unwrap().unwrap();
-        assert!(db.paste(Paste::Timeline { clip: own, at: 0.0, replace: None }, &[copy]).is_err());
+        assert!(db.paste(Paste::Timeline { clip: own, at: 0.0 }, &[copy]).is_err());
+    }
+
+    /// With a stretch selected, a paste goes in after it, at its end (the
+    /// piece there split as at the playhead), never in its place; pasted
+    /// again at the end of what was pasted, the copies line up in order.
+    #[test]
+    fn pasted_after_a_selection_splits_the_piece_at_its_end_and_replaces_nothing() {
+        let (db, vod) = library();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let one = db.copy_of(&Put::Range { vod_id: vod, start: 1.0, end: 2.0, title: None }).unwrap();
+        let two = db.copy_of(&Put::Range { vod_id: vod, start: 5.0, end: 7.0, title: None }).unwrap();
+        let before = db.edit_state(edit).unwrap().unwrap();
+        // 2..4 selected: the paste at its end, 4 s in.
+        let pasted = db.paste(Paste::Timeline { clip: edit, at: 4.0 }, std::slice::from_ref(&one)).unwrap();
+        assert_eq!(pasted.span, Some((4.0, 5.0)));
+        assert_eq!(shape(&db, edit), [(vod, 10.0, 14.0, None), (vod, 1.0, 2.0, None), (vod, 14.0, 20.0, None)]);
+        // Pasted again after what was pasted (now selected): next in line.
+        let pasted = db.paste(Paste::Timeline { clip: edit, at: 5.0 }, std::slice::from_ref(&two)).unwrap();
+        assert_eq!(pasted.span, Some((5.0, 7.0)));
+        assert_eq!(
+            shape(&db, edit),
+            [(vod, 10.0, 14.0, None), (vod, 1.0, 2.0, None), (vod, 5.0, 7.0, None), (vod, 14.0, 20.0, None)]
+        );
+        // The first paste's split and copy are one change: the state before it put back, one piece again.
+        db.restore_edit(edit, &before).unwrap();
+        assert_eq!(shape(&db, edit), [(vod, 10.0, 20.0, None)]);
     }
 
     #[test]
@@ -502,7 +504,7 @@ mod tests {
         // The VOD's marks change after the copy: the pasted one keeps the copy's.
         db.add_mark(vod, "highlight", 14.0, Some("later")).unwrap();
         let edit = db.add_edit("e").unwrap().id;
-        db.paste(Paste::Timeline { clip: edit, at: 0.0, replace: None }, std::slice::from_ref(&copy)).unwrap();
+        db.paste(Paste::Timeline { clip: edit, at: 0.0 }, std::slice::from_ref(&copy)).unwrap();
         let kinds = |clip| -> Vec<(String, Option<String>)> {
             db.clip_marks(clip).unwrap().into_iter().map(|(_, m)| (m.kind, m.text)).collect()
         };

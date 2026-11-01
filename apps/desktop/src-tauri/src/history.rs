@@ -555,6 +555,34 @@ mod tests {
         assert_eq!(history.steps(doc), 1);
     }
 
+    /// A paste after a stretch selected splits the piece at its end and
+    /// puts the copy there, and the split is part of the paste: one step,
+    /// whose undo is the edit as it was, its one piece whole.
+    #[test]
+    fn a_paste_after_a_selection_is_one_step_with_its_split() {
+        use vodscribe_core::clipboard::Paste;
+        use vodscribe_core::edits::Put;
+        let (db, vod) = library();
+        let history = History::default();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let doc = Doc::Edit(edit);
+        let was = db.edit_state(edit).unwrap().unwrap();
+        let copy = db.copy_of(&Put::Range { vod_id: vod, start: 1.0, end: 2.0, title: None }).unwrap();
+        // 2-4 s selected: pasted at its end.
+        let pasted =
+            history.change(&db, doc, "Pasted", |db| db.paste(Paste::Timeline { clip: edit, at: 4.0 }, &[copy]));
+        assert_eq!(pasted.unwrap().span, Some((4.0, 5.0)));
+        let ranges: Vec<(f64, f64)> = db.edit_pieces(edit).unwrap().iter().map(|p| (p.start, p.end)).collect();
+        assert_eq!(ranges, [(10.0, 14.0), (1.0, 2.0), (14.0, 20.0)]);
+        assert_eq!(history.steps(doc), 1, "the split and the copy, one step");
+        let mut s = history.0.lock().unwrap();
+        let Some(Entry { before: Snapshot::Edit { state, .. }, .. }) = History::take(&mut s, doc, true) else {
+            panic!("no edit step to undo")
+        };
+        assert_eq!(state, was, "undone, the one piece whole");
+    }
+
     fn bar(clips: &[(i64, f64, f64, &str)]) -> Vec<BarClip<(f64, f64)>> {
         clips.iter().map(|&(id, start, end, title)| BarClip { id, made: (start, end), title: title.into() }).collect()
     }
