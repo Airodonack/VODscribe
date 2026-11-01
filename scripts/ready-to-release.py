@@ -7,8 +7,8 @@ publishes, so that stays a person's decision. Fails (listing every problem)
 unless:
 
   git        the working tree is clean, on main, and the same commit as origin/main
-  version    Cargo.toml's version is a release (not 0.4.1-dev: between releases
-             main carries the next version with -dev; the app, its installers
+  version    Cargo.toml's version is a release (not 0.4.1+dev: between releases
+             main carries the next version with +dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
              entry, Cargo.lock agrees, and its tag doesn't exist yet
   commit     HEAD is the "Version X.Y.Z" commit and its body carries the entry
@@ -166,9 +166,9 @@ def unmeasured(e2e: Path) -> list[str]:
 
 
 def next_dev(version: str) -> str:
-    """The version main carries after `version` is released: 0.4.0 -> 0.4.1-dev."""
-    major, minor, patch = (int(n) for n in version.split("-")[0].split(".")[:3])
-    return f"{major}.{minor}.{patch + 1}-dev"
+    """The version main carries after `version` is released: 0.4.0 -> 0.4.1+dev."""
+    major, minor, patch = (int(n) for n in version.split("+")[0].split(".")[:3])
+    return f"{major}.{minor}.{patch + 1}+dev"
 
 
 def main() -> None:
@@ -184,17 +184,17 @@ def main() -> None:
     if sha != run("git", "rev-parse", "origin/main"):
         problems.append("this commit isn't origin/main: push, or pull")
 
-    if "-" in version:
-        problems.append(f"{version} is a development version: bump it to the release's (drop the -dev)")
-    # A development version's entry is the release's (0.4.1-dev's is 0.4.1's),
+    if "+" in version:
+        problems.append(f"{version} is a development version: bump it to the release's (drop the +dev)")
+    # A development version's entry is the release's (0.4.1+dev's is 0.4.1's),
     # so its other problems are listed too.
-    body, unreleased = release.changelog_entry(release.CHANGELOG.read_text(), version.split("-")[0])
+    body, unreleased = release.changelog_entry(release.CHANGELOG.read_text(), version.split("+")[0])
     if unreleased:
         problems.append(f"CHANGELOG.md still marks {version} as unreleased: date its heading")
     elif not body:
         problems.append(f"CHANGELOG.md's entry for {version} is empty")
     problems += [f"CHANGELOG.md's entry for {version}: {p}" for p in entry_problems(body)]
-    problems += commit_problems(run("git", "log", "-1", "--format=%s"), run("git", "log", "-1", "--format=%b"), version.split("-")[0], body)
+    problems += commit_problems(run("git", "log", "-1", "--format=%s"), run("git", "log", "-1", "--format=%b"), version.split("+")[0], body)
     e2e = release.ROOT / "tests" / "e2e"
     problems += ledger_problems(e2e)
     # Not a reason to wait, but worth doing with the pre-release round.
@@ -240,7 +240,7 @@ Once it's out:
     (refused if site has fixes of its own since: merge the tag into it)
   - main goes on as the next version, in development, in a commit of its
     own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
-    an empty "## {next_dev(version).split("-")[0]} (unreleased)" entry atop CHANGELOG.md""")
+    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md""")
 
 
 if __name__ == "__main__":
