@@ -46,7 +46,7 @@
   {/each}
 {/snippet}
 
-{#snippet notes(release: Release, latest: boolean)}
+{#snippet notes(release: Release)}
   {@const news = release.changes.filter((c) => !isFixes(c))}
   {@const fixes = release.changes.filter(isFixes).flatMap((c) => c.items)}
   {#if news.length}
@@ -66,9 +66,7 @@
       </ul>
     </details>
   {/if}
-  {#if latest}
-    <p class="muted downloads">This is the <a href="/#download">current version</a>.</p>
-  {:else if onHost(release.version)}
+  {#if onHost(release.version)}
     <p class="muted downloads">
       Downloads:
       {#each DOWNLOADS as d, k (d.url)}{#if k}{" · "}{/if}<a href={versionedUrl(d, release.version)}>{d.short}</a
@@ -88,8 +86,7 @@
 <article class="prose">
   <h1>Releases</h1>
   <p class="muted">
-    What changed in each version of VODscribe, newest first. Older versions are here if you need one; the app updates
-    itself to the newest.
+    What changed in each version, newest first. The app updates itself, but older versions are here if you need one.
   </p>
   <nav class="versions" aria-label="Versions">
     {#each list as release (release.version)}
@@ -101,14 +98,14 @@
     <section class="release" id={release.version}>
       {#if i === 0}
         {@render heading(release, true)}
-        {@render notes(release, true)}
+        {@render notes(release)}
       {:else}
         <details class="older">
           <summary>
             {@render heading(release, false)}
             {#if countsText(release)}<p class="muted counts">{countsText(release)}</p>{/if}
           </summary>
-          {@render notes(release, false)}
+          {@render notes(release)}
         </details>
       {/if}
     </section>

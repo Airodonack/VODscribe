@@ -72,11 +72,10 @@
         {UNSIGNED} Once that's done, the warning goes away.
       </p>
       <p>
-        <strong>To open it:</strong> open the download and drag VODscribe into <strong>Applications</strong>, then open
-        it from there, so it can update itself. When macOS refuses, click <strong>Done</strong> (not the blue Move to
-        Trash), then open <strong>System Settings › Privacy & Security</strong>, scroll down, and click
-        <strong>Open Anyway</strong>. macOS asks once more: click <strong>Open Anyway</strong> again and enter your Mac's
-        password. You only have to do this once.
+        <strong>To open it:</strong> drag VODscribe from the download into <strong>Applications</strong> and open it
+        there, so it can update itself. When macOS refuses, click <strong>Done</strong> (not the blue Move to Trash),
+        then <strong>Open Anyway</strong> at the bottom of <strong>System Settings › Privacy & Security</strong>. Click
+        <strong>Open Anyway</strong> again when macOS asks and enter your Mac's password; you only do this once.
       </p>
       <div class="sketches three" aria-hidden="true">
         <figure>

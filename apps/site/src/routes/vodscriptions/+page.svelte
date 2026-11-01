@@ -24,11 +24,11 @@
   const FAQ = [
     {
       q: "What's in a VODscription?",
-      a: "The VOD's transcript, its chapters, its highlights with what chat said, and its cast: who spoke, named where they've agreed to be. Viewers see them on the VOD's timeline and in a list beside the transcript.",
+      a: "The VOD's transcript, chapters, highlights with what chat said, and cast: who spoke, named where they've agreed to be. Viewers see them on the timeline and in a list beside the transcript.",
     },
     {
       q: "How soon after a stream?",
-      a: "Usually within hours of the stream's end. It's best effort, with no fixed time. A new VODscription also covers the channel's VODs from up to a month back.",
+      a: "Usually within hours of the stream's end, as best effort with no fixed time. A new VODscription also covers the channel's VODs from up to a month back.",
     },
     {
       q: "Which platforms?",
@@ -44,7 +44,7 @@
     },
     {
       q: "Can someone else pay for my channel?",
-      a: "Yes, a clipper, an editor or a manager can. Nothing is produced until you, the channel's owner, sign in and say yes.",
+      a: "Yes, a clipper, an editor or a manager can, once you, the channel's owner, sign in and say yes.",
     },
     {
       q: "Is there a rate for small channels?",
@@ -53,7 +53,7 @@
     },
     {
       q: "What if I stop paying?",
-      a: "New VODs stop getting one. Everything already published stays, for everyone to see as before.",
+      a: "New VODs stop getting one. Everything already published stays for everyone to see.",
     },
     {
       q: "When can I sign up?",
@@ -109,8 +109,8 @@
 
     <div class="side">
       <p class="intro">
-        Every VOD on your channel, with its chapters, highlights and who's speaking, usually within hours of the
-        stream's end. Your viewers and clippers see them for free, in VODscribe and on this site.
+        Usually ready within hours of the stream's end. Your viewers and clippers see them for free, in VODscribe and on
+        this site.
       </p>
       <ul class="parts">
         {#each PARTS as part (part.name)}
@@ -127,14 +127,14 @@
       <div class="price" id="coming-soon">
         <p class="amount"><strong>$199</strong> a month, per channel</p>
         <p class="muted">
-          Every new VOD while it runs, and the channel's VODs from up to a month back. What's published stays when it
-          ends. Cancel any time.
+          Every new VOD while it runs, and the channel's VODs from up to a month back. Cancel any time; what's published
+          stays.
         </p>
         <ComingSoon />
       </div>
 
       <p class="small trust">
-        The channel's owner signs in once and says yes. Nothing is produced without that, even when someone else pays.
+        Nothing is produced until the channel's owner signs in once and says yes, even when someone else pays.
       </p>
       <p class="small trust">
         <strong>Smaller channel?</strong> A lower rate on different terms may be available.
@@ -146,10 +146,7 @@
   <section class="more">
     <div>
       <h2>Paying for a channel you work with</h2>
-      <p class="muted">
-        Clippers, editors and managers can pay for a channel's VODscription. It starts once the channel's owner signs in
-        and says yes.
-      </p>
+      <p class="muted">Clippers, editors and managers can pay for a channel's VODscription.</p>
     </div>
     <div>
       <h2>Privacy</h2>

@@ -30,9 +30,9 @@
       and never copied or uploaded.
     </li>
     <li>
-      Before an update changes how the library is stored, VODscribe keeps a copy of it as it was, in the same folder, in
-      case the update goes wrong. A copy holds what the library held then, transcripts you've deleted since included,
-      and is removed after 30 days.
+      Before an update changes how the library is stored, VODscribe keeps a copy of it in the same folder, in case the
+      update goes wrong. The copy holds what the library held then, including transcripts deleted since, and is removed
+      after 30 days.
     </li>
     <li>VODscribe has no analytics, telemetry or crash reporting.</li>
   </ul>
@@ -42,7 +42,7 @@
       <strong>Get the VODs you add.</strong> It downloads their details and audio from Kick, Twitch or YouTube, or from the
       site the link is on, the way your browser would. From other sites it downloads the video too, and keeps it on your computer
       to play there, until you delete it or the VOD. When you ask, it downloads a VOD's video, or the part of it you make
-      a clip of, from the same place. It only takes links you add to the internet, never to your computer or your local network.
+      a clip of, from the same place. It only follows links to the internet, never ones to your computer or your local network.
     </li>
     <li>
       <strong>Get their chat.</strong> For Kick and Twitch VODs it reads the chat replay from those sites, as their own pages
@@ -97,10 +97,10 @@
     vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
     like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
     when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
-    page here, and the VODscriptions page's demo, load their annotations from dl.vodscribe.com, and the pictures of the
-    streamers they name from img.vodscribe.com, which gets the streamer's site and login and your IP address, and passes
-    your browser on to Twitch's or Kick's own picture. The VODscriptions page's email link is a plain mailto link: it
-    opens your own mail app, and this site still has no account.
+    page here and the VODscriptions page's demo load their annotations from dl.vodscribe.com. The pictures of the
+    streamers they name come from img.vodscribe.com, which gets the streamer's site and login and your IP address, and
+    passes your browser on to Twitch's or Kick's own picture. The VODscriptions page's email link only opens your own
+    mail app.
   </p>
 
   <h2>Questions</h2>

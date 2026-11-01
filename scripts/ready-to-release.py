@@ -15,7 +15,9 @@ unless:
              (the tag goes on it and nothing else: a fix after it makes the
              release the next patch number)
   changelog  the entry's new behaviour comes first and its fixes last, as
-             sub-bullets under one closing "- Fixes:" bullet
+             sub-bullets under one closing "- Fixes:" bullet, and every
+             bullet opens with a headline of eight words or fewer, with no
+             colon or parenthesis (the releases page shows it plain)
   e2e        the end-to-end tests' ledgers (tests/e2e: durations.json,
              flaky.json, budgets.json) name only scenarios that exist
   CI         the checks and the installer builds passed on this very commit
@@ -83,7 +85,38 @@ def entry_problems(body: str) -> list[str]:
     # A merge's or a rebase's conflict left in, which the releases page would show.
     if any(re.match(r"\s*(<{7}|\|{7}|={7}|>{7})( |$)", line) for line in lines):
         problems.append("it has a merge conflict's marker left in")
+    # Each bullet opens with a short headline, which the releases page shows
+    # plain and the rest muted.
+    for line in lines:
+        bullet = re.match(r"\s*- (.*)", line)
+        if bullet and bullet[1] != "Fixes:" and (why := headline_problem(bullet[1])):
+            problems.append(f'the bullet "{" ".join(bullet[1].split()[:5])}..." {why}')
     return problems
+
+
+HEADLINE_WORDS = 8
+
+
+def headline(text: str) -> str:
+    """A bullet's first sentence, split as the releases page splits it
+    (apps/site/src/lib/changelog.ts `sentences`): at the first ". " followed
+    by a capital letter outside a `code` run, or at the end."""
+    for m in re.finditer(r"\. (?=[A-Z])", text):
+        before = text[: m.start() + 1]
+        if before.count("`") % 2 == 0:
+            return before
+    return text
+
+
+def headline_problem(text: str) -> str:
+    """Why a bullet's headline is too long or not plain, or "" when it's fine."""
+    first = headline(text)
+    words = len(first.split())
+    if words > HEADLINE_WORDS:
+        return f"opens with {words} words before its first full stop (at most {HEADLINE_WORDS})"
+    if ":" in first or "(" in first:
+        return "has a colon or a parenthesis in its headline"
+    return ""
 
 
 def commit_problems(subject: str, message: str, version: str, entry: str) -> list[str]:

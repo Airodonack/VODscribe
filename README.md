@@ -137,7 +137,7 @@ VODscribe is source-available under the [Functional Source License, Version 1.1,
 
 Between releases, `version` in the root `Cargo.toml` is the next one in development, such as `0.4.1-dev`: development builds don't pass for the last release, and semver orders it after 0.4.0 and before 0.4.1, so the updater neither offers 0.4.0 to them nor holds back 0.4.1. (An MSI's version is numbers only, so builds of a development version give theirs as `0.4.1`.)
 
-1. Write the release's entry in `CHANGELOG.md` as you go (the heading says "(unreleased)" until then; CI checks that the version in `Cargo.toml` has one).
+1. Write the release's entry in `CHANGELOG.md` as you go (the heading says "(unreleased)" until then; CI checks that the version in `Cargo.toml` has one). Each bullet opens with a headline of at most eight words and no colon or parenthesis, which the releases page shows plain before the detail, and `ready-to-release.py` refuses the entry otherwise.
 2. Set `version` to the release's (drop `-dev`), date the changelog heading, and commit ("Version 0.4.1", with the entry in its message).
 3. `python3 scripts/ready-to-release.py` checks it's ready, then tag it (`git tag v0.4.1`) and push the tag. The entry becomes the release notes in `latest.json`; the tag build fails if it's missing or still marked unreleased.
 4. Once it's out, move `site` to the tag (`git push origin v0.4.1^{commit}:refs/heads/site`), and set `main`'s version to the next in development (`0.4.2-dev`) in a commit of its own, which also opens its changelog entry (`## 0.4.2 (unreleased)`: CI's check takes a development version's entry to be that one). `ready-to-release.py` prints both.

@@ -20,36 +20,36 @@
   const FAQ = [
     {
       q: "Is it free?",
-      a: "The app is free: no account, no ads, no trial. VODscriptions are paid for by the channel, and everyone sees them for free.",
+      a: "Yes: no account, no ads, no trial. A channel pays for its VODscription, and everyone sees it for free.",
       link: { text: "About VODscriptions", href: PREMIUM },
     },
     {
       q: "Do my VODs or transcripts get uploaded anywhere?",
-      a: "No. VODscribe downloads a VOD's audio to your computer and transcribes it there. Transcripts and searches never leave your computer, and VODscribe collects nothing about how you use it.",
+      a: "No. VODscribe downloads a VOD's audio and transcribes it on your computer, where transcripts and searches stay. It collects nothing about how you use it.",
     },
     {
       q: "Which VODs can it transcribe?",
-      a: "Kick, Twitch and YouTube links: past broadcasts, highlights, clips and uploads. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, and their video is kept on your computer to play. It also takes video and audio files from your computer.",
+      a: "Kick, Twitch and YouTube past broadcasts, highlights, clips and uploads, and video and audio files on your computer. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, their video kept on your computer to play.",
     },
     {
       q: "Can I use the clips in my editor?",
-      a: "Yes, in any editor that takes a video file. Drag a clip, or a stretch you picked, out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 files (H.264 and AAC), which nearly every editor reads; Settings › Storage can make them MOV (DNxHR) instead, which scrubs more smoothly and is what DaVinci Resolve needs on Linux.",
+      a: "Yes. Drag a clip or a picked stretch out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 (H.264 and AAC), which nearly every editor reads; Settings › Storage can make them MOV (DNxHR), which scrubs more smoothly and DaVinci Resolve needs on Linux.",
     },
     {
       q: "Does it show the chat?",
-      a: "Yes, for Kick, Twitch and YouTube livestreams: the chat replay sits beside the transcript, lined up with what was being said, and search covers it too. A timeline shows how busy chat was over the whole stream, and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
+      a: "Yes, for Kick, Twitch and YouTube livestreams: the replay sits beside the transcript, in step with it, and search covers it too. A timeline shows how busy chat was and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
     },
     {
       q: "Which languages does it understand?",
-      a: "English and 24 other European languages, using NVIDIA's Parakeet speech model. It's very good with clear speech; names and game terms sometimes come out spelled differently.",
+      a: "English and 24 other European languages, with NVIDIA's Parakeet speech model. It's very good with clear speech, though names and game terms are sometimes misspelled.",
     },
     {
       q: "How fast is it?",
-      a: "It depends on your computer. A recent processor transcribes an hour of VOD in minutes. On Windows and Linux, an NVIDIA graphics card with the free GPU add-on is several times faster.",
+      a: "A recent processor transcribes an hour of VOD in minutes. On Windows and Linux, an NVIDIA graphics card with the free GPU add-on is several times faster.",
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: `VODscribe ${UNSIGNED} On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, choose Done (not Move to Trash), then go to System Settings › Privacy & Security, choose Open Anyway, choose Open Anyway again when macOS asks, and enter your password (on macOS 14 or earlier, Control-click it in Applications and choose Open).`,
+      a: `VODscribe ${UNSIGNED} On Windows, choose More info, then Run anyway; on a Mac, drag it into Applications, open it, choose Done (not Move to Trash), then Open Anyway in System Settings › Privacy & Security and again when macOS asks, and enter your password. On macOS 14 or earlier, Control-click it in Applications and choose Open.`,
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
@@ -101,8 +101,7 @@
     <p class="demo-intro">
       <strong>Try it here with the transcribed VODs below.</strong>
       <span class="muted"
-        >Search them, or pick one to play. Transcribing your own VODs needs the app. In the app, any line you find is a
-        clip two keys later.</span
+        >Search them, or play one. The app transcribes your own, and any line you find is a clip two keys later.</span
       >
     </p>
     <div class="wide">
@@ -127,17 +126,16 @@
       <Icon name="scissors" size={22} />
       <h2>Clips straight into your editor</h2>
       <p class="muted">
-        Mark a stretch on the timeline, or pick lines in the transcript, and drag it out as a file into your video
-        editor or a folder. Several picked stretches go out together, in order. Edits put pieces of one VOD or many
-        together.
+        Mark a stretch on the timeline or pick lines in the transcript, then drag it into your editor or a folder.
+        Several go out together, in order, and edits join pieces of one VOD or many.
       </p>
     </div>
     <div>
       <Icon name="layers" size={22} />
       <h2>Chapters and highlights</h2>
       <p class="muted">
-        Where a channel has a VODscription, its VODs come with chapters, the moments chat reacted to and who was
-        speaking, on the timeline and beside the transcript.
+        With a channel's VODscription, its VODs come with chapters, the moments chat reacted to and who was speaking, on
+        the timeline and beside the transcript.
         <a href={PREMIUM}>About VODscriptions</a>
       </p>
     </div>
@@ -145,16 +143,16 @@
       <Icon name="search" size={22} />
       <h2>Every word and chat message, searchable</h2>
       <p class="muted">
-        The transcript and the chat replay, lined up. Type a phrase to find every time it was said or typed, across all
-        your VODs, and see on a timeline where chat went wild.
+        Find every time a phrase was said or typed, across all your VODs, in the transcript and the chat replay beside
+        it. A timeline shows where chat went wild.
       </p>
     </div>
     <div>
       <Icon name="shield" size={22} />
       <h2>Runs on your computer</h2>
       <p class="muted">
-        No account, no uploads, nothing collected. Any recent computer will do; an NVIDIA graphics card makes it several
-        times faster.
+        No account, no uploads, nothing collected. Any recent computer will do, and an NVIDIA graphics card makes it
+        several times faster.
       </p>
     </div>
   </section>
@@ -180,7 +178,7 @@
     {/if}
     <p class="muted small">
       For 64-bit Windows 10 and 11, macOS 12 and later (Apple Silicon and Intel) and Linux. On first run it downloads
-      what it needs to transcribe (about 1 GB), checking each file before using it.
+      what it needs to transcribe (about 1 GB) and checks each file.
     </p>
   </section>
 

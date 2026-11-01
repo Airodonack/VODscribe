@@ -206,6 +206,21 @@ class EntryShape(unittest.TestCase):
         body = "- New.\n- Fixes:\n  - A fix.\n    ||||||| parent of 0123abc (A fix)\n  - Another."
         self.assertEqual(len(ready.entry_problems(body)), 1)
 
+    def test_a_long_headline(self):
+        self.assertEqual(ready.entry_problems("- Clips copy and paste. Ctrl+C copies, Ctrl+V pastes."), [])
+        long = ready.entry_problems("- Ctrl+C copies the selection or the clips picked, and Ctrl+V pastes them. More.")
+        self.assertEqual(len(long), 1)
+        self.assertIn('"Ctrl+C copies the selection or', long[0])
+        # A fix is held to it too; the full stop ends the headline only before a capital.
+        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - One, two, three, four, five, six, seven, eight, nine.")), 1)
+        self.assertEqual(len(ready.entry_problems("- Pasting works in v. two of edits, and more things too.")), 1)
+
+    def test_a_headline_with_a_colon_or_parenthesis(self):
+        self.assertEqual(len(ready.entry_problems("- Search learns from: names. More.")), 1)
+        self.assertEqual(len(ready.entry_problems("- Ctrl+A (⌘A) selects all. More.")), 1)
+        # In the detail they are fine, and so is a full stop inside `code`.
+        self.assertEqual(ready.entry_problems("- Search learns more words. Such as `from:a. B` (or `in:chat`)."), [])
+
     def test_the_real_entry(self):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text()).split("-")[0]
