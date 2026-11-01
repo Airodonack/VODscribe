@@ -14773,3 +14773,58 @@ dependencies = [
  "syn 3.0.8",
  "winnow 1.0.4",
 ]
+
+[[patch.unused]]
+name = "selectors"
+version = "0.41.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "servo_arc"
+version = "0.5.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_atoms"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_derive"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_dom"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_malloc_size_of"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_static_prefs"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "stylo_traits"
+version = "0.22.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "to_shmem"
+version = "0.6.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
+
+[[patch.unused]]
+name = "to_shmem_derive"
+version = "0.2.0"
+source = "git+https://github.com/Airodonack/stylo?rev=e3320a1f1a72f2ed8aca91769b5edfb86c46a543#e3320a1f1a72f2ed8aca91769b5edfb86c46a543"
