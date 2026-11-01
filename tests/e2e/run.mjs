@@ -220,6 +220,8 @@ async function runTurn({ name, run }) {
   const measures = path.join(perfOut, run === 1 ? name : `${name}-${run}`);
   const log = (what) => console.log(`[${((Date.now() - started) / 1000).toFixed(0)} s] ${name}: ${what}`);
   screen.newScenario();
+  // The cores already there: one that appears is this scenario's crash.
+  const coresBefore = new Set(drivers.cores());
   // The app as it is now: `ctx.restart()` (for what must survive one) replaces it.
   let current;
   // What the page measured, from each start of the app (App.pageMeasures),
@@ -350,7 +352,13 @@ async function runTurn({ name, run }) {
     });
     if (summary) profiles[name] = summary;
   }
-  log(error ? "failed" : skipped ? `skipped: ${skipped}` : "passed");
+  // A crash of the app or its web process left a core (lib/drivers.mjs): said with the result.
+  const crashed = drivers
+    .cores()
+    .filter((f) => !coresBefore.has(f))
+    .map(drivers.describeCore);
+  const crashes = crashed.length ? `; a crash left ${crashed.join(", ")}` : "";
+  log(`${error ? "failed" : skipped ? `skipped: ${skipped}` : "passed"}${crashes}`);
   return {
     name,
     ...(repeat > 1 && { run }),
@@ -634,7 +642,7 @@ async function runWorkers(chosen) {
         "-n",
         String(displays[at]),
         "-s",
-        "-screen 0 1400x900x24",
+        "-screen 0 1920x1080x24",
         "sh",
         "-c",
         shell,

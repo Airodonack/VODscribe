@@ -191,7 +191,10 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: e2e-${{ matrix.target }}-${{ matrix.index }}
-          path: tests/e2e/out
+          # Not a crash's core (the harness lets the app leave one there): hundreds of MB.
+          path: |
+            tests/e2e/out
+            !tests/e2e/out/**/core.*
           if-no-files-found: ignore
           retention-days: 14
 

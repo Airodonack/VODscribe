@@ -7,17 +7,36 @@
 // of a file dropped, the app's windows (the system's drag shows its picture
 // in one of its own).
 
-import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync, readdirSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "./app.mjs";
+import { ffmpeg } from "./fixtures.mjs";
 import * as os from "./os.mjs";
 
 /** The session's file manager: Dolphin in KDE's, else Nautilus. */
 export const fileManager = () =>
   /(^|:)kde(:|$)/i.test(process.env.XDG_CURRENT_DESKTOP ?? "") ? "dolphin" : "nautilus";
+
+/**
+ * A file kept in the folder dropped on, so Nautilus shows it as a folder
+ * with files: Nautilus 42 (Ubuntu 22.04's) shows an empty one as "Folder is
+ * Empty", which takes no drop (one onto a folder with a file in it lands;
+ * Nautilus 48 takes both).
+ */
+const KEPT = "kept-for-the-drop.txt";
+
+/** The files dropped in folder `dest` so far (not hidden ones, nor the one kept there). */
+export function droppedIn(dest) {
+  return readdirSync(dest).filter((f) => !f.startsWith(".") && f !== KEPT);
+}
+
+/** Empties folder `dest` of what was dropped there, for the next drop. */
+export function clearDropped(dest) {
+  for (const f of readdirSync(dest)) if (f !== KEPT) rmSync(path.join(dest, f), { recursive: true, force: true });
+}
 
 /** Why there's no file manager to drop on here, or null if there is. */
 export function noFileManager() {
@@ -28,22 +47,61 @@ export function noFileManager() {
   } catch {
     return `no ${fileManager()} to drop on`;
   }
+  const major = fileManager() === "nautilus" ? nautilusVersion() : null;
+  if (major !== null && major < 43)
+    return `Nautilus ${major} asks for the drag's data during the motion; the drag scenarios need 43 or newer`;
   return null;
+}
+
+/** Nautilus's major version (`nautilus --version`), read once; null if it doesn't say. */
+let nautilusMajor;
+function nautilusVersion() {
+  if (nautilusMajor === undefined) {
+    try {
+      const said = execFileSync("nautilus", ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      nautilusMajor = Number(said.match(/(\d+)\.\d+/)?.[1] ?? NaN);
+      if (Number.isNaN(nautilusMajor)) nautilusMajor = null;
+    } catch {
+      nautilusMajor = null;
+    }
+  }
+  return nautilusMajor;
 }
 
 /**
  * The file manager (`fileManager`) on folder `dest`, its home in `home`,
- * beside the app's window (skipped, through `ctx`, where the screen has no
- * room for it): where to drop on it, and `close`.
+ * beside the app's window (moved to the screen's left edge if that makes
+ * room; skipped, through `ctx`, where the screen has none): where to drop
+ * on it, and `close`.
  */
 export async function openFileManager(app, ctx, dest, home) {
   mkdirSync(dest, { recursive: true });
   mkdirSync(home, { recursive: true });
-  const page = await os.windowRect(app);
+  if (fileManager() === "nautilus") writeFileSync(path.join(dest, KEPT), "Kept so the folder isn't empty.\n");
+  let page = await os.windowRect(app);
   const [screenW] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
-  const fm = { x: page.x + page.w + 20, y: Math.max(0, page.y), w: 600, h: 500 };
-  if (fm.x + fm.w > screenW) fm.x = page.x - 20 - fm.w;
-  if (fm.x < 0)
+  const fm = { w: 600, h: 500 };
+  // Right of the window, else left of it: the manager's left edge, or null.
+  const beside = (p) =>
+    p.x + p.w + 20 + fm.w <= screenW ? p.x + p.w + 20 : p.x - 20 - fm.w >= 0 ? p.x - 20 - fm.w : null;
+  // A window manager that centres new windows (openbox) leaves neither side
+  // wide enough on a screen that has room for both: the app's window goes
+  // to the screen's left edge.
+  if (beside(page) === null && page.w + 20 + fm.w <= screenW) {
+    for (const win of windowsOf(app.driver.proc.pid)) execFileSync("xdotool", ["windowmove", win, "0", "y"]);
+    const from = page.x;
+    page = await until(
+      "the app's window at the screen's left edge",
+      async () => {
+        const now = await os.windowRect(app);
+        return now.x < from && now;
+      },
+      10_000,
+    );
+  }
+  fm.x = beside(page);
+  fm.y = Math.max(0, page.y);
+  if (fm.x === null)
     ctx.skip(
       `no room for a file manager beside the window (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
     );
@@ -110,14 +168,15 @@ export function findIn(dir, name) {
   return null;
 }
 
-/** A video file's length in seconds, as ffprobe reads it. */
+/**
+ * A video file's length in seconds, as ffmpeg reads it (the one setup
+ * downloaded: the cells have no ffprobe), to the hundredth.
+ */
 export function probeDuration(file) {
-  const out = execFileSync(
-    "ffprobe",
-    ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file],
-    { encoding: "utf8" },
-  );
-  return Number(out.trim());
+  const said = spawnSync(ffmpeg(), ["-hide_banner", "-i", file], { encoding: "utf8" }).stderr ?? "";
+  const [, h, m, s] = said.match(/Duration: (\d+):(\d+):([\d.]+)/) ?? [];
+  if (h === undefined) throw new Error(`no length for ${file}: ${said.trim().split("\n").at(-1)}`);
+  return Number(h) * 3600 + Number(m) * 60 + Number(s);
 }
 
 /** Clips made as `format` ("MP4" or "MOV"), chosen in Settings. */

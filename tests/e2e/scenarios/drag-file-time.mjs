@@ -13,13 +13,22 @@
 // made, the stretch's not); last, a stretch carried while two long clips
 // wait to be made ahead of it. Linux (X11) with Nautilus only, so far.
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
-import { findIn, noFileManager, openFileManager, probeDuration, setFormat, windowsOf } from "../lib/fileManager.mjs";
+import {
+  clearDropped,
+  droppedIn,
+  findIn,
+  noFileManager,
+  openFileManager,
+  probeDuration,
+  setFormat,
+  windowsOf,
+} from "../lib/fileManager.mjs";
 import { longVideo, minute } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -121,7 +130,7 @@ export default {
         const whole = await until(
           "the files whole in the folder",
           () => {
-            const there = readdirSync(dest).filter((f) => !f.startsWith("."));
+            const there = droppedIn(dest);
             if (there.length < lengths.length) return false;
             for (const f of there) {
               const source = sources.get(f) ?? findIn(dataDirs()[0], f);
@@ -156,7 +165,7 @@ export default {
         );
         await until("the system's drag, over", () => app.js(`return !document.querySelector(".carry-ghost")`), MINUTE);
         await sleep(1500);
-        for (const f of readdirSync(dest)) rmSync(path.join(dest, f), { force: true });
+        clearDropped(dest);
         await sleep(500);
       };
 

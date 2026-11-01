@@ -15,7 +15,7 @@ These tests drive a built VODscribe through its page, as a person would: a libra
 - **Node 24** (the version in `.nvmrc`), through mise or any other way. The harness imports a TypeScript file from the app, which Node 24 runs as it is.
 - **tauri-driver**, from cargo: `cargo install tauri-driver --locked`. It must be on `PATH`, or named by `TAURI_DRIVER`. `distros.mjs` mounts this binary into each container.
 - **podman**, for `distros.mjs`. The containers pull public images (Debian, Ubuntu, Fedora, Arch and others) and install packages, so the first run of each needs the network.
-- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg.
+- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg; Nautilus (or Dolphin, under KDE) for the scenarios that drop a clip on a file manager; `prlimit` (util-linux) and `file` for crashes to leave a core and be named.
 - For `runners.mjs`: SSH access to each runner by key (it runs in batch mode), and Node on the runner.
 
 ### Building the packages
@@ -56,8 +56,18 @@ Directly against an installed app, headless, on a library of its own:
 export XDG_DATA_HOME=$HOME/.cache/vodscribe-e2e-data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1
 unset WAYLAND_DISPLAY; export GDK_BACKEND=x11
 export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
-dbus-run-session -- xvfb-run -a -s '-screen 0 1400x900x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
+dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
 ```
+
+The screen is 1920 by 1080, as in the cells, so that the scenarios that drag a clip onto a file manager (Nautilus, or Dolphin under KDE: `lib/fileManager.mjs`) have room for it beside the app's window (moved to the screen's left edge when the window manager centred it, as openbox does); on a smaller one they skip, and with a Nautilus older than 43 (Ubuntu 22.04's 42 asks for the drag's data during the motion).
+
+A crash leaves a core: on Linux the harness lifts the core limit (0 by default) of tauri-driver with `prlimit`, so the app and its WebKit processes inherit it, and starts tauri-driver in `E2E_OUT`, so with the kernel's usual pattern (`core`, with the pid: `/proc/sys/kernel/core_pattern`, `core_uses_pid`) a crash leaves `E2E_OUT/core.<pid>`. The scenario's result line names the file and the binary it is from. To read one (here WebKit's web process, at its path on Debian and Ubuntu; the binary must be the one that crashed):
+
+```sh
+gdb -batch -ex bt /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess tests/e2e/out/core.<pid>
+```
+
+A system whose pattern pipes cores to a handler (systemd-coredump, apport) keeps them there instead: `coredumpctl` lists them.
 
 The private runtime dir matters: with the shared one, the test bus's gnome-keyring finds your session's keyring there and quits without claiming its name, and GTK's portal start then waits out D-Bus's 25 s activation timeout before the window appears.
 

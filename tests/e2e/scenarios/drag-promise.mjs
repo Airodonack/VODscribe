@@ -25,6 +25,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
 import {
+  clearDropped,
+  droppedIn,
   fileManager,
   noFileManager,
   openFileManager,
@@ -193,7 +195,7 @@ exec '${real}' "$@"
         await until("the carry over", () => app.js(`return !document.querySelector(".carry-ghost")`), MINUTE);
         await until("no clip left made for a drag", async () => (await hidden()).length === 0, 30_000);
         await sleep(1000);
-        for (const f of readdirSync(dest)) rmSync(path.join(dest, f), { force: true });
+        clearDropped(dest);
       };
       /** The file dropped, once whole: as long as its stretch, and when. */
       const landed = async (label) => {
@@ -201,7 +203,7 @@ exec '${real}' "$@"
           `${label}: the file whole in the folder`,
           () => {
             // Whole: in place under its own name (Dolphin's copy is written beside, then renamed).
-            const there = readdirSync(dest).filter((f) => !f.startsWith(".") && !f.endsWith(".part"));
+            const there = droppedIn(dest).filter((f) => !f.endsWith(".part"));
             const file = there.length && path.join(dest, there[0]);
             return !!file && whole(file) && [file, Date.now()];
           },
@@ -284,8 +286,8 @@ exec '${real}' "$@"
       await settle();
       await sleep(HELD * 1000);
       const left = appFiles().filter((f) => !before.has(f));
-      if (readdirSync(dest).length || left.length)
-        throw new Error(`a drag called off left ${[...readdirSync(dest), ...left].join(", ")}`);
+      if (droppedIn(dest).length || left.length)
+        throw new Error(`a drag called off left ${[...droppedIn(dest), ...left].join(", ")}`);
       ctx.log("called off while its file was waited for: nothing landed, nothing left");
 
       // 4. Its encode fails: nothing lands, and the app says why.
@@ -298,7 +300,7 @@ exec '${real}' "$@"
       const toast = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
       if (!/Couldn't make the clip/.test(toast)) throw new Error(`the toast says "${toast}"`);
       await settle();
-      if (readdirSync(dest).length) throw new Error(`a clip that failed left ${readdirSync(dest).join(", ")}`);
+      if (droppedIn(dest).length) throw new Error(`a clip that failed left ${droppedIn(dest).join(", ")}`);
       ctx.log(`its encode failed: nothing landed, the toast says "${toast}"`);
 
       // 5. Two pills picked and carried together, both made again as they go
@@ -340,7 +342,7 @@ exec '${real}' "$@"
       await until(
         "both files whole in the folder",
         () => {
-          for (const f of readdirSync(dest).filter((f) => !f.startsWith(".") && !f.endsWith(".part"))) {
+          for (const f of droppedIn(dest).filter((f) => !f.endsWith(".part"))) {
             if (whole(path.join(dest, f)) && !arrivals.some((a) => a.name === f))
               arrivals.push({ name: f, at: Date.now() });
           }

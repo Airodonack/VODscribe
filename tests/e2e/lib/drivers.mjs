@@ -18,12 +18,13 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { Script } from "node:vm";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 
 import { appPid, appPids, processesUnder } from "./memory.mjs";
 import { watchExit } from "./procs.mjs";
@@ -37,6 +38,49 @@ async function waitFor(what, check, timeout) {
     await sleep(250);
   }
   throw new Error(`timed out waiting for ${what}`);
+}
+
+/** Where the run's output goes (E2E_OUT, as run.mjs has it). */
+const outDir = () => process.env.E2E_OUT ?? fileURLToPath(new URL("../out", import.meta.url));
+
+/**
+ * Lets the app and its web processes leave a core when they crash: their
+ * soft core limit is 0 by default. Lifted on tauri-driver and what it has
+ * started by now (WebKitWebDriver), so the apps their sessions start later
+ * inherit it; with the kernel's usual pattern (`core`, with the pid) the
+ * file lands in the crashing process's working directory, the run's output
+ * folder (tauri-driver's, passed down). Linux only; a run goes on without it.
+ */
+function allowCores(pid) {
+  try {
+    for (const p of [String(pid), ...processesUnder(pid)])
+      execFileSync("prlimit", ["--pid", p, "--core=unlimited"], { stdio: ["ignore", "ignore", "pipe"] });
+  } catch (e) {
+    const why = e.code === "ENOENT" ? "no prlimit here" : e.stderr?.toString().trim() || e.message;
+    console.log(`tauri-driver: a crash leaves no core (${why})`);
+  }
+}
+
+/** The core files (core.<pid>) in the run's output folder. */
+export function cores() {
+  try {
+    return readdirSync(outDir()).filter((f) => /^core\.\d+$/.test(f));
+  } catch {
+    return [];
+  }
+}
+
+/** Core file `name` (in the run's output folder), with the binary it's from as `file` reads it. */
+export function describeCore(name) {
+  const at = path.join(outDir(), name);
+  let from = "the binary unknown: no `file` here";
+  try {
+    // A web process's core has thousands of program headers, past file's default limit.
+    const said = execFileSync("file", ["-b", "-P", "elf_phnum=65535", at], { encoding: "utf8" });
+    const exe = said.match(/execfn: '([^']*)'/)?.[1] ?? said.match(/from '([^']*)'/)?.[1];
+    from = exe ? `from ${exe}` : said.trim();
+  } catch {}
+  return `${at} (${from})`;
 }
 
 /** A free port on 127.0.0.1. */
@@ -155,12 +199,19 @@ export async function webdriver(app) {
   }
   if (!tauriDriver) {
     spoiled = null;
-    const native = process.env.NATIVE_DRIVER ? ["--native-driver", process.env.NATIVE_DRIVER] : [];
+    // Paths as given, from this process's folder: the driver starts in another (below).
+    const command = (cmd) => (cmd.includes("/") || cmd.includes("\\") ? path.resolve(cmd) : cmd);
+    const native = process.env.NATIVE_DRIVER ? ["--native-driver", command(process.env.NATIVE_DRIVER)] : [];
     // The native driver's port too (tauri-driver's default is 4445 for
     // every run): two runs side by side would otherwise share one
     // WebKitWebDriver, each sending its sessions to the other's.
     native.push("--native-port", String(await freePort()));
-    tauriDriver = spawn(process.env.TAURI_DRIVER ?? "tauri-driver", ["--port", String(port), ...native], {
+    // In the output folder: the app and its web processes inherit it, and
+    // a crash's core lands there (allowCores). The app's binary and its
+    // sidecars are found by absolute paths.
+    mkdirSync(outDir(), { recursive: true });
+    tauriDriver = spawn(command(process.env.TAURI_DRIVER ?? "tauri-driver"), ["--port", String(port), ...native], {
+      cwd: outDir(),
       stdio: ["ignore", "inherit", "inherit"],
     });
     if (!stopOnExit) {
@@ -168,6 +219,8 @@ export async function webdriver(app) {
       process.on("exit", () => tauriDriver?.kill());
     }
     await waitFor("tauri-driver", () => fetch(`${base}/status`).then((r) => r.ok), MINUTE);
+    // Once it answers, its WebKitWebDriver has started too; no app has yet.
+    if (process.platform === "linux") allowCores(tauriDriver.pid);
   }
   // Why this session is gone, once it is: every call after says so at once.
   let lost = null;
@@ -227,7 +280,7 @@ export async function webdriver(app) {
   }, 100);
   let session;
   try {
-    const caps = { capabilities: { alwaysMatch: { "tauri:options": { application: app } } } };
+    const caps = { capabilities: { alwaysMatch: { "tauri:options": { application: path.resolve(app) } } } };
     session = (await wd("POST", "/session", caps, AbortSignal.any([limit, early.signal]))).sessionId;
   } catch (e) {
     // The driver may be left waiting on that app: a new one for the next.
