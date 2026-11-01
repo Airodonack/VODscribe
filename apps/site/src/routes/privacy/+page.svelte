@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated October 29, 2026</p>
+  <p class="muted">Last updated November 1, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -97,9 +97,10 @@
     vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
     like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
     when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
-    page here loads its annotations from dl.vodscribe.com, and the pictures of the streamers they name from
-    img.vodscribe.com, which gets the streamer's site and login and your IP address, and passes your browser on to
-    Twitch's or Kick's own picture.
+    page here, and the VODscriptions page's demo, load their annotations from dl.vodscribe.com, and the pictures of the
+    streamers they name from img.vodscribe.com, which gets the streamer's site and login and your IP address, and passes
+    your browser on to Twitch's or Kick's own picture. The VODscriptions page's email link is a plain mailto link: it
+    opens your own mail app, and this site still has no account.
   </p>
 
   <h2>Questions</h2>

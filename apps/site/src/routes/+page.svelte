@@ -4,7 +4,7 @@
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
-  import { ISSUES, SOURCE, UNSIGNED } from "#lib/links.js";
+  import { ISSUES, PREMIUM, SOURCE, UNSIGNED } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
@@ -20,7 +20,8 @@
   const FAQ = [
     {
       q: "Is it free?",
-      a: "Yes. No account, no ads, no trial.",
+      a: "The app is free: no account, no ads, no trial. VODscriptions are paid for by the channel, and everyone sees them for free.",
+      link: { text: "About VODscriptions", href: PREMIUM },
     },
     {
       q: "Do my VODs or transcripts get uploaded anywhere?",
