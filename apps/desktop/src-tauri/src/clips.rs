@@ -2168,9 +2168,6 @@ mod tests {
         assert_eq!(next, [8, 9, 2, 3], "the drag's in the order picked, then the rest as they were");
     }
 
-    /// Several clips deleted at once went one by one, a clip that was gone
-    /// skipped: one that couldn't go, in the middle, left those before it
-    /// deleted with no step to undo them.
     /// A drag's answer waits while any of its files is still being made,
     /// and is none once one can't be: all or nothing, as one drop.
     #[test]
@@ -2338,6 +2335,9 @@ mod tests {
         assert_eq!(db.clips(vod).unwrap().len(), 1, "the VOD's own clip stays");
     }
 
+    /// Several clips deleted at once went one by one, a clip that was gone
+    /// skipped: one that couldn't go, in the middle, left those before it
+    /// deleted with no step to undo them.
     #[test]
     fn deleting_several_clips_is_all_or_none() {
         let (db, vod) = library();
