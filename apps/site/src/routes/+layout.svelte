@@ -59,10 +59,11 @@
       <a class="section" class:current={premium} href={PREMIUM} aria-current={premium ? "page" : undefined}
         >VODscriptions</a
       >
-      <a class="account" href="{PREMIUM}#coming-soon" title="Sign in">
+      <!-- No account yet: the face and the words wait for the sign-in being built. -->
+      <span class="account" title="Coming soon. We're building sign-in and permissions.">
         <span class="face"><Icon name="user" size={15} /></span>
         <span class="words">Sign in</span>
-      </a>
+      </span>
     </nav>
   </header>
 
@@ -221,6 +222,9 @@
     display: flex;
     align-items: center;
     gap: 7px;
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: default;
   }
 
   /* Signed out: an anonymous face where a signed-in visitor's picture will be. */
