@@ -8,13 +8,18 @@
 // erased at once, a job of its own in the list ("Erasing"), and quitting
 // while that goes on is over at once (it used to wait up to three seconds
 // for it); at the next start what was left of it is erased.
+//
+// A clip's part file is beside its clip: in the Videos folder's VODscribe
+// on Windows and macOS (and on Linux with a Videos folder set), in the
+// app's data elsewhere. Looking in the data alone found none on the hosted
+// Windows and macOS runners, every night (2026-10-31, 2026-11-01).
 
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
+import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
 import { longVideo, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
 
 /** Quitting with an erasure under way takes no longer than this, ms (the process gone; a debug build's). */
@@ -22,7 +27,7 @@ const QUIT_WITHIN = 2000;
 /** The jobs' list, opened (Jobs.svelte). */
 const LIST = '[role="dialog"][aria-label="Jobs"]';
 
-/** The part files of clips being made, anywhere in the app's data (`.<name>.part`). */
+/** The part files of clips being made (`.<name>.part`), in the clips' folder or anywhere in the app's data. */
 function partFiles() {
   const found = [];
   const walk = (dir) => {
@@ -32,7 +37,7 @@ function partFiles() {
       else if (entry.name.startsWith(".") && entry.name.endsWith(".part")) found.push(at);
     }
   };
-  for (const dir of dataDirs()) if (existsSync(dir)) walk(dir);
+  for (const dir of new Set([clipsDir(), ...dataDirs()])) if (existsSync(dir)) walk(dir);
   return found;
 }
 

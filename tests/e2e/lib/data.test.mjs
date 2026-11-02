@@ -1,14 +1,14 @@
-// The library helpers scenarios share (data.mjs): where the library is, and
-// a file's VOD made a site's as if added by its link.
+// The library helpers scenarios share (data.mjs): where the library is and
+// where clips go, and a file's VOD made a site's as if added by its link.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 
-import { dataDirs, libraryPath, makeSiteVod } from "./data.mjs";
+import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "./data.mjs";
 
 const home = mkdtempSync(path.join(tmpdir(), "vodscribe-data-test-"));
 const saved = { ...process.env };
@@ -82,4 +82,25 @@ test("a field it doesn't know, a site it has no link for or a VOD that isn't the
   assert.throws(() => makeSiteVod(1, "twitch", "1", /** @type {any} */ ({ thumb: "x" })), /doesn't set thumb/);
   assert.throws(() => makeSiteVod(1, "vimeo", "1"), /no link/);
   assert.throws(() => makeSiteVod(2, "twitch", "1"), /no VOD 2/);
+});
+
+const linuxOnly = { skip: process.platform === "win32" || process.platform === "darwin" };
+
+test("clips go to the data folder where there's no Videos folder", linuxOnly, () => {
+  process.env.XDG_CONFIG_HOME = path.join(home, "no-config");
+  assert.equal(clipsDir(), path.join(home, "app.vodscribe", "clips"));
+});
+
+test("clips go to the Videos folder's VODscribe, as user-dirs.dirs names it", linuxOnly, () => {
+  const config = path.join(home, "config");
+  mkdirSync(config, { recursive: true });
+  process.env.XDG_CONFIG_HOME = config;
+  const dirs = path.join(config, "user-dirs.dirs");
+  writeFileSync(dirs, 'XDG_DESKTOP_DIR="$HOME/Desktop"\nXDG_VIDEOS_DIR="$HOME/Films"\n');
+  assert.equal(clipsDir(), path.join(homedir(), "Films", "VODscribe"));
+  writeFileSync(dirs, 'XDG_VIDEOS_DIR="/srv/videos"\n');
+  assert.equal(clipsDir(), path.join("/srv/videos", "VODscribe"));
+  // Pointed at the home folder: none, as xdg-user-dirs has it.
+  writeFileSync(dirs, 'XDG_VIDEOS_DIR="$HOME/"\n');
+  assert.equal(clipsDir(), path.join(home, "app.vodscribe", "clips"));
 });

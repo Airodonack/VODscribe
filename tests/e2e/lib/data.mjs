@@ -6,7 +6,8 @@
 // has no library yet: on a computer that's used, point XDG_DATA_HOME (Linux)
 // somewhere else, or run on a test machine.
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -24,6 +25,45 @@ export function dataDirs() {
     default:
       return [path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), ID)];
   }
+}
+
+/** The system's Videos folder, as the app finds it (Tauri's video_dir), or null where there's none. */
+function videosDir() {
+  switch (process.platform) {
+    case "win32":
+      // The known folder, which a user (or OneDrive) may have moved from the profile's Videos.
+      return (
+        execFileSync("powershell", ["-NoProfile", "-Command", "[Environment]::GetFolderPath('MyVideos')"], {
+          encoding: "utf8",
+        }).trim() || null
+      );
+    case "darwin":
+      return path.join(homedir(), "Movies");
+    default: {
+      // XDG_VIDEOS_DIR in user-dirs.dirs, read as the dirs crate does: under
+      // $HOME or absolute, "$HOME/" meaning none; none without the file, as
+      // in a fresh test folder or a container.
+      const config = process.env.XDG_CONFIG_HOME?.startsWith("/")
+        ? process.env.XDG_CONFIG_HOME
+        : path.join(homedir(), ".config");
+      const file = path.join(config, "user-dirs.dirs");
+      if (!existsSync(file)) return null;
+      const value = readFileSync(file, "utf8").match(/^[ \t]*XDG_VIDEOS_DIR[ \t]*=[ \t]*"(.*)"[ \t]*$/m)?.[1];
+      if (!value || value === "$HOME/") return null;
+      if (value.startsWith("$HOME/")) return path.join(homedir(), value.slice("$HOME/".length));
+      return value.startsWith("/") ? value : null;
+    }
+  }
+}
+
+/**
+ * Where the app puts clip files (clips.rs clips_dir): VODscribe in the
+ * Videos folder, or clips in its data where there's no Videos folder. On
+ * Windows and macOS there always is one, outside the data folders.
+ */
+export function clipsDir() {
+  const videos = videosDir();
+  return videos ? path.join(videos, "VODscribe") : path.join(dataDirs().at(-1), "clips");
 }
 
 /** The app's library: its database in the data folder (`dataDirs`). */
