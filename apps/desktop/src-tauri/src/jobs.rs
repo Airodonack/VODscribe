@@ -70,11 +70,12 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         true
     }
 
-    /// Adds `job` last unless one `same` finds is waiting or running; whether it did.
+    /// Adds `job` last unless one `same` finds is waiting or running (and not
+    /// stopped); whether it did.
     pub(crate) fn push_new(&self, job: J, same: impl Fn(&J) -> bool) -> bool {
         let (queue, wake) = &*self.shared;
         let mut queue = queue.lock().unwrap();
-        if queue.running.as_ref().is_some_and(|(j, _)| same(j)) || queue.waiting.iter().any(same) {
+        if running_on(&queue.running, &same) || queue.waiting.iter().any(same) {
             return false;
         }
         queue.waiting.push_back(job);
@@ -85,7 +86,10 @@ impl<J: Clone + Send + 'static> Jobs<J> {
     }
 
     /// Puts `job` first: the one `same` finds waiting is moved there, or
-    /// `job` is added there unless one is running; whether it was added.
+    /// `job` is added there unless one is running (and not stopped: one being
+    /// stopped is ending, and a job asked for now is a new one, such as a
+    /// clip given a deleted one's id while its cut winds down); whether it
+    /// was added.
     pub(crate) fn push_front(&self, job: J, same: impl Fn(&J) -> bool) -> bool {
         let (queue, wake) = &*self.shared;
         let mut queue = queue.lock().unwrap();
@@ -96,7 +100,7 @@ impl<J: Clone + Send + 'static> Jobs<J> {
             self.changed();
             return false;
         }
-        if queue.running.as_ref().is_some_and(|(j, _)| same(j)) {
+        if running_on(&queue.running, &same) {
             return false;
         }
         queue.waiting.push_front(job);
@@ -236,6 +240,11 @@ fn tell(watcher: &Watcher) {
     }
 }
 
+/// Whether the job running is one `same` finds, and goes on (isn't stopped).
+fn running_on<J>(running: &Option<(J, Arc<AtomicBool>)>, same: impl Fn(&J) -> bool) -> bool {
+    running.as_ref().is_some_and(|(j, stop)| !stop.load(Ordering::Relaxed) && same(j))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::mpsc;
@@ -284,6 +293,22 @@ mod tests {
         assert!(!jobs.push_new(1, |&j| j == 1), "running: push_new won't");
         assert!(jobs.push_once(1, |&j| j == 1), "running: push_once will, to run again after");
         assert_eq!(jobs.listed(), [1, 2, 1]);
+    }
+
+    /// A clip deleted while its cut winds down, and another made at once that
+    /// SQLite gives the same id: the new one is queued, not taken for the one
+    /// ending (it waited, never made: drag-promise on macOS, 2026-11-01).
+    #[test]
+    fn a_job_asked_for_while_one_of_its_id_is_being_stopped_is_queued() {
+        let jobs = Jobs::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        jobs.shared.0.lock().unwrap().running = Some((7, stop.clone()));
+        assert!(!jobs.push_front(7, |&j| j == 7), "running and going on: the same job");
+        assert!(!jobs.push_new(7, |&j| j == 7), "running and going on: the same job");
+        stop.store(true, Ordering::Relaxed);
+        assert!(jobs.push_front(7, |&j| j == 7), "being stopped: a new one");
+        assert!(!jobs.push_new(7, |&j| j == 7), "waiting now");
+        assert_eq!(jobs.listed(), [7, 7]);
     }
 
     /// As a storyboard's job lets go of a file about to be deleted.
