@@ -1,10 +1,12 @@
 /* The site uses the app's styles (apps/desktop/src/app.css), which are made
-   for a fixed window: the page scrolls here. */
+   for a fixed window: the page scrolls here. Clip, not hidden, cuts off
+   sideways overflow: hidden would make body a scroll container of its own,
+   and anything sticky on a page would stick to it and scroll away. */
 html,
 body {
   height: auto;
   overflow: visible;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 body {
