@@ -207,7 +207,9 @@ export default {
     const [site] = await app.addFiles([videos(dir).video]);
     await ctx.quit();
     const title = "A stream with chat";
-    const media = path.join(dataDirs()[0], "media");
+    // Kept videos are beside the downloads' work folder (Paths::media): in
+    // the local data on Windows, not the roaming data the library is in.
+    const media = path.join(dataDirs().at(-1), "media");
     mkdirSync(media, { recursive: true });
     const kept = path.join(media, `${title} [${String(site.id).padStart(6, "0")}].mp4`);
     copyFileSync(videos(dir).video, kept);
