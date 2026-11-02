@@ -128,6 +128,23 @@ export function sessionGone(failure) {
  */
 const SESSION_START = 2 * MINUTE;
 
+/**
+ * WebDriver's Set Window Rect, which sizes the whole window, for a page of
+ * `width` by `height`: the page is asked for plus what the window has around
+ * its page now (`wd` sends one command of the session `session`).
+ */
+async function resizeByWindowRect(wd, session, width, height) {
+  const rect = await wd("GET", `/session/${session}/window/rect`);
+  const page = await wd("POST", `/session/${session}/execute/sync`, {
+    script: "return { width: innerWidth, height: innerHeight }",
+    args: [],
+  });
+  await wd("POST", `/session/${session}/window/rect`, {
+    width: width + rect.width - page.width,
+    height: height + rect.height - page.height,
+  });
+}
+
 /** The tauri-driver process, shared by every scenario's session. */
 let tauriDriver;
 /** Why tauri-driver must be started again before the next session, or null. */
@@ -315,20 +332,9 @@ export async function webdriver(app) {
       const handle = await wd("GET", `/session/${session}/window`);
       await wd("POST", `/session/${session}/window`, { handle });
     },
-    // WebDriver's Set Window Rect, which sizes the whole window: the page is
-    // asked for plus what the window has around its page now. (The installed
-    // app has no e2e_set_inner_size: that's only in builds with the feature.)
-    resize: async (width, height) => {
-      const rect = await wd("GET", `/session/${session}/window/rect`);
-      const page = await wd("POST", `/session/${session}/execute/sync`, {
-        script: "return { width: innerWidth, height: innerHeight }",
-        args: [],
-      });
-      await wd("POST", `/session/${session}/window/rect`, {
-        width: width + rect.width - page.width,
-        height: height + rect.height - page.height,
-      });
-    },
+    // (The installed app has no e2e_set_inner_size: that's only in builds
+    // with the feature.)
+    resize: (width, height) => resizeByWindowRect(wd, session, width, height),
     close: async () => {
       proc.closedAt = Date.now();
       await wd("DELETE", `/session/${session}`).catch(() => {});
@@ -449,9 +455,12 @@ export async function servo(app) {
   if (env.VK_ICD_FILENAMES === undefined && existsSync(LAVAPIPE)) env.VK_ICD_FILENAMES = LAVAPIPE;
   const child = spawn(app, [], { env, stdio: ["ignore", "inherit", "inherit"] });
   let exited = null;
+  const proc = { exe: app, pid: child.pid, closedAt: null, exitedAt: null, exit: null };
   servoApps.add(child);
   child.on("exit", (code, signal) => {
     exited = signal ?? code;
+    proc.exitedAt = Date.now();
+    proc.exit = signal ? `signal ${signal}` : `code ${code}`;
     servoApps.delete(child);
   });
   const wd = async (method, url, body) => {
@@ -494,13 +503,18 @@ export async function servo(app) {
       return wd("POST", `/session/${session}/execute/sync`, { script: `return (async () => { ${body} })()`, args });
     },
     screenshot: async () => Buffer.from(await wd("GET", `/session/${session}/screenshot`), "base64"),
+    // The runtime answers Set Window Rect with the window's outer size, as
+    // WebKitWebDriver does.
+    resize: (width, height) => resizeByWindowRect(wd, session, width, height),
     close: async () => {
       if (exited !== null) return;
+      proc.closedAt = Date.now();
       // Quit as the app's own Quit would (Servo's shutdown command: the app
       // may hold it, mid-job), then the signal.
       await wd("DELETE", `/session/${session}/servo/shutdown`).catch(() => {});
       await end();
     },
+    proc,
   };
 }
 

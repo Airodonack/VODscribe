@@ -51,7 +51,6 @@ import { App, until } from "./lib/app.mjs";
 import { dataDirs, resetData } from "./lib/data.mjs";
 import * as drivers from "./lib/drivers.mjs";
 import { cssUsed } from "./lib/css-used.mjs";
-import { appPid } from "./lib/memory.mjs";
 import * as os from "./lib/os.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -91,12 +90,8 @@ async function capture(binary) {
   // The driver of the engine: the webdriver one (WebKitWebDriver) or Servo's.
   const start = async () => {
     const driver = await drivers[opts.engine === "servo" ? "servo" : "webdriver"](binary);
-    // Servo's driver has no focus() or proc: App.focused asks the OS (xdotool) by the app's pid.
+    // Servo's driver has no focus(): App.focused asks the OS (xdotool) by the app's pid.
     driver.focus ??= async () => {};
-    if (!driver.proc) {
-      const pid = appPid(binary);
-      driver.proc = { exe: binary, pid: pid && Number(pid) };
-    }
     const app = new App(driver, log);
     await app.ready();
     return app;
