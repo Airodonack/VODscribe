@@ -25,6 +25,11 @@ updates:
       # a second glib's types aren't gtk's. Moves with gtk, bumped by hand.
       - dependency-name: glib
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Held at 0.40 (SQLite 3.51): 0.41 bundles SQLite 3.54, whose planner put
+      # the library's perf check over budget. Bumped by hand once the slow
+      # query is understood and rewritten.
+      - dependency-name: rusqlite
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   # The pnpm workspace (apps/*).
   - package-ecosystem: npm
