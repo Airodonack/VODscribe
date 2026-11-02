@@ -314,8 +314,10 @@ export interface Job {
 /** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
  *  whether they went to another app; if they never came, why; and whether
  *  they didn't because the app let go on takes only files already made
- *  (`finished_only`; `receiver`, its name, where the system gives it). */
+ *  (`finished_only`; `receiver`, its name, where the system gives it).
+ *  `drag` is the number `dragClips` was given for it (none for an edit's). */
 export interface DragEnded {
+  drag: number | null;
   delivered: boolean;
   failed: string | null;
   finished_only: boolean;
@@ -770,9 +772,10 @@ export const api = {
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging the files of clips `ids` out of the window, in one drag; call while the mouse button is down. */
-  /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */
-  dragClips: (ids: number[], image?: Uint8Array) =>
-    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(",") } }),
+  /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers;
+   *  `drag`, the page's number for the drag, comes back with its end (`DragEnded`). */
+  dragClips: (ids: number[], image: Uint8Array | undefined, drag: number) =>
+    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(","), drag: String(drag) } }),
   /** Whether a clip can be dragged out before its file is made (handed over once it is). */
   dragBeforeMade: () => invoke<boolean>("drag_before_made"),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */

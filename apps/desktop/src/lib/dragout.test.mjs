@@ -8,7 +8,9 @@ import { test } from "node:test";
 // globalThis.fake for the test to read; pressToDrag is the .ts file it is.
 const fakes = {
   "./api": `export const api = globalThis.fake.api;
-    export const events = { dragEnded: async (cb) => ((globalThis.fake.ended = cb), () => {}) };
+    export const events = {
+      dragEnded: async (cb) => (globalThis.fake.listeners.add(cb), () => globalThis.fake.listeners.delete(cb)),
+    };
     export const thumbUrl = async () => null;`,
   "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
   "./resolveHint.svelte": `export const formatHint = { dragged() {} };`,
@@ -65,8 +67,19 @@ const fake = {
   answer: null,
   /** Whether that note comes up. */
   noted: false,
-  /** What the page does as the system's drag ends. @type {((e: import("./api").DragEnded) => void) | null} */
-  ended: null,
+  /** What the page listens with for the system's drags to end ("drag-ended"). @type {Set<(e: unknown) => void>} */
+  listeners: new Set(),
+  /** The number each system's drag was asked for with, in order. @type {unknown[]} */
+  numbers: [],
+  /**
+   * The system's drag numbered `drag` (the last asked for, unless said) ends
+   * as `e` says: each listener hears it, as each hears Tauri's events.
+   * @param {{ delivered: boolean, failed: string | null, finished_only: boolean, receiver: string | null }} e
+   * @param {unknown} [drag]
+   */
+  ended: (e, drag = fake.numbers.at(-1)) => {
+    for (const cb of [...fake.listeners]) cb({ drag, ...e });
+  },
   /** Whether the system's drag can begin before the files are made. */
   beforeMade: true,
   /** @type {number[]} */
@@ -88,8 +101,8 @@ const fake = {
   api: {
     frame: async () => new Uint8Array(),
     peaks: async () => new Uint8Array(),
-    /** @param {unknown} ids */
-    dragClips: async (ids) => void fake.dragged.push(ids),
+    /** @param {unknown} ids @param {unknown} _image @param {unknown} drag */
+    dragClips: async (ids, _image, drag) => void (fake.dragged.push(ids), fake.numbers.push(drag)),
     dragBeforeMade: async () => fake.beforeMade,
     /** @param {number} id */
     deleteClip: async (id) => void fake.deleted.push(id),
@@ -159,7 +172,7 @@ Object.assign(globalThis, {
     querySelector: () => null,
   },
 });
-const { carry, carrySet } = await import("./dragout.ts");
+const { carry, carrySet, backOver, backLeft } = await import("./dragout.ts");
 
 /** @param {number} x @param {number} y @param {number} [buttons] */
 const move = (x, y, buttons = 1) => send({ type: "pointermove", clientX: x, clientY: y, buttons });
@@ -187,7 +200,8 @@ function reset() {
   fake.noted = false;
   fake.kept.length = 0;
   fake.toasts.length = 0;
-  fake.ended = null;
+  fake.listeners.clear();
+  fake.numbers.length = 0;
   fake.beforeMade = true;
   fake.clips.error = null;
   under = null;
@@ -380,6 +394,40 @@ test("a drag whose file couldn't be made says so once it's over", async () => {
   await tick();
   assert.equal(fake.clips.error, "Couldn't make the clip: no footage");
   assert.deepEqual(fake.deleted, [3, 4]);
+});
+
+test("a drag out begun while the last one's files are still being handed over: each hears its own end", async () => {
+  reset();
+  const ended = { delivered: true, failed: null, finished_only: false, receiver: null };
+  // Let go on a file manager that copies the files as they're made (Dolphin,
+  // Explorer, Finder): the system's drag is over, its end still to come.
+  const first = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await first;
+  const second = carriedSet(true, async () => pair().map((c) => ({ ...c, id: c.id + 2 })));
+  move(120, 120);
+  move(0, 300);
+  await second;
+  assert.deepEqual(fake.dragged, [
+    [3, 4],
+    [5, 6],
+  ]);
+  fake.ended(ended, fake.numbers[0]);
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4], "the second's clips were forgotten as the first ended");
+  // An edit's drag out (edits.rs drag_edit) has no number: neither's.
+  fake.ended(ended, null);
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4], "forgotten as an edit's drag ended");
+  // The second, brought back over the window, still lands where a carry would.
+  under = { closest: (/** @type {string} */ s) => (s === ".clip-bar" ? {} : null) };
+  backOver(300, 300);
+  assert.equal(fake.clips.overBar, true, "brought back over the clip bar, nothing lit up");
+  backLeft();
+  fake.ended(ended, fake.numbers[1]);
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4, 5, 6], "the second's own end wasn't heard");
 });
 
 test("where the system can't wait for the files, the drag begins once they're made", async () => {

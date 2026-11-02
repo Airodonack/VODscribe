@@ -92,10 +92,14 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   // Over a moment after the system says so (events about the drag can come
   // just after), unless another's begun. The system says so only once the
   // files went where they were dropped, or couldn't: however long their
-  // making takes, they're not forgotten before.
+  // making takes, they're not forgotten before. Another can begin meanwhile
+  // (let go on a file manager that copies them as they're made), so the end
+  // heard is this one's only if it bears its number (`mine`, sent with it).
   const mine = ++drags;
+  const own = back;
   let stop: (() => void) | undefined;
   const over = (ended?: DragEnded) => {
+    if (ended && ended.drag !== mine) return;
     stop?.();
     if (ended?.failed) clips.error = `Couldn't make the clip: ${ended.failed}`;
     // Let go on an app that takes only files already made, before they were:
@@ -106,9 +110,12 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     }
     // Made only for this: forgotten (the file stays, if it was handed out);
     // unless it was brought back and dropped on the clip bar, which keeps it.
-    else if (!back?.kept) list.forEach(forgetHidden);
-    back = null;
-    backLeft();
+    else if (!own?.kept) list.forEach(forgetHidden);
+    // (A later one, on screen now, can still be brought back over the window.)
+    if (back === own) {
+      back = null;
+      backLeft();
+    }
     setTimeout(() => {
       if (mine !== drags) return;
       out = false;
@@ -130,6 +137,7 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     .dragClips(
       list.map((c) => c.id),
       image,
+      mine,
     )
     .catch((e) => {
       console.error("drag", e);

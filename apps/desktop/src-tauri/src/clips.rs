@@ -1029,6 +1029,7 @@ pub(crate) async fn drag_clip(
         .and_then(|v| v.to_str().ok()?.split(',').map(|id| id.trim().parse().ok()).collect())
         .filter(|ids: &Vec<i64>| !ids.is_empty())
         .ok_or("No clip named.")?;
+    let number = request.headers().get("drag").and_then(|v| v.to_str().ok()?.parse().ok());
     let image = match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) if !bytes.is_empty() => Some(bytes.clone()),
         _ => None,
@@ -1082,7 +1083,7 @@ pub(crate) async fn drag_clip(
         cutter.state::<AppState>().clips.dragged_out(&out, out_now);
         crate::job_list::changed(&cutter);
     };
-    drag_file(window, names, files, image, taken, dropped).await
+    drag_file(window, number, names, files, image, taken, dropped).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1093,6 +1094,9 @@ pub(crate) async fn drag_clip(
 /// page says so and keeps them in the clip bar to drag again once they are.
 #[derive(Serialize, Clone, Default, Debug, PartialEq)]
 pub(crate) struct DragEnded {
+    /// The page's number for the drag (`drag_clip`'s "drag" header), so it
+    /// knows its end from another's still pending; none for an edit's.
+    pub(crate) drag: Option<u64>,
     pub(crate) delivered: bool,
     pub(crate) failed: Option<String>,
     pub(crate) finished_only: bool,
@@ -1144,11 +1148,12 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// dropped), showing `image` (a PNG) or the app's icon. When
 /// it's over (once the files went where they were dropped, or couldn't),
 /// `taken` runs if another app took them, then the page hears "drag-ended"
-/// (`DragEnded`), so what it does next (deleting a clip made only for the
-/// drag) knows. `dropped(true)` once it's let go on another app,
-/// `dropped(false)` once it's over.
+/// (`DragEnded`, with the page's `number` for the drag), so what it does next
+/// (deleting a clip made only for the drag) knows. `dropped(true)` once it's
+/// let go on another app, `dropped(false)` once it's over.
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
+    number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Option<Vec<u8>>,
@@ -1160,7 +1165,8 @@ pub(crate) async fn drag_file(
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(start_drag(&on_main, names, files, image, taken, dropped).map_err(|e| format!("{e:#}")));
+            let started = start_drag(&on_main, number, names, files, image, taken, dropped);
+            let _ = tx.send(started.map_err(|e| format!("{e:#}")));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
@@ -1422,6 +1428,7 @@ fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
 #[cfg(target_os = "linux")]
 fn start_drag(
     window: &tauri::WebviewWindow,
+    number: Option<u64>,
     _names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
@@ -1615,8 +1622,8 @@ fn start_drag(
                     let failed = failed.filter(|why| why != CANCELED);
                     trace(&format!("over: copied for Dolphin, failed {failed:?}"));
                     dropped(false);
-                    let _ = told
-                        .emit("drag-ended", DragEnded { delivered: failed.is_none(), failed, ..Default::default() });
+                    let ended = DragEnded { drag: number, delivered: failed.is_none(), failed, ..Default::default() };
+                    let _ = told.emit("drag-ended", ended);
                 })
             });
             if !copying {
@@ -1627,7 +1634,8 @@ fn start_drag(
                 // thread, for the library's lock.
                 let (taken, told, dropped) = (taken.clone(), told.clone(), dropped.clone());
                 std::thread::spawn(move || {
-                    let ended = drag_outcome(ending, given, failure, made, receiver.as_deref().map(app_name));
+                    let outcome = drag_outcome(ending, given, failure, made, receiver.as_deref().map(app_name));
+                    let ended = DragEnded { drag: number, ..outcome };
                     trace(&format!("over: {ended:?}"));
                     if ended.delivered {
                         taken();
@@ -1954,6 +1962,7 @@ fn release_button(page: &gtk::Widget) {
 #[cfg(windows)]
 fn start_drag(
     window: &tauri::WebviewWindow,
+    number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
@@ -2003,6 +2012,7 @@ fn start_drag(
             std::thread::spawn(move || {
                 let made = !outcome.refused_unmade;
                 let ended = drag_outcome(outcome.ending, outcome.delivered, outcome.failure, made, outcome.receiver);
+                let ended = DragEnded { drag: number, ..ended };
                 trace(&format!("ended: {ended:?}"));
                 if ended.delivered && outcome.taken {
                     taken();
@@ -2024,6 +2034,7 @@ fn start_drag(
 #[cfg(target_os = "macos")]
 fn start_drag(
     window: &tauri::WebviewWindow,
+    number: Option<u64>,
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
@@ -2064,7 +2075,7 @@ fn start_drag(
                 taken();
             }
             dropped(false);
-            let _ = told.emit("drag-ended", outcome);
+            let _ = told.emit("drag-ended", DragEnded { drag: number, ..outcome });
         }
     })
 }
@@ -2189,6 +2200,7 @@ mod tests {
         let named = || Some("Kdenlive".to_string());
         let blocked = || Some("blocked".to_string());
         let ended = |delivered, failed: Option<&str>, finished_only, receiver: Option<&str>| DragEnded {
+            drag: None,
             delivered,
             failed: failed.map(String::from),
             finished_only,
