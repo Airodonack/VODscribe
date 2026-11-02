@@ -19,6 +19,20 @@ import { chat, fetchChat } from "../lib/fixtures.mjs";
 
 const BINS = 120;
 
+/** In short mode, has the transcript and chat take the player's place (its
+ *  header's button), as they stay for the session; otherwise does nothing. */
+async function transcriptInPlace(app) {
+  const toggle = ".app > .main > section .head button[aria-expanded]";
+  const label = await app.js(`return document.querySelector(arguments[0])?.getAttribute("aria-label")`, toggle);
+  if (label !== "Show transcript and chat") return;
+  await app.click(toggle);
+  await until(
+    "the transcript in the player's place",
+    () => app.js(`return !!document.querySelector(".minimap")?.getClientRects().length`),
+    10_000,
+  );
+}
+
 export default {
   name: "chat-view",
   expects: {
@@ -47,6 +61,11 @@ export default {
     // When the VOD started, from when its messages were sent.
     expect("the VOD's start", vod.started_at, fixture.started);
     await app.openVod(added.id);
+    // On a short screen (CI's hosted Mac's 613 px page) the transcript and
+    // chat take the column in the player's place, short mode's answer to a
+    // minimap that would otherwise be 36 px tall.
+    await app.shortMode(true);
+    await transcriptInPlace(app);
 
     // The header's count is the chat's.
     const total = fixture.messages.length;
@@ -87,14 +106,15 @@ export default {
 
     // The minimap's pixels: the mirrored waveform is widest in the bursts.
     // Each bar sums a stretch of the VOD that grows as the strip gets shorter
-    // (a bar per 2 px of height): 1 m 43 s in a 1200x800 window's 141 px strip,
-    // 4 m 27 s in a 1024x645 one's 54 px, as a small screen gives (a 1024x768
-    // CI runner's). The longer the stretch, the more background chat each bar
-    // has besides a burst's messages, so how many times wider a burst's bar is
-    // depends on the window: 23 px over 11 at 800, 25 px over 17 at 645. What
-    // doesn't is that its bar stands out from every bar away from the bursts,
-    // which are all background; it does at both sizes, the second checked by
-    // making the window that small.
+    // (a bar per 2 px of height): 1 m 43 s in a 1200x800 window's 141 px strip.
+    // A window as short as a small screen gives (1024x645, a 1024x768 CI
+    // runner's) is in short mode, the transcript in the player's place, and
+    // its strip is taller: 486 px. The longer the stretch, the more background
+    // chat each bar has besides a burst's messages, so how many times wider a
+    // burst's bar is depends on the window: 23 px over 11 at 800, 27 px over 7
+    // at 645. What doesn't is that its bar stands out from every bar away from
+    // the bursts, which are all background; it does at both sizes, the second
+    // checked by making the window that small.
     const widths = () =>
       app.js(`
         const canvas = document.querySelector(".minimap canvas");
@@ -151,6 +171,7 @@ export default {
     {
       const before = await app.js(`return { width: innerWidth, height: innerHeight }`);
       await resizeInner(app, 1024, 645);
+      await transcriptInPlace(app);
       await minimap();
       await resizeInner(app, before.width, before.height);
     }

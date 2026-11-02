@@ -471,7 +471,11 @@ export class App {
     );
     await this.js(`
       const real = window.fetch;
-      window.__e2e = { files: [], answer: null, asked: [], restarts: 0, console: [] };
+      window.__e2e = { files: [], answer: null, asked: [], restarts: 0, console: [], shortMode: false };
+      // The scenarios were written for a page with room for the player and
+      // the transcript together: on a short screen (CI's hosted Mac) short
+      // mode stays off, unless a scenario asks for it (shortMode()).
+      dispatchEvent(new CustomEvent("vodscribe-e2e-short", { detail: false }));
       // The page's errors, for a failure's diagnosis (run.mjs).
       const error = console.error.bind(console);
       console.error = (...args) => {
@@ -497,6 +501,16 @@ export class App {
         return real(url, init);
       };`);
     await this.watchPerformance();
+  }
+
+  /** Lets the page go into short mode on a short window (the app's
+   *  shortMode.svelte.ts), or not, until the page loads again. */
+  shortMode(on) {
+    return this.js(
+      `window.__e2e.shortMode = arguments[0];
+       dispatchEvent(new CustomEvent("vodscribe-e2e-short", { detail: arguments[0] }))`,
+      on,
+    );
   }
 
   /**

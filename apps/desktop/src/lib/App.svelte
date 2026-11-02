@@ -54,6 +54,8 @@
   import { pointerAt, selectionKey } from "./bulk";
   import { clipboardKey, clipboardPaste } from "./copyPaste";
   import AnnotationsPane from "./AnnotationsPane.svelte";
+  import { isShort, shortMode } from "./shortMode.svelte";
+  import { canEmbed } from "./embed";
   import { povLibrary } from "./castLink.svelte";
   import type { PaneRow } from "./annotationRows";
 
@@ -673,6 +675,25 @@
       changes.disconnect();
     };
   });
+  // Short mode (shortMode.svelte.ts): the main column's size, and the
+  // tallest the picture is let be (the website's demo sets its own share).
+  let mainWidth = $state(0);
+  let mainHeight = $state(0);
+  let pictureMost = $state(0);
+  $effect(() => {
+    shortMode.on = isShort(mainWidth, mainHeight, pictureMost);
+  });
+  // The player alone in the column: short, a picture to show, and nothing
+  // asked for in the transcript's place (a search's results show as usual).
+  const alone = $derived(
+    shortMode.on &&
+      !shortMode.pane &&
+      !editOpen &&
+      !showResults &&
+      !!playingVod &&
+      canEmbed(playingVod) &&
+      !playingVod.audio_only,
+  );
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
@@ -869,7 +890,14 @@
       />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
-    <svelte:element this={DEMO ? "div" : "main"} class="main">
+    <svelte:element
+      this={DEMO ? "div" : "main"}
+      class="main"
+      class:alone
+      bind:clientWidth={mainWidth}
+      bind:clientHeight={mainHeight}
+    >
+      <div class="picture-most" aria-hidden="true" bind:clientHeight={pictureMost}></div>
       <div class="toolbar">
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
@@ -1116,6 +1144,24 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+  }
+
+  /* Short mode, the player alone: it takes the column, the transcript's place left out. */
+  .main.alone > :global(section) {
+    flex: 1;
+  }
+
+  .main.alone > .below {
+    display: none;
+  }
+
+  /* How tall the picture is let be (Player.svelte's .frame), measured. */
+  .picture-most {
+    position: absolute;
+    width: 0;
+    height: var(--player-max-height, 44vh);
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .nav {

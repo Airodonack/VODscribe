@@ -30,6 +30,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Removed VODs are erased at once. It's erased beside whatever is being made rather than as VODscribe quits, so quitting is as quick as with no VOD removed. Quit, or cancel it in the list, before it's done, and the rest is erased when VODscribe next starts.
 - The donation links are gone. They're off the library and the screen shown when no video is open.
 - The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer avatars from img.vodscribe.com", which work as before.
+- A short window shows the player alone. Show transcript and chat, at the right of the VOD's title, swaps them, and the transcript stays in its place as you open other VODs.
 - Fixes:
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.

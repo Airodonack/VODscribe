@@ -544,7 +544,8 @@ button.row-act:hover:not(:disabled) {
   background: #000;
 }
 
-.fullscreen .own-player .picture {
+.fullscreen .own-player .picture,
+.alone .own-player .picture {
   flex: 1;
   min-height: 0;
   aspect-ratio: auto;

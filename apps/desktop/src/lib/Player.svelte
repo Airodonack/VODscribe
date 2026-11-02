@@ -45,6 +45,7 @@
   import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
   import { snippets } from "./selection.svelte";
   import { gaps, transcribeRest } from "./stretches";
+  import { shortMode } from "./shortMode.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
   // result, a transcript line, a source link), a fresh object each time, so
@@ -87,7 +88,15 @@
   }
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
+  // In short mode (shortMode.svelte.ts) the player and the transcript take
+  // turns instead, and the choice stays: a jump or another VOD doesn't undo it.
   let collapsed = $state(false);
+  const hidden = $derived(shortMode.on ? shortMode.pane : collapsed);
+  function toggleHidden() {
+    if (shortMode.on) shortMode.pane = !shortMode.pane;
+    else collapsed = !collapsed;
+  }
+  const toggleLabel = $derived(hidden ? "Show player" : shortMode.on ? "Show transcript and chat" : "Hide player");
 
   // Clicking the timestamp copies a link to the playhead's moment on the VOD's site.
   let copied = $state<"ok" | "failed" | null>(null);
@@ -494,7 +503,7 @@
 
   // The note is shown with the controls.
   $effect(() => {
-    if (collapsed) untrack(() => clips.answer(false));
+    if (hidden) untrack(() => clips.answer(false));
   });
 
   // Keyboard control for whichever player is open. Keys pressed while the
@@ -591,7 +600,7 @@
 <PlayerPanel
   bind:fullscreen
   shortcuts={vodShortcuts(framed, os, legendBindings)}
-  controls={canEmbed(vod) && !collapsed ? vodControls : undefined}
+  controls={canEmbed(vod) && !hidden ? vodControls : undefined}
   {stage}
   {below}
 >
@@ -640,14 +649,8 @@
       </button>
     {/each}
     {#if canEmbed(vod)}
-      <button
-        class="icon"
-        onclick={() => (collapsed = !collapsed)}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Show player" : "Hide player"}
-        title={collapsed ? "Show player" : "Hide player"}
-      >
-        <Icon name={collapsed ? "chevron-down" : "chevron-up"} size={16} />
+      <button class="icon" onclick={toggleHidden} aria-expanded={!hidden} aria-label={toggleLabel} title={toggleLabel}>
+        <Icon name={hidden ? "chevron-down" : "chevron-up"} size={16} />
       </button>
     {/if}
   {/snippet}
@@ -655,7 +658,7 @@
 
 {#snippet stage()}
   {#if canEmbed(vod)}
-    <div class="stage" class:collapsed class:audio={audioOnly}>
+    <div class="stage" class:collapsed={hidden} class:audio={audioOnly}>
       <div class="frame" class:audio={audioOnly} class:own={active && playsHere(vod)}>
         {#if active}
           <div class="host" bind:this={host}></div>
@@ -671,12 +674,12 @@
         {/if}
       </div>
     </div>
-    {#if stripCue !== null && !collapsed}
+    {#if stripCue !== null && !hidden}
       <!-- A site's player can't be drawn over: its captions show under it,
            a line kept for them (so nothing below moves as they change). -->
       <p class="caption-strip" aria-live="off">{stripCue}</p>
     {/if}
-    {#if !collapsed}
+    {#if !hidden}
       <Popover
         bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
         anchor={clipButton}
@@ -817,7 +820,7 @@
         come yet.
       </p>
     {/if}
-    {#if !collapsed && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
+    {#if !hidden && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}
@@ -973,6 +976,21 @@
 
   .stage {
     background: var(--stage);
+  }
+
+  /* Short mode, the player alone in the column (App.svelte): the picture as
+     large as fits, as in full screen. */
+  :global(.alone) .stage {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  :global(.alone) .frame {
+    flex: 1;
+    width: 100%;
+    max-height: none;
+    aspect-ratio: auto;
   }
 
   /* Hidden, not unmounted: the player keeps its state and keeps playing. */
