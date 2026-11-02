@@ -37,6 +37,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - The transcript keeps its scroll position. Switching the transcript's heading to Highlights (or Chapters) and back started the transcript again at the top.
   - The Transcribe menu lists each stretch once. Near a VOD's end, lengths that would run past the end are left out, as To the end covers them.
   - Cuts before playing use the right frames. Lines picked in the transcript of a video that hasn't started playing are cut on its frame grid, not on that of the video open before it.
+  - The Marks toggles show your saved choice. Just after a VOD opened, the Timeline panel could show both kinds of marks on for a moment, and a click then was lost.
   - Arrows work after clicking anywhere on a row. A click anywhere on a row, not only on its title, lets ↑ and ↓ move to the row before or after.
   - Show in folder works during a download. While a VOD's download is in progress, paused or stopped by an error, it shows the partial file as it is.
   - A VOD reopens where it was left. A step or jump made just before opening something else could be forgotten, and the VOD came back a step earlier.
