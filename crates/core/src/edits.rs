@@ -2446,6 +2446,31 @@ pub(crate) mod tests {
         assert_eq!(shape(edit), had, "nothing half done");
     }
 
+    /// A clip whose timeline starts with a group is read by its first piece
+    /// (`db::CLIP_JOIN`), with no paste either: an edit's row dropped at the
+    /// start of a VOD's clip open in the editor, and an edit that starts with
+    /// a clip dropped in, put on another edit's clip bar. Their bars still list.
+    #[test]
+    fn a_clip_whose_timeline_starts_with_a_group_still_lists() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let pill = db.add_clip(vod, 1.0, 2.0, "Hello", true).unwrap().id;
+        let a = db.add_edit("A").unwrap().id;
+        db.add_group(a, pill, None).unwrap();
+        // Edit A's row dropped at the start of another clip of the VOD's bar, open in the editor.
+        let clip = db.add_clip(vod, 7.0, 8.0, "Other", true).unwrap().id;
+        db.put(clip, &[Put::Clip { id: a }], Onto::Timeline(Some(0))).unwrap();
+        let listed = db.clips(vod).map(|c| c.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>());
+        assert_eq!(listed.map_err(|e| e.to_string()), Ok(vec![(1.0, 2.0), (1.0, 2.0)]), "by its first piece");
+        // Edit A put on edit B's clip bar.
+        let b = db.add_edit("B").unwrap().id;
+        let made = db.put(b, &[Put::Clip { id: a }], Onto::Bar).map(|m| m.len());
+        assert_eq!(made.map_err(|e| e.to_string()), Ok(1));
+        assert_eq!(db.bar_clips(b).map(|c| c.len()).map_err(|e| e.to_string()), Ok(1));
+        let waiting = db.unfinished_clips().map(|c| c.len()).map_err(|e| e.to_string());
+        assert_eq!(waiting, Ok(3), "the two clips of the VOD's bar and the one put wait to be made");
+    }
+
     #[test]
     fn clips_stretches_and_groups_bring_their_marks() {
         let db = Db::open(Path::new(":memory:")).unwrap();

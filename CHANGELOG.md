@@ -35,6 +35,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.
   - Splitting at a join leaves no sliver. In an edit, Split (B) on a selection that ends where two pieces meet left a sliver of the earlier piece cut off before the join.
+  - Clips that begin with another clip work. A clip bar failed to show when one of its clips started with a clip, edit or highlight dropped into it, such an edit couldn't be put on a clip bar, and VODscribe could fail to start if it quit while that clip was being made.
   - The transcript keeps its scroll position. Switching the transcript's heading to Highlights (or Chapters) and back started the transcript again at the top.
   - The Transcribe menu lists each stretch once. Near a VOD's end, lengths that would run past the end are left out, as To the end covers them.
   - Cuts before playing use the right frames. Lines picked in the transcript of a video that hasn't started playing are cut on its frame grid, not on that of the video open before it.

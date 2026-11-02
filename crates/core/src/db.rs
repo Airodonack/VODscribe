@@ -1027,8 +1027,17 @@ pub struct MarkState {
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision,
      c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)";
-/// Joins a clip (`c`) to its first piece (`i`) and its render (`r`).
-pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)
+/// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
+/// first piece in timeline order, inside a group if its timeline starts with
+/// one (a clip pasted or dropped at its start): a group has no stretch to read.
+pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (
+       WITH RECURSIVE walk(id, vod_id, path) AS (
+         SELECT id, vod_id, printf('%010d.%015d', position, id) FROM items WHERE clip_id = c.id AND parent IS NULL
+         UNION ALL
+         SELECT t.id, t.vod_id, walk.path || '/' || printf('%010d.%015d', t.position, t.id)
+         FROM items t JOIN walk ON t.parent = walk.id
+       )
+       SELECT id FROM walk WHERE vod_id IS NOT NULL ORDER BY path LIMIT 1)
      JOIN renders r ON r.clip_id = c.id";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
