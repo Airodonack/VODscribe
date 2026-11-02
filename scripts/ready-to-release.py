@@ -228,8 +228,9 @@ Before tagging, check what can't be:
     first; a change to something new in this release is part of it, not news):
 {chr(10).join("      " + line for line in since_release())}
 
-Then, to publish:
-  git tag v{version} && git push origin v{version}
+Then, to publish (a signed, annotated tag: the repo signs tags with the
+same key as commits; a bare `git tag` would make an unsigned one):
+  git tag -s v{version} -m "Version {version}" && git tag -v v{version} && git push origin v{version}
 
 The publish job checks the release once it's up (scripts/verify-release.py).
 
