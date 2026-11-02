@@ -57,6 +57,15 @@
 
   const edit = $derived(edits.open);
   const pieces = $derived(edits.pieces);
+  // Its footage all in files here: a clip of it dragged out is made from the press.
+  $effect(() => {
+    edits.footageHere =
+      pieces.length > 0 &&
+      pieces.every((p) => {
+        const vod = vods.get(p.vod_id);
+        return !!vod && playsFromFile(vod);
+      });
+  });
 
   // The name, written in place: put back when the saved name changes, not
   // whenever the edit's news comes (a render's), which would undo typing.

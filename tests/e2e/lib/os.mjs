@@ -331,6 +331,36 @@ function requireInts(rect) {
     if (!Number.isInteger(rect[k]) || rect[k] < 0) throw new Error(`a bad rectangle: ${JSON.stringify(rect)}`);
 }
 
+/**
+ * Moves the system's own pointer off the app's page, where this layer can
+ * move it (X11): to the screen's far corner, or else onto what's above the
+ * page (the title bar) or below it; then waits (up to 5 s) until the page has
+ * nothing under it. Xvfb leaves the pointer mid-screen, inside the window,
+ * and the page hears it as well as the pointer the steps make up: resting
+ * where the timeline's tip pops up, it was under the tip as it appeared and
+ * out from under it as it moved, and the timeline heard that as the pointer
+ * leaving it, so the tip went (annotations, 2 runs in 10 on a 613 px page,
+ * 2026-10-30). The test runner calls it after each start of the app.
+ */
+export async function parkPointer(app) {
+  if (unavailable({ linuxOnly: "the system's pointer" })) return;
+  const page = await windowRect(app);
+  const [w, h] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
+  const off = ([x, y]) => x < page.x || y < page.y || x >= page.x + page.w || y >= page.y + page.h;
+  const spot = [
+    [w - 1, h - 1],
+    [page.x + 1, page.y - 1],
+    [page.x + 1, page.y + page.h],
+  ].find((p) => p[0] >= 0 && p[1] >= 0 && p[1] < h && off(p));
+  if (!spot) return;
+  await gesture([["move", ...spot]]);
+  for (let waited = 0; waited < 5000; waited += 50) {
+    if (await app.js(`return !document.querySelector(":hover")`)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`the page still has something under the system's pointer, moved off it to ${spot.join(",")}`);
+}
+
 /** The app window's page area on the screen (pixels), as rectOf gives an element's. */
 export async function windowRect(app) {
   return rectOf(app, "body");

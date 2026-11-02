@@ -1,14 +1,15 @@
 // A file manager to drop on, for the scenarios that drag a clip out of the
-// window (drag-file-time, drag-promise): the session's (Dolphin in a KDE
-// one, XDG_CURRENT_DESKTOP saying so, as the app reads it; else Nautilus),
-// opened on a folder of the test's, with a home of its own (never the
-// user's), beside the app's window on the test's display. Linux (X11) only,
-// so far. And what those scenarios share: the clip format picked, the length
-// of a file dropped, the app's windows (the system's drag shows its picture
-// in one of its own).
+// window (drag-file-time, drag-promise): Dolphin in a KDE session
+// (XDG_CURRENT_DESKTOP saying so) or where E2E_FILE_MANAGER=dolphin, else
+// Nautilus, opened on a folder of the test's, with a home of its own (never
+// the user's), beside the app's window on the test's display. And an app
+// that takes finished files only (`openFinishedOnly`), in the same place.
+// Linux (X11) only, so far. And what those scenarios share: the clip format
+// picked, the length of a file dropped, the app's windows (the system's drag
+// shows its picture in one of its own).
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -16,9 +17,10 @@ import { MINUTE, until } from "./app.mjs";
 import { ffmpeg } from "./fixtures.mjs";
 import * as os from "./os.mjs";
 
-/** The session's file manager: Dolphin in KDE's, else Nautilus. */
+/** The file manager to drop on: E2E_FILE_MANAGER's, else Dolphin in a KDE session, else Nautilus. */
 export const fileManager = () =>
-  /(^|:)kde(:|$)/i.test(process.env.XDG_CURRENT_DESKTOP ?? "") ? "dolphin" : "nautilus";
+  process.env.E2E_FILE_MANAGER ||
+  (/(^|:)kde(:|$)/i.test(process.env.XDG_CURRENT_DESKTOP ?? "") ? "dolphin" : "nautilus");
 
 /**
  * A file kept in the folder dropped on, so Nautilus shows it as a folder
@@ -78,6 +80,23 @@ export async function openFileManager(app, ctx, dest, home) {
   mkdirSync(dest, { recursive: true });
   mkdirSync(home, { recursive: true });
   if (fileManager() === "nautilus") writeFileSync(path.join(dest, KEPT), "Kept so the folder isn't empty.\n");
+  const env = {
+    HOME: home,
+    XDG_CONFIG_HOME: path.join(home, ".config"),
+    XDG_DATA_HOME: path.join(home, ".local", "share"),
+    XDG_CACHE_HOME: path.join(home, ".cache"),
+  };
+  return openBeside(app, ctx, [fileManager(), "--new-window", dest], env, `^${path.basename(dest)}`, "ignore");
+}
+
+/**
+ * `program` run with its `args`, `env` over the test's environment and its
+ * output to `stdio`, its window (titled to match `title`) put beside the
+ * app's (moved to the screen's left edge if that makes room; skipped,
+ * through `ctx`, where the screen has none): where to drop on it, and
+ * `close`.
+ */
+async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
   let page = await os.windowRect(app);
   const [screenW] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
   const fm = { w: 600, h: 500 };
@@ -105,23 +124,13 @@ export async function openFileManager(app, ctx, dest, home) {
     ctx.skip(
       `no room for a file manager beside the window (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
     );
-  const nautilus = spawn(fileManager(), ["--new-window", dest], {
-    env: {
-      ...process.env,
-      HOME: home,
-      XDG_CONFIG_HOME: path.join(home, ".config"),
-      XDG_DATA_HOME: path.join(home, ".local", "share"),
-      XDG_CACHE_HOME: path.join(home, ".cache"),
-    },
-    stdio: "ignore",
-  });
+  const proc = spawn(program, args, { env: { ...process.env, ...env }, stdio });
   try {
-    const name = path.basename(dest);
     const win = await until(
-      "the file manager's window",
+      `${program}'s window`,
       () => {
         try {
-          return execFileSync("xdotool", ["search", "--onlyvisible", "--name", `^${name}`], { encoding: "utf8" })
+          return execFileSync("xdotool", ["search", "--onlyvisible", "--name", title], { encoding: "utf8" })
             .trim()
             .split("\n")[0];
         } catch {
@@ -135,13 +144,101 @@ export async function openFileManager(app, ctx, dest, home) {
     await sleep(1000);
     os.activate(app.driver.proc);
   } catch (e) {
-    nautilus.kill();
+    proc.kill();
     throw e;
   }
   return {
     drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
-    close: () => nautilus.kill(),
+    close: () => proc.kill(),
   };
+}
+
+/** The python with GTK 3 that the app that takes finished files only runs in. */
+const PYTHON = "/usr/bin/python3";
+
+/** Why there's no app that takes finished files only to drop on here, or null if there is. */
+export function noFinishedOnly() {
+  const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+  if (why) return why;
+  try {
+    execFileSync(PYTHON, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], {
+      stdio: "ignore",
+    });
+  } catch {
+    return `no GTK 3 for ${PYTHON}`;
+  }
+  return null;
+}
+
+/** An app that takes finished files only, as Qt's apps do (Kdenlive, say): let
+ *  go on, it asks for the drop's files, takes those already there, and gives
+ *  up after 5 s. Its windows' class is "Clip-taker". */
+const FINISHED_ONLY = `
+import os, sys, time
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import GLib
+GLib.set_prgname("clip-taker")  # its windows' class, set before GTK starts
+from gi.repository import Gdk, Gtk
+
+def say(what):
+    print(f"{time.time():.3f} {what}", flush=True)
+
+win = Gtk.Window(title="finished-only")
+win.add(Gtk.Label(label="Drop here"))
+win.drag_dest_set(0, [Gtk.TargetEntry.new("text/uri-list", 0, 0)], Gdk.DragAction.COPY)
+waiting = {}
+
+def motion(w, ctx, x, y, t):
+    Gdk.drag_status(ctx, Gdk.DragAction.COPY, t)
+    return True
+
+def drop(w, ctx, x, y, t):
+    say("dropped")
+    w.drag_get_data(ctx, Gdk.Atom.intern("text/uri-list", False), t)
+    def give_up():
+        if waiting.pop(ctx, None) is not None:
+            say("gave up")
+            Gtk.drag_finish(ctx, False, False, t)
+        return False
+    waiting[ctx] = GLib.timeout_add(5000, give_up)
+    return True
+
+def received(w, ctx, x, y, data, info, t):
+    if waiting.get(ctx) is None:
+        return
+    GLib.source_remove(waiting.pop(ctx))
+    files = [GLib.filename_from_uri(u)[0] for u in data.get_uris() or []]
+    there = [f for f in files if os.path.isfile(f)]
+    say(f"took {len(there)} of {len(files)}: {' '.join(there)}")
+    Gtk.drag_finish(ctx, bool(there), False, t)
+
+win.connect("drag-motion", motion)
+win.connect("drag-drop", drop)
+win.connect("drag-data-received", received)
+win.show_all()
+Gtk.main()
+`;
+
+/**
+ * The app that takes finished files only (`FINISHED_ONLY`), its script and
+ * what it says in folder `work`, beside the app's window: where to drop on
+ * it, what it has said so far (`said`, its lines), and `close`.
+ */
+export async function openFinishedOnly(app, ctx, work) {
+  mkdirSync(work, { recursive: true });
+  const script = path.join(work, "finished-only.py");
+  writeFileSync(script, FINISHED_ONLY);
+  const log = path.join(work, "finished-only.log");
+  writeFileSync(log, "");
+  const out = openSync(log, "a");
+  try {
+    const opened = await openBeside(app, ctx, [PYTHON, script], {}, "^finished-only$", ["ignore", out, out]);
+    return { ...opened, said: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
+  } finally {
+    closeSync(out);
+  }
 }
 
 /** The X windows of process `pid` that show. */

@@ -10,8 +10,13 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Cut clips with Ctrl+X. Ctrl+X (⌘X) copies the clips picked and takes them off their bar, or out of the edit.
 - Copied clips go on the clipboard too. Each is a line of text, with a link to the moment for a site's VOD.
 - Ctrl+A can select the whole timeline. Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline, ready to copy; over the clip bar it still selects all the clips, and over the library its list.
-- On Linux, clips drag out at once. The drag doesn't wait at the window's edge for the file, which lands where you drop it once it's made; a file manager waits for it (Dolphin takes each file as it's ready), and Escape before then lands nothing. If the clip can't be made, VODscribe says so when the drag ends.
-- Several picked stretches drag out sooner. From a video on this computer, their clips are made first in line from the moment you pick them up, instead of once the drag reaches the window's edge.
+- On Linux, clips drag out at once. The drag doesn't wait at the window's edge for the file, which lands where you drop it once it's made; a file manager waits for it (Dolphin takes each file as it's ready, in a KDE session or not), and Escape before then lands nothing.
+- Clips start as you pick them up. From a video on this computer, a stretch's clip, or several, is made from the moment you pick it up, first in line; a site's is downloaded once the drag leaves the window, and a clip of an edit follows its videos.
+- Long downloads no longer ask first. A clip downloaded from a site is made however long it is.
+- Some apps take finished files only. Let go on one before the clip is made, nothing lands there, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.
+- A clip still being made drags out. Drag it from the clip bar as you would a ready one.
+- Dragged clips are listed once let go. A clip made only for a drag stays off the clip bar; once you let it go on another app it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
+- A drag called off makes nothing. Escape, or a drop on nothing, stops the clip's making; dropped on the clip bar, it's kept there. If the clip can't be made, VODscribe says why only when you let it go on another app.
 - A carried stretch shows a dashed outline. Alt-dragging (Option-dragging on a Mac) a stretch of the timeline outlines what you picked up as soon as the drag starts.
 - An unpicked stretch is carried alone. Alt-drag a stretch from outside what's picked and the others are let go, as in a file manager.
 - Dragging an edge draws a guide line. On an edit's timeline (or a clip's, in the editor), a dashed line runs down the waveform where the edge is, to line it up with what you hear and see.

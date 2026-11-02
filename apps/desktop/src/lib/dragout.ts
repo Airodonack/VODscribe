@@ -8,24 +8,31 @@
 // new edit" atop the list (an edit made with it); dropped anywhere else,
 // nothing happens. Taken past the window's edge, it becomes the system's drag
 // of the clip's file, into a video editor or a folder: a clip without a pill,
-// forgotten once the drag's over (the file is the other app's then). Its file
-// (each one's, for several picked) is made as the carry begins where that's
-// quick (the VOD plays from a file here), first in the queue, else at the
-// edge. The system's drag begins at the edge at once, while the button is
-// down, the file handed over once it's made (where the system can wait for
-// it: `beforeMade`); else it begins once the file's there. Brought back over
-// the window, the system's drag lands where a carry would (`backOver`,
-// `backDropped`): on the clip bar it keeps the clip.
+// forgotten once the drag's over (the file is the other app's then), seen
+// meanwhile nowhere but in the list of jobs once it's let go on another app.
+// Its file (each one's, for several picked) is made as the carry begins
+// where its footage is here (the VOD plays from a file here), first in the
+// queue; one to download from a site, at the edge (a carry that stays in the
+// window asks nothing of the site). The system's drag begins at the edge at
+// once, while the button is down, the file handed over once it's made (where
+// the system can wait for it: `beforeMade`); else it begins once the file's
+// there. An app that takes only files already made, let go on before it is,
+// gets nothing: that's said, and the clip is kept in the clip bar to drag
+// again (`finishedOnly`). Called off (Escape), or dropped on nothing or
+// inside the window where no clip is kept, the clip made for it goes, its
+// making stopped. Brought back over the window, the system's drag lands
+// where a carry would (`backOver`, `backDropped`): on the clip bar it keeps
+// the clip.
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
 import { formatHint } from "./resolveHint.svelte";
-import { ask } from "./ask";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { edits, putOf, type Stretch } from "./edits.svelte";
 import { PEAKS_RATE, columns, stretchIn } from "./media";
 import { formatTime, playsFromFile } from "./platform";
+import { toast } from "./toasts.svelte";
 import { DRAG_SLOP, holds } from "./pressToDrag";
 
 /** How long a press is held before it picks the clip up. */
@@ -52,9 +59,22 @@ export function isOutgoing(paths: string[]): boolean {
 const beforeMade = () => api.dragBeforeMade().catch(() => false);
 
 /** Forgets `clip` if it was made only to be dragged out (no pill in the clip
- *  bar); its file stays, if it was handed out. */
+ *  bar): its making stopped, and its file deleted unless it was handed out. */
 function forgetHidden(clip: Clip | null | undefined) {
   if (clip && !clip.shown) api.deleteClip(clip.id).catch((e) => console.error("forget dragged clip", e));
+}
+
+/** Puts `clip`, made only to be dragged out, in its clip bar (a pill), to be
+ *  dragged again once it's made. */
+function keepHidden(clip: Clip) {
+  if (!clip.shown) api.keepClip(clip.id).catch((e) => console.error("keep dragged clip", e));
+}
+
+/** What's said when `count` clips were let go on an app that takes only
+ *  files already made (`receiver`, if its name is known) before theirs were. */
+export function finishedOnly(receiver: string | null, count: number): string {
+  const making = count > 1 ? "The clips are being made; drag them" : "The clip is being made; drag it";
+  return `${receiver || "That app"} takes finished files only. ${making} from the clip bar when ${count > 1 ? "they're" : "it's"} ready.`;
 }
 
 /**
@@ -78,9 +98,15 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   const over = (ended?: DragEnded) => {
     stop?.();
     if (ended?.failed) clips.error = `Couldn't make the clip: ${ended.failed}`;
+    // Let go on an app that takes only files already made, before they were:
+    // said, and they're kept in the clip bar, to drag again once made.
+    if (ended?.finished_only) {
+      toast.show(finishedOnly(ended.receiver, list.length));
+      list.forEach(keepHidden);
+    }
     // Made only for this: forgotten (the file stays, if it was handed out);
     // unless it was brought back and dropped on the clip bar, which keeps it.
-    if (!back?.kept) list.forEach(forgetHidden);
+    else if (!back?.kept) list.forEach(forgetHidden);
     back = null;
     backLeft();
     setTimeout(() => {
@@ -148,43 +174,18 @@ export function stretchAt(time: number, duration: number): { start: number; end:
   );
 }
 
-/** A download from a site longer than this asks first. */
-const LONG = 10 * 60;
-
 /**
- * Makes the stretch `start`..`end` a clip (or gives the one made), asking
- * first before a long download; in the clip bar if `shown`, else only made to
- * be dragged out.
+ * Makes the stretch `start`..`end` a clip (or gives the one made); in the
+ * clip bar if `shown`, else only made to be dragged out.
  */
-export async function exportStretch(start: number, end: number, shown = true): Promise<Clip | null> {
-  if (!clips.find(start, end) && clips.fromSite && end - start > LONG) {
-    const sure = await ask(
-      `This stretch is ${formatTime(end - start)} long, and it's downloaded from the site to make the clip. Make it?`,
-      "Make the clip",
-      "Cancel",
-    );
-    if (!sure) return null;
-  }
+export function exportStretch(start: number, end: number, shown = true): Promise<Clip | null> {
   return clips.make(start, end, shown);
 }
 
-/**
- * Makes each of `ranges` a clip in the clip bar (several stretches
- * selected), in their order, as `exportStretch` makes one: asking first
- * before a long download, all of them at once.
- */
-export async function exportStretches(ranges: { start: number; end: number }[]): Promise<void> {
-  const fresh = ranges.filter((r) => !clips.find(r.start, r.end));
-  const length = fresh.reduce((sum, r) => sum + r.end - r.start, 0);
-  if (clips.fromSite && length > LONG) {
-    const sure = await ask(
-      `These stretches are ${formatTime(length)} long together, and they're downloaded from the site to make the clips. Make them?`,
-      "Make the clips",
-      "Cancel",
-    );
-    if (!sure) return;
-  }
-  await clips.makeAll(ranges);
+/** Makes each of `ranges` a clip in the clip bar (several stretches
+ *  selected), in their order, as `exportStretch` makes one. */
+export function exportStretches(ranges: { start: number; end: number }[]): Promise<void> {
+  return clips.makeAll(ranges);
 }
 
 /** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
@@ -466,12 +467,13 @@ interface Payload {
   /** Says what's carried (`clips.carrying`, the stretch; `clips.carried`, how many). */
   lift: () => void;
   /** Puts it on `target`, a place that takes something of it (`takerAt`); true
-   *  if the clips `made` for a drag out are kept (a VOD's clip bar shows them). */
+   *  if it saw to the clips `made` for a drag out itself (a VOD's clip bar
+   *  shows them; an edit's forgets them first), else they're forgotten. */
   put: (target: Target, made: Promise<Clip[]> | null) => boolean;
   /** Makes the clips whose files go out past the window's edge (not in the
    *  clip bar: only for the drag); with none, the carry ends there. */
   files?: () => Promise<Clip[]>;
-  /** Whether those are made as the carry begins (where that's quick: from a file here), not at the edge. */
+  /** Whether those are made as the carry begins (their footage is here: no download), not at the edge. */
   early?: boolean;
   /** The VOD they're clips of, if it's one: made in the format clips are made in. */
   vodId?: number;
@@ -530,8 +532,8 @@ function carryWith(p: Payload): Promise<void> {
   return new Promise((resolve) => {
     let down = true;
     let leaving = false;
-    // Made ahead for the system's drag, where that's quick, rather than once
-    // it's out of the window, where nothing can be dropped until it's there.
+    // Made ahead for the system's drag, where its footage is here, rather
+    // than once it's out of the window.
     let early = p.early && p.files ? p.files() : null;
     const forgetAll = (made: Promise<Clip[]> | null) => made?.then((list) => list.forEach(forgetHidden));
     const finish = () => {
@@ -702,7 +704,7 @@ export function carry({
       }
       return false;
     },
-    // Its file is cut ahead where that's quick (from a file here: copied, not downloaded).
+    // Its file is cut as the carry begins where its footage is here (no download).
     files: () => make(false).then((c) => (c ? [c] : [])),
     early: ownPlayer,
     vodId: vod.id,
@@ -727,7 +729,7 @@ export interface CarrySet {
   /** Makes the clips whose files go out past the window's edge (one only for
    *  the drag isn't in the clip bar); none for rows of the library. */
   files?: () => Promise<Clip[]>;
-  /** Whether those are made as the carry begins (where that's quick: from a file here), not at the edge. */
+  /** Whether those are made as the carry begins (their footage is here: no download), not at the edge. */
   early?: boolean;
   /** The open VOD, if it's its: the files are made in the format clips are made in. */
   vodId?: number;
@@ -832,8 +834,19 @@ export function carrySet(set: CarrySet): Promise<void> {
       if (target.edit === "new") edits.createWith(items);
       else if (target.edit !== null) edits.put(target.edit, items, false);
       else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
-      else if (target.bar && clips.doc?.kind === "edit") edits.put(clips.doc.id, items, true);
-      else if (target.bar) {
+      else if (target.bar && clips.doc?.kind === "edit") {
+        const id = clips.doc.id;
+        if (!made) {
+          edits.put(id, items, true);
+          return false;
+        }
+        // The clips made ahead for a drag out are of the same stretches of
+        // this edit: they go first, so the ones put on its clip bar are new.
+        void made
+          .then((list) => Promise.all(list.filter((c) => !c.shown).map((c) => api.deleteClip(c.id).catch(() => {}))))
+          .then(() => edits.put(id, items, true));
+        return true;
+      } else if (target.bar) {
         // On a VOD's clip bar, the clips made for a drag out are the ones
         // kept: those made ahead waited for first, so they're not made twice.
         void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches));

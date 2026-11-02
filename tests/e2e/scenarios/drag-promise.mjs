@@ -15,7 +15,16 @@
 // One whose encode fails: nothing lands, and the app says it couldn't make
 // the clip. Two pills picked and carried together, both being made again
 // (in the other format, picked meanwhile): both land, Dolphin's one by one
-// in their order. Linux (X11) only, so far.
+// in their order. A pill still being made, dragged alone: it lands too.
+// Carried in the window, a stretch's clip is made from the press, hidden
+// (no pill) and not listed with the jobs; Escape there stops it, its part
+// file gone. Let go on another app, it's listed with the jobs until it's
+// handed over, and no pill shows meanwhile. Let go on an app that takes
+// finished files only (one of the test's: it gives up after 5 s, as Qt's
+// do), before the file is made: nothing lands there, the app says that app
+// (by its desktop entry's name) takes finished files only, and the clip is
+// kept as a pill, which once made drags there and lands. Linux (X11) only,
+// so far; E2E_FILE_MANAGER=dolphin drops on Dolphin outside a KDE session.
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -29,7 +38,9 @@ import {
   droppedIn,
   fileManager,
   noFileManager,
+  noFinishedOnly,
   openFileManager,
+  openFinishedOnly,
   probeDuration,
   setFormat,
   windowsOf,
@@ -73,13 +84,16 @@ export default {
     writeFileSync(
       ffmpeg,
       `#!/bin/sh
-# A clip's encode writes a .part file: held up, or made to fail (drag-promise).
+# A clip's encode writes a .part file: held up, made to fail, or left part-made
+# (saying how far it is, as ffmpeg does, so it can be stopped) (drag-promise).
 for a in "$@"; do
   case "$a" in
     *.part)
       case "$(cat '${mode}' 2>/dev/null)" in
         fail) sleep ${HELD / 2}; echo "Made to fail by the test." >&2; exit 1 ;;
         slow) sleep ${HELD} ;;
+        partial) head -c 200000 /dev/zero > "$a"
+          for i in $(seq 1 120); do echo "out_time_us=$((i * 100000))"; sleep 0.5; done; exit 1 ;;
       esac ;;
   esac
 done
@@ -89,6 +103,13 @@ exec '${real}' "$@"
     chmodSync(ffmpeg, 0o755);
     encodes("slow");
     let nautilus = null;
+    let taker = null;
+    // The name the app that takes finished files only goes by: its desktop
+    // entry's, where the app looks (the test's own XDG_DATA_HOME, never the
+    // user's; without one, its window's class).
+    const entry =
+      process.env.XDG_DATA_HOME && path.join(process.env.XDG_DATA_HOME, "applications", "clip-taker.desktop");
+    const takerName = entry ? "Clip Taker" : "Clip-taker";
     try {
       await app.toLibrary();
       const [vod] = await app.addFiles([longVideo(path.join(ctx.out, "fixtures"))]);
@@ -129,12 +150,16 @@ exec '${real}' "$@"
 
       nautilus = await openFileManager(app, ctx, dest, path.join(work, "home"));
       const { drop } = nautilus;
-      // What the page hears of the system's drag's end, and when.
+      // What the page hears of the system's drag's end, and when; and the
+      // list of jobs it's sent.
       await app.js(
         `window.__ended = [];
+         window.__jobs = [];
          const internals = window.__TAURI_INTERNALS__;
          const handler = internals.transformCallback((e) => window.__ended.push({ ...e.payload, at: Date.now() }));
-         await internals.invoke("plugin:event|listen", { event: "drag-ended", target: { kind: "Any" }, handler });`,
+         await internals.invoke("plugin:event|listen", { event: "drag-ended", target: { kind: "Any" }, handler });
+         const jobs = internals.transformCallback((e) => window.__jobs.push(e.payload.map((j) => j.id)));
+         await internals.invoke("plugin:event|listen", { event: "jobs", target: { kind: "Any" }, handler: jobs });`,
       );
       const centre = async (selector) => {
         const r = await os.rectOf(app, selector);
@@ -153,8 +178,8 @@ exec '${real}' "$@"
       };
       /** The clips made only for a drag (none in the clip bar). */
       const hidden = async () => (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => !c.shown);
-      /** Clip (or `what`) pressed and carried to over the folder, the system's drag up; then `then`. */
-      const carryOut = async (then = [], what = "button.action.clip") => {
+      /** Clip (or `what`) pressed and carried to over the folder (or `to`), the system's drag up; then `then`. */
+      const carryOut = async (then = [], what = "button.action.clip", to = drop) => {
         await app.js(`performance.clearMarks(); window.__ended = [];`);
         const from = await centre(what);
         const before = new Set(windowsOf(app.driver.proc.pid));
@@ -164,11 +189,7 @@ exec '${real}' "$@"
         ];
         for (let i = 1; i <= 18; i++)
           steps.push(
-            [
-              "move",
-              Math.round(from.x + (drop.x - from.x) * (i / 18)),
-              Math.round(from.y + (drop.y - from.y) * (i / 18)),
-            ],
+            ["move", Math.round(from.x + (to.x - from.x) * (i / 18)), Math.round(from.y + (to.y - from.y) * (i / 18))],
             ["wait", 50],
           );
         await os.gesture(steps);
@@ -182,13 +203,17 @@ exec '${real}' "$@"
           every: 25,
         });
         await os.gesture([
-          ["move", drop.x + 8, drop.y + 4],
+          ["move", to.x + 8, to.y + 4],
           ["wait", 200],
-          ["move", drop.x + 16, drop.y + 8],
+          ["move", to.x + 16, to.y + 8],
           ["wait", 300],
           ...then,
         ]);
       };
+      /** Whether clip `id` shows a pill in the clip bar. */
+      const pill = (id) => app.js(`return !!document.querySelector(arguments[0])`, `.chip[data-clip="${id}"]`);
+      /** Whether clip `id` is in the list of jobs. */
+      const listed = async (id) => (await app.invoke("list_jobs")).some((j) => j.id === id);
       const ended = () =>
         until("the system's drag, over", () => app.js(`return window.__ended[0] ?? false`), 2 * MINUTE);
       const settle = async () => {
@@ -218,8 +243,40 @@ exec '${real}' "$@"
         return { file, at, length };
       };
 
+      // 0. Carried in the window from a file here: its clip is made from the
+      // press, with no pill and not listed with the jobs; Escape there stops
+      // it, and its part file goes.
+      encodes("partial");
+      await toStart();
+      const clipAt = await centre("button.action.clip");
+      const pressed = Date.now();
+      await os.gesture([
+        ["down", clipAt.x, clipAt.y],
+        ["wait", 100],
+        ["move", clipAt.x + 30, clipAt.y - 30],
+        ["wait", 100],
+        ["move", clipAt.x + 60, clipAt.y - 60],
+      ]);
+      const early = await until("its clip, made from the press", async () => (await hidden())[0] ?? false, 10_000, {
+        every: 50,
+      });
+      const begun = Date.now() - pressed;
+      await until("its part file being written", () => appFiles().some((f) => f.endsWith(".part")), 30_000, {
+        every: 50,
+      });
+      if (await pill(early.id)) throw new Error("a pill showed for the clip made for a carry in the window");
+      if (await listed(early.id)) throw new Error("the clip made for a carry in the window was listed with the jobs");
+      await os.gesture([["key", "Escape"], ["wait", 300], ["up"]]);
+      await until("its clip gone", async () => (await hidden()).length === 0, 10_000);
+      await until("its part file gone", () => !appFiles().some((f) => f.endsWith(".part")), 10_000);
+      ctx.log(
+        `carried in the window: its clip made ${begun} ms from the press, no pill, not listed with the jobs; Escape: it and its part file gone`,
+      );
+      encodes("slow");
+
       // 1. Let go on Nautilus before the file is made: it lands whole. The
-      // window answers while it's waited for (the video plays on).
+      // window answers while it's waited for (the video plays on), no pill
+      // shows, and the clip's making is listed with the jobs till it's over.
       await toStart();
       await app.click('.bar button[aria-label="Play"]');
       await until("the video playing", async () => (await app.shownTime()) >= 2, 30_000);
@@ -229,6 +286,13 @@ exec '${real}' "$@"
       const [making] = await hidden();
       if (!making || making.status === "ready")
         throw new Error(`the clip was ${making?.status ?? "gone"} as it was dropped, not still being made`);
+      await until("its making listed with the jobs, let go elsewhere", () => listed(making.id), 5000, { every: 100 });
+      await until(
+        "the page sent the list of jobs with it",
+        () => app.js(`return window.__jobs.some((ids) => ids.includes(arguments[0]))`, making.id),
+        5000,
+        { every: 100 },
+      );
       const answers = [];
       for (let i = 0; i < 4; i++) {
         const t0 = Date.now();
@@ -241,9 +305,11 @@ exec '${real}' "$@"
         `while its file was made: the page answered in ${answers.map((a) => a.ms).join(", ")} ms, the time shown ${answers.map((a) => a.shown).join(", ")} s`,
       );
       if (slowest > 1000) throw new Error(`the window took ${slowest} ms to answer while the drop waited`);
+      if (await pill(making.id)) throw new Error("a pill showed for the clip while it was handed over");
       const first = await landed("let go before it was made");
       const end = await ended();
       if (!end.delivered) throw new Error(`the page heard the drag went nowhere: ${JSON.stringify(end)}`);
+      if (await pill(making.id)) throw new Error("a pill showed for the clip once it was handed over");
       // Taken where it is (Nautilus): its file is another app's now, kept once
       // the row made for the drag goes. Copied (Dolphin): the app's goes.
       const size = sizeOf(first.file);
@@ -252,8 +318,9 @@ exec '${real}' "$@"
       if (copies && own) throw new Error(`the app's file ${own} stayed, though Dolphin has its own copy`);
       if (!copies && (!own || sizeOf(own) !== size))
         throw new Error(`the app's file ${path.basename(first.file)} went, though another app took it`);
+      if (await listed(making.id)) throw new Error("the clip handed over was still listed with the jobs");
       ctx.log(
-        `let go ${first.at - dropped} ms before the file landed (${first.length.toFixed(2)} s long); the app's file ${copies ? "gone (copied)" : "kept as another app's"}`,
+        `let go ${first.at - dropped} ms before the file landed (${first.length.toFixed(2)} s long); the app's file ${copies ? "gone (copied)" : "kept as another app's"}; listed with the jobs meanwhile, no pill`,
       );
       await app.click('.bar button[aria-label="Pause"]').catch(() => {});
 
@@ -363,7 +430,86 @@ exec '${real}' "$@"
         `two carried together, both being made: both landed, ${apart} ms apart (${arrivals.map((a) => a.name).join(", then ")})`,
       );
       await settle();
+
+      // 6. A pill still being made (made again), dragged alone: it lands.
+      await app.key("Escape");
+      await until("none picked", () => app.js(`return !document.querySelector(".chip.chosen")`), 10_000);
+      await app.invoke("set_clip_range", { id: pair[0].id, start: 0, end: 60 });
+      await until(
+        "its pill being made",
+        () => app.js(`return !!document.querySelector(arguments[0])`, `.chip[data-clip="${pair[0].id}"]:not(.ready)`),
+        10_000,
+        { every: 50 },
+      );
+      await carryOut([["letgo", drop.x + 16, drop.y + 8]], `.chip[data-clip="${pair[0].id}"] .length`);
+      const alone = await landed("a pill being made");
+      if (!(await ended()).delivered) throw new Error("the page heard the pill being made went nowhere");
+      if (!(await pill(pair[0].id))) throw new Error("the pill dragged out went from the clip bar");
+      ctx.log(`a pill still being made, dragged alone: it landed (${alone.length.toFixed(2)} s long)`);
+      await settle();
+
+      // 7. Let go on an app that takes finished files only, before the file's
+      // made: nothing lands, the app says it takes finished files only, by
+      // its name, and keeps the clip as a pill, which once made drags there.
+      const noTaker = noFinishedOnly();
+      if (noTaker) {
+        ctx.log(`no app that takes finished files only to drop on: ${noTaker}`);
+        return;
+      }
+      nautilus.close();
+      nautilus = null;
+      if (entry) {
+        mkdirSync(path.dirname(entry), { recursive: true });
+        writeFileSync(
+          entry,
+          "[Desktop Entry]\nType=Application\nName=Clip Taker\nExec=true\nStartupWMClass=Clip-taker\n",
+        );
+      }
+      taker = await openFinishedOnly(app, ctx, path.join(work, "taker"));
+      // The last stretch, past the second cut: no clip of it yet.
+      await app.js(
+        `${AT}
+         const bar = document.querySelector(".scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((150 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         const y = box.top + box.height / 2;
+         bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+         window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+      );
+      await until("the playhead in the last stretch", async () => (await app.shownTime()) > 121, 10_000);
+      await carryOut([["letgo", taker.drop.x + 16, taker.drop.y + 8]], "button.action.clip", taker.drop);
+      const [kept] = await hidden();
+      if (!kept || kept.status === "ready") throw new Error(`the clip was ${kept?.status ?? "gone"} as it was let go`);
+      const refused = await ended();
+      if (!refused.finished_only || refused.receiver !== takerName)
+        throw new Error(`the page heard ${JSON.stringify(refused)} of a drop on an app that takes finished files only`);
+      const said = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
+      const want = `${takerName} takes finished files only. The clip is being made; drag it from the clip bar when it's ready.`;
+      if (said !== want) throw new Error(`the toast says "${said}", not "${want}"`);
+      if (!taker.said().some((l) => l.endsWith("gave up")))
+        throw new Error(`the app that takes finished files only says ${JSON.stringify(taker.said())}`);
+      await until(
+        `its pill, made`,
+        () => app.js(`return !!document.querySelector(arguments[0])`, `.chip.ready[data-clip="${kept.id}"]`),
+        2 * MINUTE,
+      );
+      await carryOut(
+        [["letgo", taker.drop.x + 16, taker.drop.y + 8]],
+        `.chip[data-clip="${kept.id}"] .length`,
+        taker.drop,
+      );
+      if (!(await ended()).delivered) throw new Error("the page heard the pill made went nowhere");
+      const took = await until(
+        "the app took it",
+        () => taker.said().find((l) => / took 1 of 1: /.test(l)) ?? false,
+        10_000,
+      );
+      ctx.log(
+        `let go on an app that takes finished files only: nothing taken, the toast says "${said}"; its pill, once made, dragged there: ${took.split(" ").slice(1, 5).join(" ")}`,
+      );
     } finally {
+      taker?.close();
+      if (entry) rmSync(entry, { force: true });
       nautilus?.close();
       rmSync(ffmpeg, { force: true });
       if (existsSync(aside)) renameSync(aside, ffmpeg);

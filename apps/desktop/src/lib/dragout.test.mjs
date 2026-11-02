@@ -12,7 +12,7 @@ const fakes = {
     export const thumbUrl = async () => null;`,
   "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
   "./resolveHint.svelte": `export const formatHint = { dragged() {} };`,
-  "./ask": `export const ask = () => new Promise((answer) => (globalThis.fake.answer = answer));`,
+  "./toasts.svelte": `export const toast = globalThis.fake.toast;`,
   "./clips.svelte": `export const clips = globalThis.fake.clips;`,
   "./cuts.svelte": `export const cuts = { list: [] };`,
   "./edits.svelte": `export const edits = globalThis.fake.edits;
@@ -61,9 +61,11 @@ const editRow = (id) => ({
   closest: (s) => (s === "[data-edit-drop]" ? { dataset: { editDrop: String(id) } } : null),
 });
 const fake = {
-  /** @type {((made: boolean) => void) | null} */
+  /** How the note before a site's first download is answered, while it's up. @type {((made: boolean) => void) | null} */
   answer: null,
-  /** What the page does as the system's drag ends. @type {((e: { delivered: boolean, failed: string | null }) => void) | null} */
+  /** Whether that note comes up. */
+  noted: false,
+  /** What the page does as the system's drag ends. @type {((e: import("./api").DragEnded) => void) | null} */
   ended: null,
   /** Whether the system's drag can begin before the files are made. */
   beforeMade: true,
@@ -75,6 +77,14 @@ const fake = {
   added: [],
   /** @type {unknown[]} */
   dragged: [],
+  /** Clips kept in the clip bar. @type {number[]} */
+  kept: [],
+  /** What the toasts said. @type {string[]} */
+  toasts: [],
+  toast: {
+    /** @param {string} message */
+    show: (message) => void fake.toasts.push(message),
+  },
   api: {
     frame: async () => new Uint8Array(),
     peaks: async () => new Uint8Array(),
@@ -83,6 +93,8 @@ const fake = {
     dragBeforeMade: async () => fake.beforeMade,
     /** @param {number} id */
     deleteClip: async (id) => void fake.deleted.push(id),
+    /** @param {number} id */
+    keepClip: async (id) => void fake.kept.push(id),
     addClip: async () => null,
     setClipRange: async () => null,
     listVods: async () => [],
@@ -100,7 +112,11 @@ const fake = {
     list: [],
     find: () => undefined,
     /** @param {number} start @param {number} end @param {boolean} shown */
-    make: async (start, end, shown) => ({ id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" }),
+    make: async (start, end, shown) => {
+      // The note before a site's first download, if the test asks for it.
+      if (fake.noted && !(await new Promise((answer) => (fake.answer = answer)))) return null;
+      return { id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" };
+    },
     /** @param {number} id @param {() => boolean} held */
     ready: async (id, held) => (
       fake.waited.push(id),
@@ -168,6 +184,9 @@ function reset() {
   fake.deleted.length = 0;
   fake.waited.length = 0;
   fake.answer = null;
+  fake.noted = false;
+  fake.kept.length = 0;
+  fake.toasts.length = 0;
   fake.ended = null;
   fake.beforeMade = true;
   fake.clips.error = null;
@@ -195,13 +214,26 @@ test("a pointer cancelled mid-carry ends it, as a press ends", async () => {
   await done;
 });
 
-test("at the window's edge, a question the system asks takes the release: no drag out begins", async () => {
+test("a long stretch of a site's VOD is made with no question at the edge", async () => {
   reset();
-  // A site VOD's 15 minutes: made at the edge, asked about first.
+  // 15 minutes, downloaded at the edge: once a question (the long download's).
   const done = carried(900);
   move(0, 300);
   await new Promise((r) => setTimeout(r, 20));
-  assert.ok(fake.answer, "the long download was asked about");
+  assert.equal(fake.answer, null, "asked about first");
+  assert.equal(fake.dragged.length, 1, "the system's drag didn't begin at once");
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await done;
+});
+
+test("at the window's edge, a question the system asks takes the release: no drag out begins", async () => {
+  reset();
+  // A site VOD's first download: the note before it comes up at the edge.
+  fake.noted = true;
+  const done = carried(900);
+  move(0, 300);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.ok(fake.answer, "the note was shown");
   // The question had the release; the pointer moves on with no button held.
   move(300, 300, 0);
   fake.answer(true);
@@ -301,10 +333,41 @@ test("past the edge before its files are made: the system's drag begins at once,
   assert.deepEqual(fake.waited, [], "waited for the files at the edge");
   await tick();
   assert.deepEqual(fake.deleted, [], "forgotten before the drag was over");
-  fake.ended?.({ delivered: true, failed: null });
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
   await tick();
   assert.deepEqual(fake.deleted, [3, 4]);
   assert.equal(fake.clips.error, null);
+});
+
+test("let go on an app that takes finished files only: it's said, by its name, and the clips are kept to drag again", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: false, failed: null, finished_only: true, receiver: "Kdenlive" });
+  await tick();
+  assert.deepEqual(fake.toasts, [
+    "Kdenlive takes finished files only. The clips are being made; drag them from the clip bar when they're ready.",
+  ]);
+  assert.deepEqual(fake.kept, [3, 4], "not kept in the clip bar");
+  assert.deepEqual(fake.deleted, [], "forgotten, with nothing to drag again");
+  assert.equal(fake.clips.error, null);
+});
+
+test("an app that takes finished files only, its name unknown, is said as that app", async () => {
+  reset();
+  const done = carried(5);
+  move(120, 120);
+  move(0, 300);
+  await new Promise((r) => setTimeout(r, 20));
+  fake.ended?.({ delivered: false, failed: null, finished_only: true, receiver: null });
+  await done;
+  await tick();
+  assert.deepEqual(fake.toasts, [
+    "That app takes finished files only. The clip is being made; drag it from the clip bar when it's ready.",
+  ]);
+  assert.deepEqual(fake.kept, [9]);
 });
 
 test("a drag whose file couldn't be made says so once it's over", async () => {
@@ -313,7 +376,7 @@ test("a drag whose file couldn't be made says so once it's over", async () => {
   move(120, 120);
   move(0, 300);
   await done;
-  fake.ended?.({ delivered: false, failed: "no footage" });
+  fake.ended?.({ delivered: false, failed: "no footage", finished_only: false, receiver: null });
   await tick();
   assert.equal(fake.clips.error, "Couldn't make the clip: no footage");
   assert.deepEqual(fake.deleted, [3, 4]);
@@ -328,6 +391,6 @@ test("where the system can't wait for the files, the drag begins once they're ma
   await done;
   assert.deepEqual(fake.waited, [3, 4], "didn't wait for the files");
   assert.deepEqual(fake.dragged, [[3, 4]]);
-  fake.ended?.({ delivered: true, failed: null });
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
   await tick();
 });

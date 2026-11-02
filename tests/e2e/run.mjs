@@ -265,6 +265,9 @@ async function runTurn({ name, run }) {
         log(`opened at ${got.width}x${got.height} (${short.name})`);
       }
     }
+    // The system's pointer off the page, once, so where Xvfb left it never
+    // hovers anything the steps look at.
+    await os.parkPointer(current.app);
     return current.app;
   };
   const ctx = {

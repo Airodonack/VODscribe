@@ -115,6 +115,7 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 - `E2E_WORKER`: set by `--parallel` in each worker (its number); not for setting by hand.
 - `E2E_SCREEN`: `hosted-mac` sizes the app's page as CI's hosted macOS runner's 1024 by 768 screen does (`lib/screen.mjs`): the window opens with a page 613 px tall at most, and `resizeInner` gives no page taller than 581 px after a scenario's first resize (the width as asked), saying `held to 1600x581 (hosted-mac)` once in the scenario when it holds one. For checking, before a push, that the scenarios measuring layout don't count on a tall screen. Unset, the page is what the window and the display give.
 - `E2E_SCHEME`: the colour scheme the run is in (`light` or `dark`), which the site scenarios check; `distros.mjs` sets it from `--scheme`.
+- `E2E_FILE_MANAGER`: the file manager the drag scenarios (drag-promise, drag-file-time) drop on: `dolphin` or `nautilus`. Unset, Dolphin in a KDE session (`XDG_CURRENT_DESKTOP`), else Nautilus.
 - `E2E_DISPLAY`: the Wayland compositor the run is under (`weston` or `gnome`), so screenshots know how to be taken; `distros.mjs` sets it from `--env`.
 - `E2E_SEED`: for `distros.mjs`, a data folder whose `bin/` and `models/` each cell starts with (default none, so setup downloads them).
 - `E2E_WORK`: for `distros.mjs`, where each cell's data folder goes (default `tests/e2e/out/distros`).

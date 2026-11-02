@@ -116,13 +116,14 @@
   /** Picked with others (more clips, or stretches on the timeline): a drag of it carries them all. */
   const withOthers = (clip: Clip) => snippets.size > 1 && snippets.has(itemOf(clip));
 
-  // A made clip's chip drags out once the pointer moves with the button down
-  // (one picked with others, made or not, carries what's picked; picked
-  // alone, it goes as it would unpicked); the click that may follow a drag
-  // doesn't pick it (pressToDrag).
+  // A clip's chip drags out once the pointer moves with the button down,
+  // made or still being made (its file goes where it's let go once it's
+  // made: dragout.ts), not one that failed (one picked with others carries
+  // what's picked; picked alone, it goes as it would unpicked); the click
+  // that may follow a drag doesn't pick it (pressToDrag).
   function canDrag(e: PointerEvent, clip: Clip) {
-    const ready = clip.status === "ready" || withOthers(clip);
-    return ready && !(e.target as HTMLElement).closest(".act, input");
+    const goes = clip.status !== "error" || withOthers(clip);
+    return goes && !(e.target as HTMLElement).closest(".act, input");
   }
 
   // The middle button pressed anywhere on the bar (a pill too) and dragged:
@@ -243,8 +244,8 @@
       role="option"
       aria-selected={picked}
       data-clip={clip.id}
-      title="{vod ? span(clip.start, clip.end) : formatTime(clip.length ?? 0)} · {describe(clip)}{clip.status ===
-      'ready'
+      title="{vod ? span(clip.start, clip.end) : formatTime(clip.length ?? 0)} · {describe(clip)}{clip.status !==
+      'error'
         ? ' · drag it into a video editor or a folder'
         : ''} · double-click to open it in the editor"
       use:pressToDrag={{ press: (e) => canDrag(e, clip), start: (e, at) => onChipDrag(e, clip, at) }}

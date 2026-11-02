@@ -39,6 +39,10 @@ class Edits {
   /** The edit open in the Edit view, and its pieces. */
   openId = $state<number | null>(null);
   pieces = $state.raw<EditPiece[]>([]);
+  /** Whether all the open edit's footage is in files here (each piece's VOD
+   *  plays from one, EditView.svelte): a clip of it dragged is made as the
+   *  carry begins, needing no download (dragout.ts). */
+  footageHere = $state(false);
   /** Counts each VOD's footage downloaded for edits, for what shows it. */
   footage = new SvelteMap<number, number>();
   /** Each VOD's section downloading for edits, and how far it is. */

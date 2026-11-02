@@ -46,11 +46,40 @@ pub(crate) struct Cutter {
     /// Clips pasted from a copy whose file was made: given a copy of that
     /// file when their turn comes, rather than made again (`copy_file`).
     copies: Arc<Mutex<HashMap<i64, crate::clipboard::CopiedFile>>>,
+    /// Clips made only for a drag out of the window, let go on another app
+    /// and not yet handed over: listed with the jobs (`job_list`), which
+    /// leaves out those still in the window's drag, or over.
+    out: Mutex<HashSet<i64>>,
 }
 
 impl Cutter {
     pub(crate) fn new() -> Self {
-        Self { jobs: Jobs::new(), removing: Arc::default(), canceled: Arc::default(), copies: Arc::default() }
+        Self {
+            jobs: Jobs::new(),
+            removing: Arc::default(),
+            canceled: Arc::default(),
+            copies: Arc::default(),
+            out: Mutex::default(),
+        }
+    }
+
+    /// Clips `ids`, dragged out of the window, were let go on another app
+    /// (`out_now`), or the drag is over (not).
+    pub(crate) fn dragged_out(&self, ids: &[i64], out_now: bool) {
+        let mut out = self.out.lock().unwrap();
+        for &id in ids {
+            if out_now {
+                out.insert(id);
+            } else {
+                out.remove(&id);
+            }
+        }
+    }
+
+    /// Whether clip `id`, made only for a drag out, was let go on another app
+    /// and is still being handed over (`dragged_out`).
+    pub(crate) fn is_out(&self, id: i64) -> bool {
+        self.out.lock().unwrap().contains(&id)
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
@@ -714,11 +743,12 @@ pub(crate) async fn forget_gone_clips(
     history::change(&app, &db, doc, label, |db| taken.iter().try_for_each(|&id| remove(&app, db, id))).map_err(err)
 }
 
-/// Deletes clip `id` (stopping its cut), and its file unless that was
+/// Deletes clip `id` (taking it out of the queue, or stopping its cut), and its file unless that was
 /// dragged out of the app, and tells the page (`clip-removed`).
 pub(crate) fn remove(app: &AppHandle, db: &Db, id: i64) -> Result<()> {
     let state = app.state::<AppState>();
-    state.clips.stop(id);
+    // Out of the queue, or its encode stopped (its part file deleted).
+    state.clips.cancel(id);
     let clip = db.clip(id)?;
     let handed_out = db.clip_handed_out(id)?;
     db.delete_clip(id)?;
@@ -918,10 +948,10 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 
 /// Whether a clip whose file isn't made yet can be dragged out of the window:
 /// the system's drag begins at once and the file goes to where it's dropped
-/// once it's made (a file manager waits for it). Linux only, so far; there
-/// VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the files at the window's
-/// edge before the drag begins (dragout.ts), for apps that read what's
-/// dropped at once and don't wait (open question: which way is the default).
+/// once it's made (a file manager waits for it; an app that takes only files
+/// already made gets none, and the page says so: `DragEnded`). Linux only, so
+/// far; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the files at
+/// the window's edge before the drag begins (dragout.ts).
 pub(crate) fn drags_before_made() -> bool {
     cfg!(target_os = "linux") && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
 }
@@ -1002,10 +1032,13 @@ pub(crate) async fn drag_clip(
         _ => None,
     };
     // (Off the main thread: waits for the library, as long as a cut holds it.)
+    // One that failed (its download blocked, say) still goes where the drag
+    // can wait for its files: why is said only if it's let go on another app
+    // (`start_drag`), and nothing lands there.
     for &id in &ids {
         match made_in(&app.state::<AppState>().db.lock().unwrap(), id) {
             Made::Ready(_) => {}
-            Made::Making if drags_before_made() => {}
+            Made::Making | Made::Failed(_) if drags_before_made() => {}
             Made::Making => return Err("That clip's file isn't made yet.".into()),
             Made::Failed(why) => return Err(format!("Couldn't make the clip: {why}")),
         }
@@ -1026,6 +1059,8 @@ pub(crate) async fn drag_clip(
     let files = move || listed.iter().map(|&id| made(&asking, id).unwrap_or(Made::Making)).collect();
     // Another app's once one takes them (not when the drag begins: called
     // off, or dropped on nothing, the files are still the app's to delete).
+    let out = ids.clone();
+    let cutter = app.clone();
     let taken = move || {
         let state = app.state::<AppState>();
         let db = state.db.lock().unwrap();
@@ -1033,16 +1068,27 @@ pub(crate) async fn drag_clip(
             let _ = db.hand_out_clip(id);
         }
     };
-    drag_file(window, files, image, taken).await
+    // Let go on another app: their making is listed with the jobs (Cancel
+    // there refuses them), until the drag is over.
+    let dropped = move |out_now: bool| {
+        cutter.state::<AppState>().clips.dragged_out(&out, out_now);
+        crate::job_list::changed(&cutter);
+    };
+    drag_file(window, files, image, taken, dropped).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
-/// it ("drag-ended"): whether they went to another app, and if they never
-/// came, why (a clip that couldn't be made; not for one canceled).
-#[derive(Serialize, Clone, Default)]
-struct DragEnded {
-    delivered: bool,
-    failed: Option<String>,
+/// it ("drag-ended"): whether they went to another app; if they never came
+/// because one couldn't be made, why (not for one canceled); and whether they
+/// didn't because the app they were let go on takes only files already made
+/// (`finished_only`, `receiver` its name where the system says it), so the
+/// page says so and keeps them in the clip bar to drag again once they are.
+#[derive(Serialize, Clone, Default, Debug, PartialEq)]
+pub(crate) struct DragEnded {
+    pub(crate) delivered: bool,
+    pub(crate) failed: Option<String>,
+    pub(crate) finished_only: bool,
+    pub(crate) receiver: Option<String>,
 }
 
 /// Starts the system's drag of the files `files` says are where (ones the
@@ -1050,22 +1096,65 @@ struct DragEnded {
 /// it's over (once the files went where they were dropped, or couldn't),
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`), so what it does next (deleting a clip made only for the
-/// drag) knows.
+/// drag) knows. `dropped(true)` once it's let go on another app,
+/// `dropped(false)` once it's over.
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Option<Vec<u8>>,
     taken: impl Fn() + Send + Sync + 'static,
+    dropped: impl Fn(bool) + Send + Sync + 'static,
 ) -> CmdResult<()> {
     let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(start_drag(&on_main, files, image, taken).map_err(|e| format!("{e:#}")));
+            let _ = tx.send(start_drag(&on_main, files, image, taken, dropped).map_err(|e| format!("{e:#}")));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
+}
+
+/// Where a drag out of the window ended.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum Ending {
+    /// Called off (Escape).
+    CalledOff,
+    /// Dropped back on the app's own window.
+    Back,
+    /// Dropped where nothing took it: on nothing, or on an app that refused
+    /// it (one whose ask for the files was refused, its making failed).
+    Nowhere,
+    /// Let go on another app, which took it or didn't.
+    Elsewhere,
+}
+
+/// What the end of a drag out of the window comes to (`DragEnded`), from what
+/// was seen of it: where it ended (`ending`), whether the files were given to
+/// the app it was let go on as addresses (`given`), why one couldn't be made
+/// (`failure`), whether they were all made as it ended (`made`), and the
+/// receiving app's name (`receiver`). Why one failed is said once it's left
+/// the window, not called off; why nothing landed, only if let go on another
+/// app before they were made.
+fn drag_outcome(
+    ending: Ending,
+    given: bool,
+    failure: Option<String>,
+    made: bool,
+    receiver: Option<String>,
+) -> DragEnded {
+    let failing = failure.is_some();
+    let failed = failure.filter(|why| why != CANCELED);
+    match ending {
+        Ending::CalledOff | Ending::Back => DragEnded::default(),
+        Ending::Nowhere => DragEnded { failed, ..Default::default() },
+        Ending::Elsewhere if given => DragEnded { delivered: true, ..Default::default() },
+        Ending::Elsewhere if failing => DragEnded { failed, ..Default::default() },
+        // It took nothing, though they were all there: its own business.
+        Ending::Elsewhere if made => DragEnded::default(),
+        Ending::Elsewhere => DragEnded { finished_only: true, receiver, ..Default::default() },
+    }
 }
 
 /// The files `made` says are where, if all are made: their paths; else, if
@@ -1101,6 +1190,23 @@ fn trace(what: &str) {
 #[cfg(all(target_os = "linux", not(feature = "e2e")))]
 fn trace(_: &str) {}
 
+/// The window a drag is over, asking for its data or let go on (`context`'s
+/// destination), if it's another app's: X11 says; Wayland doesn't.
+#[cfg(target_os = "linux")]
+fn other_window(context: &gtk::gdk::DragContext) -> Option<gtk::gdk::Window> {
+    use gtk::glib::translate::{FromGlibPtrNone, ToGlibPtr};
+    // SAFETY: the context is alive for the call; the window it gives may be
+    // null (none known), checked before it's taken.
+    let window = unsafe {
+        let window = gtk::gdk::ffi::gdk_drag_context_get_dest_window(context.to_glib_none().0);
+        if window.is_null() {
+            return None;
+        }
+        gtk::gdk::Window::from_glib_none(window)
+    };
+    (window.window_type() == gtk::gdk::WindowType::Foreign).then_some(window)
+}
+
 /// Whether the window asking a drag for its data (`context`'s destination)
 /// is one of the app's own (X11 says; elsewhere there may be none).
 #[cfg(target_os = "linux")]
@@ -1114,29 +1220,174 @@ fn asked_by_own_window(context: &gtk::gdk::DragContext) -> bool {
     }
 }
 
-/// The system's drag (GTK's) of the files `files` says are where. Another
-/// app asks for their addresses as the drag goes over it (a file manager)
-/// or once it's dropped there. Answered at once when they're all made, and
-/// always to the app's own window (the drag brought back over it: it needs
-/// no files, and its ask comes inside its own handling of the drag); in a
-/// KDE session, at once with those made so far (Dolphin takes them through
-/// `ark` instead, and gives up on an answer that waits); else the answer
-/// waits for them, the app going on meanwhile in a main loop run inside the
-/// ask (`HOLDING`): a file manager waits as long as it takes. (Meanwhile
-/// what other threads send the page, and closures run on the main thread
-/// through Tauri, wait for the end of it: Tauri's event loop takes them only
-/// between its own turns, not in a loop run inside one.) The wait ends when
-/// they're made (answered), one fails or goes (no answer: nothing lands),
-/// or the drag is called off or dropped on nothing. The drag's end comes
-/// only after that (GTK waits for the answer), so the page hears
-/// "drag-ended" once the files went, or didn't; for Dolphin, once its
-/// copies are written.
+/// Whether an ask for a drag's files (from `context`'s destination, before
+/// the drop if not `dropped`) waits for them, while they're still being made:
+/// held until they are, or answered at once with none. Apps ask in three
+/// ways. Nautilus 43 and later (GTK 4) asks as the drag goes over it and
+/// keeps that answer for the drop, asking no more: that ask is held. Qt's
+/// apps give up on an answer that waits (after 5 s on X11, 1 on Wayland), and
+/// Dolphin, which asks as the drag goes over it, then refuses the drop (so
+/// never takes KDE's promise, `ark`): never held. The others (GTK 3's, as
+/// Nautilus 42, which asks at each move and takes the drop only once
+/// answered) ask again once it's let go there: held only then. Where X11
+/// names the window asking, by the toolkit its process runs; where it
+/// doesn't (Wayland), as Nautilus 43 is answered, unless the session is
+/// KDE's, whose apps are Qt's.
+#[cfg(target_os = "linux")]
+fn holds_ask(context: &gtk::gdk::DragContext, dropped: bool) -> bool {
+    let toolkit = match other_window(context) {
+        Some(window) => window_pid(&window).and_then(toolkit_of),
+        None if kde_session() => Some(Toolkit::Qt),
+        None => Some(Toolkit::Gtk4),
+    };
+    match toolkit {
+        Some(Toolkit::Qt) => false,
+        Some(Toolkit::Gtk4) | None => true,
+        Some(Toolkit::Other) => dropped,
+    }
+}
+
+/// The toolkit an app asking for a drag's files is made with, as it asks
+/// (`holds_ask`).
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Toolkit {
+    Qt,
+    Gtk4,
+    Other,
+}
+
+/// Whether this is a KDE session.
+#[cfg(target_os = "linux")]
+fn kde_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("kde")))
+}
+
+/// The process another app's window `window` is of, as it says (_NET_WM_PID).
+#[cfg(target_os = "linux")]
+fn window_pid(window: &gtk::gdk::Window) -> Option<u32> {
+    let atom = gtk::gdk::Atom::intern;
+    let (_, _, bytes) = gtk::gdk::property_get(window, &atom("_NET_WM_PID"), &atom("CARDINAL"), 0, 1, 0)?;
+    // A 32-bit property comes as the machine's longs.
+    match bytes.len() {
+        8.. => u64::from_ne_bytes(bytes[..8].try_into().ok()?).try_into().ok(),
+        4.. => Some(u32::from_ne_bytes(bytes[..4].try_into().ok()?)),
+        _ => None,
+    }
+}
+
+/// The toolkit process `pid` runs, by the libraries it has loaded; None if
+/// that can't be read (another user's, or in a sandbox of its own).
+#[cfg(target_os = "linux")]
+fn toolkit_of(pid: u32) -> Option<Toolkit> {
+    let maps = std::fs::read_to_string(format!("/proc/{pid}/maps")).ok()?;
+    Some(if maps.contains("/libQt") {
+        Toolkit::Qt
+    } else if maps.contains("/libgtk-4") {
+        Toolkit::Gtk4
+    } else {
+        Toolkit::Other
+    })
+}
+
+/// Another app's window `window`'s class (WM_CLASS's second part: "dolphin",
+/// "org.gnome.Nautilus").
+#[cfg(target_os = "linux")]
+fn window_class(window: &gtk::gdk::Window) -> Option<String> {
+    let atom = gtk::gdk::Atom::intern;
+    let (_, _, bytes) = gtk::gdk::property_get(window, &atom("WM_CLASS"), &atom("STRING"), 0, 1024, 0)?;
+    let class = bytes.split(|&b| b == 0).nth(1).filter(|c| !c.is_empty())?;
+    Some(String::from_utf8_lossy(class).into_owned())
+}
+
+/// The name an app whose windows are of class `class` goes by: its desktop
+/// entry's (the one naming that class, or named for it: "Files" for
+/// org.gnome.Nautilus), else the class (its last part, if it's a reverse
+/// domain name).
+#[cfg(target_os = "linux")]
+fn app_name(class: &str) -> String {
+    let home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let dirs = home.into_iter().chain(dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from));
+    let entries = dirs.flat_map(|d| std::fs::read_dir(d.join("applications")).into_iter().flatten().flatten());
+    let mut named = None;
+    for entry in entries {
+        let path = entry.path();
+        let Some(stem) =
+            path.file_stem().and_then(|s| s.to_str()).filter(|_| path.extension().is_some_and(|e| e == "desktop"))
+        else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let (name, wm_class) = desktop_entry(&text);
+        let Some(name) = name else { continue };
+        if wm_class.is_some_and(|c| c.eq_ignore_ascii_case(class)) {
+            return name;
+        }
+        let stem = stem.to_ascii_lowercase();
+        let class = class.to_ascii_lowercase();
+        if named.is_none() && (stem == class || stem.ends_with(&format!(".{class}"))) {
+            named = Some(name);
+        }
+    }
+    named.unwrap_or_else(|| match class.matches('.').count() {
+        2.. => class.rsplit('.').next().unwrap_or(class).to_string(),
+        _ => class.to_string(),
+    })
+}
+
+/// A desktop entry's name and the window class it says its windows have (its
+/// [Desktop Entry] group's Name and StartupWMClass).
+#[cfg(target_os = "linux")]
+fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
+    let (mut name, mut class) = (None, None);
+    let mut main = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            main = line == "[Desktop Entry]";
+        } else if main && let Some(v) = line.strip_prefix("Name=") {
+            name = Some(v.trim().to_string());
+        } else if main && let Some(v) = line.strip_prefix("StartupWMClass=") {
+            class = Some(v.trim());
+        }
+    }
+    (name.filter(|n| !n.is_empty()), class)
+}
+
+/// The system's drag (GTK's) of the files `files` says are where. Each is
+/// offered two ways, both answered as they're asked for, so the app it's let
+/// go on chooses: their addresses (text/uri-list, any app that takes files),
+/// and KDE's promise (`ark`, Dolphin's: it asks the app to put them in its
+/// folder, and they're copied there as they're made). An app asks for their
+/// addresses as the drag goes over it (a file manager) or once it's let go
+/// there. Answered at once when they're all made, and always to the app's own
+/// window (the drag brought back over it: it needs no files, and its ask
+/// comes inside its own handling of the drag); at once with none to an app
+/// that gives up on an answer that waits, or asks again at the drop, until
+/// then (`holds_ask`: Qt's; Dolphin then takes the promise); else the answer
+/// waits for them, the app going on
+/// meanwhile in a main loop run inside the ask (`HOLDING`): a file manager
+/// waits as long as it takes. (Meanwhile what other threads send the page,
+/// and closures run on the main thread through Tauri, wait for the end of it:
+/// Tauri's event loop takes them only between its own turns, not in a loop
+/// run inside one; the player's time and the list of jobs are told from the
+/// wait itself.) The wait ends when they're made (answered), one fails or
+/// goes (no answer: nothing lands), the drag is called off or dropped on
+/// nothing, or the app it was let go on gives up waiting (its drop over with
+/// nothing taken), with no limit of its own. The drag's end comes only after
+/// that (GTK waits for the answer), so the page hears "drag-ended" once the
+/// files went, or didn't; for Dolphin, once its copies are written. Let go
+/// on an app that took nothing because they weren't made yet, the page hears
+/// that it takes finished files only, and its name where X11 gives it.
 #[cfg(target_os = "linux")]
 fn start_drag(
     window: &tauri::WebviewWindow,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
+    dropped: impl Fn(bool) + Send + Sync + 'static,
 ) -> Result<()> {
     use gtk::prelude::*;
     use std::cell::{Cell, RefCell};
@@ -1149,10 +1400,12 @@ fn start_drag(
     /// What's known of the drag as it goes.
     #[derive(Default)]
     struct Drag {
-        /// Another app was given the files' addresses.
+        /// Another app was given all the files' addresses.
         given: Cell<bool>,
         /// Called off, or dropped where nothing took it.
         failed: Cell<bool>,
+        /// Called off (Escape).
+        called_off: Cell<bool>,
         /// Over (GTK's drag-end), its end put off while an answer waits.
         ended: Cell<bool>,
         /// Answers waiting (`hold`), one inside another.
@@ -1161,14 +1414,22 @@ fn start_drag(
         failure: RefCell<Option<String>>,
         /// The drag is over the app's own page (its drag-motion, drag-drop).
         over_page: Cell<bool>,
+        /// The class of the other app's window it was let go on, where X11 says.
+        receiver: RefCell<Option<String>>,
+        /// The files were all made as it ended.
+        made: Cell<bool>,
+        /// Let go (GTK's drop-performed), anywhere.
+        dropped: Cell<bool>,
     }
     let drag = Rc::new(Drag::default());
     let source = window.gtk_window()?;
     let page = crate::webview::page(window).ok();
     let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
+    let dropped = Arc::new(dropped);
     let targets = gtk::TargetList::new(&[]);
     targets.add_uri_targets(0);
-    let ark = if ark::offered() { ark::Offer::new(files.clone()) } else { None };
+    // (Apps that don't know it never ask: Nautilus asks only for the addresses.)
+    let ark = ark::Offer::new(files.clone());
     if ark.is_some() {
         let other = gtk::TargetFlags::OTHER_APP.bits();
         targets.add(&gtk::gdk::Atom::intern("application/x-kde-ark-dndextract-service"), other, ark::SERVICE);
@@ -1191,6 +1452,7 @@ fn start_drag(
             drag.holding.set(drag.holding.get() + 1);
             let main = glib::MainLoop::new(None, false);
             let (quit, looked, watched, app) = (main.clone(), files.clone(), drag.clone(), app.clone());
+            let ticks = Cell::new(0u32);
             // (The tick ends itself as it ends the wait.)
             glib::timeout_add_local(HOLD_TICK, move || {
                 if watched.failed.get() || watched.ended.get() || settled(looked()).is_some() {
@@ -1198,6 +1460,10 @@ fn start_drag(
                     return glib::ControlFlow::Break;
                 }
                 crate::player::retell(&app);
+                ticks.set(ticks.get() + 1);
+                if ticks.get().is_multiple_of(5) {
+                    crate::job_list::retell(&app);
+                }
                 glib::ControlFlow::Continue
             });
             main.run();
@@ -1219,16 +1485,24 @@ fn start_drag(
                 data.set(&data.target(), 8, named.as_bytes());
                 return;
             }
-            // The app's own page, or (KDE) any app: what's made so far, at once.
-            if ark.is_some() || drag.over_page.get() || asked_by_own_window(context) {
+            // The app's own page: what's made so far, at once.
+            if drag.over_page.get() || asked_by_own_window(context) {
                 let ready: Vec<_> =
                     files().into_iter().filter_map(|m| if let Made::Ready(p) = m { Some(p) } else { None }).collect();
-                let who = if ark.is_some() { "in a KDE session" } else { "by the app's own window" };
-                trace(&format!("ask {n} ({}) {who}: answered with the {} made", data.target().name(), ready.len()));
+                trace(&format!(
+                    "ask {n} ({}) by the app's own window: answered with the {} made",
+                    data.target().name(),
+                    ready.len()
+                ));
                 answer(data, &ready);
                 return;
             }
             let mut now = settled(files());
+            if now.is_none() && !holds_ask(context, drag.dropped.get()) {
+                trace(&format!("ask {n} ({}) answered at once with none: not one to hold", data.target().name()));
+                answer(data, &[]);
+                return;
+            }
             if now.is_none() {
                 trace(&format!("ask {n} ({}): held until the files are made", data.target().name()));
                 hold();
@@ -1273,6 +1547,7 @@ fn start_drag(
     let on_failed = source.connect_drag_failed(move |_, _, result| {
         trace(&format!("failed: {result:?}"));
         failing.failed.set(true);
+        failing.called_off.set(result == gtk::DragResult::UserCancelled);
         glib::Propagation::Stop
     });
     handlers.borrow_mut().push((widget.clone(), on_failed));
@@ -1280,34 +1555,45 @@ fn start_drag(
     // the files went (`taken`), and the page is told.
     let finish = {
         let (drag, handlers, told, ark) = (drag.clone(), handlers.clone(), window.clone(), ark.clone());
+        let dropped = dropped.clone();
         let taken = Arc::new(taken);
         move || {
             for (widget, handler) in handlers.borrow_mut().drain(..) {
                 widget.disconnect(handler);
             }
             let page = crate::webview::page(&told);
-            let failed = drag.failure.borrow_mut().take().filter(|why| why != CANCELED);
-            let ended = DragEnded { delivered: drag.given.get() && !drag.failed.get(), failed };
+            let ending = match () {
+                _ if drag.called_off.get() => Ending::CalledOff,
+                _ if drag.over_page.get() => Ending::Back,
+                _ if drag.failed.get() => Ending::Nowhere,
+                _ => Ending::Elsewhere,
+            };
             // Dolphin asked for them (`ark`): the page told once its copies
             // are written. They're its own: the app's aren't handed out.
             let copying = ark.as_ref().is_some_and(|ark| {
-                let told = told.clone();
+                let (told, dropped) = (told.clone(), dropped.clone());
                 ark.ended(move |failed| {
                     let failed = failed.filter(|why| why != CANCELED);
                     trace(&format!("over: copied for Dolphin, failed {failed:?}"));
-                    let _ = told.emit("drag-ended", DragEnded { delivered: failed.is_none(), failed });
+                    dropped(false);
+                    let _ = told
+                        .emit("drag-ended", DragEnded { delivered: failed.is_none(), failed, ..Default::default() });
                 })
             });
             if !copying {
-                trace(&format!("over: delivered {}", ended.delivered));
+                let (given, failure) = (drag.given.get(), drag.failure.borrow_mut().take());
+                let (receiver, made) = (drag.receiver.borrow_mut().take(), drag.made.get());
                 // Taken (above), then the page told, so a drag of its own
                 // coming back in isn't taken for one to add. Off the main
                 // thread, for the library's lock.
-                let (taken, told) = (taken.clone(), told.clone());
+                let (taken, told, dropped) = (taken.clone(), told.clone(), dropped.clone());
                 std::thread::spawn(move || {
+                    let ended = drag_outcome(ending, given, failure, made, receiver.as_deref().map(app_name));
+                    trace(&format!("over: {ended:?}"));
                     if ended.delivered {
                         taken();
                     }
+                    dropped(false);
                     let _ = told.emit("drag-ended", ended);
                 });
             }
@@ -1319,15 +1605,21 @@ fn start_drag(
         }
     };
     let finish = Rc::new(finish);
-    let ending = (drag.clone(), finish.clone());
-    let end = source.connect_drag_end(move |_, _| {
-        let (drag, finish) = (&ending.0, &ending.1);
+    let ending = (drag.clone(), finish.clone(), files.clone());
+    let end = source.connect_drag_end(move |_, context| {
+        let (drag, finish, files) = (&ending.0, &ending.1, &ending.2);
         drag.ended.set(true);
+        // The app it was let go on, while the drag still says; and whether
+        // the files were made by then (taken, or not, as they were).
+        if !drag.failed.get() && !drag.over_page.get() {
+            *drag.receiver.borrow_mut() = other_window(context).and_then(|w| window_class(&w));
+            drag.made.set(settled(files()).is_some_and(|r| r.is_ok()));
+        }
         if drag.holding.get() == 0 {
             finish();
         } else {
-            // Over while an answer waits (called off during it): finished once
-            // that wait is, outside it.
+            // Over while an answer waits (called off during it, or the app it
+            // was let go on gave up): finished once that wait is, outside it.
             let (drag, finish) = (drag.clone(), finish.clone());
             glib::timeout_add_local(HOLD_TICK, move || {
                 if drag.holding.get() > 0 {
@@ -1345,10 +1637,19 @@ fn start_drag(
     // (One that can't be decoded: none to see, rather than a theme icon.)
     let picture =
         drag_picture(&image).or_else(|| gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 1, 1).ok());
+    let over = drag.clone();
     let begin = source.connect_drag_begin(move |_, context| {
         if let Some(surface) = &picture {
             context.drag_set_icon_surface(surface);
         }
+        // Let go on another app: listed with the jobs from now (`dropped`).
+        let (over, dropped) = (over.clone(), dropped.clone());
+        context.connect_drop_performed(move |context, _| {
+            over.dropped.set(true);
+            if !over.over_page.get() && !asked_by_own_window(context) {
+                dropped(true);
+            }
+        });
     });
     handlers.borrow_mut().push((widget, begin));
     let undo = || {
@@ -1385,7 +1686,7 @@ fn start_drag(
 /// on the session bus, the object's path); let go on Dolphin, it asks the
 /// object to put the files in its folder (`extractSelectedFilesTo`), its
 /// drop done at once, and the app copies each file there as it's made, one
-/// by one. Offered in KDE's sessions only (`offered`).
+/// by one. Offered in every drag: apps that don't know it never ask for it.
 #[cfg(target_os = "linux")]
 mod ark {
     use std::path::{Path, PathBuf};
@@ -1401,11 +1702,6 @@ mod ark {
     pub(super) const OBJECT: u32 = 2;
 
     const INTERFACE: &str = r#"<node><interface name="org.kde.ark.DndExtract"><method name="extractSelectedFilesTo"><arg type="s" name="path" direction="in"/></method></interface></node>"#;
-
-    /// Whether this is a KDE session, where Dolphin takes the promise.
-    pub(super) fn offered() -> bool {
-        std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|p| p.eq_ignore_ascii_case("kde")))
-    }
 
     /// What the copies came to, once they're over: why not, if one failed.
     type Then = Box<dyn FnOnce(Option<String>) + Send>;
@@ -1616,6 +1912,7 @@ fn start_drag(
     files: impl Fn() -> Vec<Made> + 'static,
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
+    _dropped: impl Fn(bool) + Send + Sync + 'static,
 ) -> Result<()> {
     let paths = match settled(files()) {
         Some(Ok(paths)) => paths,
@@ -1637,7 +1934,7 @@ fn start_drag(
                 if dropped {
                     taken();
                 }
-                let _ = told.emit("drag-ended", DragEnded { delivered: dropped, failed: None });
+                let _ = told.emit("drag-ended", DragEnded { delivered: dropped, ..Default::default() });
             });
         },
         drag::Options::default(),
@@ -1715,6 +2012,74 @@ mod tests {
         assert!(settled(vec![ready("/a"), Made::Making]).is_none());
         assert_eq!(settled(vec![ready("/a"), ready("/b")]), Some(Ok(vec![PathBuf::from("/a"), PathBuf::from("/b")])));
         assert_eq!(settled(vec![Made::Making, Made::Failed("no".into())]), Some(Err("no".into())));
+    }
+
+    /// What a drag out of the window comes to, by what was seen of it: let go
+    /// on an app that took nothing while the files were still being made, it
+    /// takes finished files only (named, where the system says); one that
+    /// failed is said only once it's let go on another app; called off or
+    /// dropped on the app's own window, nothing.
+    #[test]
+    fn a_drag_ends_as_its_receiver_took_it() {
+        use Ending::*;
+        let named = || Some("Kdenlive".to_string());
+        let blocked = || Some("blocked".to_string());
+        let ended = |delivered, failed: Option<&str>, finished_only, receiver: Option<&str>| DragEnded {
+            delivered,
+            failed: failed.map(String::from),
+            finished_only,
+            receiver: receiver.map(String::from),
+        };
+        assert_eq!(drag_outcome(Elsewhere, true, None, true, named()), ended(true, None, false, None), "given");
+        assert_eq!(
+            drag_outcome(Elsewhere, false, None, false, named()),
+            ended(false, None, true, Some("Kdenlive")),
+            "let go before it was made, nothing taken"
+        );
+        assert_eq!(drag_outcome(Elsewhere, false, None, false, None), ended(false, None, true, None), "name unknown");
+        assert_eq!(drag_outcome(Elsewhere, false, None, true, named()), DragEnded::default(), "made, not taken");
+        assert_eq!(
+            drag_outcome(Elsewhere, false, blocked(), false, named()),
+            ended(false, Some("blocked"), false, None)
+        );
+        assert_eq!(drag_outcome(Nowhere, false, blocked(), false, None), ended(false, Some("blocked"), false, None));
+        assert_eq!(drag_outcome(Nowhere, false, None, false, None), DragEnded::default(), "dropped on nothing");
+        assert_eq!(drag_outcome(Elsewhere, false, Some(CANCELED.into()), false, named()), DragEnded::default());
+        for ending in [CalledOff, Back] {
+            for (given, failure) in [(true, None), (false, None), (false, blocked())] {
+                assert_eq!(drag_outcome(ending, given, failure, false, named()), DragEnded::default(), "{ending:?}");
+            }
+        }
+    }
+
+    /// The receiving app is named as its desktop entry names it: the entry
+    /// naming its window's class, else the class.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_app_is_named_by_its_desktop_entry() {
+        let entry = "[Desktop Entry]\nName=Kdenlive\nStartupWMClass=kdenlive\n[Desktop Action new]\nName=New\n";
+        assert_eq!(desktop_entry(entry), (Some("Kdenlive".into()), Some("kdenlive")));
+        assert_eq!(desktop_entry("[Desktop Entry]\nExec=x\n"), (None, None));
+        assert_eq!(app_name("org.example.NoSuchApp"), "NoSuchApp", "a reverse domain name's last part");
+        assert_eq!(app_name("No-such-app"), "No-such-app");
+    }
+
+    /// A clip made only for a drag out of the window showed in the list of
+    /// jobs while the drag was still in the window, where nothing had been let
+    /// go yet: it's listed once it's let go on another app, until it's over.
+    #[test]
+    fn a_drag_clip_is_listed_with_the_jobs_only_once_let_go_elsewhere() {
+        let (db, vod) = library();
+        let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
+        let pill = db.add_clip(vod, 3.0, 4.0, "pill", true).unwrap().id;
+        let cutter = Cutter::new();
+        let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
+        assert!(listed(hidden).is_none(), "listed while in the window's drag");
+        assert!(listed(pill).is_some(), "a pill's making");
+        cutter.dragged_out(&[hidden], true);
+        assert_eq!(listed(hidden).map(|(_, label)| label).as_deref(), Some("dragged"));
+        cutter.dragged_out(&[hidden], false);
+        assert!(listed(hidden).is_none(), "listed once the drag was over");
     }
 
     /// Several clips made at once went in one at a time: one that failed

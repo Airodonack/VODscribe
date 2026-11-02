@@ -312,10 +312,14 @@ export interface Job {
 }
 
 /** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
- *  whether they went to another app, and if they never came, why. */
+ *  whether they went to another app; if they never came, why; and whether
+ *  they didn't because the app let go on takes only files already made
+ *  (`finished_only`; `receiver`, its name, where the system gives it). */
 export interface DragEnded {
   delivered: boolean;
   failed: string | null;
+  finished_only: boolean;
+  receiver: string | null;
 }
 
 /** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */

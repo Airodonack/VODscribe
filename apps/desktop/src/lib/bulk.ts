@@ -145,10 +145,10 @@ export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: numb
     faces,
     stretches: doc.kind === "vod" ? chosenSegments(list).map((s) => ({ start: s.start, end: s.end })) : [],
     files: () => chosenFiles(list),
-    // Made as the carry begins where that's quick: a VOD playing from a file
-    // here. A site's would be downloaded for every carry, even one dropped
-    // inside the window; an edit's pieces may be a site's too.
-    early: doc.kind === "vod" && !clips.fromSite,
+    // Made as the carry begins where the footage is here: a VOD playing from
+    // a file here, an edit whose pieces all do. A site's is downloaded only
+    // once the carry leaves the window, not for one dropped inside it.
+    early: doc.kind === "vod" ? !clips.fromSite : edits.footageHere,
     vodId: doc.kind === "vod" ? doc.id : undefined,
     home,
     from,

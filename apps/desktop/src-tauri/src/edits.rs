@@ -544,7 +544,7 @@ pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: 
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
-    crate::clips::drag_file(window, files, None, taken).await
+    crate::clips::drag_file(window, files, None, taken, |_| {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

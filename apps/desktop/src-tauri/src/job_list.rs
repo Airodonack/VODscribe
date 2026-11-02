@@ -133,14 +133,40 @@ fn listed(app: &AppHandle) -> Vec<Job> {
     let erasing = *state.job_list.erasing.lock().unwrap();
     // Read-only: never waits for the library's writes.
     let db = state.reads.lock().unwrap();
-    arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id))
+    let out = |id| state.clips.is_out(id);
+    arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out))
 }
 
-/// What job `id` on `queue` makes and what it's called; None if it's gone.
-fn describe(db: &Db, queue: Queue, id: i64) -> Option<(Kind, String)> {
+/// Sends the list as it is now, from the main thread, where Tauri sends it at
+/// once: while a drag out waits for its files in a main loop run inside an
+/// ask (clips.rs `start_drag`), what the list's own thread sends waits in
+/// Tauri's queue until that ends, and the jobs shown would stand. Not if the
+/// library's reads are busy just now (the next tick tells).
+#[cfg(target_os = "linux")]
+pub(crate) fn retell(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let render = state.clips.listed();
+    let erase = state.sweeper.listed();
+    let rendering = *state.job_list.rendering.lock().unwrap();
+    let erasing = *state.job_list.erasing.lock().unwrap();
+    let Ok(db) = state.reads.try_lock() else { return };
+    let out = |id| state.clips.is_out(id);
+    let jobs = arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out));
+    drop(db);
+    let _ = app.emit("jobs", &jobs);
+}
+
+/// What job `id` on `queue` makes and what it's called; None if it's gone,
+/// or if it's a clip made only for a drag out of the window that's still in
+/// the window's drag (not `out`: let go on another app), which is seen only
+/// once it's been let go there (Cancel then refuses it).
+pub(crate) fn describe(db: &Db, queue: Queue, id: i64, out: impl Fn(i64) -> bool) -> Option<(Kind, String)> {
     match queue {
         Queue::Render => match db.is_snippet(id).ok()?? {
-            true => Some((Kind::Clip, db.clip(id).ok()??.title)),
+            true => {
+                let clip = db.clip(id).ok()??;
+                (clip.shown || out(id)).then_some((Kind::Clip, clip.title))
+            }
             false => Some((Kind::Edit, db.edit(id).ok()??.title)),
         },
         Queue::Erase => Some((Kind::Erase, db.vod(id).ok()??.info.title)),
