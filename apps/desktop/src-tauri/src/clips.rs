@@ -950,11 +950,12 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// Whether a clip whose file isn't made yet can be dragged out of the window:
 /// the system's drag begins at once and the file goes to where it's dropped
 /// once it's made (a file manager waits for it; an app that takes only files
-/// already made gets none, and the page says so: `DragEnded`). Linux and
-/// macOS, so far; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the
+/// already made gets none, and the page says so: `DragEnded`). Linux, macOS
+/// and Windows; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the
 /// files at the window's edge before the drag begins (dragout.ts).
 pub(crate) fn drags_before_made() -> bool {
-    cfg!(any(target_os = "linux", target_os = "macos")) && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
+    cfg!(any(target_os = "linux", target_os = "macos", windows))
+        && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
 }
 
 /// Whether the page may drag clips out before their files are made
@@ -1101,7 +1102,7 @@ pub(crate) struct DragEnded {
 /// A file in a drag out of the window: the name it goes by where it's
 /// dropped, known before it's made (macOS names a file promised then), and
 /// the job making it, whose progress is shown there meanwhile.
-// (Read by macOS's drag only.)
+// (macOS's drag reads both, Windows' the name, Linux's neither.)
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct Outgoing {
     pub(crate) name: String,
@@ -1193,8 +1194,9 @@ fn drag_outcome(
 }
 
 /// The files `made` says are where, if all are made: their paths; else, if
-/// one won't be, why; else (some still being made) None.
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// one won't be, why; else (some still being made) None. (Linux's drag; the
+/// others ask each file's.)
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn settled(made: Vec<Made>) -> Option<Result<Vec<PathBuf>, String>> {
     let mut paths = Vec::new();
     let mut making = false;
@@ -1219,11 +1221,11 @@ thread_local! {
 }
 
 /// A line about a drag's progress, in the tests' builds only.
-#[cfg(all(target_os = "linux", feature = "e2e"))]
+#[cfg(all(any(target_os = "linux", windows), feature = "e2e"))]
 fn trace(what: &str) {
     eprintln!("drag: {what}");
 }
-#[cfg(all(target_os = "linux", not(feature = "e2e")))]
+#[cfg(all(any(target_os = "linux", windows), not(feature = "e2e")))]
 fn trace(_: &str) {}
 
 /// The window a drag is over, asking for its data or let go on (`context`'s
@@ -1941,43 +1943,75 @@ fn release_button(page: &gtk::Widget) {
     gtk::main_do_event(&mut event);
 }
 
-/// The system's drag of the files `files` says are where, once they're all
-/// made (the page waits for them here: `drags_before_made`).
+/// The system's drag (OLE's) of the files `files` says are where, made or
+/// not (`drag_source`): it begins at once, each file offered as a virtual
+/// file (Explorer copies it once it's made, showing its own dialog) and as
+/// itself (given to an app that takes only that once all are made). The page
+/// hears "drag-ended" once they went (for Explorer, once its copies are
+/// written), or didn't; let go on an app that asked for the files themselves
+/// while one was still being made, that it takes finished files only, named
+/// as its program describes itself.
 #[cfg(windows)]
 fn start_drag(
     window: &tauri::WebviewWindow,
-    _names: Vec<Outgoing>,
-    files: impl Fn() -> Vec<Made> + 'static,
+    names: Vec<Outgoing>,
+    files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
-    _dropped: impl Fn(bool) + Send + Sync + 'static,
+    dropped: impl Fn(bool) + Send + Sync + 'static,
 ) -> Result<()> {
-    let paths = match settled(files()) {
-        Some(Ok(paths)) => paths,
-        Some(Err(why)) => anyhow::bail!("Couldn't make the clip: {why}"),
-        None => anyhow::bail!("That clip's file isn't made yet."),
-    };
+    use crate::drag_source::{self, State};
+
+    /// One of the drag's files, the `at`th that `files` says is where.
+    struct Polled {
+        files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
+        at: usize,
+        name: String,
+    }
+    impl drag_source::Item for Polled {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+        fn state(&self) -> State {
+            match (self.files)().into_iter().nth(self.at) {
+                Some(Made::Ready(path)) => State::Ready(path),
+                Some(Made::Making) => State::Making,
+                Some(Made::Failed(why)) => State::Failed(why),
+                None => State::Failed("That clip is gone.".into()),
+            }
+        }
+        // (Explorer's Cancel stops nothing here: the page forgets a clip
+        // made only for the drag once it hears it went nowhere.)
+    }
+    let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
+    let items = (names.into_iter().enumerate())
+        .map(|(at, Outgoing { name, .. })| {
+            Box::new(Polled { files: files.clone(), at, name }) as Box<dyn drag_source::Item>
+        })
+        .collect();
+    let hwnd = window.hwnd()?.0 as isize;
     let told = window.clone();
-    let taken = std::sync::Arc::new(taken);
-    drag::start_drag(
-        window,
-        // A list: Windows' file drop holds them all.
-        drag::DragItem::Files(paths),
-        drag::Image::Raw(image),
-        move |result, _| {
+    drag_source::run(
+        hwnd,
+        items,
+        &image,
+        // Let go on another app: listed with the jobs from now, until it's over.
+        dropped,
+        move |outcome| {
             // Taken, then the page told (so a drag of its own coming back in
-            // isn't taken for one to add), in that order, off the UI thread.
-            let (dropped, taken, told) = (matches!(result, drag::DragResult::Dropped), taken.clone(), told.clone());
+            // isn't taken for one to add), off the UI thread (the library's lock).
             std::thread::spawn(move || {
-                if dropped {
+                let made = !outcome.refused_unmade;
+                let ended = drag_outcome(outcome.ending, outcome.delivered, outcome.failure, made, outcome.receiver);
+                trace(&format!("ended: {ended:?}"));
+                if ended.delivered && outcome.taken {
                     taken();
                 }
-                let _ = told.emit("drag-ended", DragEnded { delivered: dropped, ..Default::default() });
+                let _ = told.emit("drag-ended", ended);
             });
         },
-        drag::Options::default(),
+        trace,
     )
-    .map_err(|e| anyhow::anyhow!("The drag couldn't start: {e}"))
 }
 
 /// The system's drag (AppKit's) of the files `files` says are where, made or

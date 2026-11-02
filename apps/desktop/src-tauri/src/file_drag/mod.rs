@@ -5,9 +5,9 @@
 //! and hears `Event`s back.
 //!
 //! macOS only, so far (`macos`): Linux's drag is still in `clips`, and
-//! Windows' waits for the files before it begins.
+//! Windows' is `drag_source`.
 
-// (Elsewhere only `Ending` is used, by Linux's drag.)
+// (Elsewhere only `Ending` is used, by Linux's and Windows' drags.)
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
@@ -45,7 +45,7 @@ pub(crate) trait Item: Send + Sync {
 }
 
 /// Where a drag out of the window ended.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Ending {
     /// Called off (Escape). (macOS can't tell it from a drop on nothing.)
     #[cfg_attr(target_os = "macos", allow(dead_code))]

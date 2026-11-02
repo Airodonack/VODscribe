@@ -29,8 +29,8 @@
 // so Finder has its own copies; there also a pill already made lands at
 // once, Finder's cancel on the file being written lands nothing and says
 // nothing, so does Cancel in the list of jobs, and three clips land one by
-// one. Linux (X11) and macOS, so far; E2E_FILE_MANAGER=dolphin drops on
-// Dolphin outside a KDE session.
+// one. Linux (X11), macOS and Windows (on File Explorer: `onWindows`);
+// E2E_FILE_MANAGER=dolphin drops on Dolphin outside a KDE session.
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -67,6 +67,7 @@ const SLACK = 0.1;
 export default {
   name: "drag-promise",
   async run(app, ctx) {
+    if (process.platform === "win32") return onWindows(app, ctx);
     const why = noFileManager();
     if (why) ctx.skip(why);
     // Dolphin copies the files in (KDE's promise), and Finder has them
@@ -663,4 +664,446 @@ function mtimeOf(file) {
   } catch {
     return 0;
   }
+}
+
+/** The ffmpeg stand-in on Windows (C#, built by PowerShell): as the shell one does on Linux, by `mode`. */
+const STAND_IN = (
+  real,
+  mode,
+  held,
+) => `using System; using System.Diagnostics; using System.IO; using System.Linq; using System.Text; using System.Threading;
+static class StandIn {
+  static string Quote(string a) {
+    if (a.Length > 0 && a.IndexOfAny(new[] { ' ', '\\t', '"' }) < 0) return a;
+    var s = new StringBuilder("\\""); int slashes = 0;
+    foreach (char c in a) {
+      if (c == '\\\\') { slashes++; continue; }
+      if (c == '"') { s.Append('\\\\', slashes * 2 + 1); s.Append('"'); slashes = 0; continue; }
+      s.Append('\\\\', slashes); slashes = 0; s.Append(c);
+    }
+    s.Append('\\\\', slashes * 2); s.Append('"'); return s.ToString();
+  }
+  static int Main(string[] args) {
+    string how = ""; try { how = File.ReadAllText(@"${mode}").Trim(); } catch {}
+    string part = args.FirstOrDefault(a => a.EndsWith(".part"));
+    if (part != null) {
+      if (how == "fail") { Thread.Sleep(${held * 500}); Console.Error.WriteLine("Made to fail by the test."); return 1; }
+      if (how == "slow") Thread.Sleep(${held * 1000});
+    }
+    var p = Process.Start(new ProcessStartInfo(@"${real}", string.Join(" ", args.Select(Quote))) { UseShellExecute = false });
+    p.WaitForExit(); return p.ExitCode;
+  }
+}`;
+
+/**
+ * Windows: the drag is OLE's, each clip offered as a virtual file (Explorer
+ * takes that, copying it in once it's made, its own copy dialog up
+ * meanwhile) and as itself (an app that takes real files only gets it only
+ * if it's made by the drop). On a File Explorer window beside the app's:
+ * let go before the file is made, it lands once it is, the window answering
+ * meanwhile and the copy dialog up; made before the drop, it lands at once;
+ * called off (Escape), nothing lands; its encode failing, nothing lands,
+ * Explorer says nothing and the app says why; canceled from the list of jobs
+ * while Explorer waits, nothing lands and nobody says anything; three
+ * pills picked and carried together, being made again, all land, one by one
+ * in their order. On an app that takes real files only (Windows PowerShell's
+ * form), before the file's made: nothing lands, the app says Windows
+ * PowerShell takes finished files only and keeps the clip as a pill, which
+ * once made drags there and is taken. Each step logs the app's own lines
+ * about the drag (an e2e build's).
+ */
+async function onWindows(app, ctx) {
+  const why = os.unavailable();
+  if (why) ctx.skip(why);
+  const explorer = await import("../lib/explorer.mjs");
+  const work = path.join(ctx.out, "drag-promise");
+  rmSync(work, { recursive: true, force: true });
+  const dest = path.join(work, "drop-here");
+  mkdirSync(dest, { recursive: true });
+
+  // The stand-in for the app's ffmpeg (its bin is kept between scenarios:
+  // one there is moved aside, and back after).
+  const bin = path.join(dataDirs().at(-1), "bin");
+  mkdirSync(bin, { recursive: true });
+  const ffmpeg = path.join(bin, "ffmpeg.exe");
+  const aside = path.join(bin, "ffmpeg.e2e-real.exe");
+  // (One already aside is the real one: what's in its place is a stand-in a
+  // run that stopped short left there. Stand-ins put out of the way while
+  // still running go now.)
+  for (const f of readdirSync(bin).filter((f) => f.startsWith("ffmpeg.e2e-old-")))
+    rmSync(path.join(bin, f), { force: true });
+  if (existsSync(aside)) rmSync(ffmpeg, { force: true });
+  else if (existsSync(ffmpeg)) renameSync(ffmpeg, aside);
+  const real = existsSync(aside)
+    ? aside
+    : execFileSync("where.exe", ["ffmpeg"], { encoding: "utf8" }).split(/\r?\n/)[0].trim();
+  const mode = path.join(work, "ffmpeg-mode");
+  const encodes = (how) => writeFileSync(mode, how);
+  const source = path.join(work, "stand-in.cs");
+  writeFileSync(source, STAND_IN(real, mode, HELD));
+  execFileSync("powershell.exe", [
+    ...["-NoProfile", "-NonInteractive", "-Command"],
+    `Add-Type -TypeDefinition (Get-Content -Raw '${source}') -OutputAssembly '${ffmpeg}' -OutputType ConsoleApplication`,
+  ]);
+  encodes("slow");
+  // The clips folder (Videos\VODscribe), as it was: what the test adds there goes after.
+  const clips = clipsDir();
+  const appFiles = () =>
+    [...filesUnder(clips), ...filesUnder(dataDirs()[0])].filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));
+  const had = new Set(appFiles());
+  let target = null;
+  let taker = null;
+  try {
+    await app.toLibrary();
+    const [vod] = await app.addFiles([longVideo(path.join(ctx.out, "fixtures"))]);
+    await until("the video read", async () => (await app.invoke("list_vods"))[0]?.duration > 0, 5 * MINUTE);
+    await setFormat(app, "MOV");
+    // The app on the left of the screen, Explorer on the right.
+    const screen = explorer.screenSize();
+    const width = Math.round(screen.w * 0.62);
+    explorer.placeWindowOf(app.driver.proc.pid, { x: 0, y: 0, w: width, h: screen.h - 48 });
+    const beside = { x: width + 8, y: 40, w: screen.w - width - 16, h: Math.round(screen.h * 0.7) };
+    await app.openPaused(vod.id);
+    // Cuts at 10, 20 and 30 s: stretches of ten seconds.
+    for (const time of [10, 20, 30]) {
+      await toTime(app, time);
+      const marks = (await app.invoke("list_marks", { vodId: vod.id })).length;
+      await app.key("b");
+      await until("the cut", async () => (await app.invoke("list_marks", { vodId: vod.id })).length > marks, 10_000);
+      await app.key("Escape");
+    }
+    // The stretches between the cuts, as made (the playhead lands within a second of each).
+    const cuts = [0, ...(await app.invoke("list_marks", { vodId: vod.id })).map((m) => m.start).sort((a, b) => a - b)];
+    const stretchFrom = (start) => cuts[cuts.findIndex((c) => c > start + 0.01)] - start;
+    const stretchAt = (time) => {
+      const start = Math.max(...cuts.filter((c) => c <= time));
+      return stretchFrom(start);
+    };
+    target = await explorer.openExplorer(dest, beside);
+    await app.js(
+      `window.__ended = [];
+       window.__jobs = [];
+       const internals = window.__TAURI_INTERNALS__;
+       const handler = internals.transformCallback((e) => window.__ended.push({ ...e.payload, at: Date.now() }));
+       await internals.invoke("plugin:event|listen", { event: "drag-ended", target: { kind: "Any" }, handler });
+       const jobs = internals.transformCallback((e) => window.__jobs.push(e.payload.map((j) => j.id)));
+       await internals.invoke("plugin:event|listen", { event: "jobs", target: { kind: "Any" }, handler: jobs });`,
+    );
+    const centre = async (selector) => {
+      const r = await os.rectOf(app, selector);
+      return { x: r.x + Math.round(r.w / 2), y: r.y + Math.round(r.h / 2) };
+    };
+    const hidden = async () => (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => !c.shown);
+    const pill = (id) => app.js(`return !!document.querySelector(arguments[0])`, `.chip[data-clip="${id}"]`);
+    const listed = async (id) => (await app.invoke("list_jobs")).some((j) => j.id === id);
+    const ended = () => until("the system's drag, over", () => app.js(`return window.__ended[0] ?? false`), 2 * MINUTE);
+    // The app's lines about each drag (an e2e build's), from where the last step's ended.
+    let read = 0;
+    const lines = () => {
+      const all = (app.driver.proc.stderr ?? "").split(/\r?\n/).filter((l) => l.startsWith("drag: "));
+      const fresh = all.slice(read);
+      read = all.length;
+      return fresh;
+    };
+    const say = (label) => ctx.log(`${label}, the app's lines:\n    ${lines().join("\n    ") || "(none)"}`);
+    const droppedHere = () => readdirSync(dest);
+    const settle = async () => {
+      await until("the carry over", () => app.js(`return !document.querySelector(".carry-ghost")`), MINUTE);
+      await until("no clip left made for a drag", async () => (await hidden()).length === 0, 30_000);
+      await sleep(1000);
+      explorer.closeExplorerDialogs();
+      for (const f of droppedHere()) rmSync(path.join(dest, f), { force: true });
+    };
+    /**
+     * Clip (or `what`) pressed and carried over the window's edge to `to`, in
+     * one gesture (the page can't be asked anything while the system's drag
+     * is up); there, `then` (letting go, say). A screenshot of each as it's
+     * over the drop (drag-promise-<n>.png): the drag's picture, drawn by the
+     * shell, isn't a window of the app's to look for.
+     */
+    /** The app's window in front again, as a click on its title bar puts it
+     *  (the app a drop went to comes to the front, and the keys go there). */
+    const focusApp = async () => {
+      const page = await os.windowRect(app);
+      os.click(page.x + Math.round(page.w / 2), page.y - 16);
+      await sleep(300);
+    };
+    let shots = 0;
+    const carryOut = async (then, what = "button.action.clip", to = target.drop) => {
+      await focusApp();
+      await app.js(`performance.clearMarks(); window.__ended = [];`);
+      const from = await centre(what);
+      const steps = [
+        ["down", from.x, from.y],
+        ["wait", 100],
+      ];
+      for (let i = 1; i <= 18; i++)
+        steps.push(
+          ["move", Math.round(from.x + (to.x - from.x) * (i / 18)), Math.round(from.y + (to.y - from.y) * (i / 18))],
+          ["wait", 50],
+        );
+      steps.push(
+        ["move", to.x + 8, to.y + 4],
+        ["wait", 300],
+        ["shot", path.join(ctx.out, `drag-promise-${++shots}.png`)],
+      );
+      steps.push(["move", to.x + 16, to.y + 8], ["wait", 300], ...then);
+      await os.gesture(steps);
+    };
+    const landed = async (label, count = 1) => {
+      const got = await until(
+        `${label}: ${count} file${count > 1 ? "s" : ""} in the folder`,
+        () => droppedHere().length >= count && droppedHere(),
+        2 * MINUTE,
+        { every: 100 },
+      );
+      return got.map((f) => ({ name: f, length: probeDuration(path.join(dest, f)) }));
+    };
+
+    // 1. Let go on Explorer before the file is made: Explorer's copy dialog
+    // is up while it's made, the window answers meanwhile, the clip's making
+    // is listed with the jobs, and the file lands whole once made. The app's
+    // own file goes (Explorer has its copy).
+    await toTime(app, 0);
+    await carryOut([["letgo", target.drop.x + 16, target.drop.y + 8]]);
+    const dropped = Date.now();
+    const [making] = await hidden();
+    if (!making || making.status === "ready")
+      throw new Error(`the clip was ${making?.status ?? "gone"} as it was dropped, not still being made`);
+    await until("its making listed with the jobs, let go elsewhere", () => listed(making.id), 5000, { every: 100 });
+    const copying = await until(
+      "Explorer's copy dialog, while the file is made",
+      () => explorer.explorerDialogs().find((d) => /cop/i.test(`${d.title} ${d.texts.join(" ")}`)) ?? false,
+      HELD * 1000,
+      { every: 200 },
+    );
+    const answers = [];
+    for (let i = 0; i < 3; i++) {
+      const t0 = Date.now();
+      await app.shownTime();
+      answers.push(Date.now() - t0);
+      await sleep(500);
+    }
+    if (Math.max(...answers) > 1000) throw new Error(`the window took ${Math.max(...answers)} ms to answer`);
+    const end = await ended();
+    if (!end.delivered) throw new Error(`the page heard the drag went nowhere: ${JSON.stringify(end)}`);
+    const [first] = await landed("let go before it was made");
+    if (Math.abs(first.length - stretchAt(0)) > SLACK)
+      throw new Error(`the file dropped is ${first.length} s long, not ${stretchAt(0)} s`);
+    await settle();
+    if (appFiles().some((f) => path.basename(f) === first.name))
+      throw new Error(`the app's file ${first.name} stayed, though Explorer has its own copy`);
+    ctx.log(
+      `let go before it was made: Explorer's "${copying.title}" up meanwhile, the page answering in ${answers.join(", ")} ms; landed ${end.at - dropped} ms after the drop (${first.name}, ${first.length.toFixed(2)} s)`,
+    );
+    say("1");
+
+    // 2. Made before the drop (held over Explorer while it's made): it lands at once.
+    encodes("fast");
+    await toTime(app, 12);
+    await carryOut([
+      ["wait", 6000],
+      ["letgo", target.drop.x + 16, target.drop.y + 8],
+    ]);
+    const quick = Date.now();
+    await landed("made before the drop");
+    const atOnce = Date.now() - quick;
+    if (!(await ended()).delivered) throw new Error("the page heard the made clip went nowhere");
+    await settle();
+    ctx.log(`made before the drop: landed ${atOnce} ms after it`);
+    say("2");
+
+    // 3. Called off (Escape) while its file is made: nothing lands, nothing left.
+    encodes("slow");
+    await toTime(app, 0);
+    const before = new Set(appFiles());
+    await carryOut([["wait", 1000], ["key", "Escape"], ["wait", 300], ["up"]]);
+    const off = await ended();
+    if (off.delivered) throw new Error(`the page heard a drag called off went: ${JSON.stringify(off)}`);
+    await settle();
+    await sleep(HELD * 1000);
+    const left = appFiles().filter((f) => !before.has(f));
+    if (droppedHere().length || left.length) throw new Error(`a drag called off left ${[...droppedHere(), ...left]}`);
+    ctx.log("called off while its file was made: nothing landed, nothing left");
+    say("3");
+
+    // 4. Its encode fails: nothing lands, Explorer says nothing, the app says why.
+    encodes("fail");
+    await toTime(app, 0);
+    await carryOut([["letgo", target.drop.x + 16, target.drop.y + 8]]);
+    const failed = await ended();
+    if (failed.delivered || !failed.failed)
+      throw new Error(`the page heard ${JSON.stringify(failed)} of a failed clip`);
+    const toast = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
+    if (!/Couldn't make the clip/.test(toast)) throw new Error(`the toast says "${toast}"`);
+    await sleep(1500);
+    const errors = explorer.explorerDialogs();
+    if (errors.length) throw new Error(`Explorer put up ${JSON.stringify(errors)} for a clip that failed`);
+    await settle();
+    if (droppedHere().length) throw new Error(`a clip that failed left ${droppedHere()}`);
+    ctx.log(`its encode failed: nothing landed, no dialog of Explorer's, the toast says "${toast}"`);
+    say("4");
+
+    // 5. Canceled from the list of jobs while Explorer waits for it: its
+    // dialog goes, nothing lands, and nothing's said.
+    encodes("slow");
+    await toTime(app, 0);
+    await carryOut([["letgo", target.drop.x + 16, target.drop.y + 8]]);
+    const [waited] = await hidden();
+    await until("its making listed with the jobs", () => listed(waited.id), 5000, { every: 100 });
+    const job = (await app.invoke("list_jobs")).find((j) => j.id === waited.id);
+    // (What the list's Cancel does: Jobs.svelte.)
+    await app.invoke("cancel_job", { kind: job.kind, id: job.id });
+    const canceled = await ended();
+    if (canceled.delivered || canceled.failed || canceled.finished_only)
+      throw new Error(`the page heard ${JSON.stringify(canceled)} of a clip canceled`);
+    await sleep(1500);
+    const still = explorer.explorerDialogs();
+    if (still.length) throw new Error(`Explorer still shows ${JSON.stringify(still)} after the cancel`);
+    if (await app.toastSays()) throw new Error(`the toast says "${await app.toastSays()}" of a cancel`);
+    await settle();
+    if (droppedHere().length) throw new Error(`a clip canceled left ${droppedHere()}`);
+    ctx.log("canceled from the list of jobs while Explorer waited: its dialog gone, nothing landed, nothing said");
+    say("5");
+
+    // 6. Three pills picked and carried together, all being made again (MP4
+    // picked since they were made): all land, one by one, in their order.
+    encodes("fast");
+    const three = await app.invoke("add_clips", {
+      vodId: vod.id,
+      ranges: [
+        [0, 10],
+        [10, 20],
+        [20, 30],
+      ],
+    });
+    await until(
+      "the three made",
+      async () => {
+        const all = await app.invoke("list_clips", { vodId: vod.id });
+        return three.every((p) => all.find((c) => c.id === p.id)?.status === "ready");
+      },
+      2 * MINUTE,
+    );
+    await focusApp();
+    await setFormat(app, "MP4");
+    encodes("slow");
+    for (const p of three) {
+      await until(
+        "its pill",
+        () => app.js(`return !!document.querySelector(arguments[0])`, `.chip[data-clip="${p.id}"]`),
+        MINUTE,
+      );
+      await app.js(
+        `document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
+           .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));`,
+        p.id,
+      );
+    }
+    await until(
+      "all three picked",
+      () => app.js(`return document.querySelectorAll(".chip.chosen").length === 3`),
+      10_000,
+    );
+    await carryOut([["letgo", target.drop.x + 16, target.drop.y + 8]], `.chip[data-clip="${three[0].id}"] .length`);
+    const arrivals = [];
+    await until(
+      "the three files in the folder",
+      () => {
+        for (const f of droppedHere())
+          if (!arrivals.some((a) => a.name === f)) arrivals.push({ name: f, at: Date.now() });
+        return arrivals.length === 3;
+      },
+      3 * MINUTE,
+      { every: 100 },
+    );
+    if (!(await ended()).delivered) throw new Error("the page heard the three went nowhere");
+    const lengths = arrivals.map((a) => probeDuration(path.join(dest, a.name)));
+    if (lengths.some((l) => Math.abs(l - 10) > SLACK)) throw new Error(`the three are ${lengths} s long, not 10`);
+    const names = arrivals.map((a) => a.name);
+    if (names.join() !== [...names].sort().join()) throw new Error(`the three came in the order ${names.join(", ")}`);
+    ctx.log(
+      `three carried together, all being made: landed ${arrivals.map((a) => a.at - arrivals[0].at).join(", ")} ms apart, in order (${names.join(", ")})`,
+    );
+    await settle();
+    say("6");
+    await focusApp();
+    await app.key("Escape");
+    // (Off the clip bar again, so the next pill shows in its width.)
+    for (const p of three) await app.invoke("delete_clip", { id: p.id });
+
+    // 7. Let go on an app that takes real files only, before the file's made:
+    // nothing lands, the app says that app takes finished files only, by the
+    // name its program gives itself, and keeps the clip as a pill, which once
+    // made drags there and is taken.
+    target.close();
+    target = null;
+    taker = await explorer.openFilesOnly(work, beside);
+    await toTime(app, 40);
+    await carryOut([["letgo", taker.drop.x + 16, taker.drop.y + 8]], "button.action.clip", taker.drop);
+    // (The newest clip: kept as a pill as soon as the drag's over, which is at once here.)
+    const [kept] = (await app.invoke("list_clips", { vodId: vod.id })).sort((a, b) => b.id - a.id);
+    if (!kept || kept.status === "ready") throw new Error(`the clip was ${kept?.status ?? "gone"} as it was let go`);
+    const refused = await ended();
+    const takerName = "Windows PowerShell";
+    if (!refused.finished_only || refused.receiver !== takerName)
+      throw new Error(`the page heard ${JSON.stringify(refused)} of a drop on an app that takes finished files only`);
+    const said = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
+    const want = `${takerName} takes finished files only. The clip is being made; drag it from the clip bar when it's ready.`;
+    if (said !== want) throw new Error(`the toast says "${said}", not "${want}"`);
+    if (!taker.said().includes("gave nothing")) throw new Error(`the app says ${JSON.stringify(taker.said())}`);
+    say("7, before it was made");
+    await until(
+      "its pill, made",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.chip.ready[data-clip="${kept.id}"]`),
+      2 * MINUTE,
+    );
+    await carryOut(
+      [["letgo", taker.drop.x + 16, taker.drop.y + 8]],
+      `.chip[data-clip="${kept.id}"] .length`,
+      taker.drop,
+    );
+    if (!(await ended()).delivered) throw new Error("the page heard the pill made went nowhere");
+    const took = await until("the app took it", () => taker.said().find((l) => l.startsWith("took ")) ?? false, 10_000);
+    ctx.log(
+      `let go on an app that takes real files only: nothing taken, the toast says "${said}"; its pill, once made, dragged there: ${took}`,
+    );
+    say("7, once made");
+  } finally {
+    // Cleaned up without hiding why the steps failed, if they did.
+    try {
+      // A clip Explorer still waits for, canceled: it closes its dialog with no
+      // word (with the app gone instead, it would say the call failed).
+      for (const job of await app.invoke("list_jobs").catch(() => []))
+        await app.invoke("cancel_job", { kind: job.kind, id: job.id }).catch(() => {});
+      await sleep(1500);
+      taker?.close();
+      target?.close();
+      explorer.closeExplorerDialogs();
+      // The stand-in passes everything on from now. Still running (the app's
+      // own ffmpeg may be busy a while), it can't be deleted, only moved out
+      // of the way: the next run deletes it.
+      encodes("fast");
+      if (existsSync(ffmpeg)) renameSync(ffmpeg, path.join(bin, `ffmpeg.e2e-old-${Date.now()}.exe`));
+      if (existsSync(aside)) renameSync(aside, ffmpeg);
+      for (const f of appFiles()) if (!had.has(f)) rmSync(f, { force: true });
+    } catch (e) {
+      ctx.log(`not all cleaned up: ${e.message}`);
+    }
+  }
+}
+
+/** Puts the playhead at `time` s, as a press on the timeline there does. */
+async function toTime(app, time) {
+  await app.js(
+    `${AT}
+     const bar = document.querySelector(".scrubber");
+     const box = bar.getBoundingClientRect();
+     const x = box.left + 1 + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * (box.width - 2);
+     const y = box.top + box.height / 2;
+     bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+     window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+    time,
+  );
+  await until(`the playhead at ${time} s`, async () => Math.abs((await app.shownTime()) - time) <= 1, 10_000);
 }

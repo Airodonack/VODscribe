@@ -11,6 +11,8 @@ mod chats;
 mod choices;
 mod clipboard;
 mod clips;
+#[cfg(windows)]
+mod drag_source;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod edits;
