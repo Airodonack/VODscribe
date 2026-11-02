@@ -146,7 +146,7 @@ async function cutOut(
       toast.show(`Cut ${what}`, { label: "Undo", run: () => undoIn(doc) });
     return;
   }
-  if (picked.clips.length) return void (await removeChosenClips());
+  if (picked.clips.length) return void (await removeChosenClips(picked.clips, doc));
   toast.show(`${said} (a VOD's stretch stays)`);
 }
 

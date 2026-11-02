@@ -43,10 +43,9 @@ export async function clipSegments() {
   else await exportStretches(ranges);
 }
 
-/** Takes the clips selected off a VOD's clip bar, as one change; the set then goes. */
-export async function removeChosenClips() {
-  const ids = chosenClips();
-  const doc = clips.doc;
+/** Takes the clips selected (or `ids`, of `doc`'s clip bar: those Ctrl+X
+ *  copied) off their clip bar, as one change; the set then goes. */
+export async function removeChosenClips(ids = chosenClips(), doc = clips.doc) {
   if (!ids.length || !doc) return;
   snippets.clear();
   clips.hovered = null;
