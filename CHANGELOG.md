@@ -37,6 +37,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Cuts before playing use the right frames. Lines picked in the transcript of a video that hasn't started playing are cut on its frame grid, not on that of the video open before it.
   - Arrows work after clicking anywhere on a row. A click anywhere on a row, not only on its title, lets ↑ and ↓ move to the row before or after.
   - Show in folder works during a download. While a VOD's download is in progress, paused or stopped by an error, it shows the partial file as it is.
+  - A VOD reopens where it was left. A step or jump made just before opening something else could be forgotten, and the VOD came back a step earlier.
   - Reload brings back what was open. Reload, in the right-click menu, reopens what was open where it was, instead of leaving nothing open while the video's player carried on.
   - Undo undoes the latest change. Undo (Ctrl+Z) pressed right after a change, such as moving a mark, could undo the one before it instead.
 
