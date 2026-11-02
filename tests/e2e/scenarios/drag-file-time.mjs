@@ -193,6 +193,12 @@ export default {
       };
 
       const centre = async (selector) => {
+        // (A pill can be out of sight in a narrow clip bar: brought into it at once.)
+        await app.js(
+          `document.querySelector(arguments[0])?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" })`,
+          selector,
+        );
+        await sleep(300);
         const r = await os.rectOf(app, selector);
         return { x: r.x + Math.round(r.w / 2), y: r.y + Math.round(r.h / 2) };
       };

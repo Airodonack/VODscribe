@@ -282,8 +282,11 @@ async function macGesture(steps) {
       down = true;
     } else if (what === "move") mouse(down ? 6 : 5, a, b);
     else if (what === "up" || what === "letgo") {
+      // (A moment between the last move and the release, as a hand leaves:
+      // a release right on a move's heels was sometimes missed by the
+      // system's drag, which then never ended.)
       if (what === "letgo") mouse(6, a, b);
-      lines.push("mouse(2, ...here());");
+      lines.push("$.usleep(100000);", "mouse(2, ...here());");
       down = false;
     } else if (what === "click") {
       for (let i = 1; i <= (a ?? 1); i++) lines.push(`click(${i});`);
@@ -309,7 +312,10 @@ const MAC_EVENTS = `ObjC.import("CoreGraphics"); ObjC.import("unistd");
 const here = () => { const p = $.CGEventGetLocation($.CGEventCreate(null)); return [p.x, p.y]; };
 // (No modifiers: a key event posted with some leaves them held for the next.)
 const post = (e) => { $.CGEventSetFlags(e, 0); $.CGEventPost(0, e); };
-const mouse = (type, x, y) => post($.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0));
+// From the HID system's state, with a click count on a press and its release,
+// as a real mouse's are: the system's drag tracks those.
+const source = $.CGEventSourceCreate(1);
+const mouse = (type, x, y) => { const e = $.CGEventCreateMouseEvent(source, type, $.CGPointMake(x, y), 0); if (type === 1 || type === 2) $.CGEventSetIntegerValueField(e, 1, 1); post(e); };
 const click = (n) => { const [x, y] = here(); for (const type of [1, 2]) { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0); $.CGEventSetIntegerValueField(e, 1, n); post(e); } $.usleep(80000); };
 const key = (code) => { for (const down of [true, false]) { post($.CGEventCreateKeyboardEvent(null, code, down)); $.usleep(30000); } };`;
 

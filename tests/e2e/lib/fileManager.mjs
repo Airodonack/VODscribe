@@ -375,10 +375,10 @@ export async function frontmost(app) {
 /**
  * The app in front again, by a click on its title bar (an app can't bring
  * another to the front from a script any more), and a moment for it: a
- * press right after the click that brought it there goes nowhere.
+ * press right after the click that brought it there goes nowhere. Always:
+ * the page can say it has the focus while its window isn't in front.
  */
 async function focusMac(app) {
-  if (await app.js("return document.hasFocus()")) return;
   const page = await os.windowRect(app);
   os.click(page.x + Math.round(page.w / 2), page.y - 14);
   await sleep(1500);

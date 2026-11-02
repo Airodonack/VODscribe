@@ -195,6 +195,19 @@ exec '${real}' "$@"
         );
         await until("the playhead at the start", async () => (await app.shownTime()) <= 1, 10_000);
       };
+      /** The playhead in the last stretch, past the second cut. */
+      const toLast = async () => {
+        await app.js(
+          `${AT}
+           const bar = document.querySelector(".scrubber");
+           const box = bar.getBoundingClientRect();
+           const x = box.left + ((150 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+           const y = box.top + box.height / 2;
+           bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
+           window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+        );
+        await until("the playhead in the last stretch", async () => (await app.shownTime()) > 121, 10_000);
+      };
       /** The clips made only for a drag (none in the clip bar). */
       const hidden = async () => (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => !c.shown);
       /** Clip (or `what`) pressed and carried to over the folder (or `to`), the system's drag up; then `then`. */
@@ -202,6 +215,13 @@ exec '${real}' "$@"
         // (A press on a window not in front only brings it there.)
         await frontmost(app);
         await app.js(`performance.clearMarks(); window.__ended = [];`);
+        // (A pill can be scrolled out of sight in a narrow clip bar: brought
+        // into it at once, not smoothly, so its place is where it'll stay.)
+        await app.js(
+          `document.querySelector(arguments[0])?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" })`,
+          what,
+        );
+        await sleep(300);
         const from = await centre(what);
         const before = new Set(windowsOf(app.driver.proc.pid));
         const steps = [
@@ -369,10 +389,24 @@ exec '${real}' "$@"
       await settle();
 
       // 3. Called off (Escape) while its file is waited for: nothing lands,
-      // and the app's file goes too.
+      // and the app's file goes too. On macOS an Escape posted by a script
+      // doesn't reach the system's drag (a real key press does, the same as
+      // this): it's let go on the window's title bar, where nothing takes it.
       await toStart();
       const before = new Set(appFiles());
-      await carryOut([["wait", 1000], ["key", "Escape"], ["wait", 300], ["up"]]);
+      const title = mac && (await os.windowRect(app));
+      await carryOut(
+        mac
+          ? [
+              ["wait", 1000],
+              ["move", title.x + 100, title.y - 14],
+              ["wait", 300],
+              ["move", title.x + 104, title.y - 14],
+              ["wait", 300],
+              ["letgo", title.x + 104, title.y - 14],
+            ]
+          : [["wait", 1000], ["key", "Escape"], ["wait", 300], ["up"]],
+      );
       const off = await ended();
       if (off.delivered) throw new Error(`the page heard a drag called off went: ${JSON.stringify(off)}`);
       await settle();
@@ -490,9 +524,10 @@ exec '${real}' "$@"
         ctx.log(`a pill already made: it landed ${made.at - let1} ms from the press, as the drag ended`);
         await settle();
 
-        /** Let go on Finder before the file's made: the clip, once its empty file stands there. */
+        /** Let go on Finder before the file's made: the clip, once its empty file stands there.
+         *  (The last stretch's: the first two have their pills by now.) */
         const waiting = async () => {
-          await toStart();
+          await toLast();
           await carryOut([["letgo", drop.x + 16, drop.y + 8]]);
           const [clip] = await hidden();
           if (!clip || clip.status === "ready")
@@ -529,7 +564,14 @@ exec '${real}' "$@"
         // 6c. Cancel in the list of jobs, while Finder waits for the file:
         // nothing lands, and nothing is said.
         const canceled = await waiting();
-        await until("its making listed with the jobs", () => listed(canceled.id), 5000, { every: 100 });
+        await until("its making listed with the jobs", () => listed(canceled.id), 5000, { every: 100 }).catch(
+          async (e) => {
+            const clip = (await app.invoke("list_clips", { vodId: vod.id })).find((c) => c.id === canceled.id);
+            throw new Error(
+              `${e.message}; the jobs ${JSON.stringify(await app.invoke("list_jobs"))}, the clip ${clip?.status}`,
+            );
+          },
+        );
         await app.invoke("cancel_job", { kind: "clip", id: canceled.id });
         await nothing("canceled in the list of jobs");
         ctx.log("canceled in the list of jobs while Finder waited: nothing landed, nothing said");
@@ -554,16 +596,7 @@ exec '${real}' "$@"
       }
       taker = await openFinishedOnly(app, ctx, path.join(work, "taker"));
       // The last stretch, past the second cut: no clip of it yet.
-      await app.js(
-        `${AT}
-         const bar = document.querySelector(".scrubber");
-         const box = bar.getBoundingClientRect();
-         const x = box.left + ((150 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
-         const y = box.top + box.height / 2;
-         bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
-         window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
-      );
-      await until("the playhead in the last stretch", async () => (await app.shownTime()) > 121, 10_000);
+      await toLast();
       await carryOut([["letgo", taker.drop.x + 16, taker.drop.y + 8]], "button.action.clip", taker.drop);
       const [kept] = await hidden();
       if (!kept || kept.status === "ready") throw new Error(`the clip was ${kept?.status ?? "gone"} as it was let go`);

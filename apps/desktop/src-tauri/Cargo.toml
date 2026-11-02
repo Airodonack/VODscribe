@@ -52,7 +52,7 @@ drag = "2.1"
 objc2 = "0.6"
 block2 = "0.6"
 raw-window-handle = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProcessInfo", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
 objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

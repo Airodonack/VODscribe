@@ -15,6 +15,10 @@
 //! or refuse the drag while the file isn't made. AppKit counts the items, so
 //! one file shows a "2" badge.
 //!
+//! Files all made as the drag begins go as they are, one file URL each, as
+//! any app takes them: apps that read the older list of file names (VLC)
+//! refused a drag with a promise in it.
+//!
 //! The app hears `Event::LetGo` as it's let go on another app, then
 //! `Event::Ended` once the session is over (and a moment's grace, as a
 //! promise is asked for just after) and every promise asked for is settled.
@@ -28,7 +32,7 @@ use anyhow::{Context, Result};
 use block2::{DynBlock, RcBlock};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
-use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send};
+use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send};
 use objc2_app_kit::{
     NSApp, NSDragOperation, NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent,
     NSEventModifierFlags, NSEventType, NSFilePromiseProvider, NSFilePromiseProviderDelegate, NSImage, NSPasteboard,
@@ -36,8 +40,8 @@ use objc2_app_kit::{
     NSRunningApplication, NSView, NSWindow,
 };
 use objc2_foundation::{
-    NSArray, NSData, NSDictionary, NSError, NSMutableArray, NSNumber, NSOperationQueue, NSPoint, NSProgress,
-    NSProgressFileOperationKindCopying, NSProgressKindFile, NSRect, NSString, NSURL,
+    NSArray, NSData, NSDictionary, NSError, NSMutableArray, NSNumber, NSOperationQueue, NSPoint, NSProcessInfo,
+    NSProgress, NSProgressFileOperationKindCopying, NSProgressKindFile, NSRect, NSString, NSURL,
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -72,6 +76,8 @@ unsafe impl Sync for Kept {}
 /// (on the main thread and on the promises' queue).
 struct Hand {
     items: Vec<Arc<dyn Item>>,
+    /// Every file was made as the drag began: offered as files, no promise.
+    ready: bool,
     on: Box<dyn Fn(Event) + Send + Sync>,
     kept: Mutex<Option<Kept>>,
     /// Promises asked for, being written, and written.
@@ -113,7 +119,11 @@ impl Hand {
         };
         // A receiver of promises took those (and asked for the addresses only
         // on its way); else one of addresses took them, if all were made.
-        let given = if asked > 0 {
+        // Files offered as they are: taken if it was let go on an app that
+        // accepted the drop.
+        let given = if self.ready {
+            ending == Ending::Elsewhere
+        } else if asked > 0 {
             failure.is_none() && self.written.load(Ordering::SeqCst) == asked
         } else {
             self.addressed.load(Ordering::SeqCst) > 0 && !unanswered
@@ -313,11 +323,19 @@ fn of(provider: &NSFilePromiseProvider) -> &Of {
     unsafe { &*(provider as *const NSFilePromiseProvider as *const Promise) }.ivars()
 }
 
+/// The drag's source: its files, and the view that was pressed (where the
+/// drag began, in its window's coordinates), which the drag took the
+/// release from.
+struct Pressed {
+    hand: Arc<Hand>,
+    view: Retained<NSView>,
+}
+
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
     #[name = "FileDragSource"]
-    #[ivars = Arc<Hand>]
+    #[ivars = Pressed]
     struct Source;
 
     unsafe impl NSObjectProtocol for Source {}
@@ -325,13 +343,16 @@ define_class!(
     unsafe impl NSDraggingSource for Source {
         #[unsafe(method(draggingSession:sourceOperationMaskForDraggingContext:))]
         fn mask(&self, _session: &NSDraggingSession, _context: NSDraggingContext) -> NSDragOperation {
-            NSDragOperation::Copy
+            // Copy, and Generic for apps that ask for that (VLC: offered Copy
+            // alone, it refused every drop).
+            NSDragOperation::Copy | NSDragOperation::Generic
         }
 
         #[unsafe(method(draggingSession:endedAtPoint:operation:))]
         fn ended(&self, _session: &NSDraggingSession, at: NSPoint, operation: NSDragOperation) {
-            let hand = self.ivars().clone();
+            let hand = self.ivars().hand.clone();
             let mtm = self.mtm();
+            release(&self.ivars().view);
             let (ending, receiver) = if operation == NSDragOperation::None {
                 (Ending::Nowhere, None)
             } else {
@@ -354,6 +375,39 @@ define_class!(
         }
     }
 );
+
+/// The release the drag took, given to the view that was pressed: it never
+/// sees one, and takes the next press for the drag going on (a click after a
+/// drag out was lost; so is Linux's, clips::release_button).
+fn release(view: &NSView) {
+    let Some(window) = view.window() else { return };
+    let at = window.mouseLocationOutsideOfEventStream();
+    let up = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+        NSEventType::LeftMouseUp,
+        at,
+        NSEventModifierFlags::empty(),
+        NSProcessInfo::processInfo().systemUptime(),
+        window.windowNumber(),
+        None,
+        0,
+        1,
+        0.0,
+    );
+    if let Some(up) = up {
+        trace(&format!("released for {}", view.class().name().to_string_lossy()));
+        view.mouseUp(&up);
+    }
+}
+
+/// The web view in `view` (a WKWebView), which took the press: the window's
+/// views wrap it (Tauri's in a parent of wry's).
+fn web_view(view: &NSView) -> Option<Retained<NSView>> {
+    let class = objc2::runtime::AnyClass::get(c"WKWebView")?;
+    if view.isKindOfClass(class) {
+        return Some(view.retain());
+    }
+    view.subviews().iter().find_map(|sub| web_view(&sub))
+}
 
 /// Whose window is at `at` (screen points): the app's own, or another
 /// app's, by its name if it has one.
@@ -420,8 +474,10 @@ pub(crate) fn start(
     let size = picture.size();
     let delegate: Retained<Delegate> =
         unsafe { msg_send![super(Delegate::alloc().set_ivars(Queue { queue: NSOperationQueue::new() })), init] };
+    let ready = items.iter().all(|item| matches!(item.state(), State::Ready(_)));
     let hand = Arc::new(Hand {
         items,
+        ready,
         on: Box::new(on),
         kept: Mutex::new(None),
         asked: AtomicUsize::new(0),
@@ -442,6 +498,19 @@ pub(crate) fn start(
             NSPoint::new(at.x - size.width / 2. + 8. * index as f64, at.y - size.height / 2. - 8. * index as f64),
             size,
         );
+        // Made already: the file itself, as any app takes one (beside a
+        // promise, apps that read the older list of file names refused it).
+        if hand.ready {
+            let State::Ready(path) = hand.items[index].state() else { anyhow::bail!("a file went as the drag began") };
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+            let file = NSDraggingItem::initWithPasteboardWriter(
+                NSDraggingItem::alloc(),
+                ProtocolObject::<dyn NSPasteboardWriting>::from_ref(&*url),
+            );
+            unsafe { file.setDraggingFrame_contents(frame, Some(&picture)) };
+            dragged.addObject(&file);
+            continue;
+        }
         let file_type = NSString::from_str(&hand.items[index].file_type());
         let promise = Promise::new(Of { index, hand: hand.clone() }, &delegate, &file_type);
         let address = NSPasteboardItem::new();
@@ -478,7 +547,11 @@ pub(crate) fn start(
         1.0,
     )
     .context("no event")?;
-    let source: Retained<Source> = unsafe { msg_send![super(Source::alloc(mtm).set_ivars(hand.clone())), init] };
+    // The view the press went to (the web view, inside the content view).
+    let pressed = web_view(&content).unwrap_or(content.clone());
+    trace(&format!("pressed: {}", pressed.class().name().to_string_lossy()));
+    let ivars = Pressed { hand: hand.clone(), view: pressed };
+    let source: Retained<Source> = unsafe { msg_send![super(Source::alloc(mtm).set_ivars(ivars)), init] };
     trace(&format!(
         "begun: {} files, {} items, buttons {}",
         hand.items.len(),
