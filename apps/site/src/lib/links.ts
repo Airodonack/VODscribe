@@ -8,5 +8,6 @@ export const UNSIGNED = "isn't code-signed yet: signing needs a registered compa
  *  this constant and a deploy. */
 export const PREMIUM = "/vodscriptions";
 
-/** Where "Send me an email if you're interested" writes to, until sign-up opens. */
-export const CONTACT_EMAIL = "hello@vodscribe.com";
+/** The VODscriptions page's email link, until sign-up opens: one address and
+ *  subject for every link on the page. */
+export const CONTACT_MAILTO = "mailto:hello@vodscribe.com?subject=VODscriptions";

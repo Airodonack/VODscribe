@@ -7,7 +7,7 @@
   // is in this folder, and its address is PREMIUM (lib/links.ts).
   import Icon from "desktop/lib/Icon.svelte";
   import Logo from "desktop/lib/Logo.svelte";
-  import { CONTACT_EMAIL, PREMIUM } from "#lib/links.js";
+  import { CONTACT_MAILTO, PREMIUM } from "#lib/links.js";
   import ComingSoon from "./ComingSoon.svelte";
   import OfferDemo from "./OfferDemo.svelte";
 
@@ -16,49 +16,24 @@
     "Every VOD on your channel, with its chapters, highlights and who's speaking, usually within hours of the stream's end. Everyone sees them for free, in VODscribe and on vodscribe.com. $199 a month per channel.";
 
   const PARTS = [
-    { icon: "layers", name: "Chapters", text: "The stream split into named parts, on the timeline and in a list." },
+    {
+      icon: "layers",
+      name: "Chapters",
+      text: "The stream split into named parts, on the timeline and in a list beside the transcript.",
+    },
     { icon: "star", name: "Highlights", text: "The moments chat reacted to, each with its quote." },
-    { icon: "users", name: "Cast", text: "Who spoke when, named only with their consent." },
+    { icon: "users", name: "Cast", text: "Who spoke when. Anyone who hasn't agreed to be named stays nameless." },
   ] as const;
 
   const FAQ = [
-    {
-      q: "What's in a VODscription?",
-      a: "The VOD's transcript, chapters, highlights with what chat said, and cast: who spoke, named where they've agreed to be. Viewers see them on the timeline and in a list beside the transcript.",
-    },
-    {
-      q: "How soon after a stream?",
-      a: "Usually within hours of the stream's end, as best effort with no fixed time. A new VODscription also covers the channel's VODs from up to a month back.",
-    },
     {
       q: "Which platforms?",
       a: "Twitch, YouTube and Kick.",
     },
     {
-      q: "Who can see it?",
-      a: "Everyone, for free: in the VODscribe app, which needs no account, and on this site.",
-    },
-    {
-      q: "Who gets named?",
-      a: "Only people who've agreed to be. Anyone else who speaks is in the cast without a name.",
-    },
-    {
-      q: "Can someone else pay for my channel?",
-      a: "Yes, a clipper, an editor or a manager can, once you, the channel's owner, sign in and say yes.",
-    },
-    {
       q: "Is there a rate for small channels?",
       a: "Sometimes, on different terms from the standard VODscription. Email and say what you stream and how often; you'll get a straight answer.",
-      link: { text: "Send an email", href: `mailto:${CONTACT_EMAIL}?subject=VODscriptions` },
-    },
-    {
-      q: "What if I stop paying?",
-      a: "New VODs stop getting one. Everything already published stays for everyone to see.",
-    },
-    {
-      q: "When can I sign up?",
-      a: "Soon.",
-      link: { text: "Send me an email and you'll hear first.", href: `mailto:${CONTACT_EMAIL}?subject=VODscriptions` },
+      link: { text: "Send an email", href: CONTACT_MAILTO },
     },
   ];
 </script>
@@ -109,8 +84,8 @@
 
     <div class="side">
       <p class="intro">
-        Usually ready within hours of the stream's end. Your viewers and clippers see them for free, in VODscribe and on
-        this site.
+        Each VOD gets its transcript and these three parts, usually within hours of the stream's end. No time is
+        promised. Everyone sees them for free in VODscribe and on this site, and the app needs no account.
       </p>
       <ul class="parts">
         {#each PARTS as part (part.name)}
@@ -138,7 +113,7 @@
       </p>
       <p class="small trust">
         <strong>Smaller channel?</strong> A lower rate on different terms may be available.
-        <a href={`mailto:${CONTACT_EMAIL}?subject=VODscriptions`}>Send an email</a> and say what you stream.
+        <a href={CONTACT_MAILTO}>Send an email</a> and say what you stream.
       </p>
     </div>
   </section>
@@ -151,7 +126,7 @@
     <div>
       <h2>Privacy</h2>
       <p class="muted">
-        There's no sign-in here yet, so this page knows nothing about you, and the email link opens your own mail app.
+        There's no sign-in yet, so this page knows nothing about you. Email links open your own mail app.
         <a href="/privacy">How VODscribe and this site handle data</a>
       </p>
     </div>
