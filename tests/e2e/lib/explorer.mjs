@@ -134,15 +134,16 @@ export async function openExplorer(dir, rect) {
   return { drop: { x: rect.x + Math.round(rect.w / 2), y: rect.y + Math.round(rect.h * 0.6) }, close };
 }
 
-/** The WinForms receiver: takes a drop only as real files (FileDrop), logs what it got. */
-const RECEIVER = `param([string]$log, [int]$x, [int]$y, [int]$w, [int]$h)
+/** The WinForms receiver: takes a drop only as real files (FileDrop), logs what it got; or, with $refuse, refuses every drag. */
+const RECEIVER = `param([string]$log, [int]$x, [int]$y, [int]$w, [int]$h, [int]$refuse)
 Add-Type -AssemblyName System.Windows.Forms
 function L($m) { Add-Content $log $m }
 $f = New-Object System.Windows.Forms.Form
 $f.Text = 'Real files only'; $f.AllowDrop = $true; $f.TopMost = $true
 $f.StartPosition = 'Manual'; $f.Location = New-Object System.Drawing.Point($x, $y); $f.Size = New-Object System.Drawing.Size($w, $h)
 $f.Add_DragEnter({ param($s, $e)
-  if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = 'Copy' } else { $e.Effect = 'None' } })
+  if ($refuse) { $e.Effect = 'None'; L 'refused' }
+  elseif ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) { $e.Effect = 'Copy' } else { $e.Effect = 'None' } })
 $f.Add_DragDrop({ param($s, $e)
   $files = @($e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
   if (-not $files -or -not $files[0]) { L 'gave nothing' }
@@ -155,16 +156,20 @@ $f.Add_Shown({ L 'ready' })
  * Opens an app that takes real files only (CF_HDROP: Windows PowerShell's
  * WinForms form, named "Windows PowerShell" by its program) at `rect`:
  * where to drop on it, what it has said (`said()`: "gave nothing", "took
- * <path>", "missing <path>"), and `close()`.
+ * <path>", "missing <path>"), and `close()`. With `refuses`, it refuses
+ * every drag instead (and says "refused").
  */
-export async function openFilesOnly(work, rect) {
+export async function openFilesOnly(work, rect, { refuses = false } = {}) {
   const script = path.join(work, "files-only.ps1");
   const log = path.join(work, "files-only.log");
   writeFileSync(script, RECEIVER);
   writeFileSync(log, "");
   const child = spawn(
     "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, log, ...[rect.x, rect.y, rect.w, rect.h].map(String)],
+    [
+      ...["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, log],
+      ...[rect.x, rect.y, rect.w, rect.h, refuses ? 1 : 0].map(String),
+    ],
     { stdio: "ignore" },
   );
   const said = () => (existsSync(log) ? readFileSync(log, "utf8").split(/\r?\n/).filter(Boolean) : []);

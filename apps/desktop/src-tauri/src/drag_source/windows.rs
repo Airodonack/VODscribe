@@ -438,7 +438,11 @@ struct Returned {
     called_off: bool,
     /// The button came up over a window that took the drop.
     taken_drop: bool,
+    /// ...over another app's window (one that may have refused it).
+    over_other: bool,
     own: bool,
+    /// An item wasn't made as it returned.
+    unmade: bool,
     contents_asked: bool,
     files_given: bool,
     files_refused: bool,
@@ -446,12 +450,17 @@ struct Returned {
 }
 
 /// The outcome of a drag as DoDragDrop returned (`Returned`), naming the
-/// receiver (`receiver`) only when it took finished files only.
+/// receiver (`receiver`) only when it took finished files only. Let go on
+/// another app that refused the drop (DRAGDROP_S_DROP, no effect; Escape
+/// is DRAGDROP_S_CANCEL) while an item was still being made is that too:
+/// it may take the file once it's made (CapCut's timeline refuses one
+/// whose address it can't read yet).
 fn returned(r: Returned, receiver: impl FnOnce() -> Option<String>) -> Outcome {
+    let refused = !r.taken_drop && r.over_other && r.unmade && r.failure.is_none();
     let ending = match () {
         _ if r.called_off => Ending::CalledOff,
         _ if r.own => Ending::Back,
-        _ if !r.taken_drop => Ending::Nowhere,
+        _ if !r.taken_drop && !refused => Ending::Nowhere,
         _ => Ending::Elsewhere,
     };
     let none = Outcome { ending, delivered: false, taken: false, failure: None, refused_unmade: false, receiver: None };
@@ -459,7 +468,7 @@ fn returned(r: Returned, receiver: impl FnOnce() -> Option<String>) -> Outcome {
         Ending::CalledOff | Ending::Back => none,
         Ending::Nowhere => Outcome { failure: r.failure, ..none },
         Ending::Elsewhere => {
-            let refused_unmade = r.files_refused && !r.files_given && !r.contents_asked;
+            let refused_unmade = refused || (r.files_refused && !r.files_given && !r.contents_asked);
             let delivered = r.failure.is_none() && (r.files_given || r.contents_asked);
             Outcome {
                 delivered,
@@ -708,10 +717,13 @@ pub(crate) fn run(
             // The receiver copies on its own thread now; its EndOperation ends it.
             return Ok(());
         }
+        let unmade = drag.states().iter().any(|s| !matches!(s, State::Ready(_)));
         let seen = Returned {
             called_off: hr == DRAGDROP_S_CANCEL,
             taken_drop: hr == DRAGDROP_S_DROP && effect != DROPEFFECT_NONE,
+            over_other: hr == DRAGDROP_S_DROP && !drag.own_drop.load(Ordering::SeqCst),
             own: drag.own_drop.load(Ordering::SeqCst),
+            unmade,
             contents_asked: drag.contents_asked.load(Ordering::SeqCst),
             files_given: drag.files_given.load(Ordering::SeqCst),
             files_refused: drag.files_refused.load(Ordering::SeqCst),
@@ -861,6 +873,20 @@ mod tests {
         let refused = r(|r| r.files_refused = true);
         assert!(!refused.delivered && refused.refused_unmade);
         assert_eq!(refused.receiver.as_deref(), Some("Kdenlive"));
+        // Let go on another app that refused the drop while one was being
+        // made: the same, named. Made by then, or let go on nothing: silent.
+        let refusing = |r: &mut Returned| (r.taken_drop, r.over_other, r.unmade) = (false, true, true);
+        let refused_drop = r(refusing);
+        assert_eq!((refused_drop.ending, refused_drop.delivered), (Ending::Elsewhere, false));
+        assert!(refused_drop.refused_unmade);
+        assert_eq!(refused_drop.receiver.as_deref(), Some("Kdenlive"));
+        assert_eq!(r(|r| (r.taken_drop, r.over_other) = (false, true)).ending, Ending::Nowhere, "made");
+        assert_eq!(r(|r| (r.taken_drop, r.unmade) = (false, true)).ending, Ending::Nowhere, "not on another app");
+        let failed_drop =
+            r(|r| (r.taken_drop, r.over_other, r.unmade, r.failure) = (false, true, true, Some("blocked".into())));
+        assert_eq!((failed_drop.ending, failed_drop.refused_unmade), (Ending::Nowhere, false));
+        let escaped = r(|r| (r.called_off, r.taken_drop, r.unmade) = (true, false, true));
+        assert_eq!((escaped.ending, escaped.refused_unmade), (Ending::CalledOff, false));
         // Refused, then given (asked again once made), or read as a virtual file: not that.
         assert!(!r(|r| (r.files_refused, r.files_given) = (true, true)).refused_unmade);
         let read = r(|r| (r.files_refused, r.contents_asked) = (true, true));

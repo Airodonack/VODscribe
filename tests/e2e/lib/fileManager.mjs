@@ -240,11 +240,12 @@ Gtk.main()
 /**
  * The app that takes finished files only (`FINISHED_ONLY`), its script and
  * what it says in folder `work`, beside the app's window: where to drop on
- * it, what it has said so far (`said`, its lines), and `close`.
+ * it, what it has said so far (`said`, its lines), and `close`. On macOS,
+ * with `refuses`, it refuses every drag instead.
  */
-export async function openFinishedOnly(app, ctx, work) {
+export async function openFinishedOnly(app, ctx, work, { refuses = false } = {}) {
   mkdirSync(work, { recursive: true });
-  if (process.platform === "darwin") return openFinishedOnlyMac(app, ctx, work);
+  if (process.platform === "darwin") return openFinishedOnlyMac(app, ctx, work, refuses);
   const script = path.join(work, "finished-only.py");
   writeFileSync(script, FINISHED_ONLY);
   const log = path.join(work, "finished-only.log");
@@ -423,7 +424,8 @@ async function openFinder(app, ctx, dest) {
   };
 }
 
-/** The app that takes finished files only, on macOS: a window that takes file addresses only, as most apps do, and says what it got. */
+/** The app that takes finished files only, on macOS: a window that takes file addresses only, as most apps do, and says what it got.
+ *  With REFUSE set it refuses every drag, as VLC does one with no address yet, and says so. */
 const FINISHED_ONLY_MAC = `
 import AppKit
 func say(_ s: String) { print(String(format: "%.3f ", Date().timeIntervalSince1970) + s); fflush(stdout) }
@@ -431,7 +433,11 @@ final class Drop: NSView {
     override init(frame: NSRect) { super.init(frame: frame); registerForDraggedTypes([.fileURL]) }
     required init?(coder: NSCoder) { fatalError() }
     override func draw(_ r: NSRect) { NSColor.systemPurple.setFill(); r.fill() }
-    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { .copy }
+    let refuses = ProcessInfo.processInfo.environment["REFUSE"] != nil
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation {
+        if refuses { say("refused") }
+        return refuses ? [] : .copy
+    }
     override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
         say("dropped")
         let urls = s.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
@@ -455,7 +461,7 @@ app.run()
 /** The name the app that takes finished files only goes by on macOS (its program's). */
 export const FINISHED_ONLY_MAC_NAME = "Clip Taker";
 
-async function openFinishedOnlyMac(app, ctx, work) {
+async function openFinishedOnlyMac(app, ctx, work, refuses) {
   const fm = await besideMac(app, ctx);
   const source = path.join(work, "finished-only.swift");
   writeFileSync(source, FINISHED_ONLY_MAC);
@@ -465,7 +471,7 @@ async function openFinishedOnlyMac(app, ctx, work) {
   writeFileSync(log, "");
   const out = openSync(log, "a");
   const proc = spawn(program, [], {
-    env: { ...process.env, POS: `${fm.x} ${fm.y} ${fm.w} ${fm.h}` },
+    env: { ...process.env, POS: `${fm.x} ${fm.y} ${fm.w} ${fm.h}`, ...(refuses ? { REFUSE: "1" } : {}) },
     stdio: ["ignore", out, out],
   });
   closeSync(out);

@@ -48,8 +48,8 @@ pub(crate) struct Outcome {
     /// Why they never came, if one couldn't be made (or was canceled).
     pub(crate) failure: Option<String>,
     /// That app asked for the files themselves once let go on, was refused
-    /// because one was still being made, and took nothing else: it takes
-    /// finished files only.
+    /// because one was still being made, and took nothing else; or refused
+    /// the drop while one was: it takes finished files only.
     pub(crate) refused_unmade: bool,
     /// That app's name, as its program describes itself, where known.
     pub(crate) receiver: Option<String>,

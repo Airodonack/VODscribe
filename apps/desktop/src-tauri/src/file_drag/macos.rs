@@ -95,6 +95,9 @@ struct Hand {
     /// The session is over: where it ended, the app there, and whether
     /// every file was made by then.
     ended: Mutex<Option<(Ending, Option<String>, bool)>>,
+    /// Let go on another app's window, which refused the drop, while a
+    /// file wasn't made.
+    refused: AtomicBool,
     told: AtomicBool,
 }
 
@@ -133,7 +136,7 @@ impl Hand {
             given,
             written: asked > 0,
             failure,
-            made: made || !unanswered,
+            made: made || !(unanswered || self.refused.load(Ordering::SeqCst)),
             receiver: receiver.filter(|_| ending == Ending::Elsewhere),
         };
         trace(&format!(
@@ -353,16 +356,27 @@ define_class!(
             let hand = self.ivars().hand.clone();
             let mtm = self.mtm();
             release(&self.ivars().view);
-            let (ending, receiver) = if operation == NSDragOperation::None {
-                (Ending::Nowhere, None)
-            } else {
-                match window_owner(at, mtm) {
-                    Some(Owner::Us) => (Ending::Back, None),
-                    Some(Owner::App(name)) => (Ending::Elsewhere, name),
-                    None => (Ending::Elsewhere, None),
-                }
-            };
             let made = hand.made();
+            let (ending, receiver) = match window_owner(at, mtm) {
+                // AppKit says the same (no operation) for a drop the app
+                // under the pointer refused, for Escape and for a drop on
+                // nothing. Over another app's window with a file not made
+                // yet, it's taken for a refusal: that app may take the file
+                // once it's made (VLC, CapCut's timeline), so it's named, and
+                // the clip kept to drag again. Escape pressed over such a
+                // window gives the same, harmlessly: a message and a clip
+                // kept. Over the app's own window, the desktop, the menu bar
+                // or the Dock: Escape or a miss, said nothing of.
+                Some(Owner::App { name, window: true }) if operation == NSDragOperation::None && !made => {
+                    trace("no operation over another app's window: refused");
+                    hand.refused.store(true, Ordering::SeqCst);
+                    (Ending::Elsewhere, name)
+                }
+                _ if operation == NSDragOperation::None => (Ending::Nowhere, None),
+                Some(Owner::Us) => (Ending::Back, None),
+                Some(Owner::App { name, .. }) => (Ending::Elsewhere, name),
+                None => (Ending::Elsewhere, None),
+            };
             trace(&format!("session over: operation {}, {ending:?}, on {receiver:?}, made {made}", operation.0));
             *hand.ended.lock().unwrap() = Some((ending, receiver, made));
             if ending == Ending::Elsewhere {
@@ -410,10 +424,11 @@ fn web_view(view: &NSView) -> Option<Retained<NSView>> {
 }
 
 /// Whose window is at `at` (screen points): the app's own, or another
-/// app's, by its name if it has one.
+/// app's, by its name if it has one, and whether it's an ordinary window
+/// (not the desktop's, the menu bar's or the Dock's).
 enum Owner {
     Us,
-    App(Option<String>),
+    App { name: Option<String>, window: bool },
 }
 
 #[link(name = "CoreGraphics", kind = "framework")]
@@ -444,7 +459,11 @@ fn window_owner(at: NSPoint, mtm: MainThreadMarker) -> Option<Owner> {
         .and_then(|app| app.localizedName())
         .or_else(|| window.objectForKey(&NSString::from_str("kCGWindowOwnerName"))?.downcast::<NSString>().ok())
         .map(|name| name.to_string());
-    Some(Owner::App(name))
+    // kCGNormalWindowLevel: apps' windows; the desktop's are below, the
+    // menu bar's and the Dock's above.
+    let layer = window.objectForKey(&NSString::from_str("kCGWindowLayer"));
+    let ordinary = layer.and_then(|l| l.downcast_ref::<NSNumber>().map(|l| l.intValue() == 0)).unwrap_or(false);
+    Some(Owner::App { name, window: ordinary })
 }
 
 /// Begins the system's drag of `items` from `window`, showing `image` (a PNG
@@ -485,6 +504,7 @@ pub(crate) fn start(
         written: AtomicUsize::new(0),
         addressed: AtomicUsize::new(0),
         unanswered: AtomicBool::new(false),
+        refused: AtomicBool::new(false),
         cancelled: AtomicBool::new(false),
         failed: Mutex::new(None),
         ended: Mutex::new(None),

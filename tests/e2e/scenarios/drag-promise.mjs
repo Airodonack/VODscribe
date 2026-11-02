@@ -23,7 +23,8 @@
 // finished files only (one of the test's: it gives up after 5 s, as Qt's
 // do), before the file is made: nothing lands there, the app says that app
 // (by its desktop entry's name) takes finished files only, and the clip is
-// kept as a pill, which once made drags there and lands. On macOS the drop
+// kept as a pill, which once made drags there and lands; on macOS, let go
+// on one that refuses the drop (the same app, told to), the same. On macOS the drop
 // is on Finder, which takes a file promise: the app writes each file where
 // it was let go once it's made (Finder shows it with a progress meanwhile),
 // so Finder has its own copies; there also a pill already made lands at
@@ -629,6 +630,36 @@ exec '${real}' "$@"
       ctx.log(
         `let go on an app that takes finished files only: nothing taken, the toast says "${said}"; its pill, once made, dragged there: ${took.split(" ").slice(1, 5).join(" ")}`,
       );
+
+      // 8. On macOS, let go on an app that refuses the drop, before the
+      // file's made (as VLC does): the same, by that app's name, and the
+      // clip kept as a pill. (The system says nothing of the refusal: the
+      // app tells it from Escape by the other app's window under the
+      // pointer.) A fresh stretch, past a cut at 160 s.
+      if (!mac) return;
+      taker.close();
+      taker = await openFinishedOnly(app, ctx, path.join(work, "refuser"), { refuses: true });
+      // (Its window came to the front: the keys go to the app again.)
+      await frontmost(app);
+      await toTime(app, 160);
+      const marks = (await app.invoke("list_marks", { vodId: vod.id })).length;
+      await app.key("b");
+      await until("the cut", async () => (await app.invoke("list_marks", { vodId: vod.id })).length > marks, 10_000);
+      await app.key("Escape");
+      await toTime(app, 170);
+      await until("the last toast gone", async () => !(await app.toastSays()), 10_000);
+      await carryOut([["letgo", taker.drop.x + 16, taker.drop.y + 8]], "button.action.clip", taker.drop);
+      const refusedNow = await ended();
+      if (!refusedNow.finished_only || refusedNow.receiver !== takerName)
+        throw new Error(`the page heard ${JSON.stringify(refusedNow)} of a drop an app refused`);
+      const saidNow = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
+      if (saidNow !== want) throw new Error(`the toast says "${saidNow}", not "${want}"`);
+      if (!taker.said().some((l) => l.endsWith(" refused")))
+        throw new Error(`the app says ${JSON.stringify(taker.said())}`);
+      const [keptNow] = (await app.invoke("list_clips", { vodId: vod.id })).sort((a, b) => b.id - a.id);
+      if (!keptNow || keptNow.id === kept.id) throw new Error("no clip kept of the drop refused");
+      await until("its pill", () => pill(keptNow.id), 10_000);
+      ctx.log(`let go on an app that refuses the drop: the toast says "${saidNow}", the clip kept as a pill`);
     } finally {
       taker?.close();
       if (entry) rmSync(entry, { force: true });
@@ -709,7 +740,8 @@ static class StandIn {
  * in their order. On an app that takes real files only (Windows PowerShell's
  * form), before the file's made: nothing lands, the app says Windows
  * PowerShell takes finished files only and keeps the clip as a pill, which
- * once made drags there and is taken. Each step logs the app's own lines
+ * once made drags there and is taken; let go on one that refuses the drop
+ * (the same form, told to), the same. Each step logs the app's own lines
  * about the drag (an e2e build's).
  */
 async function onWindows(app, ctx) {
@@ -1069,6 +1101,35 @@ async function onWindows(app, ctx) {
       `let go on an app that takes real files only: nothing taken, the toast says "${said}"; its pill, once made, dragged there: ${took}`,
     );
     say("7, once made");
+
+    // 8. Let go on an app that refuses the drop, before the file's made (as
+    // CapCut's timeline does): the same, by that app's name, and the clip
+    // kept as a pill. A fresh stretch, past a cut at 50 s.
+    taker.close();
+    const refuserWork = path.join(work, "refuser");
+    mkdirSync(refuserWork, { recursive: true });
+    taker = await explorer.openFilesOnly(refuserWork, beside, { refuses: true });
+    // (The form came to the front: the keys go to the app again.)
+    await focusApp();
+    await toTime(app, 50);
+    const marks = (await app.invoke("list_marks", { vodId: vod.id })).length;
+    await app.key("b");
+    await until("the cut", async () => (await app.invoke("list_marks", { vodId: vod.id })).length > marks, 10_000);
+    await app.key("Escape");
+    await toTime(app, 55);
+    await until("the last toast gone", async () => !(await app.toastSays()), 10_000);
+    await carryOut([["letgo", taker.drop.x + 16, taker.drop.y + 8]], "button.action.clip", taker.drop);
+    const refusedNow = await ended();
+    if (!refusedNow.finished_only || refusedNow.receiver !== takerName)
+      throw new Error(`the page heard ${JSON.stringify(refusedNow)} of a drop an app refused`);
+    const saidNow = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
+    if (saidNow !== want) throw new Error(`the toast says "${saidNow}", not "${want}"`);
+    if (!taker.said().includes("refused")) throw new Error(`the app says ${JSON.stringify(taker.said())}`);
+    const [keptNow] = (await app.invoke("list_clips", { vodId: vod.id })).sort((a, b) => b.id - a.id);
+    if (!keptNow || keptNow.id === kept.id) throw new Error("no clip kept of the drop refused");
+    await until("its pill", () => pill(keptNow.id), 10_000);
+    ctx.log(`let go on an app that refuses the drop: the toast says "${saidNow}", the clip kept as a pill`);
+    say("8");
   } finally {
     // Cleaned up without hiding why the steps failed, if they did.
     try {

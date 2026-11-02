@@ -55,7 +55,9 @@ pub(crate) enum Ending {
     /// Dropped where nothing took it: on nothing, or on an app that refused
     /// it (one whose ask for the files was refused, its making failed).
     Nowhere,
-    /// Let go on another app, which took it or didn't.
+    /// Let go on another app, which took it or didn't: also one that refused
+    /// the drop while a file was still being made (it may take the file
+    /// once it's made).
     Elsewhere,
 }
 

@@ -15,7 +15,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - On a Mac, clips drag out at once. Finder shows the file with a progress bar until it's made, and its cancel button stops it.
 - Clips start as you pick them up. From a video on this computer, a stretch's clip, or several, is made from the moment you pick it up, first in line; a site's is downloaded once the drag leaves the window, and a clip of an edit follows its videos.
 - Long downloads no longer ask first. A clip downloaded from a site is made however long it is.
-- Some apps take finished files only. Let go on one before the clip is made, nothing lands there, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.
+- Some apps take finished files only. If one takes nothing or refuses the drop before the clip is made, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.
 - A clip still being made drags out. Drag it from the clip bar as you would a ready one.
 - Dragged clips are listed once let go. A clip made only for a drag stays off the clip bar; once you let it go on another app it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
 - A drag called off makes nothing. Escape, or a drop on nothing, stops the clip's making; dropped on the clip bar, it's kept there. If the clip can't be made, VODscribe says why only when you let it go on another app.
