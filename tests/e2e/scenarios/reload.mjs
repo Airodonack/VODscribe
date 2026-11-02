@@ -8,7 +8,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { colourNamed, colours } from "../lib/fixtures.mjs";
+import { COLOURS, colourNamed, colours } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
 export default {
@@ -37,6 +37,11 @@ export default {
       );
       return picture ? colourNamed(os.colourIn(os.screenshot(), os.middle(await os.rectOf(app, picture)))) : null;
     };
+    // The time reads 3 s a moment before the step's frame is drawn; sampled
+    // too soon the picture is still the start's red, and the correct yellow
+    // after the reload then fails the comparison (seen once in five, 2026-11-02).
+    const expected = seeing ? null : COLOURS[3][0];
+    if (expected) await until(`the picture at 3 s (${expected})`, async () => (await screen()) === expected, 10_000);
     const before = { time: await app.shownTime(), screen: await screen() };
     ctx.log(`open and paused at ${before.time} s; the screen shows ${before.screen ?? "(not looked at)"}`);
 
