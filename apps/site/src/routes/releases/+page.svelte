@@ -5,16 +5,20 @@
   import { DOWNLOADS, onHost, versionedUrl } from "#lib/downloads.js";
 
   // Every released version's changes, newest first (CHANGELOG.md, read when the
-  // site is built). The newest is open; the ones before it fold to their lead
-  // and how many changes and fixes they have, and each one's fixes fold to
-  // their count. The app's version number links to its own entry by its id
+  // site is built). Each folds to its lead and how many changes and fixes it
+  // has, the newest starting open, and each one's fixes fold to their count. The app's version number links to its own entry by its id
   // (/releases#0.2.1), which opens it, its fixes too, and is highlighted.
   const list = releases(changelog);
 
+  /** The version the address names, marked in the list of versions. */
+  let current = $state("");
+
   /** Open the release the address names (/releases#0.6.0), and bring it into view. */
   function openTarget() {
-    const section = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    const id = decodeURIComponent(location.hash.slice(1));
+    const section = document.getElementById(id);
     if (!section?.classList.contains("release")) return;
+    current = id;
     for (const details of section.querySelectorAll("details")) details.open = true;
     section.scrollIntoView();
   }
@@ -88,37 +92,69 @@
   <p class="muted">
     What changed in each version, newest first. The app updates itself, but older versions are here if you need one.
   </p>
-  <nav class="versions" aria-label="Versions">
-    {#each list as release (release.version)}
-      <a href="#{release.version}">{release.version}</a>
-    {/each}
-  </nav>
+  <!-- The versions: a row under the intro, or beside the notes where the window is wide (.side). -->
+  <div class="side">
+    <nav class="versions" aria-label="Versions">
+      {#each list as release (release.version)}
+        <a href="#{release.version}" class:current={release.version === current}>{release.version}</a>
+      {/each}
+    </nav>
+  </div>
 
   {#each list as release, i (release.version)}
     <section class="release" id={release.version}>
-      {#if i === 0}
-        {@render heading(release, true)}
+      <!-- Each release folds to its heading, lead and counts; the latest starts open. -->
+      <details class="entry" open={i === 0}>
+        <summary>
+          {@render heading(release, i === 0)}
+          {#if countsText(release)}<p class="muted counts">{countsText(release)}</p>{/if}
+        </summary>
         {@render notes(release)}
-      {:else}
-        <details class="older">
-          <summary>
-            {@render heading(release, false)}
-            {#if countsText(release)}<p class="muted counts">{countsText(release)}</p>{/if}
-          </summary>
-          {@render notes(release)}
-        </details>
-      {/if}
+      </details>
     </section>
   {/each}
 </article>
 
 <style>
+  .prose {
+    position: relative;
+  }
+
   .versions {
     display: flex;
     flex-wrap: wrap;
     gap: 4px 14px;
     margin: 12px 0 8px;
     font-size: 14px;
+  }
+
+  .versions .current {
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  /* Room beside the notes: the versions stand in a column to their right
+     and stay in view as the page scrolls (.side runs the article's height,
+     so the sticky list has that far to go). */
+  @media (min-width: 1100px) {
+    .side {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 100%;
+      width: 140px;
+      margin-left: 8px;
+    }
+
+    .versions {
+      position: sticky;
+      top: 24px;
+      flex-direction: column;
+      gap: 6px;
+      margin: 40px 0 0;
+      padding-left: 14px;
+      border-left: 1px solid var(--border);
+    }
   }
 
   .release {
@@ -180,7 +216,7 @@
   }
 
   .fixes > summary,
-  .older > summary {
+  .entry > summary {
     cursor: pointer;
   }
 
@@ -190,17 +226,17 @@
   }
 
   .fixes > summary:hover,
-  .older > summary:hover h2 {
+  .entry > summary:hover h2 {
     color: var(--accent);
   }
 
-  /* An older release's summary is its heading, date, lead and counts: the
+  /* A release's summary is its heading, date, lead and counts: the
      marker sits in the counts line, not beside the heading. */
-  .older > summary {
+  .entry > summary {
     list-style: none;
   }
 
-  .older > summary::-webkit-details-marker {
+  .entry > summary::-webkit-details-marker {
     display: none;
   }
 
@@ -213,7 +249,7 @@
     content: "▸ ";
   }
 
-  .older[open] .counts::before {
+  .entry[open] .counts::before {
     content: "▾ ";
   }
 
