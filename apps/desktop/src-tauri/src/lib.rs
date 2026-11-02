@@ -61,12 +61,12 @@ struct AppState {
     gpu: setup::Install,
     media: media::MediaServer,
     chat: chats::ChatQueue,
+    /// Clips being cut and edits being rendered, one at a time (`clips`).
     clips: clips::Cutter,
     /// Removed VODs being erased (`vods`).
     sweeper: vods::Sweeper,
     /// What the two queues above are at, for the library's list of jobs (`job_list`).
     job_list: job_list::JobList,
-    /// Edits being rendered (`edits`).
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
     /// Whole videos downloaded on request (`videos`).
