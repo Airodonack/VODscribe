@@ -124,16 +124,7 @@ fn held(app: &AppHandle, db: &Db, item: &Put) -> Result<Held> {
 /// What the page is told of `copied` (`CopiedSaid`).
 fn said(db: &Db, copied: &Copied) -> Result<CopiedSaid> {
     let pieces: Vec<&ItemState> = copied.state.items.iter().filter(|i| i.vod_id.is_some()).collect();
-    let mut length = 0.0;
-    for p in &pieces {
-        let start = p.start.map_or(0.0, |s| s.seconds());
-        let end = match p.end {
-            Some(end) => end.seconds(),
-            None => db.vod(p.vod_id.expect("a piece"))?.and_then(|v| v.info.duration).unwrap_or(start),
-        };
-        let struck: Vec<(f64, f64)> = p.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect();
-        length += edits::spans(start, end, &struck).iter().map(|(a, b)| b - a).sum::<f64>();
-    }
+    let length = db.played_of(&copied.state)?;
     let first = match pieces.first() {
         Some(p) => {
             let vod_id = p.vod_id.expect("a piece");
@@ -269,4 +260,85 @@ pub(crate) fn copy_file(app: &AppHandle, id: i64, file: &CopiedFile) -> Result<b
     }
     crate::clips::emit(app, &db, id);
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use vodscribe_core::edits::EditState;
+    use vodscribe_core::time::Flicks;
+
+    use super::*;
+
+    fn library() -> (Db, i64) {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = vodscribe_core::fetch::VodInfo {
+            platform: "youtube".into(),
+            platform_id: "x".into(),
+            url: "https://youtu.be/x".into(),
+            title: "t".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        };
+        let vod = db.add_vod(&info).unwrap().0.id;
+        (db, vod)
+    }
+
+    fn piece(parent: Option<usize>, vod: i64, start: f64, end: Option<f64>, struck: &[(f64, f64)]) -> ItemState {
+        ItemState {
+            parent,
+            vod_id: Some(vod),
+            start: Some(Flicks::from_seconds(start)),
+            end: end.map(Flicks::from_seconds),
+            title: String::new(),
+            struck: struck.iter().map(|&(a, b)| (Flicks::from_seconds(a), Flicks::from_seconds(b))).collect(),
+            origin: None,
+        }
+    }
+
+    fn copy(kind: CopiedKind, items: Vec<ItemState>) -> Copied {
+        Copied { kind, state: EditState { title: "c".into(), items, marks: Vec::new() } }
+    }
+
+    /// What the page is told of a copy: its pieces (its groups aren't), the
+    /// first one's stretch, and how long it plays, less what's struck; a
+    /// piece with no end runs to its VOD's end, one of a VOD that's gone
+    /// plays nothing.
+    #[test]
+    fn a_copy_is_said_by_its_pieces() {
+        let (db, vod) = library();
+        let group = ItemState {
+            parent: None,
+            vod_id: None,
+            start: None,
+            end: None,
+            title: "g".into(),
+            struck: Vec::new(),
+            origin: None,
+        };
+        let items = vec![
+            group.clone(),
+            piece(Some(0), vod, 10.0, Some(20.0), &[(12.0, 14.0)]),
+            piece(None, vod, 30.0, None, &[]),
+            piece(None, 9999, 5.0, None, &[]),
+        ];
+        let said_of = said(&db, &copy(CopiedKind::Clip, items)).unwrap();
+        assert_eq!((said_of.kind, said_of.title.as_str(), said_of.pieces, said_of.length), ("clip", "c", 3, 38.0));
+        let first = said_of.first.unwrap();
+        assert_eq!((first.vod_id, first.vod_title.as_str(), first.start, first.end), (vod, "t", 10.0, 20.0));
+
+        // Its first piece with no end: that stretch runs to the VOD's end.
+        let stretch = copy(CopiedKind::Stretch, vec![piece(None, vod, 5.0, None, &[(50.0, 70.0)])]);
+        let said_of = said(&db, &stretch).unwrap();
+        assert_eq!((said_of.kind, said_of.pieces, said_of.length), ("stretch", 1, 45.0));
+        let first = said_of.first.unwrap();
+        assert_eq!((first.start, first.end), (5.0, 60.0));
+
+        // A group alone: no stretch, nothing played.
+        let said_of = said(&db, &copy(CopiedKind::Clip, vec![group])).unwrap();
+        assert!(said_of.first.is_none());
+        assert_eq!((said_of.pieces, said_of.length), (0, 0.0));
+    }
 }

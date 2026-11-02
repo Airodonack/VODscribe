@@ -295,8 +295,9 @@ impl Db {
         Ok((top.len(), t))
     }
 
-    /// How long `state`'s pieces play, end to end.
-    fn played_of(&self, state: &EditState) -> Result<f64> {
+    /// How long `state`'s pieces play, end to end, less what's struck: a
+    /// piece with no end to its VOD's end (nothing if that isn't known).
+    pub fn played_of(&self, state: &EditState) -> Result<f64> {
         let mut total = 0.0;
         for i in &state.items {
             let (Some(vod), Some(start)) = (i.vod_id, i.start) else { continue };
