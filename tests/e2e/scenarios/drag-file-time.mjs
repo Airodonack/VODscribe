@@ -13,12 +13,12 @@
 // made, the stretch's not); last, a stretch carried while two long clips
 // wait to be made ahead of it. Linux (X11) with Nautilus only, so far.
 
-import { rmSync, statSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { clipsDir, dataDirs } from "../lib/data.mjs";
 import {
   clearDropped,
   droppedIn,
@@ -31,6 +31,15 @@ import {
 } from "../lib/fileManager.mjs";
 import { longVideo, minute } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
+
+/** The app's file `name`: in the clips' folder (the Videos folder's VODscribe, or the data's clips) or anywhere in its data. */
+function appFile(name) {
+  for (const dir of new Set([clipsDir(), ...dataDirs()])) {
+    const found = existsSync(dir) && findIn(dir, name);
+    if (found) return found;
+  }
+  return null;
+}
 
 /** A click's modifier that picks one (Ctrl; Linux only here). */
 const TOGGLE = `const toggle = { ctrlKey: true, metaKey: false };`;
@@ -133,7 +142,7 @@ export default {
             const there = droppedIn(dest);
             if (there.length < lengths.length) return false;
             for (const f of there) {
-              const source = sources.get(f) ?? findIn(dataDirs()[0], f);
+              const source = sources.get(f) ?? appFile(f);
               if (!source) throw new Error(`${f} in the folder isn't one of the app's files`);
               sources.set(f, source);
               if (statSync(path.join(dest, f)).size !== statSync(source).size) return false;

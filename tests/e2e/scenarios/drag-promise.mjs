@@ -32,7 +32,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs } from "../lib/data.mjs";
+import { clipsDir, dataDirs } from "../lib/data.mjs";
 import {
   clearDropped,
   droppedIn,
@@ -139,7 +139,8 @@ exec '${real}' "$@"
       /** How long the stretch from `start` is, between the cuts. */
       const stretchFrom = (start) => Math.min(...cuts.filter((c) => c > start + 0.01)) - start;
       // The app's clip files (where they are: the Videos folder, or its data's).
-      const appFiles = () => filesUnder(dataDirs()[0]).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));
+      const appFiles = () =>
+        [...new Set([clipsDir(), ...dataDirs()])].flatMap(filesUnder).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));
       /** Whether `file` dropped is whole: Dolphin's copy is renamed into place
        *  once written; Nautilus copies ours in as it goes, so it's whole at our size. */
       const whole = (file) => {
