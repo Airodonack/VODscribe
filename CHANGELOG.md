@@ -23,13 +23,13 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - An unpicked stretch is carried alone. Alt-drag a stretch from outside what's picked and the others are let go, as in a file manager.
 - Dragging an edge draws a guide line. On an edit's timeline (or a clip's, in the editor), a dashed line runs down the waveform where the edge is, to line it up with what you hear and see.
 - The annotation service is called VODscription. The service that brings a VOD's published transcript, chapters, highlights and cast has that name throughout the app and the website: the gift button offers the VOD's VODscription, and a library row's menu has Check for a VODscription and Check all VODs for VODscriptions.
-- The streamer's picture shows by their channel. When a VOD's annotations name the streamer whose channel it is, their picture shows beside the channel's name under the VOD's title and in its row in the library, as in Cast. With streamer avatars turned off in Settings › Privacy, nothing shows there, not even an initial as in the transcript and Cast.
+- The streamer's picture shows by their channel. When a VOD's annotations name the streamer whose channel it is, their picture shows beside the channel's name under the VOD's title and in its row in the library, as in Cast. With streamer pictures turned off in Settings › Privacy, nothing shows there, not even an initial as in the transcript and Cast.
 - A list shows what's being made. At the bottom of the library a line says what's under way, as a file manager shows its copies: the clips and edits being made, how far the current one is, and the VODs being erased after you removed them. Click it for the list, with each one's name, what it's doing, how far it is, and a button to cancel it.
 - Waiting clips and edits can be reordered. Drag a clip or edit that's waiting up or down the list to have it made sooner or later.
 - A canceled clip or edit says so. A canceled clip says so on the clip bar (clip that stretch again to make it); a canceled edit is left not rendered.
 - Removed VODs are erased at once. It's erased beside whatever is being made rather than as VODscribe quits, so quitting is as quick as with no VOD removed. Quit, or cancel it in the list, before it's done, and the rest is erased when VODscribe next starts.
 - The donation links are gone. They're off the library and the screen shown when no video is open.
-- The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer avatars from img.vodscribe.com", which work as before.
+- The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer pictures from img.vodscribe.com", which work as before.
 - A short window shows the player alone. Show transcript and chat, at the right of the VOD's title, swaps them, and the transcript stays in its place as you open other VODs.
 - Fixes:
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.

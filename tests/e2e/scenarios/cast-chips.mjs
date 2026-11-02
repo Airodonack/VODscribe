@@ -3,7 +3,7 @@
 // it. Annotations imported for a Twitch VOD (fixtures/annotations-minute.json,
 // on Marlowe's channel, whose cast has Marlowe with a Twitch account): the
 // picture from the image server (the run's file host, lib/fileHost.mjs) shows
-// beside "Marlowe" in both. With streamer avatars turned off in Settings ›
+// beside "Marlowe" in both. With streamer pictures turned off in Settings ›
 // Privacy, nothing is there, not even an initial, and the image server isn't
 // asked.
 
@@ -33,7 +33,7 @@ const pictures = (method, at) =>
       ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
       : { status: 404 };
 
-const AVATARS = "Enable streamer avatars from img.vodscribe.com";
+const AVATARS = "Enable streamer pictures from img.vodscribe.com";
 
 export default {
   name: "cast-chips",

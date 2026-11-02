@@ -433,7 +433,7 @@
             checked={loadCastPictures}
             onchange={(e) => appSettings.update({ load_cast_pictures: e.currentTarget.checked })}
           />
-          Enable streamer avatars from img.vodscribe.com
+          Enable streamer pictures from img.vodscribe.com
         </label>
         <p class="muted hint">
           It gets the streamer's site and login, and your IP address, and passes you on to Twitch's or Kick's own
