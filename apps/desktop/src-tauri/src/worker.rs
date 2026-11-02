@@ -41,10 +41,9 @@ struct Job {
 /// Queue state shared by the stages and the commands. Stages pick and
 /// register a job under this lock, and commands that stop or change a
 /// request take it too, so a command can't slip in between the two.
-#[derive(Default)]
 struct Queue {
     jobs: Vec<Job>,
-    /// While set, stages start nothing new (see `Worker::hold`).
+    /// While set, stages start nothing new (see `Worker::hold`), and from `Worker::start` to `Worker::run`.
     held: bool,
 }
 
@@ -70,9 +69,12 @@ impl Drop for Hold<'_> {
 }
 
 impl Worker {
+    /// Starts the stages held: they start nothing until `run`, which comes
+    /// once the app's state is managed, since a job reads it (`emit_vod`)
+    /// and a job left from last time is there to start at once.
     pub fn start(app: AppHandle, paths: Paths) -> Result<Self> {
         Db::open(&paths.db())?.requeue_interrupted()?;
-        let queue = Arc::new(Mutex::new(Queue::default()));
+        let queue = Arc::new(Mutex::new(Queue { jobs: Vec::new(), held: true }));
         let (dl_tx, dl_rx) = mpsc::channel();
         let (tr_tx, tr_rx) = mpsc::channel();
         for (stage, rx) in [(Stage::Download, dl_rx), (Stage::Transcribe, tr_rx)] {
@@ -93,6 +95,12 @@ impl Worker {
             std::thread::Builder::new().name(name.into()).spawn(move || run(stage, ctx, rx))?;
         }
         Ok(Self { wakes: Mutex::new([dl_tx, tr_tx]), queue })
+    }
+
+    /// Lets the stages start jobs; see `start`.
+    pub fn run(&self) {
+        self.queue.lock().unwrap().held = false;
+        self.wake();
     }
 
     /// Tells both stages to look for work.

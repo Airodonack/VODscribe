@@ -232,6 +232,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     });
     // First, so the queues' first news (what's left from last time) is heard.
     app.state::<AppState>().job_list.run(app.handle().clone())?;
+    app.state::<AppState>().worker.run();
     app.state::<AppState>().clips.run(app.handle().clone())?;
     // What was left to erase of the VODs nothing uses any more (stopped, or the app quit first).
     app.state::<AppState>().sweeper.run(app.handle().clone())?;
