@@ -97,6 +97,15 @@ pub(crate) fn begun(app: &AppHandle, queue: Queue, id: i64) {
     }
 }
 
+/// How far (0..1) job `id` on the clips' queue is along, if it's the one
+/// running and that's known.
+#[cfg(target_os = "macos")]
+pub(crate) fn progress_of(app: &AppHandle, id: i64) -> Option<f64> {
+    let state = app.try_state::<AppState>()?;
+    let running = *state.job_list.rendering.lock().unwrap();
+    running.filter(|&(job, along)| job == id && along.is_finite()).map(|(_, along)| along)
+}
+
 /// The job `id` running on the clips' queue is `progress` (0..1) along.
 pub(crate) fn progressed(app: &AppHandle, id: i64, progress: f64) {
     progressed_on(app, Queue::Render, id, progress);

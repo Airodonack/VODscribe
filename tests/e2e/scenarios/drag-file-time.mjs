@@ -11,16 +11,20 @@
 // half carried from the timeline (Clip pressed and dragged), the second half
 // as its pill, and both picked and carried together by the pill (its file
 // made, the stretch's not); last, a stretch carried while two long clips
-// wait to be made ahead of it. Linux (X11) with Nautilus only, so far.
+// wait to be made ahead of it. Linux (X11) with Nautilus, and macOS with
+// Finder (there the drag is up once the page has asked for it: the window
+// server draws its picture; and a file is whole once it isn't empty, as the
+// app writes Finder's copy at once).
 
 import { existsSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { clipsDir, dataDirs } from "../lib/data.mjs";
 import {
   clearDropped,
+  frontmost,
   droppedIn,
   findIn,
   noFileManager,
@@ -41,8 +45,8 @@ function appFile(name) {
   return null;
 }
 
-/** A click's modifier that picks one (Ctrl; Linux only here). */
-const TOGGLE = `const toggle = { ctrlKey: true, metaKey: false };`;
+/** A click's modifier that picks one (Ctrl; Cmd on a Mac). */
+const TOGGLE = `const toggle = /Mac/.test(navigator.platform) ? { ctrlKey: false, metaKey: true } : { ctrlKey: true, metaKey: false };`;
 /** A pointer event's fields at (x, y) with `buttons` down, in the page. */
 const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons, isPrimary: true, pointerId: 1 });`;
 
@@ -73,7 +77,10 @@ export default {
       5 * MINUTE,
     );
 
-    // Nautilus on the folder, its own home (never the user's), beside the app's window.
+    // Nautilus on the folder, its own home (never the user's), beside the
+    // app's window (narrowed on a Mac, for Finder, on a screen 1280 points wide).
+    const mac = process.platform === "darwin";
+    if (mac) await resizeInner(app, 660, await app.js("return innerHeight"));
     const nautilus = await openFileManager(app, ctx, dest, path.join(work, "home"));
     try {
       const { drop } = nautilus;
@@ -89,6 +96,8 @@ export default {
        * `lengths` seconds expected there. Logged and timed as `label`.
        */
       const measure = async (label, from, lengths) => {
+        // (A press on a window not in front only brings it there.)
+        await frontmost(app);
         await app.js(`performance.clearMarks(); window.__pressed = [];`);
         const before = new Set(windowsOf(app.driver.proc.pid));
         const steps = [
@@ -120,7 +129,7 @@ export default {
         // isn't one: the drag is refused with no button held, as it should be).
         const up = await until(
           "the system's drag up",
-          () => windowsOf(app.driver.proc.pid).some((w) => !before.has(w)) && Date.now(),
+          () => (mac ? marks.drag : windowsOf(app.driver.proc.pid).some((w) => !before.has(w)) && Date.now()),
           30_000,
           { every: 25 },
         ).catch(async (e) => {
@@ -142,6 +151,11 @@ export default {
             const there = droppedIn(dest);
             if (there.length < lengths.length) return false;
             for (const f of there) {
+              // (Finder's copy stands there empty until it's written whole.)
+              if (mac) {
+                if (statSync(path.join(dest, f)).size === 0) return false;
+                continue;
+              }
               const source = sources.get(f) ?? appFile(f);
               if (!source) throw new Error(`${f} in the folder isn't one of the app's files`);
               sources.set(f, source);

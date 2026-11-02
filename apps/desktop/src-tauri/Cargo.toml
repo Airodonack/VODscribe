@@ -43,8 +43,17 @@ tauri-plugin-single-instance = "2"
 # Dragging a clip out of the window into another app (clips.rs). On Linux the
 # app starts the GTK drag itself: drag's builds an unescaped file:// URI, which
 # breaks on names with spaces.
-[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+[target.'cfg(windows)'.dependencies]
 drag = "2.1"
+
+# macOS: the app starts the drag itself (file_drag), with a file promise (the
+# file written where it's dropped once it's made) beside the file's address.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+raw-window-handle = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

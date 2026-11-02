@@ -4,7 +4,10 @@
 // Nautilus, opened on a folder of the test's, with a home of its own (never
 // the user's), beside the app's window on the test's display. And an app
 // that takes finished files only (`openFinishedOnly`), in the same place.
-// Linux (X11) only, so far. And what those scenarios share: the clip format
+// On macOS, Finder (in icon view, so a drop lands in the folder shown, not
+// in the one selected in column view), and the finished-files-only app is
+// one built with swiftc. Linux (X11) and macOS, so far. And what those
+// scenarios share: the clip format
 // picked, the length of a file dropped, the app's windows (the system's drag
 // shows its picture in one of its own).
 
@@ -17,8 +20,9 @@ import { MINUTE, until } from "./app.mjs";
 import { ffmpeg } from "./fixtures.mjs";
 import * as os from "./os.mjs";
 
-/** The file manager to drop on: E2E_FILE_MANAGER's, else Dolphin in a KDE session, else Nautilus. */
+/** The file manager to drop on: Finder on macOS; E2E_FILE_MANAGER's, else Dolphin in a KDE session, else Nautilus. */
 export const fileManager = () =>
+  (process.platform === "darwin" ? "finder" : null) ||
   process.env.E2E_FILE_MANAGER ||
   (/(^|:)kde(:|$)/i.test(process.env.XDG_CURRENT_DESKTOP ?? "") ? "dolphin" : "nautilus");
 
@@ -42,7 +46,9 @@ export function clearDropped(dest) {
 
 /** Why there's no file manager to drop on here, or null if there is. */
 export function noFileManager() {
-  const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+  if (process.platform === "darwin") return null;
+  const why =
+    os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux and macOS only, so far" : null);
   if (why) return why;
   try {
     execFileSync("sh", ["-c", `command -v ${fileManager()}`], { stdio: "ignore" });
@@ -78,6 +84,7 @@ function nautilusVersion() {
  */
 export async function openFileManager(app, ctx, dest, home) {
   mkdirSync(dest, { recursive: true });
+  if (process.platform === "darwin") return openFinder(app, ctx, dest);
   mkdirSync(home, { recursive: true });
   if (fileManager() === "nautilus") writeFileSync(path.join(dest, KEPT), "Kept so the folder isn't empty.\n");
   const env = {
@@ -158,7 +165,16 @@ const PYTHON = "/usr/bin/python3";
 
 /** Why there's no app that takes finished files only to drop on here, or null if there is. */
 export function noFinishedOnly() {
-  const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+  if (process.platform === "darwin") {
+    try {
+      execFileSync("sh", ["-c", "command -v swiftc"], { stdio: "ignore" });
+      return null;
+    } catch {
+      return "no swiftc to build the app that takes finished files only";
+    }
+  }
+  const why =
+    os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux and macOS only, so far" : null);
   if (why) return why;
   try {
     execFileSync(PYTHON, ["-c", "import gi; gi.require_version('Gtk', '3.0'); from gi.repository import Gtk"], {
@@ -228,6 +244,7 @@ Gtk.main()
  */
 export async function openFinishedOnly(app, ctx, work) {
   mkdirSync(work, { recursive: true });
+  if (process.platform === "darwin") return openFinishedOnlyMac(app, ctx, work);
   const script = path.join(work, "finished-only.py");
   writeFileSync(script, FINISHED_ONLY);
   const log = path.join(work, "finished-only.log");
@@ -241,8 +258,12 @@ export async function openFinishedOnly(app, ctx, work) {
   }
 }
 
-/** The X windows of process `pid` that show. */
+/** The X windows of process `pid` that show (macOS: its windows on screen, by number). */
 export function windowsOf(pid) {
+  if (process.platform === "darwin")
+    return jxa(
+      `ObjC.import("CoreGraphics"); JSON.stringify(ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))).filter((w) => w.kCGWindowOwnerPID === ${Number(pid)}).map((w) => String(w.kCGWindowNumber)))`,
+    );
   try {
     return execFileSync("xdotool", ["search", "--onlyvisible", "--pid", String(pid)], { encoding: "utf8" })
       .split("\n")
@@ -290,4 +311,176 @@ export async function setFormat(app, format) {
     10_000,
   );
   await app.key("Escape");
+}
+
+/** Runs JXA `script`, its last value read as JSON. */
+function jxa(script) {
+  return JSON.parse(execFileSync("osascript", ["-l", "JavaScript", "-e", script], { encoding: "utf8" }) || "null");
+}
+
+/**
+ * JXA helpers: the windows on screen, front first (CoreGraphics' list: an
+ * AppleEvent to Finder from an SSH session times out), the screen's width,
+ * and the left button and keys as CoreGraphics events.
+ */
+const MAC_WINDOWS = `ObjC.import("CoreGraphics"); ObjC.import("unistd");
+const windows = () => ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))).filter((w) => w.kCGWindowLayer === 0);
+const front = (owner) => windows().find((w) => w.kCGWindowOwnerName === owner && w.kCGWindowBounds.Height > 100);
+const mouse = (type, x, y) => { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0); $.CGEventSetFlags(e, 0); $.CGEventPost(0, e); };
+const drag = (from, to) => { mouse(5, ...from); $.usleep(100000); mouse(1, ...from); $.usleep(80000);
+  for (let i = 1; i <= 10; i++) { mouse(6, from[0] + ((to[0] - from[0]) * i) / 10, from[1] + ((to[1] - from[1]) * i) / 10); $.usleep(30000); }
+  mouse(2, ...to); $.usleep(300000); };
+const command = (code, more = 0) => { for (const down of [true, false]) { const e = $.CGEventCreateKeyboardEvent(null, code, down); $.CGEventSetFlags(e, 0x100000 | more); $.CGEventPost(0, e); $.usleep(30000); }
+  // The modifiers let go of: else the system keeps them for the next events (a click became a Control-click).
+  for (const key of [55, 59]) { const e = $.CGEventCreateKeyboardEvent(null, key, false); $.CGEventSetFlags(e, 0); $.CGEventPost(0, e); } $.usleep(30000); };
+const screenWidth = () => $.CGDisplayPixelsWide($.CGMainDisplayID());`;
+
+/** Where a window to drop on goes beside the app's ({x, y, w, h}): right of it, else left; skipped, through `ctx`, where there's no room. */
+async function besideMac(app, ctx) {
+  const page = await os.windowRect(app);
+  const screenW = jxa(`${MAC_WINDOWS} screenWidth()`);
+  // As wide as there's room for, up to 600 (the runner's screen may be 1280 wide).
+  const room = Math.max(screenW - (page.x + page.w) - 40, page.x - 40);
+  const fm = { w: Math.min(600, room), h: 460, y: Math.max(60, page.y) };
+  fm.x = fm.w < 400 ? null : page.x + page.w + 20 + fm.w <= screenW ? page.x + page.w + 20 : page.x - 20 - fm.w;
+  if (fm.x === null)
+    ctx.skip(
+      `no room for a window beside the app's (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
+    );
+  return fm;
+}
+
+/**
+ * A window of app `owner`, the frontmost, sized and moved to `fm` by its
+ * corner and its title bar: first to the screen's left, where its corner is
+ * on the screen to drag.
+ */
+function placeMac(owner, fm) {
+  const at = JSON.stringify(owner);
+  return jxa(`${MAC_WINDOWS}
+    let b = front(${at}).kCGWindowBounds;
+    drag([b.X + b.Width / 2, b.Y + 12], [40 + b.Width / 2, ${fm.y} + 12]);
+    b = front(${at}).kCGWindowBounds;
+    drag([b.X + b.Width - 3, b.Y + b.Height - 3], [b.X + ${fm.w} - 3, b.Y + ${fm.h} - 3]);
+    b = front(${at}).kCGWindowBounds;
+    drag([b.X + b.Width / 2, b.Y + 12], [${fm.x} + b.Width / 2, ${fm.y} + 12]);
+    JSON.stringify(front(${at}).kCGWindowBounds)`);
+}
+
+/** On macOS, the app in front before a press that must reach it (`focusMac`); elsewhere nothing. */
+export async function frontmost(app) {
+  if (process.platform === "darwin") await focusMac(app);
+}
+
+/**
+ * The app in front again, by a click on its title bar (an app can't bring
+ * another to the front from a script any more), and a moment for it: a
+ * press right after the click that brought it there goes nowhere.
+ */
+async function focusMac(app) {
+  if (await app.js("return document.hasFocus()")) return;
+  const page = await os.windowRect(app);
+  os.click(page.x + Math.round(page.w / 2), page.y - 14);
+  await sleep(1500);
+}
+
+/** Finder on folder `dest`, in icon view, beside the app's window: where to drop on it, and `close`. */
+async function openFinder(app, ctx, dest) {
+  const fm = await besideMac(app, ctx);
+  const had = jxa(
+    `${MAC_WINDOWS} JSON.stringify(windows().filter((w) => w.kCGWindowOwnerName === "Finder").map((w) => w.kCGWindowNumber))`,
+  );
+  execFileSync("open", [dest]);
+  await until(
+    "Finder's window",
+    () =>
+      jxa(
+        `${MAC_WINDOWS} const w = front("Finder"); JSON.stringify(!!w && !${JSON.stringify(had)}.includes(w.kCGWindowNumber))`,
+      ),
+    MINUTE,
+  );
+  await sleep(500);
+  const at = placeMac("Finder", fm);
+  // Icon view (Cmd+1): in column view a drop goes into the folder selected;
+  // arranged by name (Ctrl+Cmd+1), so a file shows in the first place, not
+  // where it was let go.
+  jxa(`${MAC_WINDOWS} command(18); $.usleep(300000); command(18, 0x40000); "true"`);
+  await sleep(500);
+  await focusMac(app);
+  return {
+    // (Right of its sidebar.)
+    drop: { x: Math.round(at.X + at.Width * 0.65), y: Math.round(at.Y + at.Height * 0.6) },
+    window: at,
+    // The cancel button of the file in the first place (arranged by name):
+    // at its icon's top-left corner, right of the sidebar, below the toolbar.
+    cancelAt: () => ({ x: Math.round(at.X + 222), y: Math.round(at.Y + 76) }),
+    // Its title bar clicked (Finder in front), then Cmd+W.
+    close: () => {
+      jxa(`${MAC_WINDOWS} const b = front("Finder").kCGWindowBounds; mouse(5, b.X + b.Width / 2, b.Y + 12); $.usleep(100000);
+        mouse(1, b.X + b.Width / 2, b.Y + 12); mouse(2, b.X + b.Width / 2, b.Y + 12); $.usleep(300000); command(13); "true"`);
+      return focusMac(app);
+    },
+  };
+}
+
+/** The app that takes finished files only, on macOS: a window that takes file addresses only, as most apps do, and says what it got. */
+const FINISHED_ONLY_MAC = `
+import AppKit
+func say(_ s: String) { print(String(format: "%.3f ", Date().timeIntervalSince1970) + s); fflush(stdout) }
+final class Drop: NSView {
+    override init(frame: NSRect) { super.init(frame: frame); registerForDraggedTypes([.fileURL]) }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ r: NSRect) { NSColor.systemPurple.setFill(); r.fill() }
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { .copy }
+    override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
+        say("dropped")
+        let urls = s.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        let there = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        say("took \\(there.count) of \\(urls.count): \\(there.map { $0.path }.joined(separator: " "))")
+        return true
+    }
+}
+let pos = (ProcessInfo.processInfo.environment["POS"] ?? "700 100 600 500").split(separator: " ").map { Double($0)! }
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+let screen = NSScreen.main!.frame
+let win = NSWindow(contentRect: NSRect(x: pos[0], y: screen.height - pos[1] - pos[3], width: pos[2], height: pos[3]), styleMask: [.titled], backing: .buffered, defer: false)
+win.title = "finished-only"
+win.contentView = Drop(frame: NSRect(x: 0, y: 0, width: pos[2], height: pos[3]))
+win.makeKeyAndOrderFront(nil)
+say("ready")
+app.run()
+`;
+
+/** The name the app that takes finished files only goes by on macOS (its program's). */
+export const FINISHED_ONLY_MAC_NAME = "Clip Taker";
+
+async function openFinishedOnlyMac(app, ctx, work) {
+  const fm = await besideMac(app, ctx);
+  const source = path.join(work, "finished-only.swift");
+  writeFileSync(source, FINISHED_ONLY_MAC);
+  const program = path.join(work, FINISHED_ONLY_MAC_NAME);
+  execFileSync("swiftc", ["-O", source, "-o", program], { stdio: "ignore" });
+  const log = path.join(work, "finished-only.log");
+  writeFileSync(log, "");
+  const out = openSync(log, "a");
+  const proc = spawn(program, [], {
+    env: { ...process.env, POS: `${fm.x} ${fm.y} ${fm.w} ${fm.h}` },
+    stdio: ["ignore", out, out],
+  });
+  closeSync(out);
+  const said = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
+  try {
+    await until("its window", () => said().some((l) => l.endsWith(" ready")), MINUTE);
+    await sleep(1000);
+    await focusMac(app);
+  } catch (e) {
+    proc.kill();
+    throw e;
+  }
+  return {
+    drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
+    said,
+    close: () => proc.kill(),
+  };
 }

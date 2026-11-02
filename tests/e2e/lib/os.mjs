@@ -10,8 +10,9 @@
 //   found from a mark the page shows a moment (Wayland doesn't tell it).
 // - Windows (run in the signed-in session: runners.mjs): PowerShell, with
 //   System.Drawing for the screen and user32 for the mouse.
-// - macOS: screencapture, and CoreGraphics events for clicks (the process
-//   running the tests needs the Screen Recording and Accessibility permissions).
+// - macOS: screencapture, and CoreGraphics events for clicks and gestures
+//   (the process running the tests needs the Screen Recording and
+//   Accessibility permissions).
 //
 // Screen positions come from the page: an element's box, scaled by the
 // window's scale factor, from the window's position (Tauri's read-only
@@ -225,10 +226,11 @@ export function click(x, y, scale = 1) {
  * times where the pointer is (2: a double-click);
  * ["hold", "alt"] and ["release", "alt"] for a key held through a drag;
  * ["letgo", x, y] moves and lets go at once.
- * Linux (X11) only, so far.
+ * Linux (X11), and on macOS the left button's steps, keys, clicks and waits.
  */
 export async function gesture(steps) {
-  if (process.platform !== "linux") throw new Error("gestures are Linux-only, so far");
+  if (process.platform === "darwin") return macGesture(steps);
+  if (process.platform !== "linux") throw new Error("gestures are driven on Linux and macOS only, so far");
   const WHEEL = { up: "4", down: "5", left: "6", right: "7" };
   for (const [what, a, b, c] of steps) {
     if (what === "down") {
@@ -259,6 +261,58 @@ export async function gesture(steps) {
 /** The buttons and keys gestures pressed and haven't let go of yet. */
 const held = { buttons: new Set(), keys: new Set() };
 
+/** macOS's virtual key codes for the keys gestures press. */
+const MAC_KEYS = { Escape: 53, Return: 36, space: 49 };
+
+/**
+ * `gesture`'s steps on macOS, as one JXA script of CoreGraphics events (one
+ * osascript per step would take a tenth of a second each): a move with the
+ * button down is a drag event (AppKit's drag follows those only). Screen
+ * points, which are the pixels on a screen of scale 1.
+ */
+async function macGesture(steps) {
+  const lines = [];
+  let down = held.buttons.has("1");
+  const mouse = (type, x, y) => lines.push(`mouse(${type}, ${x}, ${y});`);
+  for (const [what, a, b] of steps) {
+    if (what === "down") {
+      mouse(5, a, b);
+      lines.push("$.usleep(200000);");
+      mouse(1, a, b);
+      down = true;
+    } else if (what === "move") mouse(down ? 6 : 5, a, b);
+    else if (what === "up" || what === "letgo") {
+      if (what === "letgo") mouse(6, a, b);
+      lines.push("mouse(2, ...here());");
+      down = false;
+    } else if (what === "click") {
+      for (let i = 1; i <= (a ?? 1); i++) lines.push(`click(${i});`);
+    } else if (what === "key") {
+      if (!(a in MAC_KEYS)) throw new Error(`no macOS key code for ${a}`);
+      lines.push(`key(${MAC_KEYS[a]});`);
+    } else if (what === "wait") lines.push(`$.usleep(${Math.round(a * 1000)});`);
+    else throw new Error(`no gesture step ${what} on macOS, so far`);
+  }
+  if (down) held.buttons.add("1");
+  else held.buttons.delete("1");
+  execFileSync("osascript", [
+    "-l",
+    "JavaScript",
+    "-e",
+    `${MAC_EVENTS}
+${lines.join("\n")}`,
+  ]);
+}
+
+/** The JXA helpers `macGesture`'s script uses. */
+const MAC_EVENTS = `ObjC.import("CoreGraphics"); ObjC.import("unistd");
+const here = () => { const p = $.CGEventGetLocation($.CGEventCreate(null)); return [p.x, p.y]; };
+// (No modifiers: a key event posted with some leaves them held for the next.)
+const post = (e) => { $.CGEventSetFlags(e, 0); $.CGEventPost(0, e); };
+const mouse = (type, x, y) => post($.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0));
+const click = (n) => { const [x, y] = here(); for (const type of [1, 2]) { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0); $.CGEventSetIntegerValueField(e, 1, n); post(e); } $.usleep(80000); };
+const key = (code) => { for (const down of [true, false]) { post($.CGEventCreateKeyboardEvent(null, code, down)); $.usleep(30000); } };`;
+
 /**
  * Lets go of whatever a gesture left pressed: a scenario that fails in the
  * middle of a drag leaves the X server's button down, and the next
@@ -267,6 +321,11 @@ const held = { buttons: new Set(), keys: new Set() };
  * test runner calls it after each scenario.
  */
 export function letGoOfAll() {
+  if (process.platform === "darwin") {
+    if (held.buttons.size) execFileSync("osascript", ["-l", "JavaScript", "-e", `${MAC_EVENTS}\nmouse(2, ...here());`]);
+    held.buttons.clear();
+    return;
+  }
   for (const button of held.buttons) execFileSync("xdotool", ["mouseup", button]);
   for (const key of held.keys) execFileSync("xdotool", ["keyup", key]);
   held.buttons.clear();

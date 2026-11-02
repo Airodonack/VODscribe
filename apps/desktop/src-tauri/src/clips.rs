@@ -25,6 +25,7 @@ use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
 
+use crate::file_drag::Ending;
 use crate::files::{delete_file, delete_leftovers, writing};
 use crate::history::{self, Doc};
 use crate::jobs::Jobs;
@@ -949,11 +950,11 @@ const DRAG_ICON: &[u8] = include_bytes!("../icons/64x64.png");
 /// Whether a clip whose file isn't made yet can be dragged out of the window:
 /// the system's drag begins at once and the file goes to where it's dropped
 /// once it's made (a file manager waits for it; an app that takes only files
-/// already made gets none, and the page says so: `DragEnded`). Linux only, so
-/// far; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the files at
-/// the window's edge before the drag begins (dragout.ts).
+/// already made gets none, and the page says so: `DragEnded`). Linux and
+/// macOS, so far; there VODSCRIBE_DRAG_WAITS=1 goes back to waiting for the
+/// files at the window's edge before the drag begins (dragout.ts).
 pub(crate) fn drags_before_made() -> bool {
-    cfg!(target_os = "linux") && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
+    cfg!(any(target_os = "linux", target_os = "macos")) && std::env::var("VODSCRIBE_DRAG_WAITS").as_deref() != Ok("1")
 }
 
 /// Whether the page may drag clips out before their files are made
@@ -1054,6 +1055,12 @@ pub(crate) async fn drag_clip(
     // PNG of reasonable size; else the first clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
     let image = drawn.or_else(|| std::fs::read(thumb_path(&app, ids[0])).ok());
+    let names = {
+        let state = app.state::<AppState>();
+        let format = Settings::load(&state.paths.settings()).clip_format;
+        let db = state.db.lock().unwrap();
+        ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect()
+    };
     let asking = app.clone();
     let listed = ids.clone();
     let files = move || listed.iter().map(|&id| made(&asking, id).unwrap_or(Made::Making)).collect();
@@ -1074,7 +1081,7 @@ pub(crate) async fn drag_clip(
         cutter.state::<AppState>().clips.dragged_out(&out, out_now);
         crate::job_list::changed(&cutter);
     };
-    drag_file(window, files, image, taken, dropped).await
+    drag_file(window, names, files, image, taken, dropped).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1091,8 +1098,49 @@ pub(crate) struct DragEnded {
     pub(crate) receiver: Option<String>,
 }
 
+/// A file in a drag out of the window: the name it goes by where it's
+/// dropped, known before it's made (macOS names a file promised then), and
+/// the job making it, whose progress is shown there meanwhile.
+// (Read by macOS's drag only.)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct Outgoing {
+    pub(crate) name: String,
+    pub(crate) job: Option<i64>,
+}
+
+/// The name clip `id`'s file goes by, as it's made in `format` (`cut`, or
+/// `edits::render_edit` for one changed in the editor): its file's own, if
+/// it's made.
+fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> String {
+    let named = || -> Result<Option<String>> {
+        let Some(clip) = db.clip(id)? else { return Ok(None) };
+        let own = clip.file_path.as_deref().filter(|_| clip.status == ClipStatus::Ready);
+        if let Some(name) = own.and_then(|p| Path::new(p).file_name()) {
+            return Ok(Some(name.to_string_lossy().into_owned()));
+        }
+        let pieces = db.edit_pieces(id)?;
+        if !vodscribe_core::edits::cut_whole(&pieces) {
+            let audio_only = pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
+            let title = db.edit(id)?.map(|e| e.title).unwrap_or_default();
+            return Ok(Some(format!("{}.{}", clips::safe_name(&title), clips::extension(audio_only, format))));
+        }
+        let Some(vod) = db.vod(clip.vod_id)? else { return Ok(None) };
+        let (_, name) = clips::file_path(
+            vod.info.channel.as_deref(),
+            vod.info.published.as_deref(),
+            &vod.info.title,
+            (clip.start, clip.end),
+            vod.audio_only,
+            format,
+        );
+        Ok(Some(name))
+    };
+    named().ok().flatten().unwrap_or_else(|| format!("Clip.{}", clips::extension(false, format)))
+}
+
 /// Starts the system's drag of the files `files` says are where (ones the
-/// app made, or is making), showing `image` (a PNG) or the app's icon. When
+/// app made, or is making; `names` says what each goes by where it's
+/// dropped), showing `image` (a PNG) or the app's icon. When
 /// it's over (once the files went where they were dropped, or couldn't),
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`), so what it does next (deleting a clip made only for the
@@ -1100,6 +1148,7 @@ pub(crate) struct DragEnded {
 /// `dropped(false)` once it's over.
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
+    names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Option<Vec<u8>>,
     taken: impl Fn() + Send + Sync + 'static,
@@ -1110,24 +1159,10 @@ pub(crate) async fn drag_file(
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let _ = tx.send(start_drag(&on_main, files, image, taken, dropped).map_err(|e| format!("{e:#}")));
+            let _ = tx.send(start_drag(&on_main, names, files, image, taken, dropped).map_err(|e| format!("{e:#}")));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
-}
-
-/// Where a drag out of the window ended.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Ending {
-    /// Called off (Escape).
-    CalledOff,
-    /// Dropped back on the app's own window.
-    Back,
-    /// Dropped where nothing took it: on nothing, or on an app that refused
-    /// it (one whose ask for the files was refused, its making failed).
-    Nowhere,
-    /// Let go on another app, which took it or didn't.
-    Elsewhere,
 }
 
 /// What the end of a drag out of the window comes to (`DragEnded`), from what
@@ -1159,6 +1194,7 @@ fn drag_outcome(
 
 /// The files `made` says are where, if all are made: their paths; else, if
 /// one won't be, why; else (some still being made) None.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn settled(made: Vec<Made>) -> Option<Result<Vec<PathBuf>, String>> {
     let mut paths = Vec::new();
     let mut making = false;
@@ -1384,6 +1420,7 @@ fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
 #[cfg(target_os = "linux")]
 fn start_drag(
     window: &tauri::WebviewWindow,
+    _names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
@@ -1906,9 +1943,10 @@ fn release_button(page: &gtk::Widget) {
 
 /// The system's drag of the files `files` says are where, once they're all
 /// made (the page waits for them here: `drags_before_made`).
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
 fn start_drag(
     window: &tauri::WebviewWindow,
+    _names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + 'static,
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
@@ -1923,7 +1961,7 @@ fn start_drag(
     let taken = std::sync::Arc::new(taken);
     drag::start_drag(
         window,
-        // A list on both: Windows' file drop holds them all, macOS drags one item for each.
+        // A list: Windows' file drop holds them all.
         drag::DragItem::Files(paths),
         drag::Image::Raw(image),
         move |result, _| {
@@ -1940,6 +1978,101 @@ fn start_drag(
         drag::Options::default(),
     )
     .map_err(|e| anyhow::anyhow!("The drag couldn't start: {e}"))
+}
+
+/// The system's drag (AppKit's) of the files `files` says are where, made or
+/// being made (`file_drag`): Finder, and any app that takes a file promise,
+/// gets each file written where it was dropped once it's made, with its
+/// progress and cancel meanwhile; an app that takes files already made gets
+/// those that are. Once it's over, `taken` runs if another app was given the
+/// app's own files (not copies written for it), then the page is told
+/// (`drag_outcome`, as on Linux).
+#[cfg(target_os = "macos")]
+fn start_drag(
+    window: &tauri::WebviewWindow,
+    names: Vec<Outgoing>,
+    files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
+    image: Vec<u8>,
+    taken: impl Fn() + Send + Sync + 'static,
+    dropped: impl Fn(bool) + Send + Sync + 'static,
+) -> Result<()> {
+    use crate::file_drag::{self, Event, Failure};
+
+    // The window itself (not its web view) takes file drops in tao, which
+    // unwraps the dropped files' names: a file not made yet has none, and the
+    // app panicked as the drag crossed the window's edge (tao 0.37.1's
+    // draggingEntered). Tauri hears drops from the web view, which stays
+    // registered for them.
+    let ns_window = window.ns_window()? as *const objc2_app_kit::NSWindow;
+    // SAFETY: Tauri's window, alive through this call on the main thread.
+    unsafe { (*ns_window).unregisterDraggedTypes() };
+    let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
+    let items = names
+        .into_iter()
+        .enumerate()
+        .map(|(index, Outgoing { name, job })| {
+            let file = DragFile { app: window.app_handle().clone(), index, name, job, files: files.clone() };
+            Arc::new(file) as Arc<dyn file_drag::Item>
+        })
+        .collect();
+    let told = window.clone();
+    file_drag::start(window, items, &image, move |event| match event {
+        Event::LetGo => dropped(true),
+        Event::Ended(ended) => {
+            let failure = ended.failure.map(|failure| match failure {
+                Failure::Cancelled => CANCELED.to_string(),
+                Failure::Failed(why) => why,
+            });
+            let outcome = drag_outcome(ended.ending, ended.given, failure, ended.made, ended.receiver);
+            // Copies written where it was dropped are the other app's own:
+            // the app's files aren't handed out.
+            if outcome.delivered && !ended.written {
+                taken();
+            }
+            dropped(false);
+            let _ = told.emit("drag-ended", outcome);
+        }
+    })
+}
+
+/// A clip's (or an edit's) file in a drag out of the window, as macOS's drag
+/// asks after it (`file_drag::Item`).
+#[cfg(target_os = "macos")]
+struct DragFile {
+    app: AppHandle,
+    index: usize,
+    name: String,
+    job: Option<i64>,
+    files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
+}
+
+#[cfg(target_os = "macos")]
+impl crate::file_drag::Item for DragFile {
+    fn file_name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn file_type(&self) -> String {
+        let ext = Path::new(&self.name).extension().and_then(|e| e.to_str()).unwrap_or_default();
+        match ext.to_ascii_lowercase().as_str() {
+            "mp4" => "public.mpeg-4",
+            "m4a" => "public.mpeg-4-audio",
+            "mov" => "com.apple.quicktime-movie",
+            "wav" => "com.microsoft.waveform-audio",
+            _ => "public.data",
+        }
+        .into()
+    }
+
+    fn state(&self) -> crate::file_drag::State {
+        use crate::file_drag::State;
+        match (self.files)().into_iter().nth(self.index) {
+            Some(Made::Ready(path)) => State::Ready(path),
+            Some(Made::Making) => State::Making(self.job.and_then(|id| crate::job_list::progress_of(&self.app, id))),
+            Some(Made::Failed(why)) => State::Failed(why),
+            None => State::Failed("That clip is gone.".into()),
+        }
+    }
 }
 
 /// Saves a copy of clip `id`'s file where the person picks, in the system's

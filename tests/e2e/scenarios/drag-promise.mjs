@@ -23,18 +23,26 @@
 // finished files only (one of the test's: it gives up after 5 s, as Qt's
 // do), before the file is made: nothing lands there, the app says that app
 // (by its desktop entry's name) takes finished files only, and the clip is
-// kept as a pill, which once made drags there and lands. Linux (X11) only,
-// so far; E2E_FILE_MANAGER=dolphin drops on Dolphin outside a KDE session.
+// kept as a pill, which once made drags there and lands. On macOS the drop
+// is on Finder, which takes a file promise: the app writes each file where
+// it was let go once it's made (Finder shows it with a progress meanwhile),
+// so Finder has its own copies; there also a pill already made lands at
+// once, Finder's cancel on the file being written lands nothing and says
+// nothing, so does Cancel in the list of jobs, and three clips land one by
+// one. Linux (X11) and macOS, so far; E2E_FILE_MANAGER=dolphin drops on
+// Dolphin outside a KDE session.
 
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { MINUTE, until } from "../lib/app.mjs";
+import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { clipsDir, dataDirs } from "../lib/data.mjs";
 import {
+  FINISHED_ONLY_MAC_NAME,
   clearDropped,
+  frontmost,
   droppedIn,
   fileManager,
   noFileManager,
@@ -61,8 +69,11 @@ export default {
   async run(app, ctx) {
     const why = noFileManager();
     if (why) ctx.skip(why);
-    // Dolphin copies the files in (KDE's promise); Nautilus takes ours where they are.
-    const copies = fileManager() === "dolphin";
+    // Dolphin copies the files in (KDE's promise), and Finder has them
+    // written in (a file promise); Nautilus takes ours where they are.
+    const mac = process.platform === "darwin";
+    const started = Date.now();
+    const copies = fileManager() === "dolphin" || mac;
     const work = path.join(ctx.out, "drag-promise");
     rmSync(work, { recursive: true, force: true });
     const dest = path.join(work, "drop-here");
@@ -109,7 +120,7 @@ exec '${real}' "$@"
     // user's; without one, its window's class).
     const entry =
       process.env.XDG_DATA_HOME && path.join(process.env.XDG_DATA_HOME, "applications", "clip-taker.desktop");
-    const takerName = entry ? "Clip Taker" : "Clip-taker";
+    const takerName = mac ? FINISHED_ONLY_MAC_NAME : entry ? "Clip Taker" : "Clip-taker";
     try {
       await app.toLibrary();
       const [vod] = await app.addFiles([longVideo(path.join(ctx.out, "fixtures"))]);
@@ -139,16 +150,23 @@ exec '${real}' "$@"
       /** How long the stretch from `start` is, between the cuts. */
       const stretchFrom = (start) => Math.min(...cuts.filter((c) => c > start + 0.01)) - start;
       // The app's clip files (where they are: the Videos folder, or its data's).
+      // The app's clip files: where clips go (the Videos or Movies folder's VODscribe, or the data's clips)
+      // and anywhere in its data; on macOS the Movies folder is the runner's own, so only those written since this began.
+      const clipDirs = [...new Set([clipsDir(), ...dataDirs()])];
       const appFiles = () =>
-        [...new Set([clipsDir(), ...dataDirs()])].flatMap(filesUnder).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));
+        clipDirs.flatMap(filesUnder).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f) && (!mac || mtimeOf(f) >= started));
       /** Whether `file` dropped is whole: Dolphin's copy is renamed into place
        *  once written; Nautilus copies ours in as it goes, so it's whole at our size. */
       const whole = (file) => {
+        // (Finder's stands there empty until the app writes it whole, at once.)
+        if (mac) return sizeOf(file) > 0;
         if (copies) return existsSync(file);
         const own = appFiles().find((f) => path.basename(f) === path.basename(file));
         return !!own && sizeOf(file) === sizeOf(own);
       };
 
+      // Room for Finder beside the window, on a screen 1280 points wide.
+      if (mac) await resizeInner(app, 660, await app.js("return innerHeight"));
       nautilus = await openFileManager(app, ctx, dest, path.join(work, "home"));
       const { drop } = nautilus;
       // What the page hears of the system's drag's end, and when; and the
@@ -181,6 +199,8 @@ exec '${real}' "$@"
       const hidden = async () => (await app.invoke("list_clips", { vodId: vod.id })).filter((c) => !c.shown);
       /** Clip (or `what`) pressed and carried to over the folder (or `to`), the system's drag up; then `then`. */
       const carryOut = async (then = [], what = "button.action.clip", to = drop) => {
+        // (A press on a window not in front only brings it there.)
+        await frontmost(app);
         await app.js(`performance.clearMarks(); window.__ended = [];`);
         const from = await centre(what);
         const before = new Set(windowsOf(app.driver.proc.pid));
@@ -200,9 +220,11 @@ exec '${real}' "$@"
           10_000,
           { every: 50 },
         );
-        await until("its picture", () => windowsOf(app.driver.proc.pid).some((w) => !before.has(w)), 10_000, {
-          every: 25,
-        });
+        // (On macOS the window server draws it.)
+        if (!mac)
+          await until("its picture", () => windowsOf(app.driver.proc.pid).some((w) => !before.has(w)), 10_000, {
+            every: 25,
+          });
         await os.gesture([
           ["move", to.x + 8, to.y + 4],
           ["wait", 200],
@@ -249,14 +271,16 @@ exec '${real}' "$@"
       // it, and its part file goes.
       encodes("partial");
       await toStart();
+      await frontmost(app);
       const clipAt = await centre("button.action.clip");
       const pressed = Date.now();
       await os.gesture([
         ["down", clipAt.x, clipAt.y],
         ["wait", 100],
-        ["move", clipAt.x + 30, clipAt.y - 30],
+        // (Inward on macOS, where the window is narrowed to leave room for Finder.)
+        ["move", clipAt.x + (mac ? -30 : 30), clipAt.y - 30],
         ["wait", 100],
-        ["move", clipAt.x + 60, clipAt.y - 60],
+        ["move", clipAt.x + (mac ? -60 : 60), clipAt.y - 60],
       ]);
       const early = await until("its clip, made from the press", async () => (await hidden())[0] ?? false, 10_000, {
         every: 50,
@@ -371,17 +395,12 @@ exec '${real}' "$@"
       if (droppedIn(dest).length) throw new Error(`a clip that failed left ${droppedIn(dest).join(", ")}`);
       ctx.log(`its encode failed: nothing landed, the toast says "${toast}"`);
 
-      // 5. Two pills picked and carried together, both made again as they go
-      // (MP4 picked since they were made): both land; Dolphin's one by one,
-      // in the order picked.
+      // 5. Two pills picked and carried together (three on macOS), all made
+      // again as they go (MP4 picked since they were made): all land;
+      // Dolphin's and Finder's one by one, in the order picked.
       encodes("fast");
-      const pair = await app.invoke("add_clips", {
-        vodId: vod.id,
-        ranges: [
-          [0, 60],
-          [60, 120],
-        ],
-      });
+      const ranges = [[0, 60], [60, 120], ...(mac ? [[120, 170]] : [])];
+      const pair = await app.invoke("add_clips", { vodId: vod.id, ranges });
       await until(
         "the two clips made",
         async () => {
@@ -400,35 +419,43 @@ exec '${real}' "$@"
         );
         await app.js(
           `document.querySelector('.chip[data-clip="' + arguments[0] + '"]')
-             .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));`,
+             .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, [arguments[1]]: true }));`,
           p.id,
+          mac ? "metaKey" : "ctrlKey",
         );
       }
-      await until("both picked", () => app.js(`return document.querySelectorAll(".chip.chosen").length === 2`), 10_000);
+      await until(
+        "all picked",
+        () => app.js(`return document.querySelectorAll(".chip.chosen").length === arguments[0]`, pair.length),
+        10_000,
+      );
       await carryOut([["letgo", drop.x + 16, drop.y + 8]], `.chip[data-clip="${pair[0].id}"] .length`);
       const arrivals = [];
       await until(
-        "both files whole in the folder",
+        "all the files whole in the folder",
         () => {
           for (const f of droppedIn(dest).filter((f) => !f.endsWith(".part"))) {
             if (whole(path.join(dest, f)) && !arrivals.some((a) => a.name === f))
               arrivals.push({ name: f, at: Date.now() });
           }
-          return arrivals.length === 2;
+          return arrivals.length === pair.length;
         },
         2 * MINUTE,
         { every: 50 },
       );
       const lengths = arrivals.map((a) => probeDuration(path.join(dest, a.name)));
-      if (lengths.some((l) => Math.abs(l - 60) > SLACK))
-        throw new Error(`the two files are ${lengths.join(", ")} s long, not 60`);
-      if (!(await ended()).delivered) throw new Error("the page heard the two went nowhere");
+      const wanted = ranges.map(([a, b]) => b - a);
+      const byLength = (list) => [...list].sort((a, b) => a - b);
+      if (byLength(lengths).some((l, i) => Math.abs(l - byLength(wanted)[i]) > SLACK))
+        throw new Error(`the files are ${lengths.join(", ")} s long, not ${wanted.join(", ")}`);
+      if (!(await ended()).delivered) throw new Error("the page heard the clips went nowhere");
       // Named for their ranges: the first's starts at 0.
-      const apart = arrivals[1].at - arrivals[0].at;
-      if (copies && !(arrivals[0].name < arrivals[1].name && apart > 2000))
-        throw new Error(`Dolphin's two came ${apart} ms apart, ${arrivals.map((a) => a.name).join(" then ")}`);
+      const gaps = arrivals.slice(1).map((a, i) => a.at - arrivals[i].at);
+      const inTurn = arrivals.slice(1).every((a, i) => arrivals[i].name < a.name && gaps[i] > 2000);
+      if (copies && !inTurn)
+        throw new Error(`the copies came ${gaps.join(", ")} ms apart, ${arrivals.map((a) => a.name).join(" then ")}`);
       ctx.log(
-        `two carried together, both being made: both landed, ${apart} ms apart (${arrivals.map((a) => a.name).join(", then ")})`,
+        `${pair.length} carried together, all being made: all landed, ${gaps.join(", ")} ms apart (${arrivals.map((a) => a.name).join(", then ")})`,
       );
       await settle();
 
@@ -449,6 +476,65 @@ exec '${real}' "$@"
       ctx.log(`a pill still being made, dragged alone: it landed (${alone.length.toFixed(2)} s long)`);
       await settle();
 
+      if (mac) {
+        // 6a. A pill already made: it lands at once.
+        await until(
+          "its pill, made",
+          () => app.js(`return !!document.querySelector(arguments[0])`, `.chip.ready[data-clip="${pair[1].id}"]`),
+          2 * MINUTE,
+        );
+        const let1 = Date.now();
+        await carryOut([["letgo", drop.x + 16, drop.y + 8]], `.chip[data-clip="${pair[1].id}"] .length`);
+        const made = await landed("a pill already made");
+        if (!(await ended()).delivered) throw new Error("the page heard the pill already made went nowhere");
+        ctx.log(`a pill already made: it landed ${made.at - let1} ms from the press, as the drag ended`);
+        await settle();
+
+        /** Let go on Finder before the file's made: the clip, once its empty file stands there. */
+        const waiting = async () => {
+          await toStart();
+          await carryOut([["letgo", drop.x + 16, drop.y + 8]]);
+          const [clip] = await hidden();
+          if (!clip || clip.status === "ready")
+            throw new Error(`the clip was ${clip?.status ?? "gone"} as it was let go`);
+          await until(
+            "its empty file in Finder",
+            () => droppedIn(dest).some((f) => sizeOf(path.join(dest, f)) === 0),
+            10_000,
+            { every: 50 },
+          );
+          return clip;
+        };
+        /** Nothing landed and nothing said, the clip made for the drag gone. */
+        const nothing = async (label) => {
+          const end = await ended();
+          if (end.delivered || end.failed || end.finished_only)
+            throw new Error(`${label}: the page heard ${JSON.stringify(end)}`);
+          await until(`${label}: the empty file gone`, () => droppedIn(dest).length === 0, 10_000);
+          await settle();
+        };
+
+        // 6b. Finder's cancel on the file being written (the button at its
+        // icon's corner, the first place in the folder): nothing lands, and
+        // nothing is said.
+        encodes("slow");
+        await waiting();
+        await sleep(1500);
+        const icon = nautilus.cancelAt();
+        writeFileSync(path.join(work, "finder-cancel.png"), os.screenshot());
+        await os.gesture([["move", icon.x, icon.y], ["wait", 300], ["click"]]);
+        await nothing("Finder's cancel");
+        ctx.log(`Finder's cancel at ${icon.x},${icon.y}: nothing landed, nothing said`);
+
+        // 6c. Cancel in the list of jobs, while Finder waits for the file:
+        // nothing lands, and nothing is said.
+        const canceled = await waiting();
+        await until("its making listed with the jobs", () => listed(canceled.id), 5000, { every: 100 });
+        await app.invoke("cancel_job", { kind: "clip", id: canceled.id });
+        await nothing("canceled in the list of jobs");
+        ctx.log("canceled in the list of jobs while Finder waited: nothing landed, nothing said");
+      }
+
       // 7. Let go on an app that takes finished files only, before the file's
       // made: nothing lands, the app says it takes finished files only, by
       // its name, and keeps the clip as a pill, which once made drags there.
@@ -457,7 +543,7 @@ exec '${real}' "$@"
         ctx.log(`no app that takes finished files only to drop on: ${noTaker}`);
         return;
       }
-      nautilus.close();
+      await nautilus.close();
       nautilus = null;
       if (entry) {
         mkdirSync(path.dirname(entry), { recursive: true });
@@ -487,7 +573,8 @@ exec '${real}' "$@"
       const said = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
       const want = `${takerName} takes finished files only. The clip is being made; drag it from the clip bar when it's ready.`;
       if (said !== want) throw new Error(`the toast says "${said}", not "${want}"`);
-      if (!taker.said().some((l) => l.endsWith("gave up")))
+      // (Qt's give up waiting; on macOS it gets no file at all.)
+      if (!taker.said().some((l) => (mac ? / took 0 of /.test(l) : l.endsWith("gave up"))))
         throw new Error(`the app that takes finished files only says ${JSON.stringify(taker.said())}`);
       await until(
         `its pill, made`,
@@ -533,5 +620,14 @@ function sizeOf(file) {
     return statSync(file).size;
   } catch {
     return -1;
+  }
+}
+
+/** File `file`'s last change (ms), or 0 if it isn't there. */
+function mtimeOf(file) {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return 0;
   }
 }

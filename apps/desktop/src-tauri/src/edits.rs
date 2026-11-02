@@ -543,8 +543,10 @@ pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: 
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let names = vec![crate::clips::Outgoing { name, job: None }];
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
-    crate::clips::drag_file(window, files, None, taken, |_| {}).await
+    crate::clips::drag_file(window, names, files, None, taken, |_| {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

@@ -4,13 +4,14 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.7.1 (unreleased)
 
-The clips and edits being made now show in a list at the foot of the library, where you can follow them, cancel one or move it up the line. Copy, cut and paste work on clips, and on Linux a clip dragged out of the window goes at once. The service that brings a VOD its annotations is called VODscription from now on.
+The clips and edits being made now show in a list at the foot of the library, where you can follow them, cancel one or move it up the line. Copy, cut and paste work on clips, and on Linux and on a Mac a clip dragged out of the window goes at once. The service that brings a VOD its annotations is called VODscription from now on.
 
 - Ctrl+C and Ctrl+V copy and paste clips. Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them as new clips on a clip bar, or into an edit at the playhead. A paste is the clip as it was when copied, with its video if it was already made, whatever happens to the original after. With a stretch selected on an edit's timeline, the paste goes in after it and is selected, so pasting again builds a sequence.
 - Cut clips with Ctrl+X. Ctrl+X (⌘X) copies the clips picked and takes them off their bar, or out of the edit.
 - Copied clips go on the clipboard too. Each is a line of text, with a link to the moment for a site's VOD.
 - Ctrl+A can select the whole timeline. Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline, ready to copy; over the clip bar it still selects all the clips, and over the library its list.
 - On Linux, clips drag out at once. The drag doesn't wait at the window's edge for the file, which lands where you drop it once it's made; a file manager waits for it (Dolphin takes each file as it's ready, in a KDE session or not), and Escape before then lands nothing.
+- On a Mac, clips drag out at once. Finder shows the file with a progress bar until it's made, and its cancel button stops it.
 - Clips start as you pick them up. From a video on this computer, a stretch's clip, or several, is made from the moment you pick it up, first in line; a site's is downloaded once the drag leaves the window, and a clip of an edit follows its videos.
 - Long downloads no longer ask first. A clip downloaded from a site is made however long it is.
 - Some apps take finished files only. Let go on one before the clip is made, nothing lands there, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.

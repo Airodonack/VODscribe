@@ -15,6 +15,7 @@ mod clips;
 mod e2e;
 mod edits;
 mod embed;
+mod file_drag;
 mod files;
 mod footage;
 mod history;
