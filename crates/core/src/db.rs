@@ -1309,7 +1309,8 @@ impl Db {
         Ok((self.vod(id)?.expect("just inserted"), true))
     }
 
-    fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
+    /// The VOD of `platform`'s `platform_id` in the library, listed or not.
+    pub fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE platform = ?1 AND platform_id = ?2");
         Ok(self.conn.query_row(&sql, params![platform, platform_id], vod_from_row).optional()?)
     }
@@ -2995,6 +2996,37 @@ mod tests {
         let older = db.conn.last_insert_rowid();
         db.delete_vod(older).unwrap();
         assert!(db.add_vod(&info("d2")).unwrap().0.id > older);
+    }
+
+    /// As a VOD removed from the library is pasted again while its erasure is
+    /// under way (desktop vods.rs `add_to_library` finishes the erasure first
+    /// where it can): the gone row goes with all that was left of it, and the
+    /// VOD is added anew, under an id never given before though the old one
+    /// was the newest. One removed but not yet marked gone is listed again,
+    /// the same row as it was.
+    #[test]
+    fn a_vod_added_back_while_being_erased_is_added_anew_under_a_new_id() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let older = db.add_vod(&info("older")).unwrap().0.id;
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let chat: Vec<_> = (0..5).map(|i| message(i as f64, "a", "hi")).collect();
+        db.add_chat(vod, &chat, &[]).unwrap();
+        db.insert_segments(vod, &[Segment { start: 0.0, end: 1.0, text: "hi".into(), words: Vec::new() }]).unwrap();
+        assert!(db.remove_entry(vod).unwrap(), "used by nothing now");
+        db.set_gone(vod).unwrap();
+        assert_eq!(db.delete_some_of(vod, 2).unwrap(), 2, "a part of its chat erased");
+        assert_eq!(db.erase_left(vod).unwrap(), 4, "three messages and a segment left");
+        let (again, created) = db.add_vod(&info("x")).unwrap();
+        assert!(created && again.listed && !db.is_gone(again.id).unwrap());
+        assert!(again.id > vod, "the gone VOD's id {vod} given again: {}", again.id);
+        assert!(db.vod(vod).unwrap().is_none(), "the gone row is still there");
+        assert_eq!(db.erase_left(vod).unwrap(), 0, "what was left of it went with its row");
+        assert_eq!(db.erase_left(again.id).unwrap(), 0);
+        assert!(db.vod(older).unwrap().is_some_and(|v| v.listed), "another VOD went too");
+        // Removed, its erasure not begun.
+        assert!(db.remove_entry(again.id).unwrap());
+        let (back, created) = db.add_vod(&info("x")).unwrap();
+        assert_eq!((back.id, created, back.listed), (again.id, false, true));
     }
 
     #[test]

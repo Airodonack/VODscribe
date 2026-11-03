@@ -80,8 +80,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         }
         let info = info?;
 
-        let db = state.db.lock().unwrap();
-        let (vod, created) = add_to_library(&db, &info, None)?;
+        let (vod, created) = add_to_library(&task_app, &info, None)?;
         if created {
             // Hand the resolved info to the worker so a transcription asked
             // for soon doesn't probe again. Only a shortcut: if the file can't
@@ -124,11 +123,10 @@ pub(crate) struct AddedFiles {
 pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<AddedFiles> {
     let task_app = app.clone();
     let (added, errors) = tauri::async_runtime::spawn_blocking(move || {
-        let state = task_app.state::<AppState>();
         let mut added = Vec::new();
         let mut errors = Vec::new();
         for path in paths {
-            match add_file(&state, Path::new(&path)) {
+            match add_file(&task_app, Path::new(&path)) {
                 Ok(vod) => added.push(vod),
                 Err(e) => errors.push(format!("{e:#}")),
             }
@@ -151,7 +149,8 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     Ok(AddedFiles { vods: added.into_iter().map(|(v, _)| v).collect(), errors })
 }
 
-fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
+fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
+    let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
     // probe refuses network paths and non-media files before touching them.
     let info = local::probe(&ffmpeg, path)?;
@@ -159,14 +158,31 @@ fn add_file(state: &AppState, path: &Path) -> anyhow::Result<(Vod, bool)> {
     if local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local) {
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
-    let db = state.db.lock().unwrap();
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    add_to_library(&db, &info, Some(&info.url))
+    add_to_library(app, &info, Some(&info.url))
 }
 
 /// Adds a VOD (a file at `source`, if given), in one transaction; one
 /// already there is left as it is. Nothing is transcribed till asked for.
-fn add_to_library(db: &Db, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
+///
+/// One removed and not yet erased, or being erased (nothing else uses it),
+/// is erased whole first, the sweep's job taken over (`Sweeper::hand_over`):
+/// added back, it's added anew. Otherwise the add would take its row from
+/// under the sweep, which would stop there and leave its files.
+fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
+    let state = app.state::<AppState>();
+    let erasing = {
+        let db = state.db.lock().unwrap();
+        match db.find_vod(&info.platform, &info.platform_id)? {
+            Some(vod) if !vod.listed && db.uses(vod.id)? <= 0 => Some(vod.id),
+            _ => None,
+        }
+    };
+    if let Some(id) = erasing {
+        state.sweeper.hand_over(id);
+        erase_unused(app, Sweep { vod: id, kept: false }, &AtomicBool::new(false))?;
+    }
+    let db = state.db.lock().unwrap();
     db.atomically(|db| {
         let (vod, created) = db.add_vod(info)?;
         if created && let Some(source) = source {
@@ -461,6 +477,13 @@ impl Sweeper {
     pub(crate) fn cancel(&self, id: i64) {
         self.jobs.take_waiting(|j| j.vod == id);
         self.jobs.stop_running(|j| j.vod == id);
+    }
+
+    /// Takes VOD `id` out of the queue, or stops erasing it and waits for
+    /// that (a part at a time: a moment), for its add to erase it itself.
+    pub(crate) fn hand_over(&self, id: i64) {
+        self.jobs.take_waiting(|j| j.vod == id);
+        self.jobs.stop_and_wait(|j| j.vod == id, WORK_STOPPING);
     }
 
     /// The VOD being erased, if one is, and those waiting, in order.
