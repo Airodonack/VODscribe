@@ -4,7 +4,9 @@
 // 1, 2 and 3 s; I at 1 s and O at 2 s, Ctrl+C writes one line with the
 // stretch, and Ctrl+V over the timeline (no pills yet, so no clip bar
 // shows; a VOD's timeline takes no pieces) makes a pill of it on the bar,
-// picked, made; Ctrl+Z takes it off and Ctrl+Shift+Z brings it back. That pill
+// picked, made; Ctrl+Z takes it off and Ctrl+Shift+Z brings it back; pasted
+// again, no second pill: the one there is picked, the toast saying it's
+// already on the clip bar. That pill
 // clicked and copied, pasted on its own bar, is a second pill of the same
 // stretch: ready at once, never cut, its file another of the same bytes.
 // Ctrl+A over the bar then picks both. The first pill deleted, the copy
@@ -204,6 +206,19 @@ export default {
     );
     const one = await ready(async () => (await pills()).find((c) => c.id === again.id), "the pill brought back, made");
     ctx.log(`Ctrl+V over the clip bar: pill ${first.id}, 1-2 s, picked; undone and redone (now ${one.id})`);
+
+    // The same stretch pasted again: no second pill; the one there is
+    // picked, and the toast says so.
+    await pointAt(".scrubber");
+    await paste();
+    await until("the toast", async () => (await app.toastSays()) === "Already on the clip bar.", 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}: it says "${await app.toastSays()}"`);
+      },
+    );
+    await until("the pill there picked", async () => (await picked()).join() === String(one.id), 10_000);
+    if ((await pills()).length !== 1) throw new Error(`pasted twice, the bar has ${(await pills()).length} pills`);
+    ctx.log("the same stretch pasted again: no second pill, the one there picked");
 
     // 3. The pill picked alone, copied, pasted on its own bar: a second one,
     // ready without being cut, its file a copy of the first's.

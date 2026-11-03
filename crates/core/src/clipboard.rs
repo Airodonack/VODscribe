@@ -2,7 +2,8 @@
 //! (`Copied`) is what a clip or a stretch was at the moment it was copied,
 //! as undo keeps a clip (`EditState`: its title, pieces and marks, no ids),
 //! so changing or deleting the original afterwards changes nothing pasted.
-//! Pasted on a clip bar, each copy is a new clip there; on an edit's
+//! Pasted on a clip bar, each copy is a new clip there (a stretch already
+//! there as a clip is that clip, not a second one); on an edit's
 //! timeline, it goes in at a moment of it (`Paste::Timeline`), a copied clip
 //! as a group (one band, as a clip dropped there), a copied stretch as
 //! pieces.
@@ -48,6 +49,9 @@ pub struct Pasted {
     /// The clips made on the bar, in order, each with the index in the
     /// copies of the one it's of.
     pub clips: Vec<(i64, usize)>,
+    /// The clips already on the bar that stretches pasted there are (the
+    /// same footage), each with its copy's index: none made of those.
+    pub found: Vec<(i64, usize)>,
     /// On a timeline: the stretch of it the copies now play.
     pub span: Option<(f64, f64)>,
     /// How many pieces were left out, their VOD gone since the copy.
@@ -202,9 +206,35 @@ impl Db {
         }
         match onto {
             Paste::Bar { bar, after } => {
+                // A stretch already there as a clip is that clip: pasting
+                // the same stretch twice makes one clip (a clip copied is
+                // copied, beside itself).
+                let mut fresh = Vec::with_capacity(kept.len());
+                for (of, c) in kept {
+                    match c.kind {
+                        CopiedKind::Stretch => match self.bar_clip_like(bar, &c.state)? {
+                            Some(id) => out.found.push((id, of)),
+                            None => fresh.push((of, c)),
+                        },
+                        CopiedKind::Clip => fresh.push((of, c)),
+                    }
+                }
+                let mut hidden = Vec::new();
+                for &(id, _) in &out.found {
+                    if self.clip(id)?.is_some_and(|c| !c.shown) {
+                        hidden.push(id);
+                    }
+                }
+                if fresh.is_empty() && hidden.is_empty() {
+                    return Ok(out);
+                }
                 out.clips = self.change(bar, None, |db| {
-                    let mut made = Vec::with_capacity(kept.len());
-                    for (of, c) in &kept {
+                    // One only dragged out (not shown) is shown, as making it again would.
+                    for id in &hidden {
+                        db.conn.execute("UPDATE clips SET shown = 1 WHERE id = ?1", [id])?;
+                    }
+                    let mut made = Vec::with_capacity(fresh.len());
+                    for (of, c) in &fresh {
                         let id = db.new_clip(&c.state.title, Place::Bar(bar))?;
                         db.restore_edit(id, &c.state)?;
                         made.push((id, *of));
@@ -222,6 +252,33 @@ impl Db {
             }
         }
         Ok(out)
+    }
+
+    /// The clip on listed clip `bar`'s clip bar that plays what `state`'s
+    /// pieces play (the same VODs, the same stretches of them, in order), if
+    /// there's one: a stretch pasted there again is that clip.
+    fn bar_clip_like(&self, bar: i64, state: &EditState) -> Result<Option<i64>> {
+        let near = |a: f64, b: f64| (a - b).abs() < 0.001;
+        let mut want = Vec::with_capacity(state.items.len());
+        for i in &state.items {
+            let (Some(vod), Some(start), Some(end)) = (i.vod_id, i.start, i.end) else { return Ok(None) };
+            let struck: Vec<(f64, f64)> = i.struck.iter().map(|(a, b)| (a.seconds(), b.seconds())).collect();
+            want.push((vod, spans(start.seconds(), end.seconds(), &struck)));
+        }
+        for clip in self.bar_clips(bar)? {
+            let pieces = self.edit_pieces(clip.id)?;
+            let same = pieces.len() == want.len()
+                && pieces.iter().zip(&want).all(|(p, (vod, spans))| {
+                    let have = p.spans();
+                    p.vod_id == *vod
+                        && have.len() == spans.len()
+                        && have.iter().zip(spans).all(|(x, y)| near(x.0, y.0) && near(x.1, y.1))
+                });
+            if same {
+                return Ok(Some(clip.id));
+            }
+        }
+        Ok(None)
     }
 
     /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
@@ -562,6 +619,33 @@ mod tests {
         // On a bar, the clip whole: its cut too.
         let bar = db.paste(Paste::Bar { bar: edit, after: None }, &[copy]).unwrap().clips[0].0;
         assert_eq!(kinds(bar), [("chapter".to_string(), Some("in".to_string())), ("cut".to_string(), None)]);
+    }
+
+    #[test]
+    fn a_stretch_pasted_on_a_bar_twice_is_one_clip() {
+        let (db, vod) = library();
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        let stretch = db.copy_of(&Put::Range { vod_id: vod, start: 1.0, end: 2.0, title: None }).unwrap();
+        let onto = Paste::Bar { bar, after: None };
+        let first = db.paste(onto, std::slice::from_ref(&stretch)).unwrap();
+        assert_eq!((first.clips.len(), first.found.len()), (1, 0));
+        let pill = first.clips[0].0;
+        let revision = db.revision(bar).unwrap();
+        // Again: no second clip, and the answer says which clip it is.
+        let again = db.paste(onto, std::slice::from_ref(&stretch)).unwrap();
+        assert_eq!((again.clips, again.found), (vec![], vec![(pill, 0)]));
+        assert_eq!(db.clips(vod).unwrap().len(), 1);
+        assert_eq!(db.revision(bar).unwrap(), revision, "nothing changed");
+        // One made by C (the same stretch) is that clip too; one only
+        // dragged out is shown.
+        db.delete_clip(pill).unwrap();
+        let dragged = db.add_clip(vod, 1.0, 2.0, "", false).unwrap().id;
+        let shown = db.paste(onto, std::slice::from_ref(&stretch)).unwrap();
+        assert_eq!(shown.found, [(dragged, 0)]);
+        assert!(db.clip(dragged).unwrap().unwrap().shown);
+        // A clip copied is still pasted beside itself.
+        let pill = db.copy_of(&Put::Clip { id: dragged }).unwrap();
+        assert_eq!(db.paste(onto, &[pill]).unwrap().clips.len(), 1);
     }
 
     #[test]

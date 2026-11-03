@@ -417,6 +417,8 @@ export type LibraryItem = { kind: "vod" | "edit"; id: number };
 /** What a paste made (`api.pasteItems`): the clips on the bar, or the edit as it is now and the stretch pasted. */
 export interface Pasted {
   clips: Clip[];
+  /** The clips already on the bar that stretches pasted are: none made of those. */
+  found: Clip[];
   view: EditView | null;
   span: [number, number] | null;
   /** Pieces left out, their VOD gone; copies left out, of another VOD. */

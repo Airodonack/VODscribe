@@ -11,7 +11,8 @@
 // VOD's timeline takes no pieces). In either, after what's selected, never
 // in its place, the playhead only when nothing is (where.ts
 // `insertionPoint`); what's pasted is selected then, so pasting again lines
-// copies up in order. The system's clipboard gets
+// copies up in order. A stretch pasted on a bar where it's a clip already
+// is that clip, selected, not a second one. The system's clipboard gets
 // a line of text for each (clipboardText.ts), and a paste goes ahead only
 // if what it brings is still that: something copied since, in any app, is
 // what's meant.
@@ -202,14 +203,17 @@ async function pasteHere(text: string) {
     if (!pasted) return;
     if (pasted.view) edits.took(pasted.view);
     if (onBar) {
-      clips.answered(pasted.clips, since);
+      // What's pasted is selected: the clips made, and those it already was.
+      const all = [...pasted.clips, ...pasted.found];
+      clips.answered(all, since);
       // Made beside a clip, not last: the bar's order as it is now.
       if (after !== null && pasted.clips.length) clips.reload(target);
-      snippets.set(pasted.clips.map((c) => ({ kind: "clip", id: c.id })));
+      snippets.set(all.map((c) => ({ kind: "clip", id: c.id })));
       await tick();
       document
-        .querySelector(`.clip-bar .chip[data-clip="${pasted.clips[0]?.id}"]`)
+        .querySelector(`.clip-bar .chip[data-clip="${all[0]?.id}"]`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (!pasted.clips.length) return void toast.show("Already on the clip bar.");
     } else if (pasted.span && cuts.isOf(target)) {
       // Selected, the playhead at its start: the next paste goes after it.
       const [start, end] = pasted.span;

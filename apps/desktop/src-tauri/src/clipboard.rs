@@ -151,6 +151,8 @@ fn said(db: &Db, copied: &Copied) -> Result<CopiedSaid> {
 pub(crate) struct Pasted {
     /// The clips made on the bar, in order.
     clips: Vec<Clip>,
+    /// The clips already on the bar that stretches pasted are: none made of those.
+    found: Vec<Clip>,
     /// On a timeline, the edit as it is now, and the stretch the paste plays.
     view: Option<crate::edits::EditView>,
     span: Option<(f64, f64)>,
@@ -206,7 +208,11 @@ pub(crate) async fn paste_items(
         Paste::Timeline { clip, .. } => Some(crate::edits::view(&app, &db, clip)?),
         Paste::Bar { .. } => None,
     };
-    Ok(Some(Pasted { clips, view, span: pasted.span, dropped: pasted.dropped, refused: pasted.refused }))
+    let mut found = Vec::with_capacity(pasted.found.len());
+    for &(id, _) in &pasted.found {
+        found.extend(db.clip(id).map_err(err)?);
+    }
+    Ok(Some(Pasted { clips, found, view, span: pasted.span, dropped: pasted.dropped, refused: pasted.refused }))
 }
 
 /// Gives clip `id` (just pasted, waiting) a copy of `file` as its own,
