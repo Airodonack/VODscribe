@@ -42,6 +42,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Cuts before playing use the right frames. Lines picked in the transcript of a video that hasn't started playing are cut on its frame grid, not on that of the video open before it.
   - The Marks toggles show your saved choice. Just after a VOD opened, the Timeline panel could show both kinds of marks on for a moment, and a click then was lost.
   - Arrows work after clicking anywhere on a row. A click anywhere on a row, not only on its title, lets ↑ and ↓ move to the row before or after.
+  - A click on a row closes its menu. A row's right-click menu stayed open when you clicked the row; now a click anywhere outside it closes it and does nothing else.
   - Show in folder works during a download. While a VOD's download is in progress, paused or stopped by an error, it shows the partial file as it is.
   - A VOD reopens where it was left. A step or jump made just before opening something else could be forgotten, and the VOD came back a step earlier.
   - Reload brings back what was open. Reload, in the right-click menu, reopens what was open where it was, instead of leaving nothing open while the video's player carried on.

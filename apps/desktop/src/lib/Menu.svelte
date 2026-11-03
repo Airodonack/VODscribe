@@ -18,8 +18,13 @@
   // A menu opened by a right click (or the menu key) on a row: the
   // library's VODs and edits (Library.svelte), the highlights pane's rows
   // (AnnotationsPane.svelte). Its first choice has the focus as it opens;
-  // ↑ and ↓ (Home, End) move it, Enter picks, Escape or a click elsewhere
-  // closes it, and the focus goes back where it was before.
+  // ↑ and ↓ (Home, End) move it, Enter picks, and the focus goes back where
+  // it was before once it closes. Escape closes it, as the window losing
+  // the focus does and a press anywhere outside it, the row it's of
+  // included. That press does nothing else, as in a file manager: a click
+  // on a row closes the menu without opening or picking the row. A right
+  // press goes on, so a right click on another row opens that row's menu.
+  // It's as wide as its longest choice, `width` at the least.
   import { tick } from "svelte";
   import IconView from "./Icon.svelte";
   import Popover from "./Popover.svelte";
@@ -73,6 +78,39 @@
     buttons[to].focus();
   }
 
+  // Listened for on the document as events start (capture), so nothing
+  // under the pointer that stops a press can keep the menu open.
+  $effect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (menu?.closest(".popover")?.contains(e.target as Node)) return;
+      open = false;
+      if (e.button !== 2) swallowClick(e);
+    };
+    const onBlur = () => (open = false);
+    document.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("blur", onBlur);
+    };
+  });
+
+  /** Keeps press `down`, and the rest of its click, from the page. */
+  function swallowClick(down: PointerEvent) {
+    const rest = ["mousedown", "pointerup", "mouseup", "click"];
+    const end = () => rest.forEach((type) => document.removeEventListener(type, stop, true));
+    function stop(e: Event) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.type === "click") end();
+      // Let go away from where it was pressed, there's no click: it ends here.
+      else if (e.type === "pointerup" || e.type === "mouseup") setTimeout(end);
+    }
+    rest.forEach((type) => document.addEventListener(type, stop, true));
+    stop(down);
+  }
+
   function pick(item: MenuItem) {
     open = false;
     // Once the click is done with: one that opens a panel of its own (Add to
@@ -82,7 +120,7 @@
   }
 </script>
 
-<Popover bind:open {anchor} {label} {width} padding={4}>
+<Popover bind:open {anchor} {label} {width} padding={4} grow>
   <div class="menu" role="menu" tabindex="-1" bind:this={menu} onkeydown={onKey}>
     {#each items as item (item.label)}
       <button role="menuitem" class:danger={item.danger} onclick={() => pick(item)}>

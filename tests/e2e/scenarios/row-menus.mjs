@@ -6,7 +6,9 @@
 // several does, saying the transcript is erased. An edit's row has a menu
 // too: Add to edit… asks which edit, and Delete edit… asks before it goes.
 // A site's VOD whose video was downloaded has Show in folder too, on its
-// row and in its menu, beside Open on its site and Copy link. So has one
+// row and in its menu, beside Open on its site and Copy link; the menu is
+// as wide as its longest item, and a click on the row closes it without
+// opening or picking the row. So has one
 // whose download is paused part way, for the part file as it is; with no
 // part file, neither, and the app says there's no file.
 
@@ -16,6 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
+import * as os from "../lib/os.mjs";
 
 export default {
   name: "row-menus",
@@ -148,8 +151,53 @@ export default {
     for (const want of ["Show in folder", "Open on", "Copy link"])
       if (!siteItems.some((i) => i.startsWith(want)))
         throw new Error(`the downloaded VOD's menu has ${JSON.stringify(siteItems)}, no ${want}`);
-    await app.key("Escape");
-    log(`a downloaded site VOD's menu: ${siteItems.join(", ")}`);
+    // Its longest item (Check all VODs for VODscriptions) fits: nothing to
+    // scroll sideways. A click on the row itself closes the menu, as a press
+    // anywhere outside it does, and does nothing else: the row isn't opened
+    // or picked. With the OS's mouse where there is one, else as the page
+    // gets a click.
+    const sideways = await app.js(
+      `const p = document.querySelector('[role=dialog][aria-label="VOD menu"]');
+       return p.scrollWidth - p.clientWidth`,
+    );
+    // Both said, whichever is wrong.
+    const wrong = sideways > 0 ? [`the VOD's menu scrolls sideways by ${sideways} px`] : [];
+    const rowState = () =>
+      app.js(
+        `const row = document.querySelector(arguments[0]);
+         return (row.classList.contains("selected") ? "open" : "closed") + ", " + (row.getAttribute("aria-selected") === "true" ? "picked" : "not picked")`,
+        vodRow,
+      );
+    const before = await rowState();
+    if (before !== "closed, not picked") throw new Error(`before its click, the row is ${before}`);
+    if (!os.unavailable()) {
+      const r = await os.rectOf(app, `${vodRow} .meta`);
+      os.click(r.x + r.w / 2, r.y + r.h / 2, r.scale);
+    } else
+      await app.js(
+        `const row = document.querySelector(arguments[0] + " .meta");
+         const box = row.getBoundingClientRect();
+         const at = { bubbles: true, cancelable: true, composed: true, button: 0, clientX: box.left + box.width / 2, clientY: box.top + box.height / 2 };
+         row.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1, isPrimary: true }));
+         row.dispatchEvent(new MouseEvent("mousedown", { ...at, buttons: 1 }));
+         row.dispatchEvent(new PointerEvent("pointerup", { ...at, isPrimary: true }));
+         row.dispatchEvent(new MouseEvent("mouseup", at));
+         row.dispatchEvent(new MouseEvent("click", at));`,
+        vodRow,
+      );
+    const closed = await until(
+      "a click on the row to close its menu",
+      () => app.js(`return !document.querySelector('[aria-label="VOD menu"]')`),
+      5_000,
+    ).catch(() => false);
+    if (!closed) wrong.push("a click on the row left its menu open");
+    await new Promise((r) => setTimeout(r, 500));
+    const after = await rowState();
+    if (after !== before) wrong.push(`the click on the row with its menu open left the row ${after}`);
+    if (wrong.length) throw new Error(wrong.join("; "));
+    log(
+      `a downloaded site VOD's menu: ${siteItems.join(", ")}; as wide as its items, closed by a click on the row, which stays ${after}`,
+    );
 
     // A YouTube VOD whose transcription is paused while its audio downloads.
     // With no part file yet: no Show in folder, and the app says so if asked.
