@@ -65,6 +65,7 @@ class Cuts {
   }
   set selection(picked: { start: number; end: number } | null) {
     this.#selection = picked;
+    this.piece = null;
     if (picked) {
       stretchMade();
       // Delete is then the selection's, not a mark's left selected.
@@ -73,6 +74,10 @@ class Cuts {
   }
   /** The selection's edge selected, to drag or move a frame at a time. */
   selectedEdge = $state<"start" | "end" | null>(null);
+  /** The edit's piece the selection is, its edge just handled (`edgeHandled`):
+   *  that edge selected moves the piece's, not only the selection's
+   *  (EditView.svelte). Any other selection lets it go. */
+  piece = $state<number | null>(null);
   /** The open VOD's or edit's frame rate, as its player says, for marks placed elsewhere. */
   fps = DEFAULT_FPS;
   /** How long its timeline is (the VOD's length, the edit's pieces end to
@@ -322,6 +327,17 @@ class Cuts {
     this.selectedEdge = null;
   }
 
+  /** Piece `id`'s `edge` handled (dragged, or pressed) on the edit's
+   *  timeline, the piece playing `span` of it: the piece is the selection,
+   *  that edge selected, and nothing else, so , and . move what was just
+   *  touched. */
+  edgeHandled(id: number, span: { start: number; end: number }, edge: "start" | "end") {
+    this.selection = { start: span.start, end: span.end };
+    this.selected = null;
+    this.selectedEdge = edge;
+    this.piece = id;
+  }
+
   /** Moves the selection's `edge` to `time`; dragged past the other edge, it becomes that one. */
   setEdge(edge: "start" | "end", time: number) {
     const s = this.selection;
@@ -390,6 +406,32 @@ export const cuts = new Cuts();
  * its repeats); Escape lets go of it, or of the selection. True if `e` was
  * one of them, done. The keys are the map's (keys.svelte.ts), Escape aside.
  */
+/** The shortest a piece is trimmed to by its edge, in seconds (as Scrubber.svelte drags it). */
+const SHORTEST_PIECE = 0.5;
+
+/** A piece's `range` of its VOD (`max`: the VOD's length, if known) with its
+ *  `edge` moved `frames` frames at `fps`, on the frame grid, inside the VOD
+ *  and half a second long at least: what , and . do to a piece's edge
+ *  just handled (`Cuts.edgeHandled`). */
+export function edgeNudged(
+  range: { start: number; end: number; max: number | null },
+  edge: "start" | "end",
+  frames: number,
+  fps: number,
+): { start: number; end: number } {
+  const onFrame = (t: number) => Math.round(t * fps) / fps;
+  if (edge === "start")
+    return {
+      start: Math.min(range.end - SHORTEST_PIECE, Math.max(0, onFrame(range.start + frames / fps))),
+      end: range.end,
+    };
+  const end = Math.max(
+    range.start + SHORTEST_PIECE,
+    Math.min(range.max ?? Infinity, onFrame(range.end + frames / fps)),
+  );
+  return { start: range.start, end };
+}
+
 export function markKey(
   e: KeyboardEvent,
   at: { fps: number; length: number; pause: () => void; seekTo: (time: number) => void },

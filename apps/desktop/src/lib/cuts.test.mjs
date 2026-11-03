@@ -75,7 +75,7 @@ const release = () => {
 };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-const { cuts } = await import("./cuts.svelte.ts");
+const { cuts, edgeNudged } = await import("./cuts.svelte.ts");
 let opened = 0;
 /** @param {"vod" | "edit"} kind */
 async function fresh(kind = "edit") {
@@ -122,4 +122,28 @@ test("B pressed again before the first cut is made makes one cut, not two on one
   await settle();
   assert.equal(sent.length, 1, `cuts asked for: ${JSON.stringify(sent)}`);
   assert.equal(cuts.list.length, 1);
+});
+
+test("a piece's edge dragged is the selection, that edge selected, and nothing else", async () => {
+  await fresh("edit");
+  cuts.selected = 9;
+  // Piece 4 plays 2-5 s of the edit; its end dragged.
+  cuts.edgeHandled?.(4, { start: 2, end: 5 }, "end");
+  assert.deepEqual(
+    [cuts.selection, cuts.selectedEdge, cuts.piece, cuts.selected],
+    [{ start: 2, end: 5 }, "end", 4, null],
+  );
+  // Another selection made (I, O, lines picked): the piece is let go.
+  cuts.selection = { start: 1, end: 2 };
+  assert.equal(cuts.piece, null);
+});
+
+test(", and . move a piece's edge a frame, on the grid, inside its VOD and half a second long", () => {
+  const range = { start: 10, end: 20, max: 20.5 };
+  assert.deepEqual(edgeNudged(range, "end", -1, 25), { start: 10, end: 19.96 });
+  assert.deepEqual(edgeNudged(range, "start", 1, 25), { start: 10.04, end: 20 });
+  // Not past the VOD's end, nor before its start, nor shorter than half a second.
+  assert.deepEqual(edgeNudged(range, "end", 50, 25), { start: 10, end: 20.5 });
+  assert.deepEqual(edgeNudged(range, "start", -1000, 25), { start: 0, end: 20 });
+  assert.deepEqual(edgeNudged(range, "start", 1000, 25), { start: 19.5, end: 20 });
 });

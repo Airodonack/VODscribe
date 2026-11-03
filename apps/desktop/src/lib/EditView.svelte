@@ -16,7 +16,7 @@
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
-  import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
+  import { editShortcuts, forPlayer, isEscape, markFramesOf, transportKey } from "./playerKeys";
   import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
@@ -25,7 +25,7 @@
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
-  import { cuts, markKey } from "./cuts.svelte";
+  import { cuts, edgeNudged, markKey } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
   import { PEAKS_RATE, cueAt, frameStart, playedLength, playedSpans, stretchIn } from "./media";
@@ -520,6 +520,11 @@
       e.preventDefault();
       return;
     }
+    // A piece's edge just handled: , and . (and the arrows, J and L) move that edge.
+    if (pieceEdgeKey(e)) {
+      e.preventDefault();
+      return;
+    }
     // The selected mark: renamed, moved, taken away (as on a VOD).
     if (markKey(e, { fps, length: total, pause: () => p.playing() && p.togglePlay(), seekTo })) {
       e.preventDefault();
@@ -725,6 +730,37 @@
     edgeAsking.want({ vodId: piece.vod_id, at: frameAt });
   }
 
+  /** Piece `id`'s `side` handled: the piece is the selection, that edge selected (cuts.svelte.ts). */
+  function edgeHandled(id: number, side: "start" | "end") {
+    const band = lane.find((b) => b.id === id);
+    if (band?.range) cuts.edgeHandled(id, band, side);
+  }
+  /** A trim of piece `id`'s edge on its way: , and . wait for it, so each moves a frame from where it got to. */
+  let trimming = false;
+  /** Makes piece `id` `range` of its VOD (its `side` dragged, or moved by a key), then selects that edge. */
+  async function trimEdge(id: number, range: { start: number; end: number }, side: "start" | "end") {
+    trimming = true;
+    try {
+      if (await edits.trim(id, range.start, range.end)) edgeHandled(id, side);
+    } finally {
+      trimming = false;
+    }
+  }
+  /** , and . (the keys that move a mark: the arrows, J and L too) with a
+   *  piece's edge just handled (`cuts.piece`): that edge moved, as dragging
+   *  it would. True if `e` was one. */
+  function pieceEdgeKey(e: KeyboardEvent): boolean {
+    const id = cuts.piece;
+    const side = cuts.selectedEdge;
+    const frames = id !== null && side ? markFramesOf(e, is, fps) : undefined;
+    if (id === null || !side || frames === undefined) return false;
+    const range = lane.find((b) => b.id === id)?.range;
+    if (!range) return false;
+    if (player?.playing()) player.togglePlay();
+    if (!trimming) void trimEdge(id, edgeNudged(range, side, frames, fps), side);
+    return true;
+  }
+
   const onpiece = {
     move(id: number, index: number) {
       // In the open group: among its pieces, from where they start in the lane.
@@ -741,7 +777,8 @@
       if (piece?.group && piece.group.id === openGroup) openGroup = null;
       else if (pieces.some((p) => p.group?.id === id)) openGroup = id;
     },
-    resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
+    resize: (id: number, start: number, end: number, side: "start" | "end") => trimEdge(id, { start, end }, side),
+    handled: (id: number, side: "start" | "end") => edgeHandled(id, side),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home?: CarryHome) {
       // A piece, or a group of one: a group of more doesn't go out as one clip.

@@ -49,6 +49,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Undo undoes the latest change. Undo (Ctrl+Z) pressed right after a change, such as moving a mark, could undo the one before it instead.
   - A click elsewhere lets go of picks. A plain click on the timeline, or on empty space in the clip bar or the library, lets go of the stretches, clips and rows picked; a stretch selected with I and O stays.
   - The search box lets go of the keys. A click on the player, the timeline, the transcript, the clip bar or the library, or Escape, takes the cursor out of a text field, so Ctrl+C, Ctrl+V and the player's keys work at once.
+  - A dragged edge stays selected. After you drag the edge of a piece on an edit's timeline, or of a clip in the editor, , and . move that edge a frame at a time.
 
 ## 0.7.0 — 2026-10-30
 

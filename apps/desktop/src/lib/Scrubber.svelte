@@ -144,8 +144,10 @@
     /** What's done with an edit's pieces in the lane. */
     onpiece?: {
       move: (id: number, index: number) => void;
-      /** Makes it `start`..`end` of its VOD (an edge was dragged). */
-      resize: (id: number, start: number, end: number) => void;
+      /** Makes it `start`..`end` of its VOD (its `side`'s edge was dragged). */
+      resize: (id: number, start: number, end: number, side: "start" | "end") => void;
+      /** Its `side`'s edge pressed and let go, not dragged. */
+      handled?: (id: number, side: "start" | "end") => void;
       /** While an edge is dragged: where it is in its VOD (null once it's let go). */
       resizing?: (id: number, side: "start" | "end", at: number | null) => void;
       /** Carries it out; `home` is the timeline, where coming back moves it again. */
@@ -723,7 +725,8 @@
     if (done?.kind === "resize") {
       onpiece?.resizing?.(done.id, done.side, null);
       if (done.moved && (done.start !== done.from.start || done.end !== done.from.end))
-        onpiece?.resize(done.id, done.start, done.end);
+        onpiece?.resize(done.id, done.start, done.end, done.side);
+      else onpiece?.handled?.(done.id, done.side);
     }
     if (done?.kind === "piece") {
       // A click on a band goes to the piece, letting go of what's picked
