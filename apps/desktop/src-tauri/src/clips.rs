@@ -113,24 +113,33 @@ impl Cutter {
                 }
             }
         }
-        self.jobs.run("clips", move |id, stop| {
-            crate::job_list::begun(&app, crate::job_list::Queue::Render, id);
-            // A pasted clip whose copy had its file: a copy of that, if it's still the same.
-            let copy = copies.lock().unwrap().remove(&id);
-            let copied = copy.is_some_and(|file| {
-                crate::clipboard::copy_file(&app, id, &file).unwrap_or_else(|e| {
-                    eprintln!("clip {id}: copying its file: {e:#}");
-                    false
-                })
-            });
-            if !copied {
-                make(&app, id, stop, &removing);
-            }
-            // Canceled while it was being made: shown so now it has stopped.
-            if canceled.lock().unwrap().remove(&id) {
-                settle_canceled(&app, id);
-            }
-        })?;
+        let settling = app.clone();
+        self.jobs.run_ended(
+            "clips",
+            move |id, stop| {
+                crate::job_list::begun(&app, crate::job_list::Queue::Render, id);
+                // A pasted clip whose copy had its file: a copy of that, if it's still the same.
+                let copy = copies.lock().unwrap().remove(&id);
+                let copied = copy.is_some_and(|file| {
+                    crate::clipboard::copy_file(&app, id, &file).unwrap_or_else(|e| {
+                        eprintln!("clip {id}: copying its file: {e:#}");
+                        false
+                    })
+                });
+                if !copied {
+                    make(&app, id, stop, &removing);
+                }
+            },
+            // Canceled while it was being made (`cancel_job`): shown so now it
+            // has stopped. Taken as the job ends, under the queue's lock, so a
+            // cancel as it ends either finds it running and marks it, or doesn't.
+            move |id| canceled.lock().unwrap().remove(id),
+            move |id, canceled| {
+                if canceled {
+                    settle_canceled(&settling, id);
+                }
+            },
+        )?;
         for clip in unfinished {
             self.queue(clip.id);
         }
@@ -220,12 +229,14 @@ impl Cutter {
     /// waiting, once its job has ended if it was running.
     pub(crate) fn cancel_job(&self, app: &AppHandle, id: i64) {
         let taken = !self.jobs.take_waiting(|&j| j == id).is_empty();
-        self.canceled.lock().unwrap().insert(id);
-        if !self.jobs.stop_running(|&j| j == id) {
-            self.canceled.lock().unwrap().remove(&id);
-            if taken {
-                settle_canceled(app, id);
-            }
+        let running = self.jobs.stop_running_then(
+            |&j| j == id,
+            |&j| {
+                self.canceled.lock().unwrap().insert(j);
+            },
+        );
+        if !running && taken {
+            settle_canceled(app, id);
         }
     }
 

@@ -166,6 +166,21 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
     }
 
+    /// Stops the job running if it's one `which` finds, and calls `mark`
+    /// with it, under the queue's lock; whether it was. Its end (`run_ended`'s
+    /// `ended`) comes after, never between: what `mark` notes, `ended` finds.
+    pub(crate) fn stop_running_then(&self, which: impl Fn(&J) -> bool, mark: impl FnOnce(&J)) -> bool {
+        let queue = self.shared.0.lock().unwrap();
+        match &queue.running {
+            Some((job, stop)) if which(job) => {
+                stop.store(true, Ordering::Relaxed);
+                mark(job);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Stops the job running if it's one `which` finds, and waits up to
     /// `timeout` for it to end; whether none is running now. Not from a job.
     pub(crate) fn stop_and_wait(&self, which: impl Fn(&J) -> bool, timeout: std::time::Duration) -> bool {
@@ -199,6 +214,22 @@ impl<J: Clone + Send + 'static> Jobs<J> {
 
     /// Starts the thread (`name`) doing each job with `work`, given its stop.
     pub(crate) fn run(&self, name: &str, work: impl Fn(J, &AtomicBool) + Send + 'static) -> Result<()> {
+        self.run_ended(name, work, |_| (), |_, ()| {})
+    }
+
+    /// As `run`, and as each job ends, asks `ended` about it under the
+    /// queue's lock, as the job stops being the one running: a
+    /// `stop_running_then` comes wholly before that or finds no job. What
+    /// `ended` says goes to `then`, once the lock is let go of, for work that
+    /// takes other locks (the library's is taken before this one:
+    /// `Cutter::stop_vod`).
+    pub(crate) fn run_ended<T>(
+        &self,
+        name: &str,
+        work: impl Fn(J, &AtomicBool) + Send + 'static,
+        ended: impl Fn(&J) -> T + Send + 'static,
+        then: impl Fn(J, T) + Send + 'static,
+    ) -> Result<()> {
         // A second thread would run two jobs at once, and `running` holds one.
         let again = self.started.swap(true, Ordering::Relaxed);
         debug_assert!(!again, "the {name} queue's thread was started twice");
@@ -223,10 +254,15 @@ impl<J: Clone + Send + 'static> Jobs<J> {
                     (job, stop)
                 };
                 tell(&watcher);
-                work(job, &stop);
-                queue.lock().unwrap().running = None;
+                work(job.clone(), &stop);
+                let said = {
+                    let mut queue = queue.lock().unwrap();
+                    queue.running = None;
+                    ended(&job)
+                };
                 // For `stop_and_wait`.
                 wake.notify_all();
+                then(job, said);
                 tell(&watcher);
             }
         })?;
@@ -401,6 +437,46 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(seen(), 10, "each begun and ended");
+    }
+
+    /// As Cancel in the list of jobs lands as a cut ends (`Cutter::cancel_job`):
+    /// the job has done its work but is still the one running. The mark
+    /// "canceled while running" is made and taken under the queue's lock,
+    /// so it never outlives the job, to show a later run of the same id as
+    /// canceled.
+    #[test]
+    fn a_job_canceled_as_it_ends_leaves_no_mark() {
+        let jobs = Jobs::new();
+        let marks: Arc<Mutex<std::collections::HashSet<i32>>> = Arc::default();
+        let (ending, is_ending) = mpsc::channel();
+        let (gate, opened) = mpsc::channel::<()>();
+        let (settled, was_settled) = mpsc::channel();
+        let taken = marks.clone();
+        jobs.run_ended(
+            "cancel-test",
+            move |_: i32, _| {
+                // Its work done, about to return: the cancel comes here.
+                ending.send(()).unwrap();
+                opened.recv_timeout(Duration::from_secs(5)).unwrap();
+            },
+            move |&n| taken.lock().unwrap().remove(&n),
+            move |n, marked| settled.send((n, marked)).unwrap(),
+        )
+        .unwrap();
+        jobs.push(1);
+        is_ending.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mark = marks.clone();
+        let canceled = jobs.stop_running_then(
+            |&j| j == 1,
+            |&j| {
+                mark.lock().unwrap().insert(j);
+            },
+        );
+        assert!(canceled, "still running");
+        gate.send(()).unwrap();
+        assert_eq!(was_settled.recv_timeout(Duration::from_secs(5)), Ok((1, true)), "its end found the mark");
+        assert!(marks.lock().unwrap().is_empty(), "a mark left behind: {:?}", marks.lock().unwrap());
+        assert!(!jobs.stop_running_then(|&j| j == 1, |_| panic!("not running")));
     }
 
     #[test]
