@@ -292,8 +292,11 @@ impl Data {
 
 impl IDataObject_Impl for Data_Impl {
     fn GetData(&self, f: *const FORMATETC) -> Result<STGMEDIUM> {
-        // SAFETY: COM hands a valid FORMATETC for the call.
-        let f = unsafe { &*f };
+        // A receiver may pass null; reading it would bring the app down.
+        // SAFETY: otherwise COM hands a valid FORMATETC for the call.
+        let Some(f) = (unsafe { f.as_ref() }) else {
+            return Err(E_INVALIDARG.into());
+        };
         let hglobal = f.tymed & TYMED_HGLOBAL.0 as u32 != 0;
         if f.cfFormat == self.descriptor && hglobal {
             return self.drag.descriptors();
@@ -314,7 +317,9 @@ impl IDataObject_Impl for Data_Impl {
 
     fn QueryGetData(&self, f: *const FORMATETC) -> HRESULT {
         // SAFETY: as in GetData.
-        let f = unsafe { &*f };
+        let Some(f) = (unsafe { f.as_ref() }) else {
+            return E_INVALIDARG;
+        };
         // CF_HDROP is said to be there even while it would be refused: an app
         // that takes real files only then takes the drop, and its refusal is
         // seen (the outcome says so).
@@ -324,8 +329,11 @@ impl IDataObject_Impl for Data_Impl {
     }
 
     fn GetCanonicalFormatEtc(&self, _: *const FORMATETC, out: *mut FORMATETC) -> HRESULT {
-        // SAFETY: COM hands a FORMATETC to write.
-        unsafe { (*out).ptd = std::ptr::null_mut() };
+        // SAFETY: a FORMATETC to write, unless the caller passed null.
+        let Some(out) = (unsafe { out.as_mut() }) else {
+            return E_INVALIDARG;
+        };
+        out.ptd = std::ptr::null_mut();
         DATA_S_SAMEFORMATETC
     }
 
@@ -841,6 +849,25 @@ mod tests {
         assert!(got.is_ok());
         assert!(drag.own_drop.load(Ordering::SeqCst), "asked after the drop: dropped back on the window");
         assert!(!drag.files_refused.load(Ordering::SeqCst));
+    }
+
+    /// A receiver that passes no FORMATETC is told it's wrong, and the app
+    /// stays up.
+    #[test]
+    fn a_receiver_passing_null_is_refused() {
+        // SAFETY: COM for the test's thread, which plays the UI thread.
+        unsafe {
+            let _ = OleInitialize(None);
+        }
+        let item = Test { name: "a.mp4", state: Arc::new(Mutex::new(None)) };
+        let (_, data) = data_object(vec![Box::new(item)], 0, Box::new(|_| {}), Box::new(|_| {}), |_| {}).unwrap();
+        // SAFETY: null on purpose; the object must not read it.
+        unsafe {
+            assert_eq!(data.GetData(std::ptr::null()).map(|_| ()).map_err(|e| e.code()), Err(E_INVALIDARG));
+            assert_eq!(data.QueryGetData(std::ptr::null()), E_INVALIDARG);
+            let f = format(CF_HDROP.0, -1, TYMED_HGLOBAL);
+            assert_eq!(data.GetCanonicalFormatEtc(&f, std::ptr::null_mut()), E_INVALIDARG);
+        }
     }
 
     /// A program with no description is named by its file, capitalized.
