@@ -4,9 +4,10 @@
 // bar under it at the window's bottom, and no transcript; the header's
 // button reads "Show transcript and chat". Pressed, the transcript takes the
 // column (its minimap the height of it) and the button reads "Show player".
-// Another VOD opened keeps the transcript in the player's place; "Show
-// player" brings that VOD's player back alone. (The other scenarios run
-// with short mode off: lib/app.mjs shortMode.)
+// Another VOD opened keeps the transcript in the player's place. A VOD of
+// sound alone has no player to swap: no button, its bar shown over the
+// transcript. Back on a video, "Show player" brings its player back alone.
+// (The other scenarios run with short mode off: lib/app.mjs shortMode.)
 
 import path from "node:path";
 
@@ -112,7 +113,9 @@ export default {
     const { video, named } = videos(path.join(ctx.out, "fixtures"));
     await app.toLibrary();
     const first = await app.addAndTranscribe(video);
-    const [second] = await app.addFiles([named]);
+    const added = await app.addFiles([named, ctx.fixtures.landed]);
+    const second = added.find((v) => !v.audio_only);
+    const sound = added.find((v) => v.audio_only);
     await app.openVod(first.id);
     await until("its transcript", () => app.js(`return !!document.querySelector("#transcript .row")`), MINUTE);
 
@@ -139,6 +142,34 @@ export default {
     seen = await transcriptShown(app, "the transcript still in the player's place", { minimap: false });
     ctx.log(`another VOD opened: still the transcript, ${seen.below.height} px`);
 
+    // Sound alone: the player isn't alone in the column, so there's nothing
+    // to swap: no button, and the swap asked for doesn't hide its bar.
+    await app.openVod(sound.id);
+    let last;
+    try {
+      seen = await until(
+        "sound alone: its bar over the transcript, no swap",
+        async () => {
+          last = await layout(app);
+          const { alone, stage, below, label } = last;
+          return !alone && stage && below && below.top >= stage.bottom && label === null && last;
+        },
+        10_000,
+      );
+    } catch (e) {
+      throw new Error(`${e.message}: ${JSON.stringify(last)}`);
+    }
+    ctx.log(`sound alone: its bar ${seen.stage.height} px over the transcript, no button`);
+
+    // A video again: the swap is back as it was left (opened by its row: the
+    // player it would wait for is the one swapped out).
+    await app.click(`.vod[data-key="${second.id}"]`);
+    await until(
+      "the video open again",
+      () => app.js(`return !!document.querySelector('.vod.selected[data-key="${second.id}"]')`),
+      MINUTE,
+    );
+    await transcriptShown(app, "the video's transcript in the player's place again", { minimap: false });
     await app.click(TOGGLE);
     seen = await playerAlone(app, "its player alone");
     ctx.log(`"Show player": its player alone, its picture ${seen.stage.height} px`);

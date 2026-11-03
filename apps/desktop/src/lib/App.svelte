@@ -683,17 +683,14 @@
   $effect(() => {
     shortMode.on = isShort(mainWidth, mainHeight, pictureMost);
   });
-  // The player alone in the column: short, a picture to show, and nothing
-  // asked for in the transcript's place (a search's results show as usual).
-  const alone = $derived(
-    shortMode.on &&
-      !shortMode.pane &&
-      !editOpen &&
-      !showResults &&
-      !!playingVod &&
-      canEmbed(playingVod) &&
-      !playingVod.audio_only,
+  // Short mode's swap between the player and the transcript: only for a
+  // picture to show with nothing else asked for in the transcript's place (a
+  // search's results, an edit). Otherwise the player stays and offers no swap.
+  const swappable = $derived(
+    shortMode.on && !editOpen && !showResults && !!playingVod && canEmbed(playingVod) && !playingVod.audio_only,
   );
+  // The player alone in the column: swappable, and swapped to the player.
+  const alone = $derived(swappable && !shortMode.pane);
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
@@ -974,7 +971,7 @@
         <EditView vods={vodsById} onopenvod={(vodId, time) => openVodAt(vodId, time, { keepLit: true })} />
       {:else if playing && playingVod}
         {#key playing.vodId}
-          <Player vod={playingVod} at={playing.at} />
+          <Player vod={playingVod} at={playing.at} swap={swappable} />
         {/key}
       {/if}
 

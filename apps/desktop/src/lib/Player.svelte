@@ -51,7 +51,9 @@
   // result, a transcript line, a source link), a fresh object each time, so
   // jumping to the same timestamp twice still seeks; null opens it where its
   // playhead was left this session (nav.svelte.ts), or at its start.
-  let { vod, at }: { vod: Vod; at: { time: number; play: boolean } | null } = $props();
+  // `swap`: short mode may swap this player for the transcript (App.svelte's
+  // `swappable`); when it may not, the player stays and offers no swap.
+  let { vod, at, swap }: { vod: Vod; at: { time: number; play: boolean } | null; swap: boolean } = $props();
   const start = untrack(() => {
     const doc = { kind: "vod" as const, id: vod.id };
     return at?.time ?? nav.bringBack(doc)?.time ?? nav.lastSeen(doc)?.time ?? 0;
@@ -91,7 +93,7 @@
   // In short mode (shortMode.svelte.ts) the player and the transcript take
   // turns instead, and the choice stays: a jump or another VOD doesn't undo it.
   let collapsed = $state(false);
-  const hidden = $derived(shortMode.on ? shortMode.pane : collapsed);
+  const hidden = $derived(shortMode.on ? swap && shortMode.pane : collapsed);
   function toggleHidden() {
     if (shortMode.on) shortMode.pane = !shortMode.pane;
     else collapsed = !collapsed;
@@ -648,7 +650,7 @@
         {#if action.id === "open"}<Icon name="external" size={12} />{/if}
       </button>
     {/each}
-    {#if canEmbed(vod)}
+    {#if canEmbed(vod) && (!shortMode.on || swap)}
       <button class="icon" onclick={toggleHidden} aria-expanded={!hidden} aria-label={toggleLabel} title={toggleLabel}>
         <Icon name={hidden ? "chevron-down" : "chevron-up"} size={16} />
       </button>
