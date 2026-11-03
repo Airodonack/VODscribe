@@ -715,8 +715,8 @@ export const api = {
   copiedText: (text: string) => invoke<void>("copied_text", { text }),
   /** Pastes the last copy into `target`: on its clip bar if `bar`, else in its timeline at `at` seconds (in place of
    *  `replace`); null if nothing was pasted (nothing copied, or `text`, what the system's clipboard holds, isn't the copy's). */
-  pasteItems: (target: Doc, bar: boolean, at: number | null, text: string) =>
-    invoke<Pasted | null>("paste_items", { target, bar, at, text }),
+  pasteItems: (target: Doc, bar: boolean, at: number | null, after: number | null, text: string) =>
+    invoke<Pasted | null>("paste_items", { target, bar, at, after, text }),
   /** Puts `items` (several picked) in edit `editId`, in order, as one change: on its clip bar if `bar`, else on its timeline at `index` (or last). */
   putInEdit: (editId: number, items: Put[], bar: boolean, index?: number) =>
     invoke<EditView>("put_in_edit", { editId, items, bar, index }),

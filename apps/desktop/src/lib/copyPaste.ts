@@ -7,10 +7,11 @@
 // it is at that moment; a paste makes a copy of that, however the original
 // has changed since, or if it's gone. It goes where Ctrl+A would select
 // (where.ts): over the clip bar, a clip of each thing copied on it;
-// elsewhere on the main side, an edit's timeline at the playhead, or after
-// the stretch selected there (never in its place: the pasted stretch is
-// selected then, so pasting again lines copies up in order), or a VOD's
-// clip bar (a VOD's timeline takes no pieces). The system's clipboard gets
+// elsewhere on the main side, an edit's timeline, or a VOD's clip bar (a
+// VOD's timeline takes no pieces). In either, after what's selected, never
+// in its place, the playhead only when nothing is (where.ts
+// `insertionPoint`); what's pasted is selected then, so pasting again lines
+// copies up in order. The system's clipboard gets
 // a line of text for each (clipboardText.ts), and a paste goes ahead only
 // if what it brings is still that: something copied since, in any app, is
 // what's meant.
@@ -37,6 +38,7 @@ import type { ActionId } from "./keymap";
 import { count, library, snippets } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
 import { undoIn } from "./undo";
+import { insertionPoint } from "./where";
 
 /** What's said when Ctrl+C has nothing to copy. */
 const NOTHING = "Select a stretch (I and O) or clips to copy";
@@ -180,15 +182,29 @@ async function pasteHere(text: string) {
   const onBar = !snippet && (into === "clips" || doc.kind === "vod");
   const target = onBar ? clips.doc : doc;
   if (!target) return;
-  // On a timeline, after the stretch selected (never in its place), else at the playhead.
-  const selected = !onBar && cuts.isOf(target) ? cuts.selection : null;
+  // After what's selected (never in its place), else at the playhead, or last on a bar.
+  const mark = cuts.all.find((m) => m.id === cuts.selected);
+  const point = insertionPoint(
+    onBar ? "bar" : "timeline",
+    {
+      stretch: cuts.isOf(target) ? cuts.selection : null,
+      picked: snippets.items,
+      mark: mark && cuts.isOf(target) ? mark.start : null,
+      playhead: cuts.now,
+    },
+    clips.shown.map((c) => c.id),
+  );
+  const at = "at" in point ? point.at : null;
+  const after = "after" in point ? point.after : null;
   try {
     const since = clips.news;
-    const pasted = await api.pasteItems(target, onBar, onBar ? null : (selected?.end ?? cuts.now), text);
+    const pasted = await api.pasteItems(target, onBar, at, after, text);
     if (!pasted) return;
     if (pasted.view) edits.took(pasted.view);
     if (onBar) {
       clips.answered(pasted.clips, since);
+      // Made beside a clip, not last: the bar's order as it is now.
+      if (after !== null && pasted.clips.length) clips.reload(target);
       snippets.set(pasted.clips.map((c) => ({ kind: "clip", id: c.id })));
       await tick();
       document

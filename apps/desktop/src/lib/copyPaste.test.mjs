@@ -1,5 +1,6 @@
-// Ctrl+X (copyPaste.ts, with bulk.ts as it is), the app faked: the copy
-// answers when the test says. node --test apps/desktop/src/lib/copyPaste.test.mjs
+// Ctrl+X and Ctrl+V (copyPaste.ts, with bulk.ts and where.ts as they are),
+// the app faked: the copy answers when the test says.
+// node --test apps/desktop/src/lib/copyPaste.test.mjs
 import assert from "node:assert/strict";
 import { register } from "node:module";
 import { test } from "node:test";
@@ -34,7 +35,7 @@ const fakes = {
       export const exportStretches = async () => {}; export const stretchSaid = () => "";`,
     "./media": `export const inEdit = () => undefined;`,
     "./playerKeys": `export const isEscape = () => false;`,
-    "./where": `export const where = () => null;`,
+    "./where": `export const where = () => globalThis.fake.where;`,
   },
 };
 const hooks = `
@@ -43,7 +44,8 @@ export async function resolve(specifier, context, next) {
   const parent = Object.keys(fakes).find((f) => context.parentURL?.endsWith(f));
   if (parent && fakes[parent][specifier])
     return { url: "data:text/javascript," + encodeURIComponent(fakes[parent][specifier]), shortCircuit: true };
-  if (parent === "/copyPaste.ts" && specifier === "./bulk") return next("./bulk.ts", context);
+  if (parent === "/copyPaste.ts" && (specifier === "./bulk" || specifier === "./where"))
+    return next(specifier + ".ts", context);
   return next(specifier, context);
 }`;
 register("data:text/javascript," + encodeURIComponent(hooks));
@@ -69,7 +71,13 @@ const fake = {
     copiedText: async () => {},
     /** @param {number[]} ids */
     deleteClips: async (ids) => void fake.deleted.push(ids),
+    /** @param {unknown[]} args */
+    pasteItems: async (...args) => void fake.pastes.push(args),
   },
+  /** What each paste was asked: its target, on the bar or not, at, after, text. @type {unknown[][]} */
+  pastes: [],
+  /** Where Ctrl+V acts (where.ts `where`, faked). @type {string | null} */
+  where: null,
   clips: {
     /** @type {{ kind: string, id: number } | null} */
     doc: { kind: "vod", id: 1 },
@@ -78,10 +86,26 @@ const fake = {
     hovered: null,
     error: null,
   },
-  cuts: { doc: null, selection: null, selected: null, clearSelection() {} },
-  edits: { openId: null },
+  cuts: {
+    /** @type {{ kind: string, id: number } | null} */
+    doc: null,
+    /** @type {{ start: number, end: number } | null} */
+    selection: null,
+    /** @type {number | null} */
+    selected: null,
+    /** @type {{ id: number, start: number }[]} */
+    all: [],
+    now: 0,
+    length: 0,
+    /** @param {{ kind: string, id: number } | null} doc */
+    isOf(doc) {
+      return !!doc && !!this.doc && doc.kind === this.doc.kind && doc.id === this.doc.id;
+    },
+    clearSelection() {},
+  },
+  edits: { openId: null, open: null },
   snippets: {
-    /** @type {{ kind: string, id: number }[]} */
+    /** @type {({ kind: string, id: number } | { kind: string, start: number, end: number })[]} */
     items: [],
     get size() {
       return this.items.length;
@@ -92,8 +116,12 @@ const fake = {
   },
   library: { picking: false, items: [] },
 };
-Object.assign(globalThis, { fake, window: { getSelection: () => null } });
-const { clipboardKey } = await import("./copyPaste.ts");
+Object.assign(globalThis, {
+  fake,
+  window: { getSelection: () => null },
+  document: { querySelector: () => null, activeElement: null },
+});
+const { clipboardKey, clipboardPaste } = await import("./copyPaste.ts");
 
 /** VOD 1 open, its clips 1, 2 and 3 on the clip bar, `picked` of them picked. @param {number[]} picked */
 function reset(picked) {
@@ -140,4 +168,31 @@ test("Ctrl+X takes out the clips it copied, not those of another VOD opened mean
   assert.deepEqual(fake.deleted, [[1]]);
   fake.toasts.at(-1)?.action?.run();
   assert.deepEqual(fake.undone, [{ kind: "vod", id: 1 }]);
+});
+
+/** Ctrl+V's paste, bringing what was copied: true if the app took it. */
+function paste() {
+  let taken = false;
+  clipboardPaste(
+    /** @type {any} */ ({
+      defaultPrevented: false,
+      target: null,
+      clipboardData: { getData: () => "copied" },
+      preventDefault: () => (taken = true),
+    }),
+  );
+  return taken;
+}
+
+test("Ctrl+V on an edit's timeline goes after the stretch picked, not at the playhead", async () => {
+  reset([]);
+  fake.pastes.length = 0;
+  fake.where = "timeline";
+  fake.clips.doc = { kind: "edit", id: 5 };
+  Object.assign(fake.cuts, { doc: { kind: "edit", id: 5 }, selection: null, selected: null, now: 0.5, length: 10 });
+  // An Alt-click picked 2-3 s; the playhead stayed at 0.5 s.
+  fake.snippets.items = [{ kind: "segment", start: 2, end: 3 }];
+  assert.equal(paste(), true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(fake.pastes, [[{ kind: "edit", id: 5 }, false, 3, null, "copied"]]);
 });

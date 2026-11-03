@@ -160,17 +160,19 @@ pub(crate) struct Pasted {
 }
 
 /// Pastes what was copied last into `target` (a VOD or an edit, or a clip
-/// open in the editor): on its clip bar if `bar`, else in its timeline at
-/// `at` seconds (the playhead, or the end of the stretch selected: a paste
-/// goes in after a selection, never in its place); as one change undo takes
-/// back whole. Nothing (None) if nothing was copied, or the system's
-/// clipboard now holds something other than the copy's `text`.
+/// open in the editor): on its clip bar if `bar` (after its clip `after`,
+/// else last), else in its timeline at `at` seconds (where.ts
+/// `insertionPoint`: after what's selected, never in its place, else the
+/// playhead); as one change undo takes back whole. Nothing (None) if
+/// nothing was copied, or the system's clipboard now holds something other
+/// than the copy's `text`.
 #[tauri::command]
 pub(crate) async fn paste_items(
     app: AppHandle,
     target: Doc,
     bar: bool,
     at: Option<f64>,
+    after: Option<i64>,
     text: String,
 ) -> CmdResult<Option<Pasted>> {
     let state = app.state::<AppState>();
@@ -180,8 +182,8 @@ pub(crate) async fn paste_items(
     };
     let db = state.db.lock().unwrap();
     let onto = match (target, bar) {
-        (Doc::Vod(vod), true) => Paste::Bar(db.vod_clip(vod).map_err(err)?.ok_or("That VOD is gone.")?),
-        (Doc::Edit(id), true) => Paste::Bar(id),
+        (Doc::Vod(vod), true) => Paste::Bar { bar: db.vod_clip(vod).map_err(err)?.ok_or("That VOD is gone.")?, after },
+        (Doc::Edit(id), true) => Paste::Bar { bar: id, after },
         (Doc::Edit(id), false) => Paste::Timeline { clip: id, at: at.unwrap_or(0.0) },
         (Doc::Vod(_), false) => return Err("A VOD's timeline takes no pieces: paste on its clip bar.".into()),
     };
@@ -202,7 +204,7 @@ pub(crate) async fn paste_items(
     }
     let view = match onto {
         Paste::Timeline { clip, .. } => Some(crate::edits::view(&app, &db, clip)?),
-        Paste::Bar(_) => None,
+        Paste::Bar { .. } => None,
     };
     Ok(Some(Pasted { clips, view, span: pasted.span, dropped: pasted.dropped, refused: pasted.refused }))
 }

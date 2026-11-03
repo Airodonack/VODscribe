@@ -737,7 +737,7 @@ mod tests {
         let on_bar = |db: &Db| vod_bar_states(db, vod);
         let copy = db.copy_of(&Put::Clip { id: clip }).unwrap();
         let bar = db.vod_clip(vod).unwrap().unwrap();
-        history.change(&db, doc, "Clip pasted", |db| db.paste(Paste::Bar(bar), &[copy])).unwrap();
+        history.change(&db, doc, "Clip pasted", |db| db.paste(Paste::Bar { bar, after: None }, &[copy])).unwrap();
         assert_eq!(on_bar(&db), [was.clone(), was.clone()]);
         step_library(&history, &db, doc, true);
         assert_eq!(on_bar(&db), std::slice::from_ref(&was), "the paste undone");

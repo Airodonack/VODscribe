@@ -34,8 +34,8 @@ pub struct Copied {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Paste {
     /// On listed clip `bar`'s clip bar (a VOD's own clip, or an edit), each a
-    /// clip of its own, after the others.
-    Bar(i64),
+    /// clip of its own: after clip `after` of the bar, or else after the others.
+    Bar { bar: i64, after: Option<i64> },
     /// In clip `clip`'s timeline (an edit's, or a snippet open in the
     /// editor) at `at` seconds of it: the playhead, or the end of the
     /// stretch selected (a paste goes in after it, never in its place).
@@ -181,7 +181,7 @@ impl Db {
             bail!("The VOD it was copied from is gone.");
         }
         let target = match onto {
-            Paste::Bar(bar) => bar,
+            Paste::Bar { bar, .. } => bar,
             Paste::Timeline { clip, .. } => clip,
         };
         let whole_of: Option<i64> = self
@@ -201,13 +201,17 @@ impl Db {
             }
         }
         match onto {
-            Paste::Bar(bar) => {
+            Paste::Bar { bar, after } => {
                 out.clips = self.change(bar, None, |db| {
                     let mut made = Vec::with_capacity(kept.len());
                     for (of, c) in &kept {
                         let id = db.new_clip(&c.state.title, Place::Bar(bar))?;
                         db.restore_edit(id, &c.state)?;
                         made.push((id, *of));
+                    }
+                    if let Some(after) = after {
+                        let ids: Vec<i64> = made.iter().map(|&(id, _)| id).collect();
+                        db.place_after_on_bar(bar, &ids, after)?;
                     }
                     Ok(made)
                 })?;
@@ -218,6 +222,20 @@ impl Db {
             }
         }
         Ok(out)
+    }
+
+    /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
+    /// just after its clip `after`; where they are if `after` isn't there.
+    fn place_after_on_bar(&self, bar: i64, ids: &[i64], after: i64) -> Result<()> {
+        let mut order: Vec<i64> =
+            self.bar_clips(bar)?.into_iter().map(|c| c.id).filter(|id| !ids.contains(id)).collect();
+        let Some(at) = order.iter().position(|&id| id == after) else { return Ok(()) };
+        order.splice(at + 1..at + 1, ids.iter().copied());
+        for (i, id) in order.iter().enumerate() {
+            self.conn
+                .execute("UPDATE clips SET bar_position = ?2 WHERE id = ?1", rusqlite::params![id, i as i64 + 1])?;
+        }
+        Ok(())
     }
 
     /// `Paste::Timeline`'s writes: the piece at the moment split there, the
@@ -363,7 +381,7 @@ mod tests {
         let second = db.edit_pieces(edit).unwrap()[1].id;
         db.remove_piece(second).unwrap();
         let other = db.add_edit("f").unwrap().id;
-        let bar = db.paste(Paste::Bar(other), &[copy]).unwrap().clips;
+        let bar = db.paste(Paste::Bar { bar: other, after: None }, &[copy]).unwrap().clips;
         assert_eq!(bar.len(), 1);
         let pasted: Vec<(f64, f64)> = db.edit_pieces(bar[0].0).unwrap().iter().map(|p| (p.start, p.end)).collect();
         assert_eq!(pasted, [(15.0, 20.0), (30.0, 35.0)], "the pieces as they were copied");
@@ -377,7 +395,8 @@ mod tests {
         let copy = db.copy_of(&Put::Clip { id: pill }).unwrap();
         assert_eq!(copy.kind, CopiedKind::Clip);
         let bar = db.vod_clip(vod).unwrap().unwrap();
-        let made: Vec<i64> = db.paste(Paste::Bar(bar), &[copy]).unwrap().clips.iter().map(|c| c.0).collect();
+        let made: Vec<i64> =
+            db.paste(Paste::Bar { bar, after: None }, &[copy]).unwrap().clips.iter().map(|c| c.0).collect();
         assert_eq!(made.len(), 1);
         assert_ne!(made[0], pill);
         let clip = db.clip(made[0]).unwrap().unwrap();
@@ -399,10 +418,10 @@ mod tests {
         let theirs = db.copy_of(&Put::Range { vod_id: other, start: 1.0, end: 2.0, title: None }).unwrap();
         let ours = db.copy_of(&Put::Range { vod_id: vod, start: 1.0, end: 2.0, title: None }).unwrap();
         let bar = db.vod_clip(vod).unwrap().unwrap();
-        let refused = db.paste(Paste::Bar(bar), std::slice::from_ref(&theirs)).unwrap_err();
+        let refused = db.paste(Paste::Bar { bar, after: None }, std::slice::from_ref(&theirs)).unwrap_err();
         assert_eq!(refused.to_string(), "Clips of another VOD go in an edit.");
         assert!(db.clips(vod).unwrap().is_empty());
-        let pasted = db.paste(Paste::Bar(bar), &[theirs.clone(), ours]).unwrap();
+        let pasted = db.paste(Paste::Bar { bar, after: None }, &[theirs.clone(), ours]).unwrap();
         assert_eq!((pasted.clips.len(), pasted.refused), (1, 1));
         // A clip of the VOD's bar open in the editor: the same.
         assert_eq!(pasted.clips[0].1, 1, "the second copy's");
@@ -410,7 +429,7 @@ mod tests {
         assert!(db.paste(Paste::Timeline { clip: pill, at: 0.5 }, std::slice::from_ref(&theirs)).is_err());
         // An edit takes any VOD's.
         let edit = db.add_edit("e").unwrap().id;
-        db.paste(Paste::Bar(edit), &[theirs]).unwrap();
+        db.paste(Paste::Bar { bar: edit, after: None }, &[theirs]).unwrap();
     }
 
     #[test]
@@ -427,7 +446,7 @@ mod tests {
         db.remove_piece(other_edit_piece).unwrap();
         assert!(db.remove_entry(other).unwrap(), "nothing uses it");
         let target = db.add_edit("f").unwrap().id;
-        let pasted = db.paste(Paste::Bar(target), &[both]).unwrap();
+        let pasted = db.paste(Paste::Bar { bar: target, after: None }, &[both]).unwrap();
         assert_eq!(pasted.dropped, 1);
         assert_eq!(shape(&db, pasted.clips[0].0), [(vod, 0.0, 10.0, None)]);
         let before = db.edit_state(target).unwrap();
@@ -515,7 +534,7 @@ mod tests {
         db.add_piece(edit, vod, (5.0, 6.0), "a", None).unwrap();
         let whole = db.copy_of(&Put::Clip { id: edit }).unwrap();
         let target = db.add_edit("f").unwrap().id;
-        let made = db.paste(Paste::Bar(target), &[whole]).unwrap().clips[0].0;
+        let made = db.paste(Paste::Bar { bar: target, after: None }, &[whole]).unwrap().clips[0].0;
         assert_eq!(db.clip(made).unwrap().map(|c| c.start), Some(1.0));
         assert_eq!(db.bar_clips(target).unwrap().len(), 1);
         assert_eq!(db.unfinished_clips().unwrap().len(), 3, "the pills and the pasted clip wait to be made");
@@ -541,7 +560,23 @@ mod tests {
             "not its cut, not the new highlight"
         );
         // On a bar, the clip whole: its cut too.
-        let bar = db.paste(Paste::Bar(edit), &[copy]).unwrap().clips[0].0;
+        let bar = db.paste(Paste::Bar { bar: edit, after: None }, &[copy]).unwrap().clips[0].0;
         assert_eq!(kinds(bar), [("chapter".to_string(), Some("in".to_string())), ("cut".to_string(), None)]);
+    }
+
+    #[test]
+    fn pasted_on_a_bar_after_a_clip_it_goes_next_to_it() {
+        let (db, vod) = library();
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
+        let b = db.add_clip(vod, 3.0, 4.0, "b", true).unwrap().id;
+        let copies = [
+            db.copy_of(&Put::Range { vod_id: vod, start: 5.0, end: 6.0, title: None }).unwrap(),
+            db.copy_of(&Put::Range { vod_id: vod, start: 7.0, end: 8.0, title: None }).unwrap(),
+        ];
+        let made: Vec<i64> =
+            db.paste(Paste::Bar { bar, after: Some(a) }, &copies).unwrap().clips.iter().map(|c| c.0).collect();
+        let order: Vec<i64> = db.clips(vod).unwrap().iter().map(|c| c.id).collect();
+        assert_eq!(order, [a, made[0], made[1], b]);
     }
 }

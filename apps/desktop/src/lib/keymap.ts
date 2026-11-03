@@ -223,7 +223,7 @@ export const ACTIONS = [
   },
   {
     id: "edit.paste",
-    label: "Paste: on the clip bar, or in an edit at the playhead",
+    label: "Paste: on the clip bar, or in an edit after the selection",
     scope: "player",
     legend: "cutting",
     defaults: { linux: ["Ctrl+v"], mac: ["Meta+v"] },
