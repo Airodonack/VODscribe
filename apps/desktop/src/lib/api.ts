@@ -751,7 +751,8 @@ export const api = {
    *  erasure goes on at the next start. */
   cancelJob: (kind: Job["kind"], id: number) => invoke<void>("cancel_job", { kind, id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
-  dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
+  /** Starts dragging edit `id`'s video out of the window; false if the button came up before it could. */
+  dragEdit: (id: number) => invoke<boolean>("drag_edit", { id }),
   moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
   deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
@@ -773,9 +774,10 @@ export const api = {
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging the files of clips `ids` out of the window, in one drag; call while the mouse button is down. */
   /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers;
-   *  `drag`, the page's number for the drag, comes back with its end (`DragEnded`). */
+   *  `drag`, the page's number for the drag, comes back with its end (`DragEnded`).
+   *  False if the button came up before the drag could begin. */
   dragClips: (ids: number[], image: Uint8Array | undefined, drag: number) =>
-    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(","), drag: String(drag) } }),
+    invoke<boolean>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(","), drag: String(drag) } }),
   /** Whether a clip can be dragged out before its file is made (handed over once it is). */
   dragBeforeMade: () => invoke<boolean>("drag_before_made"),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */

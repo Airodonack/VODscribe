@@ -45,7 +45,7 @@ use objc2_foundation::{
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use super::{Ended, Ending, Event, Failure, Item, State};
+use super::{Ended, Ending, Event, Failure, Item, ReleasedEarly, State};
 
 /// How often a promise waiting for its file looks at it.
 const TICK: Duration = Duration::from_millis(100);
@@ -495,7 +495,7 @@ pub(crate) fn start(
     // A drag begun with no button held never ends: the release may have come
     // in the moment between the page asking and this.
     if NSEvent::pressedMouseButtons() & 1 == 0 {
-        anyhow::bail!("The button was released before the drag could begin.");
+        return Err(ReleasedEarly.into());
     }
     let at = ns_window.mouseLocationOutsideOfEventStream();
     let picture = NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(image)).context("no picture")?;

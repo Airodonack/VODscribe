@@ -43,7 +43,7 @@ use windows::Win32::UI::Shell::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::*;
 
-use super::{Ending, Item, Outcome, State};
+use super::{Ending, Item, Outcome, ReleasedEarly, State};
 
 /// How often an answer waiting for an item looks at it.
 const TICK: Duration = Duration::from_millis(100);
@@ -684,7 +684,7 @@ pub(crate) fn run(
     // drag that didn't happen.
     // SAFETY: a plain query.
     if unsafe { GetAsyncKeyState(VK_LBUTTON.0.into()) } >= 0 {
-        anyhow::bail!("The button was released before the drag could begin.");
+        return Err(ReleasedEarly.into());
     }
     // SAFETY: OLE calls on the UI thread (tao has initialized OLE there for
     // its drop target; a second call only counts up). The helper owns the

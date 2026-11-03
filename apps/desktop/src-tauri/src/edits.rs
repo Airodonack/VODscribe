@@ -536,9 +536,9 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 }
 
 /// Starts dragging edit `id`'s video out of the window, as for a clip
-/// (`clips::drag_clip`).
+/// (`clips::drag_clip`): false if it didn't begin, the button up first.
 #[tauri::command]
-pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
+pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
     let path = rendered(&app, id)?;
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);

@@ -25,7 +25,7 @@ use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
 
-use crate::file_drag::Ending;
+use crate::file_drag::{Ending, ReleasedEarly};
 use crate::files::{delete_file, delete_leftovers, writing};
 use crate::history::{self, Doc};
 use crate::jobs::Jobs;
@@ -1025,13 +1025,14 @@ fn made_in(db: &Db, id: i64) -> Made {
 /// paths, so the interface can't offer any other file. Called while the
 /// mouse button is still down; the drag then belongs to the system. A clip
 /// whose file is still being made can go (`drags_before_made`): it's made
-/// next, and handed over once it's there.
+/// next, and handed over once it's there. False if the drag didn't begin,
+/// the button up before it could.
 #[tauri::command]
 pub(crate) async fn drag_clip(
     app: AppHandle,
     window: tauri::WebviewWindow,
     request: tauri::ipc::Request<'_>,
-) -> CmdResult<()> {
+) -> CmdResult<bool> {
     // The clips in a header, the picture as the request's bytes (a PNG is
     // tens of KB: a JSON array of its numbers took a moment to send).
     let ids: Vec<i64> = request
@@ -1161,7 +1162,8 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`, with the page's `number` for the drag), so what it does next
 /// (deleting a clip made only for the drag) knows. `dropped(true)` once it's
-/// let go on another app, `dropped(false)` once it's over.
+/// let go on another app, `dropped(false)` once it's over. False if none
+/// began, the button up before it could (`ReleasedEarly`).
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
     number: Option<u64>,
@@ -1170,17 +1172,28 @@ pub(crate) async fn drag_file(
     image: Option<Vec<u8>>,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
-) -> CmdResult<()> {
+) -> CmdResult<bool> {
     let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
             let started = start_drag(&on_main, number, names, files, image, taken, dropped);
-            let _ = tx.send(started.map_err(|e| format!("{e:#}")));
+            let _ = tx.send(began(started));
         })
         .map_err(err)?;
     tauri::async_runtime::spawn_blocking(move || rx.recv()).await.map_err(err)?.map_err(err)?
+}
+
+/// Whether a drag out of the window began (`start_drag`'s result, as the
+/// page hears it): refused because the button came up first, it didn't, which
+/// is no error to show; refused otherwise, why.
+fn began(started: Result<()>) -> CmdResult<bool> {
+    match started {
+        Ok(()) => Ok(true),
+        Err(e) if e.is::<ReleasedEarly>() => Ok(false),
+        Err(e) => Err(format!("{e:#}")),
+    }
 }
 
 /// What the end of a drag out of the window comes to (`DragEnded`), from what
@@ -1730,7 +1743,7 @@ fn start_drag(
     });
     if held == Some(false) {
         undo();
-        anyhow::bail!("The button was released before the drag could begin.");
+        return Err(ReleasedEarly.into());
     }
     if source.drag_begin_with_coordinates(&targets, gtk::gdk::DragAction::COPY, 1, None, -1, -1).is_none() {
         undo();
@@ -2378,5 +2391,21 @@ mod tests {
         assert_eq!(gone.iter().map(|(c, _)| c.id).collect::<Vec<_>>(), [b, a]);
         assert!(db.clips(vod).unwrap().is_empty());
         assert_eq!(history.steps(Doc::Vod(vod)), 1, "one step for both");
+    }
+
+    /// The page told an early release from a refused drag by the word
+    /// "released" in its error: a reworded sentence would have shown an
+    /// ordinary release, too soon, as an error.
+    #[test]
+    fn a_drag_refused_for_an_early_release_is_none_begun_not_an_error() {
+        assert_eq!(began(Ok(())), Ok(true));
+        assert_eq!(began(Err(ReleasedEarly.into())), Ok(false));
+        assert_eq!(began(Err(anyhow::Error::new(ReleasedEarly).context("Not now."))), Ok(false), "said otherwise");
+        assert_eq!(began(Err(anyhow::anyhow!("no view"))), Err("no view".into()));
+        assert_eq!(
+            began(Err(anyhow::anyhow!("The button was released before the drag could begin."))),
+            Err("The button was released before the drag could begin.".into()),
+            "only the type tells",
+        );
     }
 }

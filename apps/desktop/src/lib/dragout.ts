@@ -133,7 +133,7 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     return false;
   }
   performance.mark("drag-start");
-  await api
+  const began = await api
     .dragClips(
       list.map((c) => c.id),
       image,
@@ -141,11 +141,12 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     )
     .catch((e) => {
       console.error("drag", e);
-      // Refused: said, unless it's only that the button came up first
-      // (clips.rs `start_drag`), a drag that never was.
-      if (!/released/.test(String(e))) clips.error = String(e);
-      over();
+      clips.error = String(e);
+      return false;
     });
+  // Refused, or not begun because the button came up first (clips.rs
+  // `start_drag`, said by the result, not an error): a drag that never was.
+  if (!began) over();
   formatHint.dragged();
   return true;
 }

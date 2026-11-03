@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-pub(crate) use crate::file_drag::Ending;
+pub(crate) use crate::file_drag::{Ending, ReleasedEarly};
 
 mod windows;
 pub(crate) use windows::run;

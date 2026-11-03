@@ -7,7 +7,8 @@
 //! macOS only, so far (`macos`): Linux's drag is still in `clips`, and
 //! Windows' is `drag_source`.
 
-// (Elsewhere only `Ending` is used, by Linux's and Windows' drags.)
+// (Elsewhere only `Ending` and `ReleasedEarly` are used, by Linux's and
+// Windows' drags.)
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
@@ -60,6 +61,21 @@ pub(crate) enum Ending {
     /// once it's made).
     Elsewhere,
 }
+
+/// Why a drag wasn't begun: the button was already up when it was asked
+/// for (the release may come in the moment between the page asking and the
+/// drag's start). One begun then would never end, so it's refused, and the
+/// app tells the page by this, not by the sentence, that no drag began.
+#[derive(Debug)]
+pub(crate) struct ReleasedEarly;
+
+impl std::fmt::Display for ReleasedEarly {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The button was released before the drag could begin.")
+    }
+}
+
+impl std::error::Error for ReleasedEarly {}
 
 /// Why a file never got where it was dropped.
 #[derive(Clone, PartialEq, Debug)]

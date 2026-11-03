@@ -82,6 +82,8 @@ const fake = {
   },
   /** Whether the system's drag can begin before the files are made. */
   beforeMade: true,
+  /** How the app answers a drag asked for: begun, not (the button came up first), or refused. @type {() => boolean} */
+  begins: () => true,
   /** @type {number[]} */
   deleted: [],
   /** @type {number[]} */
@@ -102,7 +104,7 @@ const fake = {
     frame: async () => new Uint8Array(),
     peaks: async () => new Uint8Array(),
     /** @param {unknown} ids @param {unknown} _image @param {unknown} drag */
-    dragClips: async (ids, _image, drag) => void (fake.dragged.push(ids), fake.numbers.push(drag)),
+    dragClips: async (ids, _image, drag) => (fake.dragged.push(ids), fake.numbers.push(drag), fake.begins()),
     dragBeforeMade: async () => fake.beforeMade,
     /** @param {number} id */
     deleteClip: async (id) => void fake.deleted.push(id),
@@ -203,6 +205,7 @@ function reset() {
   fake.listeners.clear();
   fake.numbers.length = 0;
   fake.beforeMade = true;
+  fake.begins = () => true;
   fake.clips.error = null;
   under = null;
 }
@@ -441,4 +444,31 @@ test("where the system can't wait for the files, the drag begins once they're ma
   assert.deepEqual(fake.dragged, [[3, 4]]);
   fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
   await tick();
+});
+
+test("the button up before the system's drag could begin: nothing said, the clips forgotten, whatever the words", async () => {
+  reset();
+  fake.begins = () => false;
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  await tick();
+  assert.deepEqual(fake.dragged, [[3, 4]]);
+  assert.equal(fake.clips.error, null);
+  assert.deepEqual(fake.deleted, [3, 4], "kept, for a drag that never began");
+});
+
+test("a drag the app refused is said, even when its words say released", async () => {
+  reset();
+  // (Tauri rejects with the command's error text.)
+  fake.begins = () =>
+    /** @type {boolean} */ (/** @type {unknown} */ (Promise.reject("The clip was released from the library.")));
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  await tick();
+  assert.equal(fake.clips.error, "The clip was released from the library.");
+  assert.deepEqual(fake.deleted, [3, 4]);
 });
