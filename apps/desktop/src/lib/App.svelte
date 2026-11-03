@@ -53,6 +53,7 @@
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
   import { clipboardKey, clipboardPaste } from "./copyPaste";
+  import { escapeLetsGoOfText, pressLetsGoOfText } from "./textFocus";
   import AnnotationsPane from "./AnnotationsPane.svelte";
   import { isShort, shortMode } from "./shortMode.svelte";
   import { canEmbed } from "./embed";
@@ -236,6 +237,8 @@
     // A modal window (Settings) has the keys while it's open: undo, back and
     // search mustn't reach the view behind it. Escape closes it (Modal.svelte).
     if (document.querySelector('[aria-modal="true"]')) return;
+    // Escape in a text field lets go of it: the keys are the selection's again (textFocus.ts).
+    if (escapeLetsGoOfText(e)) return;
     // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
     const target = e.target as HTMLElement | null;
     const typing = !!target?.closest("input, textarea, select, [contenteditable]");
@@ -845,6 +848,8 @@
 
 <svelte:window
   onkeydown={onWindowKey}
+  onpointerdowncapture={(e) =>
+    pressLetsGoOfText(e.target as Element | null, document.activeElement as HTMLElement | null)}
   onpointermove={(e) => pointerAt(e.clientX, e.clientY)}
   ondragover={keepDropsInApp}
   ondrop={keepDropsInApp}

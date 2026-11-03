@@ -6,7 +6,9 @@
 // shows; a VOD's timeline takes no pieces) makes a pill of it on the bar,
 // picked, made; Ctrl+Z takes it off and Ctrl+Shift+Z brings it back; pasted
 // again, no second pill: the one there is picked, the toast saying it's
-// already on the clip bar. That pill
+// already on the clip bar. Written in the search box, then the timeline
+// clicked, the box lets go of the keys: I, Ctrl+C and Ctrl+V pressed where
+// the focus is make a pill of the stretch (taken back after). That pill
 // clicked and copied, pasted on its own bar, is a second pill of the same
 // stretch: ready at once, never cut, its file another of the same bytes.
 // Ctrl+A over the bar then picks both. The first pill deleted, the copy
@@ -219,6 +221,70 @@ export default {
     await until("the pill there picked", async () => (await picked()).join() === String(one.id), 10_000);
     if ((await pills()).length !== 1) throw new Error(`pasted twice, the bar has ${(await pills()).length} pills`);
     ctx.log("the same stretch pasted again: no second pill, the one there picked");
+
+    // Writing in the search box, then a click on the timeline: the box lets
+    // go of the keys, so I, Ctrl+C and Ctrl+V (pressed where the focus is)
+    // are the timeline's. The paste taken back after.
+    const search = 'input[type="search"]';
+    await app.js(
+      `const box = document.querySelector(arguments[0]);
+       box.focus();
+       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(box, "hello");
+       box.dispatchEvent(new Event("input", { bubbles: true }));`,
+      search,
+    );
+    const focusedOn = () => app.js(`return document.activeElement?.matches(arguments[0]) ?? false`, search);
+    if (!(await focusedOn())) throw new Error("the search box didn't take the focus");
+    await app.js(
+      `const bar = document.querySelector(".scrubber");
+       const box = bar.getBoundingClientRect();
+       const x = box.left + ((2.5 - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+       const at = { bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, isPrimary: true, pointerId: 1 };
+       bar.dispatchEvent(new PointerEvent("pointerdown", at));
+       window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`,
+    );
+    await to(2);
+    if (await focusedOn()) throw new Error("a click on the timeline left the focus in the search box");
+    // A key pressed where the focus is, as the keyboard's are.
+    const keyHere = (key, cmd = false) =>
+      app.js(
+        `const mac = /Mac/.test(navigator.platform);
+         const at = document.activeElement ?? document.body;
+         const e = new KeyboardEvent("keydown", { key: arguments[0], ctrlKey: arguments[1] && !mac, metaKey: arguments[1] && mac, bubbles: true, cancelable: true });
+         at.dispatchEvent(e);
+         if (arguments[0] === "v" && arguments[1] && !e.defaultPrevented) {
+           const data = new DataTransfer();
+           data.setData("text/plain", window.__clip.text);
+           at.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+         }`,
+        key,
+        cmd,
+      );
+    await keyHere("i");
+    await until("I selected 2.5-3 s", selection, 10_000);
+    before = (await written()).length;
+    await keyHere("c", true);
+    await copiedSince(before, "2.5-3 s, after the search box");
+    await pointAt(".scrubber");
+    await keyHere("v", true);
+    const fromSearch = await until(
+      "a pill of 2.5-3 s, pasted",
+      async () => (await pills()).find((c) => near(c.start, 2.5, 0.1) && near(c.end, 3)),
+      10_000,
+    );
+    await ready(async () => (await pills()).find((c) => c.id === fromSearch.id), "the pill from 2.5 s made");
+    await undo();
+    await until("Ctrl+Z took it off", async () => (await pills()).every((c) => c.id !== fromSearch.id), 10_000);
+    // Its id is free again for the next clip made (the library reuses the
+    // last id once deleted): its news isn't that clip's.
+    await app.js(`window.__clipNews = window.__clipNews.filter((n) => n.id !== arguments[0])`, fromSearch.id);
+    await app.js(
+      `const box = document.querySelector(arguments[0]);
+       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(box, "");
+       box.dispatchEvent(new Event("input", { bubbles: true }));`,
+      search,
+    );
+    ctx.log("written in the search box, then the timeline clicked: I, Ctrl+C and Ctrl+V were the timeline's");
 
     // 3. The pill picked alone, copied, pasted on its own bar: a second one,
     // ready without being cut, its file a copy of the first's.
