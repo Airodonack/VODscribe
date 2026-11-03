@@ -13,6 +13,7 @@ const fakes = {
     export const docKey = (doc) => doc.kind + ":" + doc.id;`,
   "./keys.svelte": `export const is = () => false;`,
   "./selection.svelte": `export const clearsStretch = () => {};
+    export const clearsMark = () => {};
     export const snippets = { clear() {} };
     export const stretchMade = () => {};`,
   "./layers.svelte": `export const layers = { marks: { own: true, imported: true }, showMarks() {} };`,

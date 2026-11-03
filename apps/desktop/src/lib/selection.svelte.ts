@@ -7,9 +7,12 @@
 // in the order they're on screen, either way (with Ctrl too, adding it).
 // On the timeline a plain click moves the playhead, so a stretch is picked
 // with Alt (Option on a Mac; an Alt-drag carries it) or Ctrl or Shift.
-// Escape, or a click on empty space, lets the set go: what stays picked is
-// the library's open row, as the item clicked in a file manager. A box
-// dragged over empty space (`dragBox` below) picks what it touches.
+// Escape, or a plain click on background (`background`: the timeline, empty
+// space in the clip bar or the list), lets the set go, and a mark selected:
+// what stays picked is the library's open row, as the item clicked in a
+// file manager. A stretch selected (I and O) stays: editors keep in and out
+// when the ruler is clicked. A box dragged over empty space (`dragBox`
+// below) picks what it touches.
 //
 // Two sets, never both at once: the snippet set (stretches of the open VOD's
 // or edit's timeline between its cuts, and clips of its clip bar, together)
@@ -171,6 +174,23 @@ export const library: Selection<Entry> = new Selection(sameEntry, () => {
 /** `letGo` lets go of a stretch selection: called whenever a set starts. */
 export function clearsStretch(letGo: () => void) {
   stretches.push(letGo);
+}
+
+/** How the mark selected is let go, handed over by its owner. */
+const marks: (() => void)[] = [];
+
+/** `letGo` lets go of the mark selected: called on a click on background. */
+export function clearsMark(letGo: () => void) {
+  marks.push(letGo);
+}
+
+/** A plain click on background (the timeline, empty space in the clip bar
+ *  or the library's list): the sets picked go, and a mark selected; a
+ *  stretch selected stays. */
+export function background() {
+  snippets.clear();
+  library.clear();
+  marks.forEach((letGo) => letGo());
 }
 
 /** A stretch selection was made, or a mark selected: the sets go. */

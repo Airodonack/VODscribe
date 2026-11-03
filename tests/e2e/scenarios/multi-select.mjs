@@ -4,7 +4,9 @@
 // its number in that order, the playhead stays where it was, and C makes a
 // clip of each, in that order, as one change. An Alt-click (Option) on the
 // timeline picks the stretch there alone, Ctrl+Alt-click adds one, and the
-// playhead stays; with one picked, an Alt-drag from another stretch lets go
+// playhead stays; a plain click elsewhere on the timeline lets go of it and
+// moves the playhead, while a stretch selected with I stays through one;
+// with one picked, an Alt-drag from another stretch lets go
 // of it, and the stretch the drag grabs is lit as grabbed until let go. The clip bar has no row of its own about what's picked:
 // the keys and the drags are the same for several as for one. A plain click
 // on a pill picks it alone, one on another picks that instead, and one on
@@ -239,6 +241,35 @@ export default {
     await app.key("Escape");
     await stretchesAre("", "Escape let it go");
     ctx.log("an Alt-click picks a stretch alone, Ctrl+Alt-click adds one, the playhead staying");
+
+    // A plain click elsewhere on the timeline is on background: the stretch
+    // picked goes and the playhead moves there. A stretch selected (I) stays
+    // through a plain click, as editors keep in and out when the ruler is
+    // clicked; Escape lets it go.
+    const plainAt = (time) =>
+      app.js(
+        `const bar = document.querySelector(".scrubber");
+         const box = bar.getBoundingClientRect();
+         const x = box.left + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * box.width;
+         const at = { bubbles: true, cancelable: true, clientX: x, clientY: box.top + box.height / 2, button: 0, buttons: 1, isPrimary: true, pointerId: 1 };
+         bar.dispatchEvent(new PointerEvent("pointerdown", at));
+         window.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));`,
+        time,
+      );
+    const selected = () => app.js(`return !!document.querySelector(".scrubber .selection")`);
+    await altAt(1.5);
+    await stretchesAre("1 2", "an Alt-click picked 1-2 s");
+    await plainAt(0.5);
+    await stretchesAre("", "a plain click elsewhere on the timeline let it go");
+    await to(0);
+    await app.key("i");
+    await until("I selected a stretch", selected, 10_000);
+    await plainAt(3.5);
+    await to(3);
+    if (!(await selected())) throw new Error("a plain click on the timeline let go of the stretch selected (I)");
+    await app.key("Escape");
+    await until("Escape let go of the stretch", async () => !(await selected()), 10_000);
+    ctx.log("a plain click on the timeline lets go of a stretch picked, keeps one selected, and moves the playhead");
 
     // With 1-2 s picked, an Alt-drag from 2-3 s lets go of the pick, and the
     // stretch it grabs is lit as grabbed from the drag's start, a look apart

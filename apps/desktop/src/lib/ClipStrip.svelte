@@ -36,7 +36,7 @@
   import { carryChosen, carrySnippets, chosenPuts } from "./bulk";
   import AddToEdit from "./AddToEdit.svelte";
   import { forPlayer } from "./playerKeys";
-  import { dragBox, howOf, overlaps, snippets, type Snippet } from "./selection.svelte";
+  import { background, dragBox, howOf, overlaps, snippets, type Snippet } from "./selection.svelte";
 
   let {
     vod,
@@ -216,7 +216,7 @@
   onpointerdown={onBarDown}
   onmousedown={onBarMouseDown}
   onwheel={onWheel}
-  use:dragBox={{ set: snippets, hits: boxed, onempty: () => snippets.clear() }}
+  use:dragBox={{ set: snippets, hits: boxed, onempty: background }}
 >
   {#each linked as edit (edit.id)}
     <button

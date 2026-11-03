@@ -47,6 +47,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - A VOD reopens where it was left. A step or jump made just before opening something else could be forgotten, and the VOD came back a step earlier.
   - Reload brings back what was open. Reload, in the right-click menu, reopens what was open where it was, instead of leaving nothing open while the video's player carried on.
   - Undo undoes the latest change. Undo (Ctrl+Z) pressed right after a change, such as moving a mark, could undo the one before it instead.
+  - A click elsewhere lets go of picks. A plain click on the timeline, or on empty space in the clip bar or the library, lets go of the stretches, clips and rows picked; a stretch selected with I and O stays.
 
 ## 0.7.0 — 2026-10-30
 

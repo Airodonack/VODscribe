@@ -63,7 +63,7 @@
     tickStep,
     waveformGaps,
   } from "./media";
-  import { howOf, picks, snippets, type Snippet } from "./selection.svelte";
+  import { background, howOf, picks, snippets, type Snippet } from "./selection.svelte";
   import type { How } from "./pick";
   import { carryChosen, carrySnippets } from "./bulk";
   import { carry, stretchAt, type CarryHome } from "./dragout";
@@ -478,6 +478,9 @@
         drag = { kind: "piece", id: piece.id, x: e.clientX, dx: 0, to: index, moved: false };
         return;
       }
+      // A plain click on the timeline is on background: what's picked goes
+      // (selection.svelte.ts), a stretch selected stays.
+      background();
       drag = { kind: "scrub" };
       follow = true;
       onseek(timeAt(e.clientX));
@@ -512,8 +515,10 @@
       cuts.selected = mark.id;
       cuts.clearSelection();
     } else {
-      // Anywhere else lets go of the cut (and the selection's edge), but
-      // not of the selection: I, a click to move the playhead, then O.
+      // Anywhere else lets go of the cut (and the selection's edge), and of
+      // what's picked (a click on background), but not of the selection: I,
+      // a click to move the playhead, then O.
+      background();
       drag = { kind: "scrub" };
       cuts.selected = null;
       cuts.selectedEdge = null;
@@ -721,10 +726,14 @@
         onpiece?.resize(done.id, done.start, done.end);
     }
     if (done?.kind === "piece") {
-      // A click on a band goes to the piece; a drag moves it.
+      // A click on a band goes to the piece, letting go of what's picked
+      // as a click elsewhere on the timeline does; a drag moves it.
       const piece = pieces?.find((p) => p.id === done.id);
       if (done.moved && pieces?.findIndex((p) => p.id === done.id) !== done.to) onpiece?.move(done.id, done.to);
-      else if (!done.moved && piece) onseek(piece.start);
+      else if (!done.moved && piece) {
+        background();
+        onseek(piece.start);
+      }
     }
     if (done?.kind === "alt") pickAt(done.at, done.how);
     if (done?.kind === "view" && !done.moved) {

@@ -15,7 +15,7 @@ import { api, docKey, type Doc, type Mark, type MarkKind } from "./api";
 import { DEFAULT_FPS, frameStart, inFrame, nudge } from "./media";
 import { is } from "./keys.svelte";
 import { inOut, isEscape, markFramesOf } from "./playerKeys";
-import { clearsStretch, snippets, stretchMade } from "./selection.svelte";
+import { clearsMark, clearsStretch, snippets, stretchMade } from "./selection.svelte";
 import { changed, shownMarks, sourceOf, type MarkSources } from "./markSources";
 import { layers } from "./layers.svelte";
 import { toast } from "./toasts.svelte";
@@ -108,6 +108,8 @@ class Cuts {
       this.clearSelection();
       this.selected = null;
     });
+    // A click on background lets go of a mark selected, not of the stretch.
+    clearsMark(() => (this.selected = null));
   }
 
   /** Shows or hides the user's own chapters and highlights, or those imported; a mark

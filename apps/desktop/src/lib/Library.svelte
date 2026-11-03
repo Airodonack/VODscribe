@@ -44,7 +44,7 @@
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
   import { keyHint } from "./keys.svelte";
-  import { count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
+  import { background, count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
 
   let {
     rows,
@@ -490,7 +490,7 @@
     aria-label="Library"
     aria-multiselectable="true"
     bind:this={reorder.list}
-    use:dragBox={{ set: library, hits: boxed, onempty: () => library.clear() }}
+    use:dragBox={{ set: library, hits: boxed, onempty: background }}
   >
     <!-- While a clip is carried: the place to start an edit with it (dragout.ts). -->
     {#if clips.carryingAny}
