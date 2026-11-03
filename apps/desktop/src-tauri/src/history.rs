@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 use vodscribe_core::db::{Db, MarkState};
@@ -35,7 +35,7 @@ pub(crate) enum Doc {
 }
 
 /// A clip in a clip bar, as a snapshot holds it: what its file is made of
-/// (`made`: a VOD's clip its stretch, an edit's what it holds) and its title.
+/// (`made`: what it holds) and its title.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BarClip<M> {
     id: i64,
@@ -51,14 +51,7 @@ pub(crate) trait Made {
     fn same(&self, other: &Self) -> bool;
 }
 
-/// A VOD's clip: its stretch, in seconds of the VOD.
-impl Made for (f64, f64) {
-    fn same(&self, other: &Self) -> bool {
-        (self.0 - other.0).abs() < 1e-6 && (self.1 - other.1).abs() < 1e-6
-    }
-}
-
-/// An edit's clip: its pieces and marks (its title is the clip's).
+/// A clip: its pieces and marks (its title is the clip's).
 impl Made for EditState {
     fn same(&self, other: &Self) -> bool {
         self.items == other.items && self.marks == other.marks
@@ -69,14 +62,11 @@ impl Made for EditState {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Snapshot {
     /// An edit, and the clips on its clip bar, each as it is.
-    Edit {
-        state: EditState,
-        bar: Vec<BarClip<EditState>>,
-    },
-    Vod {
-        marks: Vec<MarkState>,
-        clips: Vec<BarClip<(f64, f64)>>,
-    },
+    Edit { state: EditState, bar: Vec<BarClip<EditState>> },
+    /// A VOD's marks, and the clips on its clip bar, each as it is: a
+    /// clip's whole state, as one changed in the editor holds more than
+    /// its first piece's stretch.
+    Vod { marks: Vec<MarkState>, clips: Vec<BarClip<EditState>> },
 }
 
 struct Entry {
@@ -278,11 +268,38 @@ impl Stacks {
     }
 }
 
+/// What putting a clip bar back asks of the clip queue (the app's, through
+/// its `AppHandle`): a trait so the library's half can be checked alone.
+pub(crate) trait BarQueue {
+    /// Clip `id` was made of what it was: its file is made again.
+    fn remade(&self, id: i64);
+    /// Clip `id` was made anew: its file is made.
+    fn added(&self, id: i64);
+    /// Clip `id` is taken off, its file too unless it was dragged out.
+    fn remove(&self, db: &Db, id: i64) -> Result<()>;
+}
+
+impl BarQueue for AppHandle {
+    fn remade(&self, id: i64) {
+        let state = self.state::<AppState>();
+        state.clips.stop(id);
+        state.clips.queue_once(id);
+    }
+
+    fn added(&self, id: i64) {
+        self.state::<AppState>().clips.queue(id);
+    }
+
+    fn remove(&self, db: &Db, id: i64) -> Result<()> {
+        crate::clips::remove(self, db, id)
+    }
+}
+
 /// Puts back in `doc` what one change did to it, taking it from `from` (as
 /// the change left it, or as an undo of it did) to `to`. Only that: what the
 /// change didn't touch stays as it is now, so a clip that went meanwhile
 /// without a change of its own (its file deleted outside the app) stays gone.
-fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
+fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -> Result<()> {
     match (doc, from, to) {
         (Doc::Edit(id), Snapshot::Edit { state: was, bar: had }, Snapshot::Edit { state, bar }) => {
             if was != state {
@@ -292,20 +309,19 @@ fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -
                 db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })
             };
             let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
-            restore_bar(app, db, had, bar, &edit_bar(db, id)?, remake, add)?;
+            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
                 db.restore_marks(id, marks)?;
             }
-            let remake = |db: &Db, clip: i64, want: &BarClip<(f64, f64)>| {
-                db.set_clip_range(clip, want.made.0, want.made.1)?;
-                db.rename_clip(clip, &want.title)
+            let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| {
+                db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })
             };
-            let add = |db: &Db, want: &BarClip<(f64, f64)>| {
-                Ok(db.add_clip(id, want.made.0, want.made.1, &want.title, true)?.id)
+            let add = |db: &Db, want: &BarClip<EditState>| {
+                db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
             };
-            restore_bar(app, db, had, clips, &vod_bar(db, id)?, remake, add)?;
+            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
         }
         _ => {}
     }
@@ -315,23 +331,24 @@ fn restore(app: &AppHandle, db: &Db, doc: Doc, from: &Snapshot, to: &Snapshot) -
 /// The clips on edit `id`'s clip bar (those in it, not only dragged out),
 /// each as it is.
 fn edit_bar(db: &Db, id: i64) -> Result<Vec<BarClip<EditState>>> {
+    bar_states(db, db.bar_clips(id)?)
+}
+
+/// The clips on VOD `id`'s clip bar (those in it, not only dragged out),
+/// each as it is.
+fn vod_bar(db: &Db, id: i64) -> Result<Vec<BarClip<EditState>>> {
+    bar_states(db, db.clips(id)?)
+}
+
+/// Each of `clips` in the bar (not only dragged out), as it is.
+fn bar_states(db: &Db, clips: Vec<vodscribe_core::db::Clip>) -> Result<Vec<BarClip<EditState>>> {
     let mut out = Vec::new();
-    for clip in db.bar_clips(id)?.into_iter().filter(|c| c.shown) {
+    for clip in clips.into_iter().filter(|c| c.shown) {
         if let Some(state) = db.edit_state(clip.id)? {
             out.push(BarClip { id: clip.id, title: state.title.clone(), made: state });
         }
     }
     Ok(out)
-}
-
-/// The clips on VOD `id`'s clip bar (those in it, not only dragged out).
-fn vod_bar(db: &Db, id: i64) -> Result<Vec<BarClip<(f64, f64)>>> {
-    Ok(db
-        .clips(id)?
-        .into_iter()
-        .filter(|c| c.shown)
-        .map(|c| BarClip { id: c.id, made: (c.start, c.end), title: c.title })
-        .collect())
 }
 
 /// One step in putting a clip bar back (`bar_steps`).
@@ -393,7 +410,7 @@ fn bar_steps<'a, M: Made>(from: &[BarClip<M>], to: &'a [BarClip<M>], now: &[BarC
 /// made again), taken off (its file too, unless dragged out), or made anew
 /// (`add`, its id).
 fn restore_bar<M: Made>(
-    app: &AppHandle,
+    queue: &impl BarQueue,
     db: &Db,
     from: &[BarClip<M>],
     to: &[BarClip<M>],
@@ -401,17 +418,15 @@ fn restore_bar<M: Made>(
     remake: impl Fn(&Db, i64, &BarClip<M>) -> Result<()>,
     add: impl Fn(&Db, &BarClip<M>) -> Result<i64>,
 ) -> Result<()> {
-    let state = app.state::<AppState>();
     for step in bar_steps(from, to, now) {
         match step {
             BarStep::Remake(id, want) => {
                 remake(db, id, want)?;
-                state.clips.stop(id);
-                state.clips.queue_once(id);
+                queue.remade(id);
             }
             BarStep::Rename(id, title) => db.rename_clip(id, title)?,
-            BarStep::Remove(id) => crate::clips::remove(app, db, id)?,
-            BarStep::Add(want) => state.clips.queue(add(db, want)?),
+            BarStep::Remove(id) => queue.remove(db, id)?,
+            BarStep::Add(want) => queue.added(add(db, want)?),
         }
     }
     Ok(())
@@ -583,6 +598,13 @@ mod tests {
         assert_eq!(state, was, "undone, the one piece whole");
     }
 
+    /// A clip by its stretch alone, for the steps' cases.
+    impl Made for (f64, f64) {
+        fn same(&self, other: &Self) -> bool {
+            (self.0 - other.0).abs() < 1e-6 && (self.1 - other.1).abs() < 1e-6
+        }
+    }
+
     fn bar(clips: &[(i64, f64, f64, &str)]) -> Vec<BarClip<(f64, f64)>> {
         clips.iter().map(|&(id, start, end, title)| BarClip { id, made: (start, end), title: title.into() }).collect()
     }
@@ -650,6 +672,77 @@ mod tests {
         assert!(edit_bar(&db, edit).unwrap().is_empty());
         assert_eq!(bar_steps(&[], &trimmed, &[]), [BarStep::Add(&trimmed[0])]);
         assert_eq!(bar_steps(&trimmed, &[], &trimmed), [BarStep::Remove(made)]);
+    }
+
+    /// The library alone, for `restore`: no files to make or delete.
+    struct NoQueue;
+
+    impl BarQueue for NoQueue {
+        fn remade(&self, _: i64) {}
+        fn added(&self, _: i64) {}
+        fn remove(&self, db: &Db, id: i64) -> Result<()> {
+            db.delete_clip(id)
+        }
+    }
+
+    /// Steps `doc`'s history back (`undo`) or forward in the library, as
+    /// `step` does.
+    fn step_library(history: &History, db: &Db, doc: Doc, undo: bool) {
+        let mut s = history.0.lock().unwrap();
+        let entry = History::take(&mut s, doc, undo).expect("a step to take");
+        let (from, to) = if undo { (&entry.after, &entry.before) } else { (&entry.before, &entry.after) };
+        restore(&NoQueue, db, doc, from, to).unwrap();
+        let other = if undo { &mut s.redo } else { &mut s.undo };
+        other.entry(doc).or_default().push(entry);
+    }
+
+    /// VOD `vod`'s clip bar, each clip as it is.
+    fn vod_bar_states(db: &Db, vod: i64) -> Vec<EditState> {
+        db.clips(vod).unwrap().iter().map(|c| db.edit_state(c.id).unwrap().unwrap()).collect()
+    }
+
+    /// A clip of VOD `vod`'s clip bar changed in the editor (a second clip
+    /// dropped in); its id and what it holds.
+    fn changed_vod_clip(db: &Db, vod: i64) -> (i64, EditState) {
+        let clip = db.add_clip(vod, 1.0, 3.0, "a", true).unwrap().id;
+        db.add_piece(clip, vod, (10.0, 12.0), "b", None).unwrap();
+        (clip, db.edit_state(clip).unwrap().unwrap())
+    }
+
+    /// A clip of a VOD's clip bar changed in the editor, deleted: undone, it
+    /// comes back whole (it used to come back as its first piece's stretch
+    /// alone, what was dropped in lost).
+    #[test]
+    fn undo_of_a_delete_brings_a_vod_bar_clip_back_whole() {
+        let (db, vod) = library();
+        let history = History::default();
+        let doc = Doc::Vod(vod);
+        let (clip, was) = changed_vod_clip(&db, vod);
+        history.change(&db, doc, "Clip deleted", |db| db.delete_clip(clip)).unwrap();
+        assert!(vod_bar_states(&db, vod).is_empty());
+        step_library(&history, &db, doc, true);
+        assert_eq!(vod_bar_states(&db, vod), [was], "undone, the clip as it was");
+    }
+
+    /// The same clip copied and pasted beside itself: redone after an undo,
+    /// the paste is whole (it used to be its first piece's stretch alone).
+    #[test]
+    fn redo_of_a_paste_brings_a_vod_bar_clip_back_whole() {
+        use vodscribe_core::clipboard::Paste;
+        use vodscribe_core::edits::Put;
+        let (db, vod) = library();
+        let history = History::default();
+        let doc = Doc::Vod(vod);
+        let (clip, was) = changed_vod_clip(&db, vod);
+        let on_bar = |db: &Db| vod_bar_states(db, vod);
+        let copy = db.copy_of(&Put::Clip { id: clip }).unwrap();
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        history.change(&db, doc, "Clip pasted", |db| db.paste(Paste::Bar(bar), &[copy])).unwrap();
+        assert_eq!(on_bar(&db), [was.clone(), was.clone()]);
+        step_library(&history, &db, doc, true);
+        assert_eq!(on_bar(&db), std::slice::from_ref(&was), "the paste undone");
+        step_library(&history, &db, doc, false);
+        assert_eq!(on_bar(&db), [was.clone(), was], "redone, the copy as it was");
     }
 
     #[test]
