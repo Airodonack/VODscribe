@@ -148,12 +148,21 @@ impl Hand {
 
     /// Writes file `index` to `url` once it's made, with an empty file there
     /// meanwhile and a progress on it (Finder's progress and cancel). Why
-    /// not, if it wasn't: None if the receiver called it off.
+    /// not, if it wasn't: None if the receiver called it off. A file already
+    /// at `url` is left as it is and the write refused: emptied for the
+    /// progress, it would be lost on a cancel.
     fn write(&self, index: usize, url: &NSURL) -> Result<(), Option<String>> {
         let item = &self.items[index];
         let to = url.path().map(|p| PathBuf::from(p.to_string())).ok_or(Some("no place to write it".to_string()))?;
+        // A new file, never one already there: so the file at `to` is this
+        // drag's own from here on, and removed if it isn't written.
+        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&to) {
+            return Err(Some(match e.kind() {
+                std::io::ErrorKind::AlreadyExists => "a file of that name is already there".to_string(),
+                _ => format!("couldn't write the file there: {e}"),
+            }));
+        }
         let cancelled = Arc::new(AtomicBool::new(false));
-        let _ = std::fs::File::create(&to);
         let progress = NSProgress::progressWithTotalUnitCount(100);
         progress.setKind(Some(unsafe { NSProgressKindFile }));
         progress.setFileOperationKind(Some(unsafe { NSProgressFileOperationKindCopying }));
