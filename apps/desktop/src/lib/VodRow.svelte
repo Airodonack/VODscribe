@@ -219,11 +219,7 @@
     <span class="title">{vod.title}</span>
     <span class="meta muted">
       <span class="platform {vod.platform}">{platform}</span>
-      {#if vod.channel}<span class="sep">·</span><ChannelDisc
-          vodId={vod.id}
-          channel={vod.channel}
-          size={14}
-        />{vod.channel}{/if}
+      {#if vod.channel}<span class="sep">·</span><ChannelDisc {vod} size={14} />{vod.channel}{/if}
     </span>
   </span>
 </button>

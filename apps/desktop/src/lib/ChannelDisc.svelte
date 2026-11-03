@@ -1,22 +1,32 @@
 <script lang="ts">
   // The streamer's picture beside their channel's name, in the VOD's heading
-  // and its library row, as the Cast list shows them (CastDisc.svelte): the
-  // cast member the channel is (annotated.ts `channelMember`), from the VOD's
-  // annotations. There's no room there for an initial, so it's the picture or
-  // nothing: with pictures off (Settings › Privacy), nothing is read or asked.
+  // and its library row, as the Cast list shows them (CastDisc.svelte), for
+  // a VOD with a VODscription: the cast member the channel is (annotated.ts
+  // `channelMember`), or when the cast gives none an account, the channel
+  // itself, by its own login (annotated.ts `channelAccount`). There's no
+  // room there for an initial, so it's the picture or nothing: with pictures
+  // off (Settings › Privacy), nothing is read or asked.
   import { annotated } from "./annotated.svelte";
-  import { channelMember, speakerColor } from "./annotated";
+  import { channelAccount, channelMember, speakerColor } from "./annotated";
+  import type { CastMember, Vod } from "./api";
   import CastDisc from "./CastDisc.svelte";
   import { displayName } from "./castNames";
 
-  let { vodId, channel, size = 14 }: { vodId: number; channel: string | null; size?: number } = $props();
+  let { vod, size = 14 }: { vod: Vod; size?: number } = $props();
 
-  const on = $derived(!!channel && annotated.avatarBase() !== null);
+  const on = $derived(!!vod.channel && annotated.avatarBase() !== null);
   $effect(() => {
-    if (on) annotated.load(vodId);
+    if (on) annotated.load(vod.id);
   });
-  const cast = $derived(on ? (annotated.of(vodId)?.cast ?? []) : []);
-  const member = $derived(channelMember(cast, channel));
+  const annotations = $derived(on ? annotated.of(vod.id) : null);
+  const cast = $derived(annotations?.cast ?? []);
+  const member = $derived.by((): CastMember | undefined => {
+    if (!annotations || !vod.channel) return undefined;
+    const named = channelMember(cast, vod.channel);
+    if (named) return named;
+    const account = channelAccount(vod);
+    return account && { name: vod.channel, aliases: [], role: "streamer", account };
+  });
 </script>
 
 {#if member}

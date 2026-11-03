@@ -7,6 +7,7 @@ import {
   activityLabel,
   castDetail,
   castIndex,
+  channelAccount,
   channelMember,
   crowds,
   isVoice,
@@ -332,4 +333,21 @@ test("the channel's streamer is found by name, player or login, any case, a stre
   assert.equal(channelMember(cast, "Voice"), undefined);
   assert.equal(channelMember(cast, null), undefined);
   assert.equal(channelMember(cast, "Marlowe"), undefined);
+});
+
+test("a VOD's own channel is an account by its name or address", () => {
+  /** @param {string} platform @param {string | null} channel */
+  const vod = (platform, channel, url = "") => ({ platform, channel, url });
+  assert.deepEqual(channelAccount(vod("twitch", " Marlowe ")), { platform: "twitch", login: "marlowe" });
+  assert.deepEqual(channelAccount(vod("kick", "Ada Plays", "https://kick.com/Ada_Plays/videos/0b7f")), {
+    platform: "kick",
+    login: "ada_plays",
+  });
+  // A Twitch name no login can be (a localised one), a Kick address without
+  // the channel, YouTube's name (not its handle), a file: none.
+  assert.equal(channelAccount(vod("twitch", "마를로")), undefined);
+  assert.equal(channelAccount(vod("twitch", null)), undefined);
+  assert.equal(channelAccount(vod("kick", "Ada", "https://kick.com/video/0b7f")), undefined);
+  assert.equal(channelAccount(vod("youtube", "Marlowe", "https://www.youtube.com/watch?v=noa29qsTc4g")), undefined);
+  assert.equal(channelAccount(vod("local", null, "file:///a.mp4")), undefined);
 });

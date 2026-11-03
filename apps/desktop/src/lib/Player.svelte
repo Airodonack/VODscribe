@@ -611,11 +611,7 @@
       <strong title={vod.title}>{vod.title}</strong>
       <span class="meta muted">
         <span class="platform {vod.platform}">{site}</span>
-        {#if vod.channel}<span class="sep">·</span><ChannelDisc
-            vodId={vod.id}
-            channel={vod.channel}
-            size={16}
-          />{vod.channel}{/if}
+        {#if vod.channel}<span class="sep">·</span><ChannelDisc {vod} size={16} />{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if chapterNow?.text}

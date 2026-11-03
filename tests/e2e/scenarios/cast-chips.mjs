@@ -3,9 +3,11 @@
 // it. Annotations imported for a Twitch VOD (fixtures/annotations-minute.json,
 // on Marlowe's channel, whose cast has Marlowe with a Twitch account): the
 // picture from the image server (the run's file host, lib/fileHost.mjs) shows
-// beside "Marlowe" in both. With streamer pictures turned off in Settings ›
-// Privacy, nothing is there, not even an initial, and the image server isn't
-// asked.
+// beside "Marlowe" in both. A VOD whose annotations give the streamer no
+// account (the same file, Marlowe's account taken out) shows its channel's
+// picture all the same, by the channel's own login (Twitch's "marlowe").
+// With streamer pictures turned off in Settings › Privacy, nothing is there,
+// not even an initial, and the image server isn't asked.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -18,6 +20,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
 const CHAT = path.join(here, "..", "fixtures", "annotations-minute.chat.json");
 const ID = "v100000077";
+const UNNAMED = "v100000078";
 
 /** Marlowe's picture: four pixels square, all yellow. */
 const PICTURE = Buffer.from(
@@ -25,9 +28,9 @@ const PICTURE = Buffer.from(
   "base64",
 );
 
-/** The image server: Marlowe's account sent on to their picture; anyone else's not there. */
+/** The image server: Marlowe's account and channel sent on to their picture; anyone else's not there. */
 const pictures = (method, at) =>
-  at === "/avatar/twitch/marlowe_live"
+  at === "/avatar/twitch/marlowe_live" || at === "/avatar/twitch/marlowe"
     ? { status: 302, headers: { Location: "/pictures/marlowe.png" } }
     : at === "/pictures/marlowe.png"
       ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
@@ -39,23 +42,33 @@ export default {
   name: "cast-chips",
   expects: {
     "cast-chips":
-      'Over the player, the VOD\'s title "A minute with Marlowe" and under it "Twitch · Marlowe" with a small round yellow picture just before "Marlowe"; the VOD\'s row in the library on the left has the same small yellow picture before "Marlowe" under its title.',
+      'Over the player, the VOD\'s title "A minute with Marlowe" and under it "Twitch · Marlowe" with a small round yellow picture just before "Marlowe"; the two VODs\' rows in the library on the left have the same small yellow picture before "Marlowe" under their titles.',
   },
   async run(app, ctx) {
     await app.toLibrary();
     // A Twitch VOD of Marlowe's channel, made by importing its annotations
     // (with its chat beside them, so none is fetched).
-    const doc = JSON.parse(readFileSync(FIXTURE, "utf8"));
-    doc.source.platform = "twitch";
-    doc.source.id = ID;
     const dir = path.join(ctx.out, "cast-chips");
     mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, `${ID}.json`);
-    writeFileSync(file, JSON.stringify(doc));
-    writeFileSync(path.join(dir, `${ID}.chat.json`), readFileSync(CHAT));
+    /** Imports the fixture as Twitch VOD `id`, its cast changed by `cast`; the VOD made. */
+    const importAs = async (id, cast = (c) => c) => {
+      const doc = JSON.parse(readFileSync(FIXTURE, "utf8"));
+      doc.source.platform = "twitch";
+      doc.source.id = id;
+      doc.cast = cast(doc.cast);
+      const file = path.join(dir, `${id}.json`);
+      writeFileSync(file, JSON.stringify(doc));
+      writeFileSync(path.join(dir, `${id}.chat.json`), readFileSync(CHAT));
+      return (await app.invoke("import_annotations_file", { path: file })).vod;
+    };
     const host = serveFiles(pictures);
-    const { vod } = await app.invoke("import_annotations_file", { path: file });
+    const vod = await importAs(ID);
+    // The same channel's VOD, its annotations naming no account for the streamer.
+    const unnamed = await importAs(UNNAMED, (cast) =>
+      cast.map((m) => (m.name === "Marlowe" ? { ...m, account: undefined } : m)),
+    );
     const row = `.vod[data-key="${vod.id}"] .meta`;
+    const unnamedRow = `.vod[data-key="${unnamed.id}"] .meta`;
     const head = ".info .meta";
     /** What's beside the name in `where`: "picture" (shown), "initial X", or "none". */
     const chip = (where) =>
@@ -77,6 +90,7 @@ export default {
     for (const [what, where] of [
       ["the library row's picture", row],
       ["the heading's picture", head],
+      ["the picture on the row of a VOD whose annotations give the streamer no account", unnamedRow],
     ]) {
       const got = await settles(what, where, "picture");
       if (got !== true) wrong.push(`${what}: ${got}`);
@@ -84,8 +98,9 @@ export default {
     await ctx.checkpoint("cast-chips");
     // Said now: what's wrong with them showing is the news, whatever comes after.
     if (wrong.length) throw new Error(wrong.join("; "));
-    const asked = [...new Set(host.requests.map((r) => r.path))].sort().join(", ");
-    if (!asked.includes("/avatar/twitch/marlowe_live")) wrong.push(`the image server was asked: ${asked}`);
+    const asked = [...new Set(host.requests.map((r) => r.path))].sort();
+    if (!asked.includes("/avatar/twitch/marlowe_live") || !asked.includes("/avatar/twitch/marlowe"))
+      wrong.push(`the image server was asked: ${asked.join(", ")}`);
     host.stop();
 
     // Turned off: nothing beside the name, and the image server isn't asked.
@@ -103,6 +118,7 @@ export default {
     for (const [what, where] of [
       ["the library row, avatars off", row],
       ["the heading, avatars off", head],
+      ["the other VOD's row, avatars off", unnamedRow],
     ]) {
       const got = await settles(what, where, "none");
       if (got !== true) wrong.push(`${what}: ${got}`);
