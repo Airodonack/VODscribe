@@ -43,10 +43,18 @@
 {/if}
 
 <style>
+  /* On the middle of the name's line. An empty character in the name's font
+     comes first and gives the box the name's baseline; the picture is centred
+     on that character's line, which is the name's. (The hidden initial's
+     baseline put it low; the x-height's middle still left it 1 px or so low.) */
   .chip {
     position: relative;
     display: inline-flex;
-    vertical-align: -2px;
+    align-items: center;
+  }
+
+  .chip::before {
+    content: "\200b";
   }
 
   /* A gap before the name only once there's a picture in it. */

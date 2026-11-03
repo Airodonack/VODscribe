@@ -7,7 +7,8 @@
 // account (the same file, Marlowe's account taken out) shows its channel's
 // picture all the same, by the channel's own login (Twitch's "marlowe").
 // With streamer pictures turned off in Settings › Privacy, nothing is there,
-// not even an initial, and the image server isn't asked.
+// not even an initial, and the image server isn't asked. The picture sits
+// on the middle of the name's line, not hanging below it.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -98,6 +99,41 @@ export default {
     await ctx.checkpoint("cast-chips");
     // Said now: what's wrong with them showing is the news, whatever comes after.
     if (wrong.length) throw new Error(wrong.join("; "));
+    // The picture sits on the middle of the name's line: its centre and the
+    // name's (the text's own box, a Range over it) within a pixel, at both
+    // sizes (14 px in a row, 16 px in the heading).
+    const offsets = [];
+    for (const [what, where] of [
+      ["the library row's picture", row],
+      ["the heading's picture", head],
+    ]) {
+      const got = await app.js(
+        `const meta = document.querySelector(arguments[0]);
+         const disc = meta.querySelector(".avatar").getBoundingClientRect();
+         const walk = document.createTreeWalker(meta, NodeFilter.SHOW_TEXT);
+         let name = null;
+         while (walk.nextNode()) if (walk.currentNode.textContent.trim() === arguments[1]) name = walk.currentNode;
+         if (!name) return "no name " + arguments[1];
+         const range = document.createRange();
+         range.selectNodeContents(name);
+         const text = range.getBoundingClientRect();
+         return { disc: disc.top + disc.height / 2, text: text.top + text.height / 2, size: disc.height };`,
+        where,
+        "Marlowe",
+      );
+      if (typeof got === "string") {
+        wrong.push(`${what}: ${got}`);
+        continue;
+      }
+      const off = got.disc - got.text;
+      offsets.push(`${got.size} px ${off.toFixed(1)}`);
+      if (Math.abs(off) > 1)
+        wrong.push(
+          `${what} (${got.size} px) is ${Math.abs(off).toFixed(1)} px ${off < 0 ? "above" : "below"} the name's middle`,
+        );
+    }
+    if (wrong.length) throw new Error(wrong.join("; "));
+    ctx.log(`the picture's centre below the name's middle: ${offsets.join(", ")}`);
     const asked = [...new Set(host.requests.map((r) => r.path))].sort();
     if (!asked.includes("/avatar/twitch/marlowe_live") || !asked.includes("/avatar/twitch/marlowe"))
       wrong.push(`the image server was asked: ${asked.join(", ")}`);
