@@ -11,7 +11,7 @@
   import { api, events, type Job } from "./api";
   import { DEMO } from "./demo";
   import Icon from "./Icon.svelte";
-  import { inOrder, jobLine, summary, waitingIds } from "./jobs";
+  import { inOrder, jobLine, summary, waitingIds, waitingJobs } from "./jobs";
   import Popover from "./Popover.svelte";
   import Progress from "./Progress.svelte";
   import { Reorder } from "./reorder.svelte";
@@ -53,10 +53,9 @@
     if (!jobs.length) open = false;
   });
 
-  const rendering = $derived(jobs.find((j) => j.kind !== "erase" && j.running));
   const running = $derived(jobs.filter((j) => j.kind !== "erase" && j.running));
   const erasing = $derived(jobs.filter((j) => j.kind === "erase"));
-  const byId = $derived(new Map(jobs.filter((j) => j.kind !== "erase" && !j.running).map((j) => [j.id, j])));
+  const byId = $derived(new Map(waitingJobs(jobs).map((j) => [j.id, j])));
 
   // The clips and edits waiting, dragged into another order: shown so at
   // once, and the queue told.
@@ -85,7 +84,7 @@
   <button
     class="row-act cancel"
     onclick={() => cancel(job)}
-    title={job.kind === "erase" ? "Stop: the rest is erased when VODscribe next starts" : "Cancel"}
+    title={job.kind === "erase" ? "Cancel: the rest is erased when VODscribe next starts" : "Cancel"}
     aria-label="Cancel {job.label}"
   >
     <Icon name="x" size={15} />
@@ -106,8 +105,8 @@
       <span class="summary">{summary(jobs)}</span>
       <Icon name={open ? "chevron-down" : "chevron-up"} size={14} />
     </button>
-    {#if rendering}
-      <Progress thin value={rendering.progress ?? 0} indeterminate={rendering.progress === null} />
+    {#if running[0]}
+      <Progress thin value={running[0].progress ?? 0} indeterminate={running[0].progress === null} />
     {/if}
   </div>
 {/if}
