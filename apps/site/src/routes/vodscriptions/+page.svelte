@@ -16,7 +16,7 @@
 
   const TITLE = "VODscriptions: chapters, highlights and cast for every VOD on your channel";
   const DESCRIPTION =
-    "Chapters, highlights and who's speaking for every VOD on your channel, usually within hours of the stream's end. Free to see in VODscribe and on vodscribe.com. $199 a month per channel.";
+    "Chapters, highlights and who's speaking for every VOD on your channel, usually within hours of the stream's end. Free to see in VODscribe and on vodscribe.com. $99 a month per channel.";
 
   const PARTS = [
     {
@@ -117,7 +117,7 @@
        one above the other, and under it on a phone. -->
   <section class="offer" id="pricing">
     <div class="price" id="coming-soon">
-      <p class="amount"><strong>$199</strong> a month, per channel</p>
+      <p class="amount"><strong>$99</strong> a month, per channel</p>
       <p class="muted">
         Every new VOD while you subscribe, plus your VODs from up to a month back. Cancel any time; what's published
         stays as long as you want.
