@@ -152,6 +152,10 @@ export interface Settings {
   ask_for_annotations: boolean;
   /** Whether the cast's pictures are asked of the image server (accounts.ts `AVATAR_BASE`); off, their initials show. */
   load_cast_pictures: boolean;
+  /** Whether the note on permission shows before downloading from a site (permission.ts). */
+  ask_before_downloading: boolean;
+  /** Whether MOV clips are suggested where DaVinci Resolve is on Linux (resolveHint.svelte.ts). */
+  suggest_mov_for_resolve: boolean;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */

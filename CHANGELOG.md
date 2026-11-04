@@ -31,6 +31,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - The donation links are gone. They're off the library and the screen shown when no video is open.
 - The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer pictures from img.vodscribe.com", which work as before.
 - Help now leads to a support page. It lists email, the issue tracker and how to report a security problem.
+- Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Storage.
 - A short window shows the player alone. Show transcript and chat, at the right of the VOD's title, swaps them, and the transcript stays in its place as you open other VODs.
 - Fixes:
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.

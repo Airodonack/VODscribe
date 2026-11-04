@@ -3,6 +3,8 @@
 // never drops another.
 
 import { api, type Settings } from "./api";
+import { BROUGHT_OVER, broughtOver } from "./asks";
+import { load as loadChoice, save as saveChoice } from "./stored";
 
 class AppSettings {
   value = $state<Settings | null>(null);
@@ -15,13 +17,25 @@ class AppSettings {
 
   load(): Promise<void> {
     this.#loading ??= api.getSettings().then(
-      (s) => void (this.value = s),
+      (s) => {
+        this.value = s;
+        void this.#bringOver();
+      },
       (e) => {
         this.#loading = null;
         this.error = String(e);
       },
     );
     return this.#loading;
+  }
+
+  /** The notes stopped before they were settings (asks.ts), made so; each old
+   *  key is marked once that's saved, so a later Reset brings the note back. */
+  async #bringOver() {
+    const old = broughtOver(loadChoice);
+    if (!old) return;
+    await this.update(old.change);
+    if (!this.error) old.keys.forEach((key) => saveChoice(key, BROUGHT_OVER));
   }
 
   /** Puts every setting back as it starts, in turn with the saves: one asked

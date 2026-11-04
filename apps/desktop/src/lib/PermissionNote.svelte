@@ -1,10 +1,11 @@
 <script lang="ts">
   // The note before downloading from a site (a clip, Player.svelte; a whole
   // video, VodRow.svelte), in the popover each shows it in, with whatever
-  // else that one asks (`children`) before its "Don't show this again".
+  // else that one asks (`children`) before its "Don't show this again",
+  // which says where it's undone once ticked.
 
   import type { Snippet } from "svelte";
-  import { OWN_VODS_NOTE, PERMISSION_NOTE } from "./permission";
+  import { OWN_VODS_NOTE, PERMISSION_NOTE, WHERE_UNDONE } from "./permission";
 
   let {
     action,
@@ -28,6 +29,7 @@
   <p class="muted">{OWN_VODS_NOTE}</p>
   {@render children?.()}
   <label><input type="checkbox" bind:checked={hide} /> {hideLabel}</label>
+  {#if hide}<p class="muted">{WHERE_UNDONE}</p>{/if}
   <div class="buttons">
     <button onclick={() => onanswer(false, false)}>Cancel</button>
     <button class="primary" onclick={() => onanswer(true, hide)}>{action}</button>

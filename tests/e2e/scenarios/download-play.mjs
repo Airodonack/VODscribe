@@ -121,8 +121,8 @@ export default {
     };
     writeFileSync(ytDlp, standIn(file, info));
     chmodSync(ytDlp, 0o755);
-    // The rights note asks before the first download; not here. Hidden as the
-    // app keeps it (crates/core choices.rs), read as the page starts.
+    // The rights note asks before the first download; not here. Hidden as
+    // 0.7.0 kept it (crates/core choices.rs), brought into the settings as the page starts.
     writeFileSync(path.join(dataDirs()[0], "choices.json"), JSON.stringify({ "vodscribe.clipNoteHidden": "true" }));
     try {
       app = await ctx.start();

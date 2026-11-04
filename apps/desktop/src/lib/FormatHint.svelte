@@ -17,7 +17,7 @@
       <button class="primary" onclick={() => formatHint.answer(true)}>Make clips as MOV</button>
       <button class="link" onclick={() => formatHint.answer(false)}>Keep MP4</button>
     </div>
-    <p class="muted small">You can change this any time in Settings → Storage.</p>
+    <p class="muted small">You can change this in Settings › Storage.</p>
   </div>
 {/if}
 

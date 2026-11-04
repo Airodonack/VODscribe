@@ -11,7 +11,8 @@
   import Icon from "./Icon.svelte";
   import { LICENSES, PRIVACY, SUPPORT } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
-  import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, videoSize } from "./platform";
+  import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, os, videoSize } from "./platform";
+  import { shows } from "./asks";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
   import { SECTIONS, settingsWindow } from "./settingsWindow.svelte";
@@ -31,6 +32,9 @@
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
+  // The notes that can be stopped (asks.ts): each switch on while its note shows.
+  let askBeforeDownloading = $derived(shows(appSettings.value, "ask_before_downloading"));
+  let suggestMov = $derived(shows(appSettings.value, "suggest_mov_for_resolve"));
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -347,6 +351,15 @@
           </button>
         </div>
         {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={askBeforeDownloading}
+            onchange={(e) => appSettings.update({ ask_before_downloading: e.currentTarget.checked })}
+          />
+          Ask before downloading from a site
+        </label>
+        <p class="muted hint">A reminder to download only what you have permission to use.</p>
         <p class="label">Fetched video</p>
         <p class="muted hint">
           Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits
@@ -375,6 +388,17 @@
             : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
           Clips already made are made again when next dragged out.
         </p>
+        {#if os === "linux"}
+          <label class="toggle">
+            <input
+              type="checkbox"
+              checked={suggestMov}
+              onchange={(e) => appSettings.update({ suggest_mov_for_resolve: e.currentTarget.checked })}
+            />
+            Suggest MOV for DaVinci Resolve
+          </label>
+          <p class="muted hint">Once, after a clip is dragged out, if Resolve is installed and clips are MP4.</p>
+        {/if}
       </section>
     {:else if settingsWindow.section === "updates"}
       <section>
