@@ -11,3 +11,7 @@ export const PREMIUM = "/vodscriptions";
 /** The VODscriptions page's email link, until sign-up opens: one address and
  *  subject for every link on the page. */
 export const CONTACT_MAILTO = "mailto:hello@vodscribe.com?subject=VODscriptions";
+
+/** Where a VODscription's buyer reports a problem with one, from the
+ *  VODscriptions page. */
+export const SUPPORT_MAILTO = "mailto:support@vodscribe.com?subject=VODscriptions";

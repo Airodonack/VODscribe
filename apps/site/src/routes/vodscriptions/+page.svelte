@@ -1,31 +1,42 @@
 <script lang="ts">
-  // VODscriptions: the site's front for streamers and whoever pays for a
+  // VODscriptions: the site's front for creators and whoever pays for a
   // channel (the home page is the app's, for viewers, clippers and editors).
-  // The live demo (OfferDemo.svelte) beside the offer, and the questions a
-  // streamer asks. Sign-up isn't open yet: where it will be, a "Coming soon"
-  // button and an email link (ComingSoon.svelte). Everything about the page
-  // is in this folder, and its address is PREMIUM (lib/links.ts).
+  // The live demo (OfferDemo.svelte), what a VODscription holds, the offer
+  // (the hero's "See pricing" jumps to it), then privacy and the
+  // smaller-channel note, each on its own row. Sign-up isn't open yet: where it
+  // will be, a "Coming soon" button and an email link (ComingSoon.svelte).
+  // Everything about the page is in this folder, and its address is PREMIUM
+  // (lib/links.ts).
   import Icon from "desktop/lib/Icon.svelte";
   import Logo from "desktop/lib/Logo.svelte";
-  import { CONTACT_MAILTO, PREMIUM } from "#lib/links.js";
+  import { CONTACT_MAILTO, PREMIUM, SUPPORT_MAILTO } from "#lib/links.js";
   import ComingSoon from "./ComingSoon.svelte";
   import OfferDemo from "./OfferDemo.svelte";
+  import PlatformMark from "./PlatformMark.svelte";
 
   const TITLE = "VODscriptions: chapters, highlights and cast for every VOD on your channel";
   const DESCRIPTION =
-    "Every VOD on your channel, with its chapters, highlights and who's speaking, usually within hours of the stream's end. Everyone sees them for free, in VODscribe and on vodscribe.com. $199 a month per channel.";
+    "Chapters, highlights and who's speaking for every VOD on your channel, usually within hours of the stream's end. Free to see in VODscribe and on vodscribe.com. $199 a month per channel.";
 
   const PARTS = [
     {
       icon: "layers",
       name: "Chapters",
-      text: "The stream split into named parts, on the timeline and in a list beside the transcript.",
+      text: "Your stream in named parts, on the timeline and in a list beside the transcript.",
     },
     { icon: "star", name: "Highlights", text: "The moments chat reacted to, each with its quote." },
     { icon: "users", name: "Cast", text: "Who spoke when. Anyone who hasn't agreed to be named stays nameless." },
   ] as const;
 
-  const FAQ = [
+  /** The platforms, each shown with its own mark (PlatformMark.svelte). */
+  const PLATFORMS = [
+    { id: "twitch", name: "Twitch" },
+    { id: "youtube", name: "YouTube" },
+    { id: "kick", name: "Kick" },
+  ] as const;
+
+  // The FAQ is kept, not shown, for when there are more questions than these.
+  /* const FAQ = [
     {
       q: "Which platforms?",
       a: "Twitch, YouTube and Kick.",
@@ -35,7 +46,7 @@
       a: "Sometimes, on different terms from the standard VODscription. Email and say what you stream and how often; you'll get a straight answer.",
       link: { text: "Send an email", href: CONTACT_MAILTO },
     },
-  ];
+  ]; */
 </script>
 
 <svelte:head>
@@ -61,77 +72,102 @@
       <span>VODscriptions</span>
     </h1>
     <p class="lead">Chapters, highlights and who's speaking, for every VOD on your channel.</p>
+    <!-- A quiet way down to the price, below the demo and the features. -->
+    <a class="to-pricing" href="#pricing">See pricing <Icon name="chevron-down" size={14} /></a>
   </section>
 
-  <section class="offer">
-    <div class="demo">
-      <div class="wide">
-        <OfferDemo />
-      </div>
-      <div class="narrow">
-        <img
-          src="/screenshot.jpg"
-          alt="VODscribe with a NASA VOD open and every mention of “heat shield” found"
-          width="1132"
-          height="623"
-        />
-        <p class="caption">
-          <strong>The live demo needs a bigger screen.</strong>
-          <span class="muted">Open this page on a computer to try it.</span>
-        </p>
-      </div>
+  <section class="demo">
+    <div class="wide">
+      <OfferDemo />
+    </div>
+    <div class="narrow">
+      <img
+        src="/screenshot.jpg"
+        alt="VODscribe with a NASA VOD open and every mention of “heat shield” found"
+        width="1132"
+        height="623"
+      />
+      <p class="caption">
+        <strong>The live demo needs a bigger screen.</strong>
+        <span class="muted">Open this page on a computer to try it.</span>
+      </p>
+    </div>
+  </section>
+
+  <section class="features">
+    <ul class="parts">
+      {#each PARTS as part (part.name)}
+        <li>
+          <h2><Icon name={part.icon} size={20} />{part.name}</h2>
+          <p class="muted">{part.text}</p>
+        </li>
+      {/each}
+      <li>
+        <h2><Icon name="play" size={20} />Platforms</h2>
+        <ul class="platforms">
+          {#each PLATFORMS as platform (platform.id)}
+            <li><PlatformMark platform={platform.id} size={40} /><span>{platform.name}</span></li>
+          {/each}
+        </ul>
+      </li>
+    </ul>
+  </section>
+
+  <!-- The price card is the focus; the facts that go with it sit beside it,
+       one above the other, and under it on a phone. -->
+  <section class="offer" id="pricing">
+    <div class="price" id="coming-soon">
+      <p class="amount"><strong>$199</strong> a month, per channel</p>
+      <p class="muted">
+        Every new VOD while you subscribe, plus your VODs from up to a month back. Cancel any time; what's published
+        stays as long as you want.
+      </p>
+      <ComingSoon />
     </div>
 
-    <div class="side">
-      <p class="intro">
-        Each VOD gets its transcript and these three parts, usually within hours of the stream's end. No time is
-        promised. Everyone sees them for free in VODscribe and on this site, and the app needs no account.
-      </p>
-      <ul class="parts">
-        {#each PARTS as part (part.name)}
-          <li>
-            <Icon name={part.icon} size={20} />
-            <div>
-              <h2>{part.name}</h2>
-              <p class="muted">{part.text}</p>
-            </div>
-          </li>
-        {/each}
-      </ul>
-
-      <div class="price" id="coming-soon">
-        <p class="amount"><strong>$199</strong> a month, per channel</p>
+    <ul class="facts">
+      <li>
+        <h2>Supercharge any channel</h2>
         <p class="muted">
-          Every new VOD while it runs, and the channel's VODs from up to a month back. Cancel any time; what's published
-          stays.
+          Your VODs come with chapters, highlights and cast, so the best moments are easy to find and clip. Pay for your
+          own channel or one you clip, edit or manage.
         </p>
-        <ComingSoon />
-      </div>
-
-      <p class="small trust">
-        Nothing is produced until the channel's owner signs in once and says yes, even when someone else pays.
-      </p>
-      <p class="small trust">
-        <strong>Smaller channel?</strong> A lower rate on different terms may be available.
-        <a href={CONTACT_MAILTO}>Send an email</a> and say what you stream.
-      </p>
-    </div>
+      </li>
+      <li>
+        <h2>We wait for your consent</h2>
+        <p class="muted">
+          Nothing is charged or made until the creator signs in and says yes, even when someone else pays.
+        </p>
+      </li>
+      <li>
+        <h2>See annotations within hours</h2>
+        <p class="muted">
+          Once your stream ends, they're made automatically and show up in VODscribe and on this site. If anything looks
+          wrong, <a href={SUPPORT_MAILTO}>let us know right away</a>.
+        </p>
+      </li>
+    </ul>
   </section>
 
+  <!-- Privacy, and beside it the note for smaller channels, set as the features are. -->
   <section class="more">
     <div>
-      <h2>Paying for a channel you work with</h2>
-      <p class="muted">Clippers, editors and managers can pay for a channel's VODscription.</p>
+      <h2><Icon name="shield" size={20} />You choose who sees them</h2>
+      <p class="muted">
+        Annotations are open to everyone by default. If bad actors follow your channel, whitelist who sees them; you or
+        your managers handle requests for access.
+      </p>
     </div>
     <div>
-      <h2>Privacy</h2>
+      <h2><Icon name="user" size={20} />Smaller channel?</h2>
       <p class="muted">
-        There's no sign-in yet, so this page knows nothing about you. Email links open your own mail app.
-        <a href="/privacy">How VODscribe and this site handle data</a>
+        A lower rate on different terms may be available. <a href={CONTACT_MAILTO}>Send an email</a> and tell us what you
+        stream.
       </p>
     </div>
   </section>
 
+  <!-- The FAQ is kept, not shown, for when there are more questions than these.
   <section class="faq">
     <h2>Questions</h2>
     {#each FAQ as item (item.q)}
@@ -144,17 +180,22 @@
       </details>
     {/each}
   </section>
+  -->
 </main>
 
 <style>
+  /* One gap between the sections below the hero, and one between the items
+     inside a section. */
   main {
+    --gap-section: 72px;
+    --gap-inner: 40px;
     max-width: 1560px;
     margin: 0 auto;
     padding: 0 24px;
   }
 
   section {
-    margin: 0 auto 88px;
+    margin: 0 auto var(--gap-section);
   }
 
   .hero {
@@ -178,6 +219,7 @@
     letter-spacing: -0.03em;
   }
 
+  /* A phone: the title stacked. */
   @media (max-width: 560px) {
     h1 {
       flex-direction: column;
@@ -192,24 +234,12 @@
     color: var(--muted);
   }
 
-  /* The demo on the left, the offer on the right; one above the other on a
-     narrower window. */
-  .offer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 340px;
-    gap: 40px;
-    align-items: start;
-  }
-
-  @media (max-width: 1100px) {
-    .offer {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .side {
-      max-width: 560px;
-      margin: 0 auto;
-    }
+  .to-pricing {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 14px;
+    font-size: 14px;
   }
 
   .narrow {
@@ -265,38 +295,82 @@
     }
   }
 
-  .intro {
-    margin: 0 0 24px;
+  /* What a VODscription holds, side by side on a wide window. */
+  .features {
+    max-width: 1040px;
   }
 
   .parts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: var(--gap-inner);
     list-style: none;
-    margin: 0 0 24px;
+    margin: 0;
     padding: 0;
   }
 
-  .parts li {
-    display: flex;
-    gap: 12px;
-  }
-
-  .parts li + li {
-    margin-top: 16px;
-  }
-
-  .parts :global(svg) {
+  /* An item's icon starts its heading's line, and the text under it starts
+     at the icon's left edge, so nothing hangs outside the column. */
+  h2 > :global(svg) {
     flex: none;
-    margin-top: 2px;
     color: var(--accent);
   }
 
-  .parts h2 {
-    margin: 0 0 2px;
-    font-size: 16px;
+  /* The features', privacy's and the smaller channel's headings; the price
+     row's facts are a step larger, so the two groups don't read as one list. */
+  h2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 4px;
+    font-size: 15px;
   }
 
-  .parts p {
+  .facts h2 {
+    font-size: 17px;
+  }
+
+  .parts p,
+  .facts p,
+  .more p {
     margin: 0;
+  }
+
+  /* The marks side by side, each name a caption under its mark. */
+  .platforms {
+    display: flex;
+    gap: 20px;
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+  }
+
+  .platforms li {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    /* The page's smallest text: a little darker than --muted, to stay easy to read. */
+    font-size: 13px;
+    color: color-mix(in srgb, var(--text) 80%, transparent);
+  }
+
+  /* The price card, and beside it the facts that go with it, their tops
+     level; one above the other on a narrow window. */
+  .offer {
+    /* The header doesn't stick, so a little room above is enough. */
+    scroll-margin-top: 24px;
+    display: grid;
+    grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+    gap: var(--gap-inner);
+    align-items: start;
+    max-width: 1040px;
+  }
+
+  @media (max-width: 760px) {
+    .offer {
+      grid-template-columns: 1fr;
+    }
   }
 
   .price {
@@ -306,7 +380,9 @@
     flex-direction: column;
     align-items: center;
     padding: 20px;
-    border: 1px solid var(--border);
+    /* The row's focus: an accent rule on top and an accent-tinted edge. */
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+    border-top: 3px solid var(--accent);
     border-radius: 12px;
     background: var(--surface);
     box-shadow: var(--shadow);
@@ -326,51 +402,40 @@
     letter-spacing: -0.02em;
   }
 
-  .trust {
-    margin: 16px 0 0;
+  .facts {
+    display: grid;
+    gap: var(--gap-inner);
+    list-style: none;
+    margin: 0;
+    padding: 0;
   }
 
-  .small {
-    font-size: 13px;
-  }
-
+  /* Privacy and the smaller-channel note side by side, the note starting
+     where Cast does (the same gap as the features); one above the other on a
+     narrow window. */
   .more {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 28px;
-    max-width: 960px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--gap-inner);
+    align-items: start;
+    max-width: 1040px;
   }
 
-  .more h2 {
-    margin: 0 0 6px;
-    font-size: 16px;
+  @media (max-width: 760px) {
+    .more {
+      grid-template-columns: 1fr;
+    }
   }
 
-  .more p {
-    margin: 0;
-  }
+  /* A phone: the lead and the price a step smaller, so the price doesn't
+     match the title. After the rules they change, to win over them. */
+  @media (max-width: 560px) {
+    .lead {
+      font-size: 17px;
+    }
 
-  .faq {
-    max-width: 720px;
-  }
-
-  .faq h2 {
-    font-size: 28px;
-    letter-spacing: -0.02em;
-    margin: 0 0 20px;
-  }
-
-  details {
-    border-bottom: 1px solid var(--border);
-    padding: 14px 0;
-  }
-
-  summary {
-    cursor: pointer;
-    font-weight: 600;
-  }
-
-  details p {
-    margin: 8px 0 0;
+    .amount strong {
+      font-size: 28px;
+    }
   }
 </style>
