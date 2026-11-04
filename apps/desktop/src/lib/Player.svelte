@@ -224,8 +224,9 @@
   // Play): what's set meanwhile is what it starts with. The volume and speed are
   // every player's (playerPrefs.svelte.ts); muted is kept till it's made
   // (and from one player to the next, as a download switches it). A
-  // site's player has none of this till it's made: nothing of the site's
-  // is loaded before Play.
+  // site's VOD shows its sound alone till Play makes its player (nothing
+  // of the site's is loaded before), which then starts at it (embed.ts);
+  // its speed, where it has one, is its player's.
   let firstMuted = $state(false);
   const first: BarControls = {
     volume: {
@@ -239,7 +240,8 @@
     },
     rate: { get: () => prefs.speed() ?? 1, set: (rate) => prefs.setSpeed(rate) },
   };
-  const controls = $derived(player ?? (playsHere(vod) ? first : null));
+  const firstSound: BarControls = { volume: first.volume };
+  const controls = $derived(player ?? (playsHere(vod) ? first : canEmbed(vod) ? firstSound : null));
 
   // The transcript's lines as captions, for the captions button (greyed
   // till a part is transcribed) and, where the player doesn't draw them

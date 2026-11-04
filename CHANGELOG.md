@@ -34,6 +34,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Privacy.
 - A short window shows the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
 - The video's hide button sits with the controls. It's at their far right, and the button at the right of the VOD's title brings the video back.
+- Set the volume before Play. On a YouTube, Twitch or Kick VOD it works before their player loads, which then starts at it.
 - Right-click opens the speed and Transcribe menus. Holding the button still works too.
 - F11 toggles full screen too. On Linux and Windows it works as F does.
 - Fixes:

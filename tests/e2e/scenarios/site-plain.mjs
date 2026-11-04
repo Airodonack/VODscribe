@@ -5,8 +5,9 @@
 // player stays shut, and the time under the player follows theirs. The bar's
 // sound (and, for YouTube, speed) is theirs, set through their embed API
 // and as their player reports it; Twitch's has no speed, so the bar has
-// none. The volume set is kept: after a restart their player starts at it.
-// Not transcribed, the captions button is greyed, with no strip.
+// none. The volume is set on the bar before Play too, their player starts
+// at it, and it's kept: after a restart their player starts at the last
+// one set. Not transcribed, the captions button is greyed, with no strip.
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
@@ -76,8 +77,16 @@ export default {
       () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
       MINUTE,
     );
+    // Before Play, nothing of theirs loaded: the volume is on the bar, set
+    // there and kept, and their player starts at it.
+    if (!(await app.js(`return !!document.querySelector(arguments[0])`, SLIDER)))
+      throw new Error("before Play, the bar has no volume");
+    await slide(app, "0.6");
+    await keptAt(app, "0.6");
     // Playing: the time under the player runs on, from their player's reports.
     const started = await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
+    await theirsAt(app, 0.6);
+    ctx.log("set to 60% before Play: their player started at it");
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const ours = () => app.invoke("player_set_speed", { speed: 1 }).catch(() => null);
     const label = () => app.js(`return document.querySelector(".bar button.control")?.getAttribute("aria-label")`);
@@ -152,16 +161,18 @@ export default {
     ctx.log(`resumed: at ${resumed} s`);
     if ((await label()) !== "Pause") throw new Error("playing again, the button doesn't say Pause");
 
-    // Restarted: their player starts at the volume kept.
+    // Restarted: the bar shows the volume kept, and their player starts at it.
     app = await ctx.restart();
     await app.toLibrary();
     await hearTheirVolume(app);
     await app.openVod(vod.id);
     await until(
-      "the Play button",
-      () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+      "the volume on the bar",
+      () => app.js(`return document.querySelector(arguments[0])?.value`, SLIDER),
       MINUTE,
     );
+    const barVolume = await app.js(`return document.querySelector(arguments[0]).value`, SLIDER);
+    if (barVolume !== "0.3") throw new Error(`after a restart, the bar's volume is ${barVolume}`);
     await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
     await theirsAt(app, 0.3);
     ctx.log("after a restart: their player started at 30%");
