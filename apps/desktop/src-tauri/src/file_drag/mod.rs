@@ -43,6 +43,9 @@ pub(crate) trait Item: Send + Sync {
     }
     /// The receiver called its copy off (Finder's cancel on the file).
     fn cancelled(&self) {}
+    /// The receiver asked for the file while it's still being made, and
+    /// waits for it (a promise to write).
+    fn waited_for(&self) {}
 }
 
 /// Where a drag out of the window ended.

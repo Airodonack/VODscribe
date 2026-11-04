@@ -329,7 +329,7 @@ export interface DragEnded {
 }
 
 /** A drag of clips' files out of the window let go on another app before
- *  they were all made (clips.rs `DragMaking`): `drag`, as in `DragEnded`;
+ *  they were all made, which it waits for (clips.rs `DragMaking`): `drag`, as in `DragEnded`;
  *  `making`, how many are still being made. */
 export interface DragMaking {
   drag: number | null;

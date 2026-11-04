@@ -174,6 +174,10 @@ impl Hand {
         // handler AppKit may call from any thread must be.
         unsafe { progress.setCancellationHandler(Some(&handler)) };
         progress.publish();
+        if matches!(item.state(), State::Making(_)) {
+            trace(&format!("{}: waited for, still being made", item.file_name()));
+            item.waited_for();
+        }
         let result = loop {
             if cancelled.load(Ordering::SeqCst) {
                 trace(&format!("{}: called off where it was dropped", item.file_name()));

@@ -159,6 +159,11 @@ impl Drag {
         self.contents_asked.store(true, Ordering::SeqCst);
         let i = usize::try_from(lindex).map_err(|_| Error::from(DV_E_LINDEX))?;
         (self.trace)(&format!("contents {i} asked for"));
+        let own = self.own_drop.load(Ordering::SeqCst);
+        if let Some(item) = self.items.get(i).filter(|item| !own && matches!(item.state(), State::Making)) {
+            (self.trace)(&format!("contents {i}: waited for, still being made"));
+            item.waited_for();
+        }
         match self.wait_for(i) {
             Some(Ok(path)) => {
                 let wide = HSTRING::from(path.as_os_str());
@@ -747,10 +752,13 @@ pub(crate) fn run(
 mod tests {
     use super::*;
 
-    /// A test's item: its state as `state` says, now.
+    /// A test's item: its state as `state` says, now; how often it was
+    /// waited for, `waited`.
+    #[derive(Default)]
     struct Test {
         name: &'static str,
         state: Arc<Mutex<Option<std::result::Result<PathBuf, String>>>>,
+        waited: Arc<AtomicU32>,
     }
 
     impl Item for Test {
@@ -763,6 +771,9 @@ mod tests {
                 Some(Ok(path)) => State::Ready(path.clone()),
                 Some(Err(why)) => State::Failed(why.clone()),
             }
+        }
+        fn waited_for(&self) {
+            self.waited.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -779,8 +790,8 @@ mod tests {
     /// What a receiver on another app's thread is answered, before and after
     /// the drop, as the item's making goes: the virtual file's descriptor
     /// always; its contents never before the drop, and after it once made
-    /// (waited for); the file itself only once made, refused meanwhile and
-    /// the refusal remembered.
+    /// (waited for, which the item hears); the file itself only once made,
+    /// refused meanwhile and the refusal remembered.
     #[test]
     fn a_receiver_is_answered_as_the_item_is_made() {
         // SAFETY: COM for the test's thread; the objects are used within it
@@ -791,7 +802,8 @@ mod tests {
         let file = std::env::temp_dir().join(format!("drag-source-test-{}.mp4", std::process::id()));
         std::fs::write(&file, b"made").unwrap();
         let state = Arc::new(Mutex::new(None));
-        let item = Test { name: "clip one.mp4", state: state.clone() };
+        let waited = Arc::new(AtomicU32::new(0));
+        let item = Test { name: "clip one.mp4", state: state.clone(), waited: waited.clone() };
         let (drag, data) = data_object(vec![Box::new(item)], 0, Box::new(|_| {}), Box::new(|_| {}), |_| {}).unwrap();
         // SAFETY: as above.
         let (descriptor, contents) = unsafe {
@@ -820,10 +832,13 @@ mod tests {
         let waiting = ask((contents, 0, TYMED_ISTREAM));
         std::thread::sleep(TICK * 3);
         assert!(!waiting.is_finished(), "answered before it was made");
+        assert_eq!(waited.load(Ordering::SeqCst), 1, "waited for once, after the drop (the page says it's being made)");
         *state.lock().unwrap() = Some(Ok(file.clone()));
         assert_eq!(wait(waiting), Ok(()), "its contents once made");
         assert!(drag.handed[0].load(Ordering::SeqCst));
         assert_eq!(wait(ask((CF_HDROP.0, -1, TYMED_HGLOBAL))), Ok(()), "the file once made");
+        assert_eq!(wait(ask((contents, 0, TYMED_ISTREAM))), Ok(()), "its contents, made");
+        assert_eq!(waited.load(Ordering::SeqCst), 1, "not waited for once made");
         assert!(drag.files_given.load(Ordering::SeqCst));
         // One that won't be made: its contents answered "canceled", why kept.
         *state.lock().unwrap() = Some(Err("blocked".into()));
@@ -841,7 +856,7 @@ mod tests {
         unsafe {
             let _ = OleInitialize(None);
         }
-        let item = Test { name: "a.mp4", state: Arc::new(Mutex::new(None)) };
+        let item = Test { name: "a.mp4", ..Default::default() };
         let (drag, data) = data_object(vec![Box::new(item)], 0, Box::new(|_| {}), Box::new(|_| {}), |_| {}).unwrap();
         drag.dropped.store(true, Ordering::SeqCst);
         // SAFETY: a valid FORMATETC, on the object's own thread.
@@ -859,7 +874,7 @@ mod tests {
         unsafe {
             let _ = OleInitialize(None);
         }
-        let item = Test { name: "a.mp4", state: Arc::new(Mutex::new(None)) };
+        let item = Test { name: "a.mp4", ..Default::default() };
         let (_, data) = data_object(vec![Box::new(item)], 0, Box::new(|_| {}), Box::new(|_| {}), |_| {}).unwrap();
         // SAFETY: null on purpose; the object must not read it.
         unsafe {

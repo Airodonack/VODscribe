@@ -25,11 +25,11 @@
 // inside the window where no clip is kept, the clip made for it goes, its
 // making stopped. Brought back over the window, the system's drag lands
 // where a carry would (`backOver`, `backDropped`): on the clip bar it keeps
-// the clip. Let go on another app on Linux before it's made, that's said
-// (`making`): the app it was let go on may show nothing meanwhile (Explorer
-// and Finder show their own progress). Each drag says one thing at most at
-// a time: a toast replaces the one before, and the same words aren't said
-// again while they're up (`toast.once`).
+// the clip. Let go on another app that waits for it while it's made, that's
+// said (`making`), on every system: the app may show nothing meanwhile. An
+// app that refuses it unmade hears `finishedOnly` instead. Each drag says
+// one thing at most at a time: a toast replaces the one before, and the
+// same words aren't said again while they're up (`toast.once`).
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";

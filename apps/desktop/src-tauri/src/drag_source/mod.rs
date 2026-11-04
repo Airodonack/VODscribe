@@ -34,6 +34,9 @@ pub(crate) trait Item: Send + Sync {
     /// The app it was let go on gave up on it (Explorer's Cancel) before it
     /// was handed over.
     fn cancel(&self) {}
+    /// The app it was let go on asked for its file while it's still being
+    /// made, and waits for it (Explorer's copy).
+    fn waited_for(&self) {}
 }
 
 /// How a drag out of the window ended, once it has: for Explorer, once its

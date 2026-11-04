@@ -69,7 +69,7 @@ impl Cutter {
     pub(crate) fn dragged_out(&self, ids: &[i64], out_now: bool) {
         let mut out = self.out.lock().unwrap();
         for &id in ids {
-            if out_now && cfg!(target_os = "linux") {
+            if out_now {
                 out.insert(id);
             } else {
                 out.remove(&id);
@@ -1090,24 +1090,25 @@ pub(crate) async fn drag_clip(
         }
     };
     // Let go on another app: their making is listed with the jobs (Cancel
-    // there refuses them), until the drag is over; and on Linux, if some are
-    // still being made, the page says so ("drag-making"), as the app they
-    // were let go on may show nothing till they come (Explorer and Finder
-    // show their own progress). Told from here, at once: this runs on the
-    // main thread, before the wait for the files holds what other threads
-    // send (`start_drag`).
+    // there refuses them), until the drag is over.
+    let (asked, telling) = (out.clone(), cutter.clone());
     let dropped = move |out_now: bool| {
         cutter.state::<AppState>().clips.dragged_out(&out, out_now);
         crate::job_list::changed(&cutter);
-        if out_now && cfg!(target_os = "linux") {
-            // (The library busy: taken as still being made, as the drag does.)
-            let making = out.iter().filter(|&&id| matches!(made(&cutter, id), None | Some(Made::Making))).count();
-            if making > 0 {
-                let _ = cutter.emit("drag-making", DragMaking { drag: number, making });
-            }
+    };
+    // The app they were let go on waits for some still being made: the page
+    // says so ("drag-making"), once, as that app may show nothing till they
+    // come. Told at once: on Linux this runs on the main thread, inside the
+    // drag's wait, which holds what other threads send (`start_drag`).
+    let told = AtomicBool::new(false);
+    let waited = move || {
+        // (The library busy: taken as still being made, as the drag does.)
+        let making = asked.iter().filter(|&&id| matches!(made(&telling, id), None | Some(Made::Making))).count();
+        if making > 0 && !told.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            let _ = telling.emit("drag-making", DragMaking { drag: number, making });
         }
     };
-    drag_file(window, number, names, files, image, taken, dropped).await
+    drag_file(window, number, names, files, image, taken, dropped, waited).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1183,8 +1184,10 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`, with the page's `number` for the drag), so what it does next
 /// (deleting a clip made only for the drag) knows. `dropped(true)` once it's
-/// let go on another app, `dropped(false)` once it's over. False if none
-/// began, the button up before it could (`ReleasedEarly`).
+/// let go on another app, `dropped(false)` once it's over; `waited()` once
+/// that app waits for a file still being made (it may be called again). False
+/// if none began, the button up before it could (`ReleasedEarly`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn drag_file(
     window: tauri::WebviewWindow,
     number: Option<u64>,
@@ -1193,13 +1196,14 @@ pub(crate) async fn drag_file(
     image: Option<Vec<u8>>,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
+    waited: impl Fn() + Send + Sync + 'static,
 ) -> CmdResult<bool> {
     let image = image.unwrap_or_else(|| DRAG_ICON.to_vec());
     let (tx, rx) = mpsc::channel();
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let started = start_drag(&on_main, number, names, files, image, taken, dropped);
+            let started = start_drag(&on_main, number, names, files, image, taken, dropped, waited);
             let _ = tx.send(began(started));
         })
         .map_err(err)?;
@@ -1471,6 +1475,7 @@ fn desktop_entry(text: &str) -> (Option<String>, Option<&str>) {
 /// on an app that took nothing because they weren't made yet, the page hears
 /// that it takes finished files only, and its name where X11 gives it.
 #[cfg(target_os = "linux")]
+#[allow(clippy::too_many_arguments)]
 fn start_drag(
     window: &tauri::WebviewWindow,
     number: Option<u64>,
@@ -1479,6 +1484,7 @@ fn start_drag(
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
+    waited: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
     use gtk::prelude::*;
     use std::cell::{Cell, RefCell};
@@ -1517,10 +1523,11 @@ fn start_drag(
     let page = crate::webview::page(window).ok();
     let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
     let dropped = Arc::new(dropped);
+    let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
     let targets = gtk::TargetList::new(&[]);
     targets.add_uri_targets(0);
     // (Apps that don't know it never ask: Nautilus asks only for the addresses.)
-    let ark = ark::Offer::new(files.clone());
+    let ark = ark::Offer::new(files.clone(), waited.clone());
     if ark.is_some() {
         let other = gtk::TargetFlags::OTHER_APP.bits();
         targets.add(&gtk::gdk::Atom::intern("application/x-kde-ark-dndextract-service"), other, ark::SERVICE);
@@ -1564,7 +1571,7 @@ fn start_drag(
     };
     let asks = Rc::new(Cell::new(0u32));
     let data = {
-        let (drag, files, ark) = (drag.clone(), files.clone(), ark.clone());
+        let (drag, files, ark, waited) = (drag.clone(), files.clone(), ark.clone(), waited.clone());
         source.connect_drag_data_get(move |_, context, data, info, _| {
             asks.set(asks.get() + 1);
             let n = asks.get();
@@ -1596,6 +1603,10 @@ fn start_drag(
             }
             if now.is_none() {
                 trace(&format!("ask {n} ({}): held until the files are made", data.target().name()));
+                // Asked once let go there (GTK 3's): it waits for them.
+                if drag.dropped.get() {
+                    waited();
+                }
                 hold();
                 now = if drag.failed.get() || drag.ended.get() { None } else { settled(files()) };
             }
@@ -1734,12 +1745,17 @@ fn start_drag(
         if let Some(surface) = &picture {
             context.drag_set_icon_surface(surface);
         }
-        // Let go on another app: listed with the jobs from now (`dropped`).
-        let (over, dropped) = (over.clone(), dropped.clone());
+        // Let go on another app: listed with the jobs from now (`dropped`);
+        // one whose ask is held already (asked as the drag went over it,
+        // Nautilus 43's) waits for the files.
+        let (over, dropped, waited) = (over.clone(), dropped.clone(), waited.clone());
         context.connect_drop_performed(move |context, _| {
             over.dropped.set(true);
             if !over.over_page.get() && !asked_by_own_window(context) {
                 dropped(true);
+                if over.holding.get() > 0 {
+                    waited();
+                }
             }
         });
     });
@@ -1821,8 +1837,12 @@ mod ark {
 
     impl Offer {
         /// Puts the drag's object on the bus: asked, it copies what `files` says
-        /// is made into the folder named, one by one. None without a bus.
-        pub(super) fn new(files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>) -> Option<Arc<Offer>> {
+        /// is made into the folder named, one by one, `waited()` told as it's
+        /// asked (it waits for those not made). None without a bus.
+        pub(super) fn new(
+            files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
+            waited: Arc<dyn Fn() + Send + Sync>,
+        ) -> Option<Arc<Offer>> {
             static DRAGS: AtomicU32 = AtomicU32::new(0);
             let conn = gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).ok()?;
             let service = conn.unique_name()?.to_string();
@@ -1842,6 +1862,7 @@ mod ark {
                         invocation.return_value(None);
                         if first {
                             super::trace(&format!("Ark: asked to put them in {folder}"));
+                            waited();
                             let (files, state) = (files.clone(), asked.clone());
                             std::thread::spawn(move || {
                                 let result = copy_all(&*files, Path::new(&folder));
@@ -2005,6 +2026,7 @@ fn release_button(page: &gtk::Widget) {
 /// while one was still being made, that it takes finished files only, named
 /// as its program describes itself.
 #[cfg(windows)]
+#[allow(clippy::too_many_arguments)]
 fn start_drag(
     window: &tauri::WebviewWindow,
     number: Option<u64>,
@@ -2013,6 +2035,7 @@ fn start_drag(
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
+    waited: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
     use crate::drag_source::{self, State};
 
@@ -2021,6 +2044,7 @@ fn start_drag(
         files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
         at: usize,
         name: String,
+        waited: Arc<dyn Fn() + Send + Sync>,
     }
     impl drag_source::Item for Polled {
         fn name(&self) -> String {
@@ -2036,11 +2060,16 @@ fn start_drag(
         }
         // (Explorer's Cancel stops nothing here: the page forgets a clip
         // made only for the drag once it hears it went nowhere.)
+        fn waited_for(&self) {
+            (self.waited)();
+        }
     }
     let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
+    let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
     let items = (names.into_iter().enumerate())
         .map(|(at, Outgoing { name, .. })| {
-            Box::new(Polled { files: files.clone(), at, name }) as Box<dyn drag_source::Item>
+            let waited = waited.clone();
+            Box::new(Polled { files: files.clone(), at, name, waited }) as Box<dyn drag_source::Item>
         })
         .collect();
     let hwnd = window.hwnd()?.0 as isize;
@@ -2077,6 +2106,7 @@ fn start_drag(
 /// app's own files (not copies written for it), then the page is told
 /// (`drag_outcome`, as on Linux).
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 fn start_drag(
     window: &tauri::WebviewWindow,
     number: Option<u64>,
@@ -2085,6 +2115,7 @@ fn start_drag(
     image: Vec<u8>,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
+    waited: impl Fn() + Send + Sync + 'static,
 ) -> Result<()> {
     use crate::file_drag::{self, Event, Failure};
 
@@ -2097,11 +2128,13 @@ fn start_drag(
     // SAFETY: Tauri's window, alive through this call on the main thread.
     unsafe { (*ns_window).unregisterDraggedTypes() };
     let files: Arc<dyn Fn() -> Vec<Made> + Send + Sync> = Arc::new(files);
+    let waited: Arc<dyn Fn() + Send + Sync> = Arc::new(waited);
     let items = names
         .into_iter()
         .enumerate()
         .map(|(index, Outgoing { name, job })| {
-            let file = DragFile { app: window.app_handle().clone(), index, name, job, files: files.clone() };
+            let (app, files, waited) = (window.app_handle().clone(), files.clone(), waited.clone());
+            let file = DragFile { app, index, name, job, files, waited };
             Arc::new(file) as Arc<dyn file_drag::Item>
         })
         .collect();
@@ -2134,6 +2167,8 @@ struct DragFile {
     name: String,
     job: Option<i64>,
     files: Arc<dyn Fn() -> Vec<Made> + Send + Sync>,
+    /// Told when the receiver waits for the file still being made.
+    waited: Arc<dyn Fn() + Send + Sync>,
 }
 
 #[cfg(target_os = "macos")]
@@ -2162,6 +2197,10 @@ impl crate::file_drag::Item for DragFile {
             Some(Made::Failed(why)) => State::Failed(why),
             None => State::Failed("That clip is gone.".into()),
         }
+    }
+
+    fn waited_for(&self) {
+        (self.waited)();
     }
 }
 
