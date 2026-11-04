@@ -710,8 +710,10 @@ export const api = {
           headers: { overlay: JSON.stringify({ rect: overlay.rect, size: overlay.size }) },
         })
       : invoke<void>("set_screen_overlay", new Uint8Array(0)),
+  /** The page's size goes with the box: one measured at a size the
+   *  window's view no longer has is left out (present_linux.rs). */
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null, under = false) =>
-    invoke<void>("set_screen", { rect, under }),
+    invoke<void>("set_screen", { rect, under, view: [innerWidth, innerHeight] }),
   /** Whether the picture can go under the page here (not under X11). */
   screenUnder: () => invoke<boolean>("screen_under"),
   listEdits: () => invoke<Edit[]>("list_edits"),

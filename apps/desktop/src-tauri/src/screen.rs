@@ -66,12 +66,19 @@ pub(crate) fn show(app: &AppHandle, frame: Option<std::sync::Arc<vodscribe_playe
 /// corner (none when no player is open), and whether the picture goes under
 /// the page there (a site's player in the page over it: `screen_under`
 /// says where it can) or over it (as for a file).
+/// `view` is the page's size in CSS pixels when it measured the box.
 #[tauri::command]
-pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>, under: Option<bool>) {
+pub(crate) fn set_screen(app: AppHandle, rect: Option<Rect>, under: Option<bool>, view: Option<(f64, f64)>) {
     let rect = rect.filter(Rect::sane);
     if let Some(screen) = app.state::<Screen>().0.lock().unwrap().as_ref() {
         screen.set_under(under.unwrap_or(false));
-        screen.set(rect);
+        #[cfg(target_os = "linux")]
+        screen.set_measured(rect, view);
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = view;
+            screen.set(rect);
+        }
     }
 }
 

@@ -53,6 +53,13 @@ pub struct Screen {
 
 struct Inner {
     rect: Option<Rect>,
+    /// The page's size in CSS pixels when it measured `rect`, if it said.
+    measured_in: Option<(f64, f64)>,
+    /// Where the surface is, in the window's surface.
+    placed: Option<Place>,
+    /// Taken off the screen, as it would cover the whole window (Wayland:
+    /// `Inner::keep_window_clear`); shown again when placed where it doesn't.
+    hidden: bool,
     /// Under the window's surface, not over it (Wayland only).
     under: bool,
     frame: Option<Arc<Frame>>,
@@ -74,6 +81,9 @@ impl Screen {
     pub fn attach(anchor: &gtk::Widget) -> Screen {
         let inner = Inner {
             rect: None,
+            measured_in: None,
+            placed: None,
+            hidden: false,
             under: false,
             frame: None,
             overlay: None,
@@ -86,13 +96,23 @@ impl Screen {
         // A box set before the window was on screen is placed once it is.
         let again = screen.clone();
         anchor.connect_map(move |_| {
-            let rect = again.inner.lock().unwrap().rect;
-            again.set(rect);
+            again.place_soon();
         });
         // The surface is a child of the window's: it goes, under the lock,
         // before the window's does (the window closed), so a paint from the
         // player's thread never draws into a surface whose parent is gone.
         // Mapped again, it's made again.
+        // The page's view resized (the window did): placed again, so a box
+        // left out for the size the view had (`Inner::place`) goes in once
+        // the view has it, and a surface left over the whole window goes.
+        let resized = screen.clone();
+        anchor.connect_size_allocate(move |anchor, _| {
+            let mut inner = resized.inner.lock().unwrap();
+            if let Err(e) = inner.place(anchor) {
+                eprintln!("The player's screen: {e:#}");
+                inner.drawn = None;
+            }
+        });
         let gone = screen.clone();
         anchor.connect_unrealize(move |_| {
             gone.inner.lock().unwrap().drawn = None;
@@ -103,7 +123,23 @@ impl Screen {
     /// Shows the picture in `rect` (in the anchor's coordinates), from any
     /// thread: the surface goes to that box, or goes away with none.
     pub fn set(&self, rect: Option<Rect>) {
-        self.inner.lock().unwrap().rect = rect;
+        self.set_measured(rect, None);
+    }
+
+    /// As `set`, for a box the page measured when it was `size` (CSS
+    /// pixels): a box measured at another size than the page's view has
+    /// now is left out (`Inner::place`).
+    pub fn set_measured(&self, rect: Option<Rect>, size: Option<(f64, f64)>) {
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.rect = rect;
+            inner.measured_in = size;
+        }
+        self.place_soon();
+    }
+
+    /// Puts the surface where the box is, on the main thread.
+    fn place_soon(&self) {
         let (inner, anchor) = (self.inner.clone(), self.anchor.clone());
         glib::MainContext::default().invoke(move || {
             let Some(anchor) = anchor.upgrade() else { return };
@@ -120,15 +156,14 @@ impl Screen {
     /// and page are clear: what's in the page over the box (a site's player)
     /// stays on top. Only under Wayland (`can_go_under`); X11 stays over.
     pub fn set_under(&self, under: bool) {
-        let rect = {
+        {
             let mut inner = self.inner.lock().unwrap();
             if inner.under == under {
                 return;
             }
             inner.under = under;
-            inner.rect
-        };
-        self.set(rect);
+        }
+        self.place_soon();
     }
 
     /// Shows `frame` (none: black), from any thread.
@@ -191,6 +226,20 @@ impl Inner {
             return Ok(());
         }
         let toplevel = anchor.toplevel().context("the anchor isn't in a window")?;
+        // A box the page measured at a size its view no longer has: going
+        // full screen, GTK first gives the window a passing size larger than
+        // the screen, and the page's box for it is larger than the screen
+        // too; leaving it, the box for full screen is larger than the window.
+        // Such a box is left out, and the surface stays where it was till the
+        // page's box for its view's size comes, unless it covers the whole
+        // window there (`keep_window_clear`).
+        let view = (anchor.allocated_width() as f64, anchor.allocated_height() as f64);
+        if let Some(size) = self.measured_in
+            && ((size.0 - view.0).abs() > 1.0 || (size.1 - view.1).abs() > 1.0)
+        {
+            self.keep_window_clear(&toplevel);
+            return Ok(());
+        }
         let window = toplevel.window().context("the window isn't realized")?;
         // The box in the window's surface: GTK's widget coordinates in a
         // toplevel are its surface's (decorations and shadow included).
@@ -205,8 +254,13 @@ impl Inner {
         };
         match self.drawn.as_mut() {
             Some(drawn) => drawn.native.place(place),
-            None => self.drawn = Some(Drawn::new(&window, place)?),
+            None => {
+                self.drawn = Some(Drawn::new(&window, place)?);
+                self.hidden = false;
+            }
         }
+        self.placed = Some(place);
+        self.keep_window_clear(&toplevel);
         if let Some(Native::Wayland(w)) = self.drawn.as_ref().map(|d| &d.native) {
             w.stack(self.under);
         }
@@ -219,7 +273,28 @@ impl Inner {
         Ok(())
     }
 
+    /// Under Wayland, takes the surface off the screen while it would cover
+    /// the whole window, and lets it back once it doesn't. GNOME sends no
+    /// frame callbacks to a window a surface covers whole, so the page would
+    /// draw nothing more and never send the box that moves the surface: the
+    /// picture stayed over the screen, cropped, without the controls, or
+    /// filled the window when full screen was left.
+    fn keep_window_clear(&mut self, toplevel: &gtk::Widget) {
+        let Some(Native::Wayland(w)) = self.drawn.as_ref().map(|d| &d.native) else { return };
+        let (width, height) = (toplevel.allocated_width(), toplevel.allocated_height());
+        let covers =
+            self.placed.is_some_and(|p| p.x <= 0 && p.y <= 0 && p.x + p.width >= width && p.y + p.height >= height);
+        if covers && !self.hidden {
+            w.hide();
+        }
+        // Shown again by its next paint.
+        self.hidden = covers;
+    }
+
     fn paint(&mut self) {
+        if self.hidden {
+            return;
+        }
         let Some(drawn) = self.drawn.as_mut() else { return };
         let began = std::time::Instant::now();
         // Device pixels to the page's CSS pixels.
@@ -451,6 +526,14 @@ impl Wayland {
         let mut wayland = Wayland { display, conn, queue, surface, subsurface, parent };
         wayland.place(place);
         Ok(wayland)
+    }
+
+    /// Off the screen till the next frame is drawn on it (which shows it):
+    /// no buffer, so it covers nothing.
+    fn hide(&self) {
+        self.surface.attach(None, 0, 0);
+        self.surface.commit();
+        let _ = self.conn.flush();
     }
 
     /// Over the window's surface, or under it (where the window and the page

@@ -147,6 +147,10 @@
     // Counted up at each change, so a still that comes after the panel's
     // gone again doesn't hide the surface.
     let seq = 0;
+    // What was sent, with the page's size it was measured at: the box goes
+    // again when only the page's size changed, as the app leaves out a box
+    // measured at a size the window's view no longer has (present_linux.rs).
+    const key = (rect: object | null) => JSON.stringify(rect && [rect, innerWidth, innerHeight]);
     const overlaps = (a: DOMRect, b: DOMRect) =>
       a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
     const report = () => {
@@ -157,7 +161,7 @@
       if (mode !== "over") {
         // Under the page, nothing needs hiding; drawn by the page, no surface.
         const rect = mode === "under" ? here : null;
-        const now = JSON.stringify(rect);
+        const now = key(rect);
         if (now === last) return;
         last = now;
         holes(rect);
@@ -168,7 +172,7 @@
         overlaps(el.getBoundingClientRect(), r),
       );
       const rect = covered || hidden ? null : here;
-      const now = JSON.stringify(rect);
+      const now = key(rect);
       if (now === last) return;
       const mine = ++seq;
       const wasShown = last !== "" && last !== "null";
