@@ -351,15 +351,6 @@
           </button>
         </div>
         {#if videosNote}<p class="muted hint">{videosNote}</p>{/if}
-        <label class="toggle">
-          <input
-            type="checkbox"
-            checked={askBeforeDownloading}
-            onchange={(e) => appSettings.update({ ask_before_downloading: e.currentTarget.checked })}
-          />
-          Ask before downloading from a site
-        </label>
-        <p class="muted hint">A reminder to download only what you have permission to use.</p>
         <p class="label">Fetched video</p>
         <p class="muted hint">
           Clips and edits of VODs from Kick, Twitch and YouTube fetch the stretches of video they need. What your edits
@@ -463,6 +454,15 @@
           It gets the streamer's site and login, and your IP address, and passes you on to Twitch's or Kick's own
           picture. Off, their initials show in the transcript and Cast instead, and nothing beside a channel's name.
         </p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={askBeforeDownloading}
+            onchange={(e) => appSettings.update({ ask_before_downloading: e.currentTarget.checked })}
+          />
+          Ask before downloading from a site
+        </label>
+        <p class="muted hint">A reminder to download only what you have permission to use.</p>
         {#if dataDir}
           <p class="muted hint">Your library is in:</p>
           <code class="path">{dataDir}</code>

@@ -37,7 +37,7 @@ const openSettings = async (app) => {
 
 const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV" };
 
-/** The switch of the note before downloading, in Settings › Storage. */
+/** The switch of the note before downloading, in Settings › Privacy. */
 const ASK = "Ask before downloading from a site";
 /** Whether that switch is on, or null when it isn't shown. */
 const askSwitch = (app) =>
@@ -49,7 +49,7 @@ const askSwitch = (app) =>
   );
 /** Turns that switch to `on`, and waits till Settings shows it and it's saved. */
 async function setAsk(app, on) {
-  await app.openSettings("Storage");
+  await app.openSettings("Privacy");
   await app.js(
     `const l = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label.toggle')]
        .find((l) => l.textContent.trim() === arguments[0]);
@@ -87,7 +87,7 @@ export default {
     app = await ctx.start();
     await app.toLibrary();
 
-    await app.openSettings("Storage");
+    await app.openSettings("Privacy");
     await until(
       `"${ASK}" off, as it was stopped`,
       async () =>
@@ -154,7 +154,7 @@ export default {
     const after = await chosen(app, Object.keys(CHOICES));
     await ctx.checkpoint("settings-dark");
     if (!same(after, CHOICES)) throw new Error(`after a restart, Settings shows ${JSON.stringify(after)}`);
-    await app.openSettings("Storage");
+    await app.openSettings("Privacy");
     if ((await askSwitch(app)) !== false) throw new Error(`after a restart, "${ASK}" isn't off`);
 
     // Reset settings… (Help), answered Reset: every choice as it was at the start.
@@ -179,7 +179,7 @@ export default {
       saved.ask_before_downloading !== true
     )
       throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);
-    await app.openSettings("Storage");
+    await app.openSettings("Privacy");
     await until(`"${ASK}" on after the reset`, async () => (await askSwitch(app)) === true, 10_000);
     ctx.log("Reset settings put them back, the note's switch on");
   },
