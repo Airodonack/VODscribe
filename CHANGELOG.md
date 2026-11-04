@@ -32,8 +32,10 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer pictures from img.vodscribe.com", which work as before.
 - Help now leads to a support page. It lists email, the issue tracker and how to report a security problem.
 - Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Storage.
-- A short window shows the player alone. Show transcript and chat, at the right of the VOD's title, swaps them, and the transcript stays in its place as you open other VODs.
+- A short window shows the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
+- The video's hide button sits with the controls. It's at the lower right beside full screen, and the button at the right of the VOD's title brings the video back.
 - Fixes:
+  - The player's buttons fit a narrow window. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.
   - Splitting at a join leaves no sliver. In an edit, Split (B) on a selection that ends where two pieces meet left a sliver of the earlier piece cut off before the join.

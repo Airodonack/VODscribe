@@ -136,7 +136,9 @@
     height: 28px;
   }
 
+  /* The bar's narrow layouts follow its width (PlayerBar.svelte). */
   .controls {
     padding: 8px 16px 2px;
+    container-type: inline-size;
   }
 </style>

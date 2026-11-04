@@ -19,10 +19,10 @@ import { chat, fetchChat } from "../lib/fixtures.mjs";
 
 const BINS = 120;
 
-/** In short mode, has the transcript and chat take the player's place (its
- *  header's button), as they stay for the session; otherwise does nothing. */
+/** In short mode, has the transcript and chat take the player's place (the
+ *  button at its bar's right), as they stay for the session; otherwise does nothing. */
 async function transcriptInPlace(app) {
-  const toggle = ".app > .main > section .head button[aria-expanded]";
+  const toggle = ".app > .main > section button.collapse";
   const label = await app.js(`return document.querySelector(arguments[0])?.getAttribute("aria-label")`, toggle);
   if (label !== "Show transcript and chat") return;
   await app.click(toggle);

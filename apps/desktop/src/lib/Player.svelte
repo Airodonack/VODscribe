@@ -646,9 +646,17 @@
         {#if action.id === "open"}<Icon name="external" size={12} />{/if}
       </button>
     {/each}
-    {#if canEmbed(vod) && (!shortMode.on || swap)}
-      <button class="icon" onclick={toggleHidden} aria-expanded={!hidden} aria-label={toggleLabel} title={toggleLabel}>
-        <Icon name={hidden ? "chevron-down" : "chevron-up"} size={16} />
+    <!-- Hidden, the bar goes with the picture, so what brings them back is here
+         (its other half is in the bar, PlayerBar.svelte's `hide`). -->
+    {#if canEmbed(vod) && (!shortMode.on || swap) && hidden}
+      <button
+        class="icon collapse"
+        onclick={toggleHidden}
+        aria-expanded="false"
+        aria-label={toggleLabel}
+        title={toggleLabel}
+      >
+        <Icon name="chevron-down" size={16} />
       </button>
     {/if}
   {/snippet}
@@ -745,6 +753,7 @@
     canFullscreen
     ontoggleplay={togglePlay}
     onfullscreen={setFullscreen}
+    hide={!shortMode.on || swap ? { label: toggleLabel, run: toggleHidden } : undefined}
   >
     {#snippet actions()}
       <button

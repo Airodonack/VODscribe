@@ -20,7 +20,8 @@
   // and Clip, or what an edit has instead) with a line of context, then
   // sound, speed, the panel's own at the right (a VOD's Transcribe), captions,
   // the keyboard legend's button (the legend opens under this row:
-  // PlayerPanel.svelte) and full screen, where the player has them.
+  // PlayerPanel.svelte), hiding the video and full screen, where the player
+  // has them: at the lower right, where video players keep their view toggles.
 
   import type { Snippet } from "svelte";
   import { settings } from "./appSettings.svelte";
@@ -50,6 +51,7 @@
     onfullscreen,
     actions,
     beside,
+    hide,
   }: {
     player: BarControls | null;
     playing: boolean;
@@ -71,6 +73,9 @@
     actions?: Snippet;
     /** The panel's own controls at the right, before the captions button (a VOD's Transcribe). */
     beside?: Snippet;
+    /** Hides the video, and the bar with it (a VOD's player; shown again
+     *  from its header, Player.svelte). */
+    hide?: { label: string; run: () => void };
   } = $props();
 
   // The time by frame (the clock small under it), or as a clock: clicking it
@@ -211,6 +216,12 @@
       title="Keyboard shortcuts"
     >
       <Icon name="keyboard" size={16} />
+    </button>
+  {/if}
+  <!-- Full screen has nothing to show once the video is hidden: not there. -->
+  {#if hide && !fullscreen}
+    <button class="control collapse" onclick={hide.run} aria-expanded="true" aria-label={hide.label} title={hide.label}>
+      <Icon name="video-off" size={16} />
     </button>
   {/if}
   {#if canFullscreen}
@@ -393,11 +404,15 @@
     accent-color: var(--accent);
   }
 
-  /* A phone: no keyboard to show the keys of, either. */
-  @media (max-width: 560px) {
+  /* A narrow column (a phone, or a short window's player beside the
+     library): no keyboard to show the keys of, either. Sized by the column
+     (PlayerPanel.svelte's .controls), not the window, so the buttons at the
+     right end, hiding the video and full screen, never go past its edge. */
+  @container (max-width: 560px) {
     .volume,
     .speed,
-    .keys {
+    .keys,
+    .bar :global(.action kbd) {
       display: none;
     }
 
@@ -407,6 +422,15 @@
 
     .bar :global(.action) {
       padding: 0 4px;
+    }
+  }
+
+  /* Narrower still: the actions as their icons alone (named by their
+     tooltips, and still to screen readers). */
+  @container (max-width: 440px) {
+    .bar :global(.action) {
+      gap: 0;
+      font-size: 0;
     }
   }
 </style>

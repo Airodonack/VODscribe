@@ -1,12 +1,14 @@
 // Short mode: in a window too short for the player and the transcript
 // together (a 1024 by 768 Mac's 613 px page), a VOD opens with its player
 // alone in the main column, its picture larger than usual, the timeline and
-// bar under it at the window's bottom, and no transcript; the header's
-// button reads "Show transcript and chat". Pressed, the transcript takes the
-// column (its minimap the height of it) and the button reads "Show player".
+// bar under it at the window's bottom, and no transcript; the button at the
+// bar's right reads "Show transcript and chat". Pressed, the transcript takes
+// the column (its minimap the height of it), the bar goes with the picture,
+// and the header's button reads "Show player".
 // Another VOD opened keeps the transcript in the player's place. A VOD of
 // sound alone has no player to swap: no button, its bar shown over the
 // transcript. Back on a video, "Show player" brings its player back alone.
+// In a narrow window (the library beside it) the bar's button stays in it.
 // (The other scenarios run with short mode off: lib/app.mjs shortMode.)
 
 import path from "node:path";
@@ -14,7 +16,8 @@ import path from "node:path";
 import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { videos } from "../lib/fixtures.mjs";
 
-const TOGGLE = ".app > .main > section .head button[aria-expanded]";
+// In the bar while the player shows, in the header while it's hidden.
+const TOGGLE = ".app > .main > section button.collapse";
 
 /** What the main column shows: each part's box (null when it isn't drawn), and the toggle's label. */
 const layout = (app) =>
@@ -33,6 +36,9 @@ const layout = (app) =>
       panel: box(":scope > section"),
       stage: box(".stage"),
       controls: box(".controls"),
+      inBar: !!main.querySelector(arguments[0])?.closest(".controls .bar"),
+      toggleRight: Math.round(main.querySelector(arguments[0])?.getBoundingClientRect().right ?? 0),
+      panelRight: Math.round(main.querySelector(":scope > section")?.getBoundingClientRect().right ?? 0),
       below: box(".below"),
       minimap: box(".minimap"),
       label: main.querySelector(arguments[0])?.getAttribute("aria-label") ?? null,
@@ -59,6 +65,9 @@ async function playerAlone(app, what) {
           panel.bottom >= page - 1 &&
           stage.height > page * 0.44 + 20 &&
           label === "Show transcript and chat" &&
+          last.inBar &&
+          // Not pushed past the column's edge by the rest of the bar.
+          last.toggleRight <= last.panelRight &&
           last
         );
       },
@@ -88,6 +97,7 @@ async function transcriptShown(app, what, { minimap }) {
           below.bottom >= page - 1 &&
           (!minimap || last.minimap?.height > below.height / 2) &&
           label === "Show player" &&
+          !last.inBar &&
           last
         );
       },
@@ -102,7 +112,7 @@ export default {
   name: "short-mode",
   expects: {
     "short-player-alone":
-      "Under the search bar, a video's title, then a large test picture (coloured bars) filling most of the window, the timeline and a bar of buttons (Split, Clip, Transcribe) at the window's bottom; no transcript anywhere under them.",
+      "Under the search bar, a video's title, then a large test picture (coloured bars) filling most of the window, the timeline and a bar of buttons (Split, Clip, Transcribe, and a crossed-out camera just before full screen at its right end) at the window's bottom; no transcript anywhere under them.",
     "short-transcript":
       "Under the search bar, a video's title with a chevron button at its right, then the Transcript heading and its lines filling the rest of the window down to its bottom, with a narrow strip at the right edge; no picture and no timeline.",
   },
@@ -173,5 +183,13 @@ export default {
     await app.click(TOGGLE);
     seen = await playerAlone(app, "its player alone");
     ctx.log(`"Show player": its player alone, its picture ${seen.stage.height} px`);
+
+    // The narrowest window, the library beside the player: the bar fits its
+    // column, its button inside it.
+    const narrow = await resizeInner(app, 760, 613);
+    seen = await playerAlone(app, "the player alone in a narrow window");
+    ctx.log(
+      `the page ${narrow.width}x${narrow.height}: the bar's button ends at ${seen.toggleRight}, the column at ${seen.panelRight}`,
+    );
   },
 };

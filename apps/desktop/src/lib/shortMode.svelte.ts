@@ -1,9 +1,10 @@
 // Short mode: a window too short for the player and the transcript together
 // (a maximized window on a 1366 by 768 laptop, a 13" Mac with larger text)
 // shows the player alone in the main column, with its timeline and bar, and
-// the transcript, chat and pane not drawn. The player's header button swaps
-// the two (Player.svelte): the transcript and chat then take the column, and
-// stay there as other VODs open, for the rest of the session.
+// the transcript, chat and pane not drawn. A button at the right of the
+// player's bar swaps the two (Player.svelte): the transcript and chat then
+// take the column, and stay there as other VODs open, for the rest of the
+// session; the player's header then has the button that brings it back.
 
 /** Under this many pixels for the transcript, it's too short to read. */
 export const PANE_LEAST = 200;
