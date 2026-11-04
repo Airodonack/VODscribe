@@ -21,6 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 import { MINUTE, until } from "../lib/app.mjs";
 import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
 import { longVideo, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
+import * as os from "../lib/os.mjs";
 
 /** Quitting with an erasure under way takes no longer than this, ms (the process gone; a debug build's). */
 const QUIT_WITHIN = 2000;
@@ -150,25 +151,39 @@ export default {
     await ctx.checkpoint("jobs-list");
 
     // The last dragged above the one before it, a frame at a time (the
-    // list moves as it passes the other's middle: reorder.svelte.ts).
-    await app.js(
-      `const [list, from, over] = arguments;
-       const row = (job) => document.querySelector(list + ' [data-job="' + job + '"]');
-       const moved = row(from).getBoundingClientRect(), above = row(over).getBoundingClientRect();
-       const x = moved.left + 30, y0 = moved.top + moved.height / 2, y1 = above.top + 2;
-       const at = (y, buttons) => ({ bubbles: true, clientX: x, clientY: y, button: 0, buttons, pointerId: 1, isPrimary: true });
-       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-       row(from).dispatchEvent(new PointerEvent("pointerdown", at(y0, 1)));
-       for (let i = 1; i <= 10; i++) {
-         window.dispatchEvent(new PointerEvent("pointermove", at(y0 + ((y1 - y0) * i) / 10, 1)));
-         await frame();
-       }
-       window.dispatchEvent(new PointerEvent("pointerup", at(y1, 0)));
-       await frame();`,
-      LIST,
-      `clip-${c}`,
-      `clip-${b}`,
-    );
+    // list moves as it passes the other's middle: reorder.svelte.ts): with
+    // the system's own pointer where this layer drives it, as a hand does,
+    // else with pointer events made in the page.
+    const byHand = process.platform === "linux" && os.unavailable() === null;
+    if (byHand) {
+      const from = await os.rectOf(app, `${LIST} [data-job="clip-${c}"] .label`);
+      const over = await os.rectOf(app, `${LIST} [data-job="clip-${b}"]`);
+      const x = from.x + 20;
+      const [y0, y1] = [from.y + Math.round(from.h / 2), over.y + 2];
+      const steps = [["down", x, y0]];
+      // (Over a second and a half, as a hand takes: the list's news, the
+      // progress of the one being made, comes several times meanwhile.)
+      for (let i = 1; i <= 20; i++) steps.push(["move", x, Math.round(y0 + ((y1 - y0) * i) / 20)], ["wait", 80]);
+      await os.gesture([...steps, ["wait", 100], ["up"], ["wait", 100]]);
+    } else
+      await app.js(
+        `const [list, from, over] = arguments;
+         const row = (job) => document.querySelector(list + ' [data-job="' + job + '"]');
+         const moved = row(from).getBoundingClientRect(), above = row(over).getBoundingClientRect();
+         const x = moved.left + 30, y0 = moved.top + moved.height / 2, y1 = above.top + 2;
+         const at = (y, buttons) => ({ bubbles: true, clientX: x, clientY: y, button: 0, buttons, pointerId: 1, isPrimary: true });
+         const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+         row(from).dispatchEvent(new PointerEvent("pointerdown", at(y0, 1)));
+         for (let i = 1; i <= 10; i++) {
+           window.dispatchEvent(new PointerEvent("pointermove", at(y0 + ((y1 - y0) * i) / 10, 1)));
+           await frame();
+         }
+         window.dispatchEvent(new PointerEvent("pointerup", at(y1, 0)));
+         await frame();`,
+        LIST,
+        `clip-${c}`,
+        `clip-${b}`,
+      );
     await until("the queue in the order dragged", async () => (await order()) === `${a}* ${c} ${b}`, 10_000).catch(
       async (e) => {
         throw new Error(`${e.message}: it's ${await order()}`);
@@ -176,7 +191,7 @@ export default {
     );
     const shown = (await rows()).map((r) => r.job).join(" ");
     if (shown !== `clip-${a} clip-${c} clip-${b}`) throw new Error(`the list shows ${shown} after the drag`);
-    log("dragged: the last is made next");
+    log(`dragged ${byHand ? "with the system's pointer" : "by pointer events in the page"}: the last is made next`);
 
     // Cancel on the one being made: its ffmpeg ends, its part file goes,
     // and the one dragged up is made next.
