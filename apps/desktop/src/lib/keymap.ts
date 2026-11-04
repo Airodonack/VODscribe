@@ -239,7 +239,15 @@ export const ACTIONS = [
   { id: "mark.chapter", label: "New chapter here", scope: "player", legend: "marks", defaults: all("n") },
   { id: "captions.toggle", label: "Captions", scope: "player", legend: "more", defaults: all("Shift+c") },
   { id: "mute.toggle", label: "Mute", scope: "player", legend: "more", defaults: all("Shift+m") },
-  { id: "fullscreen.toggle", label: "Full screen", scope: "player", legend: "more", defaults: all("f") },
+  {
+    id: "fullscreen.toggle",
+    label: "Full screen",
+    scope: "player",
+    legend: "more",
+    // F, and F11 as on Linux and Windows. Not on a Mac: there F11 shows the
+    // desktop, and Ctrl+Cmd+F is the window menu's own full screen.
+    defaults: { linux: ["f", "F11"], mac: ["f"] },
+  },
   // An edit's player only.
   { id: "edit.render", label: "Export: render the edit", scope: "edit", legend: "cutting", defaults: all("e") },
   {

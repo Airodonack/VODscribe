@@ -107,6 +107,16 @@ test("each OS writes keys its own way", () => {
   assert.equal(first("linux", "mute.toggle"), "Shift+M");
 });
 
+test("F11 toggles full screen where the system means it to, beside F", () => {
+  for (const os of /** @type {Os[]} */ (["linux", "windows"])) {
+    assert.ok(isOn(os)(press("F11"), "fullscreen.toggle"), `F11 on ${os}`);
+    assert.ok(isOn(os)(press("f"), "fullscreen.toggle"), `F on ${os}`);
+  }
+  // On a Mac F11 shows the desktop, so only F.
+  assert.ok(!isOn("mac")(press("F11"), "fullscreen.toggle"));
+  assert.ok(isOn("mac")(press("f"), "fullscreen.toggle"));
+});
+
 test("ids are unique, and the defaults clash nowhere they could both be live", () => {
   const ids = ACTIONS.map((a) => a.id);
   assert.equal(new Set(ids).size, ids.length);
