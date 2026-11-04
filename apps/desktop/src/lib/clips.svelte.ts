@@ -161,6 +161,14 @@ class Clips {
     return this.list.filter((c) => c.shown);
   }
 
+  /** Whether making `ranges` clips here asks the note on permission first:
+   *  a VOD from a site, the note not hidden, one of them not made yet. */
+  asksFor(ranges: { start: number; end: number }[]): boolean {
+    return (
+      this.doc?.kind === "vod" && this.#fromSite && !noteHidden() && ranges.some((r) => !this.find(r.start, r.end))
+    );
+  }
+
   /**
    * Makes `start`..`end` of the document whose clip bar this is (a VOD's
    * time, or an edit's timeline) a clip, or gives the one made already

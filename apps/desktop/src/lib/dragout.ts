@@ -13,10 +13,12 @@
 // Its file (each one's, for several picked) is made as the carry begins
 // where its footage is here (the VOD plays from a file here), first in the
 // queue; one to download from a site, at the edge (a carry that stays in the
-// window asks nothing of the site). The system's drag begins at the edge at
-// once, while the button is down, the file handed over once it's made (where
-// the system can wait for it: `beforeMade`); else it begins once the file's
-// there. An app that takes only files already made, let go on before it is,
+// window asks nothing of the site). Before the first download from a site,
+// the note on permission is asked at the edge instead, and no drag begins:
+// said yes to, the clip is made in the clip bar. The system's drag begins at
+// the edge at once, while the button is down, the file handed over once
+// it's made (where the system can wait for it: `beforeMade`); else it begins
+// once the file's there. An app that takes only files already made, let go on before it is,
 // gets nothing: that's said, and the clip is kept in the clip bar to drag
 // again (`finishedOnly`). Called off (Escape), or dropped on nothing or
 // inside the window where no clip is kept, the clip made for it goes, its
@@ -609,6 +611,17 @@ function carryWith(p: Payload): Promise<void> {
     // clips are made in), if the button's still down: at once, or once each
     // is made where the system can't wait for them (`beforeMade`).
     const takeOut = async () => {
+      // Its files to download from a site, before the note on permission was
+      // ever answered: a question can't be answered in the middle of the
+      // system's drag (its release lands on the page, and the note goes with
+      // it), so none begins. The carry ends here and the note asks now; said
+      // yes to, the clips are made in the clip bar, as a drop there makes
+      // them, to drag out once they're made.
+      if (p.files && p.vodId !== undefined && p.vodId === clips.vodId && clips.asksFor(p.stretches)) {
+        finish();
+        p.put({ ...NOWHERE, bar: true }, null);
+        return;
+      }
       leaving = true;
       const ahead = early;
       early = null;

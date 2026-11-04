@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { portal } from "./portal";
 
   // A panel opened from a button: Settings, the search's From filter, the
@@ -59,17 +59,36 @@
     if (open) fit();
   });
 
+  // A click is a press and its release: one whose press was held as the panel
+  // opened (a clip pulled out of the window asks the note on permission, and
+  // is let go after) isn't a click outside it.
+  let pressed = false;
+  let pressedBefore = false;
+  $effect(() => {
+    if (open) pressedBefore = untrack(() => pressed);
+  });
+  function onWindowPointerDown() {
+    pressed = true;
+    pressedBefore = false;
+  }
+
   // By the click's path when it happened: a button inside that removes itself
   // (a layer's pill, say) is gone from the page before this runs, and that's
   // still a click inside.
   function onWindowClick(e: MouseEvent) {
     if (!open) return;
+    if (pressedBefore) {
+      pressedBefore = false;
+      return;
+    }
     const path = e.composedPath();
     if (!(anchor && path.includes(anchor)) && !(panel && path.includes(panel))) open = false;
   }
 </script>
 
 <svelte:window
+  onpointerdowncapture={onWindowPointerDown}
+  onpointerupcapture={() => (pressed = false)}
   onclick={onWindowClick}
   onkeydown={(e) => e.key === "Escape" && (open = false)}
   onresize={fit}

@@ -92,6 +92,8 @@ const fake = {
   added: [],
   /** @type {unknown[]} */
   dragged: [],
+  /** The clips made, in order. @type {{ shown: boolean }[]} */
+  made: [],
   /** Clips kept in the clip bar. @type {number[]} */
   kept: [],
   /** What the toasts said. @type {string[]} */
@@ -130,8 +132,12 @@ const fake = {
     make: async (start, end, shown) => {
       // The note before a site's first download, if the test asks for it.
       if (fake.noted && !(await new Promise((answer) => (fake.answer = answer)))) return null;
-      return { id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" };
+      const clip = { id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" };
+      fake.made.push(clip);
+      return clip;
     },
+    /** Whether making a clip asks the note first. */
+    asksFor: () => fake.noted,
     /** @param {number} id @param {() => boolean} held */
     ready: async (id, held) => (
       fake.waited.push(id),
@@ -196,6 +202,7 @@ const carried = (end) =>
 function reset() {
   fake.added.length = 0;
   fake.dragged.length = 0;
+  fake.made.length = 0;
   fake.deleted.length = 0;
   fake.waited.length = 0;
   fake.answer = null;
@@ -243,19 +250,29 @@ test("a long stretch of a site's VOD is made with no question at the edge", asyn
   await done;
 });
 
-test("at the window's edge, a question the system asks takes the release: no drag out begins", async () => {
+test("at the window's edge, the note before a site's first download is asked instead of the system's drag", async () => {
   reset();
-  // A site VOD's first download: the note before it comes up at the edge.
+  // A site VOD's first download: a question can't be answered in the
+  // middle of the system's drag, so none begins; the carry ends at the edge.
   fake.noted = true;
   const done = carried(900);
   move(0, 300);
+  const over = await Promise.race([done.then(() => true), new Promise((r) => setTimeout(() => r(false), 200))]);
+  assert.ok(over, "the carry went on at the edge, waiting for the note's answer");
   await new Promise((r) => setTimeout(r, 20));
-  assert.ok(fake.answer, "the note was shown");
-  // The question had the release; the pointer moves on with no button held.
-  move(300, 300, 0);
+  assert.ok(fake.answer, "the note wasn't shown");
+  assert.equal(fake.clips.carrying, null, "still carried while the note asks");
+  // Let go after, wherever: nothing more happens, and the note waits.
+  up(300, 300);
   fake.answer(true);
-  await done;
-  assert.deepEqual(fake.dragged, [], "the system's drag was asked for with no button held");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(fake.dragged, [], "the system's drag was asked for");
+  assert.deepEqual(
+    fake.made.map((c) => c.shown),
+    [true],
+    "said yes to, the clip isn't made in the clip bar",
+  );
+  assert.deepEqual(fake.deleted, [], "the clip made was forgotten");
 });
 
 /** Two stretches picked, carried from (100, 100); `files` makes their clips. @param {boolean} early @param {() => Promise<unknown[]>} files */

@@ -24,6 +24,7 @@ public static class Win {
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern int GetSystemMetrics(int i);
   public static List<IntPtr> Tops() { var l = new List<IntPtr>(); EnumWindows((h, p) => { if (IsWindowVisible(h)) l.Add(h); return true; }, IntPtr.Zero); return l; }
@@ -61,12 +62,14 @@ export function screenSize() {
   return { w, h };
 }
 
-/** Moves process `pid`'s main window (the visible one with a title) to `rect` ({x, y, w, h}, its outer box). */
+/** Moves process `pid`'s main window (the visible one with a title) to `rect` ({x, y, w, h}, its outer box),
+ *  restored first if it was minimized (it can open so, after the desktop was shown). */
 export function placeWindowOf(pid, rect) {
   const done = powershell(
     `${USER32}
      $h = [Win]::Tops() | Where-Object { [Win]::Pid($_) -eq ${pid} -and [Win]::Text($_) } | Select-Object -First 1
      if (-not $h) { 'none'; exit }
+     [Win]::ShowWindow($h, 9) | Out-Null
      [Win]::SetWindowPos($h, [IntPtr]::Zero, ${rect.x}, ${rect.y}, ${rect.w}, ${rect.h}, 0x44) | Out-Null; 'placed'`,
   );
   if (done !== "placed") throw new Error(`process ${pid} has no window to place`);
