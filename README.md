@@ -88,7 +88,7 @@ pnpm format       # Prettier, every app (`pnpm lint` checks without writing)
 cargo fmt --all   # rustfmt, with the settings in rustfmt.toml
 ```
 
-Code is formatted with rustfmt and Prettier, and CI refuses code that isn't (`.github/workflows/check.yml` on every push, and again before release builds). Run `git config core.hooksPath .githooks` once per clone, so `.githooks/pre-commit` refuses an unformatted commit before CI does. Claude Code formats each file it edits by itself, through the hook in `.claude/settings.json`.
+Code is formatted with rustfmt and Prettier, and CI refuses code that isn't (`.github/workflows/check.yml` on every push, and again before release builds). Run `git config core.hooksPath .githooks` once per clone, so `.githooks/pre-commit` refuses an unformatted commit before CI does.
 
 `apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt` holds the license of everything compiled into the app; the installers include it and the website serves it. After changing dependencies, regenerate it with `python3 scripts/third-party-notices.py` (it needs [cargo-about](https://github.com/EmbarkStudios/cargo-about) 0.9). CI fails when it's out of date, or when a Rust dependency's license isn't one of those accepted in `licenses/about.toml`.
 
