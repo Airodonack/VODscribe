@@ -5,12 +5,59 @@
 // player stays shut, and the time under the player follows theirs. The bar's
 // sound (and, for YouTube, speed) is theirs, set through their embed API
 // and as their player reports it; Twitch's has no speed, so the bar has
-// none. Not transcribed, the captions button is greyed, with no strip.
+// none. The volume set is kept: after a restart their player starts at it.
+// Not transcribed, the captions button is greyed, with no strip.
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
 
 const SITE = process.env.E2E_SITE ?? "twitch";
+const SLIDER = '.bar input[aria-label="Volume"]';
+
+/** Listens, in the page, for the volume their player reports (Twitch's
+ *  state, YouTube's volume changes): `window.__theirVolume`. */
+const hearTheirVolume = (app) =>
+  app.js(`window.addEventListener("message", (e) => {
+    let d = e.data;
+    try { if (typeof d === "string") d = JSON.parse(d); } catch { return; }
+    if (d?.eventName === "UPDATE_STATE" && typeof d.params?.volume === "number")
+      window.__theirVolume = { volume: d.params.volume, muted: d.params.muted };
+    if (d?.event === "onVolumeChange" && typeof d.info?.volume === "number")
+      window.__theirVolume = { volume: d.info.volume / 100, muted: d.info.muted };
+  });`);
+
+/** Sets the bar's volume slider to `value`, as a drag does. */
+const slide = (app, value) =>
+  app.js(
+    `const slider = document.querySelector(arguments[0]);
+     slider.value = arguments[1];
+     slider.dispatchEvent(new Event("input", { bubbles: true }));`,
+    SLIDER,
+    value,
+  );
+
+/** Waits for their player to report `volume`, unmuted. */
+const theirsAt = (app, volume) =>
+  until(
+    `their player at ${volume * 100}%`,
+    async () => {
+      const v = await app.js(`return window.__theirVolume ?? null`);
+      return v && Math.abs(v.volume - volume) < 0.01 && !v.muted && v;
+    },
+    10_000,
+  );
+
+/** Waits for `value` to be the volume kept (playerPrefs.svelte.ts). */
+const keptAt = (app, value) =>
+  until(
+    `${value} kept`,
+    async () => {
+      const kept = (await app.invoke("kept_choices"))["vodscribe.volume"];
+      if (kept === value) return true;
+      throw new Error(`the volume kept is ${JSON.stringify(kept)}`);
+    },
+    10_000,
+  );
 
 export default {
   name: "site-plain",
@@ -20,18 +67,9 @@ export default {
     const vod = await addTestVod(app, SITE);
     // Anything the app's frame script (embed_shim.js) says, from any frame:
     // injected, it says so even in a frame left plain ({ kind: "plain" }).
-    // And the volume their player last reported (Twitch's state, YouTube's
-    // volume changes).
     await app.js(`window.__fromFrames = [];
-      window.addEventListener("message", (e) => e.data?.vodscribeShim && window.__fromFrames.push(e.data.vodscribeShim.kind));
-      window.addEventListener("message", (e) => {
-        let d = e.data;
-        try { if (typeof d === "string") d = JSON.parse(d); } catch { return; }
-        if (d?.eventName === "UPDATE_STATE" && typeof d.params?.volume === "number")
-          window.__theirVolume = { volume: d.params.volume, muted: d.params.muted };
-        if (d?.event === "onVolumeChange" && typeof d.info?.volume === "number")
-          window.__theirVolume = { volume: d.info.volume / 100, muted: d.info.muted };
-      });`);
+      window.addEventListener("message", (e) => e.data?.vodscribeShim && window.__fromFrames.push(e.data.vodscribeShim.kind));`);
+    await hearTheirVolume(app);
     await app.openVod(vod.id);
     await until(
       "the Play button",
@@ -63,21 +101,14 @@ export default {
     const want = { mute: true, volume: true, speed: SITE === "youtube", captions: true, strip: false };
     if (Object.keys(want).some((k) => bar[k] !== want[k]))
       throw new Error(`the bar has ${JSON.stringify(bar)}, not ${JSON.stringify(want)}`);
-    // The volume set on the bar: their player says it's at it, and the bar stays there.
-    await app.js(`const slider = document.querySelector('.bar input[aria-label="Volume"]');
-      slider.value = "0.3";
-      slider.dispatchEvent(new Event("input", { bubbles: true }));`);
-    const theirs = await until(
-      "their player at 30%",
-      async () => {
-        const v = await app.js(`return window.__theirVolume ?? null`);
-        return v && Math.abs(v.volume - 0.3) < 0.01 && !v.muted && v;
-      },
-      10_000,
-    );
+    // The volume set on the bar: their player says it's at it, the bar stays
+    // there, and it's kept, as every player's volume is.
+    await slide(app, "0.3");
+    const theirs = await theirsAt(app, 0.3);
     await wait(1500);
-    const shown = await app.js(`return document.querySelector('.bar input[aria-label="Volume"]').value`);
+    const shown = await app.js(`return document.querySelector(arguments[0]).value`, SLIDER);
     if (shown !== "0.3") throw new Error(`their player said ${JSON.stringify(theirs)}, and the bar shows ${shown}`);
+    await keptAt(app, "0.3");
     // Muted from the bar: theirs is, and unmuted, back at 30%.
     await app.click('.bar button[aria-label="Mute"]');
     await until("their player muted", async () => (await app.js(`return window.__theirVolume`)).muted, 10_000);
@@ -120,5 +151,19 @@ export default {
     );
     ctx.log(`resumed: at ${resumed} s`);
     if ((await label()) !== "Pause") throw new Error("playing again, the button doesn't say Pause");
+
+    // Restarted: their player starts at the volume kept.
+    app = await ctx.restart();
+    await app.toLibrary();
+    await hearTheirVolume(app);
+    await app.openVod(vod.id);
+    await until(
+      "the Play button",
+      () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+      MINUTE,
+    );
+    await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
+    await theirsAt(app, 0.3);
+    ctx.log("after a restart: their player started at 30%");
   },
 };

@@ -37,6 +37,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Right-click opens the speed and Transcribe menus. Holding the button still works too.
 - F11 toggles full screen too. On Linux and Windows it works as F does.
 - Fixes:
+  - Sites' players keep the volume. YouTube, Twitch and Kick start at the volume last set, and one set there is kept for every player.
   - The player's buttons fit a narrow window. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.
