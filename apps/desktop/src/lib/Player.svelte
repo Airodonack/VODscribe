@@ -385,9 +385,9 @@
   // Transcribe (T), at the bar's right beside the captions: the selection;
   // else the whole VOD, or what of it isn't transcribed yet (stretches.ts
   // `transcribeRest`), or all of it again once all of it is, after asking
-  // (as the library row's Transcribe again: it replaces it all). Pressed and
-  // held, a menu of how much from the playhead instead (TranscribeFrom.svelte,
-  // hold.svelte.ts). Hovering it lights up on the timeline what it would
+  // (as the library row's Transcribe again: it replaces it all). Right-clicked,
+  // or pressed and held, a menu of how much from the playhead instead
+  // (TranscribeFrom.svelte, hold.svelte.ts). Hovering it lights up on the timeline what it would
   // transcribe, as Clip does.
   let transcribeButton = $state<HTMLElement>();
   // Where the menu was opened: the stretch starts there, though the video plays on.
@@ -440,7 +440,7 @@
           : vod.transcribed === "all"
             ? "Transcribe again…"
             : "Transcribe the whole VOD"
-    }${keyHint("transcribe.here")}. Hold for how much from here.`,
+    }${keyHint("transcribe.here")}. Right-click for how much from here.`,
   );
   function onTranscribeClick() {
     if (!transcribeHold.held) transcribe();
@@ -796,6 +796,7 @@
         class:picking={!!cuts.selection}
         bind:this={transcribeButton}
         onpointerdown={transcribeHold.down}
+        oncontextmenu={transcribeHold.menu}
         onclick={onTranscribeClick}
         onmouseenter={onTranscribeEnter}
         onmouseleave={() => (transcribeHover = false)}

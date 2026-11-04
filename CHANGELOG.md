@@ -34,6 +34,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Privacy.
 - A short window shows the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
 - The video's hide button sits with the controls. It's at the lower right beside full screen, and the button at the right of the VOD's title brings the video back.
+- Right-click opens the speed and Transcribe menus. Holding the button still works too.
 - Fixes:
   - The player's buttons fit a narrow window. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.

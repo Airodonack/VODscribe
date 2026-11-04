@@ -1,7 +1,7 @@
 <script lang="ts">
   // Transcribing a stretch of a VOD from a moment, chosen from a menu: the
-  // player bar's Transcribe pressed and held (from the playhead; let go over
-  // a choice, hold.svelte.ts, picks it), and the transcript's "Transcribe
+  // player bar's Transcribe right-clicked, or pressed and held (from the
+  // playhead; let go over a choice, hold.svelte.ts, picks it), and the transcript's "Transcribe
   // from here" (from a line, or the start of a gap).
   // The choice is asked for at once (`transcribe_stretch`), after the requests
   // already made, and kept for next time, ticked.

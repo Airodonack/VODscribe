@@ -99,8 +99,8 @@
     player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
   }
 
-  // The speed button pressed and held opens a menu of the speeds above it
-  // (hold.svelte.ts); a plain click still steps to the next speed.
+  // The speed button right-clicked, or pressed and held, opens a menu of the
+  // speeds above it (hold.svelte.ts); a plain click still steps to the next speed.
   let speedButton = $state<HTMLElement>();
   const speedHold = new Hold("[data-speed]", (item) => player?.rate?.set(Number(item.dataset.speed)));
   function onSpeedClick() {
@@ -171,8 +171,10 @@
       class="control speed"
       bind:this={speedButton}
       onpointerdown={speedHold.down}
+      oncontextmenu={speedHold.menu}
       onclick={onSpeedClick}
-      title="Playback speed (hold for a list)">{rate}×</button
+      aria-expanded={speedHold.open}
+      title="Playback speed (right-click for a list)">{rate}×</button
     >
     <Popover bind:open={speedHold.open} anchor={speedButton} label="Playback speed" width={84} padding={4} above>
       <div class="speeds">
@@ -181,7 +183,10 @@
             data-speed={s}
             class:current={s === rate}
             aria-pressed={s === rate}
-            onclick={() => player?.rate?.set(s)}
+            onclick={() => {
+              player?.rate?.set(s);
+              speedHold.open = false;
+            }}
             >{#if s === rate}<Icon name="check" size={12} />{/if}<span>{s}×</span></button
           >
         {/each}

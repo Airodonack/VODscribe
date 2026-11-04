@@ -11,6 +11,9 @@ import * as os from "../lib/os.mjs";
 
 const BUTTON = ".bar button.speed";
 const MENU = '[role=dialog][aria-label="Playback speed"]';
+const TRANSCRIBE = ".bar button.action.transcribe";
+/** Transcribe's menu of how much from the playhead (TranscribeFrom.svelte). */
+const FROM = '[role=dialog][aria-label^="Transcribe from"]';
 
 export default {
   name: "speed-menu",
@@ -91,5 +94,43 @@ export default {
     await sleep(300);
     await speedIs("1.5×");
     ctx.log("let go away from the menu: it closed, still 1.5×");
+
+    // Right-clicked: the menu, open once the button's let go; a click on
+    // 0.75× picks it.
+    await os.gesture([
+      ["down", x, y, 3],
+      ["wait", 100],
+      ["up", 3],
+    ]);
+    await until("the menu, right-clicked open", menuOpen, 5_000);
+    await sleep(300);
+    if (!(await menuOpen())) throw new Error("the menu right-clicked open closed as the button was let go");
+    const slower = await os.rectOf(app, `${MENU} [data-speed="0.75"]`);
+    os.click(slower.x + Math.round(slower.w / 2), slower.y + Math.round(slower.h / 2), slower.scale);
+    await speedIs("0.75×");
+    await until("the menu closed", async () => !(await menuOpen()), 5_000);
+    ctx.log("right-clicked, the menu opened and stayed; a click on 0.75× picked it");
+
+    // Transcribe right-clicked: its menu of how much from the playhead, which
+    // Escape closes with nothing asked.
+    const transcribe = await os.rectOf(app, TRANSCRIBE);
+    const [tx, ty] = [transcribe.x + Math.round(transcribe.w / 2), transcribe.y + Math.round(transcribe.h / 2)];
+    const fromOpen = () => app.js(`return !!document.querySelector(arguments[0])`, FROM);
+    await os.gesture([
+      ["down", tx, ty, 3],
+      ["wait", 100],
+      ["up", 3],
+    ]);
+    await until("Transcribe's menu, right-clicked open", fromOpen, 5_000);
+    await sleep(300);
+    if (!(await fromOpen())) throw new Error("Transcribe's menu right-clicked open closed as the button was let go");
+    const choices = await app.js(
+      `return [...document.querySelectorAll(arguments[0] + " [data-choice]")].map((b) => b.dataset.choice)`,
+      FROM,
+    );
+    if (!choices.length) throw new Error("Transcribe's menu, right-clicked open, has no choices");
+    await os.gesture([["key", "Escape"]]);
+    await until("Transcribe's menu closed", async () => !(await fromOpen()), 5_000);
+    ctx.log(`Transcribe right-clicked: its menu opened (${choices.join(", ")}); Escape closed it`);
   },
 };
