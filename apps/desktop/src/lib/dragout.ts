@@ -15,7 +15,8 @@
 // queue; one to download from a site, at the edge (a carry that stays in the
 // window asks nothing of the site). Before the first download from a site,
 // the note on permission is asked at the edge instead, and no drag begins:
-// said yes to, the clip is made in the clip bar. The system's drag begins at
+// said yes to, the clip is made in the clip bar, to drag from there, which
+// is said (`downloading`). The system's drag begins at
 // the edge at once, while the button is down, the file handed over once
 // it's made (where the system can wait for it: `beforeMade`); else it begins
 // once the file's there. An app that takes only files already made, let go on before it is,
@@ -24,7 +25,11 @@
 // inside the window where no clip is kept, the clip made for it goes, its
 // making stopped. Brought back over the window, the system's drag lands
 // where a carry would (`backOver`, `backDropped`): on the clip bar it keeps
-// the clip.
+// the clip. Let go on another app on Linux before it's made, that's said
+// (`making`): the app it was let go on may show nothing meanwhile (Explorer
+// and Finder show their own progress). Each drag says one thing at most at
+// a time: a toast replaces the one before, and the same words aren't said
+// again while they're up (`toast.once`).
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
@@ -79,6 +84,22 @@ export function finishedOnly(receiver: string | null, count: number): string {
   return `${receiver || "That app"} takes finished files only. ${making} from the clip bar when ${count > 1 ? "they're" : "it's"} ready.`;
 }
 
+/** What's said when `count` clips pulled out of the window are downloaded
+ *  into the clip bar instead, the note before downloading said yes to. */
+export function downloading(count: number): string {
+  return count > 1
+    ? "Downloading the clips. Drag them from the clip bar when they're ready."
+    : "Downloading the clip. Drag it from the clip bar when it's ready.";
+}
+
+/** What's said when clips let go on another app are still being made:
+ *  `count` of them, which land there once made. */
+export function making(count: number): string {
+  return count > 1
+    ? `Making ${count} clips. They'll be where you dropped them once they're made.`
+    : "Making the clip. It'll be where you dropped it once it's made.";
+}
+
 /**
  * Starts the system drag of the files of clips `list` (one, or several in
  * one drag), made or (`beforeMade`) being made, showing `image` (a PNG) if
@@ -100,14 +121,19 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   const mine = ++drags;
   const own = back;
   let stop: (() => void) | undefined;
+  let stopMaking: (() => void) | undefined;
+  // What's said of it while it's still being made (`making`), till it's over.
+  let told: number | undefined;
   const over = (ended?: DragEnded) => {
     if (ended && ended.drag !== mine) return;
     stop?.();
+    stopMaking?.();
+    if (told !== undefined) toast.drop(told);
     if (ended?.failed) clips.error = `Couldn't make the clip: ${ended.failed}`;
     // Let go on an app that takes only files already made, before they were:
     // said, and they're kept in the clip bar, to drag again once made.
     if (ended?.finished_only) {
-      toast.show(finishedOnly(ended.receiver, list.length));
+      toast.once(finishedOnly(ended.receiver, list.length));
       list.forEach(keepHidden);
     }
     // Made only for this: forgotten (the file stays, if it was handed out);
@@ -125,11 +151,18 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     }, 1000);
   };
   stop = await events.dragEnded(over).catch(() => undefined);
+  // Let go on another app before they're all made: said once.
+  stopMaking = await events
+    .dragMaking((made) => {
+      if (made.drag === mine && told === undefined) told = toast.once(making(made.making));
+    })
+    .catch(() => undefined);
   // Let go while that was set up (the release was already on its way when
   // the edge was crossed): a drag begun now, with no button down, would
   // never end. Nothing begun; undone as if never asked.
   if (!held()) {
     stop?.();
+    stopMaking?.();
     backLeft();
     if (mine === drags) out = false;
     return false;
@@ -619,6 +652,9 @@ function carryWith(p: Payload): Promise<void> {
       // them, to drag out once they're made.
       if (p.files && p.vodId !== undefined && p.vodId === clips.vodId && clips.asksFor(p.stretches)) {
         finish();
+        // Said yes to: where the clips are to be dragged from, once.
+        const count = p.stretches.length;
+        void clips.nextAnswer().then((yes) => yes && toast.once(downloading(count)));
         p.put({ ...NOWHERE, bar: true }, null);
         return;
       }

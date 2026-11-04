@@ -10,6 +10,7 @@ const fakes = {
   "./api": `export const api = globalThis.fake.api;
     export const events = {
       dragEnded: async (cb) => (globalThis.fake.listeners.add(cb), () => globalThis.fake.listeners.delete(cb)),
+      dragMaking: async (cb) => (globalThis.fake.makingListeners.add(cb), () => globalThis.fake.makingListeners.delete(cb)),
     };
     export const thumbUrl = async () => null;`,
   "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
@@ -65,6 +66,8 @@ const editRow = (id) => ({
 const fake = {
   /** How the note before a site's first download is answered, while it's up. @type {((made: boolean) => void) | null} */
   answer: null,
+  /** Told how the note is answered next (`clips.nextAnswer`). @type {((yes: boolean) => void)[]} */
+  heard: [],
   /** Whether that note comes up. */
   noted: false,
   /** What the page listens with for the system's drags to end ("drag-ended"). @type {Set<(e: unknown) => void>} */
@@ -79,6 +82,17 @@ const fake = {
    */
   ended: (e, drag = fake.numbers.at(-1)) => {
     for (const cb of [...fake.listeners]) cb({ drag, ...e });
+  },
+  /** What the page listens with for drags let go on another app while still being made ("drag-making"). @type {Set<(e: unknown) => void>} */
+  makingListeners: new Set(),
+  /**
+   * The system's drag numbered `drag` (the last asked for, unless said) was
+   * let go on another app with `making` of its clips still being made.
+   * @param {number} making
+   * @param {unknown} [drag]
+   */
+  making: (making, drag = fake.numbers.at(-1)) => {
+    for (const cb of [...fake.makingListeners]) cb({ drag, making });
   },
   /** Whether the system's drag can begin before the files are made. */
   beforeMade: true,
@@ -98,9 +112,15 @@ const fake = {
   kept: [],
   /** What the toasts said. @type {string[]} */
   toasts: [],
+  /** The toasts hidden as no longer so, by their place in `toasts`. @type {number[]} */
+  dropped: [],
   toast: {
     /** @param {string} message */
-    show: (message) => void fake.toasts.push(message),
+    show: (message) => fake.toasts.push(message) - 1,
+    /** @param {string} message */
+    once: (message) => (fake.toasts.at(-1) === message ? fake.toasts.length - 1 : fake.toasts.push(message) - 1),
+    /** @param {number} seq */
+    drop: (seq) => void fake.dropped.push(seq),
   },
   api: {
     frame: async () => new Uint8Array(),
@@ -131,13 +151,21 @@ const fake = {
     /** @param {number} start @param {number} end @param {boolean} shown */
     make: async (start, end, shown) => {
       // The note before a site's first download, if the test asks for it.
-      if (fake.noted && !(await new Promise((answer) => (fake.answer = answer)))) return null;
+      const asked = () =>
+        new Promise((answer) => {
+          fake.answer = (yes) => {
+            answer(yes);
+            for (const told of fake.heard.splice(0)) told(yes);
+          };
+        });
+      if (fake.noted && !(await asked())) return null;
       const clip = { id: 9, start, end, shown, status: "ready", file_path: "/c.mp4" };
       fake.made.push(clip);
       return clip;
     },
     /** Whether making a clip asks the note first. */
     asksFor: () => fake.noted,
+    nextAnswer: () => new Promise((told) => fake.heard.push(told)),
     /** @param {number} id @param {() => boolean} held */
     ready: async (id, held) => (
       fake.waited.push(id),
@@ -206,10 +234,13 @@ function reset() {
   fake.deleted.length = 0;
   fake.waited.length = 0;
   fake.answer = null;
+  fake.heard.length = 0;
   fake.noted = false;
   fake.kept.length = 0;
   fake.toasts.length = 0;
+  fake.dropped.length = 0;
   fake.listeners.clear();
+  fake.makingListeners.clear();
   fake.numbers.length = 0;
   fake.beforeMade = true;
   fake.begins = () => true;
@@ -273,6 +304,21 @@ test("at the window's edge, the note before a site's first download is asked ins
     "said yes to, the clip isn't made in the clip bar",
   );
   assert.deepEqual(fake.deleted, [], "the clip made was forgotten");
+  assert.deepEqual(fake.toasts, ["Downloading the clip. Drag it from the clip bar when it's ready."]);
+});
+
+test("the note at the window's edge said no to: nothing made, nothing said", async () => {
+  reset();
+  fake.noted = true;
+  const done = carried(900);
+  move(0, 300);
+  await done;
+  await new Promise((r) => setTimeout(r, 20));
+  up(300, 300);
+  fake.answer?.(false);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(fake.made, []);
+  assert.deepEqual(fake.toasts, []);
 });
 
 /** Two stretches picked, carried from (100, 100); `files` makes their clips. @param {boolean} early @param {() => Promise<unknown[]>} files */
@@ -371,6 +417,34 @@ test("past the edge before its files are made: the system's drag begins at once,
   await tick();
   assert.deepEqual(fake.deleted, [3, 4]);
   assert.equal(fake.clips.error, null);
+});
+
+test("let go on another app before they're made: it's said once, and unsaid when the drag is over", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.making(2, -1);
+  assert.deepEqual(fake.toasts, [], "said of another drag");
+  fake.making(2);
+  fake.making(1);
+  assert.deepEqual(fake.toasts, ["Making 2 clips. They'll be where you dropped them once they're made."]);
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await tick();
+  assert.deepEqual(fake.dropped, [0], "still said once they went");
+  assert.equal(fake.makingListeners.size, 0, "still listened for after the drag");
+});
+
+test("one clip still being made is said as the clip", async () => {
+  reset();
+  const done = carried(5);
+  move(120, 120);
+  move(0, 300);
+  await new Promise((r) => setTimeout(r, 20));
+  await done;
+  fake.making(1);
+  assert.deepEqual(fake.toasts, ["Making the clip. It'll be where you dropped it once it's made."]);
 });
 
 test("let go on an app that takes finished files only: it's said, by its name, and the clips are kept to drag again", async () => {

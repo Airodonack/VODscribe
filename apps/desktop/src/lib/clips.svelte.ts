@@ -47,6 +47,8 @@ class Clips {
   overBar = $state(false);
   /** While the note before downloading a clip is up: how it's answered. */
   asking = $state<((download: boolean) => void) | null>(null);
+  /** Told how the note is answered next (`nextAnswer`). */
+  #heard: ((download: boolean) => void)[] = [];
   /** Whether the VOD shown is from a site, so its clips are downloaded. */
   #fromSite = false;
   get fromSite() {
@@ -314,7 +316,16 @@ class Clips {
   /** Answers the note before downloading; `hide` keeps it from showing again. */
   answer(download: boolean, hide = false) {
     if (download && hide) hideNote();
-    this.asking?.(download);
+    if (!this.asking) return;
+    this.asking(download);
+    const heard = this.#heard;
+    this.#heard = [];
+    for (const told of heard) told(download);
+  }
+
+  /** How the note before downloading is answered next: whether to download. */
+  nextAnswer(): Promise<boolean> {
+    return new Promise((told) => this.#heard.push(told));
   }
 
   rename = (id: number, title: string) => this.#run(api.renameClip(id, title));

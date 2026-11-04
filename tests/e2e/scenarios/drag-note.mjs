@@ -3,9 +3,9 @@
 // the system's drag, so none begins. The carry ends at the window's edge and
 // the note asks there, by the Clip button, and stays up through the release
 // of the button that pulled the clip out, wherever it's let go: back over the
-// app, or out past the window. Cancel makes nothing; Download clip makes the
-// clip in the clip bar, to drag out once it's made. Driven with the OS's
-// pointer (lib/os.mjs), as a person would.
+// app, or out past the window. Cancel makes nothing and says nothing;
+// Download clip makes the clip in the clip bar, to drag out once it's made,
+// and says so. Driven with the OS's pointer (lib/os.mjs), as a person would.
 //
 // Offline: the VOD is a file added here, then made the test YouTube VOD's
 // library entry; the clip asked for is deleted before it's downloaded.
@@ -19,6 +19,8 @@ import * as explorer from "../lib/explorer.mjs";
 import * as os from "../lib/os.mjs";
 
 const NOTE = '[role=dialog][aria-label="Before downloading a clip"]';
+/** What's said once Download clip is clicked (dragout.ts `downloading`). */
+const DOWNLOADING = "Downloading the clip. Drag it from the clip bar when it's ready.";
 
 export default {
   name: "drag-note",
@@ -112,7 +114,9 @@ export default {
       await pullOut("over the app", page.x + Math.round(page.w / 2), Math.min(button.y + 120, page.y + page.h - 20));
       await answer("Cancel");
       if ((await clipsOf()).length) throw new Error("Cancel made a clip");
-      ctx.log("Cancel: nothing made");
+      await sleep(300);
+      if (await app.toastSays()) throw new Error(`after Cancel the toast says "${await app.toastSays()}"`);
+      ctx.log("Cancel: nothing made, nothing said");
     }
 
     // Let go out past the window (left of it if there's room, else above it):
@@ -123,7 +127,9 @@ export default {
       await pullOut(page.x >= 60 ? "left of the window" : "above the page", x, y);
       await answer("Download clip");
       const made = await until("the clip asked for", async () => (await clipsOf()).find((c) => c.shown), 10_000);
-      ctx.log(`Download clip: clip ${made.id} (${made.start} to ${made.end}) in the clip bar`);
+      const told = await until("the toast", () => app.toastSays(), 5_000).catch(() => "");
+      if (told !== DOWNLOADING) throw new Error(`after Download clip the toast says "${told}", not "${DOWNLOADING}"`);
+      ctx.log(`Download clip: clip ${made.id} (${made.start} to ${made.end}) in the clip bar; the toast "${told}"`);
       await app.invoke("delete_clip", { id: made.id });
     }
   },

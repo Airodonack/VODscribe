@@ -17,7 +17,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Long downloads no longer ask first. A clip downloaded from a site is made however long it is.
 - Some apps take finished files only. If one takes nothing or refuses the drop before the clip is made, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.
 - A clip still being made drags out. Drag it from the clip bar as you would a ready one.
-- Dragged clips are listed once let go. A clip made only for a drag stays off the clip bar; once you let it go on another app it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
+- Dragged clips are listed once let go. A clip made only for a drag stays off the clip bar; once you let it go on another app, VODscribe says it's being made, and it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
 - A drag called off makes nothing. Escape, or a drop on nothing, stops the clip's making; dropped on the clip bar, it's kept there. If the clip can't be made, VODscribe says why only when you let it go on another app.
 - A carried stretch shows a dashed outline. Alt-dragging (Option-dragging on a Mac) a stretch of the timeline outlines what you picked up as soon as the drag starts.
 - An unpicked stretch is carried alone. Alt-drag a stretch from outside what's picked and the others are let go, as in a file manager.

@@ -7,10 +7,11 @@
 // app's ffmpeg is a stand-in that waits before a clip's encode, then runs
 // the real one), so each drop comes before its file is there. A minute's
 // stretch of a 720p video, made as MOV, carried by Clip to the folder and
-// let go: it lands whole, the window answers meanwhile, and the page hears
-// it went; the app's own file is kept as another app's (Nautilus took it
-// where it is) or goes (Dolphin has its own copy). Carried out, back over
-// the window, out again and let go: it lands too. Called off (Escape)
+// let go: it lands whole, the window answers meanwhile, the app says (on
+// Linux) the clip is being made, and the page hears it went; the app's own
+// file is kept as another app's (Nautilus took it where it is) or goes
+// (Dolphin has its own copy). Carried out, back over the window, out again
+// and let go: it lands too. Called off (Escape)
 // while the file is waited for: nothing lands, and the app's file goes too.
 // One whose encode fails: nothing lands, and the app says it couldn't make
 // the clip. Two pills picked and carried together, both being made again
@@ -64,6 +65,25 @@ const AT = `const at = (x, y, buttons) => ({ bubbles: true, cancelable: true, cl
 const HELD = 8;
 /** How far off its stretch's length a file's duration may be, in seconds. */
 const SLACK = 0.1;
+/** What the app says while a clip let go on another app is still being made (dragout.ts `making`). */
+const MAKING = "Making the clip. It'll be where you dropped it once it's made.";
+
+/** What the toast says once `fits` it (an earlier one may show first: the
+ *  clip's being made, said as it was let go), within 10 s; else an error
+ *  saying what it said. */
+async function saysAtLast(app, fits) {
+  let last = "";
+  return until(
+    "the toast",
+    async () => {
+      last = await app.toastSays();
+      return fits(last) && last;
+    },
+    10_000,
+  ).catch((e) => {
+    throw new Error(`${e.message}: the toast says "${last}"`);
+  });
+}
 
 export default {
   name: "drag-promise",
@@ -323,7 +343,8 @@ exec '${real}' "$@"
 
       // 1. Let go on Nautilus before the file is made: it lands whole. The
       // window answers while it's waited for (the video plays on), no pill
-      // shows, and the clip's making is listed with the jobs till it's over.
+      // shows, the clip's making is listed with the jobs till it's over, and
+      // on Linux the app says it's being made.
       await toStart();
       await app.click('.bar button[aria-label="Play"]');
       await until("the video playing", async () => (await app.shownTime()) >= 2, 30_000);
@@ -333,6 +354,8 @@ exec '${real}' "$@"
       const [making] = await hidden();
       if (!making || making.status === "ready")
         throw new Error(`the clip was ${making?.status ?? "gone"} as it was dropped, not still being made`);
+      // (On Linux: Finder shows its own progress.)
+      const told = mac ? "(none on macOS)" : await saysAtLast(app, (t) => t === MAKING);
       await until("its making listed with the jobs, let go elsewhere", () => listed(making.id), 5000, { every: 100 });
       await until(
         "the page sent the list of jobs with it",
@@ -356,6 +379,7 @@ exec '${real}' "$@"
       const first = await landed("let go before it was made");
       const end = await ended();
       if (!end.delivered) throw new Error(`the page heard the drag went nowhere: ${JSON.stringify(end)}`);
+      await until("the toast gone once it landed", async () => (await app.toastSays()) !== MAKING, 10_000);
       if (await pill(making.id)) throw new Error("a pill showed for the clip once it was handed over");
       // Taken where it is (Nautilus): its file is another app's now, kept once
       // the row made for the drag goes. Copied (Dolphin): the app's goes.
@@ -367,7 +391,7 @@ exec '${real}' "$@"
         throw new Error(`the app's file ${path.basename(first.file)} went, though another app took it`);
       if (await listed(making.id)) throw new Error("the clip handed over was still listed with the jobs");
       ctx.log(
-        `let go ${first.at - dropped} ms before the file landed (${first.length.toFixed(2)} s long); the app's file ${copies ? "gone (copied)" : "kept as another app's"}; listed with the jobs meanwhile, no pill`,
+        `let go ${first.at - dropped} ms before the file landed (${first.length.toFixed(2)} s long); the app's file ${copies ? "gone (copied)" : "kept as another app's"}; listed with the jobs meanwhile, no pill, the toast "${told}"`,
       );
       await app.click('.bar button[aria-label="Pause"]').catch(() => {});
 
@@ -425,8 +449,7 @@ exec '${real}' "$@"
       const failed = await ended();
       if (failed.delivered || !failed.failed)
         throw new Error(`the page heard ${JSON.stringify(failed)} of a failed clip`);
-      const toast = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
-      if (!/Couldn't make the clip/.test(toast)) throw new Error(`the toast says "${toast}"`);
+      const toast = await saysAtLast(app, (t) => /Couldn't make the clip/.test(t));
       await settle();
       if (droppedIn(dest).length) throw new Error(`a clip that failed left ${droppedIn(dest).join(", ")}`);
       ctx.log(`its encode failed: nothing landed, the toast says "${toast}"`);
@@ -605,9 +628,8 @@ exec '${real}' "$@"
       const refused = await ended();
       if (!refused.finished_only || refused.receiver !== takerName)
         throw new Error(`the page heard ${JSON.stringify(refused)} of a drop on an app that takes finished files only`);
-      const said = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
       const want = `${takerName} takes finished files only. The clip is being made; drag it from the clip bar when it's ready.`;
-      if (said !== want) throw new Error(`the toast says "${said}", not "${want}"`);
+      const said = await saysAtLast(app, (t) => t === want);
       // (Qt's give up waiting; on macOS it gets no file at all.)
       if (!taker.said().some((l) => (mac ? / took 0 of /.test(l) : l.endsWith("gave up"))))
         throw new Error(`the app that takes finished files only says ${JSON.stringify(taker.said())}`);
@@ -652,8 +674,7 @@ exec '${real}' "$@"
       const refusedNow = await ended();
       if (!refusedNow.finished_only || refusedNow.receiver !== takerName)
         throw new Error(`the page heard ${JSON.stringify(refusedNow)} of a drop an app refused`);
-      const saidNow = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
-      if (saidNow !== want) throw new Error(`the toast says "${saidNow}", not "${want}"`);
+      const saidNow = await saysAtLast(app, (t) => t === want);
       if (!taker.said().some((l) => l.endsWith(" refused")))
         throw new Error(`the app says ${JSON.stringify(taker.said())}`);
       const [keptNow] = (await app.invoke("list_clips", { vodId: vod.id })).sort((a, b) => b.id - a.id);
@@ -966,8 +987,7 @@ async function onWindows(app, ctx) {
     const failed = await ended();
     if (failed.delivered || !failed.failed)
       throw new Error(`the page heard ${JSON.stringify(failed)} of a failed clip`);
-    const toast = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
-    if (!/Couldn't make the clip/.test(toast)) throw new Error(`the toast says "${toast}"`);
+    const toast = await saysAtLast(app, (t) => /Couldn't make the clip/.test(t));
     await sleep(1500);
     const errors = explorer.explorerDialogs();
     if (errors.length) throw new Error(`Explorer put up ${JSON.stringify(errors)} for a clip that failed`);
@@ -1080,9 +1100,8 @@ async function onWindows(app, ctx) {
     const takerName = "Windows PowerShell";
     if (!refused.finished_only || refused.receiver !== takerName)
       throw new Error(`the page heard ${JSON.stringify(refused)} of a drop on an app that takes finished files only`);
-    const said = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
     const want = `${takerName} takes finished files only. The clip is being made; drag it from the clip bar when it's ready.`;
-    if (said !== want) throw new Error(`the toast says "${said}", not "${want}"`);
+    const said = await saysAtLast(app, (t) => t === want);
     if (!taker.said().includes("gave nothing")) throw new Error(`the app says ${JSON.stringify(taker.said())}`);
     say("7, before it was made");
     await until(
@@ -1122,8 +1141,7 @@ async function onWindows(app, ctx) {
     const refusedNow = await ended();
     if (!refusedNow.finished_only || refusedNow.receiver !== takerName)
       throw new Error(`the page heard ${JSON.stringify(refusedNow)} of a drop an app refused`);
-    const saidNow = await until("the toast", async () => (await app.toastSays()) || false, 10_000);
-    if (saidNow !== want) throw new Error(`the toast says "${saidNow}", not "${want}"`);
+    const saidNow = await saysAtLast(app, (t) => t === want);
     if (!taker.said().includes("refused")) throw new Error(`the app says ${JSON.stringify(taker.said())}`);
     const [keptNow] = (await app.invoke("list_clips", { vodId: vod.id })).sort((a, b) => b.id - a.id);
     if (!keptNow || keptNow.id === kept.id) throw new Error("no clip kept of the drop refused");

@@ -328,6 +328,14 @@ export interface DragEnded {
   receiver: string | null;
 }
 
+/** A drag of clips' files out of the window let go on another app before
+ *  they were all made (clips.rs `DragMaking`): `drag`, as in `DragEnded`;
+ *  `making`, how many are still being made. */
+export interface DragMaking {
+  drag: number | null;
+  making: number;
+}
+
 /** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */
 export interface Clip {
   id: number;
@@ -955,6 +963,9 @@ export const events = {
   /** The system's drag of a clip's file (out of the window) is over, dropped or not: once
    *  its files went where it was dropped, or couldn't (`DragEnded`). */
   dragEnded: (cb: (ended: DragEnded) => void) => on<DragEnded>("drag-ended", (e) => cb(e.payload)),
+  /** A clip's file being dragged out was let go on another app while `making`
+   *  of the drag's clips were still being made (clips.rs `drag_clip`). */
+  dragMaking: (cb: (made: DragMaking) => void) => on<DragMaking>("drag-making", (e) => cb(e.payload)),
   /** How far a section downloading for edits is. */
   footageProgress: (cb: (fetching: Fetching) => void) => on<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits, or for the player (`player`), or with `error`, not. */

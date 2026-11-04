@@ -69,7 +69,7 @@ impl Cutter {
     pub(crate) fn dragged_out(&self, ids: &[i64], out_now: bool) {
         let mut out = self.out.lock().unwrap();
         for &id in ids {
-            if out_now {
+            if out_now && cfg!(target_os = "linux") {
                 out.insert(id);
             } else {
                 out.remove(&id);
@@ -1090,10 +1090,22 @@ pub(crate) async fn drag_clip(
         }
     };
     // Let go on another app: their making is listed with the jobs (Cancel
-    // there refuses them), until the drag is over.
+    // there refuses them), until the drag is over; and on Linux, if some are
+    // still being made, the page says so ("drag-making"), as the app they
+    // were let go on may show nothing till they come (Explorer and Finder
+    // show their own progress). Told from here, at once: this runs on the
+    // main thread, before the wait for the files holds what other threads
+    // send (`start_drag`).
     let dropped = move |out_now: bool| {
         cutter.state::<AppState>().clips.dragged_out(&out, out_now);
         crate::job_list::changed(&cutter);
+        if out_now && cfg!(target_os = "linux") {
+            // (The library busy: taken as still being made, as the drag does.)
+            let making = out.iter().filter(|&&id| matches!(made(&cutter, id), None | Some(Made::Making))).count();
+            if making > 0 {
+                let _ = cutter.emit("drag-making", DragMaking { drag: number, making });
+            }
+        }
     };
     drag_file(window, number, names, files, image, taken, dropped).await
 }
@@ -1113,6 +1125,15 @@ pub(crate) struct DragEnded {
     pub(crate) failed: Option<String>,
     pub(crate) finished_only: bool,
     pub(crate) receiver: Option<String>,
+}
+
+/// A drag of clips' files out of the window let go on another app before
+/// they were all made, as the page hears it ("drag-making"): the page's
+/// number for the drag, and how many are still being made.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub(crate) struct DragMaking {
+    pub(crate) drag: Option<u64>,
+    pub(crate) making: usize,
 }
 
 /// A file in a drag out of the window: the name it goes by where it's
