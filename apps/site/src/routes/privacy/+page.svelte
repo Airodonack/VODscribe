@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ISSUES } from "#lib/links.js";
+  import { HELP_MAILTO, ISSUES, SUPPORT_EMAIL } from "#lib/links.js";
 </script>
 
 <svelte:head>
@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated November 1, 2026</p>
+  <p class="muted">Last updated November 4, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -99,10 +99,12 @@
     when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
     page here and the VODscriptions page's demo load their annotations from dl.vodscribe.com. The pictures of the
     streamers they name come from img.vodscribe.com, which gets the streamer's site and login and your IP address, and
-    passes your browser on to Twitch's or Kick's own picture. The VODscriptions page's email link only opens your own
-    mail app.
+    passes your browser on to Twitch's or Kick's own picture. Its email links only open your own mail app.
   </p>
 
   <h2>Questions</h2>
-  <p>Open an issue on <a href={ISSUES} target="_blank" rel="noopener">GitHub</a>.</p>
+  <p>
+    Email <a href={HELP_MAILTO}>{SUPPORT_EMAIL}</a> about your data or to have it removed, or open an issue on
+    <a href={ISSUES} target="_blank" rel="noopener">GitHub</a>.
+  </p>
 </article>

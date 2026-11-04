@@ -165,7 +165,7 @@ def write_winget(dir: Path, version: str, sha256: str) -> None:
         + "PackageLocale: en-US\n"
         + "Publisher: Airodonack\n"
         + "PublisherUrl: https://vodscribe.com\n"
-        + "PublisherSupportUrl: https://github.com/Airodonack/VODscribe/issues\n"
+        + "PublisherSupportUrl: https://vodscribe.com/support\n"
         + "PrivacyUrl: https://vodscribe.com/privacy\n"
         + "PackageName: VODscribe\n"
         + "PackageUrl: https://vodscribe.com\n"

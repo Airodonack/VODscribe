@@ -73,6 +73,7 @@
     <footer>
       <span>Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
       <a href="/releases">Releases</a>
+      <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/licenses">Licenses</a>
       <a href={SOURCE} target="_blank" rel="noopener">Source</a>

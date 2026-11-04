@@ -4,7 +4,7 @@
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
-  import { ISSUES, PREMIUM, SOURCE, UNSIGNED } from "#lib/links.js";
+  import { PREMIUM, SOURCE, SUPPORT_EMAIL, UNSIGNED } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
@@ -53,8 +53,8 @@
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
-      a: "On the issue tracker, which the person who makes VODscribe reads.",
-      link: { text: "Open the issue tracker", href: ISSUES },
+      a: `Email problems to ${SUPPORT_EMAIL}, or post them on the issue tracker, where ideas go too.`,
+      link: { text: "Get support", href: "/support" },
     },
     {
       q: "Can I see the code?",

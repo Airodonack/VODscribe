@@ -12,7 +12,7 @@
   import { api } from "./api";
   import Icon from "./Icon.svelte";
   import Logo from "./Logo.svelte";
-  import { ISSUES } from "./links";
+  import { SUPPORT } from "./links";
   import { theme } from "./theme.svelte";
 
   let { error }: { error: string } = $props();
@@ -72,7 +72,7 @@
 
   <div class="links">
     <button class="link" onclick={() => api.showLibrary()}>Show the file</button>
-    <button class="link" onclick={() => openUrl(ISSUES)}>Report the problem</button>
+    <button class="link" onclick={() => openUrl(SUPPORT)}>Report the problem</button>
   </div>
 </div>
 

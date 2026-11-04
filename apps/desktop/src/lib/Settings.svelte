@@ -9,7 +9,7 @@
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
-  import { ISSUES, LICENSES, PRIVACY } from "./links";
+  import { LICENSES, PRIVACY, SUPPORT } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
   import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, videoSize } from "./platform";
   import Tip from "./Tip.svelte";
@@ -457,8 +457,8 @@
       <section>
         <span class="eyebrow">Help</span>
         <p class="muted hint">Something broken? Got an idea?</p>
-        <button class="link" onclick={() => openUrl(ISSUES)}
-          >Report a problem or suggest something <Icon name="external" size={12} /></button
+        <button class="link" onclick={() => openUrl(SUPPORT)}
+          >Get help or report a problem <Icon name="external" size={12} /></button
         >
       </section>
       <!-- What can't be taken back: its own subsection, marked so. -->
