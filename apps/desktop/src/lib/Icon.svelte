@@ -44,6 +44,12 @@
     lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
     pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+    // Lucide's video camera, smaller, with a chevron: below it pointing down
+    // (show the player), above it pointing up (hide it).
+    "player-show":
+      '<rect x="2" y="3" width="13" height="10" rx="2"/><path d="m15 9 6.2 3.1a.5.5 0 0 0 .8-.4V4.3a.5.5 0 0 0-.8-.4L15 7"/><path d="m8 17 4 4 4-4"/>',
+    "player-hide":
+      '<rect x="2" y="11" width="13" height="10" rx="2"/><path d="m15 17 6.2 3.1a.5.5 0 0 0 .8-.4v-7.4a.5.5 0 0 0-.8-.4L15 15"/><path d="m8 7 4-4 4 4"/>',
     "video-off":
       '<path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.248-3.062A.5.5 0 0 1 22 7.87v8.196"/><path d="M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2"/><path d="m2 2 20 20"/>',
     trash:

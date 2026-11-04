@@ -33,7 +33,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Help now leads to a support page. It lists email, the issue tracker and how to report a security problem.
 - Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Privacy.
 - A short window shows the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
-- The video's hide button sits with the controls. It's at the lower right beside full screen, and the button at the right of the VOD's title brings the video back.
+- The video's hide button sits with the controls. It's at their far right, and the button at the right of the VOD's title brings the video back.
 - Right-click opens the speed and Transcribe menus. Holding the button still works too.
 - F11 toggles full screen too. On Linux and Windows it works as F does.
 - Fixes:

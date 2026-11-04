@@ -656,7 +656,7 @@
         aria-label={toggleLabel}
         title={toggleLabel}
       >
-        <Icon name="chevron-down" size={16} />
+        <Icon name="player-show" size={16} />
       </button>
     {/if}
   {/snippet}

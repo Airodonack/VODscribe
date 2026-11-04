@@ -223,12 +223,6 @@
       <Icon name="keyboard" size={16} />
     </button>
   {/if}
-  <!-- Full screen has nothing to show once the video is hidden: not there. -->
-  {#if hide && !fullscreen}
-    <button class="control collapse" onclick={hide.run} aria-expanded="true" aria-label={hide.label} title={hide.label}>
-      <Icon name="video-off" size={16} />
-    </button>
-  {/if}
   {#if canFullscreen}
     <button
       class="control"
@@ -237,6 +231,13 @@
       title={fullscreen ? "Exit full screen (Esc)" : `Full screen${keyHint("fullscreen.toggle")}`}
     >
       <Icon name={fullscreen ? "minimize" : "maximize"} size={16} />
+    </button>
+  {/if}
+  <!-- At the far right, where the header's Show player is once the video is
+       hidden; full screen has nothing to show then, so it's not there. -->
+  {#if hide && !fullscreen}
+    <button class="control collapse" onclick={hide.run} aria-expanded="true" aria-label={hide.label} title={hide.label}>
+      <Icon name="player-hide" size={16} />
     </button>
   {/if}
 </div>
