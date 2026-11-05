@@ -49,8 +49,10 @@ pub(crate) struct Cutter {
     copies: Arc<Mutex<HashMap<i64, crate::clipboard::CopiedFile>>>,
     /// Clips made only for a drag out of the window, let go on another app
     /// and not yet handed over: listed with the jobs (`job_list`), which
-    /// leaves out those still in the window's drag, or over.
-    out: Mutex<HashSet<i64>>,
+    /// leaves out those still in the window's drag, or over. Each with how
+    /// many such drags it's in: the same clip can be dragged out again while
+    /// the first still hands it over.
+    out: Mutex<HashMap<i64, usize>>,
 }
 
 impl Cutter {
@@ -65,14 +67,17 @@ impl Cutter {
     }
 
     /// Clips `ids`, dragged out of the window, were let go on another app
-    /// (`out_now`), or the drag is over (not).
+    /// (`out_now`), or that drag, let go there, is over (not).
     pub(crate) fn dragged_out(&self, ids: &[i64], out_now: bool) {
         let mut out = self.out.lock().unwrap();
         for &id in ids {
             if out_now {
-                out.insert(id);
-            } else {
-                out.remove(&id);
+                *out.entry(id).or_default() += 1;
+            } else if let Some(drags) = out.get_mut(&id) {
+                *drags -= 1;
+                if *drags == 0 {
+                    out.remove(&id);
+                }
             }
         }
     }
@@ -80,7 +85,7 @@ impl Cutter {
     /// Whether clip `id`, made only for a drag out, was let go on another app
     /// and is still being handed over (`dragged_out`).
     pub(crate) fn is_out(&self, id: i64) -> bool {
-        self.out.lock().unwrap().contains(&id)
+        self.out.lock().unwrap().contains_key(&id)
     }
 
     /// Starts cutting, once the app's state is in place, beginning with the
@@ -1091,8 +1096,13 @@ pub(crate) async fn drag_clip(
     };
     // Let go on another app: their making is listed with the jobs (Cancel
     // there refuses them), until the drag is over.
+    // Counted once each way, and over only if it was let go there.
     let (asked, telling) = (out.clone(), cutter.clone());
+    let let_go = AtomicBool::new(false);
     let dropped = move |out_now: bool| {
+        if let_go.swap(out_now, std::sync::atomic::Ordering::SeqCst) == out_now {
+            return;
+        }
         cutter.state::<AppState>().clips.dragged_out(&out, out_now);
         crate::job_list::changed(&cutter);
     };
@@ -2340,6 +2350,23 @@ mod tests {
         assert_eq!(listed(hidden).map(|(_, label)| label).as_deref(), Some("dragged"));
         cutter.dragged_out(&[hidden], false);
         assert!(listed(hidden).is_none(), "listed once the drag was over");
+    }
+
+    /// The same clip dragged out again while the first drag still hands it
+    /// over (let go on a file manager that copies it as it's made): the
+    /// first's end left the second's making out of the list of jobs.
+    #[test]
+    fn a_drag_clip_stays_listed_till_its_last_drag_out_is_over() {
+        let (db, vod) = library();
+        let hidden = db.add_clip(vod, 1.0, 2.0, "dragged", false).unwrap().id;
+        let cutter = Cutter::new();
+        let listed = |id| crate::job_list::describe(&db, crate::job_list::Queue::Render, id, |id| cutter.is_out(id));
+        cutter.dragged_out(&[hidden], true);
+        cutter.dragged_out(&[hidden], true);
+        cutter.dragged_out(&[hidden], false);
+        assert!(listed(hidden).is_some(), "left out as the first drag ended, the second still handing it over");
+        cutter.dragged_out(&[hidden], false);
+        assert!(listed(hidden).is_none(), "listed once both were over");
     }
 
     /// Several clips made at once went in one at a time: one that failed
