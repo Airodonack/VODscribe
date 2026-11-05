@@ -248,9 +248,11 @@ function states(dir) {
         until("the chat fetched", async () => (await listed(app, s.chat.id))?.chat === "done", 3 * MINUTE),
     },
     {
-      // Removed from the library (its files kept), a VOD is erased as the
-      // app quits, for three seconds at most (vods.rs, SWEEP_AT_QUIT): here
-      // one with a long chat, each time a new one, its chat fetched whole.
+      // Removed from the library (its files kept), a VOD is erased at once,
+      // a job beside the encodes (vods.rs, Sweeper), and the quit doesn't
+      // wait for it (the rest is erased at the next start): here one with a
+      // long chat, each time a new one, its chat fetched whole, quit while
+      // it's being erased.
       name: "a VOD with a long chat just removed",
       short: "sweep",
       times: 3,
@@ -292,8 +294,7 @@ async function timeQuits(first, ctx) {
   if (first.driver.proc.stderr === undefined)
     ctx.skip("needs --driver bridge: under WebDriver the driver ends the app from outside");
   // The window count and the quit keys go through xdotool, so far.
-  const cannot =
-    os.unavailable() ?? (process.platform !== "linux" ? "the system's keys are driven on Linux only" : null);
+  const cannot = os.unavailable({ linuxOnly: "the system's keys" });
   if (cannot) ctx.skip(cannot);
   const only = process.env.E2E_EXIT_STATES?.split(",");
   const measures = new Measures(ctx, "perf-exit");

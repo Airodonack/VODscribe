@@ -39,9 +39,15 @@
   let view = $state<View>({ kind: untrack(() => idle) ? "idle" : "loading" });
 
   /** Opens the annotations in `text` (named `name`), with the chat in
-   *  `chat` (null: none; undefined: still to come). The VOD's id, or null
-   *  with the reason shown. */
-  function open(text: string, name: string, chat: string | null | undefined, from: string): number | null {
+   *  `chat` (null: none; undefined: still to come) and the waveform maybe
+   *  at `peaks`. The VOD's id, or null with the reason shown. */
+  function open(
+    text: string,
+    name: string,
+    chat: string | null | undefined,
+    peaks: string | null,
+    from: string,
+  ): number | null {
     try {
       let value: unknown;
       try {
@@ -57,7 +63,7 @@
         } catch {
           throw new Error("The chat file isn't a JSON file.");
         }
-      const id = openAnnotations(annotations, chat === undefined ? undefined : chat === null ? null : chatValue);
+      const id = openAnnotations(annotations, chat === undefined ? undefined : chat === null ? null : chatValue, peaks);
       const s = annotations.source;
       // The rows exported are the pane's: the marks open, once they're this VOD's.
       review = new Review(s.platform, s.id, () =>
@@ -85,13 +91,17 @@
         kind: "error",
         message: source.custom
           ? `Couldn't load ${source.annotations}. This page can load files from this site and dl.vodscribe.com; drop others on it instead.`
-          : "Couldn't load this VOD's annotations: they may not be on VODscribe, or the connection failed.",
+          : "Couldn't load this VOD's VODscription: it may not be on VODscribe, or the connection failed.",
       };
       return;
     }
     if (res.status === 404 || res.status === 403) return void (view = { kind: "missing" });
-    if (!res.ok) return void (view = { kind: "error", message: `Couldn't load the annotations (${res.status}).` });
-    const id = open(await res.text(), "The annotations file", undefined, where);
+    if (!res.ok)
+      return void (view = {
+        kind: "error",
+        message: `Couldn't load the ${source.custom ? "annotations file" : "VODscription"} (${res.status}).`,
+      });
+    const id = open(await res.text(), "The annotations file", undefined, source.peaks, where);
     if (id === null) return;
     // The chat comes after: the transcript and player are usable meanwhile.
     try {
@@ -117,7 +127,7 @@
     const picked = pickDropped(files);
     if ("error" in picked) return void (view = { kind: "error", message: picked.error });
     const [text, chat] = await Promise.all([picked.annotations.text(), picked.chat?.text() ?? null]);
-    open(text, picked.annotations.name, chat, picked.annotations.name);
+    open(text, picked.annotations.name, chat, null, picked.annotations.name);
   }
 
   let review = $state<Review | null>(null);
@@ -192,7 +202,7 @@
         : ''}: the VOD with its transcript, chat and chapters, on VODscribe."
     />
   {:else if !idle}
-    <title>A VOD with annotations · VODscribe</title>
+    <title>A VOD with its VODscription · VODscribe</title>
   {/if}
 </svelte:head>
 
@@ -207,9 +217,9 @@
     <div class="bar">
       <p class="muted small">
         {#if view.kind === "open"}
-          A VOD with annotations, from {view.from}. Transcribing and clipping VODs of your own needs the app.
+          A VOD with its VODscription, from {view.from}. Transcribing and clipping VODs of your own needs the app.
         {:else}
-          VODs with annotations
+          VODs with VODscriptions
         {/if}
       </p>
       <button class="small" onclick={() => picker?.click()}>Open a file…</button>
@@ -246,7 +256,7 @@
       {:else if view.kind === "missing"}
         <h1>No VOD here</h1>
         <p class="muted">
-          There are no annotations for this VOD on VODscribe. Check the link, or open an annotations file from your
+          There's no VODscription for this VOD on VODscribe. Check the link, or open an annotations file from your
           computer: it's read here, in your browser, and isn't uploaded.
         </p>
       {:else}

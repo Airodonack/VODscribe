@@ -4,8 +4,9 @@
   // and the clips made (an underline). A left click or drag only ever moves the
   // playhead; a mark's flag selects it and drags it (a frame at a time); an
   // Alt-drag (Option on a Mac) makes the stretch under the pointer a clip and
-  // drags it out of the window (dragout.ts), and an Alt-click picks that
-  // stretch (selection.svelte.ts). Holding the middle button and
+  // drags it out of the window (dragout.ts), lit with a dashed outline while
+  // it's carried (from outside what's picked, the pick is let go), and an
+  // Alt-click picks that stretch (selection.svelte.ts). Holding the middle button and
   // dragging pans (sideways) and zooms (up and down) about where it was
   // pressed; a middle click fits the whole VOD. The wheel zooms around the
   // pointer and Shift+wheel (or sideways) pans; zoomed in, it follows the
@@ -35,7 +36,8 @@
   // instead, as a stretch is carried from a VOD's. Dragging a band's edge
   // moves that end of the piece in its VOD, a frame at a time, to make it
   // shorter or longer: only that piece, the pieces past that edge moving
-  // aside as it goes, and the player shows the frame the edge is on. Footage still downloading
+  // aside as it goes, a dashed guide down the waveform at the edge, and the
+  // player shows the frame the edge is on. Footage still downloading
   // (a VOD from a site) is darker until it's in, and its piece's band shows
   // a spinner and how much is.
   //
@@ -61,7 +63,7 @@
     tickStep,
     waveformGaps,
   } from "./media";
-  import { howOf, picks, snippets, type Snippet } from "./selection.svelte";
+  import { background, howOf, picks, snippets, type Snippet } from "./selection.svelte";
   import type { How } from "./pick";
   import { carryChosen, carrySnippets } from "./bulk";
   import { carry, stretchAt, type CarryHome } from "./dragout";
@@ -142,8 +144,10 @@
     /** What's done with an edit's pieces in the lane. */
     onpiece?: {
       move: (id: number, index: number) => void;
-      /** Makes it `start`..`end` of its VOD (an edge was dragged). */
-      resize: (id: number, start: number, end: number) => void;
+      /** Makes it `start`..`end` of its VOD (its `side`'s edge was dragged). */
+      resize: (id: number, start: number, end: number, side: "start" | "end") => void;
+      /** Its `side`'s edge pressed and let go, not dragged. */
+      handled?: (id: number, side: "start" | "end") => void;
       /** While an edge is dragged: where it is in its VOD (null once it's let go). */
       resizing?: (id: number, side: "start" | "end", at: number | null) => void;
       /** Carries it out; `home` is the timeline, where coming back moves it again. */
@@ -361,8 +365,10 @@
   let drag = $state<Drag | null>(null);
   let hover = $state<number | null>(null);
 
-  // The stretch being taken out of the window, lit up while it's made.
-  let taking = $state<{ start: number; end: number } | null>(null);
+  // The stretches an Alt-drag grabbed, lit from the drag's start until it's
+  // dropped or let go: a look of their own, apart from the picked ones', so
+  // it's plain which the drag carries.
+  let grabbed = $state<{ start: number; end: number }[]>([]);
 
   /** The modifier that drags a stretch out: Alt (Option on a Mac). Ctrl stays free for selecting. */
   const dragsOut = (e: PointerEvent) => e.altKey;
@@ -474,6 +480,9 @@
         drag = { kind: "piece", id: piece.id, x: e.clientX, dx: 0, to: index, moved: false };
         return;
       }
+      // A plain click on the timeline is on background: what's picked goes
+      // (selection.svelte.ts), a stretch selected stays.
+      background();
       drag = { kind: "scrub" };
       follow = true;
       onseek(timeAt(e.clientX));
@@ -508,8 +517,10 @@
       cuts.selected = mark.id;
       cuts.clearSelection();
     } else {
-      // Anywhere else lets go of the cut (and the selection's edge), but
-      // not of the selection: I, a click to move the playhead, then O.
+      // Anywhere else lets go of the cut (and the selection's edge), and of
+      // what's picked (a click on background), but not of the selection: I,
+      // a click to move the playhead, then O.
+      background();
       drag = { kind: "scrub" };
       cuts.selected = null;
       cuts.selectedEdge = null;
@@ -556,15 +567,13 @@
         if (range) void takeOut(range, e.clientX, e.clientY);
         return;
       }
-      const piece = pieces?.find((p) => p.id === id);
-      if (!piece) return;
       // A stretch between cuts in the piece goes as itself, not the whole
       // piece (picked with others, with them).
+      const piece = pieces?.find((p) => p.id === id);
+      if (!piece) return;
       const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
-      if (seg && !(near(seg.start, piece.start) && near(seg.end, piece.end))) {
-        if (snippets.has(seg)) return carryChosen(boxOf(seg), e.clientX, e.clientY);
-        return carrySnippets([seg], boxOf(seg), e.clientX, e.clientY);
-      }
+      if (seg && !(near(seg.start, piece.start) && near(seg.end, piece.end)))
+        return void takeOut(seg, e.clientX, e.clientY);
       drag = { kind: "piece", id: piece.id, x: pressX, dx: 0, to: pieces!.indexOf(piece), moved: false };
       return onMove(e);
     }
@@ -649,15 +658,22 @@
   }
 
   /** Carries `range` (dragout.ts): to the clip bar, or out of the window as a clip's file;
-   *  picked with others, what's picked (bulk.ts); picked alone, as it would unpicked. */
+   *  picked with others, what's picked (bulk.ts); picked alone, as it would unpicked.
+   *  Grabbed from outside what's picked, the pick is let go, as a file manager's drag
+   *  of a file not selected carries that file alone. On an edit's timeline it goes
+   *  as a stretch of the edit (bulk.ts), not as a VOD's. */
   async function takeOut(range: { start: number; end: number }, px: number, py: number) {
     const from = boxOf(range);
-    if (snippets.size > 1 && snippets.has({ kind: "segment", ...range })) return carryChosen(from, px, py);
-    taking = range;
+    const seg: Snippet = { kind: "segment", start: range.start, end: range.end };
+    const withOthers = snippets.has(seg);
+    if (!withOthers) snippets.clear();
+    grabbed = withOthers && snippets.size > 1 ? chosen.map((c) => ({ start: c.start, end: c.end })) : [range];
     try {
-      if (vod) await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
+      if (withOthers && snippets.size > 1) await carryChosen(from, px, py);
+      else if (!marking) await carrySnippets([seg], from, px, py);
+      else if (vod) await carry({ vod, start: range.start, end: range.end, ownPlayer, levels, from, x: px, y: py });
     } finally {
-      taking = null;
+      grabbed = [];
     }
   }
 
@@ -689,6 +705,15 @@
     return 0;
   }
 
+  // Where the edge being resized is on the edit's timeline, for a guide down
+  // the waveform there: what the edge lines up with shows, to the frame.
+  const guideAt = $derived.by(() => {
+    const r = resized;
+    const piece = r && pieces?.find((p) => p.id === r.id);
+    if (!r || !piece) return null;
+    return r.side === "end" ? piece.end + (r.end - r.from.end) : piece.start + (r.start - r.from.start);
+  });
+
   /** A time in a VOD to a tenth of a second: 1:02.4. */
   const tenths = (t: number) => formatFraction(t, 1);
 
@@ -700,13 +725,18 @@
     if (done?.kind === "resize") {
       onpiece?.resizing?.(done.id, done.side, null);
       if (done.moved && (done.start !== done.from.start || done.end !== done.from.end))
-        onpiece?.resize(done.id, done.start, done.end);
+        onpiece?.resize(done.id, done.start, done.end, done.side);
+      else onpiece?.handled?.(done.id, done.side);
     }
     if (done?.kind === "piece") {
-      // A click on a band goes to the piece; a drag moves it.
+      // A click on a band goes to the piece, letting go of what's picked
+      // as a click elsewhere on the timeline does; a drag moves it.
       const piece = pieces?.find((p) => p.id === done.id);
       if (done.moved && pieces?.findIndex((p) => p.id === done.id) !== done.to) onpiece?.move(done.id, done.to);
-      else if (!done.moved && piece) onseek(piece.start);
+      else if (!done.moved && piece) {
+        background();
+        onseek(piece.start);
+      }
     }
     if (done?.kind === "alt") pickAt(done.at, done.how);
     if (done?.kind === "view" && !done.moved) {
@@ -1070,11 +1100,22 @@
         ></div>
       {/if}
     {/each}
-    {#each [...highlight, taking, removing] as lit, i (i)}
+    {#each grabbed as g (`${g.start} ${g.end}`)}
+      {#if g.end > viewStart && g.start < viewStart + span}
+        <!-- A stretch an Alt-drag carries. -->
+        <div
+          class="grabbed"
+          data-segment="{g.start} {g.end}"
+          style:left={pct(Math.max(g.start, viewStart))}
+          style:width={widthPct(Math.max(g.start, viewStart), Math.min(g.end, viewStart + span))}
+        ></div>
+      {/if}
+    {/each}
+    {#each [...highlight, removing] as lit, i (i)}
       {#if lit && lit.end > viewStart && lit.start < viewStart + span}
         <div
           class="lit"
-          class:removing={i === highlight.length + 1}
+          class:removing={i === highlight.length}
           style:left={pct(Math.max(lit.start, viewStart))}
           style:width={widthPct(Math.max(lit.start, viewStart), Math.min(lit.end, viewStart + span))}
         ></div>
@@ -1091,6 +1132,10 @@
         ></span>
       {/if}
     {/each}
+    {#if guideAt !== null && guideAt >= viewStart && guideAt <= viewStart + span}
+      <!-- The edge of the piece being resized, down the waveform. -->
+      <span class="size-guide" style:left={pct(guideAt)}></span>
+    {/if}
     {#if going !== null && going >= viewStart && going <= viewStart + span}
       <span class="playhead going" style:left={pct(going)}></span>
     {/if}
@@ -1622,7 +1667,19 @@
     white-space: nowrap;
   }
 
-  /* The stretch Clip would take, or being taken out. */
+  /* A stretch an Alt-drag carries: dashed, so it reads apart from the
+     picked ones' solid outline. */
+  .grabbed {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border: 2px dashed var(--accent);
+    border-radius: 3px;
+    pointer-events: none;
+  }
+
+  /* The stretch Clip would take. */
   .lit {
     position: absolute;
     top: 0;
@@ -1792,6 +1849,16 @@
     bottom: 0;
     width: 1px;
     background: var(--cut);
+    pointer-events: none;
+  }
+
+  /* The edge of a piece being resized, carried down across the waveform. */
+  .size-guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    border-left: 1px dashed var(--text);
     pointer-events: none;
   }
 

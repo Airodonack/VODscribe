@@ -83,51 +83,22 @@ fn picture_from(from: f64) -> f64 {
     if from > 0.0 { from + KEYFRAME_GAP } else { 0.0 }
 }
 
-/// The footage of `start`..`end` of VOD `vod_id`, if there is some here.
-pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Option<Source>> {
+/// The footage of VOD `vod_id` here (`find` and `cover` look in it).
+enum Here {
+    /// Its own file: a file's, or its kept video. It has all of it.
+    Own(PathBuf),
+    /// Else each clip's file of it, then each section: from where it can
+    /// play to where it ends (the VOD's time), and what it is.
+    Files(Vec<(f64, f64, Source)>),
+}
+
+/// Where VOD `vod_id`'s footage is here; none if the VOD is gone.
+fn here(db: &Db, dir: &Path, vod_id: i64) -> Result<Option<Here>> {
     let Some(vod) = db.vod(vod_id)? else { return Ok(None) };
     let own = vod.source_path.clone().or(db.media_path(vod_id)?);
     if let Some(path) = own.map(PathBuf::from).filter(|p| p.is_file()) {
-        return Ok(Some(Source { path, offset: 0.0, section: None }));
+        return Ok(Some(Here::Own(path)));
     }
-    for clip in db.clips(vod_id)? {
-        if clip.status == ClipStatus::Ready
-            && clip.start <= start + EPSILON
-            && clip.end >= end - EPSILON
-            && let Some(path) = clip.file_path.map(PathBuf::from).filter(|p| p.is_file())
-        {
-            return Ok(Some(Source { path, offset: clip.start, section: None }));
-        }
-    }
-    let found = sections(dir, vod_id)
-        .into_iter()
-        .find(|(_, from, to)| picture_from(*from) <= start + EPSILON && *to >= end - EPSILON);
-    // Used now, for tidying.
-    if let Some((path, _, _)) = &found {
-        touch(path);
-    }
-    Ok(found.map(|(path, from, to)| Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) }))
-}
-
-/// Where the footage of `start`..`end` of VOD `vod_id` is here, in order:
-/// each stretch (from, to: the VOD's time) and the file it plays from, the
-/// one reaching furthest at each point (the VOD's own file, a clip's, a
-/// section, or `growing`, the section downloading, as far as it's in).
-/// What none of them holds is left out: there the player waits.
-pub fn cover(
-    db: &Db,
-    dir: &Path,
-    vod_id: i64,
-    start: f64,
-    end: f64,
-    growing: Option<&Growing>,
-) -> Result<Vec<(f64, f64, Source)>> {
-    let Some(vod) = db.vod(vod_id)? else { return Ok(Vec::new()) };
-    let own = vod.source_path.clone().or(db.media_path(vod_id)?);
-    if let Some(path) = own.map(PathBuf::from).filter(|p| p.is_file()) {
-        return Ok(vec![(start, end, Source { path, offset: 0.0, section: None })]);
-    }
-    // Each file: from where it can play, to where it ends, and what it is.
     let mut files: Vec<(f64, f64, Source)> = Vec::new();
     for clip in db.clips(vod_id)? {
         if clip.status == ClipStatus::Ready
@@ -143,6 +114,43 @@ pub fn cover(
             Source { path, offset: from, section: Some(section_stem(vod_id, from, to)) },
         ));
     }
+    Ok(Some(Here::Files(files)))
+}
+
+/// The footage of `start`..`end` of VOD `vod_id`, if there is some here.
+pub fn find(db: &Db, dir: &Path, vod_id: i64, start: f64, end: f64) -> Result<Option<Source>> {
+    let files = match here(db, dir, vod_id)? {
+        None => return Ok(None),
+        Some(Here::Own(path)) => return Ok(Some(Source { path, offset: 0.0, section: None })),
+        Some(Here::Files(files)) => files,
+    };
+    let found = files.into_iter().find(|(from, to, _)| *from <= start + EPSILON && *to >= end - EPSILON);
+    let found = found.map(|(_, _, source)| source);
+    // Used now, for tidying.
+    if let Some(source) = found.as_ref().filter(|s| s.section.is_some()) {
+        touch(&source.path);
+    }
+    Ok(found)
+}
+
+/// Where the footage of `start`..`end` of VOD `vod_id` is here, in order:
+/// each stretch (from, to: the VOD's time) and the file it plays from, the
+/// one reaching furthest at each point (the VOD's own file, a clip's, a
+/// section, or `growing`, the section downloading, as far as it's in).
+/// What none of them holds is left out: there the player waits.
+pub fn cover(
+    db: &Db,
+    dir: &Path,
+    vod_id: i64,
+    start: f64,
+    end: f64,
+    growing: Option<&Growing>,
+) -> Result<Vec<(f64, f64, Source)>> {
+    let mut files = match here(db, dir, vod_id)? {
+        None => return Ok(Vec::new()),
+        Some(Here::Own(path)) => return Ok(vec![(start, end, Source { path, offset: 0.0, section: None })]),
+        Some(Here::Files(files)) => files,
+    };
     if let Some(g) = growing.filter(|g| g.vod_id == vod_id) {
         let source = Source { path: g.path.clone(), offset: g.from, section: Some(section_stem(vod_id, g.from, g.to)) };
         files.push((picture_from(g.from), g.usable(), source));

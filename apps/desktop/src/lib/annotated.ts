@@ -4,7 +4,7 @@
 // chapters have no colour of their own). The data comes through the app's
 // commands (list_marks, transcript, vod_annotations), never from the file.
 
-import type { Activity, CastMember } from "./api";
+import type { Activity, CastMember, Vod } from "./api";
 
 /** The cast's colours, by their place in the cast: each reads on the light
  *  and the dark theme alike, and none is the accent. */
@@ -57,6 +57,39 @@ export function castDetail(m: CastMember): string {
   const said = [m.name, m.player ?? ""].map((n) => n.trim().toLowerCase());
   const aliases = m.aliases.filter((a) => a.trim() && !said.includes(a.trim().toLowerCase()));
   return [roleLabel(m.role), aliases.length ? `also ${aliases.join(", ")}` : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * The cast member whose channel the VOD is on, by the channel's name: the one
+ * with an account whose name, player or login is `channel` (any case), a
+ * streamer first. Their picture goes beside the channel's name in the VOD's
+ * heading and its library row. Undefined when none has an account.
+ */
+export function channelMember(cast: CastMember[], channel: string | null | undefined): CastMember | undefined {
+  const key = channel?.trim().toLowerCase();
+  if (!key) return undefined;
+  const is = (n: string | undefined) => n?.trim().toLowerCase() === key;
+  const found = cast.filter((m) => m.account && !isVoice(m) && (is(m.name) || is(m.player) || is(m.account.login)));
+  return found.find((m) => m.role.trim().toLowerCase() === "streamer") ?? found[0];
+}
+
+/**
+ * VOD `vod`'s own channel as an account, from the VOD itself, for when its
+ * annotations give its streamer none: on Twitch the login is the channel's
+ * name in lower case (when that name can be a login), on Kick it's in the
+ * VOD's address (kick.com/<login>/videos/…). None on YouTube, where the VOD
+ * has its channel's name and not its handle, nor for a file.
+ */
+export function channelAccount(vod: Pick<Vod, "platform" | "channel" | "url">): CastMember["account"] {
+  if (vod.platform === "twitch") {
+    const login = vod.channel?.trim().toLowerCase();
+    return login && /^[a-z0-9_]{1,25}$/.test(login) ? { platform: "twitch", login } : undefined;
+  }
+  if (vod.platform === "kick") {
+    const login = /^https:\/\/(?:www\.)?kick\.com\/([A-Za-z0-9_-]+)\/videos\//.exec(vod.url)?.[1];
+    return login ? { platform: "kick", login: login.toLowerCase() } : undefined;
+  }
+  return undefined;
 }
 
 /**

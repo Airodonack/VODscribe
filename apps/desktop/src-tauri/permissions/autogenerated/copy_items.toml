@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-copy-items"
+description = "Enables the copy_items command without any pre-configured scope."
+commands.allow = ["copy_items"]
+
+[[permission]]
+identifier = "deny-copy-items"
+description = "Denies the copy_items command without any pre-configured scope."
+commands.deny = ["copy_items"]

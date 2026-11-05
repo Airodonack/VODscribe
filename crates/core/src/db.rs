@@ -106,6 +106,10 @@ pub struct Vod {
     /// It brought in published annotations, and another version of them is
     /// published since (`annotations::Offer::newer`).
     pub annotations_newer: bool,
+    /// Its download is under way, waiting, paused or failed part way, with a
+    /// part file on this computer and nothing kept yet: the app shows that
+    /// file as it is (`pipeline::mark_partial`). False as read from the library.
+    pub partial: bool,
 }
 
 /// Whether annotations are published for a VOD, as the app last found out.
@@ -838,6 +842,7 @@ pub(crate) fn vod_from_row(r: &Row) -> rusqlite::Result<Vod> {
             (Some(seen), Some(imported)) => !crate::annotations_filter::same_version(&seen, &imported),
             _ => false,
         },
+        partial: false,
     })
 }
 
@@ -1022,8 +1027,17 @@ pub struct MarkState {
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_path, r.error, c.shown, c.revision,
      c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)";
-/// Joins a clip (`c`) to its first piece (`i`) and its render (`r`).
-pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (SELECT id FROM items WHERE clip_id = c.id AND parent IS NULL ORDER BY position, id LIMIT 1)
+/// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
+/// first piece in timeline order, inside a group if its timeline starts with
+/// one (a clip pasted or dropped at its start): a group has no stretch to read.
+pub(crate) const CLIP_JOIN: &str = "JOIN items i ON i.id = (
+       WITH RECURSIVE walk(id, vod_id, path) AS (
+         SELECT id, vod_id, printf('%010d.%015d', position, id) FROM items WHERE clip_id = c.id AND parent IS NULL
+         UNION ALL
+         SELECT t.id, t.vod_id, walk.path || '/' || printf('%010d.%015d', t.position, t.id)
+         FROM items t JOIN walk ON t.parent = walk.id
+       )
+       SELECT id FROM walk WHERE vod_id IS NOT NULL ORDER BY path LIMIT 1)
      JOIN renders r ON r.clip_id = c.id";
 
 pub(crate) fn clip_from_row(r: &Row) -> rusqlite::Result<Clip> {
@@ -1263,12 +1277,19 @@ impl Db {
     /// Inserts a VOD, or returns the existing row if it was already added.
     pub fn add_vod(&self, info: &VodInfo) -> Result<(Vod, bool)> {
         if let Some(existing) = self.find_vod(&info.platform, &info.platform_id)? {
-            // Taken out of the list but kept for other clips: listed again.
-            if !existing.listed {
+            if existing.listed {
+                return Ok((existing, false));
+            }
+            // Removed and erased, its row kept for the session as a gone
+            // source nothing uses (an undo may yet): what's left goes, and
+            // it's added anew rather than listed again empty.
+            if self.is_gone(existing.id)? && self.uses(existing.id)? <= 0 {
+                self.delete_vod(existing.id)?;
+            } else {
+                // Taken out of the list but kept for other clips: listed again.
                 self.atomically(|db| db.add_vod_clip(existing.id, &existing.info.title))?;
                 return Ok((self.vod(existing.id)?.expect("just found"), false));
             }
-            return Ok((existing, false));
         }
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
         let id = self.atomically(|db| {
@@ -1288,7 +1309,8 @@ impl Db {
         Ok((self.vod(id)?.expect("just inserted"), true))
     }
 
-    fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
+    /// The VOD of `platform`'s `platform_id` in the library, listed or not.
+    pub fn find_vod(&self, platform: &str, platform_id: &str) -> Result<Option<Vod>> {
         let sql = format!("SELECT {VOD_COLUMNS} FROM vods WHERE platform = ?1 AND platform_id = ?2");
         Ok(self.conn.query_row(&sql, params![platform, platform_id], vod_from_row).optional()?)
     }
@@ -1608,11 +1630,6 @@ impl Db {
             }))
     }
 
-    /// The VOD mark `id` is on, if it's there.
-    pub fn mark_vod(&self, id: i64) -> Result<Option<i64>> {
-        Ok(self.conn.query_row("SELECT vod_id FROM marks WHERE id = ?1", [id], |r| r.get(0)).optional()?)
-    }
-
     /// VOD `vod_id`'s marks, to be put back later with `restore_marks` (for undo).
     pub fn mark_states(&self, vod_id: i64) -> Result<Vec<MarkState>> {
         Ok(self
@@ -1659,19 +1676,6 @@ impl Db {
         let out = f(self)?;
         tx.commit()?;
         Ok(out)
-    }
-
-    /// Puts the library in the order of `ids`, which should list every VOD.
-    pub fn reorder(&mut self, ids: &[i64]) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        {
-            let mut stmt = tx.prepare("UPDATE clips SET position = ?2 WHERE whole_of = ?1")?;
-            for (i, id) in ids.iter().enumerate() {
-                stmt.execute(params![id, i as i64])?;
-            }
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// VOD `id`'s frame rate, once its video has been read (`set_rate`).
@@ -1756,6 +1760,35 @@ impl Db {
         self.clear_some_segments(vod_id, (limit / 3).max(1))
     }
 
+    /// How many of VOD `vod_id`'s chat messages and transcript segments are
+    /// left to erase (`delete_some_of`): how far an erasure is.
+    pub fn erase_left(&self, vod_id: i64) -> Result<usize> {
+        let count = |table: &str| -> Result<usize> {
+            let sql = format!("SELECT count(*) FROM {table} WHERE vod_id = ?1");
+            Ok(self.conn.query_row(&sql, [vod_id], |r| r.get::<_, i64>(0))? as usize)
+        };
+        Ok(count("chat")? + count("segments")?)
+    }
+
+    /// Rewrites both search indexes without the entries of rows deleted
+    /// since (`tidy_index`), and empties the WAL of the old pages: a VOD's
+    /// words gone from the files, with its row (`delete_vod`) or without.
+    pub fn tidy_indexes(&self) -> Result<()> {
+        self.tidy_index("chat_fts")?;
+        self.tidy_index("segments_fts")?;
+        // Copy the change into the main file and empty the WAL, which still
+        // holds the old pages. A read on another connection at the time keeps
+        // it from finishing, so it's tried a few times.
+        for _ in 0..5 {
+            let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).unwrap_or(1);
+            if busy == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
     /// Deletes up to `limit` of VOD `vod_id`'s chat messages; how many, 0 when
     /// none are left (a part at a time: see `delete_some_of`, `LibraryChat::clear`).
     pub fn clear_some_chat(&self, vod_id: i64, limit: usize) -> Result<usize> {
@@ -1788,19 +1821,7 @@ impl Db {
     /// and the search indexes' entries for them, tidied after it's gone.
     pub fn delete_vod(&self, id: i64) -> Result<()> {
         self.conn.execute("DELETE FROM vods WHERE id = ?1", [id])?;
-        self.tidy_index("chat_fts")?;
-        self.tidy_index("segments_fts")?;
-        // Copy the change into the main file and empty the WAL, which still
-        // holds the old pages. A read on another connection at the time keeps
-        // it from finishing, so it's tried a few times.
-        for _ in 0..5 {
-            let busy: i64 = self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0)).unwrap_or(1);
-            if busy == 0 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        Ok(())
+        self.tidy_indexes()
     }
 
     pub fn clear_segments(&self, vod_id: i64) -> Result<()> {
@@ -2219,7 +2240,7 @@ mod tests {
         let cut = db.add_mark(vod, "cut", 5.0, None).unwrap();
         db.add_mark(vod, "chapter", 1.0, Some("Intro")).unwrap();
         let before = db.mark_states(vod).unwrap();
-        assert_eq!(db.mark_vod(cut.id).unwrap(), Some(vod));
+        assert_eq!(db.mark_doc(cut.id).unwrap(), Some(MarkDoc::Vod(vod)));
 
         db.move_mark(cut.id, 7.0).unwrap();
         db.add_mark(vod, "highlight", 3.0, Some("note")).unwrap();
@@ -2977,6 +2998,37 @@ mod tests {
         assert!(db.add_vod(&info("d2")).unwrap().0.id > older);
     }
 
+    /// As a VOD removed from the library is pasted again while its erasure is
+    /// under way (desktop vods.rs `add_to_library` finishes the erasure first
+    /// where it can): the gone row goes with all that was left of it, and the
+    /// VOD is added anew, under an id never given before though the old one
+    /// was the newest. One removed but not yet marked gone is listed again,
+    /// the same row as it was.
+    #[test]
+    fn a_vod_added_back_while_being_erased_is_added_anew_under_a_new_id() {
+        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let older = db.add_vod(&info("older")).unwrap().0.id;
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let chat: Vec<_> = (0..5).map(|i| message(i as f64, "a", "hi")).collect();
+        db.add_chat(vod, &chat, &[]).unwrap();
+        db.insert_segments(vod, &[Segment { start: 0.0, end: 1.0, text: "hi".into(), words: Vec::new() }]).unwrap();
+        assert!(db.remove_entry(vod).unwrap(), "used by nothing now");
+        db.set_gone(vod).unwrap();
+        assert_eq!(db.delete_some_of(vod, 2).unwrap(), 2, "a part of its chat erased");
+        assert_eq!(db.erase_left(vod).unwrap(), 4, "three messages and a segment left");
+        let (again, created) = db.add_vod(&info("x")).unwrap();
+        assert!(created && again.listed && !db.is_gone(again.id).unwrap());
+        assert!(again.id > vod, "the gone VOD's id {vod} given again: {}", again.id);
+        assert!(db.vod(vod).unwrap().is_none(), "the gone row is still there");
+        assert_eq!(db.erase_left(vod).unwrap(), 0, "what was left of it went with its row");
+        assert_eq!(db.erase_left(again.id).unwrap(), 0);
+        assert!(db.vod(older).unwrap().is_some_and(|v| v.listed), "another VOD went too");
+        // Removed, its erasure not begun.
+        assert!(db.remove_entry(again.id).unwrap());
+        let (back, created) = db.add_vod(&info("x")).unwrap();
+        assert_eq!((back.id, created, back.listed), (again.id, false, true));
+    }
+
     #[test]
     fn audio_alone_by_file_type() {
         let db = Db::open(Path::new(":memory:")).unwrap();
@@ -3126,12 +3178,12 @@ mod tests {
 
     #[test]
     fn keeps_the_library_order() {
-        let mut db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
         let a = db.add_vod(&info("a")).unwrap().0.id;
         let b = db.add_vod(&info("b")).unwrap().0.id;
         let ids = |db: &Db| db.vods().unwrap().iter().map(|v| v.id).collect::<Vec<_>>();
         assert_eq!(ids(&db), [b, a], "newest first");
-        db.reorder(&[a, b]).unwrap();
+        db.reorder_library(&[crate::edits::LibraryItem::Vod(a), crate::edits::LibraryItem::Vod(b)]).unwrap();
         assert_eq!(ids(&db), [a, b]);
         let c = db.add_vod(&info("c")).unwrap().0.id;
         assert_eq!(ids(&db), [c, a, b], "added on top");

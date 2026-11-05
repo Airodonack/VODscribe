@@ -19,7 +19,7 @@
   const shown = $derived(offers.shown);
 </script>
 
-<Modal bind:open label="Transcript and annotations" small>
+<Modal bind:open label="VODscription" small>
   {#if shown}
     <div class="offer">
       {#if offers.stopped}
@@ -37,21 +37,21 @@
       {:else}
         <p class="title">{shown.vod.title}</p>
         {#if shown.offer.up_to_date && shown.unasked}
-          <p>When last checked, this VOD had the latest transcript and annotations.</p>
+          <p>When last checked, this VOD had the latest VODscription.</p>
         {:else if shown.offer.up_to_date}
-          <p>This VOD has the latest transcript and annotations already.</p>
+          <p>This VOD has the latest VODscription already.</p>
         {:else if shown.offer.newer}
-          <p>A newer transcript and annotations are available for this VOD.</p>
+          <p>A newer VODscription is available for this VOD.</p>
         {:else}
-          <p>A transcript and annotations are available for this VOD.</p>
+          <p>A VODscription is available for this VOD: a transcript, chapters and highlights.</p>
         {/if}
         {#if shown.offer.local_transcript && !shown.offer.up_to_date}
           <p class="warn-text">This replaces the transcript made on this computer.</p>
         {/if}
         {#if shown.unasked}<p class="muted small">{shown.unasked}</p>{/if}
         <p class="muted small">
-          Chapters and highlights come with them; the ones you made stay.
-          {#if shown.afterAdd}To find them, VODscribe sent only the VOD's site and id.{/if}
+          The chapters and highlights you made stay.
+          {#if shown.afterAdd}To find it, VODscribe sent only the VOD's site and id.{/if}
         </p>
         {#if offers.error}<p class="error-text">{offers.error}</p>{/if}
         <div class="buttons">
@@ -61,7 +61,7 @@
           <span class="space"></span>
           <button onclick={() => offers.close()} disabled={offers.busy}>Not now</button>
           <button class="primary" data-autofocus onclick={() => offers.use()} disabled={offers.busy}>
-            {offers.busy ? "Getting them…" : shown.offer.up_to_date ? "Replace anyway" : "Use"}
+            {offers.busy ? "Getting it…" : shown.offer.up_to_date ? "Replace anyway" : "Use"}
           </button>
         </div>
       {/if}

@@ -140,3 +140,34 @@ export function showsProgress(shown: number | null, shownStatus: Status, stretch
   const running = (s: Status) => s === "downloading" || s === "transcribing";
   return shown === stretch || (running(status) && !running(shownStatus));
 }
+
+/** A choice of the Transcribe menu (TranscribeFrom.svelte): a length in
+ *  seconds from where it opened, on to the end, or all of it from the start. */
+export type TranscribeChoice = { key: string; label: string; length?: number; whole?: boolean };
+const TRANSCRIBE_CHOICES: TranscribeChoice[] = [
+  { key: "300", label: "5 min", length: 300 },
+  { key: "900", label: "15 min", length: 900 },
+  { key: "3600", label: "1 hour", length: 3600 },
+  { key: "end", label: "to the end" },
+  { key: "whole", label: "the whole VOD", whole: true },
+];
+
+/** The stretch `choice` asks for from `from`, in a VOD `duration` long (if
+ *  known): its end null when it runs on to the VOD's end. */
+export function transcribeStretchOf(
+  choice: TranscribeChoice,
+  from: number,
+  duration: number | null,
+): { start: number; end: number | null } {
+  if (choice.whole) return { start: 0, end: null };
+  const end = choice.length === undefined ? null : from + choice.length;
+  return { start: from, end: end !== null && duration && end >= duration ? null : end };
+}
+
+/** The Transcribe menu's choices from `from`, in a VOD `duration` long, each
+ *  stretch once: near the end several lengths are all the rest of it, which
+ *  "to the end" says, and from the start that is "the whole VOD". */
+export function transcribeChoices(from: number, duration: number | null): TranscribeChoice[] {
+  const stretch = (c: TranscribeChoice) => JSON.stringify(transcribeStretchOf(c, from, duration));
+  return TRANSCRIBE_CHOICES.filter((c, i) => !TRANSCRIBE_CHOICES.slice(i + 1).some((d) => stretch(d) === stretch(c)));
+}

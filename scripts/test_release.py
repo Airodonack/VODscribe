@@ -45,6 +45,18 @@ First release.
 
 
 class ChangelogEntry(unittest.TestCase):
+    def test_the_tag_goes_on_the_version_commit(self):
+        entry = "- A new thing.\n- Fixes:\n  - A fixed thing.\n"
+        ok = "Version 0.7.1"
+        self.assertEqual(ready.commit_problems(ok, entry, "0.7.1", entry), [])
+        self.assertEqual(ready.commit_problems(ok, entry + "\nMore detail.\n", "0.7.1", entry), [])
+        fix = ready.commit_problems("e2e: a scenario waits longer", "A fix.", "0.7.1", entry)
+        self.assertEqual(len(fix), 1)
+        self.assertIn('not "Version 0.7.1"', fix[0])
+        short = ready.commit_problems(ok, "- A new thing.\n", "0.7.1", entry)
+        self.assertEqual(len(short), 1)
+        self.assertIn("lacks 2 line(s)", short[0])
+
     def test_matches_the_exact_version(self):
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.1"), ("- One.\n- Two.", False))
         self.assertEqual(release.changelog_entry(CHANGELOG, "0.1.0"), ("First release.", False))
@@ -129,8 +141,8 @@ class CargoVersion(unittest.TestCase):
     def test_the_real_files_agree(self):
         root = Path(__file__).resolve().parent.parent
         version = release.cargo_version((root / "Cargo.toml").read_text())
-        # In development (0.4.1-dev), the entry is the release's (0.4.1).
-        release.changelog_entry((root / "CHANGELOG.md").read_text(), version.split("-")[0])
+        # In development (0.4.1+dev), the entry is the release's (0.4.1).
+        release.changelog_entry((root / "CHANGELOG.md").read_text(), version.split("+")[0])
 
 
 def sign(secret: bytes, message: bytes) -> tuple[bytes, bytes]:
@@ -194,9 +206,24 @@ class EntryShape(unittest.TestCase):
         body = "- New.\n- Fixes:\n  - A fix.\n    ||||||| parent of 0123abc (A fix)\n  - Another."
         self.assertEqual(len(ready.entry_problems(body)), 1)
 
+    def test_a_long_headline(self):
+        self.assertEqual(ready.entry_problems("- Clips copy and paste. Ctrl+C copies, Ctrl+V pastes."), [])
+        long = ready.entry_problems("- Ctrl+C copies the selection or the clips picked, and Ctrl+V pastes them. More.")
+        self.assertEqual(len(long), 1)
+        self.assertIn('"Ctrl+C copies the selection or', long[0])
+        # A fix is held to it too; the full stop ends the headline only before a capital.
+        self.assertEqual(len(ready.entry_problems("- New.\n- Fixes:\n  - One, two, three, four, five, six, seven, eight, nine.")), 1)
+        self.assertEqual(len(ready.entry_problems("- Pasting works in v. two of edits, and more things too.")), 1)
+
+    def test_a_headline_with_a_colon_or_parenthesis(self):
+        self.assertEqual(len(ready.entry_problems("- Search learns from: names. More.")), 1)
+        self.assertEqual(len(ready.entry_problems("- Ctrl+A (⌘A) selects all. More.")), 1)
+        # In the detail they are fine, and so is a full stop inside `code`.
+        self.assertEqual(ready.entry_problems("- Search learns more words. Such as `from:a. B` (or `in:chat`)."), [])
+
     def test_the_real_entry(self):
         root = Path(__file__).resolve().parent.parent
-        version = release.cargo_version((root / "Cargo.toml").read_text()).split("-")[0]
+        version = release.cargo_version((root / "Cargo.toml").read_text()).split("+")[0]
         body, _ = release.changelog_entry((root / "CHANGELOG.md").read_text(), version)
         self.assertEqual(ready.entry_problems(body), [])
 
@@ -230,8 +257,8 @@ class Ledgers(unittest.TestCase):
 
 class NextDevelopmentVersion(unittest.TestCase):
     def test_is_the_next_patch_in_development(self):
-        self.assertEqual(ready.next_dev("0.4.0"), "0.4.1-dev")
-        self.assertEqual(ready.next_dev("1.2.9"), "1.2.10-dev")
+        self.assertEqual(ready.next_dev("0.4.0"), "0.4.1+dev")
+        self.assertEqual(ready.next_dev("1.2.9"), "1.2.10+dev")
 
 if __name__ == "__main__":
     unittest.main()

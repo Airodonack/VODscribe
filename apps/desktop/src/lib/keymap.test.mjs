@@ -107,6 +107,16 @@ test("each OS writes keys its own way", () => {
   assert.equal(first("linux", "mute.toggle"), "Shift+M");
 });
 
+test("F11 toggles full screen where the system means it to, beside F", () => {
+  for (const os of /** @type {Os[]} */ (["linux", "windows"])) {
+    assert.ok(isOn(os)(press("F11"), "fullscreen.toggle"), `F11 on ${os}`);
+    assert.ok(isOn(os)(press("f"), "fullscreen.toggle"), `F on ${os}`);
+  }
+  // On a Mac F11 shows the desktop, so only F.
+  assert.ok(!isOn("mac")(press("F11"), "fullscreen.toggle"));
+  assert.ok(isOn("mac")(press("f"), "fullscreen.toggle"));
+});
+
 test("ids are unique, and the defaults clash nowhere they could both be live", () => {
   const ids = ACTIONS.map((a) => a.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -310,6 +320,11 @@ function newApp(e, is, { typing }) {
   // VODs and edits selected removed.
   if (!typing && is(e, "select.all")) return "select all";
   if (!typing && is(e, "library.remove")) return "remove from the library";
+  // New (copyPaste.ts, from App.svelte `onWindowKey`): Ctrl+C, Ctrl+X and
+  // Ctrl+V, which were the web view's alone (outside text fields: nothing).
+  if (!typing && is(e, "edit.copy")) return "copy";
+  if (!typing && is(e, "edit.cut")) return "cut out";
+  if (!typing && is(e, "edit.paste")) return "paste";
   // New (App.svelte `onWindowKey`): the library and the pane's column shown or hidden.
   if (is(e, "view.library")) return "library shown or hidden";
   if (is(e, "view.pane")) return "pane shown or hidden";
@@ -317,7 +332,7 @@ function newApp(e, is, { typing }) {
 }
 
 const KEYS = [
-  ..."aAbBcCtTiIoOmMnNeEzZyYfFkKjJlLqQ ,.<>[]{};",
+  ..."aAbBcCtTiIoOmMnNeEzZyYfFkKjJlLqQvVxX ,.<>[]{};",
   "ArrowLeft",
   "ArrowRight",
   "ArrowUp",
@@ -388,6 +403,9 @@ const NEW = new Set([
   "remove clips",
   "library shown or hidden",
   "pane shown or hidden",
+  "copy",
+  "cut out",
+  "paste",
 ]);
 
 /** The deliberate differences met, by reason, with a press or two each. */

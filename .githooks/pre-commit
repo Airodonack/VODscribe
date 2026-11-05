@@ -11,4 +11,7 @@ fi
 if git diff --cached --name-only | grep -q '^apps/[^/]*/src/'; then
   pnpm --recursive lint >/dev/null 2>&1 || { echo "Frontend isn't formatted: run pnpm format" >&2; ok=1; }
 fi
+if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+  node scripts/check-workflows.mjs >/dev/null 2>&1 || { echo "A workflow file doesn't parse as a workflow: node scripts/check-workflows.mjs" >&2; ok=1; }
+fi
 exit $ok

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { fanned } from "./fanout";
 import { forget, kept, keptEach } from "./kept";
+import type { CopiedSaid } from "./clipboardText";
 
 /** A request's status, or a VOD's (the request its row shows; with none,
  *  "done" if all of it is transcribed, else "none"). */
@@ -39,6 +40,8 @@ export interface Vod {
   media: boolean;
   /** What plays here is audio alone (by its file type): no picture to show. */
   audio_only: boolean;
+  /** Its download, begun and not finished, has a part file here, which Show in folder shows as it is (crates/core `Vod::partial`). */
+  partial: boolean;
   published: string | null;
   /** When it started, RFC 3339 in UTC to the second: by its chat, else the site, else an annotations file (crates/core `db::MIGRATE_V33`). */
   started_at: string | null;
@@ -149,6 +152,10 @@ export interface Settings {
   ask_for_annotations: boolean;
   /** Whether the cast's pictures are asked of the image server (accounts.ts `AVATAR_BASE`); off, their initials show. */
   load_cast_pictures: boolean;
+  /** Whether the note on permission shows before downloading from a site (permission.ts). */
+  ask_before_downloading: boolean;
+  /** Whether MOV clips are suggested where DaVinci Resolve is on Linux (resolveHint.svelte.ts). */
+  suggest_mov_for_resolve: boolean;
 }
 
 /** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
@@ -294,6 +301,41 @@ export interface Line {
 
 export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
 
+/** A job in the library's list (desktop job_list.rs): a clip or an edit
+ *  being made, one at a time, or a removed VOD being erased, beside them. */
+export interface Job {
+  kind: "clip" | "edit" | "erase";
+  /** The clip's or edit's id; the VOD's, for an erasure. */
+  id: number;
+  /** The clip's or edit's title; the VOD's, for an erasure. */
+  label: string;
+  /** Begun: the one each queue is at. */
+  running: boolean;
+  /** 0..1; null while it isn't known (waiting, or just begun). */
+  progress: number | null;
+}
+
+/** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
+ *  whether they went to another app; if they never came, why; and whether
+ *  they didn't because the app let go on takes only files already made
+ *  (`finished_only`; `receiver`, its name, where the system gives it).
+ *  `drag` is the number `dragClips` was given for it (none for an edit's). */
+export interface DragEnded {
+  drag: number | null;
+  delivered: boolean;
+  failed: string | null;
+  finished_only: boolean;
+  receiver: string | null;
+}
+
+/** A drag of clips' files out of the window let go on another app before
+ *  they were all made, which it waits for (clips.rs `DragMaking`): `drag`, as in `DragEnded`;
+ *  `making`, how many are still being made. */
+export interface DragMaking {
+  drag: number | null;
+  making: number;
+}
+
 /** A range of a VOD kept as a video file of its own (crates/core `db::Clip`). */
 export interface Clip {
   id: number;
@@ -383,6 +425,18 @@ export interface EditView {
 
 /** A row of the library's list (crates/core `edits::LibraryItem`): VODs and edits share one order. */
 export type LibraryItem = { kind: "vod" | "edit"; id: number };
+
+/** What a paste made (`api.pasteItems`): the clips on the bar, or the edit as it is now and the stretch pasted. */
+export interface Pasted {
+  clips: Clip[];
+  /** The clips already on the bar that stretches pasted are: none made of those. */
+  found: Clip[];
+  view: EditView | null;
+  span: [number, number] | null;
+  /** Pieces left out, their VOD gone; copies left out, of another VOD. */
+  dropped: number;
+  refused: number;
+}
 
 export type MarkKind = "cut" | "chapter" | "highlight";
 
@@ -656,8 +710,10 @@ export const api = {
           headers: { overlay: JSON.stringify({ rect: overlay.rect, size: overlay.size }) },
         })
       : invoke<void>("set_screen_overlay", new Uint8Array(0)),
+  /** The page's size goes with the box: one measured at a size the
+   *  window's view no longer has is left out (present_linux.rs). */
   setScreen: (rect: { x: number; y: number; width: number; height: number } | null, under = false) =>
-    invoke<void>("set_screen", { rect, under }),
+    invoke<void>("set_screen", { rect, under, view: [innerWidth, innerHeight] }),
   /** Whether the picture can go under the page here (not under X11). */
   screenUnder: () => invoke<boolean>("screen_under"),
   listEdits: () => invoke<Edit[]>("list_edits"),
@@ -669,6 +725,14 @@ export const api = {
   addToEdit: (editId: number, clipId: number, index?: number) =>
     invoke<EditView>("add_to_edit", { editId, clipId, index }),
   /** Puts `start`..`end` of VOD `vodId` in edit `editId`, named `title` (else for what's said). */
+  /** Copies `items` (what's selected or picked) as they are now, for Ctrl+V; what to say and write of each. */
+  copyItems: (items: Put[]) => invoke<CopiedSaid[]>("copy_items", { items }),
+  /** What was written to the system's clipboard for the last copy: a paste goes ahead while it holds it. */
+  copiedText: (text: string) => invoke<void>("copied_text", { text }),
+  /** Pastes the last copy into `target`: on its clip bar if `bar`, else in its timeline at `at` seconds (in place of
+   *  `replace`); null if nothing was pasted (nothing copied, or `text`, what the system's clipboard holds, isn't the copy's). */
+  pasteItems: (target: Doc, bar: boolean, at: number | null, after: number | null, text: string) =>
+    invoke<Pasted | null>("paste_items", { target, bar, at, after, text }),
   /** Puts `items` (several picked) in edit `editId`, in order, as one change: on its clip bar if `bar`, else on its timeline at `index` (or last). */
   putInEdit: (editId: number, items: Put[], bar: boolean, index?: number) =>
     invoke<EditView>("put_in_edit", { editId, items, bar, index }),
@@ -695,8 +759,16 @@ export const api = {
     invoke<EditView>("remove_from_edit", { id, pieces, stretches, clips }),
   renderEdit: (id: number) => invoke<void>("render_edit_now", { id }),
   stopRender: (id: number) => invoke<void>("stop_render", { id }),
+  /** The jobs as they are now (then the `jobs` news). */
+  listJobs: () => invoke<Job[]>("list_jobs"),
+  /** Puts the clips and edits waiting in the order of `ids`. */
+  reorderJobs: (ids: number[]) => invoke<void>("reorder_jobs", { ids }),
+  /** Takes a job out of the list, or stops it: a clip shows it was canceled, an edit as not rendered; an
+   *  erasure goes on at the next start. */
+  cancelJob: (kind: Job["kind"], id: number) => invoke<void>("cancel_job", { kind, id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
-  dragEdit: (id: number) => invoke<void>("drag_edit", { id }),
+  /** Starts dragging edit `id`'s video out of the window; false if the button came up before it could. */
+  dragEdit: (id: number) => invoke<boolean>("drag_edit", { id }),
   moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
   deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */
@@ -717,9 +789,13 @@ export const api = {
     invoke<void>("forget_gone_clips", doc.kind === "vod" ? { vodId: doc.id } : { editId: doc.id }),
   showClip: (id: number) => invoke<void>("show_clip", { id }),
   /** Starts dragging the files of clips `ids` out of the window, in one drag; call while the mouse button is down. */
-  /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers. */
-  dragClips: (ids: number[], image?: Uint8Array) =>
-    invoke<void>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(",") } }),
+  /** `image` (a PNG) goes as the request's bytes, not a JSON array of numbers;
+   *  `drag`, the page's number for the drag, comes back with its end (`DragEnded`).
+   *  False if the button came up before the drag could begin. */
+  dragClips: (ids: number[], image: Uint8Array | undefined, drag: number) =>
+    invoke<boolean>("drag_clip", image ?? new Uint8Array(), { headers: { clip: ids.join(","), drag: String(drag) } }),
+  /** Whether a clip can be dragged out before its file is made (handed over once it is). */
+  dragBeforeMade: () => invoke<boolean>("drag_before_made"),
   /** VOD `id`'s frame at `time`, a small JPEG; empty if it doesn't play from a file here. */
   frame: (id: number, time: number) => invoke<ArrayBuffer>("frame", { id, time }).then((b) => new Uint8Array(b)),
   /** The app's own player's frame showing now, as width, height (4 bytes each,
@@ -741,8 +817,6 @@ export const api = {
         pixels: new ImageData(new Uint8ClampedArray(b, 20, w * h * 4), w, h),
       };
     }),
-  /** How many video decoders the player has started (for the end-to-end tests). */
-  playerDecodersStarted: () => invoke<number>("player_decoders_started"),
   /** Saves a copy of clip `id`'s file where the person picks; false if they canceled. */
   saveClip: (id: number) => invoke<boolean>("save_clip", { id }),
   /** Downloads VOD `id`'s whole video to play here (YouTube, Twitch, Kick). */
@@ -758,9 +832,10 @@ export const api = {
   libraryOrder: () => invoke<LibraryItem[]>("library_order"),
   reorderLibrary: (items: LibraryItem[]) => invoke<void>("reorder_library", { items }),
   /** Takes a VOD out of the library; with `deleteVideo`, erases it now, first keeping the stretches edits
-   *  use (failing with "realize: …" if it can't), or not (`anyway`: those pieces become holes). */
+   *  use, or not (`anyway`: those pieces become holes). If they can't be kept, nothing is removed and
+   *  the answer is why; otherwise null. */
   deleteVod: (id: number, deleteVideo = false, anyway = false) =>
-    invoke<void>("delete_vod", { id, deleteVideo, anyway }),
+    invoke<string | null>("delete_vod", { id, deleteVideo, anyway }),
   retryVod: (id: number) => invoke<void>("retry_vod", { id }),
   cancelVod: (id: number) => invoke<void>("cancel_vod", { id }),
   /** Ends request `id` alone, keeping the lines it wrote. */
@@ -856,6 +931,8 @@ export const events = {
   vodProgress: (cb: (id: number, stretch: number, status: Status, progress: number) => void) =>
     on<[number, number, Status, number]>("vod-progress", (e) => cb(...e.payload)),
   vodRemoved: (cb: (id: number) => void) => on<number>("vod-removed", (e) => cb(e.payload)),
+  /** The list of jobs (clips and edits being made, removed VODs being erased), whenever it changes. */
+  jobs: (cb: (jobs: Job[]) => void) => on<Job[]>("jobs", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
   annotationsFound: (cb: (id: number) => void) => on<number>("annotations-found", (e) => cb(e.payload)),
   /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */
@@ -885,8 +962,12 @@ export const events = {
   editProgress: (cb: (id: number, progress: number) => void) =>
     on<{ id: number; progress: number }>("edit-progress", (e) => cb(e.payload.id, e.payload.progress)),
   editRemoved: (cb: (id: number) => void) => on<number>("edit-removed", (e) => cb(e.payload)),
-  /** The system's drag of a clip's file (out of the window) is over, dropped or not. */
-  dragEnded: (cb: () => void) => on("drag-ended", () => cb()),
+  /** The system's drag of a clip's file (out of the window) is over, dropped or not: once
+   *  its files went where it was dropped, or couldn't (`DragEnded`). */
+  dragEnded: (cb: (ended: DragEnded) => void) => on<DragEnded>("drag-ended", (e) => cb(e.payload)),
+  /** A clip's file being dragged out was let go on another app while `making`
+   *  of the drag's clips were still being made (clips.rs `drag_clip`). */
+  dragMaking: (cb: (made: DragMaking) => void) => on<DragMaking>("drag-making", (e) => cb(e.payload)),
   /** How far a section downloading for edits is. */
   footageProgress: (cb: (fetching: Fetching) => void) => on<Fetching>("footage-progress", (e) => cb(e.payload)),
   /** Footage of VOD `vod_id` downloaded for edits, or for the player (`player`), or with `error`, not. */

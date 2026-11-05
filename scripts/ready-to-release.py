@@ -7,12 +7,17 @@ publishes, so that stays a person's decision. Fails (listing every problem)
 unless:
 
   git        the working tree is clean, on main, and the same commit as origin/main
-  version    Cargo.toml's version is a release (not 0.4.1-dev: between releases
-             main carries the next version with -dev; the app, its installers
+  version    Cargo.toml's version is a release (not 0.4.1+dev: between releases
+             main carries the next version with +dev; the app, its installers
              and the site all take theirs from it), has a dated CHANGELOG.md
              entry, Cargo.lock agrees, and its tag doesn't exist yet
+  commit     HEAD is the "Version X.Y.Z" commit and its body carries the entry
+             (the tag goes on it and nothing else: a fix after it makes the
+             release the next patch number)
   changelog  the entry's new behaviour comes first and its fixes last, as
-             sub-bullets under one closing "- Fixes:" bullet
+             sub-bullets under one closing "- Fixes:" bullet, and every
+             bullet opens with a headline of eight words or fewer, with no
+             colon or parenthesis (the releases page shows it plain)
   e2e        the end-to-end tests' ledgers (tests/e2e: durations.json,
              flaky.json, budgets.json) name only scenarios that exist
   CI         the checks and the installer builds passed on this very commit
@@ -80,6 +85,54 @@ def entry_problems(body: str) -> list[str]:
     # A merge's or a rebase's conflict left in, which the releases page would show.
     if any(re.match(r"\s*(<{7}|\|{7}|={7}|>{7})( |$)", line) for line in lines):
         problems.append("it has a merge conflict's marker left in")
+    # Each bullet opens with a short headline, which the releases page shows
+    # plain and the rest muted.
+    for line in lines:
+        bullet = re.match(r"\s*- (.*)", line)
+        if bullet and bullet[1] != "Fixes:" and (why := headline_problem(bullet[1])):
+            problems.append(f'the bullet "{" ".join(bullet[1].split()[:5])}..." {why}')
+    return problems
+
+
+HEADLINE_WORDS = 8
+
+
+def headline(text: str) -> str:
+    """A bullet's first sentence, split as the releases page splits it
+    (apps/site/src/lib/changelog.ts `sentences`): at the first ". " followed
+    by a capital letter outside a `code` run, or at the end."""
+    for m in re.finditer(r"\. (?=[A-Z])", text):
+        before = text[: m.start() + 1]
+        if before.count("`") % 2 == 0:
+            return before
+    return text
+
+
+def headline_problem(text: str) -> str:
+    """Why a bullet's headline is too long or not plain, or "" when it's fine."""
+    first = headline(text)
+    words = len(first.split())
+    if words > HEADLINE_WORDS:
+        return f"opens with {words} words before its first full stop (at most {HEADLINE_WORDS})"
+    if ":" in first or "(" in first:
+        return "has a colon or a parenthesis in its headline"
+    return ""
+
+
+def commit_problems(subject: str, message: str, version: str, entry: str) -> list[str]:
+    """What's wrong with the commit to tag: it is the version commit, and its
+    body carries the changelog entry (GitHub's view of the tag shows the
+    commit, so the message is the release notes). v0.6.0 and v0.7.0 were
+    tagged on e2e fixes pushed after the version commit; a fix after it
+    makes the release the next patch number, with a new version commit."""
+    problems = []
+    if subject.strip() != f"Version {version}":
+        problems.append(f'HEAD is "{subject.strip()}", not "Version {version}": the tag goes on the version commit, last before the tag')
+        return problems
+    body = {line.strip() for line in message.splitlines()}
+    missing = [line.strip() for line in entry.splitlines() if line.strip().startswith("- ") and line.strip() not in body]
+    if missing:
+        problems.append(f"the version commit's body lacks {len(missing)} line(s) of CHANGELOG.md's entry, first: {missing[0][:60]}")
     return problems
 
 
@@ -113,9 +166,9 @@ def unmeasured(e2e: Path) -> list[str]:
 
 
 def next_dev(version: str) -> str:
-    """The version main carries after `version` is released: 0.4.0 -> 0.4.1-dev."""
-    major, minor, patch = (int(n) for n in version.split("-")[0].split(".")[:3])
-    return f"{major}.{minor}.{patch + 1}-dev"
+    """The version main carries after `version` is released: 0.4.0 -> 0.4.1+dev."""
+    major, minor, patch = (int(n) for n in version.split("+")[0].split(".")[:3])
+    return f"{major}.{minor}.{patch + 1}+dev"
 
 
 def main() -> None:
@@ -131,16 +184,17 @@ def main() -> None:
     if sha != run("git", "rev-parse", "origin/main"):
         problems.append("this commit isn't origin/main: push, or pull")
 
-    if "-" in version:
-        problems.append(f"{version} is a development version: bump it to the release's (drop the -dev)")
-    # A development version's entry is the release's (0.4.1-dev's is 0.4.1's),
+    if "+" in version:
+        problems.append(f"{version} is a development version: bump it to the release's (drop the +dev)")
+    # A development version's entry is the release's (0.4.1+dev's is 0.4.1's),
     # so its other problems are listed too.
-    body, unreleased = release.changelog_entry(release.CHANGELOG.read_text(), version.split("-")[0])
+    body, unreleased = release.changelog_entry(release.CHANGELOG.read_text(), version.split("+")[0])
     if unreleased:
         problems.append(f"CHANGELOG.md still marks {version} as unreleased: date its heading")
     elif not body:
         problems.append(f"CHANGELOG.md's entry for {version} is empty")
     problems += [f"CHANGELOG.md's entry for {version}: {p}" for p in entry_problems(body)]
+    problems += commit_problems(run("git", "log", "-1", "--format=%s"), run("git", "log", "-1", "--format=%b"), version.split("+")[0], body)
     e2e = release.ROOT / "tests" / "e2e"
     problems += ledger_problems(e2e)
     # Not a reason to wait, but worth doing with the pre-release round.
@@ -174,8 +228,9 @@ Before tagging, check what can't be:
     first; a change to something new in this release is part of it, not news):
 {chr(10).join("      " + line for line in since_release())}
 
-Then, to publish:
-  git tag v{version} && git push origin v{version}
+Then, to publish (a signed, annotated tag: the repo signs tags with the
+same key as commits; a bare `git tag` would make an unsigned one):
+  git tag -s v{version} -m "Version {version}" && git tag -v v{version} && git push origin v{version}
 
 The publish job checks the release once it's up (scripts/verify-release.py).
 
@@ -186,7 +241,7 @@ Once it's out:
     (refused if site has fixes of its own since: merge the tag into it)
   - main goes on as the next version, in development, in a commit of its
     own: Cargo.toml (and Cargo.lock, by cargo check) to {next_dev(version)}, and
-    an empty "## {next_dev(version).split("-")[0]} (unreleased)" entry atop CHANGELOG.md""")
+    an empty "## {next_dev(version).split("+")[0]} (unreleased)" entry atop CHANGELOG.md""")
 
 
 if __name__ == "__main__":

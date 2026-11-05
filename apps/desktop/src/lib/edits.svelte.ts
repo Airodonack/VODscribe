@@ -7,12 +7,13 @@
 // changes nothing else.
 
 import { SvelteMap } from "svelte/reactivity";
-import { playedSpans } from "./media";
+import { playedLength } from "./media";
 import { nav } from "./nav.svelte";
 import { api, events, type Edit, type EditPiece, type EditView, type Fetching, type Put } from "./api";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { toast } from "./toasts.svelte";
+import { saving } from "./writes";
 
 /** A stretch of a VOD dropped on an edit, and its name if it was a clip's;
  *  `clip` if it's a clip of the clip bar, which an edit takes as itself (a
@@ -38,6 +39,10 @@ class Edits {
   /** The edit open in the Edit view, and its pieces. */
   openId = $state<number | null>(null);
   pieces = $state.raw<EditPiece[]>([]);
+  /** Whether all the open edit's footage is in files here (each piece's VOD
+   *  plays from one, EditView.svelte): a clip of it dragged is made as the
+   *  carry begins, needing no download (dragout.ts). */
+  footageHere = $state(false);
   /** Counts each VOD's footage downloaded for edits, for what shows it. */
   footage = new SvelteMap<number, number>();
   /** Each VOD's section downloading for edits, and how far it is. */
@@ -66,8 +71,9 @@ class Edits {
   dropTarget = $state<number | "new" | null>(null);
   /** Where on the open edit's timeline a carried clip would go (its time there), while it's over it. */
   inserting = $state<number | null>(null);
-  /** Where the open edit's player was asked to go (a transcript line clicked), once each. */
-  wanted = $state.raw<{ time: number } | null>(null);
+  /** Where the open edit's player was asked to go (a transcript line clicked:
+   *  playing; the end of what was pasted: not), once each. */
+  wanted = $state.raw<{ time: number; play?: boolean } | null>(null);
   /** A clip of a clip bar open in the editor (not in the library's list). */
   #snippet = $state.raw<Edit | null>(null);
   #started = false;
@@ -177,10 +183,15 @@ class Edits {
     if (view.edit.id === this.openId) this.pieces = view.pieces;
   }
 
+  /** Shows `view`, what a change made elsewhere (a paste: copyPaste.ts) left the edit as. */
+  took(view: EditView) {
+    this.#show(view);
+  }
+
   /** Runs a change to an edit; what comes back is the edit as it is now. */
   async #change(action: Promise<EditView>): Promise<boolean> {
     try {
-      this.#show(await action);
+      this.#show(await saving(action));
       this.error = null;
       return true;
     } catch (e) {
@@ -202,10 +213,7 @@ class Edits {
 
   /** How long the open edit plays: its pieces' played stretches end to end. */
   get length(): number {
-    return this.pieces.reduce(
-      (sum, p) => sum + playedSpans(p.start, p.end, p.struck).reduce((t, [a, b]) => t + b - a, 0),
-      0,
-    );
+    return this.pieces.reduce((sum, p) => sum + playedLength(p), 0);
   }
 
   /** Plays the open edit from `time` (seconds of its timeline). */

@@ -392,10 +392,15 @@ pub fn download(
 
 /// Bytes in the part files of a download to `out_stem` (`<stem>.….part`).
 fn part_bytes(out_stem: &Path) -> u64 {
+    part_files(out_stem).iter().map(|(_, len)| len).sum()
+}
+
+/// The part files of a download to `out_stem` (`<stem>.….part`), with their sizes.
+pub fn part_files(out_stem: &Path) -> Vec<(PathBuf, u64)> {
     let (Some(dir), Some(stem)) = (out_stem.parent(), out_stem.file_name().and_then(|n| n.to_str())) else {
-        return 0;
+        return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     entries
         .flatten()
         .filter(|e| {
@@ -403,9 +408,8 @@ fn part_bytes(out_stem: &Path) -> u64 {
             let name = name.to_string_lossy();
             name.strip_prefix(stem).is_some_and(|r| r.starts_with('.')) && name.ends_with(".part")
         })
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
+        .filter_map(|e| Some((e.path(), e.metadata().ok().filter(|m| m.is_file())?.len())))
+        .collect()
 }
 
 /// The finished download for `out_stem` (`<stem>.<ext>`), ignoring yt-dlp's

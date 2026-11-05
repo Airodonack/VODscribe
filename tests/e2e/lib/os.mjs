@@ -10,8 +10,9 @@
 //   found from a mark the page shows a moment (Wayland doesn't tell it).
 // - Windows (run in the signed-in session: runners.mjs): PowerShell, with
 //   System.Drawing for the screen and user32 for the mouse.
-// - macOS: screencapture, and CoreGraphics events for clicks (the process
-//   running the tests needs the Screen Recording and Accessibility permissions).
+// - macOS: screencapture, and CoreGraphics events for clicks and gestures
+//   (the process running the tests needs the Screen Recording and
+//   Accessibility permissions).
 //
 // Screen positions come from the page: an element's box, scaled by the
 // window's scale factor, from the window's position (Tauri's read-only
@@ -41,8 +42,12 @@ function powershell(script, env = {}) {
   });
 }
 
-/** Why the OS layer can't run here, or null if it can. */
-export function unavailable() {
+/**
+ * Why the OS layer can't run here, or null if it can. With `linuxOnly`, what
+ * a scenario drives through it that is driven on Linux only so far ("drags",
+ * "the system's keys"): elsewhere, that is why.
+ */
+export function unavailable({ linuxOnly = null } = {}) {
   // Under Wayland the app's window is Wayland's: x11grab and xdotool would
   // see and click Xwayland's screen instead (DISPLAY is set there too).
   if (process.platform === "linux" && process.env.WAYLAND_DISPLAY && process.env.GDK_BACKEND !== "x11")
@@ -55,6 +60,7 @@ export function unavailable() {
       return "no xdotool";
     }
   }
+  if (linuxOnly && process.platform !== "linux") return `${linuxOnly} are driven on Linux only, so far`;
   return null;
 }
 
@@ -220,10 +226,16 @@ export function click(x, y, scale = 1) {
  * times where the pointer is (2: a double-click);
  * ["hold", "alt"] and ["release", "alt"] for a key held through a drag;
  * ["letgo", x, y] moves and lets go at once.
- * Linux (X11) only, so far.
+ * Linux (X11), Windows, and on macOS the left button's steps, keys, clicks
+ * and waits. On Windows the steps go as one PowerShell script (user32's
+ * mouse_event and keybd_event): starting one takes a moment, and a drag out
+ * of the window holds the app's UI thread, so the page can't be asked
+ * anything between the steps of one.
  */
 export async function gesture(steps) {
-  if (process.platform !== "linux") throw new Error("gestures are Linux-only, so far");
+  if (process.platform === "darwin") return macGesture(steps);
+  if (process.platform === "win32") return windowsGesture(steps);
+  if (process.platform !== "linux") throw new Error("gestures are driven on Linux, macOS and Windows only, so far");
   const WHEEL = { up: "4", down: "5", left: "6", right: "7" };
   for (const [what, a, b, c] of steps) {
     if (what === "down") {
@@ -254,6 +266,123 @@ export async function gesture(steps) {
 /** The buttons and keys gestures pressed and haven't let go of yet. */
 const held = { buttons: new Set(), keys: new Set() };
 
+/** macOS's virtual key codes for the keys gestures press. */
+const MAC_KEYS = { Escape: 53, Return: 36, space: 49 };
+
+/**
+ * `gesture`'s steps on macOS, as one JXA script of CoreGraphics events (one
+ * osascript per step would take a tenth of a second each): a move with the
+ * button down is a drag event (AppKit's drag follows those only). Screen
+ * points, which are the pixels on a screen of scale 1.
+ */
+async function macGesture(steps) {
+  const lines = [];
+  let down = held.buttons.has("1");
+  const mouse = (type, x, y) => lines.push(`mouse(${type}, ${x}, ${y});`);
+  for (const [what, a, b] of steps) {
+    if (what === "down") {
+      mouse(5, a, b);
+      lines.push("$.usleep(200000);");
+      mouse(1, a, b);
+      down = true;
+    } else if (what === "move") mouse(down ? 6 : 5, a, b);
+    else if (what === "up" || what === "letgo") {
+      // (A moment between the last move and the release, as a hand leaves:
+      // a release right on a move's heels was sometimes missed by the
+      // system's drag, which then never ended.)
+      if (what === "letgo") mouse(6, a, b);
+      lines.push("$.usleep(100000);", "mouse(2, ...here());");
+      down = false;
+    } else if (what === "click") {
+      for (let i = 1; i <= (a ?? 1); i++) lines.push(`click(${i});`);
+    } else if (what === "key") {
+      if (!(a in MAC_KEYS)) throw new Error(`no macOS key code for ${a}`);
+      lines.push(`key(${MAC_KEYS[a]});`);
+    } else if (what === "wait") lines.push(`$.usleep(${Math.round(a * 1000)});`);
+    else throw new Error(`no gesture step ${what} on macOS, so far`);
+  }
+  if (down) held.buttons.add("1");
+  else held.buttons.delete("1");
+  execFileSync("osascript", [
+    "-l",
+    "JavaScript",
+    "-e",
+    `${MAC_EVENTS}
+${lines.join("\n")}`,
+  ]);
+}
+
+/** The JXA helpers `macGesture`'s script uses. */
+const MAC_EVENTS = `ObjC.import("CoreGraphics"); ObjC.import("unistd");
+const here = () => { const p = $.CGEventGetLocation($.CGEventCreate(null)); return [p.x, p.y]; };
+// (No modifiers: a key event posted with some leaves them held for the next.)
+const post = (e) => { $.CGEventSetFlags(e, 0); $.CGEventPost(0, e); };
+// From the HID system's state, with a click count on a press and its release,
+// as a real mouse's are: the system's drag tracks those.
+const source = $.CGEventSourceCreate(1);
+const mouse = (type, x, y) => { const e = $.CGEventCreateMouseEvent(source, type, $.CGPointMake(x, y), 0); if (type === 1 || type === 2) $.CGEventSetIntegerValueField(e, 1, 1); post(e); };
+const click = (n) => { const [x, y] = here(); for (const type of [1, 2]) { const e = $.CGEventCreateMouseEvent(null, type, $.CGPointMake(x, y), 0); $.CGEventSetIntegerValueField(e, 1, n); post(e); } $.usleep(80000); };
+const key = (code) => { for (const down of [true, false]) { post($.CGEventCreateKeyboardEvent(null, code, down)); $.usleep(30000); } };`;
+
+/** user32's mouse_event flags for each button (X11's numbering), down and up. */
+const WINDOWS_BUTTONS = { 1: [0x2, 0x4], 2: [0x20, 0x40], 3: [0x8, 0x10] };
+/** Virtual-key codes for the keys gestures press, by xdotool's names. */
+const WINDOWS_KEYS = { Escape: 0x1b, Return: 0x0d, Delete: 0x2e, alt: 0x12, ctrl: 0x11, shift: 0x10 };
+const WINDOWS_INPUT = `${WINDOWS_DPI} Add-Type 'using System; using System.Runtime.InteropServices; public class Input { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y); [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, int d, IntPtr e); [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, uint f, IntPtr e); }';`;
+
+/**
+ * `steps` (as `gesture` takes them) as one PowerShell script, and run. One
+ * more step here: ["shot", file], a PNG of the screen then.
+ */
+function windowsGesture(steps) {
+  const button = (n) => WINDOWS_BUTTONS[String(n ?? 1)] ?? WINDOWS_BUTTONS[1];
+  const key = (name) => {
+    const code = WINDOWS_KEYS[name];
+    if (code === undefined) throw new Error(`no Windows key for ${name}`);
+    return code;
+  };
+  const mouse = (flags, data = 0) => `[Input]::mouse_event(${flags}, 0, 0, ${data}, [IntPtr]::Zero);`;
+  // A move is the pointer put there and a move heard (OLE's drag loop
+  // follows the moves it hears).
+  const to = (x, y) => `[Input]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}) | Out-Null; ${mouse(1)}`;
+  const lines = [];
+  for (const [what, a, b, c] of steps) {
+    if (what === "down") {
+      lines.push(to(a, b), "Start-Sleep -Milliseconds 30;", mouse(button(c)[0]));
+      held.buttons.add(String(c ?? 1));
+    } else if (what === "move") lines.push(to(a, b));
+    else if (what === "up") {
+      lines.push(mouse(button(a)[1]));
+      held.buttons.delete(String(a ?? 1));
+    } else if (what === "letgo") {
+      lines.push(to(a, b), mouse(button(1)[1]));
+      held.buttons.delete("1");
+    } else if (what === "click") {
+      for (let i = 0; i < (a ?? 1); i++) lines.push(mouse(0x2), mouse(0x4), "Start-Sleep -Milliseconds 80;");
+    } else if (what === "wheel") {
+      const [flag, sign] = { up: [0x800, 1], down: [0x800, -1], left: [0x1000, -1], right: [0x1000, 1] }[a];
+      for (let i = 0; i < (b ?? 1); i++) lines.push(mouse(flag, sign * 120), "Start-Sleep -Milliseconds 30;");
+    } else if (what === "key")
+      lines.push(
+        // (Held a moment, as a person's press is.)
+        `[Input]::keybd_event(${key(a)}, 0, 0, [IntPtr]::Zero); Start-Sleep -Milliseconds 100; [Input]::keybd_event(${key(a)}, 0, 2, [IntPtr]::Zero);`,
+      );
+    else if (what === "hold") {
+      lines.push(`[Input]::keybd_event(${key(a)}, 0, 0, [IntPtr]::Zero);`);
+      held.keys.add(a);
+    } else if (what === "release") {
+      lines.push(`[Input]::keybd_event(${key(a)}, 0, 2, [IntPtr]::Zero);`);
+      held.keys.delete(a);
+    } else if (what === "wait") lines.push(`Start-Sleep -Milliseconds ${Math.round(a)};`);
+    else if (what === "shot")
+      lines.push(
+        `Add-Type -AssemblyName System.Drawing, System.Windows.Forms; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $bmp.Save('${a}', [System.Drawing.Imaging.ImageFormat]::Png);`,
+      );
+    else throw new Error(`no gesture step ${what}`);
+  }
+  powershell(`${WINDOWS_INPUT}\n${lines.join("\n")}`);
+}
+
 /**
  * Lets go of whatever a gesture left pressed: a scenario that fails in the
  * middle of a drag leaves the X server's button down, and the next
@@ -262,8 +391,14 @@ const held = { buttons: new Set(), keys: new Set() };
  * test runner calls it after each scenario.
  */
 export function letGoOfAll() {
-  for (const button of held.buttons) execFileSync("xdotool", ["mouseup", button]);
-  for (const key of held.keys) execFileSync("xdotool", ["keyup", key]);
+  if (process.platform === "darwin") {
+    if (held.buttons.size) execFileSync("osascript", ["-l", "JavaScript", "-e", `${MAC_EVENTS}\nmouse(2, ...here());`]);
+  } else if (process.platform === "win32" && (held.buttons.size || held.keys.size)) {
+    windowsGesture([...[...held.buttons].map((b) => ["up", Number(b)]), ...[...held.keys].map((k) => ["release", k])]);
+  } else if (process.platform === "linux") {
+    for (const button of held.buttons) execFileSync("xdotool", ["mouseup", button]);
+    for (const key of held.keys) execFileSync("xdotool", ["keyup", key]);
+  }
   held.buttons.clear();
   held.keys.clear();
 }
@@ -324,6 +459,36 @@ export function distance(a, b) {
 function requireInts(rect) {
   for (const k of ["x", "y", "w", "h"])
     if (!Number.isInteger(rect[k]) || rect[k] < 0) throw new Error(`a bad rectangle: ${JSON.stringify(rect)}`);
+}
+
+/**
+ * Moves the system's own pointer off the app's page, where this layer can
+ * move it (X11): to the screen's far corner, or else onto what's above the
+ * page (the title bar) or below it; then waits (up to 5 s) until the page has
+ * nothing under it. Xvfb leaves the pointer mid-screen, inside the window,
+ * and the page hears it as well as the pointer the steps make up: resting
+ * where the timeline's tip pops up, it was under the tip as it appeared and
+ * out from under it as it moved, and the timeline heard that as the pointer
+ * leaving it, so the tip went (annotations, 2 runs in 10 on a 613 px page,
+ * 2026-10-30). The test runner calls it after each start of the app.
+ */
+export async function parkPointer(app) {
+  if (unavailable({ linuxOnly: "the system's pointer" })) return;
+  const page = await windowRect(app);
+  const [w, h] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
+  const off = ([x, y]) => x < page.x || y < page.y || x >= page.x + page.w || y >= page.y + page.h;
+  const spot = [
+    [w - 1, h - 1],
+    [page.x + 1, page.y - 1],
+    [page.x + 1, page.y + page.h],
+  ].find((p) => p[0] >= 0 && p[1] >= 0 && p[1] < h && off(p));
+  if (!spot) return;
+  await gesture([["move", ...spot]]);
+  for (let waited = 0; waited < 5000; waited += 50) {
+    if (await app.js(`return !document.querySelector(":hover")`)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`the page still has something under the system's pointer, moved off it to ${spot.join(",")}`);
 }
 
 /** The app window's page area on the screen (pixels), as rectOf gives an element's. */

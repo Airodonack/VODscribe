@@ -95,24 +95,27 @@
     {#each shown as layer (layer.id)}<span class="dot" style:background={layer.color}></span>{/each}
   </button>
   <Popover bind:open {anchor} label="Timeline layers" width={352}>
-    <!-- Whose chapters and highlights: on the timeline, in the pane and in the transcript. -->
-    <section class="marks" aria-label="Marks">
-      {#each MARKS as m (m.key)}
-        {@const on = layers.marks[m.key]}
-        <button
-          class="event"
-          class:on
-          style:--event="var(--accent)"
-          onclick={() => cuts.setSources({ [m.key]: !on })}
-          aria-pressed={on}
-          title={on ? "Hide these chapters and highlights" : "Show these chapters and highlights"}
-        >
-          <Icon name={m.icon} size={13} />
-          {m.label}
-          <span class="count">{markCount(m.key)}</span>
-        </button>
-      {/each}
-    </section>
+    <!-- Whose chapters and highlights: on the timeline, in the pane and in the transcript.
+         Once the saved choice is in: until then they would read "both on", and a click would be lost to it. -->
+    {#if layers.loaded}
+      <section class="marks" aria-label="Marks">
+        {#each MARKS as m (m.key)}
+          {@const on = layers.marks[m.key]}
+          <button
+            class="event"
+            class:on
+            style:--event="var(--accent)"
+            onclick={() => cuts.setSources({ [m.key]: !on })}
+            aria-pressed={on}
+            title={on ? "Hide these chapters and highlights" : "Show these chapters and highlights"}
+          >
+            <Icon name={m.icon} size={13} />
+            {m.label}
+            <span class="count">{markCount(m.key)}</span>
+          </button>
+        {/each}
+      </section>
+    {/if}
     <p class="intro muted">
       Events and words to look for in chat, drawn on the timeline with their messages highlighted. Up to {MAX_VISIBLE}
       layers show at once, besides the events.

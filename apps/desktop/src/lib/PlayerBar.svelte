@@ -20,7 +20,8 @@
   // and Clip, or what an edit has instead) with a line of context, then
   // sound, speed, the panel's own at the right (a VOD's Transcribe), captions,
   // the keyboard legend's button (the legend opens under this row:
-  // PlayerPanel.svelte) and full screen, where the player has them.
+  // PlayerPanel.svelte), full screen and hiding the video, where the player
+  // has them: at the lower right, where video players keep their view toggles.
 
   import type { Snippet } from "svelte";
   import { settings } from "./appSettings.svelte";
@@ -50,6 +51,7 @@
     onfullscreen,
     actions,
     beside,
+    hide,
   }: {
     player: BarControls | null;
     playing: boolean;
@@ -71,6 +73,9 @@
     actions?: Snippet;
     /** The panel's own controls at the right, before the captions button (a VOD's Transcribe). */
     beside?: Snippet;
+    /** Hides the video, and the bar with it (a VOD's player; shown again
+     *  from its header, Player.svelte). */
+    hide?: { label: string; run: () => void };
   } = $props();
 
   // The time by frame (the clock small under it), or as a clock: clicking it
@@ -94,17 +99,35 @@
     player?.rate?.set(SPEEDS[(SPEEDS.indexOf(rate) + 1) % SPEEDS.length]);
   }
 
-  // The speed button pressed and held opens a menu of the speeds above it
-  // (hold.svelte.ts); a plain click still steps to the next speed.
+  // The speed button right-clicked, or pressed and held, opens a menu of the
+  // speeds above it (hold.svelte.ts); a plain click still steps to the next speed.
   let speedButton = $state<HTMLElement>();
   const speedHold = new Hold("[data-speed]", (item) => player?.rate?.set(Number(item.dataset.speed)));
   function onSpeedClick() {
     if (!speedHold.held) nextSpeed();
   }
+
+  // macOS 12's web view has no container queries: there the bar reads its
+  // column's width itself (as the query would: PlayerPanel.svelte's
+  // .controls, its content box) for the same narrow layouts, by class.
+  let bar = $state<HTMLElement>();
+  let column = $state<number | null>(null);
+  $effect(() => {
+    const parent = bar?.parentElement;
+    if (!parent || CSS.supports("container-type: inline-size")) return;
+    const seen = new ResizeObserver(([entry]) => (column = entry.contentRect.width));
+    seen.observe(parent);
+    return () => seen.disconnect();
+  });
 </script>
 
 <!-- Not "row": that's the transcript's lines, styled app-wide. -->
-<div class="bar">
+<div
+  class="bar"
+  bind:this={bar}
+  class:narrow={column !== null && column <= 560}
+  class:narrower={column !== null && column <= 440}
+>
   <button
     class="control"
     onclick={ontoggleplay}
@@ -166,8 +189,10 @@
       class="control speed"
       bind:this={speedButton}
       onpointerdown={speedHold.down}
+      oncontextmenu={speedHold.menu}
       onclick={onSpeedClick}
-      title="Playback speed (hold for a list)">{rate}×</button
+      aria-expanded={speedHold.open}
+      title="Playback speed (right-click for a list)">{rate}×</button
     >
     <Popover bind:open={speedHold.open} anchor={speedButton} label="Playback speed" width={84} padding={4} above>
       <div class="speeds">
@@ -176,7 +201,10 @@
             data-speed={s}
             class:current={s === rate}
             aria-pressed={s === rate}
-            onclick={() => player?.rate?.set(s)}
+            onclick={() => {
+              player?.rate?.set(s);
+              speedHold.open = false;
+            }}
             >{#if s === rate}<Icon name="check" size={12} />{/if}<span>{s}×</span></button
           >
         {/each}
@@ -221,6 +249,13 @@
       title={fullscreen ? "Exit full screen (Esc)" : `Full screen${keyHint("fullscreen.toggle")}`}
     >
       <Icon name={fullscreen ? "minimize" : "maximize"} size={16} />
+    </button>
+  {/if}
+  <!-- At the far right, where the header's Show player is once the video is
+       hidden; full screen has nothing to show then, so it's not there. -->
+  {#if hide && !fullscreen}
+    <button class="control collapse" onclick={hide.run} aria-expanded="true" aria-label={hide.label} title={hide.label}>
+      <Icon name="player-hide" size={16} />
     </button>
   {/if}
 </div>
@@ -393,11 +428,15 @@
     accent-color: var(--accent);
   }
 
-  /* A phone: no keyboard to show the keys of, either. */
-  @media (max-width: 560px) {
+  /* A narrow column (a phone, or a short window's player beside the
+     library): no keyboard to show the keys of, either. Sized by the column
+     (PlayerPanel.svelte's .controls), not the window, so the buttons at the
+     right end, hiding the video and full screen, never go past its edge. */
+  @container (max-width: 560px) {
     .volume,
     .speed,
-    .keys {
+    .keys,
+    .bar :global(.action kbd) {
       display: none;
     }
 
@@ -408,5 +447,35 @@
     .bar :global(.action) {
       padding: 0 4px;
     }
+  }
+
+  /* Narrower still: the actions as their icons alone (named by their
+     tooltips, and still to screen readers). */
+  @container (max-width: 440px) {
+    .bar :global(.action) {
+      gap: 0;
+      font-size: 0;
+    }
+  }
+
+  /* The same two, where there are no container queries (macOS 12). */
+  .bar.narrow .volume,
+  .bar.narrow .speed,
+  .bar.narrow .keys,
+  .bar.narrow :global(.action kbd) {
+    display: none;
+  }
+
+  .bar.narrow {
+    gap: 0;
+  }
+
+  .bar.narrow :global(.action) {
+    padding: 0 4px;
+  }
+
+  .bar.narrower :global(.action) {
+    gap: 0;
+    font-size: 0;
   }
 </style>

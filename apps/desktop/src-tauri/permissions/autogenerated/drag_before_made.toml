@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-drag-before-made"
+description = "Enables the drag_before_made command without any pre-configured scope."
+commands.allow = ["drag_before_made"]
+
+[[permission]]
+identifier = "deny-drag-before-made"
+description = "Denies the drag_before_made command without any pre-configured scope."
+commands.deny = ["drag_before_made"]

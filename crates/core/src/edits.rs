@@ -27,7 +27,7 @@ use crate::time::Flicks;
 use crate::transcript::{Cue, Segment, Word};
 
 /// Stretches shorter than this are left out (a sliver between two struck lines).
-const SLIVER: f64 = 0.04;
+pub(crate) const SLIVER: f64 = 0.04;
 /// How near a stretch's end a cut is to be at it: within half a
 /// frame (at 25 fps), as marks sit on frames and lines end where they end.
 const AT_END: f64 = 0.02;
@@ -206,6 +206,34 @@ impl EditPiece {
     }
 }
 
+/// A stretch a clip plays (`played`): `from`..`to` of its piece's VOD, from
+/// `at` seconds into the clip's timeline.
+#[derive(Debug, Clone, Copy)]
+pub struct Played<'a> {
+    pub piece: &'a EditPiece,
+    pub from: f64,
+    pub to: f64,
+    pub at: f64,
+}
+
+impl Played<'_> {
+    /// Where it ends on the clip's timeline.
+    pub fn end(&self) -> f64 {
+        self.at + self.to - self.from
+    }
+}
+
+/// What a clip of `pieces` plays, in order: each piece's spans, end to end
+/// on its timeline. The one walk of a clip's timeline.
+pub fn played(pieces: &[EditPiece]) -> impl Iterator<Item = Played<'_>> {
+    let spans = pieces.iter().flat_map(|piece| piece.spans().into_iter().map(move |(from, to)| (piece, from, to)));
+    spans.scan(0.0, |at, (piece, from, to)| {
+        let span = Played { piece, from, to, at: *at };
+        *at += to - from;
+        Some(span)
+    })
+}
+
 /// `start`..`end` less the `struck` stretches (any order, overlapping or
 /// not), leaving out slivers.
 pub fn spans(start: f64, end: f64, struck: &[(f64, f64)]) -> Vec<(f64, f64)> {
@@ -261,24 +289,20 @@ pub fn on_timeline_cut<T, U>(
 ) -> Result<Vec<(f64, f64, U)>> {
     let mut known = std::collections::HashMap::new();
     let mut out = Vec::new();
-    let mut at = 0.0;
-    for p in pieces {
-        let things = match known.entry(p.vod_id) {
+    for Played { piece, from: a, to: b, at } in played(pieces) {
+        let things = match known.entry(piece.vod_id) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(e) => e.insert(of(p.vod_id)?),
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(of(piece.vod_id)?),
         };
-        for (a, b) in p.spans() {
-            for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
-                let (start, end) = (start.max(a), end.min(b));
-                if end - start < SLIVER {
-                    continue;
-                }
-                let shown = Shown { from: start, to: end, shift: at - a, at_end: end >= b - 1e-9 };
-                if let Some(shown) = cut(thing, shown) {
-                    out.push((at + start - a, at + end - a, shown));
-                }
+        for (start, end, thing) in things.iter().filter(|(s, e, _)| *e > a && *s < b) {
+            let (start, end) = (start.max(a), end.min(b));
+            if end - start < SLIVER {
+                continue;
             }
-            at += b - a;
+            let shown = Shown { from: start, to: end, shift: at - a, at_end: end >= b - 1e-9 };
+            if let Some(shown) = cut(thing, shown) {
+                out.push((at + start - a, at + end - a, shown));
+            }
         }
     }
     Ok(out)
@@ -425,18 +449,15 @@ fn placed_end(spans: &[(f64, f64)], mut t: f64, end: f64) -> f64 {
 /// `pieces`' timeline; at its very end, a millisecond before (the end
 /// itself plays nothing, and a mark there wouldn't show).
 pub fn source_at(pieces: &[EditPiece], time: f64) -> Option<(i64, f64)> {
-    let mut at = 0.0;
     let mut last = None;
-    for p in pieces {
-        for (a, b) in p.spans() {
-            if time >= at && time < at + b - a {
-                return Some((p.vod_id, a + time - at));
-            }
-            at += b - a;
-            last = Some((p.vod_id, (b - 0.001).max(a)));
+    for span in played(pieces) {
+        if time >= span.at && time < span.end() {
+            return Some((span.piece.vod_id, span.from + time - span.at));
         }
+        last = Some(span);
     }
-    last.filter(|_| (time - at).abs() < 1e-6)
+    let last = last.filter(|span| (time - span.end()).abs() < 1e-6)?;
+    Some((last.piece.vod_id, (last.to - 0.001).max(last.from)))
 }
 
 /// A piece of a stretch of a clip (`stretch_pieces`): `start`..`end` of VOD
@@ -688,8 +709,9 @@ impl Db {
     }
 
     /// The sources nothing uses: no entry lists them and no clip holds any
-    /// of them. They go when the app next starts (not before, so what's
-    /// undone meanwhile still has them).
+    /// of them. They're erased as they're removed, their rows kept as gone
+    /// sources till the app next starts (so what's undone meanwhile still
+    /// finds them, holes), and go then.
     pub fn unused_sources(&self) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare("SELECT id FROM vods WHERE pieces <= 0 ORDER BY id")?;
         Ok(stmt.query_map([], |r| r.get(0))?.collect::<rusqlite::Result<_>>()?)
@@ -885,7 +907,7 @@ impl Db {
         })
     }
 
-    fn vod_duration(&self, vod_id: i64) -> Result<Option<f64>> {
+    pub(crate) fn vod_duration(&self, vod_id: i64) -> Result<Option<f64>> {
         Ok(self.conn.query_row("SELECT duration FROM vods WHERE id = ?1", [vod_id], |r| r.get(0)).optional()?.flatten())
     }
 
@@ -967,12 +989,7 @@ impl Db {
     /// items as they are, with ids of their own, titled as `from` is. It's
     /// the group's own from then on: changing `from` changes nothing here.
     pub fn add_group(&self, into: i64, from: i64, index: Option<usize>) -> Result<i64> {
-        let title: String = self
-            .conn
-            .query_row("SELECT title FROM clips WHERE id = ?1", [from], |r| r.get(0))
-            .optional()?
-            .context("That clip is gone.")?;
-        let items = self.item_rows(from)?;
+        let state = self.edit_state(from)?.context("That clip is gone.")?;
         anyhow::ensure!(into != from, "A clip can't go inside itself.");
         // Its chapters and highlights that show in it come too, on the same
         // moments (cuts are where its own stretches were, not its).
@@ -982,39 +999,60 @@ impl Db {
             .filter(|m| m.kind != "cut")
             .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
             .collect();
-        self.change(into, None, |db| {
-            db.conn.execute(
-                "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
-                params![into, title],
+        self.change(into, None, |db| db.insert_group(into, &EditState { marks: shown, ..state }, index))
+    }
+
+    /// Puts what `state` holds in clip `into` as a group titled as it is, at
+    /// `index` of its top level (or last), with `state`'s marks: a clip
+    /// dropped in (`add_group`), or one pasted (`Db::paste`). Not a change of
+    /// its own: the caller's. The group's id.
+    pub(crate) fn insert_group(&self, into: i64, state: &EditState, index: Option<usize>) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO items (clip_id, position, kind, title) VALUES (?1, 0, 'group', ?2)",
+            params![into, state.title],
+        )?;
+        let group = self.conn.last_insert_rowid();
+        self.insert_items(into, state, Some(group))?;
+        for m in &state.marks {
+            self.insert_mark_with(into, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
+        }
+        self.place(into, group, index)?;
+        Ok(group)
+    }
+
+    /// Inserts `state`'s items in clip `into`, with ids of their own, those
+    /// at its top level in group `parent` (None: at the clip's top level,
+    /// unplaced, for the caller to `place`). Its marks aren't; the new
+    /// top-level items' ids, in order.
+    pub(crate) fn insert_items(&self, into: i64, state: &EditState, parent: Option<i64>) -> Result<Vec<i64>> {
+        let mut ids: Vec<i64> = Vec::with_capacity(state.items.len());
+        let mut top = Vec::new();
+        for (i, item) in state.items.iter().enumerate() {
+            let within = item.parent.map_or(parent, |p| ids.get(p).copied());
+            let position = state.items[..i].iter().filter(|o| o.parent == item.parent).count() as i64;
+            self.conn.execute(
+                "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    into,
+                    within,
+                    position,
+                    if item.vod_id.is_some() { "piece" } else { "group" },
+                    item.vod_id,
+                    item.start.map(|f| f.0),
+                    item.end.map(|f| f.0),
+                    struck_json(&item.struck)?,
+                    item.title,
+                    item.origin.map(|f| f.0)
+                ],
             )?;
-            let group = db.conn.last_insert_rowid();
-            let mut ids = std::collections::HashMap::new();
-            for item in &items {
-                let parent = item.parent.map_or(Some(group), |p| ids.get(&p).copied());
-                db.conn.execute(
-                    "INSERT INTO items (clip_id, parent, position, kind, vod_id, start, end, struck, title, origin)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![
-                        into,
-                        parent,
-                        item.position,
-                        if item.vod_id.is_some() { "piece" } else { "group" },
-                        item.vod_id,
-                        item.start.map(|f| f.0),
-                        item.end.map(|f| f.0),
-                        struck_json(&item.struck)?,
-                        item.title,
-                        item.origin.map(|f| f.0)
-                    ],
-                )?;
-                ids.insert(item.id, db.conn.last_insert_rowid());
+            let id = self.conn.last_insert_rowid();
+            ids.push(id);
+            if item.parent.is_none() {
+                top.push(id);
             }
-            for m in &shown {
-                db.insert_mark_with(into, m.vod_id, &m.kind, m.at, m.text.as_deref(), &m.detail)?;
-            }
-            db.place(into, group, index)?;
-            Ok(group)
-        })
+        }
+        Ok(top)
     }
 
     /// Puts `start`..`end` of VOD `vod_id` in clip `into` as a group titled
@@ -1087,12 +1125,7 @@ impl Db {
             }
             return Ok(self.clip(clip.id)?.expect("on the bar"));
         }
-        let marks = self.clip_marks(edit)?;
-        let inside: Vec<&MarkAt> = place_marks(&pieces, &marks)
-            .iter()
-            .filter(|m| m.kind != "cut" && m.start >= from && m.start < to)
-            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at))
-            .collect();
+        let inside = self.marks_inside(edit, &pieces, from, to)?;
         let add = |db: &Db| {
             let id = db.new_clip(title, Place::Bar(edit))?;
             db.conn.execute("UPDATE clips SET shown = ?2 WHERE id = ?1", params![id, shown])?;
@@ -1108,6 +1141,18 @@ impl Db {
         };
         let id = if shown { self.change(edit, None, add)? } else { self.atomically(add)? };
         Ok(self.clip(id)?.expect("just inserted"))
+    }
+
+    /// Clip `clip`'s chapters and highlights (of `pieces`, its pieces) whose
+    /// moments play in `from`..`to` of its timeline: what a stretch of it
+    /// made a clip, or copied, brings.
+    pub(crate) fn marks_inside(&self, clip: i64, pieces: &[EditPiece], from: f64, to: f64) -> Result<Vec<MarkAt>> {
+        let marks = self.clip_marks(clip)?;
+        Ok(place_marks(pieces, &marks)
+            .iter()
+            .filter(|m| m.kind != "cut" && m.start >= from && m.start < to)
+            .filter_map(|m| marks.iter().find(|(id, _)| *id == m.id).map(|(_, at)| at.clone()))
+            .collect())
     }
 
     /// The clip on edit `edit`'s clip bar of exactly what plays from `from`
@@ -1206,7 +1251,7 @@ impl Db {
 
     /// What `item` (not a clip of an edit's clip bar) plays, as pieces, and
     /// its name: a stretch's own or for what's said at its start, a VOD's title.
-    fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
+    pub(crate) fn put_parts(&self, item: &Put) -> Result<(String, Vec<StretchPiece>)> {
         let part = |vod_id, start, end, title: &str| StretchPiece {
             vod_id,
             start,
@@ -1291,29 +1336,27 @@ impl Db {
         for &(from, to) in ranges {
             let mut messages = Vec::new();
             let mut total = 0;
-            let mut at = 0.0;
-            for p in &pieces {
-                for (a, b) in p.spans() {
-                    let (s, e) = (from.max(at), to.min(at + b - a));
-                    if e > s {
-                        let (src, end) = (a + s - at, a + e - at);
-                        let [w]: [crate::db::ChatWindow; 1] =
-                            self.chat_windows(p.vod_id, &[(src, end)], cap)?.try_into().expect("one range");
-                        total += w.total;
-                        if let std::collections::hash_map::Entry::Vacant(e) = platforms.entry(p.vod_id) {
-                            e.insert(self.vod(p.vod_id)?.map(|v| v.info.platform));
-                        }
-                        for mut m in w.messages {
-                            // A moment played twice in the window: its messages once, where first played.
-                            if messages.iter().any(|seen: &crate::db::ChatLine| seen.id == m.id) {
-                                continue;
-                            }
-                            m.time = s + m.time - src;
-                            m.platform = platforms[&p.vod_id].clone();
-                            messages.push(m);
-                        }
+            for span in played(&pieces) {
+                let (s, e) = (from.max(span.at), to.min(span.end()));
+                if e <= s {
+                    continue;
+                }
+                let vod = span.piece.vod_id;
+                let (src, end) = (span.from + s - span.at, span.from + e - span.at);
+                let [w]: [crate::db::ChatWindow; 1] =
+                    self.chat_windows(vod, &[(src, end)], cap)?.try_into().expect("one range");
+                total += w.total;
+                if let std::collections::hash_map::Entry::Vacant(e) = platforms.entry(vod) {
+                    e.insert(self.vod(vod)?.map(|v| v.info.platform));
+                }
+                for mut m in w.messages {
+                    // A moment played twice in the window: its messages once, where first played.
+                    if messages.iter().any(|seen: &crate::db::ChatLine| seen.id == m.id) {
+                        continue;
                     }
-                    at += b - a;
+                    m.time = s + m.time - src;
+                    m.platform = platforms[&vod].clone();
+                    messages.push(m);
                 }
             }
             messages.truncate(cap);
@@ -1329,20 +1372,16 @@ impl Db {
         let mut known: std::collections::HashMap<i64, (Vec<crate::db::ChatLine>, Option<String>)> =
             std::collections::HashMap::new();
         let mut out = Vec::new();
-        let mut at = 0.0;
-        for p in &pieces {
-            if let std::collections::hash_map::Entry::Vacant(e) = known.entry(p.vod_id) {
-                e.insert((self.chat_events(p.vod_id)?, self.vod(p.vod_id)?.map(|v| v.info.platform)));
+        for Played { piece, from: a, to: b, at } in played(&pieces) {
+            if let std::collections::hash_map::Entry::Vacant(e) = known.entry(piece.vod_id) {
+                e.insert((self.chat_events(piece.vod_id)?, self.vod(piece.vod_id)?.map(|v| v.info.platform)));
             }
-            let (events, platform) = &known[&p.vod_id];
-            for (a, b) in p.spans() {
-                for event in events.iter().filter(|e| e.time >= a && e.time < b) {
-                    let mut event = event.clone();
-                    event.time = at + event.time - a;
-                    event.platform = platform.clone();
-                    out.push(event);
-                }
-                at += b - a;
+            let (events, platform) = &known[&piece.vod_id];
+            for event in events.iter().filter(|e| e.time >= a && e.time < b) {
+                let mut event = event.clone();
+                event.time = at + event.time - a;
+                event.platform = platform.clone();
+                out.push(event);
             }
         }
         out.sort_by(|a, b| a.time.total_cmp(&b.time));
@@ -1359,17 +1398,14 @@ impl Db {
         // the count says whether it has chat at all.
         let binned = duration > 0.0 && bins > 0;
         let mut stmt = self.conn.prepare("SELECT time FROM chat WHERE vod_id = ?1 AND time >= ?2 AND time < ?3")?;
-        let mut at = 0.0;
-        for p in self.edit_pieces(edit)? {
-            for (a, b) in p.spans() {
-                for time in stmt.query_map(params![p.vod_id, a, b], |r| r.get::<_, f64>(0))? {
-                    let t = at + time? - a;
-                    if binned {
-                        out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
-                    }
-                    count += 1;
+        let pieces = self.edit_pieces(edit)?;
+        for Played { piece, from: a, to: b, at } in played(&pieces) {
+            for time in stmt.query_map(params![piece.vod_id, a, b], |r| r.get::<_, f64>(0))? {
+                let t = at + time? - a;
+                if binned {
+                    out[((t / duration * bins as f64) as usize).min(bins - 1)] += 1;
                 }
-                at += b - a;
+                count += 1;
             }
         }
         Ok((count, out))
@@ -1565,7 +1601,7 @@ impl Db {
 
     /// Numbers item `id`'s siblings in clip `clip_id` (the items in the same
     /// group, or at the top level) in order, with `id` at `index` (or last).
-    fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
+    pub(crate) fn place(&self, clip_id: i64, id: i64, index: Option<usize>) -> Result<()> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM items WHERE clip_id = ?1 AND id != ?2
                AND parent IS (SELECT parent FROM items WHERE id = ?2) ORDER BY position, id",
@@ -1579,7 +1615,7 @@ impl Db {
     }
 
     /// `start`..`end` seconds of VOD `vod_id` (`vod_span`), on the flick.
-    fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
+    pub(crate) fn within_vod(&self, vod_id: i64, start: f64, end: f64) -> Result<(Flicks, Flicks)> {
         let (start, end) = self.vod_span(vod_id, start, end)?;
         Ok((Flicks::from_seconds(start), Flicks::from_seconds(end)))
     }
@@ -1615,7 +1651,7 @@ impl Db {
     /// strikes stretches now (a slice taken out splits pieces), but pieces
     /// from before may have some: the tests make such pieces with it.
     #[cfg(test)]
-    pub fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
+    pub(crate) fn set_piece_struck(&self, id: i64, struck: &[(f64, f64)]) -> Result<()> {
         let Some(edit_id) = self.piece_edit(id)? else { return Ok(()) };
         let struck = struck_json(&struck_flicks(struck))?;
         self.change(edit_id, None, |db| {
@@ -2005,6 +2041,44 @@ pub(crate) mod tests {
         assert_eq!(db.next_stretch(crate::db::Status::Queued, false).unwrap().map(|(v, _)| v.id), Some(vod));
     }
 
+    /// As a VOD removed from the library is erased at once, its row kept
+    /// for the session as a gone source (desktop vods.rs, `erase_unused`):
+    /// an undo in an edit that puts back a piece of it still finds the row
+    /// (a hole), and adding it back adds it anew, not the empty row.
+    #[test]
+    fn a_vod_erased_after_its_removal_is_added_anew_and_its_pieces_put_back_are_holes() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (10.0, 20.0), "a", None).unwrap();
+        let had = db.edit_state(edit).unwrap().unwrap();
+        db.remove_piece(db.piece_rows(edit).unwrap()[0].id).unwrap();
+        assert!(db.remove_entry(vod).unwrap(), "used by nothing now");
+        db.set_gone(vod).unwrap();
+        assert_eq!(db.erase_left(vod).unwrap(), 0);
+        db.tidy_indexes().unwrap();
+        // Undone in the edit: the piece is back, of a gone source.
+        db.restore_edit(edit, &had).unwrap();
+        assert_eq!(db.uses(vod).unwrap(), 1);
+        assert!(db.is_gone(vod).unwrap());
+        // Taken out again; then the VOD's link added back: a new VOD, listed,
+        // not gone; the old row has gone with what was left of it, and the
+        // piece the edit had of it with it.
+        db.remove_piece(db.piece_rows(edit).unwrap()[0].id).unwrap();
+        let (again, new) = db.add_vod(&info("x")).unwrap();
+        assert!(new && again.id != vod && again.listed);
+        assert!(!db.is_gone(again.id).unwrap());
+        assert!(db.vod(vod).unwrap().is_none());
+        // One still used stays a gone source when added back (as before):
+        // listed again, its pieces holes.
+        let used = db.add_vod(&info("y")).unwrap().0.id;
+        db.add_piece(edit, used, (1.0, 2.0), "b", None).unwrap();
+        assert!(!db.remove_entry(used).unwrap());
+        db.set_gone(used).unwrap();
+        let (back, new) = db.add_vod(&info("y")).unwrap();
+        assert_eq!((back.id, new, back.listed), (used, false, true));
+    }
+
     #[test]
     fn a_clip_dropped_in_is_a_group_of_its_own() {
         let db = Db::open(Path::new(":memory:")).unwrap();
@@ -2370,6 +2444,31 @@ pub(crate) mod tests {
         let gone = Put::Vod { id: 999 };
         assert!(db.put(edit, &[range(1.0, 2.0, "c"), gone], Onto::Timeline(None)).is_err());
         assert_eq!(shape(edit), had, "nothing half done");
+    }
+
+    /// A clip whose timeline starts with a group is read by its first piece
+    /// (`db::CLIP_JOIN`), with no paste either: an edit's row dropped at the
+    /// start of a VOD's clip open in the editor, and an edit that starts with
+    /// a clip dropped in, put on another edit's clip bar. Their bars still list.
+    #[test]
+    fn a_clip_whose_timeline_starts_with_a_group_still_lists() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let vod = db.add_vod(&info("x")).unwrap().0.id;
+        let pill = db.add_clip(vod, 1.0, 2.0, "Hello", true).unwrap().id;
+        let a = db.add_edit("A").unwrap().id;
+        db.add_group(a, pill, None).unwrap();
+        // Edit A's row dropped at the start of another clip of the VOD's bar, open in the editor.
+        let clip = db.add_clip(vod, 7.0, 8.0, "Other", true).unwrap().id;
+        db.put(clip, &[Put::Clip { id: a }], Onto::Timeline(Some(0))).unwrap();
+        let listed = db.clips(vod).map(|c| c.iter().map(|c| (c.start, c.end)).collect::<Vec<_>>());
+        assert_eq!(listed.map_err(|e| e.to_string()), Ok(vec![(1.0, 2.0), (1.0, 2.0)]), "by its first piece");
+        // Edit A put on edit B's clip bar.
+        let b = db.add_edit("B").unwrap().id;
+        let made = db.put(b, &[Put::Clip { id: a }], Onto::Bar).map(|m| m.len());
+        assert_eq!(made.map_err(|e| e.to_string()), Ok(1));
+        assert_eq!(db.bar_clips(b).map(|c| c.len()).map_err(|e| e.to_string()), Ok(1));
+        let waiting = db.unfinished_clips().map(|c| c.len()).map_err(|e| e.to_string());
+        assert_eq!(waiting, Ok(3), "the two clips of the VOD's bar and the one put wait to be made");
     }
 
     #[test]

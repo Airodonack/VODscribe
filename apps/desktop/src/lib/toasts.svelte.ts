@@ -21,11 +21,21 @@ class Toasts {
   #seq = 0;
   #timer: ReturnType<typeof setTimeout> | undefined;
 
-  show(message: string, action?: Shown["action"]) {
+  /** Shows `message` for a few seconds; returns which it is, for `drop`. */
+  show(message: string, action?: Shown["action"]): number {
     clearTimeout(this.#timer);
     const seq = ++this.#seq;
     this.shown = { message, action, seq };
     this.#timer = setTimeout(() => this.shown?.seq === seq && (this.shown = null), SHOWN_FOR);
+    return seq;
+  }
+
+  /** As `show`, unless `message` is up already: then it's left as it is, so
+   *  the same words don't come again; its number either way. */
+  once(message: string): number {
+    const up = this.shown;
+    if (up && !up.error && up.message === message) return up.seq;
+    return this.show(message);
   }
 
   /** Shows what went wrong, until it's dismissed or replaced (or `drop`ped);
@@ -37,7 +47,8 @@ class Toasts {
     return seq;
   }
 
-  /** Hides error `seq` (`error`), if it's still the one shown: what went wrong was put right. */
+  /** Hides toast `seq` (`show`, `error`), if it's still the one shown: what
+   *  it said no longer holds (what went wrong was put right, say). */
   drop(seq: number) {
     if (this.shown?.seq === seq) this.hide();
   }

@@ -70,12 +70,12 @@ export default {
           wrong.push("the offer stayed open after its VOD was deleted"),
         );
         file.release();
-        // The fetch ends either way: the dialog's button stops saying it's getting them.
+        // The fetch ends either way: the dialog's button stops saying it's getting it.
         await until(
           "the fetch over",
           async () =>
             !(await app.js(
-              `return [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Getting them"))`,
+              `return [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Getting it"))`,
             )),
           MINUTE,
         );

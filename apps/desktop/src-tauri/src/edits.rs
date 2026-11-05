@@ -30,7 +30,7 @@ struct Progress {
 }
 
 /// News of edit `id`; of a snippet open in the editor, for its clip bar too.
-fn emit(app: &AppHandle, db: &Db, id: i64) {
+pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(edit)) = db.edit(id) {
         let snippet = edit.snippet_of.is_some();
         let _ = app.emit("edit", edit);
@@ -166,6 +166,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
             let _ = app.emit("edit-progress", Progress { id, progress });
+            crate::job_list::progressed(app, id, progress);
         }
     };
     let result = render::render(&ffmpeg, &pieces, None, &chapters, format, &out, stop, report);
@@ -205,7 +206,7 @@ pub(crate) struct EditView {
     pieces: Vec<EditPiece>,
 }
 
-fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
+pub(crate) fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
     let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
     let pieces = pieces(app, db, id).map_err(err)?;
     let _ = app.emit("edit", edit.clone());
@@ -535,14 +536,17 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 }
 
 /// Starts dragging edit `id`'s video out of the window, as for a clip
-/// (`clips::drag_clip`).
+/// (`clips::drag_clip`): false if it didn't begin, the button up first.
 #[tauri::command]
-pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<()> {
+pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
     let path = rendered(&app, id)?;
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
-    crate::clips::drag_file(window, vec![path], None, taken).await
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let names = vec![crate::clips::Outgoing { name, job: None }];
+    let files = move || vec![crate::clips::Made::Ready(path.clone())];
+    crate::clips::drag_file(window, None, names, files, None, taken, |_| {}, || {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

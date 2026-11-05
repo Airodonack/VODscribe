@@ -15,7 +15,7 @@ These tests drive a built VODscribe through its page, as a person would: a libra
 - **Node 24** (the version in `.nvmrc`), through mise or any other way. The harness imports a TypeScript file from the app, which Node 24 runs as it is.
 - **tauri-driver**, from cargo: `cargo install tauri-driver --locked`. It must be on `PATH`, or named by `TAURI_DRIVER`. `distros.mjs` mounts this binary into each container.
 - **podman**, for `distros.mjs`. The containers pull public images (Debian, Ubuntu, Fedora, Arch and others) and install packages, so the first run of each needs the network.
-- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg.
+- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg; Nautilus (or Dolphin, under KDE) for the scenarios that drop a clip on a file manager; `prlimit` (util-linux) and `file` for crashes to leave a core and be named.
 - For `runners.mjs`: SSH access to each runner by key (it runs in batch mode), and Node on the runner.
 
 ### Building the packages
@@ -56,8 +56,18 @@ Directly against an installed app, headless, on a library of its own:
 export XDG_DATA_HOME=$HOME/.cache/vodscribe-e2e-data E2E_RESET_DATA=1 VODSCRIBE_NO_UPDATE_CHECK=1
 unset WAYLAND_DISPLAY; export GDK_BACKEND=x11
 export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
-dbus-run-session -- xvfb-run -a -s '-screen 0 1400x900x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
+dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
 ```
+
+The screen is 1920 by 1080, as in the cells, so that the scenarios that drag a clip onto a file manager (Nautilus, or Dolphin under KDE: `lib/fileManager.mjs`) have room for it beside the app's window (moved to the screen's left edge when the window manager centred it, as openbox does); on a smaller one they skip, and with a Nautilus older than 43 (Ubuntu 22.04's 42 asks for the drag's data during the motion). On Windows, drag-promise drops on File Explorer and on a Windows PowerShell form that takes real files only, then on one that refuses every drop (`lib/explorer.mjs`), beside the app's window, with gestures as PowerShell scripts in the signed-in session. On macOS its app that takes finished files only is built with swiftc, and run a second time refusing every drop.
+
+A crash leaves a core: on Linux the harness lifts the core limit (0 by default) of tauri-driver with `prlimit`, so the app and its WebKit processes inherit it, and starts tauri-driver in `E2E_OUT`, so with the kernel's usual pattern (`core`, with the pid: `/proc/sys/kernel/core_pattern`, `core_uses_pid`) a crash leaves `E2E_OUT/core.<pid>`. The scenario's result line names the file and the binary it is from. To read one (here WebKit's web process, at its path on Debian and Ubuntu; the binary must be the one that crashed):
+
+```sh
+gdb -batch -ex bt /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess tests/e2e/out/core.<pid>
+```
+
+A system whose pattern pipes cores to a handler (systemd-coredump, apport) keeps them there instead: `coredumpctl` lists them.
 
 The private runtime dir matters: with the shared one, the test bus's gnome-keyring finds your session's keyring there and quits without claiming its name, and GTK's portal start then waits out D-Bus's 25 s activation timeout before the window appears.
 
@@ -103,7 +113,9 @@ The `setup` scenario always runs first when it's chosen, and downloads the tools
 - `E2E_TRACE`: `1` logs each call into the page and how long it took.
 - `E2E_DRIVER_PORT`: tauri-driver's port (default 4444), for two runs side by side on one computer; with `--parallel`, the workers take the ports after it. The native driver under it (WebKitWebDriver) gets a free port of its own each run: tauri-driver's default, 4445 for every run, had a second run drive the first one's app.
 - `E2E_WORKER`: set by `--parallel` in each worker (its number); not for setting by hand.
+- `E2E_SCREEN`: `hosted-mac` sizes the app's page as CI's hosted macOS runner's 1024 by 768 screen does (`lib/screen.mjs`): the window opens with a page 613 px tall at most, and `resizeInner` gives no page taller than 581 px after a scenario's first resize (the width as asked), saying `held to 1600x581 (hosted-mac)` once in the scenario when it holds one. For checking, before a push, that the scenarios measuring layout don't count on a tall screen. Unset, the page is what the window and the display give. The app's short mode (the player alone on a short window) is off in every scenario but those that ask for it (`app.shortMode(true)`), as on CI's hosted Mac.
 - `E2E_SCHEME`: the colour scheme the run is in (`light` or `dark`), which the site scenarios check; `distros.mjs` sets it from `--scheme`.
+- `E2E_FILE_MANAGER`: the file manager the drag scenarios (drag-promise, drag-file-time) drop on: `dolphin` or `nautilus`. Unset, Dolphin in a KDE session (`XDG_CURRENT_DESKTOP`), else Nautilus.
 - `E2E_DISPLAY`: the Wayland compositor the run is under (`weston` or `gnome`), so screenshots know how to be taken; `distros.mjs` sets it from `--env`.
 - `E2E_SEED`: for `distros.mjs`, a data folder whose `bin/` and `models/` each cell starts with (default none, so setup downloads them).
 - `E2E_WORK`: for `distros.mjs`, where each cell's data folder goes (default `tests/e2e/out/distros`).

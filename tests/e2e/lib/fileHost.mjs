@@ -60,7 +60,7 @@ export function serveFiles(answer) {
 }
 
 /** Where the app asks for the filter of published annotations, at every start
- *  and on the library's "Check all VODs for annotations" (crates/core
+ *  and on the library's "Check all VODs for VODscriptions" (crates/core
  *  annotations_filter.rs). Unserved, as by most scenarios, it's 404 and the
  *  app asks nothing more. */
 export const FILTER_PATH = "/annotations/filter.bin";

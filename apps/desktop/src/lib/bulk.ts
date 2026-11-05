@@ -7,9 +7,10 @@
 // dropped, or out of the window as their files; "Add to edit…" puts them in
 // one without a mouse (`addTo`). Transcribe on a VOD picked with others
 // transcribes them all (`transcribeChosen`). Each is one change, so undo
-// takes it back whole. Escape lets go of a set, Ctrl+A (⌘A) selects all of
-// the clip bar or the library's list, by which side of the window the
-// pointer is on (the focus's, before the pointer has moved).
+// takes it back whole. Escape lets go of a set, Ctrl+A (⌘A) selects by
+// where the pointer is (where.ts, the rule Ctrl+V pastes by too): over the
+// clip bar, all its clips; over the library's pane, all its list;
+// elsewhere, the whole timeline of what's open, from its start to its end.
 
 import { removeEntries } from "./actions";
 import { api, type Clip, type Doc, type Edit, type Put, type Vod } from "./api";
@@ -23,6 +24,7 @@ import { isEscape } from "./playerKeys";
 import { count, library, snippets, type Entry, type Snippet } from "./selection.svelte";
 import { toast } from "./toasts.svelte";
 import { undoIn } from "./undo";
+import { where, type Where } from "./where";
 
 /** The stretches selected (or of `items`), in the order they were. */
 export const chosenSegments = (items = snippets.items) =>
@@ -41,10 +43,9 @@ export async function clipSegments() {
   else await exportStretches(ranges);
 }
 
-/** Takes the clips selected off a VOD's clip bar, as one change; the set then goes. */
-export async function removeChosenClips() {
-  const ids = chosenClips();
-  const doc = clips.doc;
+/** Takes the clips selected (or `ids`, of `doc`'s clip bar: those Ctrl+X
+ *  copied) off their clip bar, as one change; the set then goes. */
+export async function removeChosenClips(ids = chosenClips(), doc = clips.doc) {
   if (!ids.length || !doc) return;
   snippets.clear();
   clips.hovered = null;
@@ -123,26 +124,30 @@ function faceOf(item: Snippet): Face | undefined {
 /** Carries what's picked on the timeline and in the clip bar from (`x`, `y`)
  *  (a drag of one of them, flying from `from`; back over `home`, if given, the
  *  carry ends and it takes the press on): see dragout.ts `carrySet`. */
-export function carryChosen(from: DOMRect, x: number, y: number, home?: CarryHome) {
-  carrySnippets(snippets.items, from, x, y, home);
+export function carryChosen(from: DOMRect, x: number, y: number, home?: CarryHome): Promise<void> {
+  return carrySnippets(snippets.items, from, x, y, home);
 }
 
 /** Carries `items` (stretches of the open timeline, clips of its clip bar), as
  *  `carryChosen` carries what's picked: a stretch between an edit's cuts
  *  Alt-dragged goes this way, as itself rather than its whole piece. */
-export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number, home?: CarryHome) {
+export function carrySnippets(list: Snippet[], from: DOMRect, x: number, y: number, home?: CarryHome): Promise<void> {
   const items = chosenPuts(list);
   const doc = clips.doc;
-  if (!items.length || !doc) return;
+  if (!items.length || !doc) return Promise.resolve();
   const faces = list.slice(0, 3).flatMap((i) => faceOf(i) ?? []);
   // One alone is said as a stretch carried by itself is; several, by how many.
   const one = items.length === 1 && faces[0];
-  void carrySet({
+  return carrySet({
     items,
     label: one ? stretchSaid(one.start, one.end ?? one.start) : chosenSaid(list),
     faces,
     stretches: doc.kind === "vod" ? chosenSegments(list).map((s) => ({ start: s.start, end: s.end })) : [],
     files: () => chosenFiles(list),
+    // Made as the carry begins where the footage is here: a VOD playing from
+    // a file here, an edit whose pieces all do. A site's is downloaded only
+    // once the carry leaves the window, not for one dropped inside it.
+    early: doc.kind === "vod" ? !clips.fromSite : edits.footageHere,
     vodId: doc.kind === "vod" ? doc.id : undefined,
     home,
     from,
@@ -239,35 +244,25 @@ export async function removeChosenEntries(rows: Row[], onremove: (vodId: number)
   await removeEntries(vods, gone, { onremove, confirmed: () => library.clear() });
 }
 
-/** Where the pointer last was in the window, across (null before it has moved). */
-let pointerX: number | null = null;
+/** Where the pointer last was in the window (null before it has moved). */
+let pointer: { x: number; y: number } | null = null;
 
-/** The pointer moved to `x` (App.svelte tells, for Ctrl+A). */
-export function pointerAt(x: number) {
-  pointerX = x;
+/** The pointer moved to (`x`, `y`) (App.svelte tells, for Ctrl+A and Ctrl+V). */
+export function pointerAt(x: number, y: number) {
+  pointer = { x, y };
 }
 
-/**
- * What a press of Ctrl+A selects: the library's list with the pointer on
- * the library pane's side of the window (it's on the left: App.svelte),
- * the clip bar with it on the main view's side, anywhere there (the player,
- * the timeline, the transcript), not only over the bar itself. Before the
- * pointer has moved, where the focus is.
- */
-function selectingIn(): "clips" | "library" | null {
-  const pane = document.querySelector(".library-pane");
-  const side =
-    pointerX !== null && pane
-      ? pointerX < pane.getBoundingClientRect().right
-        ? "library"
-        : "clips"
-      : document.activeElement?.closest(".library-list")
-        ? "library"
-        : document.activeElement?.closest(".clip-bar")
-          ? "clips"
-          : null;
-  // No clip bar shown (the library's page), nothing to select there.
-  return side === "clips" && !document.querySelector(".clip-bar") ? null : side;
+/** What Ctrl+A selects and Ctrl+V pastes into now, the page as it is (where.ts). */
+export function whereKeys(): Where | null {
+  const box = (selector: string) => document.querySelector(selector)?.getBoundingClientRect() ?? null;
+  const focused = document.activeElement;
+  return where({
+    pointer,
+    pane: box(".library-pane"),
+    bar: box(".clip-bar"),
+    focus: focused?.closest(".library-list") ? "library" : focused?.closest(".clip-bar") ? "clips" : "other",
+    timeline: !!document.querySelector(".scrubber") && cuts.doc !== null && cuts.length > 0,
+  });
 }
 
 /**
@@ -288,14 +283,19 @@ export function selectionKey(e: KeyboardEvent, rows: Row[], onremove: (vodId: nu
     return true;
   }
   if (is(e, "select.all")) {
-    const into = selectingIn();
+    const into = whereKeys();
     if (into === "clips") snippets.set(clips.shown.map((c) => ({ kind: "clip", id: c.id })));
     else if (into === "library")
       library.set(
         rows.map((r) => (r.kind === "vod" ? { kind: "vod", id: r.vod.id } : { kind: "edit", id: r.edit.id })),
       );
-    // The key is the app's even with nothing to pick (the main side with no
-    // clip bar): the web view's own select-all would light up the page's text.
+    else if (into === "timeline") {
+      // The whole of it, selected (not cut): what Ctrl+C then copies.
+      cuts.selection = { start: 0, end: cuts.length };
+      cuts.selectedEdge = null;
+    }
+    // The key is the app's even with nothing to pick (the main side with
+    // nothing open): the web view's own select-all would light up the page's text.
     return true;
   }
   // Not the open row alone: Delete then is the player's or the edit's.

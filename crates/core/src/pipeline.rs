@@ -293,6 +293,35 @@ pub fn remove_media(work_dir: &Path, vod_id: i64) {
     remove_work_files(&media_dir(work_dir), vod_id);
 }
 
+/// The file VOD `vod`'s download is being written to, as it is: the biggest
+/// of yt-dlp's part files (`fetch::part_files`) at either of `download`'s
+/// stems, the kept video's in `media_dir` and the audio's in `work_dir`.
+/// None when no download has begun, or it has finished.
+pub fn partial_download(work_dir: &Path, vod: &Vod) -> Option<PathBuf> {
+    let stems = [media_stem(&media_dir(work_dir), vod.id, &vod.info.title), work_dir.join(vod.id.to_string())];
+    stems.iter().flat_map(|stem| fetch::part_files(stem)).max_by_key(|(_, len)| *len).map(|(path, _)| path)
+}
+
+/// The file VOD `id` is on this computer as, finished or not: the one it
+/// plays from (`Db::playable_path`), else its download so far
+/// (`partial_download`).
+pub fn file_on_disk(db: &Db, work_dir: &Path, id: i64) -> Result<Option<PathBuf>> {
+    if let Some(path) = db.playable_path(id)? {
+        return Ok(Some(path.into()));
+    }
+    Ok(db.vod(id)?.and_then(|vod| partial_download(work_dir, &vod)))
+}
+
+/// Sets `vod.partial`: whether its download so far is a file to show. Only
+/// a download that's begun and not finished is looked for on disk, so a
+/// library's list reads a folder for those alone.
+pub fn mark_partial(work_dir: &Path, vod: &mut Vod) {
+    vod.partial = vod.source_path.is_none()
+        && !vod.media
+        && matches!(vod.status, Status::Queued | Status::Downloading | Status::Paused | Status::Error)
+        && partial_download(work_dir, vod).is_some();
+}
+
 /// Audio to transcribe a stretch from: a file, and the VOD's time at its 0
 /// (a section's start; 0 for the VOD's whole audio).
 pub struct Audio {
@@ -629,6 +658,64 @@ mod tests {
             left,
             ["31.mp4", "77", "A title [4].mp4.part-Frag7.part", "Folder [32]", "Other [34].mp4", "notes.txt"]
         );
+    }
+
+    #[test]
+    fn a_download_so_far_is_its_biggest_part_file() {
+        let root = crate::TempDir::new("partial");
+        let work = root.join("work");
+        let media = media_dir(&work);
+        fs::create_dir_all(&media).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let info = |id: &str| VodInfo {
+            platform: "youtube".into(),
+            platform_id: id.into(),
+            url: format!("https://www.youtube.com/watch?v={id}"),
+            title: "A talk".into(),
+            channel: None,
+            duration: Some(60.0),
+            thumbnail: None,
+            published: None,
+            started_at: None,
+        };
+        let (vod, _) = db.add_vod(&info("one")).unwrap();
+        let (other, _) = db.add_vod(&info("two")).unwrap();
+        let stretch = db.request(vod.id, 0.0, None).unwrap();
+        db.set_stretch_status(stretch.id, Status::Paused, 0.3, None).unwrap();
+        let listed = |db: &Db, id: i64| {
+            let mut vod = db.vod(id).unwrap().unwrap();
+            mark_partial(&work, &mut vod);
+            vod
+        };
+
+        // Nothing begun: no file, nothing to show.
+        assert_eq!(file_on_disk(&db, &work, vod.id).unwrap(), None);
+        assert!(!listed(&db, vod.id).partial);
+
+        // The audio's parts in the work dir and a kept video's in media: the
+        // biggest, as it is; another VOD's (its id a prefix of none) aren't.
+        let id = vod.id;
+        fs::create_dir_all(&work).unwrap();
+        fs::write(work.join(format!("{id}.f140.m4a.part")), [0; 10]).unwrap();
+        fs::write(media.join(format!("A talk [{id:06}].f137.mp4.part")), [0; 30]).unwrap();
+        fs::write(work.join(format!("{id}.info.json")), [0; 99]).unwrap();
+        fs::write(work.join(format!("{id}0.m4a.part")), [0; 99]).unwrap();
+        fs::write(work.join(format!("{}.m4a.part", other.id)), [0; 99]).unwrap();
+        let shown = media.join(format!("A talk [{id:06}].f137.mp4.part"));
+        assert_eq!(file_on_disk(&db, &work, id).unwrap(), Some(shown));
+        assert!(listed(&db, id).partial);
+        fs::write(work.join(format!("{id}.f251.webm.part")), [0; 50]).unwrap();
+        assert_eq!(file_on_disk(&db, &work, id).unwrap(), Some(work.join(format!("{id}.f251.webm.part"))));
+
+        // Not asked for (the other VOD), its parts aren't looked for in the list.
+        assert!(!listed(&db, other.id).partial);
+
+        // Kept, it's the kept file, and the list doesn't call it partial.
+        let kept = media.join(format!("A talk [{id:06}].mp4"));
+        fs::write(&kept, b"x").unwrap();
+        db.set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
+        assert_eq!(file_on_disk(&db, &work, id).unwrap(), Some(kept));
+        assert!(!listed(&db, id).partial);
     }
 
     #[test]

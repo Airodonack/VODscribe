@@ -53,13 +53,10 @@ export default {
     log(`rendered with its hole: ${done.file_path}`);
 
     // Removed with its video: what the edit uses can't be kept (the file's
-    // gone), so that fails, saying so; anyway, the VOD goes and the piece
-    // stays a hole.
-    const failed = await app.invoke("delete_vod", { id: vod.id, deleteVideo: true, anyway: false }).then(
-      () => null,
-      (e) => String(e),
-    );
-    if (!failed?.includes("realize: ")) throw new Error(`removing it with its video said ${failed}`);
+    // gone), so nothing is removed and the answer says why; anyway, the VOD
+    // goes and the piece stays a hole.
+    const failed = await app.invoke("delete_vod", { id: vod.id, deleteVideo: true, anyway: false });
+    if (typeof failed !== "string") throw new Error(`removing it with its video answered ${JSON.stringify(failed)}`);
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id)) throw new Error("the failed removal removed it");
     await app.invoke("delete_vod", { id: vod.id, deleteVideo: true, anyway: true });
     if ((await app.invoke("list_vods")).some((v) => v.id === vod.id))

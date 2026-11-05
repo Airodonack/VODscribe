@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { portal } from "./portal";
 
   // A panel opened from a button: Settings, the search's From filter, the
@@ -17,6 +17,7 @@
     width,
     padding = 12,
     above = false,
+    grow = false,
     children,
   }: {
     open: boolean;
@@ -27,9 +28,12 @@
     padding?: number;
     /** Above the button if it fits there, rather than below. */
     above?: boolean;
+    /** As wide as what's in it, `width` at the least (a menu, its longest choice). */
+    grow?: boolean;
     children: Snippet;
   } = $props();
 
+  let panel = $state<HTMLElement>();
   // Below the button with at least this much room, even if there's more above.
   const ROOM = 280;
   // Less than this either side (a short window): as tall as the window, over the button.
@@ -39,7 +43,8 @@
     if (!open || !anchor) return;
     const box = anchor.getBoundingClientRect();
     // Right edges aligned, but never past the window's left edge (a button near it).
-    const right = Math.max(8, Math.min(window.innerWidth - box.right, window.innerWidth - width - 8));
+    const wide = Math.max(width, panel?.offsetWidth ?? 0);
+    const right = Math.max(8, Math.min(window.innerWidth - box.right, window.innerWidth - wide - 8));
     const below = window.innerHeight - box.bottom - 16;
     const up = box.top - 16;
     place = (above ? up < LEAST && below >= LEAST : below >= ROOM || (below >= up && below >= LEAST))
@@ -49,21 +54,41 @@
         : { top: 8, right, maxHeight: window.innerHeight - 16 };
   }
   $effect(() => {
+    // Again once it's drawn, to know its width.
+    void panel;
     if (open) fit();
   });
+
+  // A click is a press and its release: one whose press was held as the panel
+  // opened (a clip pulled out of the window asks the note on permission, and
+  // is let go after) isn't a click outside it.
+  let pressed = false;
+  let pressedBefore = false;
+  $effect(() => {
+    if (open) pressedBefore = untrack(() => pressed);
+  });
+  function onWindowPointerDown() {
+    pressed = true;
+    pressedBefore = false;
+  }
 
   // By the click's path when it happened: a button inside that removes itself
   // (a layer's pill, say) is gone from the page before this runs, and that's
   // still a click inside.
-  let panel = $state<HTMLElement>();
   function onWindowClick(e: MouseEvent) {
     if (!open) return;
+    if (pressedBefore) {
+      pressedBefore = false;
+      return;
+    }
     const path = e.composedPath();
     if (!(anchor && path.includes(anchor)) && !(panel && path.includes(panel))) open = false;
   }
 </script>
 
 <svelte:window
+  onpointerdowncapture={onWindowPointerDown}
+  onpointerupcapture={() => (pressed = false)}
   onclick={onWindowClick}
   onkeydown={(e) => e.key === "Escape" && (open = false)}
   onresize={fit}
@@ -77,7 +102,8 @@
     class="popover"
     role="dialog"
     aria-label={label}
-    style:width="{width}px"
+    style:width={grow ? "max-content" : `${width}px`}
+    style:min-width={grow ? `${width}px` : null}
     style:padding="{padding}px"
     style:top={place?.top !== undefined ? `${place.top}px` : null}
     style:bottom={place?.bottom !== undefined ? `${place.bottom}px` : null}

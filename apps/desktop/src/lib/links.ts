@@ -6,9 +6,9 @@ export const RELEASES = `${SITE}/releases`;
 export const releaseNotes = (version: string) => `${RELEASES}#${version.split(/[_+-]/)[0]}`;
 /** Credits and licenses; the installers also include THIRD-PARTY-NOTICES.txt. */
 export const LICENSES = `${SITE}/licenses`;
+/** Ways to get help: email, the issue tracker, security reports. The app shows no email address. */
+export const SUPPORT = `${SITE}/support`;
 export const AUTHOR = "Airodonack";
-/** Where "Made by" links: donations that cover hosting and code signing. */
-export const SUPPORT = "https://ko-fi.com/airodonack";
 /** The code, on GitHub. */
 export const SOURCE = "https://github.com/Airodonack/VODscribe";
 /** Bug reports and ideas; a public tracker, no account needed to read it. */

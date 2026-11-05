@@ -4,7 +4,7 @@
   import Demo from "#lib/Demo.svelte";
   import DownloadNote from "#lib/DownloadNote.svelte";
   import { DOWNLOADS, detectMacChip, detectOs, primaryDownload, type MacChip, type Os } from "#lib/downloads.js";
-  import { ISSUES, SOURCE, SUPPORT, UNSIGNED } from "#lib/links.js";
+  import { PREMIUM, SOURCE, SUPPORT_EMAIL, UNSIGNED } from "#lib/links.js";
 
   // The main button offers this visitor's OS; every installer is listed below it.
   let os = $state<Os | null>(null);
@@ -20,36 +20,41 @@
   const FAQ = [
     {
       q: "Is it free?",
-      a: "Yes. No account, no ads, no trial. If it saves you time, you can chip in on Ko-fi to help cover hosting and code signing.",
+      a: "Yes: no account, no ads, no trial. A channel pays for its VODscription, and everyone sees it for free.",
+      link: { text: "About VODscriptions", href: PREMIUM },
     },
     {
       q: "Do my VODs or transcripts get uploaded anywhere?",
-      a: "No. VODscribe downloads a VOD's audio to your computer and transcribes it there. Transcripts and searches never leave your computer, and VODscribe collects nothing about how you use it.",
+      a: "No. VODscribe downloads a VOD's audio and transcribes it on your computer, where transcripts and searches stay. It collects nothing about how you use it.",
     },
     {
       q: "Which VODs can it transcribe?",
-      a: "Kick, Twitch and YouTube links: past broadcasts, highlights, clips and uploads. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, and their video is kept on your computer to play. It also takes video and audio files from your computer.",
+      a: "Kick, Twitch and YouTube past broadcasts, highlights, clips and uploads, and video and audio files on your computer. Links from over a thousand other sites work too, from Rumble and Dailymotion to SoundCloud, their video kept on your computer to play.",
+    },
+    {
+      q: "Can I use the clips in my editor?",
+      a: "Yes. Drag a clip or a picked stretch out of the window into your editor or a folder, or use Show in folder on the clip. Clips are MP4 (H.264 and AAC), which nearly every editor reads; Settings › Storage can make them MOV (DNxHR), which scrubs more smoothly and DaVinci Resolve needs on Linux.",
     },
     {
       q: "Does it show the chat?",
-      a: "Yes, for Kick, Twitch and YouTube livestreams: the chat replay sits beside the transcript, lined up with what was being said, and search covers it too. A timeline shows how busy chat was over the whole stream, and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
+      a: "Yes, for Kick, Twitch and YouTube livestreams: the replay sits beside the transcript, in step with it, and search covers it too. A timeline shows how busy chat was and can mark the laughs, hype, subs and tips, or any words and emotes you choose.",
     },
     {
       q: "Which languages does it understand?",
-      a: "English and 24 other European languages, using NVIDIA's Parakeet speech model. It's very good with clear speech; names and game terms sometimes come out spelled differently.",
+      a: "English and 24 other European languages, with NVIDIA's Parakeet speech model. It's very good with clear speech, though names and game terms are sometimes misspelled.",
     },
     {
       q: "How fast is it?",
-      a: "It depends on your computer. A recent processor transcribes an hour of VOD in minutes. On Windows and Linux, an NVIDIA graphics card with the free GPU add-on is several times faster.",
+      a: "A recent processor transcribes an hour of VOD in minutes. On Windows and Linux, an NVIDIA graphics card with the free GPU add-on is several times faster.",
     },
     {
       q: "Why does Windows or macOS warn me before opening it?",
-      a: `VODscribe ${UNSIGNED} On Windows, choose More info, then Run anyway. On a Mac, drag VODscribe into Applications and open it once, choose Done (not Move to Trash), then go to System Settings › Privacy & Security, choose Open Anyway, choose Open Anyway again when macOS asks, and enter your password (on macOS 14 or earlier, Control-click it in Applications and choose Open).`,
+      a: `VODscribe ${UNSIGNED} On Windows, choose More info, then Run anyway; on a Mac, drag it into Applications, open it, choose Done (not Move to Trash), then Open Anyway in System Settings › Privacy & Security and again when macOS asks, and enter your password. On macOS 14 or earlier, Control-click it in Applications and choose Open.`,
     },
     {
       q: "Something's broken, or I have an idea. Where do I say so?",
-      a: "On the issue tracker, which the person who makes VODscribe reads.",
-      link: { text: "Open the issue tracker", href: ISSUES },
+      a: `Email problems to ${SUPPORT_EMAIL}, or post them on the issue tracker, where ideas go too.`,
+      link: { text: "Get support", href: "/support" },
     },
     {
       q: "Can I see the code?",
@@ -60,15 +65,15 @@
 </script>
 
 <svelte:head>
-  <title>VODscribe: search everything said in your VODs</title>
+  <title>VODscribe: from VOD to clip in a minute</title>
   <meta
     name="description"
-    content="VODscribe transcribes Kick, Twitch and YouTube VODs, and videos from other sites, on your computer, so you can find any moment by what was said. Free for Windows, macOS and Linux."
+    content="Paste a Twitch, YouTube or Kick link, spot the best moments at a glance and drag them straight into your editor. Free for Windows, macOS and Linux."
   />
-  <meta property="og:title" content="VODscribe: search everything said in your VODs" />
+  <meta property="og:title" content="VODscribe: from VOD to clip in a minute" />
   <meta
     property="og:description"
-    content="Transcribe Kick, Twitch and YouTube VODs on your computer and find any moment by what was said."
+    content="Paste a Twitch, YouTube or Kick link, spot the best moments at a glance and drag them straight into your editor."
   />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://vodscribe.com/" />
@@ -79,18 +84,14 @@
 
 <main>
   <section class="hero">
-    <h1>Search everything said in your VODs</h1>
+    <h1>From VOD to clip in a minute</h1>
     <p class="lead">
-      VODscribe transcribes Kick, Twitch and YouTube VODs on your computer. Find any moment by what was said, and jump
-      straight to it.
+      Paste a link. Spot the best moments at a glance. Drag them straight into your editor. Free, forever.
     </p>
     <div class="ctas">
       <a class="button primary big" href={primary?.url ?? "#download"} onclick={() => (note = primary?.os ?? null)}>
         <Icon name="download" size={18} />
         {primary ? `Download for ${primary.label}` : os === "mac" ? "Download for macOS" : "Download"}
-      </a>
-      <a class="button big" href={SUPPORT} target="_blank" rel="noopener">
-        <span class="heart">❤︎</span> Support on Ko-fi
       </a>
     </div>
     <p class="small muted">Free for Windows, macOS and Linux</p>
@@ -99,7 +100,9 @@
   <section class="demo">
     <p class="demo-intro">
       <strong>Try it here with the transcribed VODs below.</strong>
-      <span class="muted">Search them, or pick one to play. Transcribing your own VODs needs the app.</span>
+      <span class="muted"
+        >Search them, or play one. The app transcribes your own, and any line you find is a clip two keys later.</span
+      >
     </p>
     <div class="wide">
       <Demo />
@@ -107,7 +110,7 @@
     <div class="narrow">
       <img
         src="/screenshot.jpg"
-        alt="VODscribe with a NASA VOD open and every mention of “heat shield” found"
+        alt="VODscribe with a NASA VOD open and its transcript searched for “heat shield”"
         width="1132"
         height="623"
       />
@@ -120,32 +123,36 @@
 
   <section class="features">
     <div>
+      <Icon name="scissors" size={22} />
+      <h2>Clips straight into your editor</h2>
+      <p class="muted">
+        Mark a stretch on the timeline or pick lines in the transcript, then drag it into your editor or a folder.
+        Several go out together, in order, and edits join pieces of one VOD or many.
+      </p>
+    </div>
+    <div>
+      <Icon name="layers" size={22} />
+      <h2>Chapters and highlights</h2>
+      <p class="muted">
+        With a channel's VODscription, its VODs come with chapters, the moments chat reacted to and who was speaking, on
+        the timeline and beside the transcript.
+        <a href={PREMIUM}>About VODscriptions</a>
+      </p>
+    </div>
+    <div>
       <Icon name="search" size={22} />
-      <h2>Every word, searchable</h2>
+      <h2>Every word and chat message, searchable</h2>
       <p class="muted">
-        Type a phrase to see every time it was said or written in chat, across all your VODs. Click one to play from
-        there.
+        Find every time a phrase was said or typed, across all your VODs, in the transcript and the chat replay beside
+        it. A timeline shows where chat went wild.
       </p>
-    </div>
-    <div>
-      <Icon name="message" size={22} />
-      <h2>Chat beside the transcript</h2>
-      <p class="muted">
-        The stream's chat, lined up with what was said, and a timeline of where it went wild: laughs, hype, subs and
-        tips.
-      </p>
-    </div>
-    <div>
-      <Icon name="film" size={22} />
-      <h2>Kick, Twitch, YouTube and more</h2>
-      <p class="muted">Paste a link or drop a video file, then transcribe it when you want its transcript.</p>
     </div>
     <div>
       <Icon name="shield" size={22} />
       <h2>Runs on your computer</h2>
       <p class="muted">
-        No account, no uploads, nothing collected. Any recent computer will do; an NVIDIA graphics card makes it several
-        times faster.
+        No account, no uploads, nothing collected. Any recent computer will do, and an NVIDIA graphics card makes it
+        several times faster.
       </p>
     </div>
   </section>
@@ -171,7 +178,7 @@
     {/if}
     <p class="muted small">
       For 64-bit Windows 10 and 11, macOS 12 and later (Apple Silicon and Intel) and Linux. On first run it downloads
-      what it needs to transcribe (about 1 GB), checking each file before using it.
+      what it needs to transcribe (about 1 GB) and checks each file.
     </p>
   </section>
 
@@ -259,10 +266,6 @@
   .big {
     padding: 12px 22px;
     font-size: 16px;
-  }
-
-  .heart {
-    color: #e5484d;
   }
 
   .small {

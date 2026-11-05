@@ -47,6 +47,8 @@ class Clips {
   overBar = $state(false);
   /** While the note before downloading a clip is up: how it's answered. */
   asking = $state<((download: boolean) => void) | null>(null);
+  /** Told how the note is answered next (`nextAnswer`). */
+  #heard: ((download: boolean) => void)[] = [];
   /** Whether the VOD shown is from a site, so its clips are downloaded. */
   #fromSite = false;
   get fromSite() {
@@ -125,6 +127,18 @@ class Clips {
   #serial = 0;
   #news = new Map<number, number>();
 
+  /** How far the clips' news has come: `answered` takes what a command
+   *  sent at this point answers. */
+  get news(): number {
+    return this.#serial;
+  }
+
+  /** Puts `made`, a command's answer (a paste: copyPaste.ts) to one sent when
+   *  the news was at `since` (`news`), unless news of each has come since. */
+  answered(made: Clip[], since: number) {
+    for (const clip of made) this.#answer(clip, since);
+  }
+
   /** Puts `clip`, a command's answer to one sent when the news was at `since`,
    *  unless news of it has come since. */
   #answer(clip: Clip, since: number) {
@@ -147,6 +161,14 @@ class Clips {
   /** The clips in the clip bar: saved there, not only dragged out of the window. */
   get shown(): Clip[] {
     return this.list.filter((c) => c.shown);
+  }
+
+  /** Whether making `ranges` clips here asks the note on permission first:
+   *  a VOD from a site, the note not hidden, one of them not made yet. */
+  asksFor(ranges: { start: number; end: number }[]): boolean {
+    return (
+      this.doc?.kind === "vod" && this.#fromSite && !noteHidden() && ranges.some((r) => !this.find(r.start, r.end))
+    );
   }
 
   /**
@@ -294,7 +316,16 @@ class Clips {
   /** Answers the note before downloading; `hide` keeps it from showing again. */
   answer(download: boolean, hide = false) {
     if (download && hide) hideNote();
-    this.asking?.(download);
+    if (!this.asking) return;
+    this.asking(download);
+    const heard = this.#heard;
+    this.#heard = [];
+    for (const told of heard) told(download);
+  }
+
+  /** How the note before downloading is answered next: whether to download. */
+  nextAnswer(): Promise<boolean> {
+    return new Promise((told) => this.#heard.push(told));
   }
 
   rename = (id: number, title: string) => this.#run(api.renameClip(id, title));

@@ -156,7 +156,7 @@ pub(crate) async fn check_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
         let asked = can_have && may_ask(&app);
         if asked {
             look_up(&app, vod_id, &vod.info.platform, &vod.info.platform_id)
-                .map_err(|e| anyhow::anyhow!("Couldn't check for annotations: {e:#}"))?;
+                .map_err(|e| anyhow::anyhow!("Couldn't check for a VODscription: {e:#}"))?;
         }
         let offer = app.state::<AppState>().db.lock().unwrap().annotations_offer(vod_id)?;
         Ok(Checked { asked, can_have, offer })
@@ -198,7 +198,7 @@ pub(crate) async fn check_library_annotations(app: AppHandle) -> CmdResult<annot
     tauri::async_runtime::spawn_blocking(move || check_library(&app))
         .await
         .map_err(err)?
-        .map_err(|e| err(anyhow::anyhow!("Couldn't check for annotations: {e:#}")))
+        .map_err(|e| err(anyhow::anyhow!("Couldn't check for a VODscription: {e:#}")))
 }
 
 /// What's known of VOD `vod_id`'s published annotations, to offer them.

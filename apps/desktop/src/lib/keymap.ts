@@ -144,10 +144,11 @@ export const ACTIONS = [
   { id: "nav.back", label: "Back", scope: "app", defaults: { linux: ["Alt+ArrowLeft"], mac: ["Meta+["] } },
   { id: "nav.forward", label: "Forward", scope: "app", defaults: { linux: ["Alt+ArrowRight"], mac: ["Meta+]"] } },
   { id: "search.focus", label: "Search", scope: "app", defaults: { linux: ["Ctrl+f"], mac: ["Meta+f"] } },
-  // By the side of the window the pointer is on: the clip bar or the library's list.
+  // By where the pointer is: over the clip bar, its clips; over the library's
+  // pane, its list; elsewhere, the whole timeline of what's open.
   {
     id: "select.all",
-    label: "Select all the clips, or all the library (by the pointer's side)",
+    label: "Select the whole timeline, all the clips or all the library (where the pointer is)",
     scope: "app",
     defaults: { linux: ["Ctrl+a"], mac: ["Meta+a"] },
   },
@@ -205,6 +206,28 @@ export const ACTIONS = [
     defaults: all("c"),
   },
   { id: "clips.remove", label: "Remove the selected clips", scope: "player", defaults: all("Delete", "Backspace") },
+  // Ctrl+C and Ctrl+V as everywhere (C alone clips): a copy of the selection
+  // or what's picked, pasted where the pointer is (copyPaste.ts).
+  {
+    id: "edit.copy",
+    label: "Copy the selection, or what's picked",
+    scope: "player",
+    legend: "cutting",
+    defaults: { linux: ["Ctrl+c"], mac: ["Meta+c"] },
+  },
+  {
+    id: "edit.cut",
+    label: "Cut: copy what's picked and remove it",
+    scope: "player",
+    defaults: { linux: ["Ctrl+x"], mac: ["Meta+x"] },
+  },
+  {
+    id: "edit.paste",
+    label: "Paste: on the clip bar, or in an edit after the selection",
+    scope: "player",
+    legend: "cutting",
+    defaults: { linux: ["Ctrl+v"], mac: ["Meta+v"] },
+  },
   {
     id: "transcribe.here",
     label: "Transcribe the selection, or the whole VOD",
@@ -216,7 +239,15 @@ export const ACTIONS = [
   { id: "mark.chapter", label: "New chapter here", scope: "player", legend: "marks", defaults: all("n") },
   { id: "captions.toggle", label: "Captions", scope: "player", legend: "more", defaults: all("Shift+c") },
   { id: "mute.toggle", label: "Mute", scope: "player", legend: "more", defaults: all("Shift+m") },
-  { id: "fullscreen.toggle", label: "Full screen", scope: "player", legend: "more", defaults: all("f") },
+  {
+    id: "fullscreen.toggle",
+    label: "Full screen",
+    scope: "player",
+    legend: "more",
+    // F, and F11 as on Linux and Windows. Not on a Mac: there F11 shows the
+    // desktop, and Ctrl+Cmd+F is the window menu's own full screen.
+    defaults: { linux: ["f", "F11"], mac: ["f"] },
+  },
   // An edit's player only.
   { id: "edit.render", label: "Export: render the edit", scope: "edit", legend: "cutting", defaults: all("e") },
   {

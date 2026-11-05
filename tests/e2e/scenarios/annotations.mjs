@@ -66,6 +66,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { MINUTE, resizeInner, until } from "../lib/app.mjs";
 import { serveFiles } from "../lib/fileHost.mjs";
@@ -171,7 +172,7 @@ const pictures = (method, path) =>
       ? { status: 200, headers: { "Content-Type": "image/png" }, body: PICTURE }
       : { status: 404 };
 
-const PICTURES = "Load streamers' pictures from img.vodscribe.com";
+const PICTURES = "Enable streamer pictures from img.vodscribe.com";
 
 /** Turns the cast's pictures on or off in Settings › Privacy, and closes Settings. */
 async function setPictures(app, on) {
@@ -284,6 +285,7 @@ export default {
     if (shown !== "funny 😂 1, drama 🍿 1") wrong.push(`the highlights' glyphs: ${shown}`);
 
     // Pointing at the first: a line down the bar, and its title, times and why in the tip.
+    // (The system's pointer is off the page: the runner parks it, os.parkPointer.)
     await app.js(POINT, ".scrubber .emoji[data-category=funny]");
     const said = await until(
       "the highlight's tip",
@@ -868,7 +870,8 @@ export default {
           faces: row.querySelector(".faces")?.title ?? null }`,
         editRow,
       );
-      if (JSON.stringify(meta) !== JSON.stringify({ meta: "0:00·5s", faces: "Mar, Ada, Jules" }))
+      // Field by field: a page's object may come back with its keys in another order (Windows, macOS 12).
+      if (!isDeepStrictEqual(meta, { meta: "0:00·5s", faces: "Mar, Ada, Jules" }))
         wrong.push(`in the edit, Close call's row reads ${JSON.stringify(meta)}`);
       // Opened (a highlight with nothing to show has nothing to open).
       const opens = await app.js(`return !!document.querySelector(arguments[0] + " .chevron")`, editRow);
@@ -929,14 +932,16 @@ export default {
         wrong.push(`at ${narrow.width} px, the pane a tab, there's an edge to hide its column`);
       // The switch: its segments ("*" the one showing), whether each can be
       // picked, the colours of their text and of its border by name, the
-      // heading's plain label gone, and what shows under the heading.
+      // heading's plain label gone, and what shows under the heading. A web
+      // view with no color-mix (macOS 12's) draws the faded border by the
+      // app's fallback (colorMix.js), the same colour.
       const SWITCH = '.head .switch[role="tablist"]';
       const look = () =>
         app.js(
           `const sw = document.querySelector(arguments[0]);
           if (!sw) return null;
           const named = (c) => { for (const [n, v] of [["accent", "var(--accent)"], ["text", "var(--text)"], ["muted", "var(--muted)"],
-            ["border", "var(--border)"], ["faded", "color-mix(in srgb, var(--border) 50%, transparent)"]]) {
+            ["border", "var(--border)"], ["faded", CSS.supports("color: color-mix(in srgb, red, red)") ? "color-mix(in srgb, var(--border) 50%, transparent)" : "rgb(var(--border-rgb) / 0.5)"]]) {
             const probe = document.createElement("span"); probe.style.color = v; document.body.append(probe);
             const is = getComputedStyle(probe).color; probe.remove(); if (is === c) return n; } return c; };
           const shown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;
@@ -972,6 +977,17 @@ export default {
         transcript: true,
         pane: false,
       });
+      // The transcript scrolled by the reader (a wheel turned over it: it no
+      // longer follows the playhead), to come back to where it was.
+      const BODY = ".below > .body";
+      const scrolled = await app.js(
+        `const body = document.querySelector(arguments[0]);
+        body.dispatchEvent(new WheelEvent("wheel", { deltaY: 100, bubbles: true }));
+        body.scrollTop = Math.round((body.scrollHeight - body.clientHeight) / 2);
+        return { top: body.scrollTop, room: body.scrollHeight - body.clientHeight };`,
+        BODY,
+      );
+      if (scrolled.top < 40) ctx.log(`the transcript has ${scrolled.room} px to scroll: its place isn't checked`);
       await app.click(`${SWITCH} #tab-annotations`);
       await settledLook("the pane in the transcript's place, under the heading", {
         ...plain,
@@ -987,14 +1003,40 @@ export default {
           `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: arguments[0], bubbles: true, cancelable: true }))`,
           key,
         );
+      // A while on the pane (past the transcript's 2 s), then back: the
+      // transcript is where the reader left it.
+      await new Promise((r) => setTimeout(r, 3000));
+      // Where it is in the first frame drawn after the key: the switch shows
+      // the transcript again at the top, and puts its scroll back before that
+      // frame is painted (App.svelte, in the frame's animation callbacks). Read
+      // any sooner, it's still at the top: the check read it so, about one
+      // run in three (2026-10-31).
       await app.js(`document.querySelector(arguments[0]).focus()`, `${SWITCH} #tab-annotations`);
-      await press("ArrowLeft");
+      const atOnce = await app.js(
+        `const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true }));
+        await frame();
+        await frame();
+        return document.querySelector(arguments[0]).scrollTop;`,
+        BODY,
+      );
       await settledLook("← back to the transcript", {
         reads: `Transcript* | ${LABEL}`,
         transcript: true,
         pane: false,
         focused: "tab-transcript",
       });
+      if (scrolled.top >= 40) {
+        const top = await app.js(`return document.querySelector(arguments[0]).scrollTop`, BODY);
+        if (Math.abs(atOnce - scrolled.top) > 2 || Math.abs(top - scrolled.top) > 2)
+          wrong.push(
+            `back from the pane after 3 s, the transcript is scrolled to ${atOnce} px in the first frame and ${top} px after, not ${scrolled.top}`,
+          );
+        else
+          ctx.log(
+            `back from the pane after 3 s, the transcript is where it was left (${top} px), from the first frame`,
+          );
+      }
       await press("ArrowRight");
       await settledLook("→ to the pane again", {
         reads: `Transcript | ${LABEL}*`,
@@ -1176,9 +1218,9 @@ export default {
     );
     const after = await settled("the library still hidden after a reload", (w) => !w.library && w.main > 0);
     if (!after.edges.startsWith("library-edge=false")) wrong.push(`after a reload, the edges read ${after.edges}`);
-    // The library shown again, the VOD opened from it: the pane still hidden.
+    // The library shown again, the VOD open again by itself (a reload comes
+    // back to where it was): the pane still hidden.
     await app.click(LIBRARY_EDGE);
-    await app.click(`.vod[data-key="${vod.id}"] button.main`);
     const reopened = await settled(
       "the VOD open, the pane still hidden",
       (w) => w.library > 0 && !w.pane && w.main > 0,
@@ -1225,6 +1267,11 @@ export default {
     const longFile = path.join(dir, "minute-annotations-long.json");
     writeFileSync(longFile, JSON.stringify(long));
     await app.invoke("import_annotations_file", { path: longFile });
+    // From its top: the reload brought the VOD back where it was left, its
+    // transcript following the playhead there (a wheel turned: no longer).
+    await app.js(`const body = document.querySelector(".below > .body");
+      body.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, bubbles: true }));
+      body.scrollTop = 0;`);
     await until(
       "the longer transcript",
       () => app.js(`return !!document.querySelector('#transcript .line button.row[data-time="0.5"]')`),

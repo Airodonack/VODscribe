@@ -165,6 +165,10 @@ export function playedSpans(start: number, end: number, struck: [number, number]
   return out.filter(([a, b]) => b - a >= 0.04);
 }
 
+/** How long an edit's piece plays: its `playedSpans` end to end. */
+export const playedLength = (piece: { start: number; end: number; struck: [number, number][] }) =>
+  playedSpans(piece.start, piece.end, piece.struck).reduce((sum, [a, b]) => sum + b - a, 0);
+
 /**
  * Where the stretch `from`..`to` of an edit's timeline starts in its VOD, for
  * pieces `pieces` played end to end (each its `playedSpans`): the VOD and the

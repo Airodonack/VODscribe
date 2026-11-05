@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SUPPORT } from "#lib/links.js";
+  import { HELP_MAILTO, ISSUES, SUPPORT_EMAIL } from "#lib/links.js";
 </script>
 
 <svelte:head>
@@ -15,7 +15,7 @@
 
 <article class="prose">
   <h1>Privacy</h1>
-  <p class="muted">Last updated October 29, 2026</p>
+  <p class="muted">Last updated November 4, 2026</p>
 
   <p>
     VODscribe works on your computer, not in the cloud. There's no account, and neither the app nor this website
@@ -30,9 +30,9 @@
       and never copied or uploaded.
     </li>
     <li>
-      Before an update changes how the library is stored, VODscribe keeps a copy of it as it was, in the same folder, in
-      case the update goes wrong. A copy holds what the library held then, transcripts you've deleted since included,
-      and is removed after 30 days.
+      Before an update changes how the library is stored, VODscribe keeps a copy of it in the same folder, in case the
+      update goes wrong. The copy holds what the library held then, including transcripts deleted since, and is removed
+      after 30 days.
     </li>
     <li>VODscribe has no analytics, telemetry or crash reporting.</li>
   </ul>
@@ -42,7 +42,7 @@
       <strong>Get the VODs you add.</strong> It downloads their details and audio from Kick, Twitch or YouTube, or from the
       site the link is on, the way your browser would. From other sites it downloads the video too, and keeps it on your computer
       to play there, until you delete it or the VOD. When you ask, it downloads a VOD's video, or the part of it you make
-      a clip of, from the same place. It only takes links you add to the internet, never to your computer or your local network.
+      a clip of, from the same place. It only follows links to the internet, never ones to your computer or your local network.
     </li>
     <li>
       <strong>Get their chat.</strong> For Kick and Twitch VODs it reads the chat replay from those sites, as their own pages
@@ -63,11 +63,12 @@
       other sites play from your computer.
     </li>
     <li>
-      <strong>Look for annotations, unless you turn it off.</strong> When you add a Kick, Twitch or YouTube VOD, it asks dl.vodscribe.com
-      whether annotations (a transcript, chapters, highlights and who's speaking) are published for it, naming only the site
-      and the VOD's id there. At every start it also downloads from there one small list of every VOD with annotations (again
-      only when the list has changed) and checks your library against it on your computer; only a VOD the list has is asked
-      about, the same way. If you choose to use them, it downloads them from there. Turn it off in Settings → Privacy.
+      <strong>Look for VODscriptions, unless you turn it off.</strong> When you add a Kick, Twitch or YouTube VOD, it asks
+      dl.vodscribe.com whether a VODscription (a transcript, chapters, highlights and who's speaking) is published for it,
+      naming only the site and the VOD's id there. At every start it also downloads from there one small list of every VOD
+      with a VODscription (again only when the list has changed) and checks your library against it on your computer; only
+      a VOD the list has is asked about, the same way. If you choose to use one, it downloads it from there. Turn it off in
+      Settings → Privacy.
     </li>
     <li>
       <strong>Show the pictures of the streamers annotations name, unless you turn it off.</strong> For each, it asks img.vodscribe.com,
@@ -96,17 +97,14 @@
     vodscribe.com sets no cookies and runs no analytics or ads. It's hosted by Cloudflare, which handles requests to it
     like any web host. The demo runs entirely in your browser; its YouTube and Twitch players load from those sites only
     when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
-    page here loads its annotations from dl.vodscribe.com, and the pictures of the streamers they name from
-    img.vodscribe.com, which gets the streamer's site and login and your IP address, and passes your browser on to
-    Twitch's or Kick's own picture.
-  </p>
-
-  <h2>Donations</h2>
-  <p>
-    Support goes through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>, under its own privacy policy. I see
-    what Ko-fi shows creators: the name and message you choose to leave.
+    page here and the VODscriptions page's demo load their annotations from dl.vodscribe.com. The pictures of the
+    streamers they name come from img.vodscribe.com, which gets the streamer's site and login and your IP address, and
+    passes your browser on to Twitch's or Kick's own picture. This site's email links only open your own mail app.
   </p>
 
   <h2>Questions</h2>
-  <p>Send a message through <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>.</p>
+  <p>
+    Email <a href={HELP_MAILTO}>{SUPPORT_EMAIL}</a> about your data or to have it removed, or open an issue on
+    <a href={ISSUES} target="_blank" rel="noopener">GitHub</a>.
+  </p>
 </article>

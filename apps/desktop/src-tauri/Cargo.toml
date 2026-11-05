@@ -16,7 +16,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 # The end-to-end tests' way into the page where there's no WebDriver (src/e2e.rs).
 # Test builds only: never in a release.
-e2e = []
+e2e = ["vodscribe-player/counts"]
 # A site's VOD's picture taken from its player into the app's own, under it
 # (embed_shim.js, embed.rs, embed.ts bridge). Off in releases: YouTube's and
 # Twitch's developer terms forbid playing their video through another player.
@@ -40,11 +40,41 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
 
-# Dragging a clip out of the window into another app (clips.rs). On Linux the
-# app starts the GTK drag itself: drag's builds an unescaped file:// URI, which
-# breaks on names with spaces.
-[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-drag = "2.1"
+# Dragging a clip out of the window into another app (clips.rs): the app
+# starts each OS's drag itself, the GTK one on Linux.
+
+# macOS: the app starts the drag itself (file_drag), with a file promise (the
+# file written where it's dropped once it's made) beside the file's address.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+raw-window-handle = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProcessInfo", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
+objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
+
+# On Windows the app starts the OLE drag itself (drag_source), offering a clip
+# before its file is made; the windows crate's version tauri and wry build.
+[target.'cfg(windows)'.dependencies]
+# (`#[implement]` names windows-core.)
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+] }
+# The drag's picture decoded here (drag_source).
+png = "0.18"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

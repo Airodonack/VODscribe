@@ -58,14 +58,10 @@ export default {
     await app.key("C", { shift: true });
     await until("the strip back", async () => (await layout(app)).strip !== null, 10_000);
 
-    // Play: their player made (its volume on the bar), nothing moved.
+    // Play: their player made (its speed on the bar; the volume is there
+    // before), nothing moved.
     await app.click('.bar button[aria-label="Play"]');
-    await until(
-      "their player made",
-      () =>
-        app.js(`return !!document.querySelector('.bar button[aria-label="Mute"], .bar button[aria-label="Unmute"]')`),
-      MINUTE,
-    );
+    await until("their player made", () => app.js(`return !!document.querySelector(".bar button.speed")`), MINUTE);
     await sleep(1000);
     const played = await layout(app);
     if (played.strip !== opened.strip || played.scrubber !== opened.scrubber)

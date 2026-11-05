@@ -17,6 +17,7 @@ import { isUnplayable } from "../../../apps/desktop/src/lib/media.ts";
 import { SessionLost } from "./drivers.mjs";
 import { pageDump } from "./dump.mjs";
 import * as os from "./os.mjs";
+import { heightFor } from "./screen.mjs";
 
 export const MINUTE = 60_000;
 
@@ -470,7 +471,11 @@ export class App {
     );
     await this.js(`
       const real = window.fetch;
-      window.__e2e = { files: [], answer: null, asked: [], restarts: 0, console: [] };
+      window.__e2e = { files: [], answer: null, asked: [], restarts: 0, console: [], shortMode: false };
+      // The scenarios were written for a page with room for the player and
+      // the transcript together: on a short screen (CI's hosted Mac) short
+      // mode stays off, unless a scenario asks for it (shortMode()).
+      dispatchEvent(new CustomEvent("vodscribe-e2e-short", { detail: false }));
       // The page's errors, for a failure's diagnosis (run.mjs).
       const error = console.error.bind(console);
       console.error = (...args) => {
@@ -496,6 +501,16 @@ export class App {
         return real(url, init);
       };`);
     await this.watchPerformance();
+  }
+
+  /** Lets the page go into short mode on a short window (the app's
+   *  shortMode.svelte.ts), or not, until the page loads again. */
+  shortMode(on) {
+    return this.js(
+      `window.__e2e.shortMode = arguments[0];
+       dispatchEvent(new CustomEvent("vodscribe-e2e-short", { detail: arguments[0] }))`,
+      on,
+    );
   }
 
   /**
@@ -844,6 +859,12 @@ export class App {
  * caller tests at what it got; it never throws for the size.
  */
 export async function resizeInner(app, width, height) {
+  // On a short screen (E2E_SCREEN, lib/screen.mjs) no taller than it gives.
+  return sizePage(app, width, heightFor(width, height, app.log));
+}
+
+/** Resizes the page as resizeInner does, whatever the screen. */
+export async function sizePage(app, width, height) {
   const size = () => app.js(`return innerWidth + "x" + innerHeight`);
   const before = await size();
   await app.driver.resize(width, height);

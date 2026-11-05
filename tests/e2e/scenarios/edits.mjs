@@ -1,6 +1,6 @@
 // Edits: a clip's pill dragged onto "Make new edit" in the library (a group, one band); the
 // edit opened, renamed, a cut put on it (B) and a delete beside it making it a real split (and undone), its piece split, the group opened (double-click)
-// and the second half moved first and back (Ctrl+← and →), a line's slice taken out and brought back
+// and the second half moved first and back (Ctrl+← and →), a piece's end dragged showing a dashed guide at it, a line's slice taken out and brought back
 // (Ctrl+Z), its picture held and carried onto another edit's row, a clip
 // made with its Clip button, rendered to a file (E); all of it still there after a restart;
 // removing the VOD says its pieces stay in the edit (Keep: nothing goes;
@@ -113,11 +113,27 @@ export default {
 
     // The VOD's playhead left at 4 s, to find there again after the edit.
     await app.toStart();
+    // Each seek the steps make, as the media element tells them (no round trips meanwhile).
+    await app.js(`const m = document.querySelector("video, audio"); window.__seeks = [];
+      if (m) for (const type of ["seeking", "seeked"])
+        m.addEventListener(type, () => window.__seeks.push(type[4] === "e" ? "+" + m.currentTime.toFixed(3) : ">" + m.currentTime.toFixed(3)));`);
     for (let i = 0; i < 4; i++) await app.key("ArrowRight", { shift: true });
     await until("the VOD at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+    // Where the VOD's player is by the page's own reckoning, without the e2e
+    // feature: the media element's time (a file's sound plays in the web
+    // view's), the time button, the row's "Play from" and the stamp.
+    const where = () =>
+      app.js(`const m = document.querySelector("video, audio");
+        const text = (q) => document.querySelector(q)?.textContent.trim() ?? null;
+        return JSON.stringify({ media: m ? { time: m.currentTime, seeking: m.seeking, paused: m.paused } : null, seeks: window.__seeks?.join(" "),
+          button: text("button.time .now > span:not(.widest)"), stamp: text(".stamp .time"),
+          from: [...document.querySelectorAll("button")].map((b) => b.textContent.trim()).find((t) => t.startsWith("Play from")) ?? null })`);
+    const atFour = await where();
 
     // Opened from its row (the search cleared: results take the main area).
     await app.type('input[placeholder="Search for a phrase…"]', "");
+    const leaving = await where();
+    ctx.log(`the VOD at 4 s: ${atFour}; as it was left: ${leaving}`);
     await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
     const title = 'section.edit-view input.title[aria-label="Edit name"]';
     await until("the edit open", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
@@ -135,7 +151,11 @@ export default {
     });
     // Back to the VOD: where its playhead was left, not its start; then the edit again.
     await app.click(`.vod[data-key="${vod.id}"] button.main`);
-    await until("the VOD where it was left, at 4 s", async () => (await app.shownTime()) === 4, 10_000);
+    await until("the VOD where it was left, at 4 s", async () => (await app.shownTime()) === 4, 10_000).catch(
+      async (e) => {
+        throw new Error(`${e.message}; at 4 s: ${atFour}; left: ${leaving}; back: ${await where()}`);
+      },
+    );
     await app.click(`.vod.edit[data-key="-${made.id}"] button.main`);
     await until("the edit open again", () => app.js(`return !!document.querySelector(arguments[0])`, title), MINUTE);
 
@@ -398,6 +418,46 @@ export default {
       10_000,
     );
     await until("the playhead back at 1 s", async () => (await app.shownTime()) === 1, 10_000);
+
+    // A piece's end dragged: a dashed guide down the waveform where the
+    // edge being moved is, from its first move; the drag cancelled, the
+    // guide goes and the edit is as it was.
+    const sizedBefore = JSON.stringify(pieces(await edit()));
+    const guide = await app.js(
+      `${AT}
+       const grip = document.querySelector("section.edit-view .piece .grip.end");
+       const band = grip.closest(".piece");
+       const g = grip.getBoundingClientRect();
+       const [x0, y0] = [g.left + g.width / 2, g.top + g.height / 2];
+       grip.dispatchEvent(new PointerEvent("pointerdown", at(x0, y0, 1)));
+       window.dispatchEvent(new PointerEvent("pointermove", at(x0 - 20, y0, 1)));
+       await new Promise((r) => requestAnimationFrame(() => r()));
+       const wave = document.querySelector("section.edit-view .scrubber").getBoundingClientRect();
+       const line = document.querySelector("section.edit-view .scrubber .size-guide");
+       const l = line?.getBoundingClientRect();
+       const out = { edge: band.getBoundingClientRect().right, wave: [wave.top, wave.bottom],
+         guide: l ? { x: l.left, top: l.top, bottom: l.bottom, style: getComputedStyle(line).borderLeftStyle } : null };
+       window.dispatchEvent(new PointerEvent("pointercancel", at(x0 - 20, y0, 0)));
+       return out;`,
+    );
+    const g = guide.guide;
+    if (
+      !g ||
+      Math.abs(g.x - guide.edge) > 1.5 ||
+      g.style !== "dashed" ||
+      Math.abs(g.top - guide.wave[0]) > 1 ||
+      Math.abs(g.bottom - guide.wave[1]) > 1
+    )
+      throw new Error(
+        `a piece's end dragged: the guide ${JSON.stringify(g)}, the edge at ${guide.edge} px, the waveform ${guide.wave}`,
+      );
+    await until(
+      "the guide gone once cancelled",
+      () => app.js(`return !document.querySelector("section.edit-view .size-guide")`),
+      10_000,
+    );
+    if (JSON.stringify(pieces(await edit())) !== sizedBefore) throw new Error("a cancelled resize changed the edit");
+    ctx.log(`resizing a piece: a dashed guide at ${Math.round(g.x)} px, on its edge (${Math.round(guide.edge)} px)`);
 
     // Remove hovered: the piece it would take out (the one at the playhead)
     // lights up on the timeline, and goes dark as the pointer leaves.

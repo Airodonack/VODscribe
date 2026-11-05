@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack, type Snippet } from "svelte";
+  import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import {
     api,
     docKey,
@@ -31,8 +31,7 @@
   import Icon from "./Icon.svelte";
   import { load, save } from "./stored";
   import Modal from "./Modal.svelte";
-  import { AUTHOR, SUPPORT } from "./links";
-  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { AUTHOR } from "./links";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { DEMO, demoOff, keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
@@ -53,7 +52,11 @@
   import { showsProgress } from "./stretches";
   import { removing } from "./removal.svelte";
   import { pointerAt, selectionKey } from "./bulk";
+  import { clipboardKey, clipboardPaste } from "./copyPaste";
+  import { escapeLetsGoOfText, pressLetsGoOfText } from "./textFocus";
   import AnnotationsPane from "./AnnotationsPane.svelte";
+  import { isShort, shortMode } from "./shortMode.svelte";
+  import { canEmbed } from "./embed";
   import { povLibrary } from "./castLink.svelte";
   import type { PaneRow } from "./annotationRows";
 
@@ -234,6 +237,8 @@
     // A modal window (Settings) has the keys while it's open: undo, back and
     // search mustn't reach the view behind it. Escape closes it (Modal.svelte).
     if (document.querySelector('[aria-modal="true"]')) return;
+    // Escape in a text field lets go of it: the keys are the selection's again (textFocus.ts).
+    if (escapeLetsGoOfText(e)) return;
     // Ctrl/Cmd+Z undoes, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes; text fields keep their own.
     const target = e.target as HTMLElement | null;
     const typing = !!target?.closest("input, textarea, select, [contenteditable]");
@@ -255,6 +260,14 @@
     // Ctrl+A (⌘A) selects all of the clip bar or the list, by the side the
     // pointer is on (bulk.ts).
     if (!typing && selectionKey(e, rows, (id) => selectedId === id && pick(null))) {
+      e.preventDefault();
+      return;
+    }
+    // Ctrl+C, Ctrl+X and Ctrl+V (⌘ on a Mac): the selection or what's
+    // picked copied, and pasted where the pointer is (copyPaste.ts; Ctrl+V
+    // goes on to the web view, whose paste brings the text); a text field's
+    // are its own.
+    if (!typing && clipboardKey(e, (id) => vodsById.get(id))) {
       e.preventDefault();
       return;
     }
@@ -417,6 +430,11 @@
     );
     // What this computer plays, for videos kept from other sites; in the background.
     void savePlayable();
+    if (!DEMO) {
+      const keep = () => nav.keep();
+      window.addEventListener("pagehide", keep);
+      unlisten.push(() => window.removeEventListener("pagehide", keep));
+    }
     unlisten.push(
       await events.vod(
         afterLoad((vod) => {
@@ -468,7 +486,10 @@
     try {
       await refreshSetup();
       await reload();
+      // The page reloaded (the web view's own Reload): back where it was.
+      // Its player carried on meanwhile and is opened again with it.
       if (openVod !== null) select(openVod);
+      else if (!DEMO) nav.restore();
     } finally {
       // The busy cursor (app.css `html.starting`) goes once the library is in.
       document.documentElement.classList.remove("starting");
@@ -657,6 +678,22 @@
       changes.disconnect();
     };
   });
+  // Short mode (shortMode.svelte.ts): the main column's size, and the
+  // tallest the picture is let be (the website's demo sets its own share).
+  let mainWidth = $state(0);
+  let mainHeight = $state(0);
+  let pictureMost = $state(0);
+  $effect(() => {
+    shortMode.on = isShort(mainWidth, mainHeight, pictureMost);
+  });
+  // Short mode's swap between the player and the transcript: only for a
+  // picture to show with nothing else asked for in the transcript's place (a
+  // search's results, an edit). Otherwise the player stays and offers no swap.
+  const swappable = $derived(
+    shortMode.on && !editOpen && !showResults && !!playingVod && canEmbed(playingVod) && !playingVod.audio_only,
+  );
+  // The player alone in the column: swappable, and swapped to the player.
+  const alone = $derived(swappable && !shortMode.pane);
   const TAB = "vodscribe.paneTab";
   let tab = $state<"transcript" | "annotations">(load(TAB) === "annotations" ? "annotations" : "transcript");
   function openTab(to: "transcript" | "annotations") {
@@ -680,6 +717,23 @@
     if (inTab) paneKeptFor = paneKey;
   });
   const tabPane = $derived(tabbed && paneShown && (inTab || (paneKey !== null && paneKeptFor === paneKey)));
+  // How far the transcript was scrolled when the pane took its place, put
+  // back when it's shown again: hidden, it has no height, and its scroll
+  // went back to the top. Kept before the pane is laid out in its place.
+  let leftAt: { key: string | null; top: number } | null = null;
+  let wasInTab = false;
+  $effect.pre(() => {
+    const away = inTab;
+    untrack(() => {
+      if (away === wasInTab) return;
+      wasInTab = away;
+      if (away) leftAt = { key: paneKey, top: body?.scrollTop ?? 0 };
+      else if (leftAt && leftAt.key === paneKey && leftAt.top > 0) {
+        const top = leftAt.top;
+        void tick().then(() => bringScroll(top));
+      }
+    });
+  });
   const paneTabs = $derived<PaneTabs | null>(
     tabbed
       ? {
@@ -794,12 +848,15 @@
 
 <svelte:window
   onkeydown={onWindowKey}
-  onpointermove={(e) => pointerAt(e.clientX)}
+  onpointerdowncapture={(e) =>
+    pressLetsGoOfText(e.target as Element | null, document.activeElement as HTMLElement | null)}
+  onpointermove={(e) => pointerAt(e.clientX, e.clientY)}
   ondragover={keepDropsInApp}
   ondrop={keepDropsInApp}
   onmousedown={onMouseNav}
   onmouseup={onMouseNav}
 />
+<svelte:document onpaste={clipboardPaste} />
 
 <!-- The chapters and highlights pane: the window's right column, or the transcript's tab. -->
 {#snippet annotationsPane(full: boolean, visible = true)}
@@ -835,7 +892,14 @@
       />
     {/if}
     <!-- In the website's demo, the page has its own <main>. -->
-    <svelte:element this={DEMO ? "div" : "main"} class="main">
+    <svelte:element
+      this={DEMO ? "div" : "main"}
+      class="main"
+      class:alone
+      bind:clientWidth={mainWidth}
+      bind:clientHeight={mainHeight}
+    >
+      <div class="picture-most" aria-hidden="true" bind:clientHeight={pictureMost}></div>
       <div class="toolbar">
         <!-- The window's way back and forward between what was open (nav.svelte.ts). -->
         <div class="nav">
@@ -912,7 +976,7 @@
         <EditView vods={vodsById} onopenvod={(vodId, time) => openVodAt(vodId, time, { keepLit: true })} />
       {:else if playing && playingVod}
         {#key playing.vodId}
-          <Player vod={playingVod} at={playing.at} />
+          <Player vod={playingVod} at={playing.at} swap={swappable} />
         {/key}
       {/if}
 
@@ -981,11 +1045,7 @@
                   {/if}
                 {/if}
               </div>
-              <button class="credit" onclick={() => openUrl(SUPPORT)}>
-                Made with <span class="heart">❤︎</span> by {AUTHOR}<span class="sep">·</span><span class="cta"
-                  >Help cover hosting on Ko-fi</span
-                >
-              </button>
+              <span class="credit">Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
             </div>
           {/if}
         </div>
@@ -1088,6 +1148,24 @@
     min-height: 0;
   }
 
+  /* Short mode, the player alone: it takes the column, the transcript's place left out. */
+  .main.alone > :global(section) {
+    flex: 1;
+  }
+
+  .main.alone > .below {
+    display: none;
+  }
+
+  /* How tall the picture is let be (Player.svelte's .frame), measured. */
+  .picture-most {
+    position: absolute;
+    width: 0;
+    height: var(--player-max-height, 44vh);
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .nav {
     display: flex;
     gap: 2px;
@@ -1158,34 +1236,15 @@
   }
 
   .credit {
-    gap: 0;
     margin: auto 0 18px;
-    border: none;
-    background: none;
     color: var(--muted);
     font-size: 12px;
     font-weight: 400;
   }
 
-  .credit:hover:not(:disabled) {
-    color: var(--text);
-  }
-
-  .credit:hover .cta {
-    text-decoration: underline;
-  }
-
   .heart {
     color: #e5484d;
     margin: 0 3px;
-  }
-
-  .credit .sep {
-    margin: 0 8px;
-  }
-
-  .cta {
-    color: var(--accent);
   }
 
   .pad {

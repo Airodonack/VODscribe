@@ -2,11 +2,13 @@
 //! clips cut (clips.rs), edits rendered (edits.rs), videos downloaded
 //! (videos.rs), storyboards made (storyboards.rs). A queue keeps what's
 //! waiting and what's running with its stop, so a job can be taken out
-//! before its turn, or stopped during it.
+//! before its turn, or stopped during it, or put in another order; and it
+//! says when what it holds changes (`watch`), for the list of jobs the
+//! library shows (job_list.rs).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use anyhow::Result;
 
@@ -15,15 +17,35 @@ struct Queue<J> {
     running: Option<(J, Arc<AtomicBool>)>,
 }
 
+/// What's told of each change to a queue (`Jobs::watch`).
+type Watcher = Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>;
+
 pub(crate) struct Jobs<J> {
     shared: Arc<(Mutex<Queue<J>>, Condvar)>,
     started: AtomicBool,
+    watcher: Watcher,
 }
 
 impl<J: Clone + Send + 'static> Jobs<J> {
     pub(crate) fn new() -> Self {
         let queue = Queue { waiting: VecDeque::new(), running: None };
-        Jobs { shared: Arc::new((Mutex::new(queue), Condvar::new())), started: AtomicBool::new(false) }
+        Jobs {
+            shared: Arc::new((Mutex::new(queue), Condvar::new())),
+            started: AtomicBool::new(false),
+            watcher: Arc::default(),
+        }
+    }
+
+    /// Calls `changed` after each change to what's waiting or running: a job
+    /// added, taken out, begun, ended or moved. With the queue let go of, so
+    /// it may read it; it shouldn't wait on anything a caller may hold (the
+    /// library's lock): job_list.rs only sends word to a thread of its own.
+    pub(crate) fn watch(&self, changed: impl Fn() + Send + Sync + 'static) {
+        let _ = self.watcher.set(Box::new(changed));
+    }
+
+    fn changed(&self) {
+        tell(&self.watcher);
     }
 
     /// Adds `job` last.
@@ -31,6 +53,7 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         let (queue, wake) = &*self.shared;
         queue.lock().unwrap().waiting.push_back(job);
         wake.notify_one();
+        self.changed();
     }
 
     /// Adds `job` last unless one `same` finds is waiting already; whether it did.
@@ -42,45 +65,80 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
         queue.waiting.push_back(job);
         wake.notify_one();
+        drop(queue);
+        self.changed();
         true
     }
 
-    /// Adds `job` last unless one `same` finds is waiting or running; whether it did.
+    /// Adds `job` last unless one `same` finds is waiting or running (and not
+    /// stopped); whether it did.
     pub(crate) fn push_new(&self, job: J, same: impl Fn(&J) -> bool) -> bool {
         let (queue, wake) = &*self.shared;
         let mut queue = queue.lock().unwrap();
-        if queue.running.as_ref().is_some_and(|(j, _)| same(j)) || queue.waiting.iter().any(same) {
+        if running_on(&queue.running, &same) || queue.waiting.iter().any(same) {
             return false;
         }
         queue.waiting.push_back(job);
         wake.notify_one();
+        drop(queue);
+        self.changed();
         true
     }
 
     /// Puts `job` first: the one `same` finds waiting is moved there, or
-    /// `job` is added there unless one is running; whether it was added.
+    /// `job` is added there unless one is running (and not stopped: one being
+    /// stopped is ending, and a job asked for now is a new one, such as a
+    /// clip given a deleted one's id while its cut winds down); whether it
+    /// was added.
     pub(crate) fn push_front(&self, job: J, same: impl Fn(&J) -> bool) -> bool {
         let (queue, wake) = &*self.shared;
         let mut queue = queue.lock().unwrap();
         if let Some(at) = queue.waiting.iter().position(&same) {
             let waiting = queue.waiting.remove(at).expect("found");
             queue.waiting.push_front(waiting);
+            drop(queue);
+            self.changed();
             return false;
         }
-        if queue.running.as_ref().is_some_and(|(j, _)| same(j)) {
+        if running_on(&queue.running, &same) {
             return false;
         }
         queue.waiting.push_front(job);
         wake.notify_one();
+        drop(queue);
+        self.changed();
         true
     }
 
     /// Takes the jobs `which` finds out of those waiting, and returns them.
     pub(crate) fn take_waiting(&self, which: impl Fn(&J) -> bool) -> Vec<J> {
         let mut queue = self.shared.0.lock().unwrap();
-        let (taken, kept) = queue.waiting.drain(..).partition(|j| which(j));
+        let (taken, kept): (VecDeque<J>, VecDeque<J>) = queue.waiting.drain(..).partition(|j| which(j));
         queue.waiting = kept;
+        drop(queue);
+        if !taken.is_empty() {
+            self.changed();
+        }
         taken.into()
+    }
+
+    /// Puts the jobs waiting that `order` names in its order, in the places
+    /// they hold among those waiting; the others (added since the order was
+    /// read) keep theirs. The one running is begun, and stays.
+    pub(crate) fn reorder<K: PartialEq>(&self, order: &[K], key: impl Fn(&J) -> K) {
+        let mut queue = self.shared.0.lock().unwrap();
+        let rank = |j: &J| order.iter().position(|k| *k == key(j));
+        let places: Vec<usize> = (0..queue.waiting.len()).filter(|&at| rank(&queue.waiting[at]).is_some()).collect();
+        let mut named: Vec<J> = places.iter().map(|&at| queue.waiting[at].clone()).collect();
+        named.sort_by_key(|j| rank(j));
+        let moved = places.iter().zip(&named).any(|(&at, j)| rank(&queue.waiting[at]) != rank(j));
+        for (&at, j) in places.iter().zip(named) {
+            queue.waiting[at] = j;
+        }
+        drop(queue);
+        if moved {
+            self.changed();
+        }
     }
 
     /// Whether a job `which` finds is waiting.
@@ -108,6 +166,21 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
     }
 
+    /// Stops the job running if it's one `which` finds, and calls `mark`
+    /// with it, under the queue's lock; whether it was. Its end (`run_ended`'s
+    /// `ended`) comes after, never between: what `mark` notes, `ended` finds.
+    pub(crate) fn stop_running_then(&self, which: impl Fn(&J) -> bool, mark: impl FnOnce(&J)) -> bool {
+        let queue = self.shared.0.lock().unwrap();
+        match &queue.running {
+            Some((job, stop)) if which(job) => {
+                stop.store(true, Ordering::Relaxed);
+                mark(job);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Stops the job running if it's one `which` finds, and waits up to
     /// `timeout` for it to end; whether none is running now. Not from a job.
     pub(crate) fn stop_and_wait(&self, which: impl Fn(&J) -> bool, timeout: std::time::Duration) -> bool {
@@ -127,6 +200,12 @@ impl<J: Clone + Send + 'static> Jobs<J> {
         }
     }
 
+    /// The job running, if one is, and those waiting, in order.
+    pub(crate) fn snapshot(&self) -> (Option<J>, Vec<J>) {
+        let queue = self.shared.0.lock().unwrap();
+        (queue.running.as_ref().map(|(j, _)| j.clone()), queue.waiting.iter().cloned().collect())
+    }
+
     /// The job running, then those waiting, in order.
     pub(crate) fn listed(&self) -> Vec<J> {
         let queue = self.shared.0.lock().unwrap();
@@ -135,6 +214,22 @@ impl<J: Clone + Send + 'static> Jobs<J> {
 
     /// Starts the thread (`name`) doing each job with `work`, given its stop.
     pub(crate) fn run(&self, name: &str, work: impl Fn(J, &AtomicBool) + Send + 'static) -> Result<()> {
+        self.run_ended(name, work, |_| (), |_, ()| {})
+    }
+
+    /// As `run`, and as each job ends, asks `ended` about it under the
+    /// queue's lock, as the job stops being the one running: a
+    /// `stop_running_then` comes wholly before that or finds no job. What
+    /// `ended` says goes to `then`, once the lock is let go of, for work that
+    /// takes other locks (the library's is taken before this one:
+    /// `Cutter::stop_vod`).
+    pub(crate) fn run_ended<T>(
+        &self,
+        name: &str,
+        work: impl Fn(J, &AtomicBool) + Send + 'static,
+        ended: impl Fn(&J) -> T + Send + 'static,
+        then: impl Fn(J, T) + Send + 'static,
+    ) -> Result<()> {
         // A second thread would run two jobs at once, and `running` holds one.
         let again = self.started.swap(true, Ordering::Relaxed);
         debug_assert!(!again, "the {name} queue's thread was started twice");
@@ -142,6 +237,7 @@ impl<J: Clone + Send + 'static> Jobs<J> {
             return Ok(());
         }
         let shared = self.shared.clone();
+        let watcher = self.watcher.clone();
         std::thread::Builder::new().name(name.into()).spawn(move || {
             let (queue, wake) = &*shared;
             loop {
@@ -157,14 +253,32 @@ impl<J: Clone + Send + 'static> Jobs<J> {
                     queue.running = Some((job.clone(), stop.clone()));
                     (job, stop)
                 };
-                work(job, &stop);
-                queue.lock().unwrap().running = None;
+                tell(&watcher);
+                work(job.clone(), &stop);
+                let said = {
+                    let mut queue = queue.lock().unwrap();
+                    queue.running = None;
+                    ended(&job)
+                };
                 // For `stop_and_wait`.
                 wake.notify_all();
+                then(job, said);
+                tell(&watcher);
             }
         })?;
         Ok(())
     }
+}
+
+fn tell(watcher: &Watcher) {
+    if let Some(changed) = watcher.get() {
+        changed();
+    }
+}
+
+/// Whether the job running is one `same` finds, and goes on (isn't stopped).
+fn running_on<J>(running: &Option<(J, Arc<AtomicBool>)>, same: impl Fn(&J) -> bool) -> bool {
+    running.as_ref().is_some_and(|(j, stop)| !stop.load(Ordering::Relaxed) && same(j))
 }
 
 #[cfg(test)]
@@ -217,6 +331,22 @@ mod tests {
         assert_eq!(jobs.listed(), [1, 2, 1]);
     }
 
+    /// A clip deleted while its cut winds down, and another made at once that
+    /// SQLite gives the same id: the new one is queued, not taken for the one
+    /// ending (it waited, never made: drag-promise on macOS, 2026-11-01).
+    #[test]
+    fn a_job_asked_for_while_one_of_its_id_is_being_stopped_is_queued() {
+        let jobs = Jobs::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        jobs.shared.0.lock().unwrap().running = Some((7, stop.clone()));
+        assert!(!jobs.push_front(7, |&j| j == 7), "running and going on: the same job");
+        assert!(!jobs.push_new(7, |&j| j == 7), "running and going on: the same job");
+        stop.store(true, Ordering::Relaxed);
+        assert!(jobs.push_front(7, |&j| j == 7), "being stopped: a new one");
+        assert!(!jobs.push_new(7, |&j| j == 7), "waiting now");
+        assert_eq!(jobs.listed(), [7, 7]);
+    }
+
     /// As a storyboard's job lets go of a file about to be deleted.
     #[test]
     fn a_job_stopped_and_waited_for_has_ended() {
@@ -253,6 +383,100 @@ mod tests {
         jobs.shared.0.lock().unwrap().running = Some((5, Arc::default()));
         assert!(!jobs.push_front(5, |&j| j == 5), "running already");
         assert_eq!(jobs.listed(), [5, 4, 3, 1, 2]);
+    }
+
+    /// As the library's list of jobs is dragged into another order.
+    #[test]
+    fn jobs_waiting_are_put_in_the_order_asked_and_others_keep_their_places() {
+        let jobs = Jobs::new();
+        for n in [1, 2, 3, 4, 5] {
+            jobs.push(n);
+        }
+        jobs.shared.0.lock().unwrap().running = Some((9, Arc::default()));
+        // 4 dragged above 2; 3 and 5 came after the order was read.
+        jobs.reorder(&[1, 4, 2, 9], |&j| j);
+        assert_eq!(jobs.listed(), [9, 1, 4, 3, 2, 5], "2 and 4 swap places; 3 and 5 stay; 9 is running");
+        jobs.reorder(&[5, 1], |&j| j);
+        assert_eq!(jobs.listed(), [9, 5, 4, 3, 2, 1]);
+        jobs.reorder(&[7, 8], |&j| j);
+        assert_eq!(jobs.listed(), [9, 5, 4, 3, 2, 1], "none of them waiting: nothing moves");
+    }
+
+    /// For the library's list of jobs: word of each change, none for no change.
+    #[test]
+    fn each_change_to_a_queue_is_told() {
+        let jobs = Jobs::new();
+        let told = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = told.clone();
+        jobs.watch(move || {
+            count.fetch_add(1, Ordering::Relaxed);
+        });
+        let seen = || told.load(Ordering::Relaxed);
+        jobs.push(1);
+        assert_eq!(seen(), 1);
+        assert!(jobs.push_once(2, |&j| j == 2) && !jobs.push_once(2, |&j| j == 2));
+        assert_eq!(seen(), 2, "not added again: no change");
+        assert!(jobs.push_new(3, |&j| j == 3));
+        assert!(!jobs.push_front(3, |&j| j == 3), "moved to the front");
+        assert_eq!(seen(), 4);
+        jobs.reorder(&[3, 1, 2], |&j| j);
+        assert_eq!(seen(), 4, "in that order already");
+        jobs.reorder(&[2, 1], |&j| j);
+        assert_eq!(seen(), 5);
+        assert!(jobs.take_waiting(|&j| j == 7).is_empty());
+        assert_eq!(seen(), 5, "nothing taken");
+        assert_eq!(jobs.take_waiting(|&j| j == 1), [1]);
+        assert_eq!(seen(), 6);
+        // Begun and ended, on the queue's thread.
+        let (done, finished) = mpsc::channel();
+        jobs.run("watch-test", move |n: i32, _| done.send(n).unwrap()).unwrap();
+        let ran: Vec<_> = (0..2).map(|_| finished.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
+        assert_eq!(ran, [3, 2]);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while seen() < 10 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(seen(), 10, "each begun and ended");
+    }
+
+    /// As Cancel in the list of jobs lands as a cut ends (`Cutter::cancel_job`):
+    /// the job has done its work but is still the one running. The mark
+    /// "canceled while running" is made and taken under the queue's lock,
+    /// so it never outlives the job, to show a later run of the same id as
+    /// canceled.
+    #[test]
+    fn a_job_canceled_as_it_ends_leaves_no_mark() {
+        let jobs = Jobs::new();
+        let marks: Arc<Mutex<std::collections::HashSet<i32>>> = Arc::default();
+        let (ending, is_ending) = mpsc::channel();
+        let (gate, opened) = mpsc::channel::<()>();
+        let (settled, was_settled) = mpsc::channel();
+        let taken = marks.clone();
+        jobs.run_ended(
+            "cancel-test",
+            move |_: i32, _| {
+                // Its work done, about to return: the cancel comes here.
+                ending.send(()).unwrap();
+                opened.recv_timeout(Duration::from_secs(5)).unwrap();
+            },
+            move |&n| taken.lock().unwrap().remove(&n),
+            move |n, marked| settled.send((n, marked)).unwrap(),
+        )
+        .unwrap();
+        jobs.push(1);
+        is_ending.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mark = marks.clone();
+        let canceled = jobs.stop_running_then(
+            |&j| j == 1,
+            |&j| {
+                mark.lock().unwrap().insert(j);
+            },
+        );
+        assert!(canceled, "still running");
+        gate.send(()).unwrap();
+        assert_eq!(was_settled.recv_timeout(Duration::from_secs(5)), Ok((1, true)), "its end found the mark");
+        assert!(marks.lock().unwrap().is_empty(), "a mark left behind: {:?}", marks.lock().unwrap());
+        assert!(!jobs.stop_running_then(|&j| j == 1, |_| panic!("not running")));
     }
 
     #[test]

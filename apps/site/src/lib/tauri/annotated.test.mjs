@@ -9,6 +9,7 @@ import {
   chatOf,
   indexEntries,
   pageOf,
+  peaksBeside,
   pickDropped,
   pickSource,
   segmentsOf,
@@ -26,6 +27,7 @@ test("the download host's files, by the id the app stores", () => {
   assert.deepEqual(pickSource("twitch", "2901646294", new URLSearchParams(), PAGE), {
     annotations: "https://dl.vodscribe.com/annotations/twitch/v2901646294.json",
     chat: "https://dl.vodscribe.com/annotations/twitch/v2901646294.chat.json",
+    peaks: "https://dl.vodscribe.com/annotations/twitch/v2901646294.peaks",
     custom: false,
   });
   // Twitch's own ids carry no "v"; one typed with it is the same VOD.
@@ -39,10 +41,11 @@ test("the download host's files, by the id the app stores", () => {
   assert.equal(pickSource("vimeo", "1", new URLSearchParams(), PAGE), null);
 });
 
-test("?src= takes the place of the host, the chat beside it, relative to the page", () => {
+test("?src= takes the place of the host, the chat and waveform beside it, relative to the page", () => {
   assert.deepEqual(pickSource("twitch", "2901646294", new URLSearchParams("src=/files/run.json"), PAGE), {
     annotations: "https://vodscribe.com/files/run.json",
     chat: "https://vodscribe.com/files/run.chat.json",
+    peaks: "https://vodscribe.com/files/run.peaks",
     custom: true,
   });
   // Any platform, even one the address doesn't name: the file says which.
@@ -51,6 +54,7 @@ test("?src= takes the place of the host, the chat beside it, relative to the pag
     "https://dl.vodscribe.com/a/b.chat.json?v=2",
   );
   assert.equal(chatBeside("https://example.com/plain"), "https://example.com/plain.chat.json");
+  assert.equal(peaksBeside("https://dl.vodscribe.com/a/b.json?v=2"), "https://dl.vodscribe.com/a/b.peaks?v=2");
 });
 
 test("files dropped: the .chat.json is the chat, the other the annotations", () => {

@@ -22,7 +22,7 @@
   import { os } from "./platform";
   import { DEMO, demoOff } from "./demo";
   import Icon from "./Icon.svelte";
-  import { AUTHOR, SITE, SUPPORT, releaseNotes } from "./links";
+  import { AUTHOR, SITE, releaseNotes } from "./links";
   import Logo from "./Logo.svelte";
   import { Adder } from "./adder.svelte";
   import { annotated } from "./annotated.svelte";
@@ -32,6 +32,7 @@
   import FormatHint from "./FormatHint.svelte";
   import VodRow from "./VodRow.svelte";
   import EditRow from "./EditRow.svelte";
+  import Jobs from "./Jobs.svelte";
   import { clips } from "./clips.svelte";
   import { edits } from "./edits.svelte";
   import { carryEntries, chosenEntries, chosenToTranscribe, removeChosenEntries, transcribeChosen } from "./bulk";
@@ -43,7 +44,7 @@
   import { readAhead } from "./readAhead";
   import { restOver } from "./resting";
   import { keyHint } from "./keys.svelte";
-  import { count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
+  import { background, count, dragBox, howOf, library, overlaps, type Entry } from "./selection.svelte";
 
   let {
     rows,
@@ -89,8 +90,8 @@
       items.splice(
         items.length - 1,
         0,
-        { label: "Check for annotations", icon: "gift", run: () => void offers.check(vod) },
-        { label: "Check all VODs for annotations", icon: "gift", run: () => void offers.checkLibrary() },
+        { label: "Check for a VODscription", icon: "gift", run: () => void offers.check(vod) },
+        { label: "Check all VODs for VODscriptions", icon: "gift", run: () => void offers.checkLibrary() },
       );
     return items;
   });
@@ -394,7 +395,7 @@
 {/if}
 
 <aside class="library-pane">
-  <!-- Sibling buttons, since buttons can't nest: the site link fills the
+  <!-- Sibling elements, since buttons can't nest: the site link fills the
        header, the credit sits on top of it under the name, and the version
        number at the right, linking to what's new in it. -->
   <div class="brand">
@@ -410,9 +411,7 @@
         title="What's new in {version.split(/[_+-]/)[0]}">v{version}</button
       >
     {/if}
-    <button class="credit" onclick={() => openUrl(SUPPORT)} title="Support VODscribe on Ko-fi">
-      Made by {AUTHOR}
-    </button>
+    <span class="credit">Made by {AUTHOR}</span>
   </div>
 
   <UpdateBanner />
@@ -491,7 +490,7 @@
     aria-label="Library"
     aria-multiselectable="true"
     bind:this={reorder.list}
-    use:dragBox={{ set: library, hits: boxed, onempty: () => library.clear() }}
+    use:dragBox={{ set: library, hits: boxed, onempty: background }}
   >
     <!-- While a clip is carried: the place to start an edit with it (dragout.ts). -->
     {#if clips.carryingAny}
@@ -544,6 +543,9 @@
           if ((e.target as HTMLElement).closest("button")) return;
           if (row.kind === "vod") toggle(row.vod);
           else onopenedit(row.edit.id);
+          // Clicked anywhere on it, the row has the keyboard (↑ and ↓), as
+          // a click on its title gives it.
+          focusRow(key);
         }}
         use:pressToDrag={{
           press: (e) => onRowDown(e, row, key),
@@ -580,6 +582,8 @@
       {/if}
     {/each}
   </div>
+  <!-- The clips and edits being made, and VODs being erased, under the list. -->
+  <Jobs />
 </aside>
 
 <AddToEdit bind:open={adding} anchor={addButton} items={chosenEntries} />
@@ -673,11 +677,6 @@
     font-size: 11px;
     font-weight: 400;
     line-height: 16px;
-  }
-
-  .credit:hover:not(:disabled) {
-    color: var(--accent);
-    text-decoration: underline;
   }
 
   form {

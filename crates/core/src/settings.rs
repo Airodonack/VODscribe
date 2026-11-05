@@ -71,6 +71,15 @@ pub struct Settings {
     /// off; off, nothing is asked and their initials show. Only the page
     /// reads it.
     pub load_cast_pictures: bool,
+    /// Whether the note on permission shows before a video or clip is
+    /// downloaded from a site (the page's permission.ts): on until its
+    /// "Don't show this again" is ticked or it's turned off in Settings.
+    /// Only the page reads it.
+    pub ask_before_downloading: bool,
+    /// Whether the page suggests MOV clips once, after a clip is dragged out,
+    /// where DaVinci Resolve is installed on Linux (resolveHint.svelte.ts):
+    /// off once answered, back on from Settings. Only the page reads it.
+    pub suggest_mov_for_resolve: bool,
 }
 
 impl Default for Settings {
@@ -85,6 +94,8 @@ impl Default for Settings {
             show_keys: false,
             ask_for_annotations: true,
             load_cast_pictures: true,
+            ask_before_downloading: true,
+            suggest_mov_for_resolve: true,
         }
     }
 }
@@ -246,6 +257,18 @@ mod tests {
         let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
         assert!(!again.load_cast_pictures);
         assert!(!again.ask_for_annotations);
+    }
+
+    #[test]
+    fn the_notes_start_shown_and_stay_as_left() {
+        // A settings.json as 0.7.0 wrote it: no word of the notes.
+        let old: Settings = serde_json::from_str(r#"{"theme": "dark", "load_cast_pictures": false}"#).unwrap();
+        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve);
+        assert!(Settings::default().ask_before_downloading && Settings::default().suggest_mov_for_resolve);
+        let off = Settings { ask_before_downloading: false, suggest_mov_for_resolve: false, ..old };
+        let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve);
+        assert!(!again.load_cast_pictures);
     }
 
     /// A key binding written by hand in the wrong shape (a string for a

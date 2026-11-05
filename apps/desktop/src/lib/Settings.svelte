@@ -9,9 +9,10 @@
   import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
-  import { ISSUES, LICENSES, PRIVACY } from "./links";
+  import { LICENSES, PRIVACY, SUPPORT } from "./links";
   import DownloadStep from "./DownloadStep.svelte";
-  import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, videoSize } from "./platform";
+  import { DEFAULT_HEIGHT, HEIGHTS, formatBytes, os, videoSize } from "./platform";
+  import { shows } from "./asks";
   import Tip from "./Tip.svelte";
   import { updates } from "./updates.svelte";
   import { SECTIONS, settingsWindow } from "./settingsWindow.svelte";
@@ -31,6 +32,9 @@
   let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
+  // The notes that can be stopped (asks.ts): each switch on while its note shows.
+  let askBeforeDownloading = $derived(shows(appSettings.value, "ask_before_downloading"));
+  let suggestMov = $derived(shows(appSettings.value, "suggest_mov_for_resolve"));
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -375,6 +379,17 @@
             : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
           Clips already made are made again when next dragged out.
         </p>
+        {#if os === "linux"}
+          <label class="toggle">
+            <input
+              type="checkbox"
+              checked={suggestMov}
+              onchange={(e) => appSettings.update({ suggest_mov_for_resolve: e.currentTarget.checked })}
+            />
+            Suggest MOV for DaVinci Resolve
+          </label>
+          <p class="muted hint">Once, after a clip is dragged out, if Resolve is installed and clips are MP4.</p>
+        {/if}
       </section>
     {:else if settingsWindow.section === "updates"}
       <section>
@@ -414,9 +429,9 @@
         </p>
         <p class="muted hint">
           VODscribe only goes online to get the VODs you add, to play them, to download the parts it needs to run, to
-          check for updates and, unless you turn them off below, to look for annotations and to show the pictures of the
-          streamers they name. Those parts and updates are checked before they're used, to make sure they haven't been
-          tampered with. Video files from your computer never leave it.
+          check for updates and, unless you turn them off below, to look for VODscriptions and to show the pictures of
+          the streamers they name. Those parts and updates are checked before they're used, to make sure they haven't
+          been tampered with. Video files from your computer never leave it.
         </p>
         <label class="toggle">
           <input
@@ -424,7 +439,7 @@
             checked={askForAnnotations}
             onchange={(e) => appSettings.update({ ask_for_annotations: e.currentTarget.checked })}
           />
-          Ask the file host whether annotations exist for your VODs
+          Enable VODscription annotations for VODs
         </label>
         <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
         <label class="toggle">
@@ -433,12 +448,21 @@
             checked={loadCastPictures}
             onchange={(e) => appSettings.update({ load_cast_pictures: e.currentTarget.checked })}
           />
-          Load streamers' pictures from img.vodscribe.com
+          Enable streamer pictures from img.vodscribe.com
         </label>
         <p class="muted hint">
           It gets the streamer's site and login, and your IP address, and passes you on to Twitch's or Kick's own
-          picture. Off, their initials show instead.
+          picture. Off, their initials show in the transcript and Cast instead, and nothing beside a channel's name.
         </p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={askBeforeDownloading}
+            onchange={(e) => appSettings.update({ ask_before_downloading: e.currentTarget.checked })}
+          />
+          Ask before downloading from a site
+        </label>
+        <p class="muted hint">A reminder to download only what you have permission to use.</p>
         {#if dataDir}
           <p class="muted hint">Your library is in:</p>
           <code class="path">{dataDir}</code>
@@ -457,8 +481,8 @@
       <section>
         <span class="eyebrow">Help</span>
         <p class="muted hint">Something broken? Got an idea?</p>
-        <button class="link" onclick={() => openUrl(ISSUES)}
-          >Report a problem or suggest something <Icon name="external" size={12} /></button
+        <button class="link" onclick={() => openUrl(SUPPORT)}
+          >Get help or report a problem <Icon name="external" size={12} /></button
         >
       </section>
       <!-- What can't be taken back: its own subsection, marked so. -->

@@ -6,8 +6,9 @@
 // again, made again too. Split in two and so rendered as an edit, a chapter
 // added in it, renamed and moved makes it again each time. Its head names
 // the VOD before it, and the way back under its player opens the VOD, its
-// pill picked there. Opened again and deleted while it's open, the editor
-// closes.
+// pill picked there. Deleted from the clip bar and undone, it comes back
+// whole: both pieces and its chapter, made again. Opened again and deleted
+// while it's open, the editor closes.
 
 import { existsSync } from "node:fs";
 
@@ -153,9 +154,42 @@ export default {
     );
     log(`back from the clip to "${title}": its pill picked`);
 
+    // Deleted from the clip bar, then undone: back as the editor left it,
+    // two pieces and its chapter, not its first piece's stretch alone.
+    const whole = (await app.invoke("get_edit", { id: clip.id })).pieces.length;
+    await app.click(`.chip.ready[data-clip="${clip.id}"] button[aria-label="Delete clip"]`);
+    await until(
+      "the clip deleted",
+      async () => (await app.invoke("list_clips", { vodId: vod.id })).length === 0,
+      MINUTE,
+    );
+    await app.key("z", { cmd: true });
+    const again = await until(
+      "the clip back whole, made",
+      async () => {
+        const all = await app.invoke("list_clips", { vodId: vod.id });
+        if (all.length !== 1) return false;
+        const [c] = all;
+        const { pieces } = await app.invoke("get_edit", { id: c.id });
+        const marks = await app.invoke("edit_marks", { id: c.id });
+        if (pieces.length !== whole) throw new Error(`it came back with ${pieces.length} pieces, not ${whole}`);
+        if (!marks.some((m) => m.kind === "chapter" && m.text === "The start"))
+          throw new Error("it came back without its chapter");
+        if (c.status === "error") throw new Error(`it failed: ${c.error}`);
+        return c.status === "ready" && existsSync(c.file_path ?? "") && c;
+      },
+      MINUTE,
+    );
+    log(`deleted and undone: back whole, ${whole} pieces and its chapter, made again (${again.file_path})`);
+
     // Opened again, as at the start.
+    await until(
+      "its pill",
+      () => app.js(`return !!document.querySelector(arguments[0])`, `.chip.ready[data-clip="${again.id}"]`),
+      10_000,
+    );
     await app.js(
-      `const el = document.querySelector('.chip.ready[data-clip="${clip.id}"] .time');
+      `const el = document.querySelector('.chip.ready[data-clip="${again.id}"] .time');
        for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail }));
        el.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true, detail: 2 }));`,
     );
@@ -163,7 +197,7 @@ export default {
 
     // Deleted from its clip bar while it's open: the editor closes, as an
     // edit's does when it's deleted.
-    await app.invoke("delete_clip", { id: clip.id });
+    await app.invoke("delete_clip", { id: again.id });
     await until("the editor closed", () => app.js(`return !document.querySelector("section.edit-view")`), 10_000);
     log("deleted while open: the editor closed");
   },

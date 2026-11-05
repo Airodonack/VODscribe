@@ -307,7 +307,7 @@ export default {
 
     // Two of the edit's pills dragged out of the window with the system's
     // mouse: one drag with both files (seen as they come back over it).
-    const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+    const why = os.unavailable({ linuxOnly: "drags" });
     if (why) ctx.log(`no drag out of the window: ${why}`);
     else await dragOutBoth();
     async function dragOutBoth() {
@@ -577,8 +577,18 @@ export default {
       15_000,
     );
     await app.js(`window.fetch = window.__e2eSlowEdit;`);
-    await sleep(1000);
-    const onNew = (await app.invoke("edit_clips", { id: newEdit.id })).map((c) => c.title);
+    // What was picked goes on its clip bar in a second write, sent once the
+    // page has the edit's answer: the edit is in the library first, for as
+    // long as that answer takes. Waited for, not a set second (a slow answer
+    // left it empty then); it goes in at once, so the first seen is all of it.
+    const onNew = await until(
+      "what was picked on the new edit's clip bar",
+      async () => {
+        const list = (await app.invoke("edit_clips", { id: newEdit.id })).map((c) => c.title);
+        return list.length ? list : null;
+      },
+      15_000,
+    );
     if (onNew.join() !== [titles[a], titles[b]].join())
       throw new Error(`New edit › Clip bar put what was picked once the edit was made: ${JSON.stringify(onNew)}`);
     ctx.log("New edit › Clip bar put both VODs picked when it was chosen, the picking changed while the edit was made");

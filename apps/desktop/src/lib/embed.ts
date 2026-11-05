@@ -156,7 +156,8 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       )
     : null;
   const clock = new Clock(time, play, { waitsForPlayer: true });
-  const sound = { volume: 1, muted: false, rate: 1 };
+  // Its sound as last set in any player, till it says (`remembered`).
+  const sound = { volume: prefs.volume() ?? 1, muted: false, rate: 1 };
   const post = (message: object) =>
     frame.contentWindow?.postMessage(JSON.stringify({ ...message, id: 1, channel: "widget" }), YOUTUBE);
   const command = (func: string, args: unknown[] = []) => post({ event: "command", func, args });
@@ -194,7 +195,10 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       }
       // Its sound as it changes (its volume and muted, read above), and
       // their ads: told to us once we ask (addEventListener through their API).
-      if (data.event === "onReady") command("addEventListener", ["onVolumeChange"]);
+      if (data.event === "onReady") {
+        command("addEventListener", ["onVolumeChange"]);
+        remembered((volume) => command("setVolume", [Math.round(volume * 100)]));
+      }
       if (data.event === "onReady" && bridged) {
         command("addEventListener", ["onAdStart"]);
         command("addEventListener", ["onAdEnd"]);
@@ -230,6 +234,7 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
         muted: () => sound.muted,
         set(volume) {
           sound.volume = volume;
+          prefs.setVolume(volume);
           command("setVolume", [Math.round(volume * 100)]);
           if (sound.muted && volume > 0) this.setMuted(false);
         },
@@ -258,6 +263,15 @@ async function youtube(el: HTMLElement, vod: Vod, time: number, play: boolean): 
       return () => clearInterval(timer);
     },
   );
+}
+
+/** Tells a site's player, once it takes commands, the volume last set in
+ *  any player (or on the bar before it was made), if one was: it starts at
+ *  its own, whatever the app's bar says. Through `tell` alone, so a muted
+ *  start (their autoplay rule, or the bar's) stays muted. */
+function remembered(tell: (volume: number) => void) {
+  const volume = prefs.volume();
+  if (volume !== null) tell(volume);
 }
 
 /** What a site's player reported, told to its clock: where it is (if it
@@ -346,8 +360,11 @@ async function twitch(
   // start (0) for a second or so, set aside till it's seen at `time`, so the
   // playhead and I and O stay where the page put it.
   clock.asked(time, play);
-  // Its sound as it last said (their own controls set it too); it has no speed to set.
-  const sound = { volume: 1, muted: false };
+  // Its sound as it last said (their own controls set it too), or as last
+  // set in any player till it says (`remembered`); it has no speed to set.
+  const sound = { volume: prefs.volume() ?? 1, muted: false };
+  // Whether the volume last set has been told to it, once it's ready.
+  let told = false;
   // Where their plain player, reloaded, is to go on from (bridge), till it does.
   let resumeAt: number | null = null;
   const command = (eventName: number, params: unknown = null) =>
@@ -382,7 +399,15 @@ async function twitch(
         );
         return true;
       }
-      return data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
+      const ready =
+        data?.namespace === "twitch-embed" && (data.eventName === "ready" || data.eventName === "video.ready");
+      // Told once it's ready, not at its first report: till then it takes
+      // no volume, and puts its own (the last set on Twitch) in place.
+      if (ready && !told) {
+        told = true;
+        remembered((volume) => command(TWITCH_SET_VOLUME, volume));
+      }
+      return ready;
     },
     (cleanup) => ({
       ...clocked(
@@ -404,6 +429,7 @@ async function twitch(
         muted: () => sound.muted,
         set(volume) {
           sound.volume = volume;
+          prefs.setVolume(volume);
           command(TWITCH_SET_VOLUME, volume);
           if (sound.muted && volume > 0) this.setMuted(false);
         },
@@ -440,6 +466,8 @@ function videoPlayer(
   });
   // A later successful play (after a retry or seek) clears an earlier error.
   video.addEventListener("playing", () => onerror?.(null));
+  // As last set, in any player (or on the bar before this one was made).
+  video.volume = prefs.volume() ?? 1;
   el.appendChild(video);
   const detach = attach(video);
   const seeks = landingSeeks(video);
@@ -465,7 +493,10 @@ function videoPlayer(
       else video.pause();
     },
     duration: () => (Number.isFinite(video.duration) ? video.duration : 0),
-    volume: elementSound(() => video),
+    volume: elementSound(
+      () => video,
+      (volume) => prefs.setVolume(volume),
+    ),
     rate: { get: () => video.playbackRate, set: (rate) => (video.playbackRate = rate) },
     destroy() {
       detach?.();

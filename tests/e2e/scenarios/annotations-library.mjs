@@ -4,7 +4,7 @@
 // added with asking turned off is never asked about; turned on, the next
 // start fetches the filter and asks about that VOD alone, once, and its gift
 // button appears; a VOD the filter hasn't is never asked about. Brought in,
-// then published anew: the library's "Check all VODs for annotations" (any
+// then published anew: the library's "Check all VODs for VODscriptions" (any
 // row's menu) fetches the filter again, asks about that VOD once, and its gift
 // is marked newer. With nothing changed, a check, and every start, costs one
 // request for the filter, answered "unchanged".
@@ -60,7 +60,13 @@ export default {
         return { status: 200, headers: { ETag: `"${md5(file)}"`, "Content-Type": "application/json" }, body: file };
       return { status: 404 };
     });
-    const asked = (from = 0) => host.requests.slice(from).map((r) => `${r.method} ${r.path}${r.since ? " since" : ""}`);
+    // The file host's questions: the image server is the same host here, and
+    // the library row of a VOD with annotations asks it for the channel's picture.
+    const asked = (from = 0) =>
+      host.requests
+        .slice(from)
+        .filter((r) => !r.path.startsWith("/avatar/"))
+        .map((r) => `${r.method} ${r.path}${r.since ? " since" : ""}`);
     try {
       await withSiteVods(ctx, async (app) => {
         const wrong = [];
@@ -109,9 +115,9 @@ export default {
         // Published anew: the library's check finds it, at once, with one question about the VOD.
         publish(fileOf("Published anew"), 2);
         start = host.requests.length;
-        await app.rowMenu(plain.id, "Check all VODs for annotations");
+        await app.rowMenu(plain.id, "Check all VODs for VODscriptions");
         const found = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
-        if (found !== "Found newer annotations for 1 VOD: use the gift button in the library.")
+        if (found !== "Found a newer VODscription for 1 VOD: use the gift button in the library.")
           wrong.push(`the library's check says "${found}"`);
         const checked = asked(start).join(", ");
         if (checked !== `GET ${FILTER_PATH} since, HEAD ${FILE}`) wrong.push(`the library's check asked: ${checked}`);
@@ -127,9 +133,9 @@ export default {
         // Nothing changed: the check, and the next start, ask only whether the filter did;
         // the check still counts what it knows (the gift is marked newer).
         start = host.requests.length;
-        await app.rowMenu(plain.id, "Check all VODs for annotations");
+        await app.rowMenu(plain.id, "Check all VODs for VODscriptions");
         const again = await until("the check's toast", () => app.toastSays(), MINUTE).catch(() => "");
-        if (again !== "Found newer annotations for 1 VOD: use the gift button in the library.")
+        if (again !== "Found a newer VODscription for 1 VOD: use the gift button in the library.")
           wrong.push(`checked again: "${again}"`);
         if (asked(start).join(", ") !== `GET ${FILTER_PATH} since`) wrong.push(`checked again, asked: ${asked(start)}`);
         start = host.requests.length;

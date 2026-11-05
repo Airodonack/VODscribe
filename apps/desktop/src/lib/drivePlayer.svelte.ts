@@ -3,6 +3,7 @@
 // frame rate marks and the selection's ends go on, where its playhead is
 // remembered (nav.svelte.ts), and the playhead the transcript follows.
 
+import { untrack } from "svelte";
 import type { Doc } from "./api";
 import { cuts } from "./cuts.svelte";
 import { nav } from "./nav.svelte";
@@ -41,6 +42,17 @@ export function drivePlayer<P extends Readable>(
       if (o.noted?.() ?? true) nav.note(d, { time: reading.now });
     });
     return () => cancelAnimationFrame(poll);
+  });
+  // The playhead the page moves itself (a step, a jump: `reading.at`) is
+  // remembered at once, not at the next frame: on a busy machine the view
+  // may be left before one is drawn, and it reopened where the frame before
+  // had it.
+  $effect(() => {
+    const time = reading.now;
+    untrack(() => {
+      const d = doc();
+      if (d && (o.noted?.() ?? true)) nav.note(d, { time });
+    });
   });
   // The transcript follows the playhead (cuts.svelte.ts), while its marks are this document's.
   $effect(() => {

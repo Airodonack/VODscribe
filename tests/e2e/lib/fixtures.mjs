@@ -14,7 +14,8 @@ import { distance } from "./os.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const LANDED = path.join(here, "..", "fixtures", "eagle-has-landed.mp3");
 
-function ffmpeg() {
+/** The ffmpeg setup downloaded, else the one on PATH. */
+export function ffmpeg() {
   const exe = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
   const downloaded = path.join(dataDirs().at(-1), "bin", exe);
   return existsSync(downloaded) ? downloaded : exe;

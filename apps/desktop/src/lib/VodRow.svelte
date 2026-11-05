@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChannelDisc from "./ChannelDisc.svelte";
   import { settings as appSettings } from "./appSettings.svelte";
   import { hideNote, noteHidden } from "./permission";
   import PermissionNote from "./PermissionNote.svelte";
@@ -218,7 +219,7 @@
     <span class="title">{vod.title}</span>
     <span class="meta muted">
       <span class="platform {vod.platform}">{platform}</span>
-      {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
+      {#if vod.channel}<span class="sep">·</span><ChannelDisc {vod} size={14} />{vod.channel}{/if}
     </span>
   </span>
 </button>
@@ -270,8 +271,8 @@
   <!-- Published annotations for it (offers.svelte.ts): at the left, apart from what's done to the VOD itself. -->
   {#if vod.annotations === "available"}
     {@const label = vod.annotations_newer
-      ? "Newer annotations are published for this VOD"
-      : "Get the transcript and annotations for this VOD"}
+      ? "A newer VODscription is available for this VOD"
+      : "Get the VODscription for this VOD"}
     <button
       class="row-act gift"
       class:newer={vod.annotations_newer}

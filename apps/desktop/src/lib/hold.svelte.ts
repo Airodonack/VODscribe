@@ -1,8 +1,9 @@
-// A button of the player bar pressed and held opens a menu above it (the
-// speeds, PlayerBar.svelte; how much to transcribe, Player.svelte): let go
-// over one of its items, that one's picked, and elsewhere the menu just
-// closes. A plain click still does the button's own thing. A press that
-// moves first is a drag, not a hold.
+// A button of the player bar right-clicked, or pressed and held, opens a
+// menu above it (the speeds, PlayerBar.svelte; how much to transcribe,
+// Player.svelte). Right-clicked, the menu stays open for a click on one of
+// its items. Held, let go over one of its items, that one's picked, and
+// elsewhere the menu just closes. A plain click still does the button's own
+// thing. A press that moves first is a drag, not a hold.
 
 import { DRAG_SLOP, holds } from "./pressToDrag";
 
@@ -29,6 +30,17 @@ export class Hold {
   get held(): boolean {
     return this.#held;
   }
+
+  /** The button's contextmenu (a right-click, or Control-click on a Mac):
+   *  the menu, open till a click picks an item or closes it. */
+  menu = (e: MouseEvent) => {
+    e.preventDefault();
+    this.#letGo();
+    this.#held = false;
+    if (this.open) return;
+    this.#opening();
+    this.open = true;
+  };
 
   /** The button's pointerdown. */
   down = (e: PointerEvent) => {

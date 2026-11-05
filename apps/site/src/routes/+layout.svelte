@@ -1,15 +1,22 @@
 <script lang="ts">
   import "desktop/app.css";
   import "../site.css";
+  import Icon from "desktop/lib/Icon.svelte";
   import Logo from "desktop/lib/Logo.svelte";
   import { page } from "$app/state";
-  import { AUTHOR, SOURCE, SUPPORT } from "#lib/links.js";
+  import { AUTHOR, PREMIUM, SOURCE } from "#lib/links.js";
   import { siteBar } from "#lib/siteBar.svelte.ts";
 
   let { children } = $props();
   // A VOD's page is the player itself: a one-line bar, the view filling the
   // rest of the window, no footer and no page scroll (VodView.svelte).
   const full = $derived(page.route.id === "/v/[platform]/[id]");
+  // The site's sections, each marked in the nav while open: VODscriptions (the
+  // page for streamers, and everything under it), and VODscribe (the app's:
+  // every other page). The account control is the third; until sign-in
+  // exists it leads to where sign-up will be, the VODscriptions page's
+  // "Coming soon".
+  const premium = $derived(page.url.pathname === PREMIUM || page.url.pathname.startsWith(`${PREMIUM}/`));
 </script>
 
 <div class="shell" class:full>
@@ -48,10 +55,15 @@
       {#if full && siteBar.pick}
         <button class="open" onclick={siteBar.pick}>Open a file…</button>
       {/if}
-      <a class="download-link" href="/#download">Download</a>
-      {#if !full}
-        <a href={SUPPORT} target="_blank" rel="noopener">Support on Ko-fi</a>
-      {/if}
+      <a class="section" class:current={!premium} href="/" aria-current={premium ? undefined : "page"}>VODscribe</a>
+      <a class="section" class:current={premium} href={PREMIUM} aria-current={premium ? "page" : undefined}
+        >VODscriptions</a
+      >
+      <!-- No account yet: the face and the words wait for the sign-in being built. -->
+      <span class="account" title="Coming soon. We're building sign-in and permissions.">
+        <span class="face"><Icon name="user" size={15} /></span>
+        <span class="words">Sign in</span>
+      </span>
     </nav>
   </header>
 
@@ -60,8 +72,8 @@
   {#if !full}
     <footer>
       <span>Made with <span class="heart">❤︎</span> by {AUTHOR}</span>
-      <a href={SUPPORT} target="_blank" rel="noopener">Ko-fi</a>
       <a href="/releases">Releases</a>
+      <a href="/support">Support</a>
       <a href="/privacy">Privacy</a>
       <a href="/licenses">Licenses</a>
       <a href={SOURCE} target="_blank" rel="noopener">Source</a>
@@ -109,7 +121,7 @@
       scrollbar-width: none;
     }
 
-    .shell.full .download-link {
+    .shell.full .section {
       display: none;
     }
   }
@@ -180,14 +192,52 @@
     }
   }
 
-  @media (max-width: 360px) {
-    .download-link {
-      display: none;
+  /* A phone's width holds the logo, the two sections and the face: the
+     brand's word and Sign in's are left to screen readers. */
+  @media (max-width: 400px) {
+    .brand span,
+    .account .words {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
     }
   }
 
-  nav a:hover {
+  nav a:hover,
+  nav a.current {
     color: var(--text);
+  }
+
+  /* The section open: its name in the text's colour, underlined in the accent. */
+  nav a.current {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: 6px;
+  }
+
+  .account {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--muted);
+    white-space: nowrap;
+    cursor: default;
+  }
+
+  /* Signed out: an anonymous face where a signed-in visitor's picture will be. */
+  .face {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--muted);
   }
 
   footer {

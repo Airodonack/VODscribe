@@ -68,8 +68,7 @@ export default {
 
     // The wheel over the bar, and a drag with the middle button: the system's
     // where it's driven (X11), else the same events sent to the page.
-    const why =
-      os.unavailable() ?? (process.platform !== "linux" ? "the system's keys are driven on Linux only" : null);
+    const why = os.unavailable({ linuxOnly: "the system's keys" });
     const scrolled = () => app.js(`return document.querySelector(".clip-bar").scrollLeft`);
     const toStart = () => app.js(`document.querySelector(".clip-bar").scrollLeft = 0`);
     const pillInView = (n) =>

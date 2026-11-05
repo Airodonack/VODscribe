@@ -67,12 +67,26 @@ function programs(exe) {
   );
 }
 
-/** Whether process `pid` runs (a zombie, ended but not yet reaped by its parent, doesn't). */
+/**
+ * Whether process `pid` runs (a zombie, ended but not yet reaped by its
+ * parent, doesn't). On Linux, while any thread of it does: its first thread
+ * can end before the others, and the process then reads as a zombie while
+ * they still hold its files and its single-instance lock (2026-10-30: the
+ * app's thread making storyboards, in a write to a busy disk, ran on for a
+ * second; the test found the library locked, and the next copy started
+ * handed over to it and quit).
+ */
 function alive(pid) {
   if (process.platform === "linux") {
     try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-      return stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
+      return readdirSync(`/proc/${pid}/task`).some((thread) => {
+        try {
+          const stat = readFileSync(`/proc/${pid}/task/${thread}/stat`, "utf8");
+          return stat.slice(stat.lastIndexOf(")") + 2)[0] !== "Z";
+        } catch {
+          return false;
+        }
+      });
     } catch {
       return false;
     }

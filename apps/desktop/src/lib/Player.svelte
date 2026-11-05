@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChannelDisc from "./ChannelDisc.svelte";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
   import { ask } from "./ask";
@@ -22,7 +23,7 @@
   import Thumb from "./Thumb.svelte";
   import TranscribeFrom from "./TranscribeFrom.svelte";
   import { demoOff, keysForApp } from "./demo";
-  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
+  import { is, keyHint, labelOf } from "./keys.svelte";
   import { forPlayer, isEscape, transportKey, vodShortcuts } from "./playerKeys";
   import { canEmbed, createPlayer, drawsOwnCaptions, playsHere, type EmbeddedPlayer } from "./embed";
   import { ownPlayer } from "./ownPlayer.svelte";
@@ -38,17 +39,21 @@
   } from "./platform";
   import { nav } from "./nav.svelte";
   import { drivePlayer } from "./drivePlayer.svelte";
+  import { legendBindings } from "./copyPaste";
   import { hideNote, noteHidden } from "./permission";
   import { videoDownloads } from "./videos.svelte";
   import { chosenClips, chosenSegments, clipSegments, removeChosenClips } from "./bulk";
   import { snippets } from "./selection.svelte";
   import { gaps, transcribeRest } from "./stretches";
+  import { shortMode } from "./shortMode.svelte";
 
   // One instance per VOD (the parent keys it by id). `at` is a jump (a search
   // result, a transcript line, a source link), a fresh object each time, so
   // jumping to the same timestamp twice still seeks; null opens it where its
   // playhead was left this session (nav.svelte.ts), or at its start.
-  let { vod, at }: { vod: Vod; at: { time: number; play: boolean } | null } = $props();
+  // `swap`: short mode may swap this player for the transcript (App.svelte's
+  // `swappable`); when it may not, the player stays and offers no swap.
+  let { vod, at, swap }: { vod: Vod; at: { time: number; play: boolean } | null; swap: boolean } = $props();
   const start = untrack(() => {
     const doc = { kind: "vod" as const, id: vod.id };
     return at?.time ?? nav.bringBack(doc)?.time ?? nav.lastSeen(doc)?.time ?? 0;
@@ -85,7 +90,15 @@
   }
 
   // Collapsing hides the video but keeps the player loaded; a jump reopens it.
+  // In short mode (shortMode.svelte.ts) the player and the transcript take
+  // turns instead, and the choice stays: a jump or another VOD doesn't undo it.
   let collapsed = $state(false);
+  const hidden = $derived(shortMode.on ? swap && shortMode.pane : collapsed);
+  function toggleHidden() {
+    if (shortMode.on) shortMode.pane = !shortMode.pane;
+    else collapsed = !collapsed;
+  }
+  const toggleLabel = $derived(hidden ? "Show player" : shortMode.on ? "Show transcript and chat" : "Hide player");
 
   // Clicking the timestamp copies a link to the playhead's moment on the VOD's site.
   let copied = $state<"ok" | "failed" | null>(null);
@@ -211,8 +224,9 @@
   // Play): what's set meanwhile is what it starts with. The volume and speed are
   // every player's (playerPrefs.svelte.ts); muted is kept till it's made
   // (and from one player to the next, as a download switches it). A
-  // site's player has none of this till it's made: nothing of the site's
-  // is loaded before Play.
+  // site's VOD shows its sound alone till Play makes its player (nothing
+  // of the site's is loaded before), which then starts at it (embed.ts);
+  // its speed, where it has one, is its player's.
   let firstMuted = $state(false);
   const first: BarControls = {
     volume: {
@@ -226,7 +240,8 @@
     },
     rate: { get: () => prefs.speed() ?? 1, set: (rate) => prefs.setSpeed(rate) },
   };
-  const controls = $derived(player ?? (playsHere(vod) ? first : null));
+  const firstSound: BarControls = { volume: first.volume };
+  const controls = $derived(player ?? (playsHere(vod) ? first : canEmbed(vod) ? firstSound : null));
 
   // The transcript's lines as captions, for the captions button (greyed
   // till a part is transcribed) and, where the player doesn't draw them
@@ -252,6 +267,12 @@
 
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
+  // The sound and speed it'll start with, shown from the first paint, not
+  // the first frame, which may come late (a busy machine, a window in the
+  // back): till then the bar showed full volume and 1×.
+  $effect.pre(() => {
+    if (!player && controls) reading.readSound(controls);
+  });
   // Whether the player draws the captions itself, over its picture: known
   // before it opens (and then read from it), so under a site's player the
   // strip's room is kept from the start, and nothing below moves on Play.
@@ -282,6 +303,10 @@
   const fps = $derived(reading.fps);
   // The VOD's length as the site said, or as the player found when the site didn't say.
   const duration = $derived(vod.duration || playerDuration);
+  // How long its timeline is, for what selects all of it (Ctrl+A: bulk.ts).
+  $effect(() => {
+    if (cuts.isOf({ kind: "vod", id: vod.id })) cuts.length = duration;
+  });
 
   /** Moves the playhead, starting the player there (paused) if it isn't yet. */
   function seekTo(time: number) {
@@ -368,9 +393,9 @@
   // Transcribe (T), at the bar's right beside the captions: the selection;
   // else the whole VOD, or what of it isn't transcribed yet (stretches.ts
   // `transcribeRest`), or all of it again once all of it is, after asking
-  // (as the library row's Transcribe again: it replaces it all). Pressed and
-  // held, a menu of how much from the playhead instead (TranscribeFrom.svelte,
-  // hold.svelte.ts). Hovering it lights up on the timeline what it would
+  // (as the library row's Transcribe again: it replaces it all). Right-clicked,
+  // or pressed and held, a menu of how much from the playhead instead
+  // (TranscribeFrom.svelte, hold.svelte.ts). Hovering it lights up on the timeline what it would
   // transcribe, as Clip does.
   let transcribeButton = $state<HTMLElement>();
   // Where the menu was opened: the stretch starts there, though the video plays on.
@@ -423,7 +448,7 @@
           : vod.transcribed === "all"
             ? "Transcribe again…"
             : "Transcribe the whole VOD"
-    }${keyHint("transcribe.here")}. Hold for how much from here.`,
+    }${keyHint("transcribe.here")}. Right-click for how much from here.`,
   );
   function onTranscribeClick() {
     if (!transcribeHold.held) transcribe();
@@ -488,7 +513,7 @@
 
   // The note is shown with the controls.
   $effect(() => {
-    if (collapsed) untrack(() => clips.answer(false));
+    if (hidden) untrack(() => clips.answer(false));
   });
 
   // Keyboard control for whichever player is open. Keys pressed while the
@@ -584,8 +609,8 @@
 
 <PlayerPanel
   bind:fullscreen
-  shortcuts={vodShortcuts(framed, os, bindingsOf)}
-  controls={canEmbed(vod) && !collapsed ? vodControls : undefined}
+  shortcuts={vodShortcuts(framed, os, legendBindings)}
+  controls={canEmbed(vod) && !hidden ? vodControls : undefined}
   {stage}
   {below}
 >
@@ -594,7 +619,7 @@
       <strong title={vod.title}>{vod.title}</strong>
       <span class="meta muted">
         <span class="platform {vod.platform}">{site}</span>
-        {#if vod.channel}<span class="sep">·</span>{vod.channel}{/if}
+        {#if vod.channel}<span class="sep">·</span><ChannelDisc {vod} size={16} />{vod.channel}{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if chapterNow?.text}
@@ -629,15 +654,17 @@
         {#if action.id === "open"}<Icon name="external" size={12} />{/if}
       </button>
     {/each}
-    {#if canEmbed(vod)}
+    <!-- Hidden, the bar goes with the picture, so what brings them back is here
+         (its other half is in the bar, PlayerBar.svelte's `hide`). -->
+    {#if canEmbed(vod) && (!shortMode.on || swap) && hidden}
       <button
-        class="icon"
-        onclick={() => (collapsed = !collapsed)}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? "Show player" : "Hide player"}
-        title={collapsed ? "Show player" : "Hide player"}
+        class="icon collapse"
+        onclick={toggleHidden}
+        aria-expanded="false"
+        aria-label={toggleLabel}
+        title={toggleLabel}
       >
-        <Icon name={collapsed ? "chevron-down" : "chevron-up"} size={16} />
+        <Icon name="player-show" size={16} />
       </button>
     {/if}
   {/snippet}
@@ -645,7 +672,7 @@
 
 {#snippet stage()}
   {#if canEmbed(vod)}
-    <div class="stage" class:collapsed class:audio={audioOnly}>
+    <div class="stage" class:collapsed={hidden} class:audio={audioOnly}>
       <div class="frame" class:audio={audioOnly} class:own={active && playsHere(vod)}>
         {#if active}
           <div class="host" bind:this={host}></div>
@@ -661,12 +688,12 @@
         {/if}
       </div>
     </div>
-    {#if stripCue !== null && !collapsed}
+    {#if stripCue !== null && !hidden}
       <!-- A site's player can't be drawn over: its captions show under it,
            a line kept for them (so nothing below moves as they change). -->
       <p class="caption-strip" aria-live="off">{stripCue}</p>
     {/if}
-    {#if !collapsed}
+    {#if !hidden}
       <Popover
         bind:open={() => !!clips.asking, (open) => !open && clips.answer(false)}
         anchor={clipButton}
@@ -734,6 +761,7 @@
     canFullscreen
     ontoggleplay={togglePlay}
     onfullscreen={setFullscreen}
+    hide={!shortMode.on || swap ? { label: toggleLabel, run: toggleHidden } : undefined}
   >
     {#snippet actions()}
       <button
@@ -776,6 +804,7 @@
         class:picking={!!cuts.selection}
         bind:this={transcribeButton}
         onpointerdown={transcribeHold.down}
+        oncontextmenu={transcribeHold.menu}
         onclick={onTranscribeClick}
         onmouseenter={onTranscribeEnter}
         onmouseleave={() => (transcribeHover = false)}
@@ -807,7 +836,7 @@
         come yet.
       </p>
     {/if}
-    {#if !collapsed && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
+    {#if !hidden && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
     {/if}
     {#if error}
@@ -963,6 +992,21 @@
 
   .stage {
     background: var(--stage);
+  }
+
+  /* Short mode, the player alone in the column (App.svelte): the picture as
+     large as fits, as in full screen. */
+  :global(.alone) .stage {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  :global(.alone) .frame {
+    flex: 1;
+    width: 100%;
+    max-height: none;
+    aspect-ratio: auto;
   }
 
   /* Hidden, not unmounted: the player keeps its state and keeps playing. */

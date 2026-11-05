@@ -35,7 +35,7 @@ interface Indexed {
   speaker?: string;
 }
 
-const library = new Map<"vods", Promise<Vod[]>>();
+const library = new Map<"vods" | "demo", Promise<Vod[]>>();
 const transcripts = new Map<number, Promise<Indexed[]>>();
 
 /** Remembers `promise` under `key` until it fails, so a failed load is tried again next time. */
@@ -55,13 +55,16 @@ async function json<T>(path: string): Promise<T> {
   return res.json();
 }
 
+/** The demo's own VODs (static/demo), even while a VOD's annotations are open. */
+export const demoVods = (): Promise<Vod[]> => cached(library, "demo", () => json<Vod[]>("/demo/vods.json"));
+
 // The demo's VODs are transcribed whole, as the export made them (it
 // predates stretches, so their fields are filled in here).
 export function listVods(): Promise<Vod[]> {
   const open = annotated();
   if (open) return Promise.resolve([open.vod]);
   return cached(library, "vods", async () =>
-    (await json<Vod[]>("/demo/vods.json")).map((v) => ({
+    (await demoVods()).map((v) => ({
       ...v,
       status: "done",
       stretch: null,

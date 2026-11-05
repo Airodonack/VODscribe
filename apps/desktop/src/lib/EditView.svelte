@@ -15,8 +15,8 @@
   import { onDestroy, onMount, untrack } from "svelte";
   import { api, type Cue, type Doc, type EditPiece, type PlayerStretch, type Vod } from "./api";
   import { keysForApp } from "./demo";
-  import { bindingsOf, is, keyHint, labelOf } from "./keys.svelte";
-  import { editShortcuts, forPlayer, isEscape, transportKey } from "./playerKeys";
+  import { is, keyHint, labelOf } from "./keys.svelte";
+  import { editShortcuts, forPlayer, isEscape, markFramesOf, transportKey } from "./playerKeys";
   import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
@@ -25,10 +25,10 @@
   import { EditPlayer, type EditPlayback } from "./editPlayer";
   import { clips } from "./clips.svelte";
   import ClipStrip from "./ClipStrip.svelte";
-  import { cuts, markKey } from "./cuts.svelte";
+  import { cuts, edgeNudged, markKey } from "./cuts.svelte";
   import { edits } from "./edits.svelte";
   import Icon from "./Icon.svelte";
-  import { PEAKS_RATE, cueAt, frameStart, playedSpans, stretchIn } from "./media";
+  import { PEAKS_RATE, cueAt, frameStart, playedLength, playedSpans, stretchIn } from "./media";
   import { prefs } from "./playerPrefs.svelte";
   import PlayerBar, { toggleMute } from "./PlayerBar.svelte";
   import PlayerPanel from "./PlayerPanel.svelte";
@@ -43,6 +43,7 @@
   import * as overlay from "./screenOverlay";
   import { carryChosen, carrySnippets, chosenClips, chosenSegments, clipSegments } from "./bulk";
   import { count, snippets } from "./selection.svelte";
+  import { legendBindings } from "./copyPaste";
 
   let {
     vods,
@@ -56,6 +57,15 @@
 
   const edit = $derived(edits.open);
   const pieces = $derived(edits.pieces);
+  // Its footage all in files here: a clip of it dragged out is made from the press.
+  $effect(() => {
+    edits.footageHere =
+      pieces.length > 0 &&
+      pieces.every((p) => {
+        const vod = vods.get(p.vod_id);
+        return !!vod && playsFromFile(vod);
+      });
+  });
 
   // The name, written in place: put back when the saved name changes, not
   // whenever the edit's news comes (a render's), which would undo typing.
@@ -85,6 +95,10 @@
     return out;
   });
   const total = $derived(segments.reduce((sum, s) => sum + s.length, 0));
+  // How long its timeline is, for what selects all of it (Ctrl+A: bulk.ts).
+  $effect(() => {
+    if (edit && cuts.isOf({ kind: "edit", id: edit.id })) cuts.length = total;
+  });
   // The real splits: wherever what plays jumps, between pieces or over a
   // stretch struck out.
   const joins = $derived(segments.slice(1).map((s) => s.at));
@@ -413,7 +427,7 @@
       if (bringTime !== null || !player) seekTo(wanted.time);
       else {
         reading.at(wanted.time);
-        player.seek(wanted.time, true);
+        player.seek(wanted.time, wanted.play ?? true);
       }
     });
   });
@@ -437,7 +451,7 @@
   /** Split: a cut at both ends of the selection, else one here (or
    *  the one here taken away), as on a VOD. A delete at one makes it real. */
   async function split() {
-    if (cuts.selection) await cuts.cutSelection(total);
+    if (cuts.selection) await cuts.cutSelection(total, joins);
     else await cuts.toggle(now, fps, !reading.playing);
   }
 
@@ -506,6 +520,11 @@
       e.preventDefault();
       return;
     }
+    // A piece's edge just handled: , and . (and the arrows, J and L) move that edge.
+    if (pieceEdgeKey(e)) {
+      e.preventDefault();
+      return;
+    }
     // The selected mark: renamed, moved, taken away (as on a VOD).
     if (markKey(e, { fps, length: total, pause: () => p.playing() && p.togglePlay(), seekTo })) {
       e.preventDefault();
@@ -560,7 +579,7 @@
     // How much each band waits for of downloads, and how much of that is in.
     const waiting = new Map<number, { wanted: number; done: number }>();
     for (const piece of pieces) {
-      const length = pieceLength(piece);
+      const length = playedLength(piece);
       const unit = unitOf(piece);
       for (const w of pending.filter((w) => w.pieceId === piece.id)) {
         const sum = waiting.get(unit) ?? { wanted: 0, done: 0 };
@@ -711,6 +730,37 @@
     edgeAsking.want({ vodId: piece.vod_id, at: frameAt });
   }
 
+  /** Piece `id`'s `side` handled: the piece is the selection, that edge selected (cuts.svelte.ts). */
+  function edgeHandled(id: number, side: "start" | "end") {
+    const band = lane.find((b) => b.id === id);
+    if (band?.range) cuts.edgeHandled(id, band, side);
+  }
+  /** A trim of piece `id`'s edge on its way: , and . wait for it, so each moves a frame from where it got to. */
+  let trimming = false;
+  /** Makes piece `id` `range` of its VOD (its `side` dragged, or moved by a key), then selects that edge. */
+  async function trimEdge(id: number, range: { start: number; end: number }, side: "start" | "end") {
+    trimming = true;
+    try {
+      if (await edits.trim(id, range.start, range.end)) edgeHandled(id, side);
+    } finally {
+      trimming = false;
+    }
+  }
+  /** , and . (the keys that move a mark: the arrows, J and L too) with a
+   *  piece's edge just handled (`cuts.piece`): that edge moved, as dragging
+   *  it would. True if `e` was one. */
+  function pieceEdgeKey(e: KeyboardEvent): boolean {
+    const id = cuts.piece;
+    const side = cuts.selectedEdge;
+    const frames = id !== null && side ? markFramesOf(e, is, fps) : undefined;
+    if (id === null || !side || frames === undefined) return false;
+    const range = lane.find((b) => b.id === id)?.range;
+    if (!range) return false;
+    if (player?.playing()) player.togglePlay();
+    if (!trimming) void trimEdge(id, edgeNudged(range, side, frames, fps), side);
+    return true;
+  }
+
   const onpiece = {
     move(id: number, index: number) {
       // In the open group: among its pieces, from where they start in the lane.
@@ -727,7 +777,8 @@
       if (piece?.group && piece.group.id === openGroup) openGroup = null;
       else if (pieces.some((p) => p.group?.id === id)) openGroup = id;
     },
-    resize: (id: number, start: number, end: number) => edits.trim(id, start, end),
+    resize: (id: number, start: number, end: number, side: "start" | "end") => trimEdge(id, { start, end }, side),
+    handled: (id: number, side: "start" | "end") => edgeHandled(id, side),
     resizing: showEdge,
     carry(id: number, x: number, y: number, from: DOMRect, home?: CarryHome) {
       // A piece, or a group of one: a group of more doesn't go out as one clip.
@@ -745,8 +796,6 @@
     },
   };
 
-  const pieceLength = (p: EditPiece) => playedSpans(p.start, p.end, p.struck).reduce((sum, [a, b]) => sum + b - a, 0);
-
   /** Where something carried over the timeline at `x` (on screen) would go
    *  (dragout.ts): before the first of the edit's pieces (a group as one)
    *  whose middle is past it, at its start. */
@@ -761,7 +810,7 @@
     for (const piece of pieces) {
       const id = piece.group?.id ?? piece.id;
       const last = tops.at(-1);
-      const end = at + pieceLength(piece);
+      const end = at + playedLength(piece);
       if (last?.id === id) last.end = end;
       else tops.push({ id, start: at, end });
       at = end;
@@ -818,7 +867,7 @@
   <PlayerPanel
     bind:fullscreen
     label="edit-view"
-    shortcuts={editShortcuts(!!player?.step, os, bindingsOf)}
+    shortcuts={editShortcuts(!!player?.step, os, legendBindings)}
     stage={editStage}
     controls={editControls}
     below={editBelow}

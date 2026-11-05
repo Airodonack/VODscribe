@@ -18,7 +18,7 @@ import * as os from "../lib/os.mjs";
 export default {
   name: "drag-out",
   async run(app, ctx) {
-    const why = os.unavailable() ?? (process.platform !== "linux" ? "drags are driven on Linux only, so far" : null);
+    const why = os.unavailable({ linuxOnly: "drags" });
     if (why) ctx.skip(why);
     await app.toLibrary();
     const vod = await app.addAndTranscribe(ctx.fixtures.landed);

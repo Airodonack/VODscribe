@@ -55,6 +55,15 @@ import { parseArgs } from "node:util";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.join(here, "..", "..");
 
+/**
+ * Every environment's screen. Wide enough for a file manager beside the
+ * app's window, for the scenarios that drag a clip onto one
+ * (lib/fileManager.mjs: the 1200 px window, a 20 px gap, the 600 px
+ * manager, 1820 px in all from a window at the left edge): 1920 by 1080 is
+ * the smallest common screen that holds them.
+ */
+const SCREEN = { width: 1920, height: 1080 };
+
 /** What each display environment needs installed, by package manager. */
 const ENV_PACKAGES = {
   x11: { apt: [], dnf: [], pacman: [] },
@@ -98,16 +107,18 @@ const APT = (image) => ({
   kind: "deb",
   pm: "apt",
   // The WebDriver package was renamed in Ubuntu 26.04 (webkitgtk-webdriver).
+  // Nautilus, for the scenarios that drop a clip on a file manager (about 50
+  // to 60 s more to install); file, to name the binary a crash's core is from.
   install:
     `export DEBIAN_FRONTEND=noninteractive; apt-get update -qq && ` +
     `driver=$(apt-cache policy webkit2gtk-driver | grep -q "Candidate: [0-9]" && echo webkit2gtk-driver || echo webkitgtk-webdriver) && ` +
-    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps $EXTRA >/dev/null`,
+    `apt-get install -y -qq /pkg/app.deb $driver xvfb xauth openbox xdotool dbus procps nautilus file $EXTRA >/dev/null`,
 });
 const DNF = (image) => ({
   image,
   kind: "rpm",
   pm: "dnf",
-  install: `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng $EXTRA >/dev/null`,
+  install: `dnf install -y -q /pkg/app.rpm webkitgtk6.0 xorg-x11-server-Xvfb xorg-x11-xauth openbox xdotool dbus-daemon procps-ng file $EXTRA >/dev/null`,
 });
 // Arch: the libraries the .deb's binaries link, from Arch, and the .deb unpacked over /.
 const PACMAN = (image) => ({
@@ -119,7 +130,7 @@ const PACMAN = (image) => ({
     // links ALSA for the player's sound), and GStreamer's plugins, optional for WebKitGTK there,
     // without which its web process aborts at the first sound ("autoaudiosink not found").
     `pacman -Syu --noconfirm --needed webkit2gtk-4.1 webkitgtk-6.0 gtk3 libsoup3 alsa-lib gst-plugins-base gst-plugins-good gst-plugins-bad gst-libav glycin bubblewrap ` +
-    `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng $EXTRA >/dev/null && ` +
+    `xorg-server-xvfb xorg-xauth openbox xdotool dbus libarchive procps-ng file $EXTRA >/dev/null && ` +
     `mkdir -p /tmp/deb && cd /tmp/deb && bsdtar -xf /pkg/app.deb && tar -xf data.tar.* -C / && cd / && ` +
     // pacman's hooks can't all run in a container: GTK's settings schemas by hand.
     `glib-compile-schemas /usr/share/glib-2.0/schemas`,
@@ -210,7 +221,7 @@ function inEnvironment(run) {
       ...scheme,
       ...gpu,
       runtime,
-      "weston --backend=headless --renderer=gl --width=1400 --height=900 --socket=wl-e2e --debug > /out/weston.log 2>&1 &",
+      `weston --backend=headless --renderer=gl --width=${SCREEN.width} --height=${SCREEN.height} --socket=wl-e2e --debug > /out/weston.log 2>&1 &`,
       "sleep 3",
       "unset DISPLAY; export WAYLAND_DISPLAY=wl-e2e GDK_BACKEND=wayland E2E_DISPLAY=weston",
       `dbus-run-session -- sh -c '${quoted}'`,
@@ -232,12 +243,12 @@ function inEnvironment(run) {
       "dbus-daemon --session --nofork --address=unix:path=$XDG_RUNTIME_DIR/system_bus > /dev/null 2>&1 &",
       "export DBUS_SYSTEM_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/system_bus",
       "unset DISPLAY",
-      `dbus-run-session -- sh -c 'gnome-shell --headless --wayland --no-x11 --virtual-monitor 1400x900 --wayland-display wl-e2e > /out/shell.log 2>&1 & sleep 8; export WAYLAND_DISPLAY=wl-e2e GDK_BACKEND=wayland E2E_DISPLAY=gnome; ${quoted}'`,
+      `dbus-run-session -- sh -c 'gnome-shell --headless --wayland --no-x11 --virtual-monitor ${SCREEN.width}x${SCREEN.height} --wayland-display wl-e2e > /out/shell.log 2>&1 & sleep 8; export WAYLAND_DISPLAY=wl-e2e GDK_BACKEND=wayland E2E_DISPLAY=gnome; ${quoted}'`,
     ].join("\n");
   return [
     ...scheme,
     ...gpu,
-    `dbus-run-session -- xvfb-run -a -s "-screen 0 1400x900x24" sh -c 'openbox & sleep 1; ${quoted}'`,
+    `dbus-run-session -- xvfb-run -a -s "-screen 0 ${SCREEN.width}x${SCREEN.height}x24" sh -c 'openbox & sleep 1; ${quoted}'`,
   ].join("\n");
 }
 
