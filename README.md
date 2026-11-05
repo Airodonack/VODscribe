@@ -90,7 +90,7 @@ cargo fmt --all   # rustfmt, with the settings in rustfmt.toml
 
 Code is formatted with rustfmt and Prettier, and CI refuses code that isn't (`.github/workflows/check.yml` on every push, and again before release builds). Run `git config core.hooksPath .githooks` once per clone, so `.githooks/pre-commit` refuses an unformatted commit before CI does.
 
-`apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt` holds the license of everything compiled into the app; the installers include it and the website serves it. After changing dependencies, regenerate it with `python3 scripts/third-party-notices.py` (it needs [cargo-about](https://github.com/EmbarkStudios/cargo-about) 0.9). CI fails when it's out of date, or when a Rust dependency's license isn't one of those accepted in `licenses/about.toml`.
+`apps/desktop/src-tauri/THIRD-PARTY-NOTICES.txt` holds the license of everything compiled into the app; the installers include it and the website serves it. After changing dependencies, regenerate it with `python3 scripts/third-party-notices.py` (it needs [cargo-about](https://github.com/EmbarkStudios/cargo-about) 0.9). CI fails when it's out of date, or when a Rust dependency's license isn't one of those accepted in `licenses/about.toml`. On a Dependabot pull request, `.github/workflows/notices.yml` regenerates it and pushes it to the PR's branch.
 
 The worker is bundled as a Tauri sidecar, along with a CUDA build of it on Linux and Windows. `scripts/prepare-sidecars.sh` builds both into `apps/desktop/src-tauri/binaries/`. `pnpm dev` runs it automatically; run it yourself (`bash scripts/prepare-sidecars.sh [debug|release]`) before building the app with plain `cargo`, and again after changing the worker, since the app runs the copy there.
 
