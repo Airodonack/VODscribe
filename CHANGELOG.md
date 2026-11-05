@@ -41,6 +41,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Full screen works the second time. On Linux with GNOME, the video could stay over the whole screen, cropped and without its controls, until you switched windows.
   - Sites' players keep the volume. YouTube, Twitch and Kick start at the volume last set, and one set there is kept for every player.
   - Player buttons fit narrow windows. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
+  - Timeline clicks stick on a Mac. In a sound file not yet played, the playhead could go back to the start a moment after the click.
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.
   - Splitting at a join leaves no sliver. In an edit, Split (B) on a selection that ends where two pieces meet left a sliver of the earlier piece cut off before the join.
