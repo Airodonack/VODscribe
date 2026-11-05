@@ -1,8 +1,10 @@
 // The notes the app can be told to stop showing, each a setting that is on
 // while it shows (crates/core `settings`): Settings has a switch for each in
-// the pane of its subject, the note's own "Don't show this again" turns that
-// switch off, and Reset settings brings them all back. The VODscription
-// offer's "Don't ask again" is the Privacy switch `ask_for_annotations`.
+// the pane of its subject, and Reset settings brings them all back. The note
+// itself turns its switch off: the permission note's "Don't show this
+// again", ticked; the Resolve hint, once answered either way. The
+// VODscription offer's "Don't ask again" is the Privacy switch
+// `ask_for_annotations`.
 
 import type { Settings } from "./api";
 

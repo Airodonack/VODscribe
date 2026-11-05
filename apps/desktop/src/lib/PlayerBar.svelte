@@ -20,7 +20,7 @@
   // and Clip, or what an edit has instead) with a line of context, then
   // sound, speed, the panel's own at the right (a VOD's Transcribe), captions,
   // the keyboard legend's button (the legend opens under this row:
-  // PlayerPanel.svelte), hiding the video and full screen, where the player
+  // PlayerPanel.svelte), full screen and hiding the video, where the player
   // has them: at the lower right, where video players keep their view toggles.
 
   import type { Snippet } from "svelte";
