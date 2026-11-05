@@ -1,4 +1,5 @@
-// Windows' receivers for drags out of the window (drag-promise): File
+// Windows' receivers for drags out of the window (drag-promise), and File
+// Explorer as a source of drags into it (drop-virtual): File
 // Explorer on a folder of the test's own, an app that takes real files only
 // (a WinForms form taking FileDrop, as many apps do), Explorer's copy
 // dialogs, and the app's own windows. All through PowerShell, in the
@@ -135,6 +136,36 @@ export async function openExplorer(dir, rect) {
     closeExplorerDialogs();
   };
   return { drop: { x: rect.x + Math.round(rect.w / 2), y: rect.y + Math.round(rect.h * 0.6) }, close };
+}
+
+/**
+ * Where the item named `name` is in the Explorer window open on `dir`
+ * (by its name's start, screen pixels: a row of the details view runs past
+ * the window), as UI Automation finds it in the list of files; or null. (Explorer may show it without its extension.)
+ */
+export function itemIn(dir, name) {
+  const stem = name.replace(/\.[^.]+$/, "");
+  const out = powershell(
+    `${USER32}
+     $win = $null
+     foreach ($w in (New-Object -ComObject Shell.Application).Windows()) {
+       try { if ($w.Document.Folder.Self.Path -eq '${dir}') { $win = $w } } catch {}
+     }
+     if (-not $win) { 'none'; exit }
+     $e = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$win.HWND)
+     $items = $e.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+       (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)))
+     foreach ($x in $items) {
+       if ($x.Current.Name -eq '${name}' -or $x.Current.Name -eq '${stem}') {
+         $r = $x.Current.BoundingRectangle
+         "$([int]($r.X + [Math]::Min(40, $r.Width / 2))) $([int]($r.Y + $r.Height / 2))"; exit
+       }
+     }
+     'none'`,
+  );
+  if (out === "none") return null;
+  const [x, y] = out.split(" ").map(Number);
+  return { x, y };
 }
 
 /** The WinForms receiver: takes a drop only as real files (FileDrop), logs what it got; or, with $refuse, refuses every drag. */

@@ -75,6 +75,9 @@ windows = { version = "0.62", features = [
 ] }
 # The drag's picture decoded here (drag_source).
 png = "0.18"
+# The web view's own drops turned off, so the app's drop target takes them
+# (receive.rs); the version tauri and wry build.
+webview2-com = "0.39"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

@@ -6642,6 +6642,7 @@ dependencies = [
  "tauri-plugin-updater",
  "vodscribe-core",
  "vodscribe-player",
+ "webview2-com",
  "windows",
  "windows-core 0.62.2",
 ]

@@ -1,7 +1,8 @@
 <script lang="ts">
   // The jobs under way, at the bottom of the library (as a file manager
-  // shows its copies): the clips and edits being made, one at a time, and
-  // the removed VODs being erased beside them (desktop job_list.rs). A line
+  // shows its copies): the clips and edits being made, one at a time, the
+  // removed VODs being erased beside them, and files dropped on the window
+  // being received (desktop job_list.rs). A line
   // says what's going on, with the progress of what's being made; clicked,
   // it opens the list above it: each job with its name, what it's doing and
   // how far, and Cancel. The clips and edits waiting can be dragged into
@@ -113,7 +114,8 @@
 
 <Popover bind:open anchor={button} label="Jobs" width={Math.max(220, width - 16)} padding={4} above>
   <div class="jobs" role="list" aria-label="Jobs">
-    {#each running as job (job.id)}
+    <!-- (Keyed by kind too: a file received and a clip may share an id.) -->
+    {#each running as job (`${job.kind}-${job.id}`)}
       <div class="job" role="listitem" data-job="{job.kind}-{job.id}">{@render inner(job)}</div>
     {/each}
     <div class="waiting" bind:this={reorder.list}>

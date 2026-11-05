@@ -6,26 +6,29 @@ import type { Job } from "./api";
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** The button's line: the clips being made, the edits being rendered, then
- *  what's being erased ("Making 2 clips · Rendering 1 edit · Erasing 1
- *  removed VOD"); empty with no jobs. */
+ *  what's being erased, then what's being received ("Making 2 clips ·
+ *  Rendering 1 edit · Erasing 1 removed VOD · Receiving 1 file"); empty
+ *  with no jobs. */
 export function summary(jobs: Job[]): string {
   const of = (kind: Job["kind"]) => jobs.filter((j) => j.kind === kind).length;
-  const [clips, edits, erasing] = [of("clip"), of("edit"), of("erase")];
+  const [clips, edits, erasing, receiving] = [of("clip"), of("edit"), of("erase"), of("receive")];
   const parts = [];
   if (clips) parts.push(`Making ${counted(clips, "clip", "clips")}`);
   if (edits) parts.push(`Rendering ${counted(edits, "edit", "edits")}`);
   if (erasing) parts.push(`Erasing ${counted(erasing, "removed VOD", "removed VODs")}`);
+  if (receiving) parts.push(`Receiving ${counted(receiving, "file", "files")}`);
   return parts.join(" · ");
 }
 
 /** A job's line under its name: what it's doing and how far, or that it waits. */
 export function jobLine(job: Job): string {
   if (!job.running) return "Waiting";
-  const doing = job.kind === "erase" ? "Erasing" : job.kind === "edit" ? "Rendering" : "Making the clip";
+  const doing = { erase: "Erasing", edit: "Rendering", receive: "Receiving", clip: "Making the clip" }[job.kind];
   return job.progress === null ? `${doing}…` : `${doing} · ${Math.round(job.progress * 100)}%`;
 }
 
-/** The clips and edits waiting, in their order: the ones that can be dragged. */
+/** The clips and edits waiting, in their order: the ones that can be dragged
+ *  (files being received never wait). */
 export const waitingJobs = (jobs: Job[]) => jobs.filter((j) => j.kind !== "erase" && !j.running);
 
 /** The ids of the clips and edits waiting, in their order. */

@@ -302,12 +302,13 @@ export interface Line {
 export type ClipStatus = "waiting" | "cutting" | "ready" | "error";
 
 /** A job in the library's list (desktop job_list.rs): a clip or an edit
- *  being made, one at a time, or a removed VOD being erased, beside them. */
+ *  being made, one at a time, or a removed VOD being erased, beside them,
+ *  or a file dropped on the window being received. */
 export interface Job {
-  kind: "clip" | "edit" | "erase";
-  /** The clip's or edit's id; the VOD's, for an erasure. */
+  kind: "clip" | "edit" | "erase" | "receive";
+  /** The clip's or edit's id; the VOD's, for an erasure; the file's own, for one received. */
   id: number;
-  /** The clip's or edit's title; the VOD's, for an erasure. */
+  /** The clip's or edit's title; the VOD's, for an erasure; the file's name. */
   label: string;
   /** Begun: the one each queue is at. */
   running: boolean;

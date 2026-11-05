@@ -16,9 +16,10 @@
 //!   them if they're made by the drop; if not, nothing lands, and the outcome
 //!   says it asked and was refused (`Outcome::refused_unmade`).
 //!
-//! The app's own window (wry's drop target) asks for CF_HDROP on the UI
-//! thread as the drag comes over it, and is answered at once with the files
-//! made so far: refused, it would ignore the drag (no drag-over, no drop).
+//! The app's own window (its drop target, `drop_target`) asks for CF_HDROP
+//! on the UI thread as the drag comes over it, and is answered at once with
+//! the files made so far: refused, it would ignore the drag (no drag-over,
+//! no drop).
 //! Every other format (the drag's picture from IDragSourceHelper, Explorer's
 //! drop description and Performed DropEffect) goes to an inner store
 //! (SHCreateDataObject), which answers for it.

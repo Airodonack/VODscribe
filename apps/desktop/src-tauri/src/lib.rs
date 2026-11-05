@@ -13,6 +13,8 @@ mod clipboard;
 mod clips;
 #[cfg(windows)]
 mod drag_source;
+#[cfg(windows)]
+mod drop_target;
 #[cfg(feature = "e2e")]
 mod e2e;
 mod edits;
@@ -26,6 +28,7 @@ mod jobs;
 mod loopback;
 mod media;
 mod player;
+mod receive;
 mod recovery;
 mod screen;
 mod setup;
@@ -67,6 +70,8 @@ struct AppState {
     sweeper: vods::Sweeper,
     /// What the two queues above are at, for the library's list of jobs (`job_list`).
     job_list: job_list::JobList,
+    /// Files dropped on the window being received (`receive`), listed with the jobs.
+    receives: receive::Receives,
     /// Footage for edits being downloaded (`footage`).
     footage: footage::Footage,
     /// Whole videos downloaded on request (`videos`).
@@ -221,6 +226,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         clips: clips::Cutter::new(),
         sweeper: vods::Sweeper::new(),
         job_list: job_list::JobList::new(),
+        receives: receive::Receives::new(),
         footage: footage::Footage::default(),
         videos: videos::Videos::new(),
         storyboards: storyboards::Storyboards::new(),
@@ -329,7 +335,13 @@ pub fn run() {
                 Ok(extra) if !extra.trim().is_empty() => builder.additional_browser_args(&webview_args(&extra)),
                 _ => builder,
             };
+            // On Windows the app takes drops itself (receive.rs), files without
+            // a path too; the page hears the same events.
+            #[cfg(windows)]
+            let builder = builder.disable_drag_drop_handler();
             let main = builder.build()?;
+            #[cfg(windows)]
+            receive::take_drops(&main)?;
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());
             app.manage(screen::Screen::default());

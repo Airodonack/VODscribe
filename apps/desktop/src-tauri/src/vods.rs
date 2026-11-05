@@ -136,26 +136,47 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
     .await
     .map_err(err)?;
 
-    let state = app.state::<AppState>();
     for (vod, created) in &added {
-        let _ = app.emit("vod", vod);
-        if *created {
-            // A file has no chat; the queue records that.
-            state.chat.push(vod.id);
-            let (app, id) = (app.clone(), vod.id);
-            std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
-        }
+        announce_file(&app, vod, *created);
     }
     Ok(AddedFiles { vods: added.into_iter().map(|(v, _)| v).collect(), errors })
 }
 
+/// Tells the page of file VOD `vod`, just added (`created`) or found.
+fn announce_file(app: &AppHandle, vod: &Vod, created: bool) {
+    let _ = app.emit("vod", vod);
+    if created {
+        // A file has no chat; the queue records that.
+        app.state::<AppState>().chat.push(vod.id);
+        let (app, id) = (app.clone(), vod.id);
+        std::thread::spawn(move || thumbnails::cache_thumbnail(&app, id));
+    }
+}
+
+/// Adds the file at `path`, received from another app's drag into the
+/// kept videos' folder (`receive`), as a file dropped on the window is;
+/// it's erased with its VOD (`erase_source`).
+#[cfg(windows)]
+pub(crate) fn add_received(app: &AppHandle, path: &Path) -> anyhow::Result<()> {
+    let (vod, created) = add_local(app, path, true)?;
+    announce_file(app, &vod, created);
+    Ok(())
+}
+
 fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
+    add_local(app, path, false)
+}
+
+/// Adds the file at `path`; one in the app's own data only if it's one
+/// `received` (into the kept videos' folder).
+fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(crate::worker::NO_FFMPEG))?;
     // probe refuses network paths and non-media files before touching them.
     let info = local::probe(&ffmpeg, path)?;
     let canonical = Path::new(&info.url);
-    if local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local) {
+    let own = local::is_inside(canonical, &state.paths.root) || local::is_inside(canonical, &state.paths.local);
+    if own && !(received && local::is_inside(canonical, &state.paths.media())) {
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     // One transaction, so a file never shows up as an online VOD with a path for a link.
@@ -343,6 +364,12 @@ fn erase_source(app: &AppHandle, db: &Db, id: i64, kept: bool) -> anyhow::Result
     let paths = &app.state::<AppState>().paths;
     pipeline::remove_work_files(&paths.work(), id);
     pipeline::remove_media(&paths.work(), id);
+    // A file received from another app's drag is the app's own copy.
+    if let Some(source) = db.vod(id)?.and_then(|v| v.source_path)
+        && local::is_inside(Path::new(&source), &paths.media())
+    {
+        let _ = std::fs::remove_file(source);
+    }
     thumbs::remove(&paths.thumbs(), id);
     vodscribe_core::peaks::remove(&paths.peaks(), id);
     crate::storyboards::remove(app, id);
