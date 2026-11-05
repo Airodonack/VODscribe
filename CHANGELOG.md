@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.2 (unreleased)
 
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
+- Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 
 ## 0.7.1 — 2026-11-05
 
