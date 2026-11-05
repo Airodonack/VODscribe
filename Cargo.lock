@@ -1546,6 +1546,7 @@ name = "dragndrop-target"
 version = "0.1.0"
 dependencies = [
  "block2",
+ "gtk",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

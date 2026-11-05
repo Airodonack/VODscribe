@@ -31,7 +31,7 @@ pub fn safe_file_name(name: &str) -> String {
 
 /// `name` in `dir`, or the first of "<stem> (2).<ext>", "(3)"... that isn't
 /// there, finished or being written.
-fn free_path(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn free_path(dir: &Path, name: &str) -> PathBuf {
     let (stem, ext) = match name.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => (stem, Some(ext)),
         _ => (name, None),

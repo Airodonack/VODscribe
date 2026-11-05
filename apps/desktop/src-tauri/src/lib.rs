@@ -13,7 +13,7 @@ mod clipboard;
 mod clips;
 #[cfg(windows)]
 mod drag_source;
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod drop_target;
 #[cfg(feature = "e2e")]
 mod e2e;
@@ -337,11 +337,13 @@ pub fn run() {
             };
             // The app takes drops itself (receive.rs), files without a path
             // too; the page hears the same events. On Windows instead of wry's
-            // drop target, on macOS through it.
+            // drop target, on macOS through it, on Linux beside it (for the
+            // drops the web view can't take: files an archive manager saves,
+            // a sandboxed app's).
             #[cfg(windows)]
             let builder = builder.disable_drag_drop_handler();
             let main = builder.build()?;
-            #[cfg(any(windows, target_os = "macos"))]
+            #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
             receive::take_drops(&main)?;
             #[cfg(feature = "e2e")]
             e2e::start(app.handle());

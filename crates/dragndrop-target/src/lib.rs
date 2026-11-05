@@ -30,13 +30,18 @@
 //!   item from its reader block, on a queue of its own: a folder destination
 //!   has the file moved in, a sink is fed from it. Bytes so far are known
 //!   only at the end, and a cancel waits for the source's file.
-//! - **Linux** (to come, GTK 3): give it the `GdkDragContext` and
-//!   `GtkSelectionData` of `drag-data-received`. text/uri-list file URIs are
-//!   the paths; the items are the files of
-//!   `application/vnd.portal.filetransfer` (retrieved through the document
-//!   portal) and an XdndDirectSave offer (the source writes the file where
-//!   the target names). The fetch finishes the drag (`gtk_drag_finish`) when
-//!   its items end.
+//! - **Linux** ([`linux`], GTK 3): give it the `GdkDragContext` of your
+//!   widget's drag signals. [`linux::paths`] reads text/uri-list (from your
+//!   `drag-data-received`), [`linux::items`] an XdndDirectSave offer (in
+//!   `drag-motion`). At the drop, [`linux::receive`] asks the source and
+//!   hears back on GTK's thread: the paths (text/uri-list, else the files of
+//!   `application/vnd.portal.filetransfer`, which the document portal gives
+//!   as files on disk), or the files an XDS source saved into a folder you
+//!   name (archive managers write each file under its own name), as items.
+//!   It finishes the drag (`gtk_drag_finish`) once the source is done.
+//!   [`linux::fetch`] then moves each item into a folder, or copies it into
+//!   a sink, on a thread of its own. Saving has no progress or cancel (the
+//!   source does it); the move or copy has both.
 //!
 //! On every system you get the same things back: [`Item`]s (a name, a size if
 //! known), a [`Destination`] per item you take (a folder, or a [`Sink`] of
@@ -54,6 +59,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 mod descriptor;
 mod folder;
 
+#[cfg(target_os = "linux")]
+pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
 #[cfg(windows)]
@@ -68,8 +75,8 @@ pub struct Item {
     name: String,
     size: Option<u64>,
     /// Its place in the drag, as the platform counts (FileContents' index on
-    /// Windows, the promise's on macOS).
-    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    /// Windows, the promise's on macOS, the saved file's on Linux).
+    #[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
     index: usize,
 }
 
@@ -232,14 +239,14 @@ pub(crate) struct Slot {
 }
 
 /// One item to read: where it is in the drag, where it goes, its progress.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
 pub(crate) struct Job {
     pub(crate) item: Item,
     pub(crate) sink: Box<dyn Sink>,
     pub(crate) slot: usize,
 }
 
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
 impl Shared {
     /// The shared state of `requests`, and each as a job: a folder
     /// destination becomes the sink that writes its file.

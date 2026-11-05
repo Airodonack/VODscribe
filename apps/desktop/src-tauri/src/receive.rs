@@ -1,22 +1,26 @@
 //! Files dropped on the window with no path on this computer to play them
 //! from, received (`drop_target`): virtual files on Windows (a video inside a
-//! zip folder in Explorer), file promises on macOS. Each is written into the
-//! kept videos' folder,
-//! under `received`, as `<name>.part`, renamed once whole and added as a
-//! file (`vods::add_received`); meanwhile it's listed with the jobs
+//! zip folder in Explorer), file promises on macOS, and on Linux the files an
+//! archive manager saves for the app (File Roller, Engrampa, Ark), first into
+//! a hidden folder of `received`. Each is written into the kept videos'
+//! folder, under `received`, as `<name>.part`, renamed once whole and added
+//! as a file (`vods::add_received`); meanwhile it's listed with the jobs
 //! ("Receiving", how far, and Cancel). Canceled or failed, nothing is left.
 //!
 //! On Windows the window's drops are all taken here (`Window`, for
 //! `drop_target`): those with paths reach the page as Tauri's own drag-drop
 //! events did, so the page hears the same. On macOS only drags of promises
-//! are; wry gives the page the rest, as before.
+//! are; wry gives the page the rest, as before. On Linux the web view keeps
+//! the drops it takes (file addresses), and those taken here reach the page
+//! the same way: a sandboxed app's files, which the document portal gives as
+//! paths, as a drop with them.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The files being received.
 pub(crate) struct Receives {
-    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
     next: AtomicI64,
     list: Mutex<Vec<Arc<Receiving>>>,
 }
@@ -63,7 +67,7 @@ fn along(got: u64, size: Option<u64>) -> Option<f64> {
 
 /// The name a file received as `name` is written under (as a file it
 /// would be added from: one of the media extensions), else None.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn file_name(name: &str) -> Option<String> {
     // Split as text: another app's name isn't a path here (on Windows "a:b"
     // would read as a drive).
@@ -75,7 +79,7 @@ fn file_name(name: &str) -> Option<String> {
 
 /// `name` in `dir`, or the first of "<stem> (2).<ext>", "(3)"... that isn't
 /// there, finished or being written.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn free_name(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     let path = std::path::Path::new(name);
     let (stem, ext) = (path.file_stem().unwrap_or_default().to_string_lossy(), path.extension());
@@ -95,17 +99,17 @@ fn free_name(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 }
 
 /// Where file `path` is written until it's whole.
-#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
 fn part_of(path: &std::path::Path) -> std::path::PathBuf {
     let mut part = path.as_os_str().to_owned();
     part.push(".part");
     part.into()
 }
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 pub(crate) use taking::take_drops;
 
-#[cfg(any(windows, target_os = "macos"))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod taking {
     use std::fs::File;
     use std::io::{BufWriter, Write};
@@ -169,6 +173,21 @@ mod taking {
         })
     }
 
+    /// Takes the drops on `window`'s page that its web view can't (files with
+    /// no address yet); the web view keeps the rest.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn take_drops(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+        let target = Window { app: window.app_handle().clone(), label: window.label().to_string() };
+        match crate::webview::page(window) {
+            Ok(page) => {
+                drop_target::register(&page, Box::new(target), trace);
+                trace("taking the drops the web view can't");
+            }
+            Err(e) => eprintln!("The window can't take files saved for it: {e:#}"),
+        }
+        Ok(())
+    }
+
     /// Where a drag over the window is, as Tauri's drag-drop events say it.
     #[derive(Serialize, Clone)]
     struct Position {
@@ -217,6 +236,12 @@ mod taking {
 
         fn takes(&self, name: &str) -> bool {
             file_name(name).is_some()
+        }
+
+        #[cfg(target_os = "linux")]
+        fn stage(&self) -> Option<PathBuf> {
+            // (Not while the library can't be opened: the recovery screen.)
+            Some(self.app.try_state::<AppState>()?.paths.media().join("received"))
         }
 
         fn incoming(&self, item: &Item) -> Option<Destination> {

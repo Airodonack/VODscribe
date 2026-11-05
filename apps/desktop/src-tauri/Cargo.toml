@@ -39,9 +39,8 @@ getrandom = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
-# What a drag dropped on the window offers, its virtual files and file
-# promises read out of it (drop_target, receive.rs); nothing where the
-# system's module isn't written yet.
+# What a drag dropped on the window offers, its virtual files, file
+# promises and files saved for it read out of it (drop_target, receive.rs).
 dragndrop-target = { path = "../../../crates/dragndrop-target" }
 
 # Dragging a clip out of the window into another app (clips.rs): the app

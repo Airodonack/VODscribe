@@ -1,30 +1,37 @@
 //! Files dragged onto the window from other apps, taken in by the app's own
 //! drop target, which also receives virtual files: files with no path to
 //! give, read from the app they come from by `dragndrop_target`. On Windows
-//! (`windows`: OLE's IDropTarget) a video inside a zip folder in Explorer;
-//! on macOS (`macos`: wry's web view's dragging methods, hooked) a file
-//! promise. The mirror of `drag_source` and `file_drag`.
+//! (`windows`: OLE's IDropTarget) it takes every drop, a video inside a zip
+//! folder in Explorer too; on macOS (`macos`: wry's web view's dragging
+//! methods, hooked) a file promise; on Linux (`linux`: GTK's drag signals
+//! on the page) the drops the web view can't, a file dragged out of an
+//! archive manager or a sandboxed app. The mirror of `drag_source` and
+//! `file_drag`.
 //!
 //! This part owns the window's side (registering, the drag's events, its
 //! answer); what a drag offers and its files' bytes are the crate's. Nothing
-//! here knows the app: it's given the window's raw handle and a `Target`,
+//! here knows the app: it's given the window (its handle, view or page) and a `Target`,
 //! which hears the drag as it goes (`Event`), says which virtual files it
 //! takes, and gives where each one's bytes go.
 
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-#[cfg(target_os = "macos")]
-pub(crate) use macos::register;
 #[cfg(windows)]
 mod windows;
+#[cfg(target_os = "linux")]
+pub(crate) use linux::register;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::register;
 #[cfg(windows)]
 pub(crate) use windows::register;
 
 /// A drag over the window, as it goes. Positions are from the window's top
 /// left, as Tauri's own events give them: in device pixels on Windows, in
-/// points on macOS.
+/// points on macOS, in the page's pixels (GTK's) on Linux.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Event {
     /// It came over the window with `paths` (files that are where they are)
@@ -58,4 +65,8 @@ pub(crate) trait Target {
     /// A virtual file `item` was let go on the window: where its bytes go, or
     /// None to leave it.
     fn incoming(&self, item: &dragndrop_target::Item) -> Option<dragndrop_target::Destination>;
+    /// Where an app that saves its files itself (Linux: an archive
+    /// manager) saves them first, or None to refuse such drops.
+    #[cfg(target_os = "linux")]
+    fn stage(&self) -> Option<PathBuf>;
 }

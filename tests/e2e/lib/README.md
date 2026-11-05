@@ -11,6 +11,7 @@ What the scenarios and the runners share.
 - `fileHost.mjs`: a stand-in for the host of VODscriptions and the cast's pictures.
 - `fileManager.mjs`: the file manager a dragged clip is dropped on, Nautilus or Dolphin on Linux and Finder on the Mac, and the drag scenarios' shared steps, such as choosing the clip format and quality.
 - `explorer.mjs`: File Explorer and drop targets on Windows, for drags in and out.
+- `archives.mjs`: apps that drag out files with no address yet on Linux: an archive manager, or stand-ins for one and for a sandboxed app.
 - `inOut.mjs`: I right after a timeline click, shared by two scenarios.
 - `screen.mjs`: a smaller screen than the computer's, for layout checks.
 - `preflight.mjs`: what a run needs of the computer, checked before any scenario.

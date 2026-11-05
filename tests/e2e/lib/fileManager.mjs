@@ -101,10 +101,10 @@ export async function openFileManager(app, ctx, dest, home) {
  * `program` run with its `args`, `env` over the test's environment and its
  * output to `stdio`, its window (titled to match `title`) put beside the
  * app's (moved to the screen's left edge if that makes room; skipped,
- * through `ctx`, where the screen has none): where to drop on it, and
- * `close`.
+ * through `ctx`, where the screen has none): where to drop on it, its
+ * window (`win`, X11's id), and `close`.
  */
-async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
+export async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
   let page = await os.windowRect(app);
   const [screenW] = execFileSync("xdotool", ["getdisplaygeometry"], { encoding: "utf8" }).trim().split(" ").map(Number);
   const fm = { w: 600, h: 500 };
@@ -133,8 +133,9 @@ async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
       `no room for a file manager beside the window (screen ${screenW} px wide, the window ${page.x} to ${page.x + page.w})`,
     );
   const proc = spawn(program, args, { env: { ...process.env, ...env }, stdio });
+  let win;
   try {
-    const win = await until(
+    win = await until(
       `${program}'s window`,
       () => {
         try {
@@ -157,6 +158,7 @@ async function openBeside(app, ctx, [program, ...args], env, title, stdio) {
   }
   return {
     drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
+    win,
     close: () => proc.kill(),
   };
 }
