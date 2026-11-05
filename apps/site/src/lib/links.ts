@@ -1,4 +1,4 @@
-import { SOURCE } from "desktop/lib/links.ts";
+import { ISSUES, SOURCE } from "desktop/lib/links.ts";
 
 export { AUTHOR, ISSUES, SOURCE } from "desktop/lib/links.ts";
 
@@ -24,6 +24,18 @@ export const SUPPORT_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=VODscriptions`;
 
 /** Help with the app, from the support, privacy and home pages. */
 export const HELP_MAILTO = `mailto:${SUPPORT_EMAIL}?subject=VODscribe`;
+
+/** A problem by email, with blanks for what a report needs (the same as the
+ *  bug form's). Mail wants CRLF line breaks. */
+export const REPORT_MAILTO =
+  `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("VODscribe problem")}&body=` +
+  encodeURIComponent(
+    ["VODscribe version:", "System:", "What I did:", "What happened:", "What I expected:", ""].join("\r\n\r\n"),
+  );
+
+/** The issue forms in .github/ISSUE_TEMPLATE. */
+export const BUG_FORM = `${ISSUES}/new?template=bug.yml`;
+export const IDEA_FORM = `${ISSUES}/new?template=idea.yml`;
 
 /** A security problem, reported privately (as SECURITY.md says). */
 export const SECURITY_REPORT = `${SOURCE}/security/advisories/new`;

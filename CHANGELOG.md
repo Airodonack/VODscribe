@@ -4,6 +4,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 ## 0.7.2 (unreleased)
 
+- Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
+
 ## 0.7.1 — 2026-11-05
 
 The clips and edits being made now show in a list at the foot of the library, where you can follow them, cancel one or move it up the line. Copy, cut and paste work on clips, and on Linux, Windows and a Mac a clip dragged out of the window goes at once. The service that brings a VOD its annotations is called VODscription from now on.
