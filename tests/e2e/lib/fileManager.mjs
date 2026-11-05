@@ -6,7 +6,8 @@
 // that takes finished files only (`openFinishedOnly`), in the same place.
 // On macOS, Finder (in icon view, so a drop lands in the folder shown, not
 // in the one selected in column view), and the finished-files-only app is
-// one built with swiftc. Linux (X11) and macOS, so far. And what those
+// one built with swiftc, as is one that gives a file as a promise only
+// (`openPromiseGiver`, for drop-virtual). Linux (X11) and macOS, so far. And what those
 // scenarios share: the clip format
 // picked, the length of a file dropped, the app's windows (the system's drag
 // shows its picture in one of its own).
@@ -546,6 +547,91 @@ async function openFinishedOnlyMac(app, ctx, work, refuses) {
   }
   return {
     drop: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
+    said,
+    close: () => proc.kill(),
+  };
+}
+
+/** An app that gives a file as a promise only, on macOS: a window that, pressed and dragged from, drags file FILE as an
+ *  NSFilePromiseProvider named NAME, written (copied) where the receiver asks once it's let go, after DELAY seconds. */
+const PROMISE_GIVER_MAC = `
+import AppKit
+func say(_ s: String) { print(String(format: "%.3f ", Date().timeIntervalSince1970) + s); fflush(stdout) }
+let env = ProcessInfo.processInfo.environment
+let file = URL(fileURLWithPath: env["FILE"]!)
+let name = env["NAME"] ?? file.lastPathComponent
+let delay = Double(env["DELAY"] ?? "0")!
+final class Giver: NSView, NSFilePromiseProviderDelegate, NSDraggingSource {
+    let queue = OperationQueue()
+    var dragging = false
+    override func draw(_ r: NSRect) { NSColor.systemTeal.setFill(); r.fill() }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    override func mouseDown(with e: NSEvent) { dragging = false }
+    override func mouseDragged(with e: NSEvent) {
+        if dragging { return }
+        dragging = true
+        let p = convert(e.locationInWindow, from: nil)
+        let item = NSDraggingItem(pasteboardWriter: NSFilePromiseProvider(fileType: "public.mpeg-4", delegate: self))
+        item.setDraggingFrame(NSRect(x: p.x - 32, y: p.y - 32, width: 64, height: 64), contents: NSWorkspace.shared.icon(forFile: file.path))
+        say("drag begins")
+        beginDraggingSession(with: [item], event: e, source: self)
+    }
+    func draggingSession(_ s: NSDraggingSession, sourceOperationMaskFor c: NSDraggingContext) -> NSDragOperation { .copy }
+    func draggingSession(_ s: NSDraggingSession, endedAt p: NSPoint, operation: NSDragOperation) { say("ended with operation \\(operation.rawValue)") }
+    func filePromiseProvider(_ p: NSFilePromiseProvider, fileNameForType t: String) -> String { say("named \\(name)"); return name }
+    func filePromiseProvider(_ p: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+        say("asked for \\(url.path)")
+        Thread.sleep(forTimeInterval: delay)
+        do { try FileManager.default.copyItem(at: file, to: url); say("written"); completionHandler(nil) }
+        catch { say("failed: \\(error)"); completionHandler(error) }
+    }
+    func operationQueue(for p: NSFilePromiseProvider) -> OperationQueue { queue }
+}
+let pos = (env["POS"] ?? "700 100 400 300").split(separator: " ").map { Double($0)! }
+let app = NSApplication.shared
+app.setActivationPolicy(.regular)
+let screen = NSScreen.main!.frame
+let win = NSWindow(contentRect: NSRect(x: pos[0], y: screen.height - pos[1] - pos[3], width: pos[2], height: pos[3]), styleMask: [.titled], backing: .buffered, defer: false)
+win.title = "promise-giver"
+win.contentView = Giver(frame: NSRect(x: 0, y: 0, width: pos[2], height: pos[3]))
+win.makeKeyAndOrderFront(nil)
+say("ready")
+app.run()
+`;
+
+/**
+ * On macOS, the app that gives `file` as a file promise only, named `name`
+ * (`PROMISE_GIVER_MAC`), built and run in folder `work`, beside the app's
+ * window: where to press to drag from it (`from`), what it has said so far
+ * (`said`, its lines), and `close`. It writes the file `delay` seconds after
+ * it's asked for.
+ */
+export async function openPromiseGiver(app, ctx, work, file, name, { delay = 1 } = {}) {
+  if (process.platform !== "darwin") throw new Error("the promise giver is macOS's");
+  mkdirSync(work, { recursive: true });
+  const fm = await besideMac(app, ctx);
+  const source = path.join(work, "promise-giver.swift");
+  writeFileSync(source, PROMISE_GIVER_MAC);
+  const program = path.join(work, "Promise Giver");
+  execFileSync("swiftc", ["-O", source, "-o", program], { stdio: "ignore" });
+  const log = path.join(work, "promise-giver.log");
+  writeFileSync(log, "");
+  const out = openSync(log, "a");
+  const proc = spawn(program, [], {
+    env: { ...process.env, FILE: file, NAME: name, DELAY: String(delay), POS: `${fm.x} ${fm.y} ${fm.w} ${fm.h}` },
+    stdio: ["ignore", out, out],
+  });
+  closeSync(out);
+  const said = () => readFileSync(log, "utf8").split("\n").filter(Boolean);
+  try {
+    await until("its window", () => said().some((l) => l.endsWith(" ready")), MINUTE);
+    await sleep(1000);
+  } catch (e) {
+    proc.kill();
+    throw e;
+  }
+  return {
+    from: { x: fm.x + Math.round(fm.w / 2), y: fm.y + Math.round(fm.h * 0.6) },
     said,
     close: () => proc.kill(),
   };

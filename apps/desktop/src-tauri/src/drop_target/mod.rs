@@ -1,8 +1,9 @@
 //! Files dragged onto the window from other apps, taken in by the app's own
-//! drop target. Windows only (`windows`: OLE's IDropTarget), where it also
-//! receives virtual files: files with no path to give (a video inside a zip
-//! folder in Explorer), read from the app they come from by
-//! `dragndrop_target`. The mirror of `drag_source`.
+//! drop target, which also receives virtual files: files with no path to
+//! give, read from the app they come from by `dragndrop_target`. On Windows
+//! (`windows`: OLE's IDropTarget) a video inside a zip folder in Explorer;
+//! on macOS (`macos`: wry's web view's dragging methods, hooked) a file
+//! promise. The mirror of `drag_source` and `file_drag`.
 //!
 //! This part owns the window's side (registering, the drag's events, its
 //! answer); what a drag offers and its files' bytes are the crate's. Nothing
@@ -12,11 +13,18 @@
 
 use std::path::PathBuf;
 
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::register;
+#[cfg(windows)]
 mod windows;
+#[cfg(windows)]
 pub(crate) use windows::register;
 
-/// A drag over the window, as it goes. Positions are in the window's own
-/// pixels (device pixels), from its top left.
+/// A drag over the window, as it goes. Positions are from the window's top
+/// left, as Tauri's own events give them: in device pixels on Windows, in
+/// points on macOS.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Event {
     /// It came over the window with `paths` (files that are where they are)

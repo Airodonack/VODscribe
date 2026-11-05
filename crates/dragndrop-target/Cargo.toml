@@ -12,6 +12,33 @@ categories = ["gui", "os"]
 # Published once it works on all three systems.
 publish = false
 
+# The objc2 crates' versions as wry builds them.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSArray",
+  "NSDictionary",
+  "NSEnumerator",
+  "NSError",
+  "NSFileManager",
+  "NSOperation",
+  "NSPathUtilities",
+  "NSString",
+  "NSURL",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "NSDragging",
+  "NSFilePromiseReceiver",
+  "NSPasteboard",
+  "NSPasteboardItem",
+  "NSWorkspace",
+] }
+
 # The windows crate's version and features as wry builds them.
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

@@ -39,6 +39,10 @@ getrandom = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"
+# What a drag dropped on the window offers, its virtual files and file
+# promises read out of it (drop_target, receive.rs); nothing where the
+# system's module isn't written yet.
+dragndrop-target = { path = "../../../crates/dragndrop-target" }
 
 # Dragging a clip out of the window into another app (clips.rs): the app
 # starts each OS's drag itself, the GTK one on Linux.
@@ -50,7 +54,7 @@ objc2 = "0.6"
 block2 = "0.6"
 raw-window-handle = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProcessInfo", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
-objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSFilePromiseReceiver", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
 
 # On Windows the app starts the OLE drag itself (drag_source), offering a clip
 # before its file is made; the windows crate's version tauri and wry build.
@@ -78,9 +82,6 @@ png = "0.18"
 # The web view's own drops turned off, so the app's drop target takes them
 # (receive.rs); the version tauri and wry build.
 webview2-com = "0.39"
-# What a drag dropped on the window offers, its virtual files read out of it
-# (drop_target, receive.rs).
-dragndrop-target = { path = "../../../crates/dragndrop-target" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

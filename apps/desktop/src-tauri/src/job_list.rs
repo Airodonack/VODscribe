@@ -251,7 +251,11 @@ pub(crate) async fn cancel_job(app: AppHandle, kind: Kind, id: i64) -> CmdResult
     match kind {
         Kind::Clip | Kind::Edit => state.clips.cancel_job(&app, id),
         Kind::Erase => state.sweeper.cancel(id),
-        Kind::Receive => state.receives.cancel(id),
+        Kind::Receive => {
+            if state.receives.cancel(id) {
+                changed(&app);
+            }
+        }
     }
     Ok(())
 }

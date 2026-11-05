@@ -70,7 +70,7 @@ On a runner: `node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] --onl
 
 The `setup` scenario always runs first when chosen, and downloads the tools and speech model the others keep. Without it, the first scenario goes through setup. Quit any VODscribe you have open: the run refuses to start beside one.
 
-The screen is 1920 by 1080, as in the cells, so the drag scenarios have room for a file manager beside the app's window; on a smaller screen, or with a Nautilus older than 43, they skip. On the Windows machine, drag-promise drops on File Explorer and on PowerShell forms beside the app, and drop-virtual drags a video out of a zip folder onto the window. On the Mac, drag-promise drops on Finder in icon view and on an app built with swiftc that takes finished files only.
+The screen is 1920 by 1080, as in the cells, so the drag scenarios have room for a file manager beside the app's window; on a smaller screen, or with a Nautilus older than 43, they skip. On the Windows machine, drag-promise drops on File Explorer and on PowerShell forms beside the app, and drop-virtual drags a video out of a zip folder onto the window. On the Mac, drag-promise drops on Finder in icon view and on an app built with swiftc that takes finished files only, and drop-virtual drags a file promise from another such app onto the window.
 
 The app's short mode, the player alone in a short window, is off in every scenario but those that ask for it with `app.shortMode(true)`.
 

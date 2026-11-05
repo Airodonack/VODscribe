@@ -78,6 +78,18 @@ impl FolderSink {
             .map_err(Some);
         FolderSink { file, done }
     }
+
+    /// Takes file `from`, whole, as the item: moved over its part file
+    /// (nothing copied, so only on the same volume). Its length, or why it
+    /// couldn't be moved, leaving the part file as it was to be written.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn adopt(&mut self, from: &Path) -> io::Result<u64> {
+        let Ok((to, _)) = &self.file else { return Err(io::ErrorKind::BrokenPipe.into()) };
+        let len = std::fs::metadata(from)?.len();
+        // (The part file still open here is then a name-less file, closed at the finish.)
+        std::fs::rename(from, part_of(to))?;
+        Ok(len)
+    }
 }
 
 impl Sink for FolderSink {
@@ -179,6 +191,23 @@ mod tests {
         left.sort();
         assert_eq!(left, ["c_d.mp4"]);
         assert_eq!(std::fs::read(dir.join("c_d.mp4")).unwrap(), b"abc");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_adopted_whole_lands_under_the_items_name() {
+        let dir = scratch("adopt");
+        let (tell, heard) = mpsc::channel();
+        let mut sink = Box::new(FolderSink::new(dir.clone(), "a.mp4", Box::new(move |r| tell.send(r).unwrap())));
+        let from = dir.join("received elsewhere.mp4");
+        std::fs::write(&from, b"whole").unwrap();
+        assert_eq!(sink.adopt(&from).unwrap(), 5);
+        assert!(!from.exists());
+        sink.finish(Ok(5));
+        assert_eq!(heard.recv().unwrap().unwrap(), dir.join("a.mp4"));
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["a.mp4"]);
+        assert_eq!(std::fs::read(dir.join("a.mp4")).unwrap(), b"whole");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

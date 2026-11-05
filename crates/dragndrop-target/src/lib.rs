@@ -21,12 +21,15 @@
 //!   there and the reading goes on a thread of its own, so `Drop` returns at
 //!   once and the source shows its own copy progress; otherwise everything is
 //!   read before `fetch` returns.
-//! - **macOS** (to come): give it the `NSDraggingInfo` of
-//!   `performDragOperation:`. File URLs are the paths; NSFilePromiseReceiver
-//!   items are the items (names from their `fileNames`, no size). The fetch
-//!   calls `receivePromisedFilesAtDestination` and ends each item from its
-//!   reader block; a writer destination is filled from a temporary folder.
-//!   Bytes so far are known only at the end.
+//! - **macOS** ([`macos`]): give it the `NSDraggingInfo` of
+//!   `performDragOperation:` (and of `draggingEntered:`, to decide).
+//!   [`macos::paths`] reads the file URLs; [`macos::items`] reads the
+//!   NSFilePromiseReceivers, named by the name each source suggests (a
+//!   promise's real name is known only once it's received), no size.
+//!   [`macos::fetch`] calls `receivePromisedFilesAtDestination` and ends each
+//!   item from its reader block, on a queue of its own: a folder destination
+//!   has the file moved in, a sink is fed from it. Bytes so far are known
+//!   only at the end, and a cancel waits for the source's file.
 //! - **Linux** (to come, GTK 3): give it the `GdkDragContext` and
 //!   `GtkSelectionData` of `drag-data-received`. text/uri-list file URIs are
 //!   the paths; the items are the files of
@@ -51,6 +54,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 mod descriptor;
 mod folder;
 
+#[cfg(target_os = "macos")]
+pub mod macos;
 #[cfg(windows)]
 pub mod windows;
 
@@ -63,8 +68,8 @@ pub struct Item {
     name: String,
     size: Option<u64>,
     /// Its place in the drag, as the platform counts (FileContents' index on
-    /// Windows).
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Windows, the promise's on macOS).
+    #[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
     index: usize,
 }
 
@@ -227,14 +232,14 @@ pub(crate) struct Slot {
 }
 
 /// One item to read: where it is in the drag, where it goes, its progress.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 pub(crate) struct Job {
     pub(crate) item: Item,
     pub(crate) sink: Box<dyn Sink>,
     pub(crate) slot: usize,
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "macos")), allow(dead_code))]
 impl Shared {
     /// The shared state of `requests`, and each as a job: a folder
     /// destination becomes the sink that writes its file.

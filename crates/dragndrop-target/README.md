@@ -4,7 +4,7 @@ Read what a drag dropped on your window offers: the plain paths, and the virtual
 
 It reads data only. Your drop target stays yours: from its drop handler you pass the native drag object, and you get the paths, the virtual items (a name, a size if known), and a fetch of each item into a folder or a writer, with progress and cancel.
 
-Windows works. macOS (file promises) and Linux (portal file transfer, XdndDirectSave) are to come.
+Windows and macOS (file promises) work. Linux (portal file transfer, XdndDirectSave) is to come.
 
 ```rust
 // Inside your IDropTarget::Drop, with the IDataObject it was given:
@@ -18,7 +18,7 @@ let fetch = dragndrop_target::windows::fetch(data, requests);
 ```
 
 - [`src`](src): the code.
-- `Cargo.toml`: the crate, its licence and its one dependency.
+- `Cargo.toml`: the crate, its licence and its dependencies: the windows crate, and objc2's on macOS.
 - `LICENSE-MIT`, `LICENSE-APACHE`: the two licences.
 
 Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.

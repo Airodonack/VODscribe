@@ -33,5 +33,5 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
 - [`drag_source`](drag_source): dragging clips out on Windows before they're made.
-- [`drop_target`](drop_target): taking drops on Windows, virtual files included.
+- [`drop_target`](drop_target): taking drops on Windows and macOS, virtual files and file promises included.
 - [`file_drag`](file_drag): dragging clips out on macOS before they're made.
