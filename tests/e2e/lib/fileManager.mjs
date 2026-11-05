@@ -12,7 +12,6 @@
 // shows its picture in one of its own).
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { release } from "node:os";
 import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -386,8 +385,29 @@ async function focusMac(app) {
   await sleep(1500);
 }
 
-/** macOS 12 (Darwin 21) or older, whose Finder lays out its window differently. */
-const MONTEREY = process.platform === "darwin" && Number(release().split(".")[0]) <= 21;
+/**
+ * The top-left corner of the first icon (by place: top row, then left) in
+ * the Finder window at `at` (its CoreGraphics bounds), read from Finder's
+ * accessibility tree, not from a layout that differs between versions (the
+ * sidebar is about 40 px narrower on macOS 12, and may be on others).
+ */
+function finderIcon(at) {
+  return jxa(`ObjC.import("ApplicationServices"); ${MAC_WINDOWS}
+    const attr = (el, name) => { const r = Ref(); return $.AXUIElementCopyAttributeValue(el, $(name), r) === 0 ? ObjC.castRefToObject(r[0]) : null; };
+    const text = (el, name) => attr(el, name)?.description.js ?? "";
+    const kids = (el) => attr(el, "AXChildren")?.js ?? [];
+    const point = (el) => { const m = /x:(-?[\\d.]+) y:(-?[\\d.]+)/.exec(text(el, "AXPosition")); return m && { x: +m[1], y: +m[2] }; };
+    const app = $.AXUIElementCreateApplication(front("Finder").kCGWindowOwnerPID);
+    const win = kids(app).find((w) => { const p = point(w); return p && Math.abs(p.x - ${at.X}) < 2 && Math.abs(p.y - ${at.Y}) < 2; });
+    const icons = [];
+    const walk = (el, depth) => { if (depth > 8) return; for (const k of kids(el)) {
+      const role = text(k, "AXRole");
+      if (role === "AXImage") { const p = point(k); if (p) icons.push(p); }
+      else if (role !== "AXToolbar" && role !== "AXOutline") walk(k, depth + 1); } };
+    if (win) walk(win, 0);
+    icons.sort((a, b) => a.y - b.y || a.x - b.x);
+    JSON.stringify(icons[0] ?? null)`);
+}
 
 /** Finder on folder `dest`, in icon view, beside the app's window: where to drop on it, and `close`. */
 async function openFinder(app, ctx, dest) {
@@ -417,9 +437,12 @@ async function openFinder(app, ctx, dest) {
     drop: { x: Math.round(at.X + at.Width * 0.65), y: Math.round(at.Y + at.Height * 0.6) },
     window: at,
     // The cancel button of the file in the first place (arranged by name):
-    // at its icon's top-left corner, right of the sidebar, below the toolbar.
-    // macOS 12's Finder (Darwin 21) has a narrower sidebar: 41 px further left.
-    cancelAt: () => ({ x: Math.round(at.X + (MONTEREY ? 181 : 222)), y: Math.round(at.Y + 76) }),
+    // at its icon's top-left corner, a little in, where the document's page begins.
+    cancelAt: () => {
+      const icon = finderIcon(at);
+      if (!icon) throw new Error(`no icon in Finder's window at ${at.X},${at.Y}`);
+      return { x: Math.round(icon.x + 3), y: Math.round(icon.y + 10) };
+    },
     // Its title bar clicked (Finder in front), then Cmd+W.
     close: () => {
       jxa(`${MAC_WINDOWS} const b = front("Finder").kCGWindowBounds; mouse(5, b.X + b.Width / 2, b.Y + 12); $.usleep(100000);
