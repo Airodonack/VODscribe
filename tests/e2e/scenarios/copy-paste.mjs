@@ -497,15 +497,23 @@ export default {
     if ((await pills()).length !== had) throw new Error("another VOD's stretch was pasted on a VOD's own bar");
 
     // 8. The edit's clip open in the editor: a paste at its playhead goes in
-    // it, and it's made again.
+    // it, and it's made again. The edit's clip bar fills a moment after its
+    // view opens (its clips listed when it's shown: clips.svelte.ts), so its
+    // pill is waited for, not taken to be there with the title.
     await openEdit();
+    const barPill = `section.edit-view .chip[data-clip="${barClip.id}"]`;
+    await until(
+      "the edit's clip on its bar",
+      () => app.js(`return !!document.querySelector(arguments[0])`, barPill),
+      10_000,
+    );
     await app.js(
       `const el = document.querySelector(arguments[0]);
        const box = el.getBoundingClientRect();
        const at = { bubbles: true, cancelable: true, clientX: box.left + 4, clientY: box.top + box.height / 2 };
        for (const detail of [1, 2]) el.dispatchEvent(new MouseEvent("click", { ...at, detail }));
        el.dispatchEvent(new MouseEvent("dblclick", { ...at, detail: 2 }));`,
-      `section.edit-view .chip[data-clip="${barClip.id}"]`,
+      barPill,
     );
     await until(
       "the clip open in the editor",
