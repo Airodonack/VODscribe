@@ -932,14 +932,16 @@ export default {
         wrong.push(`at ${narrow.width} px, the pane a tab, there's an edge to hide its column`);
       // The switch: its segments ("*" the one showing), whether each can be
       // picked, the colours of their text and of its border by name, the
-      // heading's plain label gone, and what shows under the heading.
+      // heading's plain label gone, and what shows under the heading. A web
+      // view with no color-mix (macOS 12's) draws the faded border by the
+      // app's fallback (colorMix.js), the same colour.
       const SWITCH = '.head .switch[role="tablist"]';
       const look = () =>
         app.js(
           `const sw = document.querySelector(arguments[0]);
           if (!sw) return null;
           const named = (c) => { for (const [n, v] of [["accent", "var(--accent)"], ["text", "var(--text)"], ["muted", "var(--muted)"],
-            ["border", "var(--border)"], ["faded", "color-mix(in srgb, var(--border) 50%, transparent)"]]) {
+            ["border", "var(--border)"], ["faded", CSS.supports("color: color-mix(in srgb, red, red)") ? "color-mix(in srgb, var(--border) 50%, transparent)" : "rgb(var(--border-rgb) / 0.5)"]]) {
             const probe = document.createElement("span"); probe.style.color = v; document.body.append(probe);
             const is = getComputedStyle(probe).color; probe.remove(); if (is === c) return n; } return c; };
           const shown = (el) => !!el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().height > 0;

@@ -12,6 +12,7 @@
 // shows its picture in one of its own).
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { release } from "node:os";
 import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -385,6 +386,9 @@ async function focusMac(app) {
   await sleep(1500);
 }
 
+/** macOS 12 (Darwin 21) or older, whose Finder lays out its window differently. */
+const MONTEREY = process.platform === "darwin" && Number(release().split(".")[0]) <= 21;
+
 /** Finder on folder `dest`, in icon view, beside the app's window: where to drop on it, and `close`. */
 async function openFinder(app, ctx, dest) {
   const fm = await besideMac(app, ctx);
@@ -414,7 +418,8 @@ async function openFinder(app, ctx, dest) {
     window: at,
     // The cancel button of the file in the first place (arranged by name):
     // at its icon's top-left corner, right of the sidebar, below the toolbar.
-    cancelAt: () => ({ x: Math.round(at.X + 222), y: Math.round(at.Y + 76) }),
+    // macOS 12's Finder (Darwin 21) has a narrower sidebar: 41 px further left.
+    cancelAt: () => ({ x: Math.round(at.X + (MONTEREY ? 181 : 222)), y: Math.round(at.Y + 76) }),
     // Its title bar clicked (Finder in front), then Cmd+W.
     close: () => {
       jxa(`${MAC_WINDOWS} const b = front("Finder").kCGWindowBounds; mouse(5, b.X + b.Width / 2, b.Y + 12); $.usleep(100000);

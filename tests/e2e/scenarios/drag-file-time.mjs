@@ -240,7 +240,10 @@ export default {
           await until("the playhead at the start", async () => (await app.shownTime()) === 0, 10_000);
           await measure(`${name}, timeline`, await centre("button.action.clip"), [half]);
           // The second half made a clip (C, the playhead in it), then its pill carried.
-          await scrubTo(half + 1, false);
+          // The playhead put in its middle: a press lands on a whole pixel, and
+          // on a small screen's timeline (Finder beside it) a pixel is a fifth
+          // of a second or more, so 1 s past the cut could read as the cut's second.
+          await scrubTo((half + durations[i]) / 2, false);
           await until("the playhead in the second half", async () => (await app.shownTime()) > half, 10_000);
           await app.key("c");
           const pill = await until(
@@ -297,7 +300,9 @@ export default {
         ]);
       }
     } finally {
-      nautilus.close();
+      // Awaited: on macOS it brings the app back to the front, and a press left
+      // in flight after the app is quit ends the whole run.
+      await nautilus.close();
     }
   },
 };

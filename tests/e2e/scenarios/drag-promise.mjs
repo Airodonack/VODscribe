@@ -1220,17 +1220,22 @@ async function onWindows(app, ctx) {
   }
 }
 
-/** Puts the playhead at `time` s, as a press on the timeline there does. */
+/** Puts the playhead at `time` s, as a press on the timeline there does. The
+ *  press lands on a whole pixel, which on a narrow timeline (a small screen's,
+ *  Finder beside it) is more than a second of a three-minute video: the
+ *  playhead is looked for at the time of that pixel. */
 async function toTime(app, time) {
-  await app.js(
+  const at = await app.js(
     `${AT}
      const bar = document.querySelector(".scrubber");
      const box = bar.getBoundingClientRect();
-     const x = box.left + 1 + ((arguments[0] - Number(bar.dataset.viewStart)) / Number(bar.dataset.span)) * (box.width - 2);
+     const [start, span] = [Number(bar.dataset.viewStart), Number(bar.dataset.span)];
+     const x = Math.round(box.left + 1 + ((arguments[0] - start) / span) * (box.width - 2));
      const y = box.top + box.height / 2;
      bar.dispatchEvent(new PointerEvent("pointerdown", at(x, y, 1)));
-     window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));`,
+     window.dispatchEvent(new PointerEvent("pointerup", at(x, y, 0)));
+     return start + ((x - box.left) / box.width) * span;`,
     time,
   );
-  await until(`the playhead at ${time} s`, async () => Math.abs((await app.shownTime()) - time) <= 1, 10_000);
+  await until(`the playhead at ${time} s`, async () => Math.abs((await app.shownTime()) - at) <= 1, 10_000);
 }
