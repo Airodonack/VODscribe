@@ -325,13 +325,17 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
 /// Clip `clip` of a clip bar made of what `want` holds and titled as it:
 /// waiting to be made again unless its file is of that already. The cutter
 /// makes only a clip that isn't ready (`clips::cut`), so one left ready kept
-/// the file of what the undone change made it.
+/// the file of what the undone change made it. One change: in between, the
+/// clip read from elsewhere (`list_clips`) would be back as it was yet ready,
+/// with the file of what it no longer is.
 fn remake_clip(db: &Db, clip: i64, want: &BarClip<EditState>) -> Result<()> {
-    db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })?;
-    if db.edit(clip)?.is_some_and(|e| !e.current) {
-        db.set_edit_render(clip, ClipStatus::Waiting, None, None, None)?;
-    }
-    Ok(())
+    db.atomically(|db| {
+        db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })?;
+        if db.edit(clip)?.is_some_and(|e| !e.current) {
+            db.set_edit_render(clip, ClipStatus::Waiting, None, None, None)?;
+        }
+        Ok(())
+    })
 }
 
 /// The clips on edit `id`'s clip bar (those in it, not only dragged out),
