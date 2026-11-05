@@ -106,10 +106,28 @@
   function onSpeedClick() {
     if (!speedHold.held) nextSpeed();
   }
+
+  // macOS 12's web view has no container queries: there the bar reads its
+  // column's width itself (as the query would: PlayerPanel.svelte's
+  // .controls, its content box) for the same narrow layouts, by class.
+  let bar = $state<HTMLElement>();
+  let column = $state<number | null>(null);
+  $effect(() => {
+    const parent = bar?.parentElement;
+    if (!parent || CSS.supports("container-type: inline-size")) return;
+    const seen = new ResizeObserver(([entry]) => (column = entry.contentRect.width));
+    seen.observe(parent);
+    return () => seen.disconnect();
+  });
 </script>
 
 <!-- Not "row": that's the transcript's lines, styled app-wide. -->
-<div class="bar">
+<div
+  class="bar"
+  bind:this={bar}
+  class:narrow={column !== null && column <= 560}
+  class:narrower={column !== null && column <= 440}
+>
   <button
     class="control"
     onclick={ontoggleplay}
@@ -438,5 +456,26 @@
       gap: 0;
       font-size: 0;
     }
+  }
+
+  /* The same two, where there are no container queries (macOS 12). */
+  .bar.narrow .volume,
+  .bar.narrow .speed,
+  .bar.narrow .keys,
+  .bar.narrow :global(.action kbd) {
+    display: none;
+  }
+
+  .bar.narrow {
+    gap: 0;
+  }
+
+  .bar.narrow :global(.action) {
+    padding: 0 4px;
+  }
+
+  .bar.narrower :global(.action) {
+    gap: 0;
+    font-size: 0;
   }
 </style>
