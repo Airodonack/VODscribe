@@ -298,20 +298,52 @@ export function probeDuration(file) {
   return Number(h) * 3600 + Number(m) * 60 + Number(s);
 }
 
-/** Clips made as `format` ("MP4" or "MOV"), chosen in Settings. */
+/** The codec each choice of Settings' clip format makes (crates/core `ClipCodec`). */
+const CODECS = { "MP4 H.264": "h264", "MP4 H.265": "h265", "MOV DNxHR": "dnxhr", "MOV ProRes": "prores" };
+
+/**
+ * Clips made as `format`, chosen in Settings: a choice as it reads there
+ * ("MOV ProRes"), or "MP4" or "MOV" alone for that file's first codec,
+ * H.264 or DNxHR.
+ */
 export async function setFormat(app, format) {
+  const label = Object.keys(CODECS).find((l) => l === format || l.startsWith(`${format} `));
+  if (!label) throw new Error(`no clip format ${format}`);
+  await choose(app, "Clip format", label, (s) => s.clip_codec === CODECS[label]);
+}
+
+/** Clips made at `quality` ("Proxy", "Standard" or "High"), chosen in Settings. */
+export async function setQuality(app, quality) {
+  await choose(app, "Clip quality", quality, (s) => s.clip_quality === quality.toLowerCase());
+}
+
+/** Picks `option` in Settings' radio group `group` (Storage), once `saved(settings)` says it's saved. */
+async function choose(app, group, option, saved) {
   await app.openSettings("Storage");
-  await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Clip format"]')`), MINUTE);
+  const buttons = `[role="radiogroup"][aria-label="${group}"] button`;
+  await until(group, () => app.js(`return !!document.querySelector(arguments[0])`, buttons), MINUTE);
   await app.js(
-    `[...document.querySelectorAll('[role="radiogroup"][aria-label="Clip format"] button')].find((b) => b.textContent.trim() === arguments[0]).click()`,
-    format,
+    `const b = [...document.querySelectorAll(arguments[0])].find((b) => b.textContent.trim() === arguments[1]);
+     if (!b) throw new Error("no " + arguments[1]);
+     b.click();`,
+    buttons,
+    option,
   );
-  await until(
-    `${format} chosen`,
-    async () => (await app.invoke("get_settings")).clip_format === format.toLowerCase(),
-    10_000,
-  );
+  await until(`${option} chosen`, async () => saved(await app.invoke("get_settings")), 10_000);
   await app.key("Escape");
+}
+
+/**
+ * A video file's picture as ffmpeg reads it (the cells have no ffprobe):
+ * its codec, profile, tag and pixel format, as in "hevc (Main) (hvc1 /
+ * 0x31637668), yuv420p(tv, …)".
+ */
+export function probeVideo(file) {
+  const said = spawnSync(ffmpeg(), ["-hide_banner", "-i", file], { encoding: "utf8" }).stderr ?? "";
+  const [, codec, profile, tag, pixels] =
+    said.match(/Video: (\w+) \(([^)]+)\) \((\w+) \/ 0x[0-9a-fA-F]+\), (\w+)/) ?? [];
+  if (!codec) throw new Error(`no picture in ${file}: ${said.trim().split("\n").at(-1)}`);
+  return { codec, profile, tag, pixels };
 }
 
 /** Runs JXA `script`, its last value read as JSON. */

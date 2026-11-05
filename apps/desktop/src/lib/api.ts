@@ -141,8 +141,13 @@ export interface Settings {
   emote_providers: EmoteProvider[];
   /** The tallest video kept from sites without embeds; unset means DEFAULT_HEIGHT (platform.ts). */
   video_height: number | null;
-  /** What clips and rendered edits are made as (crates/core `settings::ClipFormat`). */
+  /** The file clips and rendered edits are made as (crates/core `settings::ClipFormat`): always the one
+   *  `clip_codec` goes in, sent with it. */
   clip_format: ClipFormat;
+  /** The codec clips and rendered edits are encoded with (crates/core `settings::ClipCodec`). */
+  clip_codec: ClipCodec;
+  /** How much picture they keep (crates/core `settings::ClipQuality`). */
+  clip_quality: ClipQuality;
   /** The keyboard controls changed in Settings, by action id (keymap.ts): each
    *  action's whole list of bindings, an empty one for no key. */
   key_bindings: Record<string, string[]>;
@@ -158,8 +163,12 @@ export interface Settings {
   suggest_mov_for_resolve: boolean;
 }
 
-/** MP4 (H.264, AAC), or MOV (DNxHR, PCM) for DaVinci Resolve on Linux. */
+/** MP4 (H.264 or H.265, AAC), or MOV (DNxHR or ProRes, PCM) for editors. */
 export type ClipFormat = "mp4" | "mov";
+
+export type ClipCodec = "h264" | "h265" | "dnxhr" | "prores";
+
+export type ClipQuality = "proxy" | "standard" | "high";
 
 /** What this computer's webview plays, best first (crates/core `playable::Playable`). */
 export interface Playable {

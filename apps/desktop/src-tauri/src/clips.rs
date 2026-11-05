@@ -367,7 +367,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
     };
     let range = (clip.start, clip.end);
     let ffmpeg = tools::find_ffmpeg(&state.paths.bin()).context(crate::worker::NO_FFMPEG)?;
-    let format = Settings::load(&state.paths.settings()).clip_format;
+    let encoding = Settings::load(&state.paths.settings()).clip_encoding();
     // Named for its range: one already made for this range is made again in
     // place; a range moved gets a new file, and the old one stays where it is.
     let (folder, name) = clips::file_path(
@@ -376,7 +376,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         &vod.info.title,
         range,
         vod.audio_only,
-        format,
+        encoding.format(),
     );
     let dir = folder.map_or_else(|| clips_dir(app), |f| clips_dir(app).join(f));
     let out = match &clip.file_path {
@@ -414,7 +414,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         };
         let within = (range.0 - source.offset, range.1 - source.offset);
         let report = |p: f64| report(cut_from + p * (1.0 - cut_from));
-        clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, format, stop, report)
+        clips::cut(&ffmpeg, &source.path, &out, within, vod.audio_only, encoding, stop, report)
     })();
     let db = state.db.lock().unwrap();
     let path = out.to_string_lossy();
@@ -1076,7 +1076,7 @@ pub(crate) async fn drag_clip(
     let image = drawn.or_else(|| std::fs::read(thumb_path(&app, ids[0])).ok());
     let names = {
         let state = app.state::<AppState>();
-        let format = Settings::load(&state.paths.settings()).clip_format;
+        let format = Settings::load(&state.paths.settings()).clip_encoding().format();
         let db = state.db.lock().unwrap();
         ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect()
     };

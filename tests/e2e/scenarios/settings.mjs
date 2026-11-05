@@ -1,5 +1,6 @@
-// Settings are kept: a theme, a video quality and a clip format chosen in
-// Settings are still chosen after a restart; Reset settings puts them back.
+// Settings are kept: a theme, a video quality and a clip format and quality
+// chosen in Settings are still chosen after a restart; Reset settings puts
+// them back.
 // So is a note's switch: the note before downloading from a site, stopped
 // as 0.7.0 kept it, shows its switch off; turned on, the note comes back on
 // a site VOD's download button; turned off, it stays off after a restart,
@@ -15,7 +16,12 @@ import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs, makeSiteVod } from "../lib/data.mjs";
 
 /** The section of Settings each radio group is in. */
-const SECTION = { Theme: "Appearance", "Video quality": "Storage", "Clip format": "Storage" };
+const SECTION = {
+  Theme: "Appearance",
+  "Video quality": "Storage",
+  "Clip format": "Storage",
+  "Clip quality": "Storage",
+};
 
 /** The chosen option of each radio group named in `groups`, as Settings shows them, each in its section. */
 const chosen = async (app, groups) => {
@@ -35,7 +41,7 @@ const openSettings = async (app) => {
   await until("Settings", () => app.js(`return !!document.querySelector('[aria-label="Theme"]')`), MINUTE);
 };
 
-const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV" };
+const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV ProRes", "Clip quality": "High" };
 
 /** The switch of the note before downloading, in Settings › Privacy. */
 const ASK = "Ask before downloading from a site";
@@ -143,7 +149,13 @@ export default {
       "the choices saved",
       async () => {
         const s = await app.invoke("get_settings");
-        return s.theme === "dark" && s.video_height === 480 && s.clip_format === "mov";
+        return (
+          s.theme === "dark" &&
+          s.video_height === 480 &&
+          s.clip_format === "mov" &&
+          s.clip_codec === "prores" &&
+          s.clip_quality === "high"
+        );
       },
       10_000,
     );
@@ -172,10 +184,11 @@ export default {
       10_000,
     );
     const saved = await app.invoke("get_settings");
+    const clips = [saved.clip_format, saved.clip_codec, saved.clip_quality].join(" ");
     if (
       saved.theme !== "system" ||
       saved.video_height !== null ||
-      saved.clip_format !== "mp4" ||
+      clips !== "mp4 h264 standard" ||
       saved.ask_before_downloading !== true
     )
       throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);

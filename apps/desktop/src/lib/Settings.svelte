@@ -6,7 +6,16 @@
   import { settings as appSettings } from "./appSettings.svelte";
   import { onDestroy, onMount } from "svelte";
   import { ask } from "./ask";
-  import { api, events, type Device, type DownloadProgress, type GpuStatus, type UnlistenFn } from "./api";
+  import {
+    api,
+    events,
+    type ClipCodec,
+    type ClipQuality,
+    type Device,
+    type DownloadProgress,
+    type GpuStatus,
+    type UnlistenFn,
+  } from "./api";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import Icon from "./Icon.svelte";
   import { LICENSES, PRIVACY, SUPPORT } from "./links";
@@ -29,7 +38,40 @@
   let cacheBytes = $state<number | null>(null);
   let mediaBytes = $state<number | null>(null);
   let videoHeight = $derived(appSettings.value?.video_height ?? DEFAULT_HEIGHT);
-  let clipFormat = $derived(appSettings.value?.clip_format ?? "mp4");
+  let clipCodec = $derived<ClipCodec>(appSettings.value?.clip_codec ?? "h264");
+  let clipQuality = $derived<ClipQuality>(appSettings.value?.clip_quality ?? "standard");
+  /** The clip codecs offered, each with the file it goes in (crates/core `ClipCodec::format`) and its help line. */
+  const CODECS = [
+    {
+      id: "h264",
+      format: "mp4",
+      label: "MP4 H.264",
+      hint: "Small files that nearly every video editor and player opens.",
+    },
+    {
+      id: "h265",
+      format: "mp4",
+      label: "MP4 H.265",
+      hint: "Smaller files, but some editors and Windows players cannot open them.",
+    },
+    {
+      id: "dnxhr",
+      format: "mov",
+      label: "MOV DNxHR",
+      hint: "Large files that scrub smoothly in DaVinci Resolve and Premiere.",
+    },
+    {
+      id: "prores",
+      format: "mov",
+      label: "MOV ProRes",
+      hint: "Large files that scrub smoothly in Final Cut and other Apple editors.",
+    },
+  ] as const;
+  const QUALITIES = [
+    { id: "proxy", label: "Proxy" },
+    { id: "standard", label: "Standard" },
+    { id: "high", label: "High" },
+  ] as const;
   let askForAnnotations = $derived(appSettings.value?.ask_for_annotations ?? true);
   let loadCastPictures = $derived(appSettings.value?.load_cast_pictures ?? true);
   // The notes that can be stopped (asks.ts): each switch on while its note shows.
@@ -362,23 +404,32 @@
         </button>
         <p class="label">Clips and edits are made as</p>
         <div class="segmented" role="radiogroup" aria-label="Clip format">
-          {#each [["mp4", "MP4"], ["mov", "MOV"]] as const as [format, name] (format)}
+          {#each CODECS as c (c.id)}
             <button
               role="radio"
-              aria-checked={clipFormat === format}
-              class:on={clipFormat === format}
-              onclick={() => appSettings.update({ clip_format: format })}
+              aria-checked={clipCodec === c.id}
+              class:on={clipCodec === c.id}
+              onclick={() => appSettings.update({ clip_codec: c.id, clip_format: c.format })}
             >
-              {name}
+              {c.label}
             </button>
           {/each}
         </div>
-        <p class="muted hint">
-          {clipFormat === "mp4"
-            ? "H.264 and AAC: small, and read by nearly every video editor."
-            : "DNxHR and PCM, for editing: every frame complete, so it scrubs smoothly even on slower computers; also what DaVinci Resolve needs on Linux. About 350 MB a minute at 1080p."}
-          Clips already made are made again when next dragged out.
-        </p>
+        <p class="muted hint">{CODECS.find((c) => c.id === clipCodec)?.hint}</p>
+        <p class="label">Quality</p>
+        <div class="segmented" role="radiogroup" aria-label="Clip quality">
+          {#each QUALITIES as q (q.id)}
+            <button
+              role="radio"
+              aria-checked={clipQuality === q.id}
+              class:on={clipQuality === q.id}
+              onclick={() => appSettings.update({ clip_quality: q.id })}
+            >
+              {q.label}
+            </button>
+          {/each}
+        </div>
+        <p class="muted hint">A clip made as the other file type is made again when next dragged out.</p>
         {#if os === "linux"}
           <label class="toggle">
             <input
@@ -680,7 +731,7 @@
     font-size: 13px;
   }
 
-  /* A row of choices, the chosen one filled (theme, video quality, clip format). */
+  /* A row of choices, the chosen one filled (theme, video quality, clip format and quality). */
   .segmented {
     display: inline-flex;
     margin-bottom: 12px;

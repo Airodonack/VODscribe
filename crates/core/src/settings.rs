@@ -27,12 +27,73 @@ pub enum Theme {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ClipFormat {
-    /// H.264 and AAC in MP4: small, and read by nearly every editor.
+    /// H.264 or H.265, and AAC, in MP4: small, and read by nearly every editor.
     #[default]
     Mp4,
-    /// DNxHR LB and PCM in MOV: an editing format, for DaVinci Resolve on
-    /// Linux, which reads neither H.264 (the free edition) nor AAC.
+    /// DNxHR or ProRes, and PCM, in MOV: editing formats; DNxHR for DaVinci
+    /// Resolve on Linux, which reads neither H.264 (the free edition) nor AAC.
     Mov,
+}
+
+/// The codec clips' (and rendered edits') pictures are encoded with; each
+/// goes in one `ClipFormat` (`format`).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipCodec {
+    /// H.264: light to decode, read by nearly every editor and player.
+    #[default]
+    H264,
+    /// H.265: smaller files for the same picture, slower to make; Resolve's
+    /// free edition on Linux and some Windows players can't read it.
+    H265,
+    /// DNxHR: every frame whole, for editing (Resolve, Premiere).
+    Dnxhr,
+    /// ProRes: every frame whole, for Apple's editors.
+    Prores,
+}
+
+impl ClipCodec {
+    /// The file a picture in this codec goes in.
+    pub fn format(self) -> ClipFormat {
+        match self {
+            ClipCodec::H264 | ClipCodec::H265 => ClipFormat::Mp4,
+            ClipCodec::Dnxhr | ClipCodec::Prores => ClipFormat::Mov,
+        }
+    }
+
+    /// The codec a file of `format` was made with before codecs were a
+    /// choice: a settings file from then reads as it did.
+    fn of(format: ClipFormat) -> Self {
+        match format {
+            ClipFormat::Mp4 => ClipCodec::H264,
+            ClipFormat::Mov => ClipCodec::Dnxhr,
+        }
+    }
+}
+
+/// How much picture clips keep, for the size it costs (`clips::output_args`
+/// says what each is in each codec).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipQuality {
+    Proxy,
+    #[default]
+    Standard,
+    High,
+}
+
+/// What clips and rendered edits are encoded as.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClipEncoding {
+    pub codec: ClipCodec,
+    pub quality: ClipQuality,
+}
+
+impl ClipEncoding {
+    /// The file it goes in, which names the extension.
+    pub fn format(self) -> ClipFormat {
+        self.codec.format()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -49,8 +110,14 @@ pub struct Settings {
     /// (`pipeline::keeps_video`) and for clips (`clips::selector`), in pixels;
     /// `video_height()` gives the default when unset.
     pub video_height: Option<u32>,
-    /// What clips and rendered edits are made as.
+    /// The file clips and rendered edits are made as; always the one
+    /// `clip_codec` goes in once loaded or saved (`normalized`).
     pub clip_format: ClipFormat,
+    /// The codec clips are encoded with, and their quality; unset only in a
+    /// file from before they were a choice, read as clips were made then
+    /// (`clip_encoding`).
+    pub clip_codec: Option<ClipCodec>,
+    pub clip_quality: Option<ClipQuality>,
     /// The keyboard controls the user changed (Settings › Controls), by the
     /// page's action id: each the whole list of that action's keys, an empty
     /// one for none. Only the page reads them (keymap.ts); ids it no longer
@@ -90,6 +157,8 @@ impl Default for Settings {
             emote_providers: EmoteProviders::default(),
             video_height: None,
             clip_format: ClipFormat::default(),
+            clip_codec: None,
+            clip_quality: None,
             key_bindings: BTreeMap::new(),
             show_keys: false,
             ask_for_annotations: true,
@@ -166,13 +235,34 @@ impl Settings {
         self.video_height.unwrap_or(DEFAULT_VIDEO_HEIGHT)
     }
 
+    /// What clips and rendered edits are encoded as. Unset, as before they
+    /// were a choice: the format's codec, H.264 at CRF 18 or DNxHR LB (the
+    /// lowest step, as `ClipQuality::Proxy`).
+    pub fn clip_encoding(&self) -> ClipEncoding {
+        let codec = self.clip_codec.unwrap_or(ClipCodec::of(self.clip_format));
+        let then = if codec == ClipCodec::Dnxhr { ClipQuality::Proxy } else { ClipQuality::Standard };
+        ClipEncoding { codec, quality: self.clip_quality.unwrap_or(then) }
+    }
+
+    /// The codec and quality set, and the format the one the codec goes in:
+    /// the codec decides, so a page that changes it needn't change the format.
+    pub fn normalized(mut self) -> Self {
+        let ClipEncoding { codec, quality } = self.clip_encoding();
+        self.clip_codec = Some(codec);
+        self.clip_quality = Some(quality);
+        self.clip_format = codec.format();
+        self
+    }
+
     /// Missing or unreadable settings fall back to defaults.
     pub fn load(path: &Path) -> Self {
-        let Ok(text) = fs::read_to_string(path) else { return Self::default() };
-        serde_json::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("{}: unreadable, using the defaults: {e}", path.display());
-            Self::default()
-        })
+        let Ok(text) = fs::read_to_string(path) else { return Self::default().normalized() };
+        serde_json::from_str::<Self>(&text)
+            .unwrap_or_else(|e| {
+                eprintln!("{}: unreadable, using the defaults: {e}", path.display());
+                Self::default()
+            })
+            .normalized()
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -182,7 +272,7 @@ impl Settings {
         static SAVING: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _turn = SAVING.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = path.with_extension("tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
+        fs::write(&tmp, serde_json::to_string_pretty(&self.clone().normalized())?)?;
         fs::rename(tmp, path)?;
         Ok(())
     }
@@ -222,6 +312,23 @@ mod tests {
         assert_eq!(again.key_bindings["play.toggle"], ["p"]);
         assert!(again.key_bindings["mute.toggle"].is_empty());
         assert_eq!(again.key_bindings["gone.away"], ["x"]);
+    }
+
+    #[test]
+    fn clip_codecs_follow_old_formats_and_lead_new_ones() {
+        // A settings.json as 0.7.1 wrote it: a format, no codec or quality.
+        let read = |json: &str| serde_json::from_str::<Settings>(json).unwrap().normalized();
+        let mov = read(r#"{"clip_format": "mov"}"#);
+        assert_eq!(mov.clip_encoding(), ClipEncoding { codec: ClipCodec::Dnxhr, quality: ClipQuality::Proxy });
+        assert_eq!(read(r#"{"clip_format": "mp4"}"#).clip_encoding(), ClipEncoding::default());
+        assert_eq!(read("{}").clip_encoding(), ClipEncoding::default());
+        assert_eq!(read("{}").clip_format, ClipFormat::Mp4);
+        // The codec decides the format, whatever the page sent with it.
+        let prores = read(r#"{"clip_format": "mp4", "clip_codec": "prores", "clip_quality": "high"}"#);
+        assert_eq!((prores.clip_format, prores.clip_quality), (ClipFormat::Mov, Some(ClipQuality::High)));
+        assert_eq!(read(r#"{"clip_format": "mov", "clip_codec": "h265"}"#).clip_format, ClipFormat::Mp4);
+        let again = read(&serde_json::to_string(&prores).unwrap());
+        assert_eq!(again.clip_encoding(), ClipEncoding { codec: ClipCodec::Prores, quality: ClipQuality::High });
     }
 
     #[test]

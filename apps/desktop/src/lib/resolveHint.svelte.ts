@@ -27,10 +27,14 @@ class FormatHint {
     return shows(settings.value, "suggest_mov_for_resolve") && (settings.value?.clip_format ?? "mp4") === "mp4";
   }
 
-  /** Answered: clips as MOV from now on (`useMov`), or not; either way, not shown again. */
+  /** Answered: clips as MOV from now on (`useMov`), DNxHR LB as the hint
+   *  says, or not; either way, not shown again. */
   answer(useMov: boolean) {
     this.shown = false;
-    settings.update({ suggest_mov_for_resolve: false, ...(useMov ? { clip_format: "mov" as const } : {}) });
+    settings.update({
+      suggest_mov_for_resolve: false,
+      ...(useMov ? { clip_format: "mov" as const, clip_codec: "dnxhr" as const, clip_quality: "proxy" as const } : {}),
+    });
   }
 }
 

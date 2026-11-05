@@ -12,7 +12,7 @@ use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
 use vodscribe_core::search::AuthorSuggestion;
-use vodscribe_core::settings::ClipFormat;
+use vodscribe_core::settings::{ClipEncoding, ClipFormat};
 use vodscribe_core::stretches::{self, Stretch};
 use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
 
@@ -429,7 +429,8 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
             )
         };
         let within = (start - source.offset, end - source.offset);
-        let made = clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipFormat::Mp4, stop, |_| {});
+        let made =
+            clips::cut(ffmpeg, &source.path, &out, within, vod.audio_only, ClipEncoding::default(), stop, |_| {});
         let db = state.db.lock().unwrap();
         let moved = made.and_then(|()| {
             db.set_media_path(new, Some(&out.to_string_lossy()))?;

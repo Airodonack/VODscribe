@@ -133,11 +133,11 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
         let pieces = edits::render_pieces(&edit_pieces, |vod, a, b| crate::footage::cover(app, &db, vod, a, b))?;
         let ffmpeg = ffmpeg?;
         // Sound alone if every piece's VOD is, named for the format clips are made in.
-        let format = Settings::load(&state.paths.settings()).clip_format;
+        let encoding = Settings::load(&state.paths.settings()).clip_encoding();
         let audio_only = edit_pieces.iter().all(|p| db.vod(p.vod_id).ok().flatten().is_some_and(|v| v.audio_only));
         // The same file as last time, if it's still named for the edit (its
         // extension may be the one for sound alone, found only by rendering).
-        let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, format));
+        let name = format!("{}.{}", clips::safe_name(&edit.title), clips::extension(audio_only, encoding.format()));
         let out = match &edit.file_path {
             // (render() gives it the extension for what it holds: the same, written over.)
             Some(path) if Path::new(path).file_stem() == Path::new(&name).file_stem() => PathBuf::from(path),
@@ -146,9 +146,9 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             _ => clips::unique_path(&edits_dir(app), &name),
         };
         crate::files::writing(&out);
-        anyhow::Ok((pieces, ffmpeg, out, version, format, edit.file_path, made_of, chapters))
+        anyhow::Ok((pieces, ffmpeg, out, version, encoding, edit.file_path, made_of, chapters))
     })();
-    let (pieces, ffmpeg, out, version, format, before, made_of, chapters) = match prepared {
+    let (pieces, ffmpeg, out, version, encoding, before, made_of, chapters) = match prepared {
         Ok(ready) => ready,
         Err(e) => {
             let db = state.db.lock().unwrap();
@@ -169,7 +169,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
             crate::job_list::progressed(app, id, progress);
         }
     };
-    let result = render::render(&ffmpeg, &pieces, None, &chapters, format, &out, stop, report);
+    let result = render::render(&ffmpeg, &pieces, None, &chapters, encoding, &out, stop, report);
     // As made: sound alone is named so (an .m4a or .wav), found only then.
     let out = result.as_ref().map_or(out, |made| made.clone());
     let db = state.db.lock().unwrap();

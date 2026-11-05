@@ -5,6 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.2 (unreleased)
 
 - On Windows, files from inside zips drop in. A video dragged from a zip folder in File Explorer, or from another app that gives a file without a path, is copied into VODscribe and listed with the jobs as it comes.
+- Clips come in more formats. Settings › Storage adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 
