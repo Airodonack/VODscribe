@@ -6,7 +6,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 
 The clips and edits being made now show in a list at the foot of the library, where you can follow them, cancel one or move it up the line. Copy, cut and paste work on clips, and on Linux, Windows and a Mac a clip dragged out of the window goes at once. The service that brings a VOD its annotations is called VODscription from now on.
 
-- Ctrl+C and Ctrl+V copy and paste clips. Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them on a clip bar or into an edit, after what's selected, or at the playhead when nothing is. A paste is the clip as it was when copied, with its video if it was already made, whatever happens to the original after. What's pasted is selected, so pasting again builds a sequence, and a stretch already on a clip bar isn't added twice.
+- Copy and paste clips. Ctrl+C (⌘C) copies the selection or the clips picked, and Ctrl+V (⌘V) pastes them on a clip bar or into an edit, after what's selected, or at the playhead when nothing is.
 - Cut clips with Ctrl+X. Ctrl+X (⌘X) copies the clips picked and takes them off their bar, or out of the edit.
 - Copied clips go on the clipboard too. Each is a line of text, with a link to the moment for a site's VOD.
 - Ctrl+A can select the whole timeline. Ctrl+A (⌘A) over the player, the timeline or the transcript selects the whole timeline, ready to copy; over the clip bar it still selects all the clips, and over the library its list.
@@ -17,34 +17,34 @@ The clips and edits being made now show in a list at the foot of the library, wh
 - Long downloads no longer ask first. A clip downloaded from a site is made however long it is.
 - Some apps take finished files only. If one takes nothing or refuses the drop before the clip is made, VODscribe says which app it was, and the clip shows on the clip bar to drag again once it's ready.
 - A clip still being made drags out. Drag it from the clip bar as you would a ready one.
-- Dragged clips are listed once let go. A clip made only for a drag stays off the clip bar; once you let it go on another app, VODscribe says it's being made, and it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
+- Dropped clips show in the jobs list. A clip made only for a drag stays off the clip bar; once you let it go on another app, VODscribe says it's being made, and it's in the list at the bottom of the library, where Cancel stops it and nothing lands.
 - A drag called off makes nothing. Escape, or a drop on nothing, stops the clip's making; dropped on the clip bar, it's kept there. If the clip can't be made, VODscribe says why only when you let it go on another app.
 - A carried stretch shows a dashed outline. Alt-dragging (Option-dragging on a Mac) a stretch of the timeline outlines what you picked up as soon as the drag starts.
 - An unpicked stretch is carried alone. Alt-drag a stretch from outside what's picked and the others are let go, as in a file manager.
 - Dragging an edge draws a guide line. On an edit's timeline (or a clip's, in the editor), a dashed line runs down the waveform where the edge is, to line it up with what you hear and see.
 - The annotation service is called VODscription. The service that brings a VOD's published transcript, chapters, highlights and cast has that name throughout the app and the website: the gift button offers the VOD's VODscription, and a library row's menu has Check for a VODscription and Check all VODs for VODscriptions.
-- The streamer's picture shows by their channel. For a VOD with a VODscription, it shows beside the channel's name under the VOD's title and in its row in the library, as in Cast. With streamer pictures turned off in Settings › Privacy, nothing shows there, not even an initial as in the transcript and Cast.
+- Streamer pictures show by channels. For a VOD with a VODscription, the picture shows beside the channel's name under the VOD's title and in its row in the library.
 - A list shows what's being made. At the bottom of the library a line says what's under way, as a file manager shows its copies: the clips and edits being made, how far the current one is, and the VODs being erased after you removed them. Click it for the list, with each one's name, what it's doing, how far it is, and a button to cancel it.
 - Waiting clips and edits can be reordered. Drag a clip or edit that's waiting up or down the list to have it made sooner or later.
 - A canceled clip or edit says so. A canceled clip says so on the clip bar (clip that stretch again to make it); a canceled edit is left not rendered.
 - Removed VODs are erased at once. It's erased beside whatever is being made rather than as VODscribe quits, so quitting is as quick as with no VOD removed. Quit, or cancel it in the list, before it's done, and the rest is erased when VODscribe next starts.
 - The donation links are gone. They're off the library and the screen shown when no video is open.
 - The two privacy settings are renamed. Settings › Privacy has "Enable VODscription annotations for VODs" and "Enable streamer pictures from img.vodscribe.com", which work as before.
-- Help now leads to a support page. It lists email, the issue tracker and how to report a security problem.
+- Help opens a support page. It lists email, the issue tracker and how to report a security problem.
 - Settings decide which notes are shown. A note you hid can be turned back on, such as Ask before downloading from a site in Privacy.
-- A short window shows the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
-- The video's hide button sits with the controls. It's at their far right, and the button at the right of the VOD's title brings the video back.
+- Short windows show the player alone. Show transcript and chat, at the right of the player's controls, swaps them, and the transcript stays in its place as you open other VODs.
+- Hide the video from the controls. It's at their far right, and the button at the right of the VOD's title brings the video back.
 - Set the volume before Play. On a YouTube, Twitch or Kick VOD it works before their player loads, which then starts at it.
-- Right-click opens the speed and Transcribe menus. Holding the button still works too.
+- Right-click opens speed and Transcribe menus. Holding the button still works too.
 - F11 toggles full screen too. On Linux and Windows it works as F does.
 - Fixes:
   - Full screen works the second time. On Linux with GNOME, the video could stay over the whole screen, cropped and without its controls, until you switched windows.
   - Sites' players keep the volume. YouTube, Twitch and Kick start at the volume last set, and one set there is kept for every player.
-  - The player's buttons fit a narrow window. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
+  - Player buttons fit narrow windows. With the library beside a narrow player, full screen and the sound controls went past the window's edge.
   - An edge can't empty the selection. Moving a selection's edge with , and . onto the other edge stops a frame short, where it left a selection of nothing that Delete and C refused.
   - B twice quickly makes one cut. It made two on the same frame.
   - Splitting at a join leaves no sliver. In an edit, Split (B) on a selection that ends where two pieces meet left a sliver of the earlier piece cut off before the join.
-  - Clips that begin with another clip work. A clip bar failed to show when one of its clips started with a clip, edit or highlight dropped into it, such an edit couldn't be put on a clip bar, and VODscribe could fail to start if it quit while that clip was being made.
+  - Clips can start with another clip. A clip bar failed to show when one of its clips started with a clip, edit or highlight dropped into it, such an edit couldn't be put on a clip bar, and VODscribe could fail to start if it quit while that clip was being made.
   - Undo brings a clip back whole. Editor changes to a clip on a VOD's clip bar, a line struck or a clip dropped in, survive Delete then Undo, and a paste's Undo then Redo.
   - The download note survives a drag. A site's clip pulled out of the window before you've answered the note asks there and starts no drag; Download clip puts it on the clip bar to drag out once it's made.
   - The transcript keeps its scroll position. Switching the transcript's heading to Highlights (or Chapters) and back started the transcript again at the top.
@@ -52,13 +52,13 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Cuts before playing use the right frames. Lines picked in the transcript of a video that hasn't started playing are cut on its frame grid, not on that of the video open before it.
   - The Marks toggles show your saved choice. Just after a VOD opened, the Timeline panel could show both kinds of marks on for a moment, and a click then was lost.
   - Arrows work after clicking anywhere on a row. A click anywhere on a row, not only on its title, lets ↑ and ↓ move to the row before or after.
-  - A click on a row closes its menu. A row's right-click menu stayed open when you clicked the row; now a click anywhere outside it closes it and does nothing else.
+  - Clicking a row closes its menu. A row's right-click menu stayed open when you clicked the row; now a click anywhere outside it closes it and does nothing else.
   - Show in folder works during a download. While a VOD's download is in progress, paused or stopped by an error, it shows the partial file as it is.
   - A VOD reopens where it was left. A step or jump made just before opening something else could be forgotten, and the VOD came back a step earlier.
   - Reload brings back what was open. Reload, in the right-click menu, reopens what was open where it was, instead of leaving nothing open while the video's player carried on.
   - Undo undoes the latest change. Undo (Ctrl+Z) pressed right after a change, such as moving a mark, could undo the one before it instead.
-  - A click elsewhere lets go of picks. A plain click on the timeline, or on empty space in the clip bar or the library, lets go of the stretches, clips and rows picked; a stretch selected with I and O stays.
-  - The search box lets go of the keys. A click on the player, the timeline, the transcript, the clip bar or the library, or Escape, takes the cursor out of a text field, so Ctrl+C, Ctrl+V and the player's keys work at once.
+  - Clicking elsewhere clears picks. A plain click on the timeline, or on empty space in the clip bar or the library, lets go of the stretches, clips and rows picked; a stretch selected with I and O stays.
+  - Search lets go of the keys. A click on the player, the timeline, the transcript, the clip bar or the library, or Escape, takes the cursor out of a text field, so Ctrl+C, Ctrl+V and the player's keys work at once.
   - A dragged edge stays selected. After you drag the edge of a piece on an edit's timeline, or of a clip in the editor, , and . move that edge a frame at a time.
 
 ## 0.7.0 — 2026-10-30

@@ -99,7 +99,7 @@
     when you play a VOD. Its chat is a real stream's, with the name of everyone in it replaced by a made-up one. A VOD's
     page here and the VODscriptions page's demo load their annotations from dl.vodscribe.com. The pictures of the
     streamers they name come from img.vodscribe.com, which gets the streamer's site and login and your IP address, and
-    passes your browser on to Twitch's or Kick's own picture. Its email links only open your own mail app.
+    passes your browser on to Twitch's or Kick's own picture. This site's email links only open your own mail app.
   </p>
 
   <h2>Questions</h2>
