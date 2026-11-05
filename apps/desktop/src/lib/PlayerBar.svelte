@@ -107,7 +107,7 @@
     if (!speedHold.held) nextSpeed();
   }
 
-  // macOS 12's web view has no container queries: there the bar reads its
+  // A web view without container queries (macOS 12's, for one): there the bar reads its
   // column's width itself (as the query would: PlayerPanel.svelte's
   // .controls, its content box) for the same narrow layouts, by class.
   let bar = $state<HTMLElement>();
@@ -458,7 +458,7 @@
     }
   }
 
-  /* The same two, where there are no container queries (macOS 12). */
+  /* The same two, where there are no container queries. */
   .bar.narrow .volume,
   .bar.narrow .speed,
   .bar.narrow .keys,

@@ -933,7 +933,7 @@ export default {
       // The switch: its segments ("*" the one showing), whether each can be
       // picked, the colours of their text and of its border by name, the
       // heading's plain label gone, and what shows under the heading. A web
-      // view with no color-mix (macOS 12's) draws the faded border by the
+      // view with no color-mix draws the faded border by the
       // app's fallback (colorMix.js), the same colour.
       const SWITCH = '.head .switch[role="tablist"]';
       const look = () =>

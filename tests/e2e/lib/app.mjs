@@ -346,7 +346,7 @@ export class App {
     );
   }
 
-  /** Submits the form `selector` is in, as Enter would (macOS 12's WebKit has no requestSubmit). */
+  /** Submits the form `selector` is in, as Enter would (an older WebKit, macOS 12's, has no requestSubmit). */
   submit(selector) {
     return this.js(
       `const form = document.querySelector(arguments[0])?.closest("form");

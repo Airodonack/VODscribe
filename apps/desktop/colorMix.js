@@ -1,5 +1,5 @@
-// Fallbacks for color-mix(), which macOS 12's WKWebView lacks (its Safari
-// 17.6 has it; the system web view the app gets doesn't). For each rule that
+// Fallbacks for color-mix(), for a web view without it (macOS 12's system
+// WKWebView, though its Safari 17.6 has it). For each rule that
 // uses it, a copy follows inside `@supports not (color-mix)` with each mix
 // replaced: a mix with transparent by the same colour at that alpha,
 // `rgb(var(--x-rgb) / a)`; a mix of two colours by the larger share. The

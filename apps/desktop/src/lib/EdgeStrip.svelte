@@ -94,7 +94,7 @@
     /* Clear of the scrollbar on the left: the library's, or the transcript's. */
     left: 3px;
     right: 0;
-    /* macOS 12's web view gives a button 2 px above and below. */
+    /* Some web views give a button a margin (macOS 12's: 2 px above and below). */
     margin: 0;
     padding: 0;
     border: none;

@@ -1184,7 +1184,7 @@
     position: relative;
     width: 100%;
     aspect-ratio: 16 / 9;
-    /* Capped by a width, not max-height: macOS 12's WebKit (17.6) turned
+    /* Capped by a width, not max-height: an older WebKit (macOS 12's) turned
        max-height and aspect-ratio together into a max-width, and the box
        shrank to the left. */
     max-width: calc(var(--player-max-height, 44vh) * 16 / 9);

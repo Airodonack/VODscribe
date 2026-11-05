@@ -9,7 +9,7 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [
-    // color-mix() fallbacks for macOS 12's web view (colorMix.js).
+    // color-mix() fallbacks for web views without it (colorMix.js).
     colorMix(),
     sveltekit({
       preprocess: [vitePreprocess(), colorMixStyles],
