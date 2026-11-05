@@ -146,6 +146,7 @@ const fake = {
     vodId: 1,
     fromSite: true,
     error: null,
+    /** The clips of the bar shown, as the store has them now. @type {{ id: number, shown: boolean }[]} */
     list: [],
     find: () => undefined,
     /** @param {number} start @param {number} end @param {boolean} shown */
@@ -245,6 +246,7 @@ function reset() {
   fake.beforeMade = true;
   fake.begins = () => true;
   fake.clips.error = null;
+  fake.clips.list = [];
   under = null;
 }
 
@@ -522,6 +524,63 @@ test("a drag out begun while the last one's files are still being handed over: e
   fake.ended(ended, fake.numbers[1]);
   await tick();
   assert.deepEqual(fake.deleted, [3, 4, 5, 6], "the second's own end wasn't heard");
+});
+
+test("the same clips dragged out again while the first drag's are still being handed over: kept till the last ends", async () => {
+  reset();
+  const ended = { delivered: true, failed: null, finished_only: false, receiver: null };
+  // Let go on a file manager that copies them as they're made; the same
+  // stretches pulled out again meanwhile are the same clips (clips.make).
+  const first = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await first;
+  const second = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await second;
+  assert.deepEqual(fake.dragged, [
+    [3, 4],
+    [3, 4],
+  ]);
+  fake.ended(ended, fake.numbers[0]);
+  await tick();
+  assert.deepEqual(fake.deleted, [], "forgotten as the first ended, while the second still hands them over");
+  fake.ended(ended, fake.numbers[1]);
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4], "not forgotten once the last was over");
+});
+
+test("the same clips pulled out again but let go before that drag began: the first's still hands them over", async () => {
+  reset();
+  const first = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await first;
+  // Let go just past the edge, before the second's system drag could begin.
+  const second = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  up(-5, 300);
+  await second;
+  await tick();
+  assert.deepEqual(fake.deleted, [], "forgotten while the first drag still hands them over");
+  fake.ended({ delivered: true, failed: null, finished_only: false, receiver: null }, fake.numbers[0]);
+  await tick();
+  assert.deepEqual(fake.deleted, [3, 4]);
+});
+
+test("a clip kept in the clip bar while its drag out is still being handed over stays", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  // C pressed on the same stretch meanwhile (clips.make with shown): a pill.
+  fake.clips.list = [{ ...pair()[0], shown: true }, pair()[1]];
+  fake.ended({ delivered: true, failed: null, finished_only: false, receiver: null });
+  await tick();
+  assert.deepEqual(fake.deleted, [4], "the clip kept meanwhile was deleted as the drag ended");
 });
 
 test("where the system can't wait for the files, the drag begins once they're made", async () => {

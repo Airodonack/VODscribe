@@ -54,6 +54,10 @@ let outgoing: string[] = [];
  *  over): brought back over the window, it isn't something dropped in to add. */
 let out = false;
 let drags = 0;
+// The clips in drags out whose end is still to come, each with how many: the
+// same stretch pulled out again meanwhile is the same clip, forgotten only
+// once the last of them is over.
+const handing = new Map<number, number>();
 export const draggingOut = () => out;
 
 /** Whether `paths` are just the clips being dragged out. */
@@ -68,7 +72,11 @@ const beforeMade = () => api.dragBeforeMade().catch(() => false);
 /** Forgets `clip` if it was made only to be dragged out (no pill in the clip
  *  bar): its making stopped, and its file deleted unless it was handed out. */
 function forgetHidden(clip: Clip | null | undefined) {
-  if (clip && !clip.shown) api.deleteClip(clip.id).catch((e) => console.error("forget dragged clip", e));
+  // As it is now: kept in the clip bar meanwhile (C, or a drop there), or
+  // in a drag out still being handed over (`handing`), it stays.
+  const now = clip && (clips.list.find((c) => c.id === clip.id) ?? clip);
+  if (now && !now.shown && !handing.has(now.id))
+    api.deleteClip(now.id).catch((e) => console.error("forget dragged clip", e));
 }
 
 /** Puts `clip`, made only to be dragged out, in its clip bar (a pill), to be
@@ -124,16 +132,23 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   let stopMaking: (() => void) | undefined;
   // What's said of it while it's still being made (`making`), till it's over.
   let told: number | undefined;
-  const over = (ended?: DragEnded) => {
-    if (ended && ended.drag !== mine) return;
+  let ended = false;
+  const over = (end?: DragEnded) => {
+    if ((end && end.drag !== mine) || ended) return;
+    ended = true;
+    for (const c of list) {
+      const left = (handing.get(c.id) ?? 1) - 1;
+      if (left > 0) handing.set(c.id, left);
+      else handing.delete(c.id);
+    }
     stop?.();
     stopMaking?.();
     if (told !== undefined) toast.drop(told);
-    if (ended?.failed) clips.error = `Couldn't make the clip: ${ended.failed}`;
+    if (end?.failed) clips.error = `Couldn't make the clip: ${end.failed}`;
     // Let go on an app that takes only files already made, before they were:
     // said, and they're kept in the clip bar, to drag again once made.
-    if (ended?.finished_only) {
-      toast.once(finishedOnly(ended.receiver, list.length));
+    if (end?.finished_only) {
+      toast.once(finishedOnly(end.receiver, list.length));
       list.forEach(keepHidden);
     }
     // Made only for this: forgotten (the file stays, if it was handed out);
@@ -167,6 +182,7 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     if (mine === drags) out = false;
     return false;
   }
+  for (const c of list) handing.set(c.id, (handing.get(c.id) ?? 0) + 1);
   performance.mark("drag-start");
   const began = await api
     .dragClips(
