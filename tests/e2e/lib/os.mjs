@@ -205,14 +205,19 @@ export function click(x, y, scale = 1) {
     );
   } else {
     // Straight to CoreGraphics, in points, not pixels: System Events doesn't
-    // answer a script run over SSH (its AppleEvent times out).
+    // answer a script run over SSH (its AppleEvent times out). Pointed there,
+    // pressed and released a moment later, as a hand clicks: after a click on
+    // the title bar with its release right on the press's heels, the window
+    // went on following the pointer, as if the release was missed, and the
+    // next gesture dragged it off the screen (drag-note, the hosted Mac,
+    // 2026-11-05; macGesture's releases wait for the same reason).
     const [px, py] = [Math.round(x / scale), Math.round(y / scale)];
     execFileSync("osascript", [
       "-l",
       "JavaScript",
       "-e",
-      `ObjC.import("CoreGraphics"); const p = $.CGPointMake(${px}, ${py});
-       for (const t of [1, 2]) $.CGEventPost(0, $.CGEventCreateMouseEvent(null, t, p, 0));`,
+      `${MAC_EVENTS}
+       mouse(5, ${px}, ${py}); $.usleep(50000); mouse(1, ${px}, ${py}); $.usleep(100000); mouse(2, ${px}, ${py});`,
     ]);
   }
 }
