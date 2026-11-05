@@ -24,6 +24,9 @@
   // included. That press does nothing else, as in a file manager: a click
   // on a row closes the menu without opening or picking the row. A right
   // press goes on, so a right click on another row opens that row's menu.
+  // On macOS a right click on a window in the back opens the menu there, and
+  // the click that brings the window to the front never reaches the page:
+  // the window's coming to the front closes a menu opened that way.
   // It's as wide as its longest choice, `width` at the least.
   import { tick } from "svelte";
   import IconView from "./Icon.svelte";
@@ -88,11 +91,19 @@
       if (e.button !== 2) swallowClick(e);
     };
     const onBlur = () => (open = false);
+    // Elsewhere the click that focuses the window is pressed in the page too
+    // and closes it as above; a menu opened in a focused window never gets this.
+    const inBack = !document.hasFocus();
+    const onFocus = () => {
+      if (inBack) open = false;
+    };
     document.addEventListener("pointerdown", onDown, true);
     window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
     return () => {
       document.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
     };
   });
 

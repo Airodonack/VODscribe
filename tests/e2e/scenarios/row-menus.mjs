@@ -155,7 +155,10 @@ export default {
     // scroll sideways. A click on the row itself closes the menu, as a press
     // anywhere outside it does, and does nothing else: the row isn't opened
     // or picked. With the OS's mouse where there is one, else as the page
-    // gets a click.
+    // gets a click. On macOS the app restarted behind the runner's own
+    // window, so this is the click that brings it to the front, which the
+    // page never gets: the menu was opened in the back, as a right click
+    // there does.
     const sideways = await app.js(
       `const p = document.querySelector('[role=dialog][aria-label="VOD menu"]');
        return p.scrollWidth - p.clientWidth`,
