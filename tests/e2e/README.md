@@ -1,31 +1,39 @@
 # End-to-end tests
 
-These tests drive a built VODscribe through its page, as a person would: a library made, a file added and transcribed, clips cut, edits rendered, settings changed, the app restarted. Each scenario in `scenarios/` starts the app on an empty library and says in plain words at its top what it checks. Helpers are in `lib/`: `app.mjs` drives the page, `os.mjs` takes screenshots and real clicks from the operating system, `drivers.mjs` starts the driver.
+These tests drive a built VODscribe through its page, as a person would: a file added and transcribed, clips cut, edits rendered, settings changed, the app restarted. Each scenario starts the app on an empty library.
 
-## The three runners
-
-- **`run.mjs`** drives one app binary on this computer, through WebDriver on Linux (tauri-driver with WebKitWebDriver) or, on Windows and macOS, through the app's own test hook in a build made with the `e2e` feature (`--driver bridge`). The other two runners end up calling it.
-- **`distros.mjs`** (Linux only) runs the suite inside a podman container per distribution, its "cell": our .deb or .rpm installed with that distribution's package manager, then `run.mjs` under a headless display. `--only debian-13,fedora-44` picks distributions (the list is `DISTROS` in distros.mjs). `--env weston` or `--env gnome` runs under a headless Wayland compositor instead of Xvfb with openbox; `--scheme dark` in the dark colour scheme; `--gpu nvidia` with the host's NVIDIA GPU, `--gpu dri` with the host's render nodes (`/dev/dri/renderD*`) and the distribution's Mesa (Intel and AMD).
-- **`runners.mjs`** runs the suite on another computer over SSH (a "runner"): it copies the harness and the app there, runs `run.mjs`, and brings the results back. Runners are listed in `runners.json`, which isn't in the repository: copy `runners.example.json` and fill in each one's name, SSH host, operating system (`windows` or `macos`), a folder to work in, and for Windows the folders to put first on `PATH`. Someone must be signed in on the runner, and its app data is emptied before each scenario, so use a computer kept for testing. On Windows it won't start while an earlier run is still going there.
-
-`contact-sheet.mjs` makes a page of the checkpoints a run took (`ctx.checkpoint`), one column per run, for looking at what the tests can't judge. `verify.mjs` has a model judge them (below, "Judging the pictures").
+- `run.mjs`: runs the scenarios against one app on this computer, through WebDriver on Linux or the app's own test hook on Windows and macOS.
+- `distros.mjs`: runs them on Linux distributions, each in a podman container with our package installed.
+- `runners.mjs`: runs them on another computer over SSH, a "runner", and brings the results back.
+- `runners.example.json`: the shape of `runners.json`, the list of runners, which stays out of the repository.
+- `merge-results.mjs`: merges shards' results into one summary.
+- `durations.mjs`, `durations.json`: each scenario's last passing time, which shards are dealt by.
+- `flaky.json`: the flake ledger.
+- `budgets.json`: the `perf-*` scenarios' budgets.
+- `perf-compare.mjs`: compares two runs' timings, or judges one against the budgets.
+- `contact-sheet.mjs`: a page of a run's checkpoints, one column per run.
+- `verify.mjs`: has a model judge the checkpoints' pictures.
+- `profile-setup.sh`: readies a Debian system for profiled runs.
+- `*.test.mjs`: unit tests of the harness, run with `node --test`.
+- `.gitignore`: results, `runners.json`, and SQLite's side files.
+- [`scenarios`](scenarios): the scenarios.
+- [`lib`](lib): helpers; `app.mjs` drives the page, `os.mjs` the OS's screenshots and clicks, `drivers.mjs` the driver.
+- [`fixtures`](fixtures): recorded test files.
+- [`gnome-shell`](gnome-shell): an extension for headless GNOME Shell runs.
 
 ## What they need
 
-- **Node 24** (the version in `.nvmrc`), through mise or any other way. The harness imports a TypeScript file from the app, which Node 24 runs as it is.
-- **tauri-driver**, from cargo: `cargo install tauri-driver --locked`. It must be on `PATH`, or named by `TAURI_DRIVER`. `distros.mjs` mounts this binary into each container.
-- **podman**, for `distros.mjs`. The containers pull public images (Debian, Ubuntu, Fedora, Arch and others) and install packages, so the first run of each needs the network.
-- For `run.mjs` directly on Linux: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, renamed `webkitgtk-webdriver` in Ubuntu 26.04; `webkitgtk6.0` on Fedora), and for a headless run Xvfb, openbox, xdotool and ffmpeg; Nautilus (or Dolphin, under KDE) for the scenarios that drop a clip on a file manager; `prlimit` (util-linux) and `file` for crashes to leave a core and be named.
-- For `runners.mjs`: SSH access to each runner by key (it runs in batch mode), and Node on the runner.
+- **Node 24**, the version in `.nvmrc`, which runs the app's TypeScript file the harness imports.
+- **tauri-driver**: `cargo install tauri-driver --locked`, on `PATH` or named by `TAURI_DRIVER`; `distros.mjs` mounts it into each container.
+- **podman**, for `distros.mjs`, with the network for each distribution's first run.
+- **For `run.mjs` on Linux**: WebKitWebDriver (`webkit2gtk-driver` on Debian and Ubuntu, `webkitgtk-webdriver` from Ubuntu 26.04, `webkitgtk6.0` on Fedora); Xvfb, openbox, xdotool and ffmpeg for a headless run; Nautilus, or Dolphin under KDE, for the scenarios that drop a clip on a file manager; `prlimit` and `file` to keep and name crash cores.
+- **For `runners.mjs`**: SSH access to each runner by key, and Node on the runner.
 
 ### Building the packages
 
-`distros.mjs` takes a folder holding the .deb and the .rpm; it finds them anywhere under it, so the layout is usually `deb/` and `rpm/` side by side, as Tauri writes them. A fresh checkout can't build the app yet: three folders under `apps/desktop/src-tauri` are ignored by Git and made by the build steps.
+A fresh checkout needs three folders under `apps/desktop/src-tauri` that Git ignores. `binaries/` holds the transcription workers and `lib/` the sherpa-onnx library the GPU worker links; `scripts/prepare-sidecars.sh release` makes both, checking the libraries against `scripts/sherpa-onnx-prebuilt.sha256`, and needs `patchelf`. `gen/` is written by the first Rust build.
 
-- `binaries/` holds the transcription workers, which Tauri bundles as sidecars, and `lib/` the sherpa-onnx library the GPU worker links. `scripts/prepare-sidecars.sh release` makes both: it downloads sherpa-onnx's prebuilt libraries, checks them against the hashes pinned in `scripts/sherpa-onnx-prebuilt.sha256`, and builds the workers. It needs `patchelf` for a release build.
-- `gen/` holds the capability schemas, which the Rust build writes the first time it runs.
-
-From the repository root, with Rust, pnpm and Tauri's system dependencies installed (CI installs `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev patchelf` on Ubuntu; see `.github/workflows/build.yml`):
+With Rust, pnpm and Tauri's system dependencies installed (CI's list for Ubuntu is in `.github/workflows/build.yml`):
 
 ```sh
 pnpm install
@@ -33,22 +41,19 @@ scripts/prepare-sidecars.sh release
 pnpm --filter desktop tauri build --bundles deb,rpm
 ```
 
-The packages land in `target/release/bundle/` (under `CARGO_TARGET_DIR` if that is set), with `deb/` and `rpm/` inside, which `distros.mjs` takes as its folder. For Windows and macOS runners, build the app with the `e2e` feature as `build.yml` does: `--features e2e --no-bundle` on Windows (the installer and this `vodscribe.exe` both go to `runners.mjs`, with `--test-app` for the second), `--features e2e --bundles app` on macOS.
+The packages land in `deb/` and `rpm/` under `target/release/bundle/`, or under `CARGO_TARGET_DIR`; `distros.mjs` takes that folder. For runners, build with the `e2e` feature as `build.yml` does: on Windows `--features e2e --no-bundle`, whose `vodscribe.exe` goes to `runners.mjs` with `--test-app` beside the installer; on macOS `--features e2e --bundles app`.
 
 ## Running
 
-One scenario, on one distribution:
+One scenario on one distribution, then under Wayland, then dark with the host's GPU. Everything after `--` goes to `run.mjs`:
 
 ```sh
 node tests/e2e/distros.mjs target/release/bundle --only debian-13 -- --only edits
-```
-
-Everything after `--` goes to `run.mjs`. The same scenario under Wayland, then in the dark scheme with the GPU:
-
-```sh
 node tests/e2e/distros.mjs target/release/bundle --only debian-13 --env weston -- --only edits
 node tests/e2e/distros.mjs target/release/bundle --only fedora-44 --scheme dark --gpu dri -- --only site-plain
 ```
+
+`DISTROS` in `distros.mjs` lists the distributions. `--env weston` or `--env gnome` runs under a headless Wayland compositor instead of Xvfb with openbox. `--gpu nvidia` passes the host's NVIDIA GPU, and `--gpu dri` its render nodes with the distribution's Mesa.
 
 Directly against an installed app, headless, on a library of its own:
 
@@ -59,87 +64,86 @@ export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
 dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' sh -c 'openbox & sleep 1; node tests/e2e/run.mjs /usr/bin/vodscribe --only edits'
 ```
 
-The screen is 1920 by 1080, as in the cells, so that the scenarios that drag a clip onto a file manager (Nautilus, or Dolphin under KDE: `lib/fileManager.mjs`) have room for it beside the app's window (moved to the screen's left edge when the window manager centred it, as openbox does); on a smaller one they skip, and with a Nautilus older than 43 (Ubuntu 22.04's 42 asks for the drag's data during the motion). On Windows, drag-promise drops on File Explorer and on a Windows PowerShell form that takes real files only, then on one that refuses every drop (`lib/explorer.mjs`), beside the app's window, with gestures as PowerShell scripts in the signed-in session. On macOS its app that takes finished files only is built with swiftc, and run a second time refusing every drop. On Windows, drop-virtual drags a video out of a zip folder in File Explorer onto the window, which receives it as a virtual file.
+Keep the private `XDG_RUNTIME_DIR`: with the shared one, the test session's gnome-keyring quits, and the window waits 25 s for GTK's portal before it appears.
 
-A crash leaves a core: on Linux the harness lifts the core limit (0 by default) of tauri-driver with `prlimit`, so the app and its WebKit processes inherit it, and starts tauri-driver in `E2E_OUT`, so with the kernel's usual pattern (`core`, with the pid: `/proc/sys/kernel/core_pattern`, `core_uses_pid`) a crash leaves `E2E_OUT/core.<pid>`. The scenario's result line names the file and the binary it is from. To read one (here WebKit's web process, at its path on Debian and Ubuntu; the binary must be the one that crashed):
+On a runner: `node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] --only edits`. Copy `runners.example.json` to `runners.json` and give each runner its name, SSH host, `windows` or `macos`, a folder to work in, and on Windows the folders to put first on `PATH`. Someone must be signed in on the runner, and its app data is emptied before each scenario, so use a computer kept for testing. The Windows machine takes one run at a time.
+
+The `setup` scenario always runs first when chosen, and downloads the tools and speech model the others keep. Without it, the first scenario goes through setup. Quit any VODscribe you have open: the run refuses to start beside one.
+
+The screen is 1920 by 1080, as in the cells, so the drag scenarios have room for a file manager beside the app's window; on a smaller screen, or with a Nautilus older than 43, they skip. On the Windows machine, drag-promise drops on File Explorer and on PowerShell forms beside the app, and drop-virtual drags a video out of a zip folder onto the window. On the Mac, drag-promise drops on Finder in icon view and on an app built with swiftc that takes finished files only.
+
+The app's short mode, the player alone in a short window, is off in every scenario but those that ask for it with `app.shortMode(true)`.
+
+### Crash cores
+
+On Linux the harness lifts tauri-driver's core limit with `prlimit` and starts it in `E2E_OUT`, so a crash leaves `E2E_OUT/core.<pid>`. The scenario's result line names the file and its binary. To read one, with the binary that crashed:
 
 ```sh
 gdb -batch -ex bt /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess tests/e2e/out/core.<pid>
 ```
 
-A system whose pattern pipes cores to a handler (systemd-coredump, apport) keeps them there instead: `coredumpctl` lists them.
-
-The private runtime dir matters: with the shared one, the test bus's gnome-keyring finds your session's keyring there and quits without claiming its name, and GTK's portal start then waits out D-Bus's 25 s activation timeout before the window appears.
-
-On another computer: `node tests/e2e/runners.mjs <runner> <app> [--test-app <exe>] --only edits`.
+A system that pipes cores to systemd-coredump or apport keeps them there; `coredumpctl` lists them.
 
 ### Several at once, and shards
 
-`--parallel N` (Linux) runs N apps at once, each in a worker of its own: `run.mjs` again, with its own data folders (`XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` with `-1`, `-2`, … added, and a private `XDG_RUNTIME_DIR`), its own driver port (`E2E_DRIVER_PORT` + 1, + 2, …), its own D-Bus session and its own X display (Xvfb, with openbox if it's installed: the OS layer's screenshots and clicks are of the whole screen, so two windows on one display would see and click each other). Each worker starts with the tools and model of the configured data folder, hard-linked (so a run of setup there first saves each worker the download). Its output comes marked `[w1]`, `[w2]`, …, and its results are merged into `E2E_OUT` at the end in scenario order (`results.json`, `checkpoints/`, `perf.json`, the failures' pages and screenshots), as one run would have left them. It needs `XDG_DATA_HOME` set, and can't be used with `--profile`.
-
-With the environment above (each worker makes its own bus and display, so the run needs neither around it):
+`--parallel N` runs N apps at once on Linux, each in a worker with its own D-Bus session, X display, driver port after `E2E_DRIVER_PORT`, and data folders: the `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` given, with `-1`, `-2`, … added. Each worker starts with the configured data folder's tools and model, hard-linked, so run setup there first. Output is marked `[w1]`, `[w2]`, …, and results merge into `E2E_OUT` in scenario order. It needs `XDG_DATA_HOME` set, and doesn't combine with `--profile`.
 
 ```sh
 node tests/e2e/run.mjs /usr/bin/vodscribe --parallel 3
 ```
 
-Scenarios are dealt longest first, each to the worker with the least to do so far, by the seconds each took when it last passed: `durations.json`, refreshed from runs' results with `node tests/e2e/durations.mjs <out dir>...` (a scenario that's new to it goes last). `--shard i/N` runs the i-th of N such deals, the same on every computer for the same file, for CI's machines to split the suite between them; it combines with `--parallel`. `distros.mjs --parallel N` runs a cell's suite that way; `runners.mjs` passes `run.mjs`'s options on as they are (`--shard` works there; `--parallel` is Linux's only).
+Scenarios are dealt longest first, each to the worker with the least so far, by `durations.json`. Refresh it with `node tests/e2e/durations.mjs <out dir>...` when scenarios are added or change a lot; a new one goes last. `--shard i/N` runs the i-th of N such deals, the same on every computer, and combines with `--parallel`. `distros.mjs --parallel N` runs a cell that way; `runners.mjs` passes `--shard` on.
 
 ### In CI
 
-`e2e.yml` runs the suite as a matrix of shards, `run.mjs --shard i/N`: 2 on Ubuntu, 2 on Windows and 3 on macOS (its runners are the slowest: the whole suite took 26 minutes there, 10 to 13 elsewhere). `durations.json` makes the shards about equal, so refresh it (above) when scenarios are added or change a lot. Each shard uploads its `tests/e2e/out` as the artifact `e2e-<target>-<i>`, and a last job runs
+`e2e.yml` runs the suite in shards with `run.mjs --shard i/N`: 2 on Ubuntu, 2 on Windows and 3 on macOS, the slowest. Each shard uploads `tests/e2e/out` as `e2e-<target>-<i>`, and a last job runs:
 
 ```sh
 node tests/e2e/merge-results.mjs --expect <shards> <folder of the artifacts' folders>
 ```
 
-which reads every `results.json` and prints one summary in `run.mjs`'s words (`e2e: P of T passed, F flaky, in K shards`, a line per shard, and a line for each failure or flaky pass, with its shard). It exits 1 on a failed scenario, or when fewer shards reported than `--expect` (a shard that crashed leaves no `results.json`).
-
-Which lane runs when, and how to start one by hand, is in the top README's "CI lanes": the fast lane runs the Ubuntu shards only, against the Linux build; the full lane every system's. `gh workflow run e2e.yml -f build_run=<run id>` tests an earlier build's installers without building again (`-f lane=fast` for the Ubuntu shards only).
+It prints one summary in `run.mjs`'s words, with a line per shard and per failure or flaky pass, and exits 1 on a failed scenario or when fewer shards reported than `--expect`. The fast lane runs the Ubuntu shards only; the full lane every system's. `gh workflow run e2e.yml -f build_run=<run id>` tests an earlier build's installers, with `-f lane=fast` for the Ubuntu shards only.
 
 ### The flake ledger
 
-`flaky.json` names the scenarios known to fail now and then for reasons outside what they check, each with the reason and the date it was seen: `{ "<scenario>": "<what happened, where, when>" }`. A listed scenario that fails runs once more; if it passes then, it's reported `flaky`, on a line of its own and counted apart from the passes (`e2e: 31 of 33 passed, 1 flaky`), never as passed, and its entry in `results.json` has `attempts: 2`, `flaky: true` and the first attempt's error (`firstError`). The first attempt's page and screenshot are kept as `<scenario>.first.txt` and `.png`, its checkpoints labelled "(first attempt)". A scenario goes in the ledger with its reason once the failure has been looked into and found to be the computer's or the runner's, not the app's; it comes out when the cause is fixed or a few rounds pass without it. Every summary says how many the ledger holds.
-
-The `setup` scenario always runs first when it's chosen, and downloads the tools and the speech model the others keep. Without them, whichever scenario runs first goes through setup and downloads them; with it, they're copied in and the run starts at once. Quit any VODscribe you have open first: the run refuses to start beside one.
+`flaky.json` names scenarios known to fail now and then for reasons outside what they check: `{ "<scenario>": "<what happened, where, when>" }`. A listed scenario that fails runs once more. If it passes then, it's reported `flaky`, counted apart from the passes, with `attempts: 2`, `flaky: true` and `firstError` in `results.json`, and its first page and screenshot kept as `<scenario>.first.txt` and `.png`. A scenario goes in once its failure is found to be the computer's or the runner's, and comes out when the cause is fixed or a few rounds pass without it.
 
 ## Environment
 
-- `E2E_OUT`: where `run.mjs` writes its results (default `tests/e2e/out`).
-- `E2E_RESET_DATA`: `1` lets a scenario empty a data folder that already has a library. Without it, the run refuses rather than delete one; point `XDG_DATA_HOME` at a folder of its own.
-- `E2E_NETWORK`: `1` runs the scenarios that reach Twitch, YouTube or Kick; without it they're skipped.
-- `E2E_SITE`: which site's VOD the site scenarios play (`twitch`, the default, or `youtube`).
-- `E2E_SHOTS`: set, `site-embed` keeps a screenshot of the whole screen at each step.
-- `E2E_TRACE`: `1` logs each call into the page and how long it took.
-- `E2E_DRIVER_PORT`: tauri-driver's port (default 4444), for two runs side by side on one computer; with `--parallel`, the workers take the ports after it. The native driver under it (WebKitWebDriver) gets a free port of its own each run: tauri-driver's default, 4445 for every run, had a second run drive the first one's app.
-- `E2E_WORKER`: set by `--parallel` in each worker (its number); not for setting by hand.
-- `E2E_SCREEN`: `hosted-mac` sizes the app's page as CI's hosted macOS runner's 1024 by 768 screen does (`lib/screen.mjs`): the window opens with a page 613 px tall at most, and `resizeInner` gives no page taller than 581 px after a scenario's first resize (the width as asked), saying `held to 1600x581 (hosted-mac)` once in the scenario when it holds one. For checking, before a push, that the scenarios measuring layout don't count on a tall screen. Unset, the page is what the window and the display give. The app's short mode (the player alone on a short window) is off in every scenario but those that ask for it (`app.shortMode(true)`), as on CI's hosted Mac.
-- `E2E_SCHEME`: the colour scheme the run is in (`light` or `dark`), which the site scenarios check; `distros.mjs` sets it from `--scheme`.
-- `E2E_FILE_MANAGER`: the file manager the drag scenarios (drag-promise, drag-file-time) drop on: `dolphin` or `nautilus`. Unset, Dolphin in a KDE session (`XDG_CURRENT_DESKTOP`), else Nautilus.
-- `E2E_DISPLAY`: the Wayland compositor the run is under (`weston` or `gnome`), so screenshots know how to be taken; `distros.mjs` sets it from `--env`.
-- `E2E_SEED`: for `distros.mjs`, a data folder whose `bin/` and `models/` each cell starts with (default none, so setup downloads them).
-- `E2E_WORK`: for `distros.mjs`, where each cell's data folder goes (default `tests/e2e/out/distros`).
-- `E2E_PODMAN`: the podman command for `distros.mjs` (default `podman`; a wrapper for another store, for example).
-- `TAURI_DRIVER`: the tauri-driver binary, if it isn't on `PATH`.
-- `NATIVE_DRIVER`: the platform's WebDriver, passed to tauri-driver, if it isn't where tauri-driver looks.
+- `E2E_OUT`: where `run.mjs` writes its results; default `tests/e2e/out`.
+- `E2E_RESET_DATA`: `1` lets a scenario empty a data folder that already holds a library; without it the run refuses.
+- `E2E_NETWORK`: `1` runs the scenarios that reach Twitch, YouTube or Kick.
+- `E2E_SITE`: the site the site scenarios play, `twitch` by default, or `youtube` or `kick`.
+- `E2E_SHOTS`: set, `site-embed` keeps a whole-screen screenshot at each step.
+- `E2E_TRACE`: `1` logs each call into the page and its time.
+- `E2E_DRIVER_PORT`: tauri-driver's port, default 4444; give two runs side by side different ones.
+- `E2E_WORKER`: set by `--parallel` in each worker.
+- `E2E_SCREEN`: `hosted-mac` sizes the page as CI's hosted Mac's 1024 by 768 screen does, at most 613 px tall at open and 581 px after a resize.
+- `E2E_SCHEME`: the run's colour scheme, `light` or `dark`; `distros.mjs` sets it from `--scheme`.
+- `E2E_FILE_MANAGER`: `dolphin` or `nautilus` for the drag scenarios on Linux; unset, Dolphin in a KDE session, else Nautilus, and always Finder on the Mac.
+- `E2E_DISPLAY`: the Wayland compositor, `weston` or `gnome`; `distros.mjs` sets it from `--env`.
+- `E2E_SEED`: for `distros.mjs`, a data folder whose `bin/` and `models/` each cell starts with.
+- `E2E_WORK`: for `distros.mjs`, where each cell's data folder goes; default `tests/e2e/out/distros`.
+- `E2E_PODMAN`: the podman command for `distros.mjs`.
+- `E2E_BUDGET_SCALE`: multiplies every budget, for a slower computer.
+- `E2E_COMMIT`: what `perf.json` names the build by; default `git describe`.
+- `TAURI_DRIVER`: the tauri-driver binary, if not on `PATH`.
+- `NATIVE_DRIVER`: the platform's WebDriver, if not where tauri-driver looks.
 - `XDG_DATA_HOME`: on Linux, where the app keeps its library, and so what the tests empty.
-- `VODSCRIBE_NO_UPDATE_CHECK`: read by the app, not the harness: set, it doesn't look for updates.
-- `PROFILE_CG`: with `--profile`, how perf walks the stack: `fp` (frame pointers, the default) or `dwarf` (deeper through the system's libraries, about 60 times the disk).
-- `PROFILE_HZ`: with `--profile`, samples a second (default 999).
-- `PERF`: the perf command, if it isn't `perf` on `PATH`.
-- `E2E_COMMIT`: what `perf.json` names the build by (default `git describe` of the checkout).
+- `VODSCRIBE_NO_UPDATE_CHECK`: read by the app; set, it doesn't look for updates.
+- `PROFILE_CG`: with `--profile`, `fp` for frame pointers, the default, or `dwarf`, deeper and about 60 times the disk.
+- `PROFILE_HZ`: with `--profile`, samples a second; default 999.
+- `PERF`: the perf command, if not `perf` on `PATH`.
 
 ## Results
 
-`run.mjs` writes `results.json` (each scenario, passed, failed, skipped or flaky, and why) to `E2E_OUT`, and ends with a summary: how many passed, a line for each scenario, the flake ledger's size, and the wall time on how many workers. For a failure it adds the page dump (`<scenario>.txt`: the page's text and errors, its video or audio element's state, the app's process, and with the `e2e` feature the app's own player's state; `lib/dump.mjs`) and a screenshot (`<scenario>.png`); checkpoints go in `checkpoints/`. `distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named for the distribution and what differs from the default (`debian-13-weston-dark`), with the whole log in `run.log`, and prints one line per cell at the end. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`. Two runs of the same cell from the same checkout wipe each other's folders.
+`run.mjs` writes `results.json` to `E2E_OUT`, each scenario passed, failed, skipped or flaky and why, with its `timings` and, on Linux, `memory`. It ends with a summary: how many passed, a line per scenario, the ledger's size, and the wall time. A failure leaves `<scenario>.txt`, the page dump from `lib/dump.mjs`, and `<scenario>.png`; checkpoints go in `checkpoints/`. Every run also writes `perf.json`: each scenario's timed steps, the app's memory at its end, and what the run was on.
 
-Every run also writes `perf.json` to `E2E_OUT`: the steps each scenario timed (below), the app's memory at each scenario's end, and what the run was on (CPU, kernel, WebKit, display). Each result in `results.json` has its `timings` (ms) and, on Linux, `memory`.
+`distros.mjs` keeps each cell's results in `tests/e2e/out/distros/<cell>/`, named like `debian-13-weston-dark`, with the whole log in `run.log`. Two runs of the same cell from one checkout wipe each other. `runners.mjs` brings a runner's back to `tests/e2e/out/<runner>/`.
 
 ## Judging the pictures
 
-The tests are layered: unit tests of the app's pure parts, then these scenarios, which check what the page and the screen say, then on top `verify.mjs`, which has a model look at the checkpoints the way a person would. It's the most flexible layer and the only one that costs money per run: it judges what no check can (a picture cut off, text over text, a dark theme half applied), never what a check already asserts.
-
-A scenario says what each checkpoint should show beside its `run`:
+`verify.mjs` has a model look at the checkpoints as a person would, for what no check can judge: a picture cut off, text over text, a dark theme half applied. A scenario says what each should show beside its `run`:
 
 ```js
 expects: {
@@ -147,114 +151,99 @@ expects: {
 },
 ```
 
-The rule for an expectation: write what a person should see; one or two sentences; nothing a check already asserts. Write it so a wrong picture fails it, not so anything passes: name what's there and where, not "the page looks right".
+Write what a person should see, in one or two sentences, and nothing a check already asserts. Name what's there and where, so a wrong picture fails.
 
 ```sh
 OPENROUTER_API_KEY=... E2E_VERIFY_MODEL='vendor/family*' node tests/e2e/verify.mjs tests/e2e/out
 ```
 
-Each checkpoint with an expectation goes to OpenRouter's chat completions with its picture (scaled as the contact sheet does), the expectation and a fixed rubric; the answer is pass, fail or unsure, with a reason and, as concerns, anything that looks broken even if not asked. Checkpoints without an expectation are listed, not judged, and an expectation whose checkpoint a scenario that ran didn't take is named (a label renamed). `--model` or `E2E_VERIFY_MODEL` is a model id, or a prefix ending in `*` for the cheapest model with that prefix that takes pictures, looked up at run time (variants such as `:batch` left out); the line it prints says which, and its price. `--only a,b` keeps those scenarios, `--concurrency N` (default 4) caps the requests at once (each retried on 429 and 5xx, 60 s at most), `--out` names the verdict sheet (default `verify.html` in the first out dir), with `verify.json` beside it: each checkpoint's scenario, label, expectation, verdict, reason, concerns, model and tokens. `--dry-run` prints the pairs and the prompt and calls nothing. The last line is `verify: P pass, F fail, U unsure, N without expectation; ~T tokens`; the exit status is 1 on any fail, not on unsure.
+`--model` or `E2E_VERIFY_MODEL` is a model id, or a prefix ending in `*` for the cheapest model with that prefix that takes pictures. `--only a,b` keeps those scenarios, `--concurrency N` caps the requests at once, default 4, and `--out` names the verdict sheet, default `verify.html` with `verify.json` beside it. Requests are retried on 429 and 5xx for up to 60 s, and `--dry-run` prints the prompts and calls nothing. The last line is `verify: P pass, F fail, U unsure, N without expectation; ~T tokens`, and it exits 1 on any fail.
 
-Without a key, an agent judges the pictures instead: a person, or a model with a tool that reads image files. Write the manifest, have the agent read each picture and answer, feed the answers back:
+Without a key, a person or a model that reads image files judges them instead:
 
 ```sh
 node tests/e2e/verify.mjs tests/e2e/out --manifest verify-manifest.json   # [--only a,b]
-# the agent reads verify-manifest.json (the rubric, the answer format, and for each pair the
-# absolute picture path and the expectation), looks at each picture, and writes verdicts.jsonl:
-# one line each, {"file": "05-legend-legend-vod.png", "verdict": "pass", "reason": "...", "concerns": []}
+# read each picture the manifest lists, and write verdicts.jsonl, one line each:
+# {"file": "05-legend-legend-vod.png", "verdict": "pass", "reason": "...", "concerns": []}
 node tests/e2e/verify.mjs tests/e2e/out --verdicts verdicts.jsonl         # [--only a,b]
 ```
 
-`file` is a picture's file name or its absolute path. `--verdicts` then does all the OpenRouter path does with its answers: `verify.json`, the `verify.html` sheet (fails first, concerns listed), the summary line, exit 1 on a fail. A picture with no line counts as unsure, "no verdict"; a line for a picture that isn't being judged is named and ignored; a line that isn't a verdict stops the run (exit 2).
+`file` is a picture's name or absolute path. A picture with no line counts as unsure; a line that isn't a verdict stops the run with exit 2. Verifying costs money per run, so it belongs in the full lane only; `e2e.yml`'s step is commented out until `OPENROUTER_API_KEY` is a repository secret.
 
-It belongs in the full lane only (nightly, by hand, on tags), never per push: `e2e.yml` has its step, commented out until `OPENROUTER_API_KEY` is a repository secret.
+## A chat without Twitch
 
-## Fixtures
+`chat()` in `lib/fixtures.mjs` is a synthetic two-hour Twitch chat of about 3,000 messages, the same on every run. It has a streamer, `CHANNEL`, named chatters, `CHATTERS`, one with a space in the name, three bursts at 1200, 3600 and 5400 s, subs, gifts and tips as Twitch writes them, `@name` mentions, and the streamer saying "landed". It returns the facts to check against: `by(name)`, `withWord(word)`, `between(from, to)` and `events`.
 
-`lib/fixtures.mjs` makes the test files at test time (`videos()`, `longSpeech()`, `colours()` and others, from ffmpeg and the recorded landing), so the repository holds no video. It makes a chat too.
+The e2e build serves `<data>/e2e-chat.json` as Twitch's comment pages. `serveChat(fixture, failAfter)` writes it, and `fetchChat(app, ctx, id, fixture)` makes a VOD the chat's Twitch VOD, restarts the app and returns it once the chat is whole.
 
-### A chat without Twitch
-
-`chat()` is a synthetic Twitch chat of two hours and about 3,000 messages, the same on every run: a streamer (`CHANNEL`, "Marlowe") and named chatters (`CHATTERS`, one with a space in the name) among thirty "viewerN"s; three bursts at known times (`bursts`: 1200, 3600 and 5400 s, one crowd writing KEKW, one PogChamp, one both) for the minimap's histogram; subs, gifts and tips written as Twitch posts them (the app reads their kind from the text); `@name` mentions; and the streamer saying "landed", as the transcribed landing does. It returns the messages with the facts to check them against (`by(name)`, `withWord(word)`, `between(from, to)`, `events`).
-
-The e2e build serves `<data>/e2e-chat.json` as Twitch's comment pages through the app's own fetch (`src-tauri/src/e2e.rs`). `serveChat(fixture, failAfter)` writes the file, and `fetchChat(app, ctx, id, fixture)` makes VOD `id` (added from a file, transcribed or not) the test Twitch VOD of the chat's channel, restarts the app, which fetches the chat, and returns the new app once it's whole. `chat-search` and `chat-view` use them; `chat-partial` serves a plainer chat that fails partway.
-
-What the seam can't carry: only a message's time, author and text. There are no emote images (Twitch's emote fragments, and 7TV, BTTV and FFZ lists from the network, are not part of it; emote names are plain words), no colours, and no kind or amount other than what the app reads from the text (a sub's "X subscribed at Tier 1.", a gift's "X is gifting 5 Tier 1 Subs", bits as "Cheer500"). And a Twitch VOD has no player offline, so "the part in view" is where the minimap scrolled the transcript.
+The seam carries only a message's time, author and text: no emote images, no colours, and no kind or amount but what the app reads from the text. A Twitch VOD has no player offline, so "the part in view" is where the minimap scrolled the transcript.
 
 ## Timings and profiling
 
-A performance pass starts from measurements, not from reading the code: the scenarios time what a person waits on, and a profiled run says where the time went. Releases are compared by both.
+A performance pass starts from measurements: the scenarios time what a person waits on, and a profiled run says where the time went.
 
 ### Timings
 
-The scenarios time these steps (`ctx.time` and `ctx.timing` in a scenario; the `App` helpers time their own):
+| Step                                                            | Where                                                                                              |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| start to first screen                                           | every scenario; a start that needed a page reload is named "(reloaded)"                            |
+| open to first frame                                             | `player-picture`: opening the VOD and Play, to the app's own player showing a frame                |
+| seek to frame shown                                             | `player-picture`: a seek, to the frame there showing                                               |
+| play to the picture moving                                      | `player-open`: Play on a file opened paused, to the next frame                                     |
+| search, many lines / one line a VOD / none                      | `search-large`: on 60 VODs of two hours' talk, from the words typed to the results drawn           |
+| clip made (2 s) / whole video's clip made (5 s) / edit rendered | the scenarios that cut the 1 to 3 s clip / `export-whole` / `edits`: from the key to the file made |
+| transcribed (the file's name)                                   | every scenario that adds and transcribes a file: the worker's time on it                           |
+| memory at the end                                               | every scenario, on Linux: the app's processes' proportional set size                               |
 
-| Step                                                            | Where                                                                                                                                                       |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| start to first screen                                           | every scenario: from asking for the app to its first screen (a start App.ready had to reload the page for is named "(reloaded)", apart)                     |
-| open to first frame                                             | `player-picture`: opening the VOD and Play, to the app's own player showing a frame (by its `player-time` status)                                           |
-| seek to frame shown                                             | `player-picture`: a seek to the frame there showing                                                                                                         |
-| play to the picture moving                                      | `player-open`: Play on a file opened paused (its first frame already shown), to the app's own player showing the frame after it                             |
-| search, many lines / one line a VOD / none                      | `search-large`: on 60 VODs of two hours' talk (`fixtures/large-library.mjs`), from the words typed to the results drawn                                     |
-| clip made (2 s) / whole video's clip made (5 s) / edit rendered | every scenario that cuts the 1 to 3 s clip (`App.clipOneToThree`: `clip`, `edits`, `drag-out`, …) / `export-whole` / `edits`: from the key to the file made |
-| transcribed (the file's name)                                   | every scenario that adds and transcribes a file (`App.addAndTranscribe`): the worker's time on it, 5 s of speech for `eagle-has-landed.mp3`                 |
-| memory at the end                                               | every scenario (Linux): the app's processes' proportional set size (Pss: shared pages counted once), in `lib/memory.mjs`                                    |
-
-`--repeat N` runs the chosen scenarios N times in turn, and `perf.json` keeps each step's median, least and most. Two runs compare with `node tests/e2e/perf-compare.mjs <before perf.json> <after perf.json>`: a step whose times moved clear of the other run's spread, by more than 10% (`--threshold`), is marked, and one that got worse makes it exit 1. Time the release build, unprofiled: perf slows what it watches, and `perf.json` says when a run was profiled.
+A scenario times a step with `ctx.time` and `ctx.timing`. `--repeat N` runs the chosen scenarios N times, and `perf.json` keeps each step's median, least and most. `node tests/e2e/perf-compare.mjs <before perf.json> <after perf.json>` marks a step that moved clear of the other run's spread by more than 10% (`--threshold`), and exits 1 when one got worse. Time the release build, unprofiled.
 
 ### Budgets
 
-The `perf-*` scenarios time what a person waits on most, each several times in one run, and fail when a median is over its budget in `budgets.json`, saying the numbers (`over budget: seek to frame shown: 131 ms (median of 128, 131, 77, 140, 135), budget 120 ms: OVER`); within budget, each median is logged with its samples and the budget.
+The `perf-*` scenarios take each measure several times and fail when a median is over its budget in `budgets.json`, saying the numbers.
 
-| Scenario       | Steps (each taken five times; the scroll three)                                                                                                                                                                                                                                                                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `perf-player`  | open to first frame (five copies of the colour video opened in turn, Play, to the app's own player's first frame); a click on the timeline to the bar's time changing (`seek: time shown`) and to the frame there (`seek to frame shown`)                                                                                          |
-| `perf-library` | on search-large's 60 VODs (108,000 lines): searches typed, from the search sent to its results drawn (the box's 120 ms wait for more typing left out); one VOD's transcript (1,800 lines) scrolled by script, 40 px a frame for 180 frames, every gap between animation frames taken: the 95th percentile (budgeted) and the worst |
-| `perf-page`    | Settings opened from its gear, to the frame it's drawn in; a VOD with twenty clips opened, to the frame its clip bar has all twenty pills                                                                                                                                                                                          |
+| Scenario       | Steps, each taken five times; the scroll three                                                                                   |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `perf-player`  | open to first frame, five copies of the colour video in turn; a timeline click to the bar's time changing and to the frame there |
+| `perf-library` | on 60 VODs: searches typed, to their results drawn; one transcript of 1,800 lines scrolled, its 95th percentile frame gap        |
+| `perf-page`    | Settings opened, to the frame it's drawn in; a VOD with twenty clips opened, to all twenty pills drawn                           |
 
-`budgets.json` has an entry per platform (`linux`, `darwin`, `win32`; only Linux's so far), naming the computer and build they were set on, and per scenario and step the budget, what was measured and where from. A budget is 1.5 times the slowest of three runs' medians, rounded up to 10 ms, and never under that median plus two frames (34 ms). They were set on a release build; a debug build with `--features e2e` is within them too. `E2E_BUDGET_SCALE` multiplies every budget, for a computer slower than the one they were set on. Each takes under half a minute here (perf-library 28 s, perf-page 8 s, perf-player 8 s on the release build).
+`budgets.json` has an entry per platform, `linux`, `darwin` and `win32`, only Linux's so far, with the computer and build they were set on. A budget is 1.5 times the slowest of three runs' medians, rounded up to 10 ms, and at least that median plus 34 ms. A debug build with `--features e2e` is within them too. Run them serially: under `--parallel` the numbers are logged, not judged. `perf-compare.mjs <perf.json> --budgets tests/e2e/budgets.json` judges a whole run's file the same way, with `--scale` for a slower computer.
 
-Run them serially, not with `--parallel`: apps side by side skew the times, so under `--parallel` the numbers are logged and not judged. A whole run's `perf.json` is judged the same way with `node tests/e2e/perf-compare.mjs <perf.json> --budgets tests/e2e/budgets.json` (`--scale`, or `E2E_BUDGET_SCALE`), also after a comparison of two runs (`perf-compare.mjs <before> <after> --budgets …`, the after run judged); it exits 1 on a step over budget.
+### Profiling
 
-### Profiling (Linux)
+On Linux, `run.mjs --profile <dir>` samples each scenario's app with perf, and every process it starts, through `lib/profile.sh`. Into `<dir>/<scenario>/` go perf's recordings, `<scenario>-<n>.data`, one per start of the app; `folded.txt`, every stack for a flame graph; `top.txt`; and `page.json`, the page's own measures.
 
-`run.mjs --profile <dir>` samples each scenario's app with perf, and every process it starts (the web view's, the worker, ffmpeg), for the whole scenario. The driver starts `lib/profile.sh` in the app's place, which starts perf in a session of its own attached to itself and then becomes the app, so WebKitWebDriver's kill at the end of a session reaches the app and perf finishes its file. Into `<dir>/<scenario>/`: perf's recordings (`<scenario>-<n>.data`, one for each start of the app; `perf report -i` reads them), `folded.txt` (every stack, `process;thread;outermost;…;innermost count`, for a flame graph) and `top.txt`; the page's own measures go in `page.json` (in `E2E_OUT/perf/` without `--profile`).
+- **The profiling build** has our code's names: `scripts/build-profiling.sh`, after `prepare-sidecars.sh release`, makes `target/profiling/vodscribe` with the worker beside it, run directly: `node tests/e2e/run.mjs <target>/profiling/vodscribe --only player-picture --profile out/profile`.
+- **perf and symbols**: `tests/e2e/profile-setup.sh`, on Debian with sudo, installs perf, binutils, libc's debug symbols, and the debug symbols of the installed WebKitGTK from snapshot.debian.org; perf needs `kernel.perf_event_paranoid` at 1 or less, and a profile is read where it was recorded.
+- **In a cell**: `distros.mjs --profile` installs perf there and lets it sample, into the cell's `perf/`; not in Ubuntu's cells, whose perf must match the host's kernel.
 
-What it needs:
+`top.txt` puts each sample down to an owner by its innermost frame: **ours**, our crates; **crates**, the Rust libraries we link; **engine**, WebKit and its JavaScript; **graphics**, wgpu, Mesa and software rendering; **media**, ffmpeg; **transcription**, the worker; **toolkit**, GTK, GLib and fonts; **system**, the kernel and libc. It shows the share by process and thread, by owner, our functions by their own time with their callers, everyone's functions, each timed step's samples, and the page's slow input events and animation frame gaps over 50 ms.
 
-- **The profiling build**, for our own code's names: `scripts/build-profiling.sh` (after `scripts/prepare-sidecars.sh release`) builds the `profiling` cargo profile, release code with its symbols and line tables and frame pointers, and the page unminified; the binary is `target/profiling/vodscribe` (under `CARGO_TARGET_DIR`), with the worker beside it, and is run directly: `node tests/e2e/run.mjs <target>/profiling/vodscribe --only player-picture --profile out/profile`. A packaged build has no symbols of ours.
-- **perf and symbols**, where the run is: `tests/e2e/profile-setup.sh` (Debian, with sudo) installs perf, binutils (whose `c++filt` names Rust's symbols) and libc's debug symbols, and fetches WebKitGTK's and JavaScriptCore's debug symbols for exactly the version installed from snapshot.debian.org (about 200 MB), without which the engine's functions show as addresses. A profile is read where it was recorded (`perf script` finds the symbols there). `kernel.perf_event_paranoid` must be 1 or less.
-- In a distribution cell: `distros.mjs --profile` installs perf in the cell and lets it sample (`--security-opt seccomp=unconfined`: podman's default filter refuses perf), into the cell's `perf/`. Not Ubuntu's cells, whose perf must match the host's kernel.
-
-### Reading top.txt
-
-`top.txt` puts each sample down to an owner by its innermost frame: **ours** (our crates, `vodscribe_*`), **crates** (the Rust libraries the app links in), **engine** (WebKit, its JavaScript, and everything else in the web view's processes), **graphics** (wgpu, Mesa, software rendering), **media** (ffmpeg), **transcription** (the worker, its speech model's runtime included), **toolkit** (GTK, GLib, fonts), **system** (the kernel, libc). Its sections: the share by process and thread; by owner, and how much had our code anywhere on the stack; our functions by their own time, with who called them; everyone's functions; then, for each timed step, the samples taken during it, by owner and function; and the page's slow input events (16 ms or more, by the Event Timing API) and gaps between animation frames over 50 ms (WebKit has no long tasks API).
-
-A **finding** is one of: time in our code that needn't be spent; engine time our page causes (style, layout or script while nothing changed on screen); work done every frame that could be done when something changes; the same work done twice; work on the main thread that could be elsewhere; or a timing worse than the last release's beyond its spread. It names the scenario, the step, the stack and its share. It is **confirmed** by the change and a before-and-after on the same scenario, machine and build (`--repeat 3`, `perf-compare.mjs`), with a profile showing the samples gone; until then it's a note.
+A **finding** is time in our code that needn't be spent, engine time our page causes, work done every frame that could be done on change, the same work twice, main-thread work that could be elsewhere, or a timing worse than the last release's. It names the scenario, step, stack and share. It is **confirmed** by a before-and-after on the same scenario, machine and build, `--repeat 3` and `perf-compare.mjs`, with a profile showing the samples gone.
 
 ### Every release
 
-On the computer and box the last release was measured on (a Debian box whose WebKit matches the developer's desktop):
+On the computer and container the last release was measured on:
 
 1. `scripts/build-profiling.sh`, and the release build.
-2. Profiled once, the profiling build: `--only player-picture,player-seek,transcribe-search-play,search,search-large,clip,edits,export-whole --profile <dir>`.
-3. Timed three times, the release build: the same scenarios, `--repeat 3`.
-4. `perf-compare.mjs` against the last release's `perf.json`, and the results kept with the release's.
+2. The profiling build, profiled once: `--only player-picture,player-seek,transcribe-search-play,search,search-large,clip,edits,export-whole --profile <dir>`.
+3. The release build, timed: the same scenarios, `--repeat 3`.
+4. `perf-compare.mjs` against the last release's `perf.json`, the results kept with the release's.
 
-The rest (video-files, recovery, upgrade, the site scenarios, a DWARF profile) on demand. Profiled at 999 samples a second with frame pointers, a scenario has run no slower so far, and its recordings take about a megabyte; with DWARF, about 40 MB for ten seconds of it.
+A scenario profiled at 999 samples a second with frame pointers has run no slower so far, and takes about a megabyte; with DWARF, about 40 MB for ten seconds.
 
 ### What it doesn't measure
 
-- **The GPU.** Headless, wgpu draws with lavapipe and WebKit composites with llvmpipe, on the CPU: graphics time in these profiles is CPU time a GPU would take. Profile with `distros.mjs --gpu` before calling graphics time a finding.
-- **The Windows and macOS runners.** Timings and memory need nothing of Linux but `memory.mjs`; profiling there would wrap the bridge driver's start in the platform's profiler (`xctrace record --launch` on macOS, `wpr` on Windows).
-- **The sites' players.** Their frames are theirs; only the app around them is measured.
-- **Our page's JavaScript by function name.** perf sees JavaScriptCore's compiled code as `[JIT code]`. JavaScriptCore can describe it for perf (`JSC_useJITDump=1`), but WebKitGTK 2.54 (Debian) then aborts as the app starts; not looked into yet.
+- **The GPU.** Headless, wgpu and WebKit draw on the CPU; profile with `distros.mjs --gpu` before calling graphics time a finding.
+- **The Windows machine and the Mac.** Timings and memory work there; profiling would need the platform's profiler, `wpr` or `xctrace`.
+- **The sites' players.** Only the app around them is measured.
+- **Our page's JavaScript by name.** perf sees it as `[JIT code]`, and `JSC_useJITDump=1` makes WebKitGTK 2.54 abort at start.
 
 ## Known limits
 
-- `distros.mjs` is Linux only: it needs podman and Linux containers.
-- ubuntu-22.04 needs a .deb built on Ubuntu 22.04, such as CI's artifact. One built on a newer system links a newer glibc, and the cell stops at "missing libraries".
-- `--gpu nvidia` needs nvidia-container-toolkit, with a CDI spec generated for podman (`nvidia-ctk cdi generate`).
-- `--gpu dri` needs a podman whose runtime is crun, to keep the user's video and render groups in the container. On a GPU Mesa has no driver for, it draws with Mesa's software fallback.
-- Under `--env weston` there's no seat, so the window never has the keyboard and the operating system's clicks aren't available; the scenarios and steps that need them are skipped there.
-- The drag-out scenario's Alt-drag step is skipped under window managers that move windows on Alt-drag.
+- `distros.mjs` is Linux only.
+- ubuntu-22.04 needs a .deb built on Ubuntu 22.04, such as CI's; a newer one stops at "missing libraries".
+- `--gpu nvidia` needs nvidia-container-toolkit and a CDI spec, `nvidia-ctk cdi generate`.
+- `--gpu dri` needs podman with crun; on a GPU without a Mesa driver it draws in software.
+- Under `--env weston` the window never has the keyboard and the OS's clicks aren't available, so the scenarios that need them skip.
+- drag-out's Alt-drag step skips under window managers that move windows on Alt-drag.
