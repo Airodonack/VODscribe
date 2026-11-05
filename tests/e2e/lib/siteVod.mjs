@@ -13,7 +13,7 @@ import { chmodSync, existsSync, renameSync, rmSync, writeFileSync } from "node:f
 import path from "node:path";
 
 import { MINUTE, until } from "./app.mjs";
-import { dataDirs } from "./data.mjs";
+import { dataDirs, putBackYtDlp } from "./data.mjs";
 import * as os from "./os.mjs";
 
 /** A yt-dlp answering `-J <link>` as YouTube's (or Dailymotion's) video of the link's last part. */
@@ -50,6 +50,9 @@ export async function withSiteVods(ctx, fn) {
   const bin = path.join(dataDirs().at(-1), "bin");
   const ytDlp = path.join(bin, "yt-dlp");
   const real = path.join(bin, "yt-dlp.e2e-real");
+  // A stand-in a killed run left is no real one to move aside and put back after.
+  const putBack = putBackYtDlp(bin);
+  if (putBack) ctx.log(putBack);
   // Moved aside, not written over: the tools in bin may be links to a seed's.
   if (existsSync(ytDlp)) renameSync(ytDlp, real);
   writeFileSync(ytDlp, STAND_IN);

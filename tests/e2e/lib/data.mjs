@@ -7,7 +7,18 @@
 // somewhere else, or run on a test machine.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -127,6 +138,44 @@ export function makeSiteVod(id, platform, platformId, fields = {}) {
     if (done.changes !== 1) throw new Error(`no VOD ${id} in the library to make ${platform}'s`);
   } finally {
     db.close();
+  }
+}
+
+/** The line every yt-dlp stand-in of the tests carries (siteVod.mjs, scenarios/download-play.mjs). */
+export const YT_DLP_STAND_IN = "stand-in for yt-dlp";
+
+/**
+ * Puts the real yt-dlp back in `bin` (the data folder's) where a run that
+ * died left a stand-in there: the stand-ins are put back in a `finally`
+ * that a killed run never reaches, and one left in place answers every
+ * site's lookup in every run after (one sat on a runner for days). The real
+ * one moved aside (yt-dlp.e2e-real) comes back; with none, the stand-in is
+ * removed, and setup downloads yt-dlp again. Says what it did, or null.
+ */
+export function putBackYtDlp(bin = path.join(dataDirs().at(-1), "bin")) {
+  const ytDlp = path.join(bin, "yt-dlp");
+  const real = path.join(bin, "yt-dlp.e2e-real");
+  if (existsSync(ytDlp) && !isStandIn(ytDlp)) return null;
+  if (existsSync(real)) {
+    renameSync(real, ytDlp);
+    return `put the real yt-dlp back over a test's stand-in in ${bin}`;
+  }
+  if (!existsSync(ytDlp)) return null;
+  rmSync(ytDlp, { force: true });
+  return `removed a test's yt-dlp stand-in from ${bin}: setup downloads yt-dlp again`;
+}
+
+/** Whether `file` is one of the tests' stand-ins: its first lines, not the whole (the real one is tens of MB). */
+function isStandIn(file) {
+  const fd = openSync(file, "r");
+  try {
+    const head = Buffer.alloc(512);
+    return head
+      .subarray(0, readSync(fd, head, 0, head.length, 0))
+      .toString("latin1")
+      .includes(YT_DLP_STAND_IN);
+  } finally {
+    closeSync(fd);
   }
 }
 

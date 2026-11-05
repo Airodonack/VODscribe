@@ -16,7 +16,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { dataDirs, makeSiteVod } from "../lib/data.mjs";
+import { dataDirs, makeSiteVod, putBackYtDlp } from "../lib/data.mjs";
 import { minute } from "../lib/fixtures.mjs";
 
 /** How many times its speed the stand-in reads the file: a minute in about 15 s. */
@@ -109,6 +109,9 @@ export default {
     const bin = path.join(dataDirs().at(-1), "bin");
     const ytDlp = path.join(bin, "yt-dlp");
     const real = path.join(bin, "yt-dlp.e2e-real");
+    // A stand-in a killed run left is no real one to move aside and put back after.
+    const putBack = putBackYtDlp(bin);
+    if (putBack) ctx.log(putBack);
     // Moved aside, not written over: the tools in bin may be links to a seed's.
     if (existsSync(ytDlp)) renameSync(ytDlp, real);
     // In place before the app starts: without one, setup would download yt-dlp.

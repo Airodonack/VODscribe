@@ -725,7 +725,14 @@ exec '${real}' "$@"
     } finally {
       taker?.close();
       if (entry) rmSync(entry, { force: true });
-      nautilus?.close();
+      // Awaited: on macOS it brings the app back to the front, and a press
+      // left in flight after the app is quit ends the whole run. Its own
+      // failure is told, not put in place of the step's.
+      try {
+        await nautilus?.close();
+      } catch (e) {
+        ctx.log(`the file manager not closed: ${e.message}`);
+      }
       rmSync(ffmpeg, { force: true });
       if (existsSync(aside)) renameSync(aside, ffmpeg);
     }

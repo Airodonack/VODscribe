@@ -1,14 +1,15 @@
 // The library helpers scenarios share (data.mjs): where the library is and
-// where clips go, and a file's VOD made a site's as if added by its link.
+// where clips go, a file's VOD made a site's as if added by its link, and
+// the real yt-dlp put back over a stand-in a killed run left.
 
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 
-import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "./data.mjs";
+import { clipsDir, dataDirs, libraryPath, makeSiteVod, putBackYtDlp, YT_DLP_STAND_IN } from "./data.mjs";
 
 const home = mkdtempSync(path.join(tmpdir(), "vodscribe-data-test-"));
 const saved = { ...process.env };
@@ -103,4 +104,39 @@ test("clips go to the Videos folder's VODscribe, as user-dirs.dirs names it", li
   // Pointed at the home folder: none, as xdg-user-dirs has it.
   writeFileSync(dirs, 'XDG_VIDEOS_DIR="$HOME/"\n');
   assert.equal(clipsDir(), path.join(home, "app.vodscribe", "clips"));
+});
+
+/** A bin folder of its own holding `files` (name: contents). */
+const binWith = (files) => {
+  const bin = mkdtempSync(path.join(home, "bin-"));
+  for (const [name, text] of Object.entries(files)) writeFileSync(path.join(bin, name), text);
+  return bin;
+};
+const standIn = `#!/bin/sh\n# The e2e tests' ${YT_DLP_STAND_IN} (tests/e2e/lib/siteVod.mjs).\nexit 1\n`;
+
+test("a stand-in left over the real yt-dlp is replaced by the real one", () => {
+  const bin = binWith({ "yt-dlp": standIn, "yt-dlp.e2e-real": "the real one" });
+  assert.match(putBackYtDlp(bin), /put the real yt-dlp back/);
+  assert.equal(readFileSync(path.join(bin, "yt-dlp"), "utf8"), "the real one");
+  assert.equal(existsSync(path.join(bin, "yt-dlp.e2e-real")), false);
+});
+
+test("a stand-in with no real one aside is removed, for setup to download it", () => {
+  const bin = binWith({ "yt-dlp": standIn });
+  assert.match(putBackYtDlp(bin), /removed a test's yt-dlp stand-in/);
+  assert.equal(existsSync(path.join(bin, "yt-dlp")), false);
+});
+
+test("the real one moved aside, with nothing in its place, comes back", () => {
+  const bin = binWith({ "yt-dlp.e2e-real": "the real one" });
+  assert.match(putBackYtDlp(bin), /put the real yt-dlp back/);
+  assert.equal(readFileSync(path.join(bin, "yt-dlp"), "utf8"), "the real one");
+});
+
+test("the real yt-dlp, or none, is left as it is", () => {
+  const real = binWith({ "yt-dlp": "#!/usr/bin/env python3\n# yt-dlp\n" });
+  assert.equal(putBackYtDlp(real), null);
+  assert.equal(readFileSync(path.join(real, "yt-dlp"), "utf8"), "#!/usr/bin/env python3\n# yt-dlp\n");
+  assert.equal(putBackYtDlp(binWith({})), null);
+  assert.equal(putBackYtDlp(path.join(home, "no-bin")), null);
 });
