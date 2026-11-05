@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
-use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod};
+use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
 use vodscribe_core::search::AuthorSuggestion;
@@ -284,7 +284,7 @@ async fn erase_in_parts(
         let state = handle.state::<AppState>();
         // Letting go between parts, so what's waiting gets its turn.
         while part(&state.db.lock().unwrap())? > 0 {
-            std::thread::yield_now();
+            give_way();
         }
         Ok(())
     })
@@ -557,7 +557,7 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
-        std::thread::yield_now();
+        give_way();
     }
     // Its storyboard's ffmpeg lets go of its files first (on Windows a file
     // open elsewhere can't be deleted): it may have been at work on it as

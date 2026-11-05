@@ -1174,6 +1174,16 @@ fn struck_to_flicks(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Between the parts of a long job on the library (a removed VOD's chat
+/// erased a thousand messages at a time), lets a thread waiting for the
+/// library's lock take it. A yield doesn't: the lock isn't fair, and the
+/// job takes it back before the waiting thread has woken, so a quit or a
+/// command could wait out the whole job (an erasure held the quit for over
+/// three seconds, 2026-11-05). A millisecond is that thread's time to wake.
+pub fn give_way() {
+    std::thread::sleep(std::time::Duration::from_millis(1));
+}
+
 pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -2198,7 +2208,7 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
         // A part at a time, letting go of the library between them, so a busy
         // chat fetched again doesn't hold everything else up.
         while self.db.lock().unwrap().clear_some_chat(self.vod_id, 1000)? > 0 {
-            std::thread::yield_now();
+            give_way();
         }
         self.starts.clear();
         let db = self.db.lock().unwrap();
@@ -2232,6 +2242,55 @@ impl crate::chat::ChatStore for LibraryChat<'_> {
 mod tests {
     use super::*;
     use crate::transcript::{Segment, Segmenter};
+
+    /// A job a part at a time (an erasure) lets a thread waiting for the
+    /// library in after the part it's on, not after the whole job.
+    #[test]
+    fn a_job_in_parts_lets_a_waiting_thread_in() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Mutex};
+        const MESSAGES: usize = 20_000;
+        let dir = crate::TempDir::new("give-way");
+        let db = Db::open(&dir.join("library.db")).unwrap();
+        let vod = db.add_vod(&crate::edits::tests::info("x")).unwrap().0.id;
+        let db = Arc::new(Mutex::new(db));
+        for round in 0..3 {
+            {
+                let db = db.lock().unwrap();
+                db.conn.execute_batch("BEGIN").unwrap();
+                for i in 0..MESSAGES {
+                    db.conn
+                        .execute(
+                            "INSERT INTO chat (vod_id, time, author, text, parts) VALUES (?1, ?2, 'viewer', ?3, '[]')",
+                            params![vod, i as f64, format!("message {i}")],
+                        )
+                        .unwrap();
+                }
+                db.conn.execute_batch("COMMIT").unwrap();
+            }
+            let begun = Arc::new(AtomicBool::new(false));
+            let job = {
+                let (db, begun) = (db.clone(), begun.clone());
+                std::thread::spawn(move || {
+                    loop {
+                        let held = db.lock().unwrap();
+                        begun.store(true, Ordering::SeqCst);
+                        if held.delete_some_of(vod, 1000).unwrap() == 0 {
+                            break;
+                        }
+                        drop(held);
+                        give_way();
+                    }
+                })
+            };
+            while !begun.load(Ordering::SeqCst) {
+                std::thread::yield_now();
+            }
+            let left = db.lock().unwrap().erase_left(vod).unwrap();
+            job.join().unwrap();
+            assert!(left > MESSAGES / 2, "round {round}: let in with {left} of {MESSAGES} left");
+        }
+    }
 
     #[test]
     fn marks_are_put_back_as_they_were() {

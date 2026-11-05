@@ -8,6 +8,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Clips come in more formats. Settings › Storage adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
+- Fixes:
+  - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
 
 ## 0.7.1 — 2026-11-05
 
