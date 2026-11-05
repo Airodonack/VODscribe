@@ -113,8 +113,10 @@ mod windows {
     use tauri::{AppHandle, Emitter, Manager};
 
     use super::{Receiving, file_name, free_name, part_of};
+    use dragndrop_target::{Destination, Item};
+
     use crate::AppState;
-    use crate::drop_target::{self, Event, Incoming};
+    use crate::drop_target::{self, Event};
 
     /// How often the jobs' list hears how far a file is.
     const TELL_EVERY: Duration = Duration::from_millis(250);
@@ -200,13 +202,13 @@ mod windows {
             file_name(name).is_some()
         }
 
-        fn incoming(&self, name: &str, size: Option<u64>) -> Option<Box<dyn Incoming>> {
+        fn incoming(&self, item: &Item) -> Option<Destination> {
             // (Not while the library can't be opened: the recovery screen.)
             self.app.try_state::<AppState>()?;
-            match Sink::start(&self.app, name, size) {
-                Ok(sink) => Some(Box::new(sink)),
+            match Sink::start(&self.app, item.name(), item.size()) {
+                Ok(sink) => Some(Destination::sink(sink)),
                 Err(e) => {
-                    eprintln!("{name} couldn't be received: {e:#}");
+                    eprintln!("{} couldn't be received: {e:#}", item.name());
                     None
                 }
             }
@@ -261,7 +263,7 @@ mod windows {
         }
     }
 
-    impl Incoming for Sink {
+    impl dragndrop_target::Sink for Sink {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
             if self.job.canceled.load(Ordering::SeqCst) {
                 return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Canceled."));
@@ -276,11 +278,17 @@ mod windows {
             Ok(())
         }
 
-        fn done(mut self: Box<Self>, result: Result<(), String>) {
+        fn finish(mut self: Box<Self>, result: Result<u64, dragndrop_target::Error>) {
+            trace(&format!(
+                "{}: {}",
+                self.job.name,
+                result.as_ref().map(|n| format!("{n} bytes read")).unwrap_or_else(|e| e.to_string())
+            ));
             let file = self.file.take();
             let part = part_of(&self.to);
             let whole = result
-                .and_then(|()| match self.job.canceled.load(Ordering::SeqCst) {
+                .map_err(|e| e.to_string())
+                .and_then(|_| match self.job.canceled.load(Ordering::SeqCst) {
                     true => Err("Canceled.".to_string()),
                     false => Ok(()),
                 })
@@ -311,7 +319,7 @@ mod windows {
     }
 
     impl Drop for Sink {
-        /// Never done (no thread to read on): what was written goes.
+        /// Never finished (dropped unread): what was written goes.
         fn drop(&mut self) {
             if self.file.take().is_some() {
                 let _ = std::fs::remove_file(part_of(&self.to));

@@ -1542,6 +1542,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dragndrop-target"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "dsa"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6622,6 +6629,7 @@ version = "0.7.2+dev"
 dependencies = [
  "anyhow",
  "block2",
+ "dragndrop-target",
  "getrandom 0.4.3",
  "glib",
  "gtk",

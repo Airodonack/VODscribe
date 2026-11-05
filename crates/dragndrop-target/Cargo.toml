@@ -1,0 +1,26 @@
+[package]
+name = "dragndrop-target"
+version = "0.1.0"
+description = "Read what a drag dropped on your window offers: plain paths, and virtual files with no path yet"
+authors = ["Airodonack"]
+license = "MIT OR Apache-2.0"
+edition = "2024"
+# No newer than wry's.
+rust-version = "1.85"
+keywords = ["drag-and-drop", "drop", "virtual-file", "file-promise"]
+categories = ["gui", "os"]
+# Published once it works on all three systems.
+publish = false
+
+# The windows crate's version and features as wry builds them.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
+  "Win32_UI_Shell",
+] }

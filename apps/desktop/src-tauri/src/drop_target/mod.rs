@@ -1,12 +1,14 @@
 //! Files dragged onto the window from other apps, taken in by the app's own
 //! drop target. Windows only (`windows`: OLE's IDropTarget), where it also
 //! receives virtual files: files with no path to give (a video inside a zip
-//! folder in Explorer), read from the app they come from. The mirror of
-//! `drag_source`.
+//! folder in Explorer), read from the app they come from by
+//! `dragndrop_target`. The mirror of `drag_source`.
 //!
-//! Nothing here knows the app: it's given the window's raw handle and a
-//! `Target`, which hears the drag as it goes (`Event`), says which virtual
-//! files it takes, and gives where each one's bytes go (`Incoming`).
+//! This part owns the window's side (registering, the drag's events, its
+//! answer); what a drag offers and its files' bytes are the crate's. Nothing
+//! here knows the app: it's given the window's raw handle and a `Target`,
+//! which hears the drag as it goes (`Event`), says which virtual files it
+//! takes, and gives where each one's bytes go.
 
 use std::path::PathBuf;
 
@@ -45,17 +47,7 @@ pub(crate) trait Target {
     /// Whether a virtual file named `name` is one to receive: a drag with
     /// none it takes (and no paths) is refused as it comes over.
     fn takes(&self, name: &str) -> bool;
-    /// A virtual file named `name` (`size` bytes, if the app it comes from
-    /// says) was let go on the window: where its bytes go, or None to leave
-    /// it.
-    fn incoming(&self, name: &str, size: Option<u64>) -> Option<Box<dyn Incoming>>;
-}
-
-/// One virtual file being received, read from the app it comes from on a
-/// thread of its own (or the window's, if that app can't wait).
-pub(crate) trait Incoming: Send {
-    /// The next of its bytes. An error stops it: canceled, or not written.
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<()>;
-    /// It's all here (Ok), or it never will be, and why.
-    fn done(self: Box<Self>, result: Result<(), String>);
+    /// A virtual file `item` was let go on the window: where its bytes go, or
+    /// None to leave it.
+    fn incoming(&self, item: &dragndrop_target::Item) -> Option<dragndrop_target::Destination>;
 }
