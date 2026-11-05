@@ -18,7 +18,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
-use vodscribe_core::db::{Db, MarkState};
+use vodscribe_core::db::{ClipStatus, Db, MarkState};
 use vodscribe_core::edits::EditState;
 
 use crate::{AppState, CmdResult, err};
@@ -305,25 +305,31 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
             if was != state {
                 db.restore_edit(id, state)?;
             }
-            let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| {
-                db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })
-            };
             let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
-            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake, add)?;
+            restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake_clip, add)?;
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
                 db.restore_marks(id, marks)?;
             }
-            let remake = |db: &Db, clip: i64, want: &BarClip<EditState>| {
-                db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })
-            };
             let add = |db: &Db, want: &BarClip<EditState>| {
                 db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
             };
-            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake, add)?;
+            restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake_clip, add)?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Clip `clip` of a clip bar made of what `want` holds and titled as it:
+/// waiting to be made again unless its file is of that already. The cutter
+/// makes only a clip that isn't ready (`clips::cut`), so one left ready kept
+/// the file of what the undone change made it.
+fn remake_clip(db: &Db, clip: i64, want: &BarClip<EditState>) -> Result<()> {
+    db.restore_edit(clip, &EditState { title: want.title.clone(), ..want.made.clone() })?;
+    if db.edit(clip)?.is_some_and(|e| !e.current) {
+        db.set_edit_render(clip, ClipStatus::Waiting, None, None, None)?;
     }
     Ok(())
 }
@@ -743,6 +749,47 @@ mod tests {
         assert_eq!(on_bar(&db), std::slice::from_ref(&was), "the paste undone");
         step_library(&history, &db, doc, false);
         assert_eq!(on_bar(&db), [was.clone(), was], "redone, the copy as it was");
+    }
+
+    /// Clip `clip` of `doc`'s clip bar, made of `made`, resized and its
+    /// file made of that: undone, it's back to `made` and waits to be made
+    /// again. The cutter makes only a clip that isn't ready (`clips::cut`),
+    /// so one left ready would keep the resized file.
+    fn undone_resize_is_made_again(db: &Db, doc: Doc, clip: i64, made: (f64, f64)) {
+        let history = History::default();
+        let ready = |(start, end): (f64, f64)| {
+            assert!(db.set_clip_file(clip, start, end, ClipStatus::Ready, Some("/clips/x.mp4"), None).unwrap());
+            db.set_made_now(clip).unwrap();
+        };
+        ready(made);
+        let resized = (made.0, made.0 + 1.0);
+        history.change(db, doc, "Clip resized", |db| db.set_clip_range(clip, resized.0, resized.1)).unwrap();
+        ready(resized);
+        step_library(&history, db, doc, true);
+        let now = db.clip(clip).unwrap().unwrap();
+        assert_eq!((now.start, now.end), made, "back as it was");
+        assert_eq!(now.status, ClipStatus::Waiting, "its file, of the resize, to be made again");
+        // Redone, the same.
+        step_library(&history, db, doc, false);
+        let now = db.clip(clip).unwrap().unwrap();
+        assert_eq!((now.start, now.end), resized, "resized again");
+        assert_eq!(now.status, ClipStatus::Waiting, "its file, of the undo, to be made again");
+    }
+
+    #[test]
+    fn a_resize_undone_on_a_vod_bar_is_made_again() {
+        let (db, vod) = library();
+        let clip = db.add_clip(vod, 1.0, 3.0, "a", true).unwrap().id;
+        undone_resize_is_made_again(&db, Doc::Vod(vod), clip, (1.0, 3.0));
+    }
+
+    #[test]
+    fn a_resize_undone_on_an_edits_bar_is_made_again() {
+        let (db, vod) = library();
+        let edit = db.add_edit("e").unwrap().id;
+        db.add_piece(edit, vod, (0.0, 30.0), "a", None).unwrap();
+        let clip = db.add_edit_clip(edit, 5.0, 9.0, "one", true).unwrap().id;
+        undone_resize_is_made_again(&db, Doc::Edit(edit), clip, (5.0, 9.0));
     }
 
     #[test]

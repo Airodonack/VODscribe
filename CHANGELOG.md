@@ -46,6 +46,7 @@ The clips and edits being made now show in a list at the foot of the library, wh
   - Splitting at a join leaves no sliver. In an edit, Split (B) on a selection that ends where two pieces meet left a sliver of the earlier piece cut off before the join.
   - Clips can start with another clip. A clip bar failed to show when one of its clips started with a clip, edit or highlight dropped into it, such an edit couldn't be put on a clip bar, and VODscribe could fail to start if it quit while that clip was being made.
   - Undo brings a clip back whole. Editor changes to a clip on a VOD's clip bar, a line struck or a clip dropped in, survive Delete then Undo, and a paste's Undo then Redo.
+  - Undoing a resize makes the clip again. On an edit's clip bar, Undo or Redo of a clip's new length left its video as it was.
   - The download note survives a drag. A site's clip pulled out of the window before you've answered the note asks there and starts no drag; Download clip puts it on the clip bar to drag out once it's made.
   - The transcript keeps its scroll position. Switching the transcript's heading to Highlights (or Chapters) and back started the transcript again at the top.
   - The Transcribe menu lists each stretch once. Near a VOD's end, lengths that would run past the end are left out, as To the end covers them.
