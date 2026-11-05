@@ -267,6 +267,12 @@
 
   // What the controls show, read from the player every frame (playerReading.svelte.ts).
   const reading = new PlayerReading(start);
+  // The sound and speed it'll start with, shown from the first paint, not
+  // the first frame, which may come late (a busy machine, a window in the
+  // back): till then the bar showed full volume and 1×.
+  $effect.pre(() => {
+    if (!player && controls) reading.readSound(controls);
+  });
   // Whether the player draws the captions itself, over its picture: known
   // before it opens (and then read from it), so under a site's player the
   // strip's room is kept from the start, and nothing below moves on Play.
