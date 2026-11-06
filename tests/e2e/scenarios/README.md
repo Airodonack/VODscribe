@@ -51,6 +51,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `player-seek.mjs`: a far seek while playing lands and stays.
 - `quit-mid-job.mjs`: quitting mid-transcription leaves nothing running, and it carries on at the next start.
 - `readd-erasing.mjs`: a VOD removed and added again while it's being erased.
+- `readd-stuck.mjs`: a VOD removed and added again while its work won't stop.
 - `recovery.mjs`: a library that won't open starts the recovery screen.
 - `reload.mjs`: a page reload brings back what was open.
 - `remembered.mjs`: the small choices the page remembers outlast a restart.

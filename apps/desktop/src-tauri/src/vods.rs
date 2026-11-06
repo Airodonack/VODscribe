@@ -189,7 +189,9 @@ fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vo
 /// One removed and not yet erased, or being erased (nothing else uses it),
 /// is erased whole first, the sweep's job taken over (`Sweeper::hand_over`):
 /// added back, it's added anew. Otherwise the add would take its row from
-/// under the sweep, which would stop there and leave its files.
+/// under the sweep, which would stop there and leave its files. One whose
+/// work doesn't stop in time (`WORK_STOPPING`) is set aside instead
+/// (`Db::set_aside`), its files erased once it has (`Sweeper::left`).
 fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) -> anyhow::Result<(Vod, bool)> {
     let state = app.state::<AppState>();
     let erasing = {
@@ -204,13 +206,26 @@ fn add_to_library(app: &AppHandle, info: &fetch::VodInfo, source: Option<&str>) 
         erase_unused(app, Sweep { vod: id, kept: false }, &AtomicBool::new(false))?;
     }
     let db = state.db.lock().unwrap();
-    db.atomically(|db| {
+    let mut left = None;
+    let added = db.atomically(|db| {
+        if let Some(id) = erasing
+            && db.vod(id)?.is_some()
+            && db.uses(id)? <= 0
+        {
+            db.set_aside(id)?;
+            left = Some(id);
+        }
         let (vod, created) = db.add_vod(info)?;
         if created && let Some(source) = source {
             db.set_source_path(vod.id, source)?;
         }
         Ok((db.vod(vod.id)?.unwrap_or(vod), created))
-    })
+    })?;
+    drop(db);
+    if let Some(id) = left {
+        state.sweeper.left(id);
+    }
+    Ok(added)
 }
 
 /// Opens a local VOD's file in the system's video player, for formats the
@@ -498,6 +513,12 @@ impl Sweeper {
     /// VOD `id` was removed and nothing uses it: it's erased.
     pub(crate) fn removed(&self, id: i64) {
         self.jobs.push_new(Sweep { vod: id, kept: true }, |j| j.vod == id);
+    }
+
+    /// VOD `id` was set aside by its add, its work still stopping
+    /// (`add_to_library`): it's erased, row and all, once that's stopped.
+    pub(crate) fn left(&self, id: i64) {
+        self.jobs.push_new(Sweep { vod: id, kept: false }, |j| j.vod == id);
     }
 
     /// Stops erasing VOD `id`, or takes it out of the queue: what's left of

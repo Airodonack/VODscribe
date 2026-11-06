@@ -96,6 +96,7 @@ permissions = [
   "allow-player-decoders-started",
   "allow-e2e-player-state",
   "allow-e2e-set-inner-size",
+  "allow-e2e-work-busy",
   "allow-screen-under",
   "allow-player-play",
   "allow-player-pause",

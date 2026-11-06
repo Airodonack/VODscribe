@@ -171,6 +171,21 @@ impl Worker {
         idle(&running)?;
         Ok(!running.is_empty())
     }
+
+    /// For the tests (readd-stuck.mjs): VOD `vod_id` has work running that
+    /// doesn't stop when told, for `busy`, as a download stuck on the
+    /// network would. A job of no request, which no stage runs.
+    #[cfg(feature = "e2e")]
+    pub fn e2e_busy(&self, vod_id: i64, busy: Duration) {
+        let flag = Arc::new(AtomicBool::new(false));
+        let job = Job { stretch_id: -1, vod_id, flag: flag.clone(), reason: Arc::default() };
+        self.queue.lock().unwrap().jobs.push(job);
+        let queue = self.queue.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(busy);
+            queue.lock().unwrap().jobs.retain(|j| !Arc::ptr_eq(&j.flag, &flag));
+        });
+    }
 }
 
 impl Job {

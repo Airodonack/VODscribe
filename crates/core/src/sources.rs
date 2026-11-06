@@ -145,6 +145,15 @@ impl Db {
         self.conn.execute("DELETE FROM vod_annotations WHERE vod_id = ?1", [vod_id])?;
         Ok(())
     }
+
+    /// Moves VOD `vod_id`, gone but not yet erased (its work still
+    /// stopping), out of the way of the same VOD added again: under an id
+    /// of its own, `add_vod` doesn't find it and adds the VOD anew, and its
+    /// row stays to name its files till they're erased (`unused_sources`).
+    pub fn set_aside(&self, vod_id: i64) -> Result<()> {
+        self.conn.execute("UPDATE vods SET platform_id = platform_id || '#' || id WHERE id = ?1", [vod_id])?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +164,20 @@ mod tests {
     use crate::chat::{ChatMessage, ChatPart, Kind};
     use crate::edits::tests::info;
     use crate::transcript::Segment;
+
+    #[test]
+    fn a_vod_set_aside_is_added_anew_and_left_to_erase() {
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let old = db.add_vod(&info("x")).unwrap().0.id;
+        db.remove_entry(old).unwrap();
+        db.set_gone(old).unwrap();
+        db.set_aside(old).unwrap();
+        let (new, created) = db.add_vod(&info("x")).unwrap();
+        assert!(created && new.id != old, "added anew");
+        // Still there to name its files, and the next start erases it.
+        assert!(db.vod(old).unwrap().is_some(), "its row deleted by the add");
+        assert_eq!(db.unused_sources().unwrap(), vec![old]);
+    }
 
     #[test]
     fn a_realized_stretch_is_a_source_of_its_own() {

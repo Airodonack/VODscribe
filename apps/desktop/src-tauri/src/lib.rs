@@ -481,6 +481,8 @@ pub fn run() {
             e2e::e2e_player_state,
             #[cfg(feature = "e2e")]
             e2e::e2e_set_inner_size,
+            #[cfg(feature = "e2e")]
+            e2e::e2e_work_busy,
             screen::screen_under,
             player::player_play,
             player::player_pause,
