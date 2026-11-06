@@ -396,12 +396,13 @@
 
 <aside class="library-pane">
   <!-- Sibling elements, since buttons can't nest: the site link fills the
-       header, the credit sits on top of it under the name, and the version
-       number at the right, linking to what's new in it. -->
+       header, the credit inside it under the name, and the version number
+       on top of it at the right, linking to what's new in it. -->
   <div class="brand">
     <button class="site" onclick={() => openUrl(SITE)} title="vodscribe.com">
       <Logo size={28} tile />
       <span class="name">VODscribe</span>
+      <span class="credit">Made by {AUTHOR}</span>
       <span class="external"><Icon name="external" size={12} /></span>
     </button>
     {#if version}
@@ -411,7 +412,6 @@
         title="What's new in {version.split(/[_+-]/)[0]}">v{version}</button
       >
     {/if}
-    <span class="credit">Made by {AUTHOR}</span>
   </div>
 
   <UpdateBanner />
@@ -626,6 +626,8 @@
     border-radius: 0;
     background: var(--surface);
     color: var(--muted);
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .site:hover:not(:disabled) {
@@ -667,13 +669,12 @@
     text-decoration: underline;
   }
 
+  /* Part of the site link: a click on it opens the site too. */
   .credit {
     position: absolute;
     left: 50px;
     bottom: 7px;
     padding: 0 2px;
-    border: none;
-    background: none;
     color: var(--muted);
     font-size: 11px;
     font-weight: 400;
