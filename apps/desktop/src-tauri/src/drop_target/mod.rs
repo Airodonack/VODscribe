@@ -62,11 +62,18 @@ pub(crate) trait Target {
     /// Whether a virtual file named `name` is one to receive: a drag with
     /// none it takes (and no paths) is refused as it comes over.
     fn takes(&self, name: &str) -> bool;
-    /// A virtual file `item` was let go on the window: where its bytes go, or
-    /// None to leave it.
-    fn incoming(&self, item: &dragndrop_target::Item) -> Option<dragndrop_target::Destination>;
+    /// Virtual files `items` were let go on the window, together: those it
+    /// receives, each with where its bytes go (the rest are left).
+    fn incoming(
+        &self,
+        items: Vec<dragndrop_target::Item>,
+    ) -> Vec<(dragndrop_target::Item, dragndrop_target::Destination)>;
     /// Where an app that saves its files itself (Linux: an archive
     /// manager) saves them first, or None to refuse such drops.
     #[cfg(target_os = "linux")]
     fn stage(&self) -> Option<PathBuf>;
+    /// A drop's source gave nothing, and why (Linux: an archive manager
+    /// that couldn't save, a portal transfer that didn't come).
+    #[cfg(target_os = "linux")]
+    fn nothing_given(&self, why: &dragndrop_target::Error);
 }

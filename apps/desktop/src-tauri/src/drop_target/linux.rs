@@ -143,6 +143,7 @@ impl Drops {
         linux::receive(context, time, stage, move |received| {
             if let Some(why) = received.failure() {
                 (drops.trace)(&format!("nothing received: {why}"));
+                drops.target.nothing_given(why);
             }
             let paths = received.offer().paths.clone();
             if portal {
@@ -156,11 +157,7 @@ impl Drops {
                 items.len(),
                 items.iter().map(|i| i.name()).collect::<Vec<_>>().join(", ")
             ));
-            let requests: Vec<_> = items
-                .into_iter()
-                .filter(|f| drops.target.takes(f.name()))
-                .filter_map(|f| drops.target.incoming(&f).map(|to| (f, to)))
-                .collect();
+            let requests = drops.target.incoming(items.into_iter().filter(|f| drops.target.takes(f.name())).collect());
             let reading = linux::fetch(received, requests);
             let mut fetches = drops.fetches.borrow_mut();
             fetches.retain(|f| !f.is_finished());

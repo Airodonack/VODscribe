@@ -196,6 +196,8 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     embed::clear(&paths.local);
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
+    // Files a quit (or a crash) left being received from another app's drop.
+    receive::tidy(&paths.media().join("received"));
     // Kept videos' leftovers from VODs no longer in the library; only
     // tidying, so a library that can't be read here isn't a reason not
     // to start.

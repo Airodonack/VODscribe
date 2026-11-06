@@ -470,6 +470,15 @@
           if (vod) void offers.offer(vod, true);
         }),
       ),
+      // A file dropped with no path, received: the first of its drop opens,
+      // as a dropped file on disk does (the Adder); one that failed says so.
+      await events.received(
+        afterLoad((received) => {
+          if (received.kind === "open") return pick(received.vod);
+          const what = received.name ? `“${received.name}”` : "the dropped file";
+          toast.error(`Couldn't receive ${what}. ${received.why}`);
+        }),
+      ),
       await events.vodRemoved(
         afterLoad((id) => {
           nav.forget({ kind: "vod", id });

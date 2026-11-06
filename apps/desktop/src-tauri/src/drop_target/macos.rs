@@ -162,7 +162,7 @@ impl Taking {
 
     /// Receives promises `files` of `info`, let go on the view.
     fn receive(&mut self, info: &ProtocolObject<dyn NSDraggingInfo>, files: Vec<Item>) {
-        let requests: Vec<_> = files.into_iter().filter_map(|f| self.target.incoming(&f).map(|to| (f, to))).collect();
+        let requests = self.target.incoming(files);
         if requests.is_empty() {
             return;
         }

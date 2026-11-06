@@ -6,6 +6,10 @@
 //! folder, under `received`, as `<name>.part`, renamed once whole and added
 //! as a file (`vods::add_received`); meanwhile it's listed with the jobs
 //! ("Receiving", how far, and Cancel). Canceled or failed, nothing is left.
+//! The page hears ("received") the first file of each drop to be added, which
+//! it opens, as it opens the first file of a drop with paths; and each file
+//! that failed, which it says. A crash's leftovers go at the next start
+//! (`tidy`).
 //!
 //! On Windows the window's drops are all taken here (`Window`, for
 //! `drop_target`): those with paths reach the page as Tauri's own drag-drop
@@ -106,6 +110,22 @@ fn part_of(path: &std::path::Path) -> std::path::PathBuf {
     part.into()
 }
 
+/// Removes from `received` (the kept videos' folder's) what a crash or a
+/// quit left being received: part files, and the folders an archive manager
+/// saved into first (Linux). Called at start, before any drop.
+pub(crate) fn tidy(received: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(received) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if name.ends_with(".part") && path.is_file() {
+            let _ = std::fs::remove_file(path);
+        } else if name.starts_with(".dragndrop-") && path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 pub(crate) use taking::take_drops;
 
@@ -115,7 +135,7 @@ mod taking {
     use std::io::{BufWriter, Write};
     use std::path::PathBuf;
     use std::sync::Arc;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
     use serde::Serialize;
@@ -202,6 +222,34 @@ mod taking {
         position: Position,
     }
 
+    /// What the page hears of a file received ("received"): the first of its
+    /// drop to be added, to open; or one that failed, to say, with why in one
+    /// plain sentence (the whole error goes to the log).
+    #[derive(Serialize, Clone)]
+    #[serde(tag = "kind", rename_all = "lowercase")]
+    enum Received {
+        Open { vod: i64 },
+        Failed { name: Option<String>, why: &'static str },
+    }
+
+    /// Why, for one its app didn't give.
+    const NOT_GIVEN: &str = "The app it came from didn't hand it over.";
+    /// Why, for one received that couldn't be added.
+    const UNREADABLE: &str = "It isn't a video VODscribe can read.";
+
+    /// Why, for one that couldn't be written (`e`).
+    fn unsaved(e: Option<&std::io::Error>) -> &'static str {
+        use std::io::ErrorKind;
+        match e.map(|e| e.kind()) {
+            Some(ErrorKind::StorageFull | ErrorKind::QuotaExceeded) => "There's no room to save it.",
+            _ => "It couldn't be saved.",
+        }
+    }
+
+    fn tell_page(app: &AppHandle, received: Received) {
+        crate::page::emit(app, "received", received);
+    }
+
     /// The window's side of its drops.
     struct Window {
         app: AppHandle,
@@ -244,16 +292,31 @@ mod taking {
             Some(self.app.try_state::<AppState>()?.paths.media().join("received"))
         }
 
-        fn incoming(&self, item: &Item) -> Option<Destination> {
+        fn incoming(&self, items: Vec<Item>) -> Vec<(Item, Destination)> {
             // (Not while the library can't be opened: the recovery screen.)
-            self.app.try_state::<AppState>()?;
-            match Sink::start(&self.app, item.name(), item.size()) {
-                Ok(sink) => Some(Destination::sink(sink)),
-                Err(e) => {
-                    eprintln!("{} couldn't be received: {e:#}", item.name());
-                    None
-                }
+            if self.app.try_state::<AppState>().is_none() {
+                return vec![];
             }
+            // Whether one of this drop's files was opened yet.
+            let opened = Arc::new(AtomicBool::new(false));
+            items
+                .into_iter()
+                .filter_map(|item| match Sink::start(&self.app, item.name(), item.size(), opened.clone()) {
+                    Ok(sink) => Some((item, Destination::sink(sink))),
+                    Err(e) => {
+                        eprintln!("{} couldn't be received: {e:#}", item.name());
+                        let why = unsaved(e.downcast_ref());
+                        tell_page(&self.app, Received::Failed { name: Some(item.name().to_string()), why });
+                        None
+                    }
+                })
+                .collect()
+        }
+
+        #[cfg(target_os = "linux")]
+        fn nothing_given(&self, why: &dragndrop_target::Error) {
+            eprintln!("A dropped file wasn't received: {why}");
+            tell_page(&self.app, Received::Failed { name: None, why: NOT_GIVEN });
         }
     }
 
@@ -266,10 +329,12 @@ mod taking {
         /// Until it's done.
         file: Option<BufWriter<File>>,
         told: Instant,
+        /// Whether a file of its drop was opened: the first added is.
+        opened: Arc<AtomicBool>,
     }
 
     impl Sink {
-        fn start(app: &AppHandle, name: &str, size: Option<u64>) -> anyhow::Result<Sink> {
+        fn start(app: &AppHandle, name: &str, size: Option<u64>, opened: Arc<AtomicBool>) -> anyhow::Result<Sink> {
             let state = app.state::<AppState>();
             let shown = file_name(name).ok_or_else(|| anyhow::anyhow!("not a video or audio file"))?;
             let dir = state.paths.media().join("received");
@@ -294,6 +359,7 @@ mod taking {
                 to,
                 file: Some(BufWriter::with_capacity(1 << 20, file)),
                 told: Instant::now(),
+                opened,
             })
         }
 
@@ -328,34 +394,52 @@ mod taking {
             ));
             let file = self.file.take();
             let part = part_of(&self.to);
-            let whole = result
-                .map_err(|e| e.to_string())
-                .and_then(|_| match self.job.canceled.load(Ordering::SeqCst) {
-                    true => Err("Canceled.".to_string()),
-                    false => Ok(()),
-                })
-                .and_then(|()| {
-                    let file = file.ok_or("Not written.")?.into_inner().map_err(|e| e.error().to_string())?;
-                    file.sync_all().map_err(|e| e.to_string())?;
-                    drop(file);
-                    std::fs::rename(&part, &self.to).map_err(|e| e.to_string())
-                });
+            // Canceled from the jobs, or the fetch let go of (the window
+            // closing): not a failure to tell.
+            let canceled =
+                || self.job.canceled.load(Ordering::SeqCst) || matches!(result, Err(dragndrop_target::Error::Canceled));
+            let whole = match canceled() {
+                true => Err("Canceled.".to_string()),
+                false => result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
+            }
+            .and_then(|()| {
+                let file = file.ok_or("Not written.")?.into_inner().map_err(|e| e.error().to_string())?;
+                file.sync_all().map_err(|e| e.to_string())?;
+                drop(file);
+                std::fs::rename(&part, &self.to).map_err(|e| e.to_string())
+            });
             if let Err(why) = whole {
                 // (The file is closed before it goes: Windows keeps an open one.)
                 let _ = std::fs::remove_file(&part);
-                if !self.job.canceled.load(Ordering::SeqCst) {
+                if !canceled() {
                     eprintln!("{} wasn't received: {why}", self.job.name);
+                    let why = match &result {
+                        Err(dragndrop_target::Error::Source(_)) => NOT_GIVEN,
+                        Err(dragndrop_target::Error::Write(e)) => unsaved(Some(e)),
+                        _ => unsaved(None),
+                    };
+                    tell_page(&self.app, Received::Failed { name: Some(self.job.name.clone()), why });
                 }
                 self.end();
                 return;
             }
             // Added off the reading thread (it may be the window's).
             std::thread::spawn(move || {
-                if let Err(e) = crate::vods::add_received(&self.app, &self.to) {
-                    eprintln!("{} was received but couldn't be added: {e:#}", self.job.name);
-                    let _ = std::fs::remove_file(&self.to);
+                match crate::vods::add_received(&self.app, &self.to) {
+                    // Off the jobs first, so the page opens it with its job gone.
+                    Ok(vod) => {
+                        self.end();
+                        if !self.opened.swap(true, Ordering::SeqCst) {
+                            tell_page(&self.app, Received::Open { vod });
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("{} was received but couldn't be added: {e:#}", self.job.name);
+                        let _ = std::fs::remove_file(&self.to);
+                        self.end();
+                        tell_page(&self.app, Received::Failed { name: Some(self.job.name.clone()), why: UNREADABLE });
+                    }
                 }
-                self.end();
             });
         }
     }
@@ -394,6 +478,27 @@ mod tests {
         std::fs::write(dir.join("a (2).mp4.part"), b"").unwrap();
         assert_eq!(free_name(&dir, "a.mp4"), dir.join("a (3).mp4"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_crash_s_leftovers_go_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("vodscribe-receive-tidy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let stage = dir.join(".dragndrop-12-1");
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::write(stage.join("zipped.mp4"), b"saved").unwrap();
+        for file in ["a.mp4", "a (2).mp4.part", "b.mkv.part", ".hidden.mp4"] {
+            std::fs::write(dir.join(file), b"").unwrap();
+        }
+        // A folder named as a part file isn't one.
+        std::fs::create_dir_all(dir.join("c.part")).unwrap();
+        tidy(&dir);
+        let mut left: Vec<_> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert_eq!(left, [".hidden.mp4", "a.mp4", "c.part"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        tidy(&dir);
     }
 
     #[test]

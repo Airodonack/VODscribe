@@ -325,6 +325,11 @@ export interface Job {
   progress: number | null;
 }
 
+/** What the page hears of a file dropped with no path (receive.rs `Received`):
+ *  VOD `vod` to open, the first of its drop added; or `name` (unknown when
+ *  its app gave nothing) not received, and why, in a sentence. */
+export type Received = { kind: "open"; vod: number } | { kind: "failed"; name: string | null; why: string };
+
 /** How the system's drag of files out of the window ended (clips.rs `DragEnded`):
  *  whether they went to another app; if they never came, why; and whether
  *  they didn't because the app let go on takes only files already made
@@ -943,6 +948,8 @@ export const events = {
   vodRemoved: (cb: (id: number) => void) => on<number>("vod-removed", (e) => cb(e.payload)),
   /** The list of jobs (clips and edits being made, removed VODs being erased), whenever it changes. */
   jobs: (cb: (jobs: Job[]) => void) => on<Job[]>("jobs", (e) => cb(e.payload)),
+  /** A file dropped with no path, received (receive.rs): the first of its drop added, or one that failed. */
+  received: (cb: (received: Received) => void) => on<Received>("received", (e) => cb(e.payload)),
   /** A VOD just added has published annotations (crates/core `annotations::look_up`): they're offered. */
   annotationsFound: (cb: (id: number) => void) => on<number>("annotations-found", (e) => cb(e.payload)),
   /** VOD `id` has had annotations imported, from wherever: what's shown of it is read again. */

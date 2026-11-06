@@ -155,12 +155,12 @@ fn announce_file(app: &AppHandle, vod: &Vod, created: bool) {
 
 /// Adds the file at `path`, received from another app's drag into the
 /// kept videos' folder (`receive`), as a file dropped on the window is;
-/// it's erased with its VOD (`erase_source`).
+/// it's erased with its VOD (`erase_source`). Its VOD's id.
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-pub(crate) fn add_received(app: &AppHandle, path: &Path) -> anyhow::Result<()> {
+pub(crate) fn add_received(app: &AppHandle, path: &Path) -> anyhow::Result<i64> {
     let (vod, created) = add_local(app, path, true)?;
     announce_file(app, &vod, created);
-    Ok(())
+    Ok(vod.id)
 }
 
 fn add_file(app: &AppHandle, path: &Path) -> anyhow::Result<(Vod, bool)> {
