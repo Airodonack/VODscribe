@@ -8,6 +8,18 @@
     SECURITY_REPORT,
     SUPPORT_EMAIL,
   } from "#lib/links.js";
+
+  /** Answers for problems people hit; plain text with code in <code>. */
+  const FAQ = [
+    {
+      q: "Twitch or YouTube don't play on Linux",
+      a: "They need a video decoder that some systems leave out, and VODscribe's package brings it in. If it was skipped: on Ubuntu or Debian, install <code>gstreamer1.0-libav</code>. On Fedora, VODscribe needs <code>openh264</code> from Cisco's repository; if the install says nothing provides it, turn that repository on with <code>sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1</code> and install again.",
+    },
+    {
+      q: "DaVinci Resolve on Linux won't take my clips",
+      a: "Resolve on Linux can't open MP4, the format VODscribe makes clips in by default. Drop one on Resolve and VODscribe offers to switch to MOV; or pick MOV DNxHR in Settings › Encoding. Then drag the clip again.",
+    },
+  ];
 </script>
 
 <svelte:head>
@@ -21,13 +33,13 @@
 <article class="prose">
   <h1>Support</h1>
 
-  <h2>Twitch or YouTube don't play on Linux</h2>
-  <p>
-    They need a video decoder that some systems leave out, and VODscribe's package brings it in. If it was skipped: on
-    Ubuntu or Debian, install <code>gstreamer1.0-libav</code>. On Fedora, VODscribe needs <code>openh264</code> from
-    Cisco's repository; if the install says nothing provides it, turn that repository on with
-    <code>sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1</code> and install again.
-  </p>
+  <h2>Questions</h2>
+  {#each FAQ as item (item.q)}
+    <details>
+      <summary>{item.q}</summary>
+      <p class="muted">{@html item.a}</p>
+    </details>
+  {/each}
 
   <h2>Bugs and ideas</h2>
   <p>
@@ -48,3 +60,19 @@
     in a public issue.
   </p>
 </article>
+
+<style>
+  details {
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+  }
+
+  summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  details p {
+    margin: 8px 0 0;
+  }
+</style>
