@@ -18,7 +18,9 @@ concurrency:
 
 jobs:
   format:
-    timeout-minutes: 10
+    # On this branch the notices step fetches Servo and mozjs_sys from GitHub
+    # (cargo metadata reads every crate in Cargo.lock), about 8 minutes alone.
+    timeout-minutes: 25
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

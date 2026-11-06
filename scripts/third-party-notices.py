@@ -86,7 +86,9 @@ def onnxruntime_section() -> str:
 def main() -> None:
     cargo_about = os.environ.get("CARGO_ABOUT", "cargo-about")
     rust = subprocess.run(
-        [cargo_about, "generate", "--config", "licenses/about.toml", "licenses/about.hbs"],
+        # With the servo feature too: one file for the release build and the
+        # build that ships Servo (scripts/servo-appimage.sh).
+        [cargo_about, "generate", "--features", "vodscribe/servo", "--config", "licenses/about.toml", "licenses/about.hbs"],
         cwd=ROOT,
         check=True,
         capture_output=True,

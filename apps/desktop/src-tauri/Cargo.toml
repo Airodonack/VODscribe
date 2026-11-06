@@ -98,9 +98,9 @@ glib = "0.18"
 # The drag's picture decoded here, not by gdk-pixbuf, whose loaders a system
 # may run in a sandbox that isn't there (clips.rs drag_picture).
 png = "0.18"
-# The Servo runtime (the `servo` feature). A path for now: the repository has
-# no published home yet.
-tauri-runtime-servo = { path = "/mnt/data/servo-spike/tauri-servo/tauri-runtime-servo", optional = true }
+# The Servo runtime (the `servo` feature), which takes the Servo fork from
+# GitHub too. scripts/tauri-servo.sh can point both at local checkouts.
+tauri-runtime-servo = { git = "https://github.com/Airodonack/tauri-runtime-servo", rev = "ad0264e6e083e3cd371594968872b7316e9ba4d9", optional = true }
 # Servo and its runtime report through `log`, the page's console among them
 # (the `console` target); the wry runtime's web views have an inspector instead.
 env_logger = { version = "0.11", optional = true }
