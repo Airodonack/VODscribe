@@ -945,6 +945,10 @@ async function onWindows(app, ctx) {
       steps.push(["move", to.x + 16, to.y + 8], ["wait", 300], ...then);
       await os.gesture(steps);
     };
+    /** The files dropped, once Explorer has written them. It makes each at
+     *  its full length at once and fills it in from there, the movie's index
+     *  (written last) still missing, so a file there isn't whole until its
+     *  copies are over: they end the drag (EndOperation). */
     const landed = async (label, count = 1) => {
       const got = await until(
         `${label}: ${count} file${count > 1 ? "s" : ""} in the folder`,
@@ -952,6 +956,7 @@ async function onWindows(app, ctx) {
         2 * MINUTE,
         { every: 100 },
       );
+      await ended();
       return got.map((f) => ({ name: f, length: probeDuration(path.join(dest, f)) }));
     };
 
