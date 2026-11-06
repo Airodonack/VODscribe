@@ -320,9 +320,9 @@ export async function setQuality(app, quality) {
   await choose(app, "Clip quality", quality, (s) => s.clip_quality === quality.toLowerCase());
 }
 
-/** Picks `option` in Settings' radio group `group` (Storage), once `saved(settings)` says it's saved. */
+/** Picks `option` in Settings' radio group `group` (Encoding), once `saved(settings)` says it's saved. */
 async function choose(app, group, option, saved) {
-  await app.openSettings("Storage");
+  await app.openSettings("Encoding");
   const buttons = `[role="radiogroup"][aria-label="${group}"] button`;
   await until(group, () => app.js(`return !!document.querySelector(arguments[0])`, buttons), MINUTE);
   await app.js(

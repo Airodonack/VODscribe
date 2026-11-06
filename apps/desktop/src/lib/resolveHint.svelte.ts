@@ -2,7 +2,7 @@
 // (no H.264 in its free edition, no AAC in any): they come in blank. Shown
 // after the first clip is dragged out (dragout.ts), only where Resolve is
 // installed and clips are still MP4, in the library (FormatHint.svelte).
-// Answered, it's off; Settings › Storage turns it back on (the setting
+// Answered, it's off; Settings › Encoding turns it back on (the setting
 // `suggest_mov_for_resolve`, asks.ts).
 
 import { api } from "./api";

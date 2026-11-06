@@ -20,8 +20,8 @@ import { dataDirs, makeSiteVod } from "../lib/data.mjs";
 const SECTION = {
   Theme: "Appearance",
   "Video quality": "Storage",
-  "Clip format": "Storage",
-  "Clip quality": "Storage",
+  "Clip format": "Encoding",
+  "Clip quality": "Encoding",
 };
 
 /** The chosen option of each radio group named in `groups`, as Settings shows them, each in its section. */
@@ -47,7 +47,7 @@ const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV Pr
 /** The switches of the notes that can be stopped (asks.ts): each one's
  *  words, its section of Settings and its setting. Resolve's is Linux's only. */
 const ASK = { label: "Ask before downloading from a site", section: "Privacy", key: "ask_before_downloading" };
-const RESOLVE = { label: "Suggest MOV for DaVinci Resolve", section: "Storage", key: "suggest_mov_for_resolve" };
+const RESOLVE = { label: "Suggest MOV for DaVinci Resolve", section: "Encoding", key: "suggest_mov_for_resolve" };
 /** Whether switch `which` is on, or null when it isn't shown. */
 const switchOn = (app, which) =>
   app.js(
@@ -85,7 +85,7 @@ export default {
   // What a person should see at each checkpoint (verify.mjs).
   expects: {
     settings:
-      "A Settings dialog over the library: down its left a list of sections (Transcription, Appearance, Controls, Storage, Updates, Privacy, Help) with one of them highlighted, and to the right that section's heading and its options, each with a line of explanation.",
+      "A Settings dialog over the library: down its left a list of sections (Transcription, Appearance, Controls, Storage, Encoding, Updates, Privacy, Help) with one of them highlighted, and to the right that section's heading and its options, each with a line of explanation.",
     "settings-help":
       'Settings, in a dark theme, shows its Help section: a link to report a problem at the top, then, set apart under a "Reset and repair" heading like the other subsections, two red-outlined buttons, Reset settings… and Repair VODscribe…, each with a line of explanation under it.',
     "settings-dark":

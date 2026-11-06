@@ -46,7 +46,7 @@ On first start it downloads what it needs to transcribe, about 1 GB, and checks 
 
 - **Clips.** Pick lines in the transcript, or press I and O to mark a stretch, press C, and drag the clip from the clip bar under the player into your editor or a folder.
 - **Edits.** Drag a clip onto "Make new edit" in the library, then open the edit to cut and order its pieces.
-- **Clip format.** Clips are MP4 with H.264 unless Settings › Storage picks H.265, DNxHR or ProRes, at a Proxy, Standard or High quality. DaVinci Resolve on Linux needs DNxHR or ProRes.
+- **Clip format.** Clips are MP4 with H.264 unless Settings › Encoding picks H.265, DNxHR or ProRes, at a Proxy, Standard or High quality. DaVinci Resolve on Linux needs DNxHR or ProRes.
 - **Keys.** The keyboard button at the right of the player's controls lists them, and Settings › Controls changes them.
 - **Search.** Quote a phrase to match it exactly, and add `from:name` to search one chatter's messages.
 - **Updates.** VODscribe checks at start and once a day, and installs only when you say so; [vodscribe.com/releases](https://vodscribe.com/releases) has every version's changes.

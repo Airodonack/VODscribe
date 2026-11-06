@@ -402,6 +402,10 @@
         <button class="danger-outline" onclick={clearFootage} disabled={clearingFootage || !footageBytes}>
           {clearingFootage ? "Deleting…" : "Delete fetched video"}
         </button>
+      </section>
+    {:else if settingsWindow.section === "encoding"}
+      <section>
+        <span class="eyebrow">Encoding</span>
         <p class="label">Clips and edits are made as</p>
         <div class="segmented" role="radiogroup" aria-label="Clip format">
           {#each CODECS as c (c.id)}
