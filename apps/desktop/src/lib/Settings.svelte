@@ -77,6 +77,7 @@
   // The notes that can be stopped (asks.ts): each switch on while its note shows.
   let askBeforeDownloading = $derived(shows(appSettings.value, "ask_before_downloading"));
   let suggestMov = $derived(shows(appSettings.value, "suggest_mov_for_resolve"));
+  let askToUseVodscription = $derived(shows(appSettings.value, "ask_to_use_vodscription"));
   // The video clips and edits fetched from sites: how much is kept (mostly what edits use).
   let footageBytes = $state<number | null>(null);
   let clearingFootage = $state(false);
@@ -441,9 +442,9 @@
               checked={suggestMov}
               onchange={(e) => appSettings.update({ suggest_mov_for_resolve: e.currentTarget.checked })}
             />
-            Suggest MOV for DaVinci Resolve
+            Ask about MOV when dropping on Resolve
           </label>
-          <p class="muted hint">When an MP4 clip is dropped on Resolve, which can't open it.</p>
+          <p class="muted hint">Resolve can't open MP4 clips.</p>
         {/if}
       </section>
     {:else if settingsWindow.section === "updates"}
@@ -497,6 +498,15 @@
           Enable VODscription annotations for VODs
         </label>
         <p class="muted hint">It sends a VOD's site and its id on that site, nothing else.</p>
+        <label class="toggle">
+          <input
+            type="checkbox"
+            checked={askToUseVodscription}
+            onchange={(e) => appSettings.update({ ask_to_use_vodscription: e.currentTarget.checked })}
+          />
+          Ask to use a VODscription when one is found
+        </label>
+        <p class="muted hint">After you add a VOD. Off, its gift button still offers it.</p>
         <label class="toggle">
           <input
             type="checkbox"

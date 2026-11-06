@@ -11,12 +11,13 @@
 
 import { api, type AnnotationsOffer, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
+import { shows } from "./asks";
 import { toast } from "./toasts.svelte";
 
 export interface Offered {
   vod: Vod;
   offer: AnnotationsOffer;
-  /** Offered because it was just added: "No, and don't show again" is one of the answers. */
+  /** Offered because it was just added: "No, and don't ask again" is one of the answers. */
   afterAdd: boolean;
   /** Why the file host wasn't asked just now (asking is off, or it failed), when the
    *  offer goes by the last check: the dialog says so. Null when it was asked. */
@@ -31,12 +32,14 @@ class Offers {
   /** The file host being asked, for the gift button. */
   asking = $state(false);
   error = $state<string | null>(null);
-  /** "No, and don't show again" was picked: the dialog says where that's undone, then closes. */
+  /** "No, and don't ask again" was picked: the dialog says where that's undone, then closes. */
   stopped = $state(false);
 
-  /** Offers `vod`'s annotations, as last found, unless something else is offered already. */
+  /** Offers `vod`'s annotations, as last found, unless something else is
+   *  offered already, or it was just added and the offer is turned off
+   *  (`ask_to_use_vodscription`: its gift button still offers them). */
   async offer(vod: Vod, afterAdd: boolean, unasked: string | null = null) {
-    if (this.shown) return;
+    if (this.shown || (afterAdd && !shows(settings.value, "ask_to_use_vodscription"))) return;
     const offer = await api.annotationsOffer(vod.id).catch(() => null);
     if (!offer || offer.available !== "available" || this.shown) return;
     this.#show({ vod, offer, afterAdd, unasked });
@@ -121,9 +124,10 @@ class Offers {
     }
   }
 
-  /** "No, and don't show again": the app stops asking the file host at all. */
+  /** "No, and don't ask again": VODs added from now on aren't offered theirs.
+   *  The app still looks them up (`ask_for_annotations`), for the gift button. */
   async stop() {
-    await settings.update({ ask_for_annotations: false });
+    await settings.update({ ask_to_use_vodscription: false });
     this.stopped = true;
   }
 

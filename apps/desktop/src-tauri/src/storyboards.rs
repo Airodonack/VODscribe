@@ -411,16 +411,15 @@ mod tests {
     fn a_video_deleted_while_its_storyboard_is_made_is_deleted() {
         use std::sync::atomic::AtomicU64;
         use std::sync::{Arc, mpsc};
-        use vodscribe_core::pipeline;
         static N: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "vodscribe-sb-delete-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)
         ));
-        let work = vodscribe_core::Paths::new(&root).work();
-        std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
-        let db = Db::open(&root.join("library.sqlite")).unwrap();
+        let paths = vodscribe_core::Paths::new(&root);
+        std::fs::create_dir_all(paths.media()).unwrap();
+        let db = Db::open(&paths.db()).unwrap();
         let info = vodscribe_core::fetch::VodInfo {
             platform: "youtube".into(),
             platform_id: "x".into(),
@@ -462,8 +461,8 @@ mod tests {
         storyboards.push(id);
         is_reading.recv_timeout(Duration::from_secs(5)).unwrap();
 
-        let remove = |work: &Path, id| crate::vods::remove_kept(&storyboards, work, id);
-        crate::vods::delete_kept_video(&db, &videos, &work, id, remove).unwrap();
+        let remove = |paths: &vodscribe_core::Paths, id| crate::vods::remove_kept(&storyboards, paths, id);
+        crate::vods::delete_kept_video(&db, &videos, &paths, id, remove).unwrap();
         // Then `forget_gone`, as delete_video does.
         storyboards.stop(id);
         let deleted_under_it = has_ended.recv_timeout(Duration::from_secs(5)).unwrap();

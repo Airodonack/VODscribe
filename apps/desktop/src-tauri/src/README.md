@@ -12,7 +12,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `jobs.rs`: clips, renders, video downloads and storyboards, one at a time.
 - `job_list.rs`: the jobs list the library shows.
 - `clips.rs`: clips' commands, and the queue that cuts them.
-- `resolve.rs`: MP4 clips and edits dropped on DaVinci Resolve on Linux, which can't open them, are held back.
+- `resolve.rs`: MP4 clips and edits dropped on DaVinci Resolve on Linux, which can't open them, are held back, and the page offers MOV.
 - `edits.rs`: edits' commands, and their rendering.
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
 - `videos.rs`: downloading a VOD's whole video on request.
@@ -35,4 +35,4 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.
 - [`drag_source`](drag_source): dragging clips out before they're made.
-- [`drop_target`](drop_target): taking drops on Windows and macOS, virtual files and file promises included.
+- [`drop_target`](drop_target): taking drops on Windows, macOS and Linux, virtual files and file promises included.

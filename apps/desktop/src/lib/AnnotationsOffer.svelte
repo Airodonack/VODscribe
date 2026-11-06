@@ -4,7 +4,7 @@
   import { settingsWindow } from "./settingsWindow.svelte";
 
   // The offer of a VOD's published annotations (offers.svelte.ts): Use, Not
-  // now, and after an add "No, and don't show again". Already brought in and
+  // now, and after an add "No, and don't ask again". Already brought in and
   // unchanged, it says so and offers to replace them anyway.
 
   let open = $state(false);
@@ -57,7 +57,7 @@
         <div class="buttons">
           <span class="space"></span>
           {#if shown.afterAdd}
-            <button onclick={() => offers.stop()} disabled={offers.busy}>No, and don't show again</button>
+            <button onclick={() => offers.stop()} disabled={offers.busy}>No, and don't ask again</button>
           {/if}
           <button onclick={() => offers.close()} disabled={offers.busy}>Not now</button>
           <button class="primary" data-autofocus onclick={() => offers.use()} disabled={offers.busy}>

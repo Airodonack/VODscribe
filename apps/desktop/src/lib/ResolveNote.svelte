@@ -1,6 +1,6 @@
 <script lang="ts">
   // The note at a drop on DaVinci Resolve on Linux (resolveDrop.svelte.ts):
-  // Switch to MOV, or Not now; and Don't show again.
+  // Switch to MOV, or Not now; and Don't ask again.
   import Modal from "./Modal.svelte";
   import { WHERE_UNDONE, noteText, resolveNote } from "./resolveDrop.svelte";
 
@@ -23,7 +23,7 @@
   {#if shown}
     <div class="note">
       <p>{noteText(shown.how, shown.count, shown.what)}</p>
-      <label><input type="checkbox" bind:checked={hide} /> Don't show again</label>
+      <label><input type="checkbox" bind:checked={hide} /> Don't ask again</label>
       {#if hide}<p class="muted">{WHERE_UNDONE}</p>{/if}
       <div class="buttons">
         <button onclick={() => resolveNote.answer(false, hide)}>Not now</button>

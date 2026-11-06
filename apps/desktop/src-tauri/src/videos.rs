@@ -20,7 +20,7 @@ use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
 use vodscribe_core::stretches::Stretch;
-use vodscribe_core::{fetch, local, pipeline, tools};
+use vodscribe_core::{Paths, fetch, local, pipeline, tools};
 
 use crate::jobs::Jobs;
 use crate::{AppState, CmdResult, err};
@@ -79,7 +79,7 @@ impl Videos {
                 Err(e) if vodscribe_core::is_canceled(&e) => {
                     let kept = state.db.lock().unwrap().media_path(id).ok().flatten().is_some();
                     if !kept {
-                        pipeline::remove_media(&state.paths.work(), id);
+                        pipeline::remove_media(&state.paths, id);
                     }
                     None
                 }
@@ -132,8 +132,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let bin = paths.bin();
     let yt_dlp = tools::find_yt_dlp(&bin).context(fetch::NO_YT_DLP)?;
     let ffmpeg = tools::find_ffmpeg(&bin).context(crate::worker::NO_FFMPEG)?;
-    let work = paths.work();
-    std::fs::create_dir_all(&work)?;
+    std::fs::create_dir_all(paths.work())?;
     let media = paths.media();
     std::fs::create_dir_all(&media)?;
     // A site without its own player: its video comes as a section of all
@@ -194,7 +193,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
         let named = named.into_iter().flatten().collect::<Vec<_>>().join(", ");
         anyhow::bail!("This video came in a format that doesn't play here ({named}).");
     }
-    record(&state.db, &state.videos, &work, id, &file, stop)?;
+    record(&state.db, &state.videos, paths, id, &file, stop)?;
     // A player waiting for it plays it now.
     if let Some(duration) = vod.info.duration {
         crate::player::refile(app, id, &file, duration);
@@ -237,7 +236,7 @@ fn stream_then_keep(
     }
     let out = paths.source_video(vod.id, "mp4");
     vodscribe_core::clips::remux(&ffmpeg, &section.path, &out, duration, stop, |p| report(0.95 + p * 0.05))?;
-    record(&state.db, &state.videos, &paths.work(), vod.id, &out, stop)?;
+    record(&state.db, &state.videos, paths, vod.id, &out, stop)?;
     crate::player::refile(app, vod.id, &out, duration);
     // It's the kept video now.
     crate::footage::drop_section(&section.path);
@@ -253,7 +252,7 @@ fn begin(db: &Mutex<Db>, videos: &Videos, id: i64) -> Result<Option<Vod>> {
 }
 
 /// Records `file`, just downloaded, as VOD `id`'s kept video.
-fn record(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64, file: &Path, stop: &AtomicBool) -> Result<()> {
+fn record(db: &Mutex<Db>, videos: &Videos, paths: &Paths, id: i64, file: &Path, stop: &AtomicBool) -> Result<()> {
     let _files = videos.files();
     let db = db.lock().unwrap();
     if stop.load(Ordering::Relaxed) {
@@ -263,7 +262,7 @@ fn record(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64, file: &Path, st
     }
     if db.vod(id)?.is_none() {
         // Removed while downloading.
-        pipeline::remove_media(work, id);
+        pipeline::remove_media(paths, id);
         return Ok(());
     }
     db.set_media_path(id, Some(&file.to_string_lossy()))?;
@@ -314,7 +313,7 @@ fn downloading_to_transcribe(db: &Db, vod: &Vod) -> Result<bool> {
 /// takes it out of the queue.
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    if !stop(&state.db, &state.videos, &state.paths.work(), id) {
+    if !stop(&state.db, &state.videos, &state.paths, id) {
         crate::page::emit(&app, "video-progress", VideoProgress::over(id, None));
     }
     Ok(())
@@ -322,7 +321,7 @@ pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i
 
 /// `stop_video`'s work; whether VOD `id`'s download was running (it then
 /// deletes what it had itself).
-fn stop(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64) -> bool {
+fn stop(db: &Mutex<Db>, videos: &Videos, paths: &Paths, id: i64) -> bool {
     let queued = |(v, _): &(i64, u32)| *v == id;
     let _files = videos.files();
     // Waiting, it has nothing of its own yet, but the VOD's files may be a
@@ -330,7 +329,7 @@ fn stop(db: &Mutex<Db>, videos: &Videos, work: &Path, id: i64) -> bool {
     // queued again meanwhile) or a download's parts a quit left: without a
     // video kept, they'd stay untracked.
     if !videos.0.take_waiting(queued).is_empty() && db.lock().unwrap().media_path(id).ok().flatten().is_none() {
-        pipeline::remove_media(work, id);
+        pipeline::remove_media(paths, id);
     }
     videos.0.stop_running(queued)
 }
@@ -347,7 +346,6 @@ pub(crate) async fn video_downloads(state: State<'_, AppState>) -> CmdResult<Vec
 #[tauri::command]
 pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>) -> CmdResult<usize> {
     state.videos.stop_all(&app);
-    let work = state.paths.work();
     let mut kept = 0;
     let mut gone = Vec::new();
     {
@@ -372,7 +370,7 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
     let _files = state.videos.files();
     for id in gone {
         if !state.videos.wanted(id) {
-            crate::vods::remove_kept(&state.storyboards, &work, id);
+            crate::vods::remove_kept(&state.storyboards, &state.paths, id);
         }
         crate::storyboards::forget_gone(&app, id);
     }
@@ -400,12 +398,12 @@ mod tests {
 
     const WAIT: Duration = Duration::from_secs(5);
 
-    /// A library with one finished YouTube VOD, and a work dir of its own
-    /// (with the media folder beside it), deleted when the test ends.
+    /// A library with one finished YouTube VOD, in a folder of its own
+    /// (with the media folder made), deleted when the test ends.
     struct Setup {
         db: Arc<Mutex<Db>>,
         videos: Arc<Videos>,
-        work: std::path::PathBuf,
+        paths: Paths,
         id: i64,
         /// The test's own, not the queue thread's copy.
         owner: bool,
@@ -414,7 +412,7 @@ mod tests {
     impl Drop for Setup {
         fn drop(&mut self) {
             if self.owner {
-                let _ = std::fs::remove_dir_all(self.work.parent().unwrap());
+                let _ = std::fs::remove_dir_all(&self.paths.root);
             }
         }
     }
@@ -425,8 +423,8 @@ mod tests {
             static N: AtomicU64 = AtomicU64::new(0);
             let n = N.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!("vodscribe-videos-{}-{n}", std::process::id()));
-            let work = vodscribe_core::Paths::new(&root).work();
-            std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
+            let paths = Paths::new(&root);
+            std::fs::create_dir_all(paths.media()).unwrap();
             let db = Db::open(&root.join("library.sqlite")).unwrap();
             let info = VodInfo {
                 platform: "youtube".into(),
@@ -443,7 +441,7 @@ mod tests {
             let id = db.add_vod(&info).unwrap().0.id;
             let whole = db.request(id, 0.0, None).unwrap();
             db.finish_stretch(whole.id).unwrap();
-            Setup { db: Arc::new(Mutex::new(db)), videos: Arc::new(Videos::new()), work, id, owner: true }
+            Setup { db: Arc::new(Mutex::new(db)), videos: Arc::new(Videos::new()), paths, id, owner: true }
         }
 
         /// Where the VOD's video goes, with `ext`.
@@ -469,7 +467,7 @@ mod tests {
             let me = Setup {
                 db: self.db.clone(),
                 videos: self.videos.clone(),
-                work: self.work.clone(),
+                paths: self.paths.clone(),
                 id: self.id,
                 owner: false,
             };
@@ -501,14 +499,14 @@ mod tests {
         s.run(move |s, stop| {
             let file = s.file("mp4");
             std::fs::write(&file, b"video").unwrap();
-            record(&s.db, &s.videos, &s.work, s.id, &file, stop).unwrap();
+            record(&s.db, &s.videos, &s.paths, s.id, &file, stop).unwrap();
             recorded.send(()).unwrap();
             // Still the queue's running job (the pause).
             let _ = ends.lock().unwrap().recv_timeout(WAIT);
         });
         s.keep_video();
         has_recorded.recv_timeout(WAIT).unwrap();
-        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, pipeline::remove_media).unwrap();
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.paths, s.id, pipeline::remove_media).unwrap();
         end.send(()).unwrap();
         assert_eq!(s.media_path(), None);
         assert!(!s.file("mp4").exists(), "deleted, not left untracked");
@@ -525,12 +523,12 @@ mod tests {
             std::fs::write(s.file("mp4.part"), b"new").unwrap();
             wrote.send(()).unwrap();
         });
-        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, |work, id| {
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.paths, s.id, |paths, id| {
             // Mid-delete (the pause): Keep video, and its download given the
             // time to start.
             s.keep_video();
             let _ = has_written.recv_timeout(Duration::from_millis(500));
-            pipeline::remove_media(work, id);
+            pipeline::remove_media(paths, id);
         })
         .unwrap();
         // The download writes now, if it couldn't during the delete.
@@ -582,8 +580,8 @@ mod tests {
         let old = s.kept();
         // No queue thread: the download waits.
         s.keep_video();
-        crate::vods::delete_kept_video(&s.db, &s.videos, &s.work, s.id, pipeline::remove_media).unwrap();
-        assert!(!stop(&s.db, &s.videos, &s.work, s.id), "it was waiting");
+        crate::vods::delete_kept_video(&s.db, &s.videos, &s.paths, s.id, pipeline::remove_media).unwrap();
+        assert!(!stop(&s.db, &s.videos, &s.paths, s.id), "it was waiting");
         assert_eq!(s.media_path(), None);
         assert!(!old.exists(), "not left untracked");
     }
@@ -596,7 +594,7 @@ mod tests {
         let left = s.file("mp4");
         std::fs::write(&left, b"video").unwrap();
         s.keep_video();
-        assert!(!stop(&s.db, &s.videos, &s.work, s.id));
+        assert!(!stop(&s.db, &s.videos, &s.paths, s.id));
         assert!(!left.exists());
     }
 }

@@ -2,7 +2,7 @@
 //! H.264, and no edition reads AAC): they come in blank and silent. An MP4
 //! clip or edit dragged out onto Resolve is refused there, and once the drag is over
 //! the page asks whether to make clips as MOV (resolveDrop.svelte.ts), while
-//! its "Don't show again" isn't ticked (the setting `suggest_mov_for_resolve`).
+//! its "Don't ask again" isn't ticked (the setting `suggest_mov_for_resolve`).
 //! Asked then, not at the drag's start: the drop on Resolve is what makes the
 //! question make sense. Resolve is told by the window the drag is let go on,
 //! where X11 names it (`dragndrop_source::linux::Asker`); where it doesn't

@@ -4,8 +4,8 @@
 // So is a note's switch: the note before downloading from a site, stopped
 // as 0.7.0 kept it, shows its switch off; turned on, the note comes back on
 // a site VOD's download button; turned off, it stays off after a restart,
-// and Reset settings turns it on again. On Linux the same for the Resolve
-// hint's switch, on at the start.
+// and Reset settings turns it on again. The same for the VODscription
+// offer's switch, and on Linux the Resolve note's, both on at the start.
 //
 // Offline: the VOD is a file added here, made Dailymotion's (no player the
 // app can show, so its row downloads its video); nothing is downloaded.
@@ -47,7 +47,16 @@ const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV Pr
 /** The switches of the notes that can be stopped (asks.ts): each one's
  *  words, its section of Settings and its setting. Resolve's is Linux's only. */
 const ASK = { label: "Ask before downloading from a site", section: "Privacy", key: "ask_before_downloading" };
-const RESOLVE = { label: "Suggest MOV for DaVinci Resolve", section: "Encoding", key: "suggest_mov_for_resolve" };
+const RESOLVE = {
+  label: "Ask about MOV when dropping on Resolve",
+  section: "Encoding",
+  key: "suggest_mov_for_resolve",
+};
+const OFFER = {
+  label: "Ask to use a VODscription when one is found",
+  section: "Privacy",
+  key: "ask_to_use_vodscription",
+};
 /** Whether switch `which` is on, or null when it isn't shown. */
 const switchOn = (app, which) =>
   app.js(
@@ -122,11 +131,16 @@ export default {
     ctx.log(`"${ASK.label}" came in off, from 0.7.0's choice; turned on, the note showed again`);
     await setSwitch(app, ASK, false);
     const linux = process.platform === "linux";
-    if (linux) {
-      await switchIs(app, RESOLVE, true, " at the start");
-      await setSwitch(app, RESOLVE, false);
-      ctx.log(`"${RESOLVE.label}" on at the start; turned off, and saved`);
+    // The other notes' switches, on at the start (0.7.0's choice stops neither).
+    const others = linux ? [OFFER, RESOLVE] : [OFFER];
+    for (const which of others) {
+      await switchIs(app, which, true, " at the start");
+      await setSwitch(app, which, false);
+      ctx.log(`"${which.label}" on at the start; turned off, and saved`);
     }
+    // Turning the offer off leaves looking VODscriptions up as it was.
+    if ((await app.invoke("get_settings")).ask_for_annotations !== true)
+      throw new Error("turning the VODscription offer off turned the lookups off");
 
     await openSettings(app);
     const before = await chosen(app, Object.keys(CHOICES));
@@ -176,7 +190,7 @@ export default {
     const after = await chosen(app, Object.keys(CHOICES));
     await ctx.checkpoint("settings-dark");
     if (!same(after, CHOICES)) throw new Error(`after a restart, Settings shows ${JSON.stringify(after)}`);
-    for (const which of linux ? [ASK, RESOLVE] : [ASK]) {
+    for (const which of [ASK, ...others]) {
       await app.openSettings(which.section);
       if ((await switchOn(app, which)) !== false) throw new Error(`after a restart, "${which.label}" isn't off`);
     }
@@ -204,7 +218,7 @@ export default {
       saved.ask_before_downloading !== true
     )
       throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);
-    for (const which of linux ? [ASK, RESOLVE] : [ASK]) await switchIs(app, which, true, " after the reset");
+    for (const which of [ASK, ...others]) await switchIs(app, which, true, " after the reset");
     ctx.log(`Reset settings put them back, the notes' switches on`);
   },
 };

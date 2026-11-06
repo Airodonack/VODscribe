@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -161,12 +161,12 @@ pub trait ChatStore {
 /// Fetches a VOD's chat into `store`, carrying on from where an interrupted
 /// fetch got to. False when the site has no chat replay for it (a file on this
 /// computer, another site, or a YouTube video that wasn't a livestream).
-/// Reports a 0..1 fraction while it pages through.
+/// Reports a 0..1 fraction while it pages through. A YouTube chat downloads
+/// to `stem` (`Paths::temp_chat`) and an extension.
 pub fn fetch(
     info: &VodInfo,
     yt_dlp: Option<&YtDlp>,
-    work_dir: &Path,
-    vod_id: i64,
+    stem: &Path,
     store: &mut dyn ChatStore,
     cancel: &AtomicBool,
     mut on_progress: impl FnMut(f64),
@@ -180,7 +180,7 @@ pub fn fetch(
         }
         "youtube" => {
             let yt_dlp = yt_dlp.context(crate::fetch::NO_YT_DLP)?;
-            if !fetch_youtube(info, yt_dlp, work_dir, vod_id, store, cancel, &mut on_progress)? {
+            if !fetch_youtube(info, yt_dlp, stem, store, cancel, &mut on_progress)? {
                 return Ok(false);
             }
         }
@@ -1044,17 +1044,17 @@ fn is_emote_id(id: &str) -> bool {
 fn fetch_youtube(
     info: &VodInfo,
     yt_dlp: &YtDlp,
-    work_dir: &Path,
-    vod_id: i64,
+    stem: &Path,
     store: &mut dyn ChatStore,
     cancel: &AtomicBool,
     on_progress: &mut dyn FnMut(f64),
 ) -> Result<bool> {
-    fs::create_dir_all(work_dir)?;
-    // Not named "{vod_id}.…": `pipeline::remove_work_files` clears those when
-    // a transcription ends, which may be while this is still downloading.
-    let stem = work_dir.join(format!("chat-{vod_id}"));
-    let file = work_dir.join(format!("chat-{vod_id}.live_chat.json"));
+    if let Some(dir) = stem.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut file = stem.as_os_str().to_owned();
+    file.push(".live_chat.json");
+    let file = PathBuf::from(file);
     let part = file.with_extension("json.part");
     let remove = || {
         let _ = fs::remove_file(&file);
@@ -1064,7 +1064,7 @@ fn fetch_youtube(
     let mut child = yt_dlp
         .command()
         .args(["--skip-download", "--write-subs", "--sub-langs", "live_chat", "--no-playlist", "--no-warnings", "-o"])
-        .arg(&stem)
+        .arg(stem)
         .arg("--")
         .arg(&info.url)
         .stdin(Stdio::null())
@@ -2001,7 +2001,8 @@ mod tests {
             })
         };
         let yt_dlp = fake_yt_dlp(&tools, 1, 30.0);
-        let result = fetch_youtube(&info, &yt_dlp, &work, 7, &mut MemoryChat::default(), &cancel, &mut |_| {});
+        let result =
+            fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut MemoryChat::default(), &cancel, &mut |_| {});
         let stopped = stopper.join().unwrap();
         assert!(result.is_err_and(|e| crate::is_canceled(&e)));
         assert!(stopped.elapsed() < std::time::Duration::from_secs(1), "{:?} after the stop", stopped.elapsed());
@@ -2012,9 +2013,10 @@ mod tests {
         let begun = std::time::Instant::now();
         let mut progress = Vec::new();
         let yt_dlp = fake_yt_dlp(&tools, 3, 0.4);
-        let fetched = fetch_youtube(&info, &yt_dlp, &work, 7, &mut store, &AtomicBool::new(false), &mut |f| {
-            progress.push((f, begun.elapsed()))
-        });
+        let fetched =
+            fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut store, &AtomicBool::new(false), &mut |f| {
+                progress.push((f, begun.elapsed()))
+            });
         assert!(fetched.unwrap());
         assert_eq!(store.messages.len(), 3);
         let fractions: Vec<f64> = progress.iter().map(|p| p.0).collect();
@@ -2042,9 +2044,10 @@ mod tests {
         let begun = std::time::Instant::now();
         let mut progress = Vec::new();
         let mut store = MemoryChat::default();
-        let fetched = fetch_youtube(&info, &yt_dlp, &work, 7, &mut store, &AtomicBool::new(false), &mut |f| {
-            progress.push((f, begun.elapsed()))
-        });
+        let fetched =
+            fetch_youtube(&info, &yt_dlp, &work.join("chat-7"), &mut store, &AtomicBool::new(false), &mut |f| {
+                progress.push((f, begun.elapsed()))
+            });
         assert!(fetched.unwrap());
         let total = begun.elapsed();
         let early = progress.iter().filter(|p| p.1 < total.mul_f64(0.8)).count();

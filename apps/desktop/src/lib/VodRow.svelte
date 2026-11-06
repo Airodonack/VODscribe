@@ -414,9 +414,7 @@
   <Popover bind:open={asking} anchor={keepButton} label="Before downloading the video" width={340}>
     <PermissionNote
       action="Download video"
-      hideLabel="Don't show this again{pickedHeight !== height
-        ? ` (and download at ${pickedHeight}p from now on)`
-        : ''}"
+      hideLabel="Don't ask again{pickedHeight !== height ? ` (and download at ${pickedHeight}p from now on)` : ''}"
       onanswer={answer}
     >
       <div class="quality" role="radiogroup" aria-label="Video quality">

@@ -140,14 +140,19 @@ pub struct Settings {
     pub load_cast_pictures: bool,
     /// Whether the note on permission shows before a video or clip is
     /// downloaded from a site (the page's permission.ts): on until its
-    /// "Don't show this again" is ticked or it's turned off in Settings.
-    /// Only the page reads it.
+    /// "Don't ask again" is ticked or it's turned off in Settings. Only the
+    /// page reads it.
     pub ask_before_downloading: bool,
     /// Whether an MP4 clip dragged out onto DaVinci Resolve on Linux is
     /// refused there and the page asks to make clips as MOV (the app's
-    /// resolve.rs): on until its "Don't show again" is ticked or it's turned
+    /// resolve.rs): on until its "Don't ask again" is ticked or it's turned
     /// off in Settings.
     pub suggest_mov_for_resolve: bool,
+    /// Whether a VODscription found for a VOD just added is offered (the
+    /// page's offers.svelte.ts): on until the offer's "No, and don't ask
+    /// again" or it's turned off in Settings. Looking one up is
+    /// `ask_for_annotations`, apart from this. Only the page reads it.
+    pub ask_to_use_vodscription: bool,
 }
 
 impl Default for Settings {
@@ -166,6 +171,7 @@ impl Default for Settings {
             load_cast_pictures: true,
             ask_before_downloading: true,
             suggest_mov_for_resolve: true,
+            ask_to_use_vodscription: true,
         }
     }
 }
@@ -371,11 +377,18 @@ mod tests {
     fn the_notes_start_shown_and_stay_as_left() {
         // A settings.json as 0.7.0 wrote it: no word of the notes.
         let old: Settings = serde_json::from_str(r#"{"theme": "dark", "load_cast_pictures": false}"#).unwrap();
-        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve);
-        assert!(Settings::default().ask_before_downloading && Settings::default().suggest_mov_for_resolve);
-        let off = Settings { ask_before_downloading: false, suggest_mov_for_resolve: false, ..old };
+        assert!(old.ask_before_downloading && old.suggest_mov_for_resolve && old.ask_to_use_vodscription);
+        let fresh = Settings::default();
+        assert!(fresh.ask_before_downloading && fresh.suggest_mov_for_resolve && fresh.ask_to_use_vodscription);
+        let off = Settings {
+            ask_before_downloading: false,
+            suggest_mov_for_resolve: false,
+            ask_to_use_vodscription: false,
+            ..old
+        };
         let again: Settings = serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
-        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve);
+        assert!(!again.ask_before_downloading && !again.suggest_mov_for_resolve && !again.ask_to_use_vodscription);
+        assert!(again.ask_for_annotations, "the offer's own switch, apart from looking up");
         assert!(!again.load_cast_pictures);
     }
 

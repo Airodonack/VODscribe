@@ -86,7 +86,9 @@ fn fetch(app: &AppHandle, id: i64) {
     let offline = None;
     let result = match offline {
         Some(result) => result,
-        None => chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.work(), id, &mut store, &flag, &mut on_progress),
+        None => {
+            chat::fetch(&vod.info, yt_dlp.as_ref(), &state.paths.temp_chat(id), &mut store, &flag, &mut on_progress)
+        }
     };
     let started = chat::vod_start(&store.starts);
     drop(store);

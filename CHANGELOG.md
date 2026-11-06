@@ -5,34 +5,36 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.2 (unreleased)
 
 - Transcribe from the captions button. Right-click CC under the player, or press and hold it, for Transcribe VOD, the selection, or how much from the playhead; T still transcribes, and the bar's own Transcribe button is gone.
-- Videos from zips and other apps drop in. A video dragged from a zip in File Explorer or an archive manager on Linux, or one a Mac app hands over only once it's dropped, is copied into VODscribe, listed with the jobs as it comes, and opens once it's in.
+- Names open a streamer card. A click on someone's name or picture in a VODscription's transcript, a highlight or over the player shows who they are and their links in one place.
+- The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
+- Download notes say less. The notes and tooltips of a video downloading are shorter, and the percent shows only for a download that plays once it's all in.
+- Searches leaving words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
+- Drop in videos from zips and apps. A video dragged from a zip in File Explorer or an archive manager on Linux, or one a Mac app hands over only once it's dropped, is copied into VODscribe, listed with the jobs as it comes, and opens once it's in.
 - Clips come in more formats. Settings › Encoding adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Dropping on DaVinci Resolve offers MOV. On Linux, where Resolve can't open MP4, a clip or edit dropped on it is held back and VODscribe offers to switch to MOV, in place of the library's note.
-- Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
+- New clips follow the picked one. The Clip key, and a stretch dropped on the clip bar, put the clip after the clip you picked there, as a paste does, and pick it.
 - Clips now live in the library. A clip or edit dragged out or shown in its folder still goes by its title; the ones already in Videos/VODscribe stay there.
-- Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
-- The VODscription offer has plainer buttons. After you add a VOD, "No, and don't show again" sits beside Not now.
-- The jobs list shows three at first. Past three, N more at its foot shows the rest.
+- Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
+- The jobs list shows three first. Past three, N more at its foot shows the rest.
+- VODscription offers have their own switch. Their "No, and don't ask again" turns off only Ask to use a VODscription when one is found, in Settings › Privacy; VODscriptions are still looked up.
+- Notes all say Don't ask again. The note before downloading and the Resolve note match their Ask switches in Settings.
 - Clip settings have their own section. Settings › Encoding has the clip format and quality; Storage keeps the downloaded and fetched videos.
-- Names open a streamer card. A click on someone's name or picture in a VODscription's transcript, a highlight or over the player shows who they are and their links in one place.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
-- The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
-- New clips go after the picked one. The Clip key, and a stretch dropped on the clip bar, put the clip after the clip you picked there, as a paste does, and pick it.
 - Fixes:
-  - Twitch starts muted when muted before Play. A mute set on the bar before Play was lost, and the video played with sound.
+  - Twitch keeps a mute before Play. A mute set on the bar before Play was lost, and the video played with sound.
   - YouTube shows captions once. With CC on, YouTube's own captions in its player are turned off, as ours show under it.
-  - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
+  - Every Twitch channel shows its picture. A VOD you add from a channel whose name differs from its login, such as a Korean one, gets the streamer's picture too.
   - A Mac drop keeps your files. A file you saved under the clip's name while the clip was being made is no longer deleted or written over; VODscribe says a file of that name is already there.
   - Progress keeps moving during clip drags. On Linux, transcriptions, downloads and clips no longer freeze while an app waits for a clip you dragged out.
-  - Menus answer their first click. After a Control-click on a Mac, or a press the system called off, the next click on a row's menu could be ignored.
-  - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
-  - An edit's frames load while it plays. The small frames on its timeline, of videos not yet seen, waited until you paused.
-  - Download notes say less. The notes and tooltips of a video downloading are shorter, and the percent shows only for a download that plays once it's all in.
   - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
   - Undo keeps the clip bar's order. A clip pasted in the middle of the clip bar came back last when redone, and so did one deleted from there when undone.
+  - Edit timeline frames load while playing. The small frames on an edit's timeline, of videos not yet seen, waited until you paused.
+  - A moved library finds its files. A library copied or moved to another folder or computer lost its kept videos, audio and clips.
+  - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
+  - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
+  - Menus answer their first click. After a Control-click on a Mac, or a press the system called off, the next click on a row's menu could be ignored.
   - Made by opens the site too. A click on the credit under VODscribe's name did nothing, and its words could be selected.
-  - Every Twitch channel shows its picture. A VOD you add from a channel whose name differs from its login, such as a Korean one, gets the streamer's picture too.
 
 ## 0.7.1 — 2026-11-05
 

@@ -180,7 +180,7 @@ fn allow_images_from(csp: &mut Option<tauri::utils::config::Csp>, base: &str) {
 
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     if let Some(mut vod) = db.vod(id).map_err(err)? {
-        vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths.work(), &mut vod);
+        vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths, &mut vod);
         crate::page::emit(app, "vod", vod);
     }
     Ok(())
@@ -205,7 +205,7 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     // Kept videos' leftovers from VODs no longer in the library.
     if let Ok(vods) = vods {
         let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
-        vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
+        vodscribe_core::pipeline::tidy_media(&paths, &library);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
     let db = Mutex::new(db);

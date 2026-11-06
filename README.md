@@ -70,7 +70,7 @@ VODscribe is source-available under the [Functional Source License, Version 1.1,
 VODscribe is a Tauri 2 app: a Svelte 5 page in the system's web view, a Rust shell around it, and Rust crates that do the work. The JavaScript side is a pnpm workspace and the Rust side a Cargo workspace, both rooted here.
 
 - [`apps`](apps): the desktop app and the website.
-- [`crates`](crates): the library and transcription, the player, and the transcription worker.
+- [`crates`](crates): the library and transcription, the player, the transcription worker, and dragging files in and out.
 - [`scripts`](scripts): the sidecar build, release packaging and checks.
 - [`tests`](tests): the end-to-end harness.
 - [`third_party`](third_party): patched copies of crates.

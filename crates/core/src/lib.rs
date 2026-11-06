@@ -210,9 +210,11 @@ impl Paths {
 
     /// The videos kept from sites other than YouTube, Twitch and Kick, to play
     /// here (`pipeline::keeps_video`), as `<vod id>.<ext>`. Not a cache: a VOD's
-    /// stays until it's deleted, or removed from the VOD.
+    /// stays until it's deleted, or removed from the VOD. Beside the work dir,
+    /// never in it, so clearing a VOD's work files after transcribing can't
+    /// take its video.
     pub fn media(&self) -> PathBuf {
-        pipeline::media_dir(&self.work())
+        self.local.join("media")
     }
 
     // The library's own files, one function per kind, each built from its
@@ -224,9 +226,12 @@ impl Paths {
     // a new layout changes only these bodies.
 
     /// Where VOD `vod_id`'s kept video downloads to, before its extension
-    /// (`pipeline::keeps_video`); its part files start the same.
+    /// (`pipeline::keeps_video`); its part files start the same. The name a
+    /// user sees is given only where it's handed out. Videos kept from 0.4.0
+    /// to 0.7.1 were named `<title> [<id>]` (`pipeline::owner` still knows
+    /// them, so their leftovers go).
     pub fn source_video_stem(&self, vod_id: i64) -> PathBuf {
-        pipeline::media_stem(&self.media(), vod_id)
+        self.media().join(vod_id.to_string())
     }
 
     /// VOD `vod_id`'s kept video, once it's here (`Db::set_video`).
@@ -247,7 +252,7 @@ impl Paths {
     /// Where request `stretch_id`'s section of VOD `vod_id`'s audio downloads
     /// to, before its extension.
     pub fn source_section_stem(&self, vod_id: i64, stretch_id: i64) -> PathBuf {
-        pipeline::section_stem(&self.work(), vod_id, stretch_id)
+        self.work().join(format!("{vod_id}.s{stretch_id}"))
     }
 
     /// Request `stretch_id`'s section of VOD `vod_id`'s audio.
@@ -322,7 +327,7 @@ impl Paths {
 
     /// What VOD `vod_id`'s site said of it, for its audio (`pipeline::fresh_info`).
     pub fn source_info(&self, vod_id: i64) -> PathBuf {
-        pipeline::info_path(&self.work(), vod_id)
+        self.work().join(format!("{vod_id}.info.json"))
     }
 
     /// What VOD `vod_id`'s site said of it, for its video kept whole.
@@ -344,6 +349,14 @@ impl Paths {
     /// Emote images matched to words in chat (`word_emotes`).
     pub fn cache_word_emotes(&self) -> PathBuf {
         self.emotes().join("words")
+    }
+
+    /// Where VOD `vod_id`'s YouTube chat downloads to, before its extension
+    /// (`chat::fetch`). Not named `<id>.…`: `pipeline::remove_work_files`
+    /// clears those when a transcription ends, which may be while the chat
+    /// is still downloading.
+    pub fn temp_chat(&self, vod_id: i64) -> PathBuf {
+        self.work().join(format!("chat-{vod_id}"))
     }
 
     /// What a site said of a link looked up (`n` makes it unique), before
@@ -501,7 +514,9 @@ mod tests {
     }
 
     /// Every file of the library's is where `Paths` builds it: no code outside
-    /// this module joins a folder of the library's to a name by hand.
+    /// this module joins a folder of the library's to a name by hand, from
+    /// `Paths` or from a folder handed in by its name (`work_dir`, `media`),
+    /// or finds one beside another (`with_file_name("media")`).
     #[test]
     fn only_paths_joins_the_librarys_folders() {
         let folders = [
@@ -521,6 +536,32 @@ mod tests {
             "models()",
             "gpu_pack()",
         ];
+        // Folders holding the library's own files, as a variable or
+        // parameter names them when it's handed one.
+        let handed = [
+            "work",
+            "media",
+            "received",
+            "clips",
+            "clip_thumbs",
+            "footage",
+            "thumbs",
+            "peaks",
+            "storyboards",
+            "emotes",
+        ];
+        let by_hand = |line: &str| {
+            folders.iter().any(|f| line.contains(&format!(".{f}.join(")))
+                || handed.iter().any(|f| {
+                    line.contains(&format!("with_file_name(\"{f}\")"))
+                        || ["", "_dir"].iter().any(|end| {
+                            let join = format!("{f}{end}.join(");
+                            line.match_indices(&join).any(|(at, _)| {
+                                !line[..at].ends_with(|c: char| c.is_alphanumeric() || c == '_' || c == '.')
+                            })
+                        })
+                })
+        };
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut found = Vec::new();
         let mut dirs: Vec<PathBuf> = std::fs::read_dir(repo.join("crates"))
@@ -541,9 +582,9 @@ mod tests {
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
                 // Tests make folders of their own as they like.
-                let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or_default();
+                let code = text.split("\nmod tests {").next().unwrap_or_default();
                 for (n, line) in code.lines().enumerate() {
-                    if folders.iter().any(|f| line.contains(&format!(".{f}.join("))) {
+                    if by_hand(line) {
                         found.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
                     }
                 }

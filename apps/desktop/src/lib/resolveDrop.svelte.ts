@@ -5,7 +5,7 @@
 // let go (Wayland) while Resolve is installed ("maybe"; clips.rs `DragEnded`,
 // src-tauri resolve.rs). The same for an edit's video dragged out. "Switch to
 // MOV" makes clips and edits as MOV DNxHR from then on, and the clips kept
-// from the drop, or the edit, are made again so; "Don't show again",
+// from the drop, or the edit, are made again so; "Don't ask again",
 // ticked, stops it (the setting `suggest_mov_for_resolve`, asks.ts), and
 // Settings › Encoding turns it back on.
 
@@ -14,7 +14,7 @@ import { toast } from "./toasts.svelte";
 
 export type ResolveDrop = "refused" | "maybe";
 
-/** Under "Don't show again", once ticked. */
+/** Under "Don't ask again", once ticked. */
 export const WHERE_UNDONE = "You can turn it back on in Settings › Encoding.";
 
 /** What was dropped on Resolve: clips, or an edit's video. */

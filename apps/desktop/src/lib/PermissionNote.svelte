@@ -1,7 +1,7 @@
 <script lang="ts">
   // The note before downloading from a site (a clip, Player.svelte; a whole
   // video, VodRow.svelte), in the popover each shows it in, with whatever
-  // else that one asks (`children`) before its "Don't show this again",
+  // else that one asks (`children`) before its "Don't ask again",
   // which says where it's undone once ticked.
 
   import type { Snippet } from "svelte";
@@ -9,7 +9,7 @@
 
   let {
     action,
-    hideLabel = "Don't show this again",
+    hideLabel = "Don't ask again",
     children,
     onanswer,
   }: {

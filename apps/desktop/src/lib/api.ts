@@ -163,6 +163,8 @@ export interface Settings {
   ask_before_downloading: boolean;
   /** Whether an MP4 clip dropped on DaVinci Resolve on Linux asks to switch to MOV (resolveDrop.svelte.ts). */
   suggest_mov_for_resolve: boolean;
+  /** Whether a VODscription found for a VOD just added is offered (offers.svelte.ts). */
+  ask_to_use_vodscription: boolean;
 }
 
 /** MP4 (H.264 or H.265, AAC), or MOV (DNxHR or ProRes, PCM) for editors. */

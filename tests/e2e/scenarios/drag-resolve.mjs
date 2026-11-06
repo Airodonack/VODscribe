@@ -12,7 +12,7 @@
 // MOV makes it again as MOV once it's made as MP4. Back to MP4, an edit's
 // MP4 video dragged onto Resolve: refused, the note asks of the edit, and
 // Switch to MOV renders it again as MOV, which then lands. Back to MP4, the pill
-// dropped on Resolve again: the note asks again; Don't show again, ticked,
+// dropped on Resolve again: the note asks again; Don't ask again, ticked,
 // and Not now turn it off, and the MP4 then lands. Driven with the OS's pointer
 // (lib/os.mjs). Linux (X11) only: on Wayland the drop's app isn't named, and
 // macOS and Windows never ask.
@@ -20,7 +20,6 @@
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { dataDirs } from "../lib/data.mjs";
@@ -43,7 +42,7 @@ export default {
   name: "drag-resolve",
   expects: {
     "resolve-note":
-      'A small dialog titled "DaVinci Resolve" over the player: "DaVinci Resolve can\'t open MP4 clips on Linux, so the clip wasn\'t dropped there. MOV clips work.", a "Don\'t show again" checkbox, unticked, then "Not now" and a highlighted "Switch to MOV" at the right.',
+      'A small dialog titled "DaVinci Resolve" over the player: "DaVinci Resolve can\'t open MP4 clips on Linux, so the clip wasn\'t dropped there. MOV clips work.", a "Don\'t ask again" checkbox, unticked, then "Not now" and a highlighted "Switch to MOV" at the right.',
   },
   async run(app, ctx) {
     const why = process.platform !== "linux" ? "Resolve's note is Linux's only" : noFinishedOnly();
@@ -79,6 +78,10 @@ export default {
        const handler = internals.transformCallback((e) => window.__ended.push(e.payload));
        await internals.invoke("plugin:event|listen", { event: "drag-ended", target: { kind: "Any" }, handler });`,
     );
+    // The page's own handler of the drag's end (dragout.ts `over`, which puts
+    // the note up) runs in the same script as this one: Tauri calls an
+    // event's listeners together. Once this is heard, by a later script, the
+    // page has handled it, and a note it shows is up already.
     const ended = () => until("the system's drag, over", () => app.js(`return window.__ended[0] ?? false`), MINUTE);
 
     /** The pill (or `what`) carried onto `taker` and let go there, the system's drag up on the way. */
@@ -181,7 +184,7 @@ exec '${real}' "$@"
       if (!/ took 1 of 1: .*\.mp4$/.test(other)) throw new Error(`the other app says "${other}"`);
       if (heard.resolve || !heard.delivered)
         throw new Error(`the page heard ${JSON.stringify(heard)} of a drop on another app`);
-      await sleep(500);
+      // Heard, the drop is handled (`ended`): no note now is none at all.
       if (await noteUp()) throw new Error("the note asks of a drop on another app");
       ctx.log(`dropped on another app: it took the MP4, nothing asked`);
       taker.close();
@@ -220,7 +223,6 @@ exec '${real}' "$@"
       const mov = await took(taker, before);
       if (!/ took 1 of 1: .*\.mov$/.test(mov) || heard.resolve)
         throw new Error(`Resolve says "${mov}", the page heard ${JSON.stringify(heard)}`);
-      await sleep(500);
       if (await noteUp()) throw new Error("the note asks of a MOV");
       ctx.log(`Switch to MOV: said "${SWITCHED}", the pill made again as MOV, and Resolve took it`);
 
@@ -311,7 +313,7 @@ exec '${real}' "$@"
       );
       await app.openPaused(vod.id);
 
-      // 4. MP4 again: asked again; Don't show again ticked, Not now, and the MP4 lands.
+      // 4. MP4 again: asked again; Don't ask again ticked, Not now, and the MP4 lands.
       await setFormat(app, "MP4");
       // (Made again as MP4 before the drag, as Resolve takes finished files only.)
       await app.invoke("set_clip_range", { id: made.id, start: 1, end: 4 });
@@ -332,9 +334,8 @@ exec '${real}' "$@"
       const mp4 = await took(taker, from);
       if (!/ took 1 of 1: .*\.mp4$/.test(mp4) || heard.resolve)
         throw new Error(`Resolve says "${mp4}", the page heard ${JSON.stringify(heard)}`);
-      await sleep(500);
       if (await noteUp()) throw new Error("the note asks once turned off");
-      ctx.log("asked again of an MP4; Don't show again and Not now turned it off, and Resolve then took the MP4");
+      ctx.log("asked again of an MP4; Don't ask again and Not now turned it off, and Resolve then took the MP4");
     } finally {
       taker?.close();
       putBack();

@@ -45,7 +45,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 
 - `Player.svelte`: a VOD's player, in the site's player or the app's own.
 - `PlayerPanel.svelte`: the player's panel, shared by a VOD and an edit.
-- `PlayerBar.svelte`: the sound and speed controls.
+- `PlayerBar.svelte`: the row of controls under a player's timeline.
 - `Controls.svelte`: Settings › Controls.
 - `NativePlayer.svelte`: a file in the app's own player.
 - `LocalPlayer.svelte`: a file in the web view's `<video>`, where the app's player can't draw.

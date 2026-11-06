@@ -9,7 +9,7 @@ edition = "2024"
 rust-version = "1.85"
 keywords = ["drag-and-drop", "drop", "virtual-file", "file-promise"]
 categories = ["gui", "os"]
-# Published once it works on all three systems.
+# Published once its API settles.
 publish = false
 
 # The objc2 crates' versions as wry builds them.

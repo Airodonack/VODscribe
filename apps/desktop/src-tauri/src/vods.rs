@@ -14,7 +14,7 @@ use vodscribe_core::query::QueryInfo;
 use vodscribe_core::search::AuthorSuggestion;
 use vodscribe_core::settings::{ClipEncoding, ClipFormat};
 use vodscribe_core::stretches::{self, Stretch};
-use vodscribe_core::{clips, fetch, local, pipeline, thumbs, tools};
+use vodscribe_core::{Paths, clips, fetch, local, pipeline, thumbs, tools};
 
 use crate::worker::{self, Stop};
 use crate::{AppState, CmdResult, emit_vod, err, thumbnails};
@@ -86,7 +86,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
             // for soon doesn't probe again. Only a shortcut: if the file can't
             // be moved (a virus scanner holding it, say), the worker probes
             // again, and the VOD, already saved, must still be shown.
-            if std::fs::rename(&probe_path, pipeline::info_path(&state.paths.work(), vod.id)).is_err() {
+            if std::fs::rename(&probe_path, state.paths.source_info(vod.id)).is_err() {
                 let _ = std::fs::remove_file(&probe_path);
             }
         } else {
@@ -274,17 +274,17 @@ pub(crate) async fn media_extensions() -> CmdResult<Vec<&'static str>> {
 #[tauri::command]
 pub(crate) async fn show_file(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     use tauri_plugin_opener::OpenerExt;
-    let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths.work(), id).map_err(err)?;
+    let file = pipeline::file_on_disk(&state.db.lock().unwrap(), &state.paths, id).map_err(err)?;
     let file = file.ok_or("That VOD has no file on this computer.")?;
     app.opener().reveal_item_in_dir(file).map_err(err)
 }
 
 #[tauri::command]
 pub(crate) async fn list_vods(app: AppHandle) -> CmdResult<Vec<Vod>> {
-    let work = app.state::<AppState>().paths.work();
+    let paths = app.state::<AppState>().paths.clone();
     crate::with_reads(app, move |db| {
         let mut vods = db.listed_vods()?;
-        vods.iter_mut().for_each(|vod| pipeline::mark_partial(&work, vod));
+        vods.iter_mut().for_each(|vod| pipeline::mark_partial(&paths, vod));
         Ok(vods)
     })
     .await
@@ -397,7 +397,7 @@ pub(crate) async fn delete_vod(
 fn erase_source(app: &AppHandle, db: &Db, id: i64, kept: bool) -> anyhow::Result<()> {
     let paths = &app.state::<AppState>().paths;
     pipeline::remove_work_files(&paths.work(), id);
-    pipeline::remove_media(&paths.work(), id);
+    pipeline::remove_media(paths, id);
     // A file received from another app's drag is the app's own copy.
     if let Some(source) = db.vod(id)?.filter(|v| v.received).and_then(|v| v.source_path) {
         let _ = std::fs::remove_file(source);
@@ -625,8 +625,8 @@ fn erase_unused(app: &AppHandle, job: Sweep, stop: &AtomicBool) -> anyhow::Resul
 /// downloaded again when played (`pipeline::keeps_video`).
 #[tauri::command]
 pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
-    let remove = |work: &Path, id| remove_kept(&state.storyboards, work, id);
-    delete_kept_video(&state.db, &state.videos, &state.paths.work(), id, remove)?;
+    let remove = |paths: &Paths, id| remove_kept(&state.storyboards, paths, id);
+    delete_kept_video(&state.db, &state.videos, &state.paths, id, remove)?;
     crate::storyboards::forget_gone(&app, id);
     emit_vod(&app, &state.db.lock().unwrap(), id)
 }
@@ -636,18 +636,18 @@ pub(crate) async fn delete_video(app: AppHandle, state: State<'_, AppState>, id:
 /// them: a file another process has open can't be deleted on Windows, and
 /// would stay, its record gone. Called with the record forgotten already
 /// (no job starts on the file again) and the library let go of.
-pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, work: &Path, id: i64) {
+pub(crate) fn remove_kept(storyboards: &crate::storyboards::Storyboards, paths: &Paths, id: i64) {
     storyboards.let_go(id);
-    pipeline::remove_media(work, id);
+    pipeline::remove_media(paths, id);
 }
 
 /// `delete_video`'s work: `remove` deletes the files (`remove_kept`).
 pub(crate) fn delete_kept_video(
     db: &std::sync::Mutex<Db>,
     videos: &crate::videos::Videos,
-    work: &Path,
+    paths: &Paths,
     id: i64,
-    remove: impl FnOnce(&Path, i64),
+    remove: impl FnOnce(&Paths, i64),
 ) -> CmdResult<()> {
     // Through to the files' deletion: a download recorded meanwhile, or one
     // a "Keep video" begins meanwhile, waits for it (`Videos::files`).
@@ -667,7 +667,7 @@ pub(crate) fn delete_kept_video(
     // Delete all's to clear. A download that recorded it has written all it
     // will; a "Keep video" queued meanwhile begins after.
     if had {
-        remove(work, id);
+        remove(paths, id);
     }
     Ok(())
 }
@@ -791,7 +791,7 @@ pub(crate) async fn cancel_vod(app: AppHandle, state: State<'_, AppState>, id: i
         .control_vod(id, Stop::Cancel, |running| {
             let db = state.db.lock().unwrap();
             for stretch in db.requests(id)?.into_iter().filter(|s| !running.contains(&s.id)) {
-                worker::cancel(&db, &state.paths.work(), stretch.id)?;
+                worker::cancel(&db, &state.paths, stretch.id)?;
             }
             Ok(())
         })
@@ -806,7 +806,7 @@ pub(crate) async fn cancel_stretch(app: AppHandle, state: State<'_, AppState>, i
     let Some(vod_id) = state.db.lock().unwrap().stretch(id).map_err(err)?.map(|s| s.vod_id) else { return Ok(()) };
     state
         .worker
-        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths.work(), id))
+        .control(id, Stop::Cancel, || worker::cancel(&state.db.lock().unwrap(), &state.paths, id))
         .map_err(err)?;
     emit_vod(&app, &state.db.lock().unwrap(), vod_id)
 }

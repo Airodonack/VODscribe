@@ -144,7 +144,6 @@ mod tests {
             &info,
             None,
             std::path::Path::new("/nowhere"),
-            0,
             &mut store,
             &AtomicBool::new(false),
             |_| {},
