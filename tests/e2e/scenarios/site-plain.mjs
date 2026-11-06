@@ -5,9 +5,10 @@
 // player stays shut, and the time under the player follows theirs. The bar's
 // sound (and, for YouTube, speed) is theirs, set through their embed API
 // and as their player reports it; Twitch's has no speed, so the bar has
-// none. The volume is set on the bar before Play too, their player starts
-// at it, and it's kept: after a restart their player starts at the last
-// one set. Not transcribed, the captions button is greyed, with no strip.
+// none. The volume is set and muted on the bar before Play too, their player
+// starts at it, muted, and it's kept: after a restart their player starts at
+// the last one set. Not transcribed, the captions button is greyed, with no
+// strip.
 
 import { MINUTE, until } from "../lib/app.mjs";
 import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
@@ -16,7 +17,8 @@ const SITE = process.env.E2E_SITE ?? "twitch";
 const SLIDER = '.bar input[aria-label="Volume"]';
 
 /** Listens, in the page, for the volume their player reports (Twitch's
- *  state, YouTube's volume changes): `window.__theirVolume`. */
+ *  state, YouTube's volume changes): `window.__theirVolume`; and when
+ *  YouTube's said it loaded and was ready: `window.__theirSaid`. */
 const hearTheirVolume = (app) =>
   app.js(`window.addEventListener("message", (e) => {
     let d = e.data;
@@ -25,6 +27,9 @@ const hearTheirVolume = (app) =>
       window.__theirVolume = { volume: d.params.volume, muted: d.params.muted };
     if (d?.event === "onVolumeChange" && typeof d.info?.volume === "number")
       window.__theirVolume = { volume: d.info.volume / 100, muted: d.info.muted };
+    // When YouTube's player said it had loaded, and that it takes commands:
+    // the bar's mute is sent at the first (embed.ts), before the second.
+    if (d?.event === "initialDelivery" || d?.event === "onReady") (window.__theirSaid ??= {})[d.event] ??= performance.now();
   });`);
 
 /** Sets the bar's volume slider to `value`, as a drag does. */
@@ -37,15 +42,19 @@ const slide = (app, value) =>
     value,
   );
 
-/** Waits for their player to report `volume`, unmuted. */
-const theirsAt = (app, volume) =>
+/** Waits for their player to report `volume`, unmuted (or `muted`). */
+const theirsAt = (app, volume, muted = false) =>
   until(
-    `their player at ${volume * 100}%`,
+    `their player at ${volume * 100}%${muted ? ", muted" : ""}`,
     async () => {
       const v = await app.js(`return window.__theirVolume ?? null`);
-      return v && Math.abs(v.volume - volume) < 0.01 && !v.muted && v;
+      return v && Math.abs(v.volume - volume) < 0.01 && v.muted === muted && v;
     },
     10_000,
+  ).catch((e) =>
+    app.js(`return window.__theirVolume ?? null`).then((v) => {
+      throw new Error(`${e.message}: their player said ${JSON.stringify(v)}`);
+    }),
   );
 
 /** Waits for `value` to be the volume kept (playerPrefs.svelte.ts). */
@@ -78,15 +87,27 @@ export default {
       MINUTE,
     );
     // Before Play, nothing of theirs loaded: the volume is on the bar, set
-    // there and kept, and their player starts at it.
+    // there and kept, and muted there, and their player starts at it, muted.
     if (!(await app.js(`return !!document.querySelector(arguments[0])`, SLIDER)))
       throw new Error("before Play, the bar has no volume");
     await slide(app, "0.6");
     await keptAt(app, "0.6");
+    await app.click('.bar button[aria-label="Mute"]');
     // Playing: the time under the player runs on, from their player's reports.
     const started = await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
+    await theirsAt(app, 0.6, true);
+    // Still muted a moment later: not unmuted as their player settles.
+    await new Promise((r) => setTimeout(r, 3000));
+    await theirsAt(app, 0.6, true);
+    if (!(await app.js(`return !!document.querySelector('.bar button[aria-label="Unmute"]')`)))
+      throw new Error("muted before Play, the bar doesn't show Unmute once playing");
+    await app.click('.bar button[aria-label="Unmute"]');
     await theirsAt(app, 0.6);
-    ctx.log("set to 60% before Play: their player started at it");
+    const loaded = await app.js(`return window.__theirSaid ?? {}`);
+    const gap = loaded.onReady - loaded.initialDelivery;
+    ctx.log(
+      `set to 60% and muted before Play: their player started at it, muted${Number.isFinite(gap) ? ` (muted at their loading, ${Math.round(gap)} ms before they were ready)` : ""}`,
+    );
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const ours = () => app.invoke("player_set_speed", { speed: 1 }).catch(() => null);
     const label = () => app.js(`return document.querySelector(".bar button.control")?.getAttribute("aria-label")`);
