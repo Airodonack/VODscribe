@@ -148,6 +148,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `DownloadStep.svelte`: a download's current step.
 - `Modal.svelte`: a window over the app.
 - `Popover.svelte`: a panel opened from a button.
+- `swallowClick.ts`: the press that closed a menu, kept from the page.
 - `portal.ts`: moves an element to the end of `<body>`.
 - `Menu.svelte`: a menu's choice.
 - `Tip.svelte`: a tooltip.
