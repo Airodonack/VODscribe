@@ -15,6 +15,7 @@
 //! search.test.mjs runs these tests against it: a change to what matches is
 //! made there too.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
@@ -289,6 +290,10 @@ impl Db {
             stream.cover(self, lo, hi)?;
             let Some(scope) = stream.may_match(line_id, lo, hi, c, &anchor, &lines_with) else { continue };
             stream.read_lines(self, scope.clone())?;
+            // A match's exclusions are looked for around it, in the window's lines.
+            if !c.not.is_empty() {
+                stream.read(self, lo, hi)?;
+            }
             for candidate in stream.matches(line_id, &anchor, c, within, scope) {
                 if candidate.start >= after && candidate.start < before {
                     pending.push(candidate);
@@ -700,11 +705,36 @@ struct Stream {
     lines: Vec<Line>,
     /// How far the lines read reach: every line starting up to here.
     reached: f64,
+    /// Every line before this one (by index) is read.
+    read_to: usize,
+    /// Where the exclusions are in the lines read, for `excluded`.
+    minus: RefCell<Minus>,
+}
+
+/// The exclusions' occurrences in a stretch of a stream's lines, found once
+/// as the windows move through it. Looking for them again in each window
+/// read every word of the window again for every match, and a window of an
+/// hour around each of thousands of lines took seconds.
+#[derive(Default)]
+struct Minus {
+    /// The lines looked through, by index in the stream.
+    lines: Range<usize>,
+    /// Each exclusion's occurrences there, in the stream's order.
+    found: Vec<Vec<Spot>>,
+}
+
+/// An occurrence of an exclusion: its first and last line (by index in the
+/// stream), the latest any of its words starts and the earliest any ends.
+struct Spot {
+    first: usize,
+    last: usize,
+    latest_start: f64,
+    earliest_end: f64,
 }
 
 impl Stream {
     fn new(vod_id: i64, position: i64) -> Stream {
-        Stream { vod_id, position, lines: Vec::new(), reached: f64::MIN }
+        Stream { vod_id, position, lines: Vec::new(), reached: f64::MIN, read_to: 0, minus: RefCell::default() }
     }
 
     /// Reads the lines with words from `lo` to `hi` that aren't read yet.
@@ -726,6 +756,8 @@ impl Stream {
             // A fresh stretch, from the line `lo` falls in (the last to start by then).
             _ => {
                 self.lines.clear();
+                self.read_to = 0;
+                *self.minus.get_mut() = Minus::default();
                 stmt = db.conn.prepare_cached(
                     "SELECT id, start, end, text FROM segments
                      WHERE vod_id = ?1 AND start <= ?3 AND start >= coalesce(
@@ -737,7 +769,8 @@ impl Stream {
         };
         let mut rows = rows;
         while let Some(r) = rows.next()? {
-            // The words, the most of a line to read, only once it's needed.
+            // The words, the most of a line to read, only once it's needed: the
+            // rest is in the index the query goes by (db.rs `MIGRATE_V37`).
             self.lines.push(Line::new(r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, None));
         }
         self.reached = self.reached.max(hi);
@@ -759,7 +792,15 @@ impl Stream {
     }
 
     fn read_lines(&mut self, db: &Db, lines: Range<usize>) -> Result<()> {
-        self.lines[lines].iter_mut().try_for_each(|l| l.read(db))
+        // A window moving on through lines all read reads only the new ones:
+        // going over the hour's lines again for each of thousands took seconds.
+        let joins = lines.start <= self.read_to;
+        let from = if joins { lines.start.max(self.read_to) } else { lines.start };
+        self.lines[from..lines.end.max(from)].iter_mut().try_for_each(|l| l.read(db))?;
+        if joins {
+            self.read_to = self.read_to.max(lines.end);
+        }
+        Ok(())
     }
 
     /// Whether the window `lo..hi` around anchor line `line_id` could hold
@@ -767,8 +808,8 @@ impl Stream {
     /// a word not in it may be anywhere): a piece through the anchor word
     /// has all its words within as many lines of it as it has words, and
     /// every piece has its words in the window. If so, the lines a match
-    /// through the line can be in: for a piece alone with nothing left out,
-    /// only those next to the anchor line.
+    /// through the line can be in: for a piece alone (whose exclusions are
+    /// looked for apart, `excluded`), only those next to the anchor line.
     fn may_match(
         &self,
         line_id: i64,
@@ -803,7 +844,7 @@ impl Stream {
             return None;
         }
         match &c.pieces[..] {
-            [p] if c.not.is_empty() => {
+            [p] => {
                 let near = near(p);
                 Some(near[0]..near[near.len() - 1] + 1)
             }
@@ -859,11 +900,70 @@ impl Stream {
 
     /// Whether any of `not` is in the window centred on `start..end`: the
     /// match widened equally on both sides to the window's full size.
+    /// The window's lines are read.
     fn excluded(&self, not: &[Piece], start: f64, end: f64, within: f64) -> bool {
         let centre = (start + end) / 2.0;
         let (lo, hi) = (centre - within / 2.0, centre + within / 2.0);
-        let places = self.places(lo, hi, &self.overlapping(lo, hi));
-        not.iter().any(|p| !self.occurrences(&places, p).is_empty())
+        let lines = self.overlapping(lo, hi);
+        #[cfg(test)]
+        if tests::EACH_WINDOW.get() {
+            let places = self.places(lo, hi, &lines);
+            return not.iter().any(|p| !self.occurrences(&places, p).is_empty());
+        }
+        let mut minus = self.minus.borrow_mut();
+        self.look_through(&mut minus, not, lines.clone());
+        // An occurrence in the window's lines with every word in its time.
+        minus.found.iter().any(|spots| {
+            let from = spots.partition_point(|s| s.first < lines.start);
+            spots[from..]
+                .iter()
+                .take_while(|s| s.first < lines.end)
+                .any(|s| s.last < lines.end && s.earliest_end >= lo && s.latest_start <= hi)
+        })
+    }
+
+    /// Finds the exclusions in `lines` (which are read) not looked through
+    /// yet. The windows move on through the stream, so each next one mostly
+    /// overlaps what was looked through: only the lines past it are new. One
+    /// that doesn't starts the stretch again.
+    fn look_through(&self, minus: &mut Minus, not: &[Piece], lines: Range<usize>) {
+        if minus.found.len() != not.len() || lines.start < minus.lines.start || lines.start > minus.lines.end {
+            *minus = Minus { lines: lines.start..lines.start, found: not.iter().map(|_| Vec::new()).collect() };
+        }
+        let seen = minus.lines.end;
+        if lines.end <= seen {
+            return;
+        }
+        // An occurrence ending in the new lines can begin in those looked
+        // through: up to the longest exclusion's words, less one, back.
+        let longest = not.iter().map(|p| p.terms.len()).max().unwrap_or(1);
+        let (mut from, mut back) = (seen, 0);
+        while from > minus.lines.start && back + 1 < longest {
+            from -= 1;
+            back += self.lines[from].terms.len();
+        }
+        let mut places: Vec<Place> = Vec::new();
+        for l in from..lines.end {
+            debug_assert!(self.lines[l].saved.is_none(), "a line looked through before it's read");
+            places.extend((0..self.lines[l].terms.len()).map(|t| (l, t)));
+        }
+        for (p, spots) in not.iter().zip(&mut minus.found) {
+            for r in self.occurrences(&places, p) {
+                let (first, last) = (places[r.start].0, places[r.end - 1].0);
+                // Those ending before the new lines are found already.
+                if last < seen {
+                    continue;
+                }
+                let words = || places[r.clone()].iter().map(|&place| self.word(place));
+                spots.push(Spot {
+                    first,
+                    last,
+                    latest_start: words().map(|w| w.start).fold(f64::NEG_INFINITY, f64::max),
+                    earliest_end: words().map(|w| w.end).fold(f64::INFINITY, f64::min),
+                });
+            }
+        }
+        minus.lines.end = lines.end;
     }
 
     /// The tightest match through each of `line_id`'s anchor words: every
@@ -1076,6 +1176,9 @@ mod tests {
     thread_local! {
         /// Every window read, none passed over: what `may_match` must agree with.
         pub(super) static NO_SHORTCUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// The exclusions looked for in each window afresh, as they were till
+        /// 0.7.2: what `Stream::look_through` must agree with.
+        pub(super) static EACH_WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     fn library() -> Db {
@@ -1547,6 +1650,83 @@ mod tests {
             NO_SHORTCUT.set(false);
             assert_eq!(shown(&quick), shown(&every), "{q}");
             found += every.hits.len();
+        }
+        assert!(found > 1000, "the queries find things: {found}");
+    }
+
+    /// The exclusions found once per stretch of lines (`Stream::look_through`)
+    /// leave out what looking in each window afresh did, on a library of
+    /// lines with and without words: minus words and phrases, small windows
+    /// and the widest, with phrases common to most lines, with a name alone,
+    /// with a time.
+    #[test]
+    fn exclusions_found_once_leave_out_what_each_window_did() {
+        const WORDS: [&str; 6] = ["ah", "be", "cee", "dee", "eh", "eff"];
+        let mut seed: u64 = 11;
+        let mut next = move |n: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        let mut db = library();
+        for v in 0..3 {
+            let id = vod(&db, &format!("v{v}"), if v == 0 { "streamer" } else { "other" });
+            let mut t = 0.0;
+            for _ in 0..300 {
+                let text = match next(10) {
+                    0 => "…".to_string(),
+                    _ => (0..1 + next(5)).map(|_| WORDS[next(WORDS.len())]).collect::<Vec<_>>().join(" "),
+                };
+                say(&mut db, id, t, &text);
+                t += 0.5 + next(30) as f64 * 0.5 + text.split(' ').count() as f64 * 0.3;
+            }
+        }
+        let shown = |r: &SearchResults| -> Vec<String> {
+            r.hits
+                .iter()
+                .map(|h| format!("{} {} {} {} {:?}", h.vod_id, h.time, h.end, h.lines, marked_parts(h)))
+                .collect()
+        };
+        let mut queries: Vec<String> = [
+            "ah be cee",
+            "ah be cee within:1h",
+            "\"ah\" \"be\" within:1h",
+            "ah -be",
+            "ah -be within:1h",
+            "ah be -cee",
+            "\"ah\" \"dee\" -\"be cee\" within:30",
+            "ah -\"be cee dee\" within:2",
+            "eff OR dee -ah",
+            "from:streamer -ah",
+            "from:streamer in:audio -ah within:1h",
+            "from:streamer in:audio -\"eh eff\" -cee within:10",
+            "after:5:00 in:audio -be",
+            "after:5:00 in:audio -be -cee -dee within:1",
+        ]
+        .map(String::from)
+        .to_vec();
+        for _ in 0..200 {
+            let minus: Vec<String> = (0..1 + next(2))
+                .map(|_| {
+                    let phrase: Vec<&str> = (0..1 + next(3)).map(|_| WORDS[next(WORDS.len())]).collect();
+                    if phrase.len() == 1 { format!("-{}", phrase[0]) } else { format!("-\"{}\"", phrase.join(" ")) }
+                })
+                .collect();
+            let find = match next(4) {
+                0 => "from:streamer in:audio".to_string(),
+                _ => (0..1 + next(3)).map(|_| WORDS[next(WORDS.len())]).collect::<Vec<_>>().join(" "),
+            };
+            let within = [3, 10, 40, 600, 3600][next(5)];
+            queries.push(format!("{find} {} within:{within}", minus.join(" ")));
+        }
+        let mut found = 0;
+        for q in &queries {
+            let once = db.search(q, &SearchFilter::default(), 10_000).unwrap();
+            EACH_WINDOW.set(true);
+            let each = db.search(q, &SearchFilter::default(), 10_000).unwrap();
+            EACH_WINDOW.set(false);
+            assert_eq!(once.query.error, None, "{q}");
+            assert_eq!(shown(&once), shown(&each), "{q}");
+            found += each.hits.len();
         }
         assert!(found > 1000, "the queries find things: {found}");
     }
