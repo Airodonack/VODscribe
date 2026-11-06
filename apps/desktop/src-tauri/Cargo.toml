@@ -42,12 +42,13 @@ tauri-plugin-single-instance = "2"
 # What a drag dropped on the window offers, its virtual files, file
 # promises and files saved for it read out of it (drop_target, receive.rs).
 dragndrop-target = { path = "../../../crates/dragndrop-target" }
+# Dragging a clip out of the window into another app before it's made: the
+# drag's data, the receivers' asks and how it ended (drag_source, which
+# starts each system's drag).
+dragndrop-source = { path = "../../../crates/dragndrop-source" }
 
-# Dragging a clip out of the window into another app (clips.rs): the app
-# starts each OS's drag itself, the GTK one on Linux.
-
-# macOS: the app starts the drag itself (file_drag), with a file promise (the
-# file written where it's dropped once it's made) beside the file's address.
+# macOS: the app starts the drag itself (drag_source), and takes drops
+# (drop_target).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
@@ -55,8 +56,8 @@ raw-window-handle = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSGeometry", "NSOperation", "NSProcessInfo", "NSProgress", "NSString", "NSURL", "NSValue", "block2"] }
 objc2-app-kit = { version = "0.3", features = ["block2", "libc", "NSApplication", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSFilePromiseProvider", "NSFilePromiseReceiver", "NSGraphics", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSResponder", "NSRunningApplication", "NSView", "NSWindow"] }
 
-# On Windows the app starts the OLE drag itself (drag_source), offering a clip
-# before its file is made; the windows crate's version tauri and wry build.
+# On Windows the app starts the OLE drag itself (drag_source) and takes drops
+# (drop_target); the windows crate's version tauri and wry build.
 [target.'cfg(windows)'.dependencies]
 # (`#[implement]` names windows-core.)
 windows-core = "0.62"

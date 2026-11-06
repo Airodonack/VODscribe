@@ -11,7 +11,6 @@ mod chats;
 mod choices;
 mod clipboard;
 mod clips;
-#[cfg(windows)]
 mod drag_source;
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod drop_target;
@@ -19,7 +18,6 @@ mod drop_target;
 mod e2e;
 mod edits;
 mod embed;
-mod file_drag;
 mod files;
 mod footage;
 mod history;

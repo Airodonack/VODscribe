@@ -3,7 +3,7 @@
 //!
 //! - as paths (CF_HDROP), told to the target as they are: files dropped from
 //!   Explorer, and the app's own drags out, coming back over the window
-//!   (`drag_source` answers the window at once, with the files made so far);
+//!   (`dragndrop_source` answers the window at once, with the files made so far);
 //! - else as virtual files (FileGroupDescriptorW + FileContents), when there
 //!   are some the target takes: a video inside a zip folder in Explorer.
 //!   Once let go, each is read from the app it comes from into what the

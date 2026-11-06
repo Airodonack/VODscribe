@@ -5,8 +5,7 @@
 //! folder in Explorer too; on macOS (`macos`: wry's web view's dragging
 //! methods, hooked) a file promise; on Linux (`linux`: GTK's drag signals
 //! on the page) the drops the web view can't, a file dragged out of an
-//! archive manager or a sandboxed app. The mirror of `drag_source` and
-//! `file_drag`.
+//! archive manager or a sandboxed app. The mirror of `drag_source`.
 //!
 //! This part owns the window's side (registering, the drag's events, its
 //! answer); what a drag offers and its files' bytes are the crate's. Nothing

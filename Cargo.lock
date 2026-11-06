@@ -1542,6 +1542,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dragndrop-source"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "gtk",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "windows",
+ "windows-core 0.62.2",
+]
+
+[[package]]
 name = "dragndrop-target"
 version = "0.1.0"
 dependencies = [
@@ -6634,6 +6647,7 @@ version = "0.7.2+dev"
 dependencies = [
  "anyhow",
  "block2",
+ "dragndrop-source",
  "dragndrop-target",
  "getrandom 0.4.3",
  "glib",

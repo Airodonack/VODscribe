@@ -1,59 +1,43 @@
-//! Dragging files out of the app into other apps before they're made: the
-//! system's drag begins at once, and each file is handed over once it's
-//! there. Windows only (`windows`: OLE's drag, a virtual file beside the
-//! file itself); Linux's lives in clips.rs, macOS's in `file_drag`, whose
-//! `Ending` this shares.
-//!
-//! Nothing here knows the app: it's given items (`Item`: a file's name, where
-//! its file is, as polled; a cancel hook), the window's raw handle and a PNG,
-//! and it says how the drag ended (`Outcome`). The app (clips.rs) answers for
-//! its clips through `Item` and decides what the page hears from `Outcome`.
+//! Dragging files out of the window into other apps, before they're made:
+//! each system's drag begun here (`start`), from the press that's still
+//! down, with its picture. What the drag carries, the receivers' asks and
+//! how it ended are `dragndrop_source`'s; clips.rs answers for the files
+//! (`Item`) and tells the page what it hears (`Event`).
 
-use std::path::PathBuf;
+pub(crate) use dragndrop_source::{Ending, Event, Failure, Item, ReleasedEarly, State};
 
-pub(crate) use crate::file_drag::{Ending, ReleasedEarly};
-
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(windows)]
 mod windows;
-pub(crate) use windows::run;
 
-/// Where an item's file is: made, at its path; still being made; or not
-/// going to be, and why.
-pub(crate) enum State {
-    Making,
-    Ready(PathBuf),
-    Failed(String),
+#[cfg(target_os = "linux")]
+pub(crate) use linux::start;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::start;
+#[cfg(windows)]
+pub(crate) use windows::start;
+
+/// A line about a drag's progress, in the tests' builds only (stderr, where
+/// the end-to-end tests read them); the drag's own lines too, once one has
+/// begun (`traced`).
+#[cfg(feature = "e2e")]
+pub(crate) fn trace(what: &str) {
+    if cfg!(target_os = "macos") {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        eprintln!("drag: [{:.3}] {what}", now.as_secs_f64() % 1000.0);
+    } else {
+        eprintln!("drag: {what}");
+    }
 }
+#[cfg(not(feature = "e2e"))]
+pub(crate) fn trace(_: &str) {}
 
-/// One file in a drag out of the window.
-pub(crate) trait Item: Send + Sync {
-    /// The name its file lands under, with its extension, as it will be once
-    /// it's made (a receiver that copies it, Explorer, names its copy so).
-    fn name(&self) -> String;
-    /// Where its file is now: polled, from any thread, while the drag waits.
-    fn state(&self) -> State;
-    /// The app it was let go on gave up on it (Explorer's Cancel) before it
-    /// was handed over.
-    fn cancel(&self) {}
-    /// The app it was let go on asked for its file while it's still being
-    /// made, and waits for it (Explorer's copy).
-    fn waited_for(&self) {}
-}
-
-/// How a drag out of the window ended, once it has: for Explorer, once its
-/// copies are written.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Outcome {
-    pub(crate) ending: Ending,
-    /// The files went to the app it was let go on, as themselves or copied.
-    pub(crate) delivered: bool,
-    /// That app has the files themselves (not copies): they're its now.
-    pub(crate) taken: bool,
-    /// Why they never came, if one couldn't be made (or was canceled).
-    pub(crate) failure: Option<String>,
-    /// That app asked for the files themselves once let go on, was refused
-    /// because one was still being made, and took nothing else; or refused
-    /// the drop while one was: it takes finished files only.
-    pub(crate) refused_unmade: bool,
-    /// That app's name, as its program describes itself, where known.
-    pub(crate) receiver: Option<String>,
+/// Has the drag's own lines traced too, in the tests' builds.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
+fn traced() {
+    #[cfg(feature = "e2e")]
+    dragndrop_source::trace_with(trace);
 }
