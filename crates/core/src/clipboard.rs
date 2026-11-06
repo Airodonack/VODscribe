@@ -281,20 +281,6 @@ impl Db {
         Ok(None)
     }
 
-    /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
-    /// just after its clip `after`; where they are if `after` isn't there.
-    fn place_after_on_bar(&self, bar: i64, ids: &[i64], after: i64) -> Result<()> {
-        let mut order: Vec<i64> =
-            self.bar_clips(bar)?.into_iter().map(|c| c.id).filter(|id| !ids.contains(id)).collect();
-        let Some(at) = order.iter().position(|&id| id == after) else { return Ok(()) };
-        order.splice(at + 1..at + 1, ids.iter().copied());
-        for (i, id) in order.iter().enumerate() {
-            self.conn
-                .execute("UPDATE clips SET bar_position = ?2 WHERE id = ?1", rusqlite::params![id, i as i64 + 1])?;
-        }
-        Ok(())
-    }
-
     /// `Paste::Timeline`'s writes: the piece at the moment split there, the
     /// copies in. The stretch they play.
     fn paste_in(&self, clip: i64, at: f64, items: &[Copied]) -> Result<(f64, f64)> {

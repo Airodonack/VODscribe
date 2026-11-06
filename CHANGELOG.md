@@ -10,6 +10,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
+- New clips go after the picked one. The Clip key, and a stretch dropped on the clip bar, put the clip after the clip you picked there, as a paste does, and pick it.
 - Fixes:
   - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
   - A Mac drop keeps your files. A file you saved under the clip's name while the clip was being made is no longer deleted or written over; VODscribe says a file of that name is already there.
@@ -18,6 +19,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
   - An edit's frames load while it plays. The small frames on its timeline, of videos not yet seen, waited until you paused.
   - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
+  - Undo keeps the clip bar's order. A clip pasted in the middle of the clip bar came back last when redone, and so did one deleted from there when undone.
 
 ## 0.7.1 — 2026-11-05
 

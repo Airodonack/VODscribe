@@ -3,7 +3,8 @@
 // clips; over the library's pane, its list; anywhere else on the main side
 // (the player, the timeline, the transcript), the timeline of what's open.
 // "Over" is where the pointer is; before the pointer has moved, where the
-// focus is. And where in it a paste puts what it brings (`insertionPoint`):
+// focus is. And where in it a paste puts what it brings (`insertionPoint`),
+// as the Clip key and a drop on the clip bar do (clips.svelte.ts `after`):
 // after what's selected, the playhead only when nothing is. Pure:
 // node --test apps/desktop/src/lib/where.test.mjs.
 

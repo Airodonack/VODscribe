@@ -34,13 +34,15 @@ export const chosenSegments = (items = snippets.items) =>
 export const chosenClips = (items = snippets.items) =>
   items.flatMap((i) => (i.kind === "clip" && clips.shown.some((c) => c.id === i.id) ? [i.id] : []));
 
-/** A clip in the clip bar of each stretch selected, in the order they were, as one change; the set then goes. */
+/** A clip in the clip bar of each stretch selected, in the order they were, as one change,
+ *  after the last clip picked beside them (clips.svelte.ts `after`); the set then goes. */
 export async function clipSegments() {
   const ranges = chosenSegments().map((s) => ({ start: s.start, end: s.end }));
   if (!ranges.length) return;
+  const after = clips.after;
   snippets.clear();
-  if (clips.doc?.kind === "edit") await clips.makeAll(ranges);
-  else await exportStretches(ranges);
+  if (clips.doc?.kind === "edit") await clips.makeAll(ranges, after);
+  else await exportStretches(ranges, after);
 }
 
 /** Takes the clips selected (or `ids`, of `doc`'s clip bar: those Ctrl+X

@@ -271,10 +271,11 @@ class Edits {
   addRange = (editId: number, s: Stretch, index?: number) =>
     this.#change(api.addRangeToEdit(editId, s.vodId, s.start, s.end, s.title, index));
   /** Puts several things picked in edit `editId`, in their order, as one change: on its clip
-   *  bar if `bar` (shown again if it's open), else on its timeline at `index` (or last). */
-  async put(editId: number, items: Put[], bar: boolean, index?: number): Promise<boolean> {
+   *  bar if `bar` (shown again if it's open; after its clip `after`, else last), else on its
+   *  timeline at `index` (or last). */
+  async put(editId: number, items: Put[], bar: boolean, index?: number, after: number | null = null): Promise<boolean> {
     if (!items.length) return false;
-    const done = await this.#change(api.putInEdit(editId, items, bar, index));
+    const done = await this.#change(api.putInEdit(editId, items, bar, index, after));
     if (done && bar) clips.reload({ kind: "edit", id: editId });
     return done;
   }

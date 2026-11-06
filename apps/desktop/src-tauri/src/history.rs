@@ -307,6 +307,7 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
             }
             let add = |db: &Db, want: &BarClip<EditState>| db.add_bar_clip(id, &want.made);
             restore_bar(queue, db, had, bar, &edit_bar(db, id)?, remake_clip, add)?;
+            order_bar(db, id, bar, &edit_bar(db, id)?)?;
         }
         (Doc::Vod(id), Snapshot::Vod { marks: was, clips: had }, Snapshot::Vod { marks, clips }) => {
             if was != marks {
@@ -316,6 +317,9 @@ fn restore(queue: &impl BarQueue, db: &Db, doc: Doc, from: &Snapshot, to: &Snaps
                 db.add_bar_clip(db.vod_clip(id)?.context("That VOD is gone.")?, &want.made)
             };
             restore_bar(queue, db, had, clips, &vod_bar(db, id)?, remake_clip, add)?;
+            if let Some(bar) = db.vod_clip(id)? {
+                order_bar(db, bar, clips, &vod_bar(db, id)?)?;
+            }
         }
         _ => {}
     }
@@ -440,6 +444,32 @@ fn restore_bar<M: Made>(
         }
     }
     Ok(())
+}
+
+/// The order `now`'s clips go in for clip bar `to`'s order: those that are
+/// `to`'s clips take the places they hold among them in `to`, others stay
+/// where they are. None if that's the order they're in already.
+fn bar_order<M: Made>(to: &[BarClip<M>], now: &[BarClip<M>]) -> Option<Vec<i64>> {
+    let mut ours: Vec<i64> = Vec::new();
+    for want in to {
+        if let Some(clip) = find(now, want, to).filter(|c| !ours.contains(&c.id)) {
+            ours.push(clip.id);
+        }
+    }
+    let mut next = ours.iter();
+    let order: Vec<i64> =
+        now.iter().map(|c| if ours.contains(&c.id) { *next.next().expect("one of ours") } else { c.id }).collect();
+    (order.iter().ne(now.iter().map(|c| &c.id))).then_some(order)
+}
+
+/// Puts listed clip `bar`'s clip bar, `now` as it is once a change was put
+/// back (`restore_bar`), in `to`'s order: a clip made again comes back where
+/// it was, not last.
+fn order_bar<M: Made>(db: &Db, bar: i64, to: &[BarClip<M>], now: &[BarClip<M>]) -> Result<()> {
+    match bar_order(to, now) {
+        Some(order) => db.change(bar, None, |db| db.order_bar(&order)),
+        None => Ok(()),
+    }
 }
 
 /// Steps `view`'s history back (`undo`) or forward, and tells the page which
@@ -753,6 +783,35 @@ mod tests {
         assert_eq!(on_bar(&db), std::slice::from_ref(&was), "the paste undone");
         step_library(&history, &db, doc, false);
         assert_eq!(on_bar(&db), [was.clone(), was], "redone, the copy as it was");
+    }
+
+    /// A clip pasted between two on a VOD's bar, then the middle one
+    /// deleted: undone or redone, it comes back where it was, not last.
+    #[test]
+    fn undo_and_redo_keep_the_bars_order() {
+        use vodscribe_core::clipboard::Paste;
+        use vodscribe_core::edits::Put;
+        let (db, vod) = library();
+        let history = History::default();
+        let doc = Doc::Vod(vod);
+        let bar = db.vod_clip(vod).unwrap().unwrap();
+        let a = db.add_clip(vod, 1.0, 2.0, "a", true).unwrap().id;
+        db.add_clip(vod, 3.0, 4.0, "b", true).unwrap();
+        let starts = |db: &Db| db.clips(vod).unwrap().iter().map(|c| c.start).collect::<Vec<_>>();
+        let copy = db.copy_of(&Put::Range { vod_id: vod, start: 5.0, end: 6.0, title: None }).unwrap();
+        history.change(&db, doc, "Clip pasted", |db| db.paste(Paste::Bar { bar, after: Some(a) }, &[copy])).unwrap();
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "pasted after the first");
+        step_library(&history, &db, doc, true);
+        assert_eq!(starts(&db), [1.0, 3.0]);
+        step_library(&history, &db, doc, false);
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "redone, in the middle again");
+
+        // The middle one deleted: undone, it's back in the middle.
+        let middle = db.clips(vod).unwrap()[1].id;
+        history.change(&db, doc, "Clip deleted", |db| db.delete_clip(middle)).unwrap();
+        assert_eq!(starts(&db), [1.0, 3.0]);
+        step_library(&history, &db, doc, true);
+        assert_eq!(starts(&db), [1.0, 5.0, 3.0], "undone, in the middle again");
     }
 
     /// Clip `clip` of `doc`'s clip bar, made of `made`, resized and its

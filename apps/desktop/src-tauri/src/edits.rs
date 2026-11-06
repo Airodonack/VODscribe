@@ -400,7 +400,8 @@ pub(crate) async fn add_range_to_edit(
 /// Puts `items` (several things picked) in edit `edit_id`, in their order,
 /// as one change undo takes back whole: on its clip bar if `bar`, else on its
 /// timeline at `index` of its top level (or last). The clips made on the bar
-/// are queued to be made.
+/// go after its clip `after`, if given (where.ts `insertionPoint`), else
+/// last, and are queued to be made.
 #[tauri::command]
 pub(crate) async fn put_in_edit(
     app: AppHandle,
@@ -408,6 +409,7 @@ pub(crate) async fn put_in_edit(
     items: Vec<edits::Put>,
     bar: bool,
     index: Option<usize>,
+    after: Option<i64>,
 ) -> CmdResult<EditView> {
     let onto = if bar { edits::Onto::Bar } else { edits::Onto::Timeline(index) };
     let label = match (bar, items.len()) {
@@ -419,6 +421,9 @@ pub(crate) async fn put_in_edit(
     let mut made = Vec::new();
     let view = changing(&app, edit_id, label, |db| {
         made = db.put(edit_id, &items, onto)?;
+        if let Some(after) = after.filter(|_| bar && !made.is_empty()) {
+            db.place_after_on_bar(edit_id, &made, after)?;
+        }
         Ok(())
     })?;
     let state = app.state::<AppState>();

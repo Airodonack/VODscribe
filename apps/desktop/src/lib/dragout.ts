@@ -236,16 +236,18 @@ export function stretchAt(time: number, duration: number): { start: number; end:
 
 /**
  * Makes the stretch `start`..`end` a clip (or gives the one made); in the
- * clip bar if `shown`, else only made to be dragged out.
+ * clip bar if `shown` (after clip `after`, else where a paste would go:
+ * clips.svelte.ts `after`), else only made to be dragged out.
  */
-export function exportStretch(start: number, end: number, shown = true): Promise<Clip | null> {
-  return clips.make(start, end, shown);
+export function exportStretch(start: number, end: number, shown = true, after = clips.after): Promise<Clip | null> {
+  return clips.make(start, end, shown, after);
 }
 
 /** Makes each of `ranges` a clip in the clip bar (several stretches
- *  selected), in their order, as `exportStretch` makes one. */
-export function exportStretches(ranges: { start: number; end: number }[]): Promise<void> {
-  return clips.makeAll(ranges);
+ *  selected), in their order, as `exportStretch` makes one: after clip
+ *  `after`, else where a paste would go (clips.svelte.ts `after`). */
+export function exportStretches(ranges: { start: number; end: number }[], after = clips.after): Promise<void> {
+  return clips.makeAll(ranges, after);
 }
 
 /** Where `start`..`end` is on screen: on the timeline if it's in view, else null. */
@@ -740,8 +742,8 @@ export function carry({
   home,
 }: Carry): Promise<void> {
   // A stretch of the VOD shown is made a clip through its clip bar; another's (an edit's piece) directly.
-  const make = async (shown: boolean): Promise<Clip | null> => {
-    if (vod.id === clips.vodId) return exportStretch(start, end, shown);
+  const make = async (shown: boolean, after = clips.after): Promise<Clip | null> => {
+    if (vod.id === clips.vodId) return exportStretch(start, end, shown, after);
     return api.addClip(vod.id, start, end, shown).catch((e) => {
       clips.error = String(e);
       return null;
@@ -771,9 +773,10 @@ export function carry({
       else if (edit !== null) into(edit);
       else if (timeline && edits.openId !== null) into(edits.openId, timeline.index);
       else if (bar && clips.doc?.kind === "edit")
-        edits.put(clips.doc.id, [{ kind: "range", vodId: vod.id, start, end, title }], true);
+        edits.put(clips.doc.id, [{ kind: "range", vodId: vod.id, start, end, title }], true, undefined, clips.after);
       else if (bar) {
-        void (made ?? Promise.resolve([])).then(() => make(true));
+        const after = clips.after;
+        void (made ?? Promise.resolve([])).then(() => make(true, after));
         return true;
       }
       return false;
@@ -910,20 +913,22 @@ export function carrySet(set: CarrySet): Promise<void> {
       else if (target.timeline && edits.openId !== null) edits.put(edits.openId, items, false, target.timeline.index);
       else if (target.bar && clips.doc?.kind === "edit") {
         const id = clips.doc.id;
+        const after = clips.after;
         if (!made) {
-          edits.put(id, items, true);
+          edits.put(id, items, true, undefined, after);
           return false;
         }
         // The clips made ahead for a drag out are of the same stretches of
         // this edit: they go first, so the ones put on its clip bar are new.
         void made
           .then((list) => Promise.all(list.filter((c) => !c.shown).map((c) => api.deleteClip(c.id).catch(() => {}))))
-          .then(() => edits.put(id, items, true));
+          .then(() => edits.put(id, items, true, undefined, after));
         return true;
       } else if (target.bar) {
         // On a VOD's clip bar, the clips made for a drag out are the ones
         // kept: those made ahead waited for first, so they're not made twice.
-        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches));
+        const after = clips.after;
+        void (made ?? Promise.resolve([])).then(() => exportStretches(set.stretches, after));
         return true;
       }
       return false;

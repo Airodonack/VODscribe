@@ -10,7 +10,9 @@
 // of it, and the stretch the drag grabs is lit as grabbed until let go. The clip bar has no row of its own about what's picked:
 // the keys and the drags are the same for several as for one. A plain click
 // on a pill picks it alone, one on another picks that instead, and one on
-// the pill picked alone lets it go. A pill's play button plays the VOD from
+// the pill picked alone lets it go. C with a pill picked puts the clip of
+// the stretch at the playhead after that pill, picked, as a paste would;
+// undone, it goes. A pill's play button plays the VOD from
 // the clip's start and picks nothing. One pill clicked and the other
 // Ctrl-clicked picks both: Delete takes both off the clip bar, and one undo
 // brings both back. A box dragged from empty space in the clip bar over both
@@ -31,7 +33,8 @@
 //
 // One kind picked at a time: two pills picked, then a cut clicked, the pills
 // are let go (the bar says nothing's picked) and Delete takes the cut only;
-// the same with a library row picked. Ctrl+A (⌘A) picks by where the
+// the same with a library row picked, and a plain click on the timeline
+// lets go of a row picked too. Ctrl+A (⌘A) picks by where the
 // pointer is, whatever has the focus: over the clip bar, all the clips; over
 // the timeline, the whole timeline selected (no clips); over the library's
 // pane, all its rows; over the main side with nothing open, nothing, and not
@@ -335,6 +338,38 @@ export default {
     await plainClick(made[1].id);
     await until("a plain click on the pill picked alone let it go", async () => !(await chosen()).length, 10_000);
     ctx.log("a plain click picks a pill alone, another instead, and lets go of the one picked alone");
+
+    // C with the first pill picked (the playhead at 3 s): the clip of 3 s
+    // on goes after that pill, as a paste would, not last, and is picked;
+    // undone, it goes.
+    const barOrder = () =>
+      app.js(`return [...document.querySelectorAll(".clip-bar .chip[data-clip]")].map((c) => Number(c.dataset.clip))`);
+    await plainClick(made[0].id);
+    await pickedAlone(made[0].id, "a plain click picked the first pill alone");
+    await app.key("c");
+    const third = await until(
+      "a third clip, after the first pill",
+      async () => {
+        const order = await barOrder();
+        return order.length === 3 && order[0] === made[0].id && order[2] === made[1].id && order[1];
+      },
+      MINUTE,
+    ).catch(async (e) => {
+      throw new Error(
+        `${e.message}: the bar holds ${JSON.stringify(await barOrder())}, made ${made[0].id}, ${made[1].id}`,
+      );
+    });
+    await pickedAlone(third, "the clip C made picked");
+    await app.key("z", { cmd: true });
+    await until(
+      "the third clip undone",
+      async () => (await barOrder()).join() === `${made[0].id},${made[1].id}`,
+      10_000,
+    );
+    await until("nothing picked once it's gone", async () => !(await chosen()).length, 10_000).catch(async (e) => {
+      throw new Error(`${e.message}: picked ${JSON.stringify(await chosen())}`);
+    });
+    ctx.log("C with a pill picked put the clip after it, picked; undone, it went");
 
     // The play button on the 1-2 s pill (the playhead at 3 s, after the
     // cuts): the VOD plays from 1 s, and the pill isn't picked.
@@ -711,6 +746,20 @@ export default {
     if (askedNow.length) throw new Error(`Delete on the cut asked ${JSON.stringify(askedNow)}`);
     if (!(await app.invoke("list_vods")).some((v) => v.id === vod.id))
       throw new Error("Delete on the cut removed the VOD");
+
+    // A row picked, then a plain click on the timeline, the playhead set
+    // there: the row is let go, as a stretch or a pill picked is.
+    await click(d, "toggle");
+    await says("2 VODs", "another Ctrl-clicked beside the open one");
+    await plainAt(0.5);
+    await until(
+      "a plain click on the timeline let the row go",
+      () => app.js(`return !document.querySelector(".list .vod.chosen, aside .picked")`),
+      10_000,
+    ).catch(async (e) => {
+      throw new Error(`${e.message}: the list says "${await listHead()}"`);
+    });
+    ctx.log("a plain click on the timeline lets go of a library row picked");
 
     // The two pills picked, 2-3 s first, and the second dragged (in the
     // page's events) onto "Make new edit": both go in a new edit, in the

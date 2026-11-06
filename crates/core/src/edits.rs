@@ -1195,6 +1195,27 @@ impl Db {
         })
     }
 
+    /// Moves clips `ids` (in their order) of listed clip `bar`'s clip bar to
+    /// just after its clip `after`; where they are if `after` isn't there.
+    /// Part of a change (`change`), as making them is.
+    pub fn place_after_on_bar(&self, bar: i64, ids: &[i64], after: i64) -> Result<()> {
+        let mut order: Vec<i64> =
+            self.bar_clips(bar)?.into_iter().map(|c| c.id).filter(|id| !ids.contains(id)).collect();
+        let Some(at) = order.iter().position(|&id| id == after) else { return Ok(()) };
+        order.splice(at + 1..at + 1, ids.iter().copied());
+        self.order_bar(&order)
+    }
+
+    /// Puts clips `ids` of one clip bar in that order (undo putting a bar
+    /// back as it was). Part of a change (`change`).
+    pub fn order_bar(&self, ids: &[i64]) -> Result<()> {
+        for (i, id) in ids.iter().enumerate() {
+            self.conn
+                .execute("UPDATE clips SET bar_position = ?2 WHERE id = ?1", rusqlite::params![id, i as i64 + 1])?;
+        }
+        Ok(())
+    }
+
     /// Puts `items` in edit `edit`, one after another in their order, where
     /// `onto` says, as one change (all of them, or none if one can't go):
     /// several things picked, dropped on the edit or added from a menu. On
