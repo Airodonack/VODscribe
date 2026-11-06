@@ -277,7 +277,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // On Windows the data dir roams, so downloads go in the local one.
-            let paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
+            let mut paths = Paths::split(app.path().app_data_dir()?, app.path().app_local_data_dir()?);
+            // Where 0.7.1 made clips; without a Videos folder it made them in
+            // the library, whose own files are known anyway.
+            if let Ok(videos) = app.path().video_dir() {
+                paths = paths.with_old_clips(videos.join("VODscribe"));
+            }
             paths.ensure()?;
             app.manage(choices::Kept::load(paths.choices()));
             // Upgrades: drop models this version no longer uses.
@@ -289,6 +294,12 @@ pub fn run() {
             let db_path = paths.db();
             match Db::open_in(&paths) {
                 Ok(db) => {
+                    // Files recorded where they were before 0.7.2 go where
+                    // they're built now (a move a crash cut short is
+                    // finished): here only, before any job has a path.
+                    if let Err(e) = vodscribe_core::library::settle(&db) {
+                        eprintln!("Some of the library's files couldn't be moved to where they go now: {e:#}");
+                    }
                     app.manage(recovery::Problem::none(db_path));
                     start_library(app, paths, db)?;
                 }

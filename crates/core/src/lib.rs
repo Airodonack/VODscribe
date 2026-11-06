@@ -112,6 +112,11 @@ pub fn is_canceled(e: &anyhow::Error) -> bool {
 pub struct Paths {
     pub root: PathBuf,
     pub local: PathBuf,
+    /// Where 0.7.1 made clips and edits (VODscribe in the Videos folder),
+    /// if known: the one folder outside the library `library::settle`
+    /// takes files from, and where a clip's file it couldn't link in is
+    /// read from (`db::clip_file_of`).
+    pub old_clips: Option<PathBuf>,
 }
 
 /// Bytes in `path`: a file's, or everything under a folder (not following links).
@@ -127,11 +132,16 @@ impl Paths {
     /// Everything in one directory.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
-        Self { local: root.clone(), root }
+        Self { local: root.clone(), root, old_clips: None }
     }
 
     pub fn split(root: impl Into<PathBuf>, local: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), local: local.into() }
+        Self { root: root.into(), local: local.into(), old_clips: None }
+    }
+
+    /// These paths, with 0.7.1's clip folder at `dir` (`old_clips`).
+    pub fn with_old_clips(self, dir: impl Into<PathBuf>) -> Self {
+        Self { old_clips: Some(dir.into()), ..self }
     }
 
     pub fn db(&self) -> PathBuf {

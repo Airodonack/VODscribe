@@ -264,7 +264,7 @@ impl Waiting {
     fn read(&self, url: &NSURL, error: Option<&NSError>) {
         let file = url.to_file_path();
         let Some(mut job) = self.job.lock().unwrap().take() else {
-            if let Some(file) = file {
+            if let Some(file) = file.filter(|f| self.owns(f)) {
                 let _ = std::fs::remove_file(file);
             }
             return;
@@ -273,10 +273,22 @@ impl Waiting {
             (Some(e), _) => Err(Error::Source(e.localizedDescription().to_string())),
             _ if self.shared.canceled() => Err(Error::Canceled),
             (None, None) => Err(Error::Source("it gave no file".into())),
+            (None, Some(file)) if !self.owns(&file) => Err(Error::Source("it gave a file elsewhere".into())),
             (None, Some(file)) => self.take(&mut job, &file),
         };
         self.shared.end(job, result);
         let _ = std::fs::remove_dir_all(&self.at);
+    }
+
+    /// Whether `file` is in the folder made for this promise (`at`), as on
+    /// disk (links followed): the one place a file is moved or deleted
+    /// from. AppKit builds the URL, from the source's name in the older
+    /// API, so it's checked rather than trusted.
+    fn owns(&self, file: &Path) -> bool {
+        match (std::fs::canonicalize(file), std::fs::canonicalize(&self.at)) {
+            (Ok(file), Ok(at)) => file.starts_with(&at) && file != at,
+            _ => false,
+        }
     }
 
     /// File `file` taken as `job`: moved in, else read into its sink.
@@ -369,6 +381,32 @@ mod tests {
         fn finish(self: Box<Self>, result: Result<u64, Error>) {
             self.0.send((self.1, result.map_err(|e| e.to_string()))).unwrap();
         }
+    }
+
+    /// A URL handed back for a file outside the promise's own folder (the
+    /// older API builds it from the source's name): that file is neither
+    /// moved in nor deleted, by the reader or a late one.
+    #[test]
+    fn a_file_outside_the_promises_folder_is_left_alone() {
+        let dir = scratch("outside");
+        let theirs = dir.join("theirs.mp4");
+        std::fs::write(&theirs, b"someone's").unwrap();
+        let (tell, heard) = mpsc::channel();
+        let to = Destination::folder(&dir, move |r| tell.send(r).unwrap());
+        let (fetch, waiting, _) = given(&dir, vec![(item("a.mp4"), to)], "a.mp4", b"whole");
+        // Through the promise's own folder and out of it.
+        let up = waiting.at.parent().unwrap().join(format!("dragndrop-target-up-{}.mp4", std::process::id()));
+        std::fs::write(&up, b"beside").unwrap();
+        let out = waiting.at.join("..").join(up.file_name().unwrap());
+        waiting.read(&NSURL::from_file_path(&out).unwrap(), None);
+        assert!(heard.recv().unwrap().is_err());
+        assert!(fetch.is_finished());
+        assert_eq!(std::fs::read(&up).unwrap(), b"beside", "moved in");
+        std::fs::remove_file(&up).unwrap();
+        // Read again, its job ended: a late reader deletes only a file of its own folder.
+        waiting.read(&NSURL::from_file_path(&theirs).unwrap(), None);
+        assert_eq!(std::fs::read(&theirs).unwrap(), b"someone's", "deleted");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

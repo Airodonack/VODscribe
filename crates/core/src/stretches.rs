@@ -75,8 +75,7 @@ fn stretch_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Stretch> 
         reached: r.get("reached")?,
         error: r.get("error")?,
         model: r.get("model")?,
-        audio: r
-            .get::<_, Option<String>>("audio_ext")?
+        audio: crate::db::ext_of(r.get("audio_ext")?)
             .map(|ext| crate::db::shown(&files.source_section(vod_id, id, &ext))),
     })
 }

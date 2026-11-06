@@ -176,6 +176,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
     }
     // The video made before in the other format goes (the names it was
     // handed out by stay).
+    let before = before.filter(|p| crate::clips::own_file(&state.paths, p));
     if let Some(old) = before.filter(|p| result.is_ok() && Path::new(p) != out) {
         crate::files::delete_file(old);
     }

@@ -832,8 +832,8 @@ pub(crate) const VOD_COLUMNS: &str =
 
 pub(crate) fn vod_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Vod> {
     let id: i64 = r.get("id")?;
-    let video: Option<String> = r.get("video_ext")?;
-    let received: Option<String> = r.get("received_ext")?;
+    let video = ext_of(r.get("video_ext")?);
+    let received = ext_of(r.get("received_ext")?);
     let source_path = match &received {
         Some(ext) => Some(files.source_received(id, ext).to_string_lossy().into_owned()),
         None => r.get("source_path")?,
@@ -1070,7 +1070,7 @@ pub struct MarkState {
 /// A snippet's columns: the clip's, and its first piece's stretch.
 pub(crate) const CLIP_COLUMNS: &str =
     "c.id, i.vod_id, i.start, i.end, c.title, r.status, r.file_ext, r.error, c.shown, c.revision,
-     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of)";
+     c.bar_of, (SELECT whole_of FROM clips b WHERE b.id = c.bar_of), r.file_path";
 /// Joins a clip (`c`) to its first piece (`i`) and its render (`r`). The
 /// first piece in timeline order, inside a group if its timeline starts with
 /// one (a clip pasted or dropped at its start): a group has no stretch to read.
@@ -1093,7 +1093,7 @@ pub(crate) fn clip_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<C
         end: Flicks(r.get::<_, Option<i64>>(3)?.unwrap_or(0)).seconds(),
         title: r.get(4)?,
         status: ClipStatus::parse(&r.get::<_, String>(5)?),
-        file_path: r.get::<_, Option<String>>(6)?.map(|ext| files.clip_file(id, &ext).to_string_lossy().into_owned()),
+        file_path: clip_file_of(files, id, r.get(6)?, r.get(12)?),
         error: r.get(7)?,
         shown: r.get(8)?,
         revision: r.get(9)?,
@@ -1229,6 +1229,34 @@ pub fn give_way() {
     std::thread::sleep(std::time::Duration::from_millis(1));
 }
 
+/// An extension column (`video_ext`, `file_ext`…) as the library reads it:
+/// only one the app could have written, 1 to 10 ASCII letters and digits,
+/// in lower case. Anything else (a separator, a `..`, from a library someone
+/// else made) is read as none, the file unknown, so no path it builds can
+/// leave the library's folders, and nothing is deleted for it.
+pub(crate) fn ext_of(ext: Option<String>) -> Option<String> {
+    ext.filter(|e| (1..=10).contains(&e.len()) && e.bytes().all(|b| b.is_ascii_alphanumeric()))
+        .map(|e| e.to_ascii_lowercase())
+}
+
+/// Clip `id`'s file as its render row has it: built from its extension
+/// (`file_ext`). A row `library::settle` left as 0.7.1 wrote it, with only
+/// the full path (`file_path`): the file in 0.7.1's clip folder
+/// (`Paths::old_clips`) where it couldn't be linked in, else where its
+/// extension would build it, so a file gone reads as gone (and the clip
+/// comes off its bar, `forget_gone_clips`) rather than as none at all.
+pub(crate) fn clip_file_of(files: &crate::Paths, id: i64, ext: Option<String>, old: Option<String>) -> Option<String> {
+    if let Some(ext) = ext_of(ext) {
+        return Some(shown(&files.clip_file(id, &ext)));
+    }
+    let old = old?;
+    if files.old_clips.as_deref().is_some_and(|dir| crate::library::named_inside(Path::new(&old), dir)) {
+        return Some(old);
+    }
+    let ext = ext_of(Path::new(&old).extension().and_then(|e| e.to_str()).map(str::to_owned))?;
+    Some(shown(&files.clip_file(id, &ext)))
+}
+
 /// The extension of `file`, which must be `built(ext)`: where the library
 /// keeps a file of its kind (`Paths`). Writers give the path they wrote,
 /// built there; any other is refused, so no row can mean a file elsewhere.
@@ -1264,14 +1292,11 @@ impl Db {
     }
 
     fn open_with(path: &Path, files: crate::Paths) -> Result<Self> {
-        let db = Self::open_inner(path, files)
-            .with_context(|| format!("open the library at {}", crate::tools::shown(path)))?;
-        // Files recorded where they were before 0.7.2, moved to where they
-        // go now; a move a crash cut short is finished.
-        if let Err(e) = crate::library::settle(&db) {
-            eprintln!("Some of the library's files couldn't be moved to where they go now: {e:#}");
-        }
-        Ok(db)
+        // Files recorded where they were before 0.7.2 are moved by the app
+        // once, as it starts (`library::settle`), not at every open: a job's
+        // own connection opened mid-session would move a file under another
+        // job that has its path.
+        Self::open_inner(path, files).with_context(|| format!("open the library at {}", crate::tools::shown(path)))
     }
 
     /// A second connection to the library at `path`, for reading only, opened
@@ -1811,7 +1836,7 @@ impl Db {
     pub fn playable_path(&self, id: i64) -> Result<Option<String>> {
         let sql = "SELECT source_path, received_ext, video_ext FROM vods WHERE id = ?1";
         let row: Option<(Option<String>, Option<String>, Option<String>)> =
-            self.conn.query_row(sql, [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
+            self.conn.query_row(sql, [id], |r| Ok((r.get(0)?, ext_of(r.get(1)?), ext_of(r.get(2)?)))).optional()?;
         let Some((source, received, video)) = row else { return Ok(None) };
         let path = match (received, source, video) {
             (Some(ext), _, _) => Some(shown(&self.files.source_received(id, &ext))),
@@ -1825,7 +1850,7 @@ impl Db {
     pub fn media_path(&self, id: i64) -> Result<Option<String>> {
         let ext: Option<String> =
             self.conn.query_row("SELECT video_ext FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
-        Ok(ext.map(|ext| shown(&self.files.source_video(id, &ext))))
+        Ok(ext_of(ext).map(|ext| shown(&self.files.source_video(id, &ext))))
     }
 
     /// Records VOD `id`'s kept video, at `path` (`Paths::source_video`), or
@@ -1842,7 +1867,7 @@ impl Db {
     pub fn audio_path(&self, id: i64) -> Result<Option<String>> {
         let ext: Option<String> =
             self.conn.query_row("SELECT audio_ext FROM vods WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten();
-        match ext {
+        match ext_of(ext) {
             Some(ext) => Ok(Some(shown(&self.files.source_audio(id, &ext)))),
             None => self.playable_path(id),
         }
@@ -2761,11 +2786,12 @@ mod tests {
         use crate::edits::LibraryItem::{Edit, Vod};
         let edit = db.edits().unwrap().remove(0);
         assert_eq!(db.library_order().unwrap(), [Vod(2), Edit(edit.id), Vod(1)], "the order kept");
-        assert_eq!(
-            (edit.title.as_str(), edit.current, edit.file_path.as_deref()),
-            ("Best of", true, None),
-            "its file isn't there, so it's forgotten (library::settle)"
-        );
+        assert_eq!((edit.title.as_str(), edit.current), ("Best of", true));
+        // Its file isn't there, nor where settle takes files from: read as
+        // gone (where it would be built), as before, so it's made again.
+        let file = edit.file_path.expect("a file, gone");
+        assert_eq!(file, shown(&db.files().clip_file(edit.id, "mp4")));
+        assert!(!Path::new(&file).exists());
         let pieces = db.edit_pieces(edit.id).unwrap();
         assert_eq!(
             pieces.iter().map(|p| (p.id, p.vod_id, p.start, p.end)).collect::<Vec<_>>(),
@@ -2780,7 +2806,8 @@ mod tests {
         let bar: Vec<_> = db.clips(1).unwrap().into_iter().map(|c| (c.id, c.start, c.end, c.title, c.shown)).collect();
         assert_eq!(bar, [(2, 30.0, 40.0, "Dinner".into(), true), (1, 10.0, 20.5, "Lunch".into(), true)]);
         assert!(db.clip_handed_out(1).unwrap() && !db.clip_handed_out(2).unwrap());
-        assert_eq!(db.clip(1).unwrap().unwrap().file_path, None, "its file isn't there either");
+        let lunch = db.clip(1).unwrap().unwrap().file_path;
+        assert_eq!(lunch, Some(shown(&db.files().clip_file(1, "mp4"))), "its file isn't there either: read as gone");
         assert_eq!(db.clips(2).unwrap().iter().map(|c| (c.id, c.shown)).collect::<Vec<_>>(), [(3, false)]);
         // Each VOD has its clip, over all of it.
         let own = db.vod_clip(1).unwrap().unwrap();

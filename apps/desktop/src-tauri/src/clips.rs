@@ -370,12 +370,19 @@ fn same_file(a: &Path, b: &Path) -> bool {
     stat(a).is_some_and(|a| Some(a) == stat(b))
 }
 
+/// Whether `file`, a clip's or an edit's, is the library's own, which goes
+/// with it: not one read from 0.7.1's clip folder (`Paths::old_clips`),
+/// which stays there.
+pub(crate) fn own_file(paths: &vodscribe_core::Paths, file: &str) -> bool {
+    Path::new(file).starts_with(paths.clips())
+}
+
 /// What's left of clip `id`'s files once it's gone: its own file (`file`)
 /// deleted; the names it was handed out by kept if another app took them
 /// (`handed_out`), as its project may use them, else deleted with it.
 pub(crate) fn let_go_files(paths: &vodscribe_core::Paths, id: i64, file: Option<&str>, handed_out: bool) {
     let dir = paths.clip_names(id);
-    if let Some(file) = file {
+    if let Some(file) = file.filter(|f| own_file(paths, f)) {
         if !handed_out {
             // Only those that are this clip's file: a clip before it with its
             // id (ids are given again) may have left names another app took.
@@ -487,7 +494,8 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         delete_file(&out);
     }
     // Its file in the format before goes (those it was handed out by stay).
-    if let Some(old) = clip.file_path.as_deref().filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
+    let old = clip.file_path.as_deref().filter(|p| own_file(&state.paths, p));
+    if let Some(old) = old.filter(|p| recorded && result.is_ok() && Path::new(p) != out) {
         delete_file(old);
     }
     if recorded && result.is_ok() && !vod.audio_only {
@@ -1528,6 +1536,25 @@ pub(crate) async fn save_clip(app: AppHandle, window: tauri::WebviewWindow, id: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clip whose file is read from 0.7.1's clip folder (it couldn't be
+    /// linked in) leaves that file there when it goes; its own goes.
+    #[test]
+    fn a_clip_going_leaves_files_outside_the_library() {
+        let root = std::env::temp_dir().join(format!("vodscribe-let-go-{}", std::process::id()));
+        let paths = vodscribe_core::Paths::new(root.join("lib"));
+        let old = root.join("Videos/VODscribe/A talk.mp4");
+        let own = paths.clip_file(4, "mp4");
+        for file in [&old, &own] {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, b"clip").unwrap();
+        }
+        let_go_files(&paths, 3, Some(&old.to_string_lossy()), false);
+        assert!(old.is_file(), "0.7.1's file deleted");
+        let_go_files(&paths, 4, Some(&own.to_string_lossy()), false);
+        assert!(!own.exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     /// A clip made only to be dragged out was queued last, behind every clip
     /// and edit render waiting, and the drag waited for all of them.

@@ -770,7 +770,7 @@ impl Db {
             .conn
             .query_row(
                 "SELECT c.title, r.status, r.file_ext, r.error, c.revision, r.revision,
-                        c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of
+                        c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of, r.file_path
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
                 |r| {
@@ -783,14 +783,15 @@ impl Db {
                         r.get::<_, Option<i64>>(5)?,
                         crate::db::ClipBar::of(r.get(6)?, r.get(7)?),
                         r.get::<_, Option<String>>(8)?,
+                        r.get::<_, Option<String>>(9)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of)) = row else {
+        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of, old)) = row else {
             return Ok(None);
         };
-        let file_path = file_ext.map(|ext| crate::db::shown(&self.files.clip_file(id, &ext)));
+        let file_path = crate::db::clip_file_of(&self.files, id, file_ext, old);
         let pieces = self.edit_pieces(id)?;
         // Of the edit as it is if made of what it's made of now (a file made
         // before that was recorded: of the revision it was made at).
