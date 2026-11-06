@@ -486,6 +486,7 @@
 
   <div
     class="list library-list"
+    data-press-blurs-text
     role="listbox"
     aria-label="Library"
     aria-multiselectable="true"

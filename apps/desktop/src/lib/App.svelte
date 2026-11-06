@@ -895,6 +895,7 @@
     <svelte:element
       this={DEMO ? "div" : "main"}
       class="main"
+      data-press-blurs-text
       class:alone
       bind:clientWidth={mainWidth}
       bind:clientHeight={mainHeight}
