@@ -3,8 +3,9 @@
 //! has its own, `storyboards/<vod id>-<path's hash>.sb` (the VOD's id first,
 //! so all of a VOD's go with it). They're made one at a time on a queue of
 //! VODs, each job making those of the VOD's files that aren't made yet;
-//! the queue waits while the player plays something else, so playing stays
-//! smooth. A file's library picture is a frame of its storyboard.
+//! the queue waits while the player plays other footage (another VOD, or
+//! an edit not made of this one), so playing stays smooth. A file's library
+//! picture is a frame of its storyboard.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -133,8 +134,8 @@ fn make(app: &AppHandle, id: i64, stop: &AtomicBool) {
             if own && !pictured {
                 pictured = picture(app, id, board);
             }
-            // Playing something else: it waits.
-            while !stop.load(Ordering::Relaxed) && state.player.playing_other(Doc::Vod(id)) {
+            // Playing something else (not this VOD, nor an edit of it): it waits.
+            while !stop.load(Ordering::Relaxed) && state.player.playing_other(&state.db, id) {
                 std::thread::sleep(Duration::from_millis(250));
             }
             !stop.load(Ordering::Relaxed)

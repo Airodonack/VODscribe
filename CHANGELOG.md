@@ -15,6 +15,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Progress keeps moving during clip drags. On Linux, transcriptions, downloads and clips no longer freeze while an app waits for a clip you dragged out.
   - Menus answer their first click. After a Control-click on a Mac, or a press the system called off, the next click on a row's menu could be ignored.
   - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
+  - An edit's frames load while it plays. The small frames on its timeline, of videos not yet seen, waited until you paused.
 
 ## 0.7.1 — 2026-11-05
 
