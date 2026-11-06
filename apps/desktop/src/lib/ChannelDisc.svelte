@@ -22,7 +22,7 @@
   const cast = $derived(annotations?.cast ?? []);
   const member = $derived.by((): CastMember | undefined => {
     if (!annotations || !vod.channel) return undefined;
-    const named = channelMember(cast, vod.channel);
+    const named = channelMember(cast, vod.channel, vod.channel_login);
     if (named) return named;
     const account = channelAccount(vod);
     return account && { name: vod.channel, aliases: [], role: "streamer", account };

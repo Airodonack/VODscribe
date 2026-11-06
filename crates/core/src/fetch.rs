@@ -19,6 +19,11 @@ pub struct VodInfo {
     pub url: String,
     pub title: String,
     pub channel: Option<String>,
+    /// The channel's login (Twitch's, Kick's slug) or handle, as the site
+    /// gives it, beside `channel`, its display name, which can differ (a
+    /// Twitch name in another script). The streamer's picture goes by it.
+    #[serde(default)]
+    pub channel_login: Option<String>,
     pub duration: Option<f64>,
     pub thumbnail: Option<String>,
     /// YYYY-MM-DD
@@ -63,6 +68,9 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
         url: s("webpage_url").or_else(|| s("original_url")).context("yt-dlp returned no URL")?,
         title: s("title").unwrap_or_else(|| "Untitled".into()),
         channel: s("channel").or_else(|| s("uploader")),
+        // The uploader's login is the channel's only when the uploader is the
+        // channel: a Twitch clip's uploader is whoever clipped it.
+        channel_login: s("uploader_id").filter(|_| s("channel").is_none() || s("channel") == s("uploader")),
         duration: json.get("duration").and_then(Value::as_f64),
         thumbnail: s("thumbnail"),
         published,
@@ -682,6 +690,25 @@ mod tests {
             let json = serde_json::json!({ "id": "abc", "webpage_url": "https://www.twitch.tv/videos/abc", "upload_date": date });
             assert_eq!(parse_info(&json).unwrap().published, None);
         }
+    }
+
+    #[test]
+    fn a_channels_login_is_kept_beside_its_name() {
+        let login = |json: serde_json::Value| parse_info(&json).unwrap().channel_login;
+        // A Twitch VOD: its channel's display name and login, which can differ.
+        let vod = serde_json::json!({ "id": "v1", "extractor_key": "TwitchVod", "webpage_url": "https://www.twitch.tv/videos/1",
+            "uploader": "마를로", "uploader_id": "marlowe" });
+        assert_eq!(login(vod).as_deref(), Some("marlowe"));
+        let kick = serde_json::json!({ "id": "k1", "extractor_key": "KickVOD", "webpage_url": "https://kick.com/ada_plays/videos/k1",
+            "channel": "Ada Plays", "uploader": "Ada Plays", "uploader_id": "ada_plays" });
+        assert_eq!(login(kick).as_deref(), Some("ada_plays"));
+        // A Twitch clip's uploader is who clipped it, not the channel: no login.
+        let clip = serde_json::json!({ "id": "1", "display_id": "Slug", "extractor_key": "TwitchClips",
+            "webpage_url": "https://www.twitch.tv/ea/clip/Slug", "channel": "EA", "uploader": "stereotype_", "uploader_id": "43566419" });
+        assert_eq!(login(clip), None);
+        let none = serde_json::json!({ "id": "v2", "extractor_key": "TwitchVod", "webpage_url": "https://www.twitch.tv/videos/2",
+            "uploader": "someone" });
+        assert_eq!(login(none), None);
     }
 
     #[test]

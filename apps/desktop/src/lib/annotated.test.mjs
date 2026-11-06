@@ -351,3 +351,17 @@ test("a VOD's own channel is an account by its name or address", () => {
   assert.equal(channelAccount(vod("youtube", "Marlowe", "https://www.youtube.com/watch?v=noa29qsTc4g")), undefined);
   assert.equal(channelAccount(vod("local", null, "file:///a.mp4")), undefined);
 });
+
+test("a Twitch channel whose name differs from its login is found by the login the site gave", () => {
+  const vod = { platform: "twitch", channel: "마를로", channel_login: "marlowe", url: "" };
+  assert.deepEqual(channelAccount(vod), { platform: "twitch", login: "marlowe" });
+  // The login the site gave wins over one guessed from the name.
+  assert.deepEqual(channelAccount({ ...vod, channel: "Marlowe Plays", channel_login: "marlowe_tv" }), {
+    platform: "twitch",
+    login: "marlowe_tv",
+  });
+  // A cast member with that login is the channel's, whatever its name.
+  /** @type {import("./api").CastMember[]} */
+  const cast = [{ name: "Marlowe", aliases: [], role: "streamer", account: { platform: "twitch", login: "marlowe" } }];
+  assert.equal(channelMember(cast, "마를로", "marlowe")?.name, "Marlowe");
+});

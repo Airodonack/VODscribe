@@ -510,6 +510,7 @@ mod tests {
             url: format!("https://youtu.be/{id}"),
             title: id.into(),
             channel: None,
+            channel_login: None,
             duration,
             thumbnail: None,
             published: None,

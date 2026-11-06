@@ -133,6 +133,7 @@ mod tests {
             url: String::new(),
             title: String::new(),
             channel: None,
+            channel_login: None,
             duration: None,
             thumbnail: None,
             published: None,

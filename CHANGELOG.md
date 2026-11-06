@@ -26,6 +26,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
   - Undo keeps the clip bar's order. A clip pasted in the middle of the clip bar came back last when redone, and so did one deleted from there when undone.
   - Made by opens the site too. A click on the credit under VODscribe's name did nothing, and its words could be selected.
+  - Every Twitch channel shows its picture. A VOD you add from a channel whose name differs from its login, such as a Korean one, gets the streamer's picture too.
 
 ## 0.7.1 — 2026-11-05
 

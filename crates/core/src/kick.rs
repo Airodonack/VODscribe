@@ -125,6 +125,7 @@ fn parse_playback(json: &Value, slug: &str, id: &str) -> Result<(VodInfo, String
         url: format!("https://kick.com/{slug}/videos/{id}"),
         title: text("video_title").unwrap_or_else(|| "Untitled".into()),
         channel: text("video_series").or_else(|| Some(slug.to_string())),
+        channel_login: Some(slug.to_string()),
         duration: session("video_duration").and_then(Value::as_f64).filter(|d| *d > 0.0),
         thumbnail: json.pointer("/playback_url/thumbnail").and_then(Value::as_str).and_then(poster_url),
         published: None,

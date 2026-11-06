@@ -61,28 +61,42 @@ export function castDetail(m: CastMember): string {
 
 /**
  * The cast member whose channel the VOD is on, by the channel's name: the one
- * with an account whose name, player or login is `channel` (any case), a
- * streamer first. Their picture goes beside the channel's name in the VOD's
- * heading and its library row. Undefined when none has an account.
+ * with an account whose name, player or login is `channel`, or whose login is
+ * the channel's `login` as its site gave it (any case), a streamer first.
+ * Their picture goes beside the channel's name in the VOD's heading and its
+ * library row. Undefined when none has an account.
  */
-export function channelMember(cast: CastMember[], channel: string | null | undefined): CastMember | undefined {
-  const key = channel?.trim().toLowerCase();
-  if (!key) return undefined;
-  const is = (n: string | undefined) => n?.trim().toLowerCase() === key;
-  const found = cast.filter((m) => m.account && !isVoice(m) && (is(m.name) || is(m.player) || is(m.account.login)));
+export function channelMember(
+  cast: CastMember[],
+  channel: string | null | undefined,
+  login?: string | null,
+): CastMember | undefined {
+  const lower = (n: string | null | undefined) => n?.trim().toLowerCase() || undefined;
+  const [key, loginKey] = [lower(channel), lower(login)];
+  if (!key && !loginKey) return undefined;
+  const found = cast.filter(
+    (m) =>
+      m.account &&
+      !isVoice(m) &&
+      ([m.name, m.player, m.account.login].some((n) => key && lower(n) === key) ||
+        (loginKey && lower(m.account.login) === loginKey)),
+  );
   return found.find((m) => m.role.trim().toLowerCase() === "streamer") ?? found[0];
 }
 
 /**
  * VOD `vod`'s own channel as an account, from the VOD itself, for when its
- * annotations give its streamer none: on Twitch the login is the channel's
- * name in lower case (when that name can be a login), on Kick it's in the
- * VOD's address (kick.com/<login>/videos/…). None on YouTube, where the VOD
- * has its channel's name and not its handle, nor for a file.
+ * annotations give its streamer none: on Twitch the login the site gave
+ * (`channel_login`), else, for a VOD added before that was kept, the
+ * channel's name in lower case (when that name can be a login); on Kick
+ * it's in the VOD's address (kick.com/<login>/videos/…). None on YouTube,
+ * where the pictures go by login and a channel has a handle, nor for a file.
  */
-export function channelAccount(vod: Pick<Vod, "platform" | "channel" | "url">): CastMember["account"] {
+export function channelAccount(
+  vod: Pick<Vod, "platform" | "channel" | "url" | "channel_login">,
+): CastMember["account"] {
   if (vod.platform === "twitch") {
-    const login = vod.channel?.trim().toLowerCase();
+    const login = (vod.channel_login || vod.channel)?.trim().toLowerCase();
     return login && /^[a-z0-9_]{1,25}$/.test(login) ? { platform: "twitch", login } : undefined;
   }
   if (vod.platform === "kick") {

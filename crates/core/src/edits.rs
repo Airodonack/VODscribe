@@ -1943,6 +1943,7 @@ pub(crate) mod tests {
             url: format!("https://youtu.be/{id}"),
             title: format!("VOD {id}"),
             channel: None,
+            channel_login: None,
             duration: Some(600.0),
             thumbnail: None,
             published: None,

@@ -1589,6 +1589,7 @@ mod tests {
             url: "https://youtu.be/x".into(),
             title: "t".into(),
             channel: None,
+            channel_login: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,

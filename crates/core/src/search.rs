@@ -1192,6 +1192,7 @@ mod tests {
             url: format!("https://www.twitch.tv/videos/{id}"),
             title: id.into(),
             channel: Some(channel.into()),
+            channel_login: None,
             duration: Some(3600.0),
             thumbnail: None,
             published: None,
