@@ -173,6 +173,11 @@ export default {
       );
     const before = await rowState();
     if (before !== "closed, not picked") throw new Error(`before its click, the row is ${before}`);
+    // What of the click reaches the page, seen before anything else sees it.
+    await app.js(
+      `const seen = (window.__rowClick = []);
+       for (const type of ["pointerdown", "click", "mouseup"]) window.addEventListener(type, () => seen.push(type), { capture: true });`,
+    );
     if (!os.unavailable()) {
       const r = await os.rectOf(app, `${vodRow} .meta`);
       os.click(r.x + r.w / 2, r.y + r.h / 2, r.scale);
@@ -194,7 +199,16 @@ export default {
       5_000,
     ).catch(() => false);
     if (!closed) wrong.push("a click on the row left its menu open");
-    await new Promise((r) => setTimeout(r, 500));
+    // Its release seen, and with it whatever the click does to the row; or,
+    // on the Mac's window in the back, no press: the window's coming to the
+    // front closed the menu, and nothing of the click comes.
+    await until(
+      "the click on the row over",
+      () =>
+        app.js(`const seen = window.__rowClick;
+                return !seen.includes("pointerdown") || seen.includes("click") || seen.includes("mouseup")`),
+      5_000,
+    ).catch(() => wrong.push("the click on the row was pressed and never let go"));
     const after = await rowState();
     if (after !== before) wrong.push(`the click on the row with its menu open left the row ${after}`);
     if (wrong.length) throw new Error(wrong.join("; "));

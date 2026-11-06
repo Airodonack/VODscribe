@@ -403,21 +403,9 @@ function placeMac(owner, fm) {
     JSON.stringify(front(${at}).kCGWindowBounds)`);
 }
 
-/** On macOS, the app in front before a press that must reach it (`focusMac`); elsewhere nothing. */
+/** On macOS, the app in front before a press that must reach it (`os.toFront`); elsewhere nothing. */
 export async function frontmost(app) {
-  if (process.platform === "darwin") await focusMac(app);
-}
-
-/**
- * The app in front again, by a click on its title bar (an app can't bring
- * another to the front from a script any more), and a moment for it: a
- * press right after the click that brought it there goes nowhere. Always:
- * the page can say it has the focus while its window isn't in front.
- */
-async function focusMac(app) {
-  const page = await os.windowRect(app);
-  os.click(page.x + Math.round(page.w / 2), page.y - 14);
-  await sleep(1500);
+  if (process.platform === "darwin") await os.toFront(app);
 }
 
 /**
@@ -466,7 +454,7 @@ async function openFinder(app, ctx, dest) {
   // where it was let go.
   jxa(`${MAC_WINDOWS} command(18); $.usleep(300000); command(18, 0x40000); "true"`);
   await sleep(500);
-  await focusMac(app);
+  await os.toFront(app);
   return {
     // (Right of its sidebar.)
     drop: { x: Math.round(at.X + at.Width * 0.65), y: Math.round(at.Y + at.Height * 0.6) },
@@ -482,7 +470,7 @@ async function openFinder(app, ctx, dest) {
     close: () => {
       jxa(`${MAC_WINDOWS} const b = front("Finder").kCGWindowBounds; mouse(5, b.X + b.Width / 2, b.Y + 12); $.usleep(100000);
         mouse(1, b.X + b.Width / 2, b.Y + 12); mouse(2, b.X + b.Width / 2, b.Y + 12); $.usleep(300000); command(13); "true"`);
-      return focusMac(app);
+      return os.toFront(app);
     },
   };
 }
@@ -542,7 +530,7 @@ async function openFinishedOnlyMac(app, ctx, work, refuses) {
   try {
     await until("its window", () => said().some((l) => l.endsWith(" ready")), MINUTE);
     await sleep(1000);
-    await focusMac(app);
+    await os.toFront(app);
   } catch (e) {
     proc.kill();
     throw e;

@@ -4,8 +4,6 @@
 // speed. Held and let go away from the menu, it closes with the speed as it
 // was. Linux (X11) only, so far.
 
-import { setTimeout as sleep } from "node:timers/promises";
-
 import { until } from "../lib/app.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -35,14 +33,28 @@ export default {
         10_000,
       );
     const menuOpen = () => app.js(`return !!document.querySelector(arguments[0])`, MENU);
+    /**
+     * Runs gesture `steps`, ending in the release of `button` (2: the right
+     * one, as PointerEvent numbers it), and waits till the page has seen that
+     * release: what it does is done by then, the click after it included.
+     */
+    const released = async (steps, button) => {
+      await app.js(
+        `const seen = (window.__released = []);
+         window.addEventListener("pointerup", (e) => seen.push(e.button), { capture: true });`,
+      );
+      await os.gesture(steps);
+      await until("the release seen", () => app.js(`return window.__released.includes(arguments[0])`, button), 5_000);
+    };
     await speedIs("1×");
     const at = await os.rectOf(app, BUTTON);
     const [x, y] = [at.x + Math.round(at.w / 2), at.y + Math.round(at.h / 2)];
 
     // A click: the next speed, and no menu.
     os.click(x, y, at.scale);
+    // The step is the click's, after its release: a hold's menu can't open
+    // from that press any more.
     await speedIs("1.25×");
-    await sleep(600);
     if (await menuOpen()) throw new Error("a click opened the menu");
     ctx.log("a click steps 1× to 1.25×, no menu");
 
@@ -85,26 +97,31 @@ export default {
       ["wait", 700],
     ]);
     await until("the menu, held open", menuOpen, 5_000);
-    await os.gesture([
-      ["move", time.x + Math.round(time.w / 2), time.y + Math.round(time.h / 2)],
-      ["wait", 150],
-      ["up"],
-    ]);
+    await released(
+      [["move", time.x + Math.round(time.w / 2), time.y + Math.round(time.h / 2)], ["wait", 150], ["up"]],
+      0,
+    );
     await until("the menu closed", async () => !(await menuOpen()), 5_000);
-    await sleep(300);
+    // A speed picked would be the player's already: the release picks, and
+    // LocalPlayer.svelte sets the media's rate as it's asked; the button
+    // shows it a moment later.
+    const rate = await app.js(`return document.querySelector("video, audio")?.playbackRate ?? null`);
+    if (rate !== 1.5) throw new Error(`let go away from the menu, the speed is ${rate}`);
     await speedIs("1.5×");
     ctx.log("let go away from the menu: it closed, still 1.5×");
 
     // Right-clicked: the menu, open once the button's let go; a click on
     // 0.75× picks it.
-    await os.gesture([
-      ["down", x, y, 3],
-      ["wait", 100],
-      ["up", 3],
-    ]);
-    await until("the menu, right-clicked open", menuOpen, 5_000);
-    await sleep(300);
-    if (!(await menuOpen())) throw new Error("the menu right-clicked open closed as the button was let go");
+    await released(
+      [
+        ["down", x, y, 3],
+        ["wait", 100],
+        ["up", 3],
+      ],
+      2,
+    );
+    // Its release seen already: open now is open for good.
+    await until("the menu, right-clicked open, still open once let go", menuOpen, 5_000);
     const slower = await os.rectOf(app, `${MENU} [data-speed="0.75"]`);
     os.click(slower.x + Math.round(slower.w / 2), slower.y + Math.round(slower.h / 2), slower.scale);
     await speedIs("0.75×");
@@ -116,14 +133,15 @@ export default {
     const transcribe = await os.rectOf(app, TRANSCRIBE);
     const [tx, ty] = [transcribe.x + Math.round(transcribe.w / 2), transcribe.y + Math.round(transcribe.h / 2)];
     const fromOpen = () => app.js(`return !!document.querySelector(arguments[0])`, FROM);
-    await os.gesture([
-      ["down", tx, ty, 3],
-      ["wait", 100],
-      ["up", 3],
-    ]);
-    await until("Transcribe's menu, right-clicked open", fromOpen, 5_000);
-    await sleep(300);
-    if (!(await fromOpen())) throw new Error("Transcribe's menu right-clicked open closed as the button was let go");
+    await released(
+      [
+        ["down", tx, ty, 3],
+        ["wait", 100],
+        ["up", 3],
+      ],
+      2,
+    );
+    await until("Transcribe's menu, right-clicked open, still open once let go", fromOpen, 5_000);
     const choices = await app.js(
       `return [...document.querySelectorAll(arguments[0] + " [data-choice]")].map((b) => b.dataset.choice)`,
       FROM,

@@ -496,6 +496,24 @@ export async function parkPointer(app) {
   throw new Error(`the page still has something under the system's pointer, moved off it to ${spot.join(",")}`);
 }
 
+/**
+ * The app's window in front, as a click on its title bar puts it (an app
+ * can't bring another to the front from a script on a Mac any more, and the
+ * app a drop went to comes to the front, with the keys), once the page says
+ * it has the focus. On a Mac, a moment instead: the page can say it has the
+ * focus while its window isn't in front, and a press right after the click
+ * that brought it there goes nowhere.
+ */
+export async function toFront(app) {
+  const page = await windowRect(app);
+  click(page.x + Math.round(page.w / 2), page.y - 14, page.scale);
+  if (process.platform === "darwin") return new Promise((r) => setTimeout(r, 1500));
+  for (let waited = 0; !(await app.js(`return document.hasFocus()`)); waited += 50) {
+    if (waited >= 5000) throw new Error("the app's page doesn't have the focus after a click on its title bar");
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
 /** The app window's page area on the screen (pixels), as rectOf gives an element's. */
 export async function windowRect(app) {
   return rectOf(app, "body");

@@ -916,23 +916,17 @@ async function onWindows(app, ctx) {
       explorer.closeExplorerDialogs();
       for (const f of droppedHere()) rmSync(path.join(dest, f), { force: true });
     };
+    let shots = 0;
     /**
      * Clip (or `what`) pressed and carried over the window's edge to `to`, in
      * one gesture (the page can't be asked anything while the system's drag
      * is up); there, `then` (letting go, say). A screenshot of each as it's
      * over the drop (drag-promise-<n>.png): the drag's picture, drawn by the
-     * shell, isn't a window of the app's to look for.
+     * shell, isn't a window of the app's to look for. The app's window in
+     * front first: the app a drop went to comes to the front, with the keys.
      */
-    /** The app's window in front again, as a click on its title bar puts it
-     *  (the app a drop went to comes to the front, and the keys go there). */
-    const focusApp = async () => {
-      const page = await os.windowRect(app);
-      os.click(page.x + Math.round(page.w / 2), page.y - 16);
-      await sleep(300);
-    };
-    let shots = 0;
     const carryOut = async (then, what = "button.action.clip", to = target.drop) => {
-      await focusApp();
+      await os.toFront(app);
       await app.js(`performance.clearMarks(); window.__ended = []; ${HEAR_TOASTS}`);
       const from = await centre(what);
       const steps = [
@@ -1089,7 +1083,7 @@ async function onWindows(app, ctx) {
       },
       2 * MINUTE,
     );
-    await focusApp();
+    await os.toFront(app);
     await setFormat(app, "MP4");
     encodes("slow");
     for (const p of three) {
@@ -1131,7 +1125,7 @@ async function onWindows(app, ctx) {
     );
     await settle();
     say("6");
-    await focusApp();
+    await os.toFront(app);
     await app.key("Escape");
     // (Off the clip bar again, so the next pill shows in its width.)
     for (const p of three) await app.invoke("delete_clip", { id: p.id });
@@ -1183,7 +1177,7 @@ async function onWindows(app, ctx) {
     mkdirSync(refuserWork, { recursive: true });
     taker = await explorer.openFilesOnly(refuserWork, beside, { refuses: true });
     // (The form came to the front: the keys go to the app again.)
-    await focusApp();
+    await os.toFront(app);
     await toTime(app, 50);
     const marks = (await app.invoke("list_marks", { vodId: vod.id })).length;
     await app.key("b");
