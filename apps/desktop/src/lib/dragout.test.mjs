@@ -13,8 +13,13 @@ const fakes = {
       dragMaking: async (cb) => (globalThis.fake.makingListeners.add(cb), () => globalThis.fake.makingListeners.delete(cb)),
     };
     export const thumbUrl = async () => null;`,
-  "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
-  "./resolveDrop.svelte": `export const resolveNote = { show: (how, count) => globalThis.fake.resolve.push([how, count]) };`,
+  "./appSettings.svelte": `export const settings = globalThis.fake.settings;`,
+  "./resolveDrop.svelte": `export const resolveNote = {
+    show: (how, count, remake, what = "clip") => (
+      globalThis.fake.resolve.push(what === "clip" ? [how, count] : [how, count, what]),
+      (globalThis.fake.remake = remake)
+    ),
+  };`,
   "./toasts.svelte": `export const toast = globalThis.fake.toast;`,
   "./clips.svelte": `export const clips = globalThis.fake.clips;`,
   "./cuts.svelte": `export const cuts = { list: [] };`,
@@ -112,6 +117,12 @@ const fake = {
   kept: [],
   /** The Resolve notes shown: how it went, and how many clips. @type {[string, number][]} */
   resolve: [],
+  /** What the last note's Switch to MOV does, once clips are MOV. @type {(() => void) | undefined} */
+  remake: undefined,
+  /** The format clips are made in. */
+  settings: { load: async () => {}, value: { clip_format: "mp4" } },
+  /** Clips made again (`clips.move`): id, start and end. @type {number[][]} */
+  moved: [],
   /** What the toasts said. @type {string[]} */
   toasts: [],
   /** The toasts hidden as no longer so, by their place in `toasts`. @type {number[]} */
@@ -131,6 +142,8 @@ const fake = {
     /** @param {unknown} ids @param {unknown} _image @param {unknown} drag */
     dragClips: async (ids, _image, drag) => (fake.dragged.push(ids), fake.numbers.push(drag), fake.begins()),
     dragBeforeMade: async () => fake.beforeMade,
+    /** @param {number} id @param {unknown} drag */
+    dragEdit: async (id, drag) => (fake.dragged.push(["edit", id]), fake.numbers.push(drag), fake.begins()),
     /** @param {number} id */
     deleteClip: async (id) => void fake.deleted.push(id),
     /** @param {number} id */
@@ -175,7 +188,8 @@ const fake = {
       fake.waited.push(id),
       held() ? { id, start: 0, end: 900, status: "ready", file_path: "/c.mp4" } : null
     ),
-    move: async () => {},
+    /** @param {number} id @param {number} start @param {number} end */
+    move: async (id, start, end) => void fake.moved.push([id, start, end]),
     makeAll: async () => {},
   },
   edits: {
@@ -190,6 +204,11 @@ const fake = {
     addRange: (...a) => fake.added.push(["addRange", ...a]),
     /** @param {unknown[]} a */
     createWith: (...a) => fake.added.push(["createWith", ...a]),
+    /** Edits rendered again. @type {number[]} */
+    rendered: [],
+    /** @param {number} id */
+    render: async (id) => void fake.edits.rendered.push(id),
+    error: null,
   },
 };
 Object.assign(globalThis, {
@@ -212,7 +231,7 @@ Object.assign(globalThis, {
     querySelector: () => null,
   },
 });
-const { carry, carrySet, backOver, backLeft } = await import("./dragout.ts");
+const { carry, carrySet, backOver, backLeft, dragEditOut } = await import("./dragout.ts");
 
 /** @param {number} x @param {number} y @param {number} [buttons] */
 const move = (x, y, buttons = 1) => send({ type: "pointermove", clientX: x, clientY: y, buttons });
@@ -242,6 +261,10 @@ function reset() {
   fake.noted = false;
   fake.kept.length = 0;
   fake.resolve.length = 0;
+  fake.remake = undefined;
+  fake.settings.value.clip_format = "mp4";
+  fake.moved.length = 0;
+  fake.edits.rendered.length = 0;
   fake.toasts.length = 0;
   fake.dropped.length = 0;
   fake.listeners.clear();
@@ -496,6 +519,115 @@ test("refused to DaVinci Resolve: its note asks, and the clips are kept to drag 
   assert.deepEqual(fake.kept, [3, 4], "not kept in the clip bar");
   assert.deepEqual(fake.deleted, []);
   assert.deepEqual(fake.toasts, [], "said in the note alone");
+});
+
+test("refused to Resolve while still being made, then switched to MOV: made again as MOV once made as MP4", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: false, failed: null, finished_only: false, receiver: null, resolve: "refused" });
+  await tick();
+  // Made meanwhile, in the format their making began in.
+  const ready = fake.clips.ready;
+  fake.clips.ready = async (id) => ({ id, start: 0, end: 5, shown: true, status: "ready", file_path: `/${id}.mp4` });
+  try {
+    fake.settings.value.clip_format = "mov";
+    fake.remake?.();
+    await tick();
+    assert.deepEqual(
+      fake.moved,
+      [
+        [3, 0, 5],
+        [4, 0, 5],
+      ],
+      "left as MP4",
+    );
+  } finally {
+    fake.clips.ready = ready;
+  }
+});
+
+// (The races review's case: a stretch carried out, its clip still being cut
+// as MP4 when Resolve refuses it; and trimmed while the note is up.)
+test("one clip refused to Resolve while being cut, trimmed meanwhile: Switch makes it again as MOV, as trimmed", async () => {
+  reset();
+  const make = fake.clips.make;
+  const ready = fake.clips.ready;
+  /** The clip as the store has it now. */
+  let now = {
+    id: 9,
+    start: 0,
+    end: 5,
+    shown: false,
+    status: "cutting",
+    file_path: "",
+  };
+  fake.clips.make = async (start, end, shown) => (fake.made.push(now), { ...now, start, end, shown });
+  fake.clips.ready = async (id) => ({ ...now, id });
+  try {
+    const done = carried(5);
+    move(120, 120);
+    move(0, 300);
+    await new Promise((r) => setTimeout(r, 20));
+    // Resolve refused it at its first ask (no hold), the clip still being cut as MP4.
+    fake.ended?.({ delivered: false, failed: null, finished_only: false, receiver: null, resolve: "refused" });
+    await done;
+    await tick();
+    assert.deepEqual(fake.resolve, [["refused", 1]]);
+    // Meanwhile its cut finished as MP4, and it was trimmed; then Switch to MOV.
+    now = { ...now, start: 1, end: 4, shown: true, status: "ready", file_path: "/9.mp4" };
+    fake.settings.value.clip_format = "mov";
+    fake.remake?.();
+    await tick();
+    assert.deepEqual(fake.moved, [[9, 1, 4]], "the clip from the drop isn't made again as MOV, as trimmed");
+  } finally {
+    fake.clips.make = make;
+    fake.clips.ready = ready;
+  }
+});
+
+test("an MP4 edit refused to Resolve: the note asks of the edit, and Switch to MOV renders it again", async () => {
+  reset();
+  const edit = /** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 7, file_path: "/e.mp4" }));
+  await dragEditOut(edit);
+  assert.deepEqual(fake.dragged, [["edit", 7]]);
+  // Another drag's end isn't the edit's.
+  fake.ended({ delivered: false, failed: null, finished_only: false, receiver: null, resolve: "refused" }, -1);
+  assert.deepEqual(fake.resolve, []);
+  fake.ended({ delivered: false, failed: null, finished_only: false, receiver: null, resolve: "refused" });
+  assert.deepEqual(fake.resolve, [["refused", 1, "edit"]]);
+  assert.equal(fake.listeners.size, 0, "still listened for after the drag");
+  fake.settings.value.clip_format = "mov";
+  fake.remake?.();
+  await tick();
+  assert.deepEqual(fake.edits.rendered, [7], "left as MP4");
+});
+
+test("an edit let go where Resolve may be is rendered again too once switched; one already MOV isn't", async () => {
+  reset();
+  await dragEditOut(/** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 7, file_path: "/e.mp4" })));
+  fake.ended({ delivered: true, failed: null, finished_only: false, receiver: null, resolve: "maybe" });
+  assert.deepEqual(fake.resolve, [["maybe", 1, "edit"]]);
+  fake.settings.value.clip_format = "mov";
+  fake.remake?.();
+  await tick();
+  assert.deepEqual(fake.edits.rendered, [7]);
+  reset();
+  await dragEditOut(/** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 8, file_path: "/e.mov" })));
+  fake.ended({ delivered: true, failed: null, finished_only: false, receiver: null, resolve: "maybe" });
+  fake.settings.value.clip_format = "mov";
+  fake.remake?.();
+  await tick();
+  assert.deepEqual(fake.edits.rendered, []);
+});
+
+test("an edit's drag that never began listens no more", async () => {
+  reset();
+  fake.begins = () => false;
+  await dragEditOut(/** @type {import("./api").Edit} */ (/** @type {unknown} */ ({ id: 7, file_path: "/e.mp4" })));
+  assert.equal(fake.listeners.size, 0);
 });
 
 test("let go where Resolve may be: its note asks, and the clips go as any drop's", async () => {

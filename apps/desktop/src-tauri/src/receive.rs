@@ -3,8 +3,9 @@
 //! zip folder in Explorer), file promises on macOS, and on Linux the files an
 //! archive manager saves for the app (File Roller, Engrampa, Ark), first into
 //! a hidden folder of `received`. Each is written into the kept videos'
-//! folder, under `received`, as `<name>.part`, renamed once whole and added
-//! as a file (`vods::add_received`); meanwhile it's listed with the jobs
+//! folder, under `received/incoming` (`incoming`), as `<name>.part`, renamed
+//! once whole and added as a file (`vods::add_received`), which moves it to
+//! `received/<its VOD's id>`; meanwhile it's listed with the jobs
 //! ("Receiving", how far, and Cancel). Canceled or failed, nothing is left.
 //! The page hears ("received") the first file of each drop to be added, which
 //! it opens, as it opens the first file of a drop with paths; and each file
@@ -81,6 +82,19 @@ fn file_name(name: &str) -> Option<String> {
     Some(format!("{}.{ext}", vodscribe_core::clips::safe_name(stem)))
 }
 
+/// Renames `from` to `to`, unless something is at `to` already (an error of
+/// kind AlreadyExists): `std::fs::rename` would replace it.
+pub(crate) fn rename_new(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    // A second name, then the first one gone: the link fails if `to` is there.
+    match std::fs::hard_link(from, to) {
+        Ok(()) => std::fs::remove_file(from),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+        // A file system without links (FAT): checked, then renamed.
+        Err(_) if to.exists() => Err(std::io::ErrorKind::AlreadyExists.into()),
+        Err(_) => std::fs::rename(from, to),
+    }
+}
+
 /// `name` in `dir`, or the first of "<stem> (2).<ext>", "(3)"... that isn't
 /// there, finished or being written.
 #[cfg_attr(not(any(windows, target_os = "macos", target_os = "linux")), allow(dead_code))]
@@ -110,11 +124,22 @@ fn part_of(path: &std::path::Path) -> std::path::PathBuf {
     part.into()
 }
 
-/// Removes from `received` (the kept videos' folder's) what a crash or a
-/// quit left being received: part files, and the folders an archive manager
-/// saved into first (Linux). Called at start, before any drop.
-pub(crate) fn tidy(received: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(received) else { return };
+/// Removes from `received` (the kept videos' folder's) and `incoming` (`Paths::received_incoming`)
+/// what a crash or a quit left being received: part files, the folders an
+/// archive manager saved into first (Linux), and, when the library's files
+/// are known (`kept`, every VOD's file), a file received whole that no VOD
+/// has (a crash before it was added). Called at start, after
+/// `library::settle` has moved 0.7.1's received files, and before any drop.
+pub(crate) fn tidy(received: &std::path::Path, incoming: &std::path::Path, kept: Option<&[String]>) {
+    // Compared as found on disk, as the paths rows keep may be spelled otherwise.
+    let kept: Option<std::collections::HashSet<std::path::PathBuf>> =
+        kept.map(|kept| kept.iter().filter_map(|p| std::fs::canonicalize(p).ok()).collect());
+    tidy_in(received, kept.as_ref());
+    tidy_in(incoming, kept.as_ref());
+}
+
+fn tidy_in(dir: &std::path::Path, kept: Option<&std::collections::HashSet<std::path::PathBuf>>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
@@ -122,6 +147,12 @@ pub(crate) fn tidy(received: &std::path::Path) {
             let _ = std::fs::remove_file(path);
         } else if name.starts_with(".dragndrop-") && path.is_dir() {
             let _ = std::fs::remove_dir_all(path);
+        } else if let Some(kept) = kept
+            && !name.starts_with('.')
+            && path.is_file()
+            && std::fs::canonicalize(&path).is_ok_and(|p| !kept.contains(&p))
+        {
+            let _ = std::fs::remove_file(path);
         }
     }
 }
@@ -141,7 +172,7 @@ mod taking {
     use serde::Serialize;
     use tauri::{AppHandle, Emitter, Manager};
 
-    use super::{Receiving, file_name, free_name, part_of};
+    use super::{Receiving, file_name, free_name, part_of, rename_new};
     use dragndrop_target::{Destination, Item};
 
     use crate::AppState;
@@ -337,7 +368,7 @@ mod taking {
         fn start(app: &AppHandle, name: &str, size: Option<u64>, opened: Arc<AtomicBool>) -> anyhow::Result<Sink> {
             let state = app.state::<AppState>();
             let shown = file_name(name).ok_or_else(|| anyhow::anyhow!("not a video or audio file"))?;
-            let dir = state.paths.received();
+            let dir = state.paths.received_incoming();
             std::fs::create_dir_all(&dir)?;
             let receives = &state.receives;
             let mut list = receives.list.lock().unwrap();
@@ -361,6 +392,21 @@ mod taking {
                 told: Instant::now(),
                 opened,
             })
+        }
+
+        /// Its file, whole at `part`, under the name it was written for; or,
+        /// something there now, the next free one (`free_name`).
+        fn keep(&mut self, part: &std::path::Path) -> std::io::Result<()> {
+            match rename_new(part, &self.to) {
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let receives = &self.app.state::<AppState>().receives;
+                    let _list = receives.list.lock().unwrap();
+                    let (dir, name) = (self.to.parent().unwrap_or(part), self.to.file_name().unwrap_or_default());
+                    self.to = free_name(dir, &name.to_string_lossy());
+                    rename_new(part, &self.to)
+                }
+                kept => kept,
+            }
         }
 
         /// Its job off the list.
@@ -396,8 +442,9 @@ mod taking {
             let part = part_of(&self.to);
             // Canceled from the jobs, or the fetch let go of (the window
             // closing): not a failure to tell.
+            let job = self.job.clone();
             let canceled =
-                || self.job.canceled.load(Ordering::SeqCst) || matches!(result, Err(dragndrop_target::Error::Canceled));
+                || job.canceled.load(Ordering::SeqCst) || matches!(result, Err(dragndrop_target::Error::Canceled));
             let whole = match canceled() {
                 true => Err("Canceled.".to_string()),
                 false => result.as_ref().map(|_| ()).map_err(|e| e.to_string()),
@@ -406,8 +453,9 @@ mod taking {
                 let file = file.ok_or("Not written.")?.into_inner().map_err(|e| e.error().to_string())?;
                 file.sync_all().map_err(|e| e.to_string())?;
                 drop(file);
-                std::fs::rename(&part, &self.to).map_err(|e| e.to_string())
-            });
+                Ok(())
+            })
+            .and_then(|()| self.keep(&part).map_err(|e| e.to_string()));
             if let Err(why) = whole {
                 // (The file is closed before it goes: Windows keeps an open one.)
                 let _ = std::fs::remove_file(&part);
@@ -487,18 +535,67 @@ mod tests {
         let stage = dir.join(".dragndrop-12-1");
         std::fs::create_dir_all(&stage).unwrap();
         std::fs::write(stage.join("zipped.mp4"), b"saved").unwrap();
-        for file in ["a.mp4", "a (2).mp4.part", "b.mkv.part", ".hidden.mp4"] {
+        for file in ["a.mp4", "a (2).mp4.part", "b.mkv.part", ".hidden.mp4", "7.mp4", "video.mp4"] {
             std::fs::write(dir.join(file), b"").unwrap();
         }
         // A folder named as a part file isn't one.
         std::fs::create_dir_all(dir.join("c.part")).unwrap();
-        tidy(&dir);
-        let mut left: Vec<_> =
-            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        left.sort();
-        assert_eq!(left, [".hidden.mp4", "a.mp4", "c.part"]);
+        let left = || {
+            let mut left: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            left.sort();
+            left
+        };
+        // The library unread: its files are left.
+        tidy(&dir, &dir.join("incoming"), None);
+        assert_eq!(left(), [".hidden.mp4", "7.mp4", "a.mp4", "c.part", "video.mp4"]);
+        // A file a VOD has stays (moved for it, or where it arrived); one
+        // received whole that none has goes, here or in `incoming`.
+        let waiting = dir.join("incoming");
+        std::fs::create_dir_all(&waiting).unwrap();
+        for file in ["kept.mp4", "left.mp4", "d.mp4.part"] {
+            std::fs::write(waiting.join(file), b"").unwrap();
+        }
+        let kept =
+            [dir.join("7.mp4"), dir.join("a.mp4"), waiting.join("kept.mp4")].map(|p| p.to_string_lossy().into_owned());
+        tidy(&dir, &dir.join("incoming"), Some(&kept));
+        assert_eq!(left(), [".hidden.mp4", "7.mp4", "a.mp4", "c.part", "incoming"]);
+        let waits: Vec<_> = std::fs::read_dir(&waiting).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(waits, ["kept.mp4"]);
         std::fs::remove_dir_all(&dir).unwrap();
-        tidy(&dir);
+        tidy(&dir, &dir.join("incoming"), Some(&kept));
+    }
+
+    /// Two files received at once, named "1.mp4" and "2.mp4", "2.mp4" added
+    /// first as VOD 1 (moved to `received/1.mp4`, `vods::add_local`), then
+    /// "1.mp4" made whole: each VOD keeps its own file.
+    #[test]
+    fn a_file_received_named_as_a_vod_s_takes_no_other_s_place() {
+        let received = std::env::temp_dir().join(format!("vodscribe-receive-ids-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&received);
+        let dir = received.join("incoming");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (one, two) = (free_name(&dir, "1.mp4"), free_name(&dir, "2.mp4"));
+        for (file, bytes) in [(&one, "one"), (&two, "two")] {
+            std::fs::write(part_of(file), bytes).unwrap();
+        }
+        rename_new(&part_of(&two), &two).unwrap();
+        rename_new(&two, &received.join("1.mp4")).unwrap();
+        rename_new(&part_of(&one), &one).unwrap();
+        rename_new(&one, &received.join("2.mp4")).unwrap();
+        let read = |name: &str| std::fs::read_to_string(received.join(name)).unwrap();
+        assert_eq!((read("1.mp4"), read("2.mp4")), ("two".into(), "one".into()), "a file lost");
+        // Nor is one put over another file, wherever it is.
+        std::fs::write(dir.join("3.mp4"), "three").unwrap();
+        let refused = rename_new(&dir.join("3.mp4"), &received.join("1.mp4")).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            (read("1.mp4"), std::fs::read_to_string(dir.join("3.mp4")).unwrap()),
+            ("two".into(), "three".into())
+        );
+        std::fs::remove_dir_all(&received).unwrap();
     }
 
     #[test]

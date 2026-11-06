@@ -1,6 +1,6 @@
 //! DaVinci Resolve on Linux can't read MP4 clips (its free edition has no
 //! H.264, and no edition reads AAC): they come in blank and silent. An MP4
-//! clip dragged out onto Resolve is refused there, and once the drag is over
+//! clip or edit dragged out onto Resolve is refused there, and once the drag is over
 //! the page asks whether to make clips as MOV (resolveDrop.svelte.ts), while
 //! its "Don't show again" isn't ticked (the setting `suggest_mov_for_resolve`).
 //! Asked then, not at the drag's start: the drop on Resolve is what makes the

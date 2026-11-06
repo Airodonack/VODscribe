@@ -255,10 +255,18 @@ impl Paths {
         with_ext(self.source_section_stem(vod_id, stretch_id), ext)
     }
 
-    /// Where files dropped from another app arrive, as `<name>.part`, before
-    /// each is added (`source_received`).
+    /// Where files dropped from another app are kept (`source_received`);
+    /// they arrive in a folder of its own, "incoming", as `<name>.part`,
+    /// till each is added (desktop receive.rs).
     pub fn received(&self) -> PathBuf {
         self.media().join("received")
+    }
+
+    /// Where files being received are written, and wait to be added: a
+    /// folder of their own, so a name one comes with ("1.mp4") is never the
+    /// one a VOD's file is kept under (`source_received`).
+    pub fn received_incoming(&self) -> PathBuf {
+        self.received().join("incoming")
     }
 
     /// VOD `vod_id`'s file, received from another app's drop: the app's own

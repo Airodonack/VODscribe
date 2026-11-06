@@ -1880,6 +1880,29 @@ impl Db {
         Ok(())
     }
 
+    /// Adds file `info`, just received from another app's drop at `info.url`
+    /// (in `Paths::received`), as a new VOD, never one already there: the
+    /// name it arrived under is free again once it's renamed for its VOD
+    /// (`set_received`), and the next drop may be given it. So its identity
+    /// is "received:<id>", which no file's path is, and its url the path
+    /// it's kept at (`Paths::source_received`); till it's moved there it
+    /// plays where it arrived (`source_path`).
+    pub fn add_received(&self, info: &VodInfo) -> Result<Vod> {
+        let arrived = info.url.clone();
+        // Under an identity no row keeps past this transaction, so none is found.
+        let info = VodInfo { platform_id: format!("received:{arrived}"), ..info.clone() };
+        self.atomically(|db| {
+            let (vod, _) = db.add_vod(&info)?;
+            let ext = Path::new(&arrived).extension().map(|e| e.to_string_lossy().into_owned());
+            let url = ext.map_or_else(|| arrived.clone(), |ext| shown(&db.files.source_received(vod.id, &ext)));
+            db.conn.execute(
+                "UPDATE vods SET platform_id = ?2, url = ?3, source_path = ?4, received_ext = NULL WHERE id = ?1",
+                params![vod.id, format!("received:{}", vod.id), url, arrived],
+            )?;
+            Ok(db.vod(vod.id)?.expect("just added"))
+        })
+    }
+
     /// Records that VOD `id`'s file is the app's own copy, received from
     /// another app's drop, at `path` (`Paths::source_received`).
     pub fn set_received(&self, id: i64, path: &str) -> Result<()> {
@@ -2513,6 +2536,42 @@ mod tests {
             published: None,
             started_at: None,
         }
+    }
+
+    /// Files received from drops arrive under the name their app gave, which
+    /// is free again once the first is renamed for its VOD: a second file of
+    /// that name is a VOD of its own, not the first one found again; nor is
+    /// it a 0.7.1 library's received file, whose row names where it arrived.
+    #[test]
+    fn a_second_file_received_under_the_same_name_is_a_new_vod() {
+        let root = crate::TempDir::new("received-twice");
+        let paths = crate::Paths::new(root.join("lib"));
+        paths.ensure().unwrap();
+        std::fs::create_dir_all(paths.received()).unwrap();
+        let db = Db::open_in(&paths).unwrap();
+        let arrived = shown(&paths.received().join("video.mp4"));
+        let mut file = info("x");
+        file.platform = "local".into();
+        file.platform_id = arrived.clone();
+        file.url = arrived.clone();
+        // As 0.7.1 added one, moved since by `library::settle`.
+        let (old, _) = db.add_vod(&file).unwrap();
+        db.set_received(old.id, &shown(&paths.source_received(old.id, "mp4"))).unwrap();
+
+        let first = db.add_received(&file).unwrap();
+        assert_ne!(first.id, old.id, "found as the 0.7.1 library's VOD");
+        assert_eq!(first.source_path.as_deref(), Some(arrived.as_str()), "played where it arrived till it's moved");
+        let to = shown(&paths.source_received(first.id, "mp4"));
+        assert_eq!(
+            (first.info.platform_id.clone(), first.info.url.clone()),
+            (format!("received:{}", first.id), to.clone())
+        );
+        std::fs::write(&to, b"first").unwrap();
+        db.set_received(first.id, &to).unwrap();
+        assert_eq!(db.vod(first.id).unwrap().unwrap().source_path, Some(to));
+        // Another drop, another file, the same name.
+        let second = db.add_received(&file).unwrap();
+        assert!(second.id != first.id && second.id != old.id, "found as VOD {} (the first file's)", second.id);
     }
 
     fn words(text: &str, start: f64) -> Vec<Word> {

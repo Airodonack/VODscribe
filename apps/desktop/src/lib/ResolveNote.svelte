@@ -22,7 +22,7 @@
 <Modal bind:open label="DaVinci Resolve" small>
   {#if shown}
     <div class="note">
-      <p>{noteText(shown.how, shown.count)}</p>
+      <p>{noteText(shown.how, shown.count, shown.what)}</p>
       <label><input type="checkbox" bind:checked={hide} /> Don't show again</label>
       {#if hide}<p class="muted">{WHERE_UNDONE}</p>{/if}
       <div class="buttons">

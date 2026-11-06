@@ -29,7 +29,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `drag-note.mjs`: a site's clip dragged out before the download note was answered starts no drag.
 - `drag-out.mjs`: clips dragged out of the window with the OS's mouse.
 - `drag-promise.mjs`: a clip dragged out before it's made lands once it's made.
-- `drag-resolve.mjs`: an MP4 clip dropped on DaVinci Resolve on Linux is held back, and the app offers MOV.
+- `drag-resolve.mjs`: an MP4 clip or edit dropped on DaVinci Resolve on Linux is held back, and the app offers MOV.
 - `drop-virtual.mjs`: a video with no path dropped on the window (a zip in Explorer or an archive manager, a promise on a Mac) opens once received, and one its app can't give is said; on Linux also a sandboxed app's file.
 - `edit-footage-thumbnail.mjs`: the timeline's thumbnail over an edit's piece from a site.
 - `edits.mjs`: making, renaming, cutting and rendering an edit.

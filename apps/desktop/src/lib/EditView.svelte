@@ -17,7 +17,7 @@
   import { keysForApp } from "./demo";
   import { is, keyHint, labelOf } from "./keys.svelte";
   import { editShortcuts, forPlayer, isEscape, markFramesOf, transportKey } from "./playerKeys";
-  import { carry, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
+  import { carry, dragEditOut, dropsInEdit, holdToCarry, rectOf, type CarryHome, type Insertion } from "./dragout";
   import { drivePlayer } from "./drivePlayer.svelte";
   import { latest } from "./latest";
   import { pressToDrag } from "./pressToDrag";
@@ -816,7 +816,7 @@
 
   // The rendered video, carried out of the window into an editor or a folder.
   function onOutDrag() {
-    if (edit) api.dragEdit(edit.id).catch((err) => (edits.error = String(err)));
+    if (edit) void dragEditOut(edit);
   }
 
   /** Delete edit: asked as from its row (actions.ts). */

@@ -336,14 +336,14 @@ export type Received = { kind: "open"; vod: number } | { kind: "failed"; name: s
  *  whether they went to another app; if they never came, why; and whether
  *  they didn't because the app let go on takes only files already made
  *  (`finished_only`; `receiver`, its name, where the system gives it).
- *  `drag` is the number `dragClips` was given for it (none for an edit's). */
+ *  `drag` is the number `dragClips` or `dragEdit` was given for it. */
 export interface DragEnded {
   drag: number | null;
   delivered: boolean;
   failed: string | null;
   finished_only: boolean;
   receiver: string | null;
-  /** Let go on DaVinci Resolve on Linux, which was refused the MP4 clips
+  /** Let go on DaVinci Resolve on Linux, which was refused the MP4 clips or edit
    *  ("refused"), or on an app the system doesn't name, where Resolve is
    *  installed ("maybe"): the page asks to switch to MOV (resolveDrop.svelte.ts). */
   resolve?: "refused" | "maybe" | null;
@@ -806,7 +806,9 @@ export const api = {
   cancelJob: (kind: Job["kind"], id: number) => invoke<void>("cancel_job", { kind, id }),
   showEdit: (id: number) => invoke<void>("show_edit", { id }),
   /** Starts dragging edit `id`'s video out of the window; false if the button came up before it could. */
-  dragEdit: (id: number) => invoke<boolean>("drag_edit", { id }),
+  /** Starts dragging edit `id`'s video out of the window; `drag`, the page's
+   *  number for the drag, comes back with its end (`DragEnded`). */
+  dragEdit: (id: number, drag: number) => invoke<boolean>("drag_edit", { id, drag }),
   moveMark: (id: number, time: number) => marking(invoke<void>("move_mark", { id, time })),
   deleteMark: (id: number) => marking(invoke<void>("delete_mark", { id })),
   /** Takes away a mark just added, as if never made (not undoable, nor its adding). */

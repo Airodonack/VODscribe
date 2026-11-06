@@ -180,14 +180,19 @@ fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vo
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    let (vod, created) = add_to_library(app, &info, Some(&info.url))?;
-    let Some(ext) = canonical.extension().and_then(|e| e.to_str()).filter(|_| received && created) else {
+    // One received is always new: its name may be one a VOD received before arrived under.
+    let (vod, created) = match received {
+        true => (state.db.lock().unwrap().add_received(&info)?, true),
+        false => add_to_library(app, &info, Some(&info.url))?,
+    };
+    let Some(ext) = canonical.extension().and_then(|e| e.to_str()).filter(|_| received) else {
         return Ok((vod, created));
     };
     // The app's own copy goes where the library keeps a received file, named
     // for its VOD, before anything reads it (nothing's asked of it yet).
     let to = state.paths.source_received(vod.id, ext);
-    if let Err(e) = std::fs::rename(canonical, &to) {
+    // Never over another file (one a VOD has, or an older VOD's leftover).
+    if let Err(e) = crate::receive::rename_new(canonical, &to) {
         // Played where it arrived, moved by `library::settle` at the next start.
         eprintln!("VOD {}: its received file stays where it arrived: {e}", vod.id);
         return Ok((vod, created));

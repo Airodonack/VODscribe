@@ -536,17 +536,26 @@ pub(crate) async fn show_edit(app: AppHandle, id: i64) -> CmdResult<()> {
 }
 
 /// Starts dragging edit `id`'s video out of the window, as for a clip
-/// (`clips::drag_clip`): false if it didn't begin, the button up first.
+/// (`clips::drag_clip`), `drag` the page's number for it, which comes back
+/// with its end; an MP4 is watched for DaVinci Resolve as a clip's is
+/// (resolve.rs). False if it didn't begin, the button up first.
 #[tauri::command]
-pub(crate) async fn drag_edit(app: AppHandle, window: tauri::WebviewWindow, id: i64) -> CmdResult<bool> {
+pub(crate) async fn drag_edit(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: i64,
+    drag: Option<u64>,
+) -> CmdResult<bool> {
     let path = handed_out(&app, id)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let settings = Settings::load(&app.state::<AppState>().paths.settings());
+    let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &[name.as_str()]));
     let taken = move || {
         let _ = app.state::<AppState>().db.lock().unwrap().hand_out_edit(id);
     };
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let names = vec![crate::clips::Outgoing { name, job: None }];
     let files = move || vec![crate::clips::Made::Ready(path.clone())];
-    crate::clips::drag_file(window, None, names, files, None, Default::default(), taken, |_| {}, || {}).await
+    crate::clips::drag_file(window, drag, names, files, None, resolve, taken, |_| {}, || {}).await
 }
 
 /// Edit `id`'s picture: its first piece's first frame (a JPEG), or failing

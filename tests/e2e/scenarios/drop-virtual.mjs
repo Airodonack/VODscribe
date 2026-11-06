@@ -67,6 +67,13 @@ export default {
   },
 };
 
+/** What's in the received files' folder `received`, and in its `incoming`,
+ *  where they're written till they're added (receive.rs `incoming`). */
+function inReceived(received) {
+  const incoming = path.join(received, "incoming");
+  return [...readdirSync(received), ...(existsSync(incoming) ? readdirSync(incoming) : [])];
+}
+
 /** The page keeps each job it hears of ("kind:label"), in window.__kinds, and what it hears of each file received, in window.__received. */
 function listenToJobs(app) {
   return app.js(
@@ -229,7 +236,7 @@ async function receivedIntoLibrary(app, ctx, received) {
   if (!kinds.includes(`receive:${NAME}`)) throw new Error(`no "Receiving" job was listed: ${kinds.join(", ")}`);
   await until("the job's gone", async () => (await app.invoke("list_jobs")).length === 0, 30_000);
   // Part files, and (Linux) the hidden folder an archive manager saves into first.
-  const leftovers = () => readdirSync(received).filter((f) => f.endsWith(".part") || f.startsWith(".dragndrop-"));
+  const leftovers = () => inReceived(received).filter((f) => f.endsWith(".part") || f.startsWith(".dragndrop-"));
   await until("nothing left beside the video", () => leftovers().length === 0, 10_000).catch(() => {
     throw new Error(`left in ${received}: ${leftovers().join(", ")}`);
   });
@@ -278,7 +285,7 @@ async function failedReceive(app, ctx, work, received) {
     if ((await app.invoke("list_vods")).some((v) => v.title === path.parse(MISSING).name))
       throw new Error("a VOD was added for the file not received");
     const left = () =>
-      readdirSync(received).filter((f) => f.startsWith(".dragndrop-") || f.startsWith(path.parse(MISSING).name));
+      inReceived(received).filter((f) => f.startsWith(".dragndrop-") || f.startsWith(path.parse(MISSING).name));
     await until("nothing of it left", () => left().length === 0, 10_000).catch(() => {
       throw new Error(`left in ${received}: ${left().join(", ")}`);
     });

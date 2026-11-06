@@ -195,12 +195,15 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     embed::clear(&paths.temp_embed());
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
+    // Only tidying from here, so a library that can't be read isn't a
+    // reason not to start.
+    let vods = db.vods();
     // Files a quit (or a crash) left being received from another app's drop.
-    receive::tidy(&paths.received());
-    // Kept videos' leftovers from VODs no longer in the library; only
-    // tidying, so a library that can't be read here isn't a reason not
-    // to start.
-    if let Ok(vods) = db.vods() {
+    let files: Option<Vec<String>> =
+        vods.as_ref().ok().map(|v| v.iter().filter_map(|v| v.source_path.clone()).collect());
+    receive::tidy(&paths.received(), &paths.received_incoming(), files.as_deref());
+    // Kept videos' leftovers from VODs no longer in the library.
+    if let Ok(vods) = vods {
         let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
         vodscribe_core::pipeline::tidy_media(&paths.work(), &library);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);

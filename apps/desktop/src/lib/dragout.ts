@@ -31,7 +31,17 @@
 // one thing at most at a time: a toast replaces the one before, and the
 // same words aren't said again while they're up (`toast.showUnlessUp`).
 
-import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
+import {
+  api,
+  events,
+  thumbUrl,
+  type Clip,
+  type ClipFormat,
+  type DragEnded,
+  type Edit,
+  type Put,
+  type Vod,
+} from "./api";
 import { settings } from "./appSettings.svelte";
 import { resolveNote } from "./resolveDrop.svelte";
 import { clips } from "./clips.svelte";
@@ -53,7 +63,10 @@ let outgoing: string[] = [];
 /** While a clip's file is being dragged out (until the system's drag is
  *  over): brought back over the window, it isn't something dropped in to add. */
 let out = false;
+/** The number the last drag of clips out was given; `numbered`, the last
+ *  given any drag out (an edit's too), so each hears its own end. */
 let drags = 0;
+let numbered = 0;
 // The clips in drags out whose end is still to come, each with how many: the
 // same stretch pulled out again meanwhile is the same clip, forgotten only
 // once the last of them is over.
@@ -137,7 +150,7 @@ async function dragOut(
   // making takes, they're not forgotten before. Another can begin meanwhile
   // (let go on a file manager that copies them as they're made), so the end
   // heard is this one's only if it bears its number (`mine`, sent with it).
-  const mine = ++drags;
+  const mine = (drags = ++numbered);
   const own = back;
   let stop: (() => void) | undefined;
   let stopMaking: (() => void) | undefined;
@@ -162,7 +175,7 @@ async function dragOut(
     // if switched (those of a VOD's bar; another's are made so as they're
     // dragged next).
     if (end?.resolve) {
-      const remake = () => vodId !== undefined && list.forEach((c) => void remade(c, vodId));
+      const remake = () => vodId !== undefined && list.forEach((c) => void remadeOnceMade(c, vodId));
       resolveNote.show(end.resolve, list.length, end.resolve === "refused" ? remake : undefined);
     }
     if (end?.resolve === "refused") list.forEach(keepHidden);
@@ -222,8 +235,40 @@ async function dragOut(
   return true;
 }
 
-/** The format clip `clip`'s file is in, by its extension. */
-const formatOf = (clip: Clip): ClipFormat => (/\.(mov|wav)$/i.test(clip.file_path ?? "") ? "mov" : "mp4");
+/** The format clip (or edit) `clip`'s file is in, by its extension. */
+const formatOf = (clip: { file_path: string | null }): ClipFormat =>
+  /\.(mov|wav)$/i.test(clip.file_path ?? "") ? "mov" : "mp4";
+
+/**
+ * Starts the system drag of edit `edit`'s rendered video out of the window
+ * (call while the button is down). Let go on DaVinci Resolve as MP4, as a
+ * clip's: refused there on X11, and once it's over asked whether to switch
+ * to MOV (or where the system doesn't say where it went, and Resolve is
+ * installed); switched, the edit is rendered again so, to drag once it's
+ * ready.
+ */
+export async function dragEditOut(edit: Edit): Promise<void> {
+  const mine = ++numbered;
+  let stop: (() => void) | undefined;
+  stop = await events
+    .dragEnded((end) => {
+      if (end.drag !== mine) return;
+      stop?.();
+      if (!end.resolve) return;
+      const remake = async () => {
+        await settings.load();
+        if (formatOf(edit) !== (settings.value?.clip_format ?? "mp4")) await edits.render(edit.id);
+      };
+      // (Given to it or not, the edit's video is MP4 till it's rendered again.)
+      resolveNote.show(end.resolve, 1, () => void remake(), "edit");
+    })
+    .catch(() => undefined);
+  const began = await api.dragEdit(edit.id, mine).catch((e) => {
+    edits.error = String(e);
+    return false;
+  });
+  if (!began) stop?.();
+}
 
 /** Clip `clip` (of VOD `vodId`) to be in the format clips are made in now:
  *  as it is, or (made in the other) being made again; null if it can't be. */
@@ -236,6 +281,15 @@ async function remade(clip: Clip, vodId: number): Promise<Clip | null> {
     return { ...clip, status: "waiting", file_path: null };
   }
   return api.setClipRange(clip.id, clip.start, clip.end).catch(() => null);
+}
+
+/** Clip `clip` (of VOD `vodId`), carried in a drag, made again in the
+ *  format clips are made in now once it's made: one still being made when
+ *  the drag ended (as it is now, not as it was then) is made in the format
+ *  its making began in. */
+async function remadeOnceMade(clip: Clip, vodId: number): Promise<void> {
+  const made = await clips.ready(clip.id, () => true, vodId);
+  if (made) await remade(made, vodId);
 }
 
 /** Clip `clip` (of VOD `vodId`) in the format clips are made in now, once
