@@ -360,12 +360,12 @@
       bind:this={keepButton}
       onclick={keep}
       title={keeping !== undefined
-        ? `Downloading the video: ${Math.round(keeping * 100)}%. Click to stop.`
+        ? `Downloading the video, ${Math.round(keeping * 100)}%. Click to stop.`
         : keepError
-          ? `The video couldn't be downloaded: ${keepError} Click to try again.`
+          ? `Couldn't download the video: ${keepError} Click to try again.`
           : hasSitePlayer(vod)
-            ? `Download the video (up to ${height}p, ${keepSize}) to play it in VODscribe's own player, where frames can be stepped through exactly. Splitting and clipping work without it.`
-            : `Download the video (up to ${height}p, ${keepSize}): ${platform} has no player VODscribe can show, so it plays here, as it downloads.`}
+            ? `Download the video, up to ${height}p${keepSize ? `, ${keepSize}` : ""}. It then plays here, exact to the frame.`
+            : `Download the video, up to ${height}p${keepSize ? `, ${keepSize}` : ""}. It plays here as it downloads.`}
       aria-label={keeping !== undefined ? "Stop downloading the video" : "Download the video"}
       {...demoOff("The web demo can't download videos. In the app, this downloads the VOD's video to clip it.")}
     >

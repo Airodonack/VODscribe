@@ -176,15 +176,10 @@
       gone = true;
     };
   });
-  // How far the section downloading of each VOD can be used already.
-  const usable = (vodId: number) => {
-    const f = edits.fetching.get(vodId);
-    return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
-  };
   // How many tens of seconds of the sections downloading are in: each ten
   // more, the edit is planned again, so the player plays further into them.
   const reached = $derived(
-    (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, usable(vodId) ?? 0) / 10), 0),
+    (edit?.vod_ids ?? []).reduce((sum, vodId) => sum + Math.floor(Math.max(0, edits.usable(vodId) ?? 0) / 10), 0),
   );
   const EMPTY =
     `Empty for now. Carry clips onto this edit's row in the list on the left (drag a clip's pill, or ${os === "mac" ? "Option" : "Alt"}-drag a ` +
@@ -641,7 +636,7 @@
       const s = segments.find((x) => x.piece.id === seg.piece_id && x.at <= seg.at + 1e-6 && seg.at < x.at + x.length);
       const vodFrom = s ? s.vodFrom + (seg.at - s.at) : 0;
       const f = s && edits.fetching.get(s.piece.vod_id);
-      const upTo = s && usable(s.piece.vod_id);
+      const upTo = s && edits.usable(s.piece.vod_id);
       let done = 0;
       if (s && f && upTo != null && f.from <= vodFrom + 1e-3 && f.to >= vodFrom + seg.length - 1e-3)
         done = Math.max(0, Math.min(seg.length, upTo - vodFrom));

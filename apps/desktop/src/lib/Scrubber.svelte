@@ -137,7 +137,7 @@
     pieces?: LanePiece[];
     /** An edit's real splits, where what plays jumps (else where its pieces meet). */
     joins?: number[];
-    /** Stretches of an edit whose footage isn't downloaded yet, and how much of each (from its start) is. */
+    /** Stretches whose footage isn't downloaded yet (an edit's, or a VOD's video downloading to play), and how much of each (from its start) is. */
     pending?: { start: number; end: number; done: number }[];
     /** The piece acted on (an edit's: the one at the playhead), outlined. */
     selectedPiece?: number | null;
@@ -1690,7 +1690,7 @@
     pointer-events: none;
   }
 
-  /* An edit's footage not downloaded yet. */
+  /* Footage not downloaded yet: an edit's, or a VOD's video playing as it downloads. */
   .pending {
     position: absolute;
     top: 0;

@@ -1,9 +1,10 @@
 // A VOD from a site without a player the app can show (Dailymotion) plays
 // as its video downloads (videos.rs): Play downloads it all, and the app's
-// own player plays as far as it's in. When the download ends, the player
-// goes on from the video kept, where it was: the picture stays, it plays
-// on, and a seek after works. Once with no seek near the end, once with
-// seeks all through it, one in flight as it ends.
+// own player plays as far as it's in, the timeline darker past that. When
+// the download ends, the player goes on from the video kept, where it was:
+// the picture stays, it plays on, and a seek after works. Once with no
+// seek near the end, once with seeks all through it, one in flight as it
+// ends.
 //
 // Offline: the VODs are files added here, then made Dailymotion's, their
 // file gone from them; yt-dlp is a stand-in in the data folder's bin (put
@@ -71,6 +72,23 @@ const clickTimeline = (app, fraction) =>
      el.dispatchEvent(new PointerEvent("pointerup", at));`,
     fraction,
   );
+
+/**
+ * The timeline's darker part, not downloaded yet, as fractions of the
+ * timeline, with any note under the player that gives a percent; null
+ * while there's none.
+ */
+const shade = (app) =>
+  app.js(`
+    const box = document.querySelector(".scrubber canvas")?.getBoundingClientRect();
+    const dark = [...document.querySelectorAll(".scrubber .pending")].map((el) => el.getBoundingClientRect());
+    if (!box || dark.length !== 1) return null;
+    const note = [...document.querySelectorAll(".note")].map((n) => n.textContent.trim()).find((t) => t.includes("%"));
+    return {
+      from: (dark[0].left - box.left) / box.width,
+      to: (dark[0].right - box.left) / box.width,
+      note: note ?? null,
+    };`);
 
 /** Whether VOD `id` has its video kept now. */
 const kept = async (app, id) => (await app.invoke("list_vods")).find((v) => v.id === id)?.media;
@@ -151,6 +169,26 @@ export default {
           MINUTE,
         );
         if (await kept(app, id)) throw new Error(`${label}: the download ended before it was watched`);
+        if (!seeking) {
+          // The timeline says how far it's in, as an edit's footage still to
+          // come does: darker from there to the end, the edge moving on as
+          // it comes, never behind what plays. No percent under the player.
+          await ctx.checkpoint("downloading");
+          const first = await until(`${label}: the timeline darker past what's in`, () => shade(app), 5_000);
+          if (first.note) throw new Error(`${label}: a percent under the player too: “${first.note}”`);
+          if (Math.abs(first.to - 1) > 0.01)
+            throw new Error(`${label}: the darker part doesn't reach the end: ${JSON.stringify(first)}`);
+          await until(
+            `${label}: the darker part to draw back from ${first.from.toFixed(3)}`,
+            async () => {
+              const [now, seen] = [await shade(app), await look(app)];
+              if (now && seen.time / 60 > now.from + 0.04)
+                throw new Error(`${label}: playing at ${seen.time} s, in the darker part: ${JSON.stringify(now)}`);
+              return now && now.from > first.from + 0.05 && now;
+            },
+            30_000,
+          );
+        }
         // While it comes in: now and then, back near the start (which is in) and on.
         let seeks = 0;
         await until(

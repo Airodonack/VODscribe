@@ -415,6 +415,15 @@ export interface EditPiece {
 /** A section (`from`..`to` of VOD `vod_id`) downloading for edits: its
  *  footage can be used up to `usable` (the VOD's time) already; before that's
  *  known, `progress` (0..1) guesses how far it is. */
+/** Where a VOD's video download is (videos.rs `VideoProgress`): `progress`
+ *  null once it's over; `streamed` while it plays as it comes in. */
+export interface VideoProgress {
+  id: number;
+  progress: number | null;
+  error: string | null;
+  streamed: boolean;
+}
+
 export interface Fetching {
   vod_id: number;
   from: number;
@@ -971,9 +980,8 @@ export const events = {
   /** A batch of a VOD's chat was saved while it's being fetched; `chat` has it now. */
   chatSaved: (cb: (id: number) => void) => on<number>("chat-saved", (e) => cb(e.payload)),
   clip: (cb: (clip: Clip) => void) => on<Clip>("clip", (e) => cb(e.payload)),
-  /** A VOD's video download: `progress` null when waiting or over, `error` if it failed. */
-  videoProgress: (cb: (p: { id: number; progress: number | null; error: string | null }) => void) =>
-    on<{ id: number; progress: number | null; error: string | null }>("video-progress", (e) => cb(e.payload)),
+  /** A VOD's video download: how far, over (`progress` null), or failed (`error`). */
+  videoProgress: (cb: (p: VideoProgress) => void) => on<VideoProgress>("video-progress", (e) => cb(e.payload)),
   clipProgress: (cb: (id: number, progress: number) => void) =>
     on<{ id: number; progress: number }>("clip-progress", (e) => cb(e.payload.id, e.payload.progress)),
   clipRemoved: (cb: (id: number) => void) => on<number>("clip-removed", (e) => cb(e.payload)),

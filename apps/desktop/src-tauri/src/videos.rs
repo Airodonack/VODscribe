@@ -36,12 +36,23 @@ pub(crate) const HEIGHTS: [u32; 3] = [480, 720, 1080];
 pub(crate) struct Videos(Jobs<(i64, u32)>, Mutex<()>);
 
 /// Where a VOD's video download is, for the interface: `progress` is None
-/// while waiting its turn, and `error` is set if it failed.
+/// once it's over (done, stopped or failed), and `error` is set if it failed.
+/// `streamed`: it comes in as a section of all of it, which plays as far as
+/// it's in, the timeline darker past that (`footage::ensure_as` tells how
+/// far); else it plays only once it's all in, so the page gives the percent.
 #[derive(Serialize, Clone)]
 struct VideoProgress {
     id: i64,
     progress: Option<f64>,
     error: Option<String>,
+    streamed: bool,
+}
+
+impl VideoProgress {
+    /// VOD `id`'s download is over: done, stopped, or failed with `error`.
+    fn over(id: i64, error: Option<String>) -> Self {
+        VideoProgress { id, progress: None, error, streamed: false }
+    }
 }
 
 impl Videos {
@@ -84,7 +95,7 @@ impl Videos {
             if error.is_none() {
                 let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
             }
-            crate::page::emit(&app, "video-progress", VideoProgress { id, progress: None, error: error.clone() });
+            crate::page::emit(&app, "video-progress", VideoProgress::over(id, error.clone()));
             if error.is_none() {
                 state.storyboards.push(id);
             }
@@ -105,7 +116,7 @@ impl Videos {
     /// Stops every download and empties the queue (deleting what each had).
     pub(crate) fn stop_all(&self, app: &AppHandle) {
         for (id, _) in self.0.take_waiting(|_| true) {
-            crate::page::emit(app, "video-progress", VideoProgress { id, progress: None, error: None });
+            crate::page::emit(app, "video-progress", VideoProgress::over(id, None));
         }
         self.0.stop_running(|_| true);
     }
@@ -138,13 +149,19 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
             let mut last = report.lock().unwrap();
             if last.elapsed() >= PROGRESS_EVERY {
                 *last = Instant::now();
-                crate::page::emit(app, "video-progress", VideoProgress { id, progress: Some(progress), error: None });
+                let streamed = VideoProgress { id, progress: Some(progress), error: None, streamed: true };
+                crate::page::emit(app, "video-progress", streamed);
             }
         };
         match stream_then_keep(app, &vod, duration, height, stop, &report) {
             Ok(()) => return Ok(()),
             Err(e) if vodscribe_core::is_canceled(&e) => return Err(e),
-            Err(e) => eprintln!("VOD {id}: its video didn't come as a section, so it downloads whole: {e:#}"),
+            Err(e) => {
+                eprintln!("VOD {id}: its video didn't come as a section, so it downloads whole: {e:#}");
+                // It plays only once it's in now: the page says how far, from the start.
+                let whole = VideoProgress { id, progress: Some(0.0), error: None, streamed: false };
+                crate::page::emit(app, "video-progress", whole);
+            }
         }
     }
     let info = work.join(format!("video-{id}.info.json"));
@@ -155,7 +172,8 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let mut report = |progress: f64| {
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
-            crate::page::emit(app, "video-progress", VideoProgress { id, progress: Some(progress), error: None });
+            let whole = VideoProgress { id, progress: Some(progress), error: None, streamed: false };
+            crate::page::emit(app, "video-progress", whole);
         }
     };
     let result = (|| {
@@ -277,7 +295,9 @@ pub(crate) async fn keep_video(
     if !state.videos.0.push_new((id, height), queued) {
         return Ok(());
     }
-    crate::page::emit(&app, "video-progress", VideoProgress { id, progress: Some(0.0), error: None });
+    // As `download` begins: a site without its own player streams it, if it says how long it is.
+    let streamed = pipeline::keeps_video(&vod.info.platform) && vod.info.duration.is_some_and(|d| d > 0.0);
+    crate::page::emit(&app, "video-progress", VideoProgress { id, progress: Some(0.0), error: None, streamed });
     Ok(())
 }
 
@@ -295,7 +315,7 @@ fn downloading_to_transcribe(db: &Db, vod: &Vod) -> Result<bool> {
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     if !stop(&state.db, &state.videos, &state.paths.work(), id) {
-        crate::page::emit(&app, "video-progress", VideoProgress { id, progress: None, error: None });
+        crate::page::emit(&app, "video-progress", VideoProgress::over(id, None));
     }
     Ok(())
 }

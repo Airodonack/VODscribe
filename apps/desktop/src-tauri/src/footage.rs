@@ -439,6 +439,12 @@ pub(crate) fn ensure_as(
     *state.footage.growing.lock().unwrap() = None;
     // Now played from where it went (or no further).
     crate::player::footage_grew(app, vod_id);
+    // The page's last word on it: all of it plays now, or none of it does
+    // (failed or stopped, its files go). A VOD's video streamed this way
+    // (videos.rs) is copied into its kept file before the download's over.
+    let usable = result.is_ok().then_some(to);
+    let progress = if result.is_ok() { 1.0 } else { 0.0 };
+    crate::page::emit(app, "footage-progress", Fetching { vod_id, from, to, progress, usable });
     // Failed (not stopped), the next asks the site afresh.
     if result.as_ref().is_err_and(|e| !vodscribe_core::is_canceled(e)) {
         let _ = std::fs::remove_file(&info);

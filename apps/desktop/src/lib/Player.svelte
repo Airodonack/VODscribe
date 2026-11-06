@@ -68,6 +68,16 @@
   const download = $derived(keepsVideo(vod) && !vod.media);
   const downloading = $derived(videoDownloads.progress.get(vod.id));
   const downloadError = $derived(videoDownloads.errors.get(vod.id));
+  // It comes in as a section of all of it (videos.rs), from the start on:
+  // the timeline is darker past what plays, as an edit's footage still to
+  // come is. Downloaded whole instead, none of it plays till it's all in.
+  const notIn = $derived.by(() => {
+    if (!download || downloading === undefined || !duration) return [];
+    const f = edits.fetching.get(vod.id);
+    const all = f && f.from <= 0.001 && f.to >= duration - 0.5 && !videoDownloads.playsOnceIn.has(vod.id);
+    const upTo = all ? (edits.usable(vod.id) ?? 0) : 0;
+    return [{ start: 0, end: duration, done: Math.max(0, Math.min(duration, upTo)) }];
+  });
   let playButton = $state<HTMLElement>();
   let askingDownload = $state(false);
   function playByDownloading() {
@@ -735,8 +745,7 @@
     <Popover bind:open={askingDownload} anchor={playButton} label="Before downloading the video" width={340}>
       <PermissionNote action="Download video" onanswer={answerDownload}>
         <p class="muted">
-          {site} has no player VODscribe can show, so its video can only be downloaded: it plays here as it comes in. It's
-          kept until you delete it.
+          {site} has no player VODscribe can show. The video plays here as it downloads, and stays until you delete it.
         </p>
       </PermissionNote>
     </Popover>
@@ -769,6 +778,7 @@
       ranges={editRanges}
       current={between ? stretch : null}
       ownPlayer={playsFromFile(vod)}
+      pending={notIn}
       onpause={() => player?.playing() && player.togglePlay()}
       onseek={seekTo}
     />
@@ -833,11 +843,9 @@
 
 {#snippet below()}
   {#if canEmbed(vod)}
-    {#if download && downloading !== undefined}
-      <p class="muted note">
-        Downloading the video ({Math.round(downloading * 100)}%): it plays as far as it's in, and waits where it hasn't
-        come yet.
-      </p>
+    <!-- Streamed, the timeline says how far it's in (`notIn`). -->
+    {#if download && downloading !== undefined && videoDownloads.playsOnceIn.has(vod.id)}
+      <p class="muted note">Downloading the video, {Math.round(downloading * 100)}%. It plays once it's in.</p>
     {/if}
     {#if !hidden && (clips.shown.length || clips.carryingAny || edits.forVod(vod.id).length || snippets.size)}
       <ClipStrip {vod} ownPlayer={playsFromFile(vod)} onplay={playFrom} />
@@ -859,9 +867,9 @@
          download, and “Open on …” is in the header. -->
     <p class="muted note">
       {#if downloading !== undefined || (keepsVideo(vod) && vod.status === "downloading")}
-        Downloading the video{downloading ? ` (${Math.round(downloading * 100)}%)` : ""}: it plays here once it's in.
+        Downloading the video{downloading ? `, ${Math.round(downloading * 100)}%` : ""}. It plays once it's in.
       {:else if downloadError}
-        <span class="error-text">The video couldn't be downloaded: {downloadError}</span> Press Play to try again.
+        <span class="error-text">Couldn't download the video: {downloadError}</span> Press Play to try again.
       {:else if keepsVideo(vod)}
         Press Play to download the video and watch it here.
       {:else}

@@ -45,7 +45,8 @@ class Edits {
   footageHere = $state(false);
   /** Counts each VOD's footage downloaded for edits, for what shows it. */
   footage = new SvelteMap<number, number>();
-  /** Each VOD's section downloading for edits, and how far it is. */
+  /** Each VOD's section downloading (for edits, or all of it for a VOD played
+   *  as its video downloads, videos.rs), and how far it is. */
   fetching = new SvelteMap<number, Fetching>();
   /** How far each edit being rendered is, 0..1. */
   progress = new SvelteMap<number, number>();
@@ -123,6 +124,14 @@ class Edits {
       (list) => (this.list = list),
       (e) => (this.error = String(e)),
     );
+  }
+
+  /** How far (the VOD's time) the section downloading of VOD `vodId` plays
+   *  already, or a guess from what's downloaded till that's known; null with
+   *  none downloading. */
+  usable(vodId: number): number | null {
+    const f = this.fetching.get(vodId);
+    return f ? (f.usable ?? f.from + f.progress * (f.to - f.from) - 1) : null;
   }
 
   /** The edits with pieces of VOD `vodId`. */

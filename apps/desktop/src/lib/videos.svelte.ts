@@ -2,7 +2,7 @@
 // (and clip) here (src-tauri videos.rs): which are downloading, how far, and
 // which failed. Their rows show it (VodRow.svelte).
 
-import { SvelteMap } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import { api, events } from "./api";
 import { DEMO } from "./demo";
 
@@ -11,15 +11,20 @@ class VideoDownloads {
   progress = new SvelteMap<number, number>();
   /** Why a download failed, by VOD. */
   errors = new SvelteMap<number, string>();
+  /** The VODs whose download plays only once it's all in: not streamed as
+   *  it comes, so the timeline can't say how far it is. */
+  playsOnceIn = new SvelteSet<number>();
   #started = false;
 
   /** Follows the downloads; the first caller starts it. */
   start() {
     if (this.#started || DEMO) return;
     this.#started = true;
-    events.videoProgress(({ id, progress, error }) => {
+    events.videoProgress(({ id, progress, error, streamed }) => {
       if (progress === null) this.progress.delete(id);
       else this.progress.set(id, progress);
+      if (progress === null || streamed) this.playsOnceIn.delete(id);
+      else this.playsOnceIn.add(id);
       if (error) this.errors.set(id, error);
     });
     api.videoDownloads().then(

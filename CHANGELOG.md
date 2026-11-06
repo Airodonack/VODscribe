@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Clips come in more formats. Settings › Storage adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
+- The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 - New clips go after the picked one. The Clip key, and a stretch dropped on the clip bar, put the clip after the clip you picked there, as a paste does, and pick it.
 - Fixes:
@@ -18,6 +19,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
   - Menus answer their first click. After a Control-click on a Mac, or a press the system called off, the next click on a row's menu could be ignored.
   - Re-added VODs leave no old files. A VOD removed and added again before its download stopped kept its old files on disk.
   - An edit's frames load while it plays. The small frames on its timeline, of videos not yet seen, waited until you paused.
+  - Download notes say less. The notes and tooltips of a video downloading are shorter, and the percent shows only for a download that plays once it's all in.
   - Clip links to videos click again. In the editor, when a clip's row of links to its videos scrolls sideways, a click on a link's lower half did nothing on some Linux systems.
   - Undo keeps the clip bar's order. A clip pasted in the middle of the clip bar came back last when redone, and so did one deleted from there when undone.
 
