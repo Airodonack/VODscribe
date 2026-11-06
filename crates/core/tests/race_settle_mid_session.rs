@@ -28,6 +28,7 @@ fn a_second_connection_moves_no_file_a_job_has() {
         title: "clip from zip".into(),
         channel: None,
         channel_login: None,
+        channel_url: None,
         duration: Some(1.0),
         thumbnail: None,
         published: None,

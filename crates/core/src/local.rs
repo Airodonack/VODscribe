@@ -94,6 +94,7 @@ pub fn probe(ffmpeg: &Path, path: &Path) -> Result<VodInfo> {
         title,
         channel: None,
         channel_login: None,
+        channel_url: None,
         duration: streams.duration,
         thumbnail: None,
         published: None,

@@ -41,6 +41,11 @@
   const to = $derived(of ? castLink(of.member, of.vod, of.moment) : null);
   /** Their own stream at the moment, when it ran alongside: first, as the name's link was. */
   const pov = $derived(to?.pov ? to : null);
+  /** The VOD's channel's page, when it's opened from the channel and its channels don't have it already. */
+  const page = $derived.by(() => {
+    const own = of?.page;
+    return own && view && !view.channels.some((c) => channelUrl(c) === own.href) ? own : null;
+  });
   const face = $derived(
     view ? { name: view.name, aliases: [], role: "streamer", account: view.avatar ?? undefined } : undefined,
   );
@@ -68,7 +73,7 @@
           {#if view.aliases.length}<span class="aliases muted">also {view.aliases.join(", ")}</span>{/if}
         </div>
       </header>
-      {#if pov || view.channels.length || view.socials.length}
+      {#if pov || view.channels.length || page || view.socials.length}
         <ul class="links">
           {#if pov}
             <li>
@@ -87,6 +92,14 @@
               >
             </li>
           {/each}
+          {#if page}
+            {@const href = page.href}
+            <li>
+              <a class="channel" {href} title={href} onclick={(e) => follow(e, () => void openUrl(href))}
+                >{page.label}<span class="out"><Icon name="external" size={10} /></span></a
+              >
+            </li>
+          {/if}
           {#each view.socials as social (social.href)}
             <li>
               <a

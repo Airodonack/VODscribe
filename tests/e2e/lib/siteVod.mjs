@@ -1,8 +1,8 @@
 // VODs "from a site", added by their link without the network: yt-dlp is a
 // stand-in in the data folder's bin (the real one put back after) that
 // answers any lookup as a YouTube video whose id is the link's last part, a
-// minute long (or a Dailymotion one, for a link to /dailymotion/<id>), and
-// does nothing else: it has no chat replay, and a download fails. YouTube's,
+// minute long, of channel Marlowe (@marlowe) (or a Dailymotion one, for a
+// link to /dailymotion/<id>, its channel's page named), and does nothing else: it has no chat replay, and a download fails. YouTube's,
 // as the file host is asked only about Twitch's, YouTube's and Kick's VODs,
 // and YouTube's chat comes through yt-dlp alone; the answer names no
 // thumbnail and its player loads only on Play, so adding one reaches nothing
@@ -31,8 +31,8 @@ done
 id="\${link##*/}"
 rest="\${link%/*}"
 case "\${rest##*/}" in
-  dailymotion) printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","duration":60}\\n' "$id" "$id" ;;
-  *) printf '{"id":"%s","extractor_key":"Youtube","webpage_url":"https://www.youtube.com/watch?v=%s","title":"A minute with Marlowe","channel":"Marlowe","duration":60}\\n' "$id" "$id" ;;
+  dailymotion) printf '{"id":"%s","extractor_key":"Dailymotion","webpage_url":"https://www.dailymotion.com/video/%s","title":"A minute with Marlowe","channel":"Marlowe","channel_url":"https://www.dailymotion.com/marlowe","duration":60}\\n' "$id" "$id" ;;
+  *) printf '{"id":"%s","extractor_key":"Youtube","webpage_url":"https://www.youtube.com/watch?v=%s","title":"A minute with Marlowe","channel":"Marlowe","uploader":"Marlowe","uploader_id":"@marlowe","uploader_url":"https://www.youtube.com/@marlowe","duration":60}\\n' "$id" "$id" ;;
 esac
 `;
 

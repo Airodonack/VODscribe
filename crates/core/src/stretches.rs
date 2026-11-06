@@ -519,6 +519,7 @@ mod tests {
             title: id.into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration,
             thumbnail: None,
             published: None,

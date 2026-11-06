@@ -5,7 +5,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 ## 0.7.2 (unreleased)
 
 - Transcribe from the captions button. Right-click CC under the player, or press and hold it, for Transcribe VOD, the selection, or how much from the playhead; T still transcribes, and the bar's own Transcribe button is gone.
-- Names open a streamer card. A click on someone's name or picture in a VODscription's transcript, a highlight or over the player shows who they are and their links in one place.
+- Names open a streamer card. A click on someone's name or picture in a VODscription's transcript, a highlight or over the player shows who they are and their links in one place. The channel over the player links to its page on every site.
 - The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
 - Download notes say less. The notes and tooltips of a video downloading are shorter, and the percent shows only for a download that plays once it's all in.
 - Searches leaving words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.

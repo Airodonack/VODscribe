@@ -264,6 +264,30 @@ pub fn tidy_media(paths: &Paths, library: &[i64]) {
     }
 }
 
+/// Fills in the channel's login and page of `vods` added before the library
+/// kept them, from the info JSON still kept for them (`Paths::source_info`;
+/// one is removed once its VOD is transcribed): only the VOD's own (the same
+/// site and video), and only what's missing. Nothing kept, nothing known.
+pub fn fill_channels(db: &Db, paths: &Paths, vods: &[Vod]) {
+    let lacking = vods
+        .iter()
+        .filter(|v| v.source_path.is_none() && (v.info.channel_login.is_none() || v.info.channel_url.is_none()));
+    for vod in lacking {
+        let Ok(raw) = fs::read(paths.source_info(vod.id)) else { continue };
+        let Ok(info) =
+            serde_json::from_slice(&raw).map_err(anyhow::Error::from).and_then(|json| fetch::parse_info(&json))
+        else {
+            continue;
+        };
+        if (info.platform.as_str(), info.platform_id.as_str())
+            != (vod.info.platform.as_str(), vod.info.platform_id.as_str())
+        {
+            continue;
+        }
+        let _ = db.fill_channel(vod.id, info.channel_login.as_deref(), info.channel_url.as_deref());
+    }
+}
+
 /// Removes VOD `vod_id`'s kept video, and any part of one, from `Paths::media`.
 pub fn remove_media(paths: &Paths, vod_id: i64) {
     remove_work_files(&paths.media(), vod_id);
@@ -606,6 +630,35 @@ mod tests {
     }
 
     #[test]
+    fn fills_in_a_channel_from_the_info_kept() {
+        let root = crate::TempDir::new("fill-channels");
+        let paths = Paths::new(root.to_path_buf());
+        fs::create_dir_all(paths.work()).unwrap();
+        let db = Db::open(Path::new(":memory:")).unwrap();
+        let add = |id: &str| {
+            let info = VodInfo { platform: "youtube".into(), ..crate::edits::tests::info(id) };
+            db.add_vod(&info).unwrap().0
+        };
+        let (kept, other, none) = (add("aaa"), add("bbb"), add("ccc"));
+        let info = |id: &str| {
+            serde_json::json!({ "id": id, "extractor_key": "Youtube", "webpage_url": format!("https://www.youtube.com/watch?v={id}"),
+                "uploader_id": "@quill", "uploader_url": "https://www.youtube.com/@quill" })
+            .to_string()
+        };
+        fs::write(paths.source_info(kept.id), info("aaa")).unwrap();
+        // Another video's info under this VOD's name isn't its.
+        fs::write(paths.source_info(other.id), info("zzz")).unwrap();
+        fill_channels(&db, &paths, &db.vods().unwrap());
+        let channel = |id: i64| {
+            let info = db.vod(id).unwrap().unwrap().info;
+            (info.channel_login, info.channel_url)
+        };
+        assert_eq!(channel(kept.id), (Some("@quill".into()), Some("https://www.youtube.com/@quill".into())));
+        assert_eq!(channel(other.id), (None, None));
+        assert_eq!(channel(none.id), (None, None), "nothing kept, nothing known");
+    }
+
+    #[test]
     fn tidies_media_of_vods_gone() {
         let root = crate::TempDir::new("tidy-media");
         let paths = Paths::new(root.to_path_buf());
@@ -651,6 +704,7 @@ mod tests {
             title: "A talk".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -731,6 +785,7 @@ mod tests {
             title: "1".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(1.0),
             thumbnail: None,
             published: None,
@@ -773,6 +828,7 @@ mod tests {
             title: "x".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(1.0),
             thumbnail: None,
             published: None,
@@ -827,6 +883,7 @@ mod tests {
             title: "x".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(600.0),
             thumbnail: None,
             published: None,
@@ -923,6 +980,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -1010,6 +1068,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -1081,6 +1140,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -1119,6 +1179,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(600.0),
             thumbnail: None,
             published: None,

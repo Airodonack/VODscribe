@@ -773,6 +773,7 @@ impl Db {
                         title: source.title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| "Untitled".into()),
                         channel: source.channel.clone().filter(|c| !c.trim().is_empty()),
                         channel_login: None,
+                        channel_url: None,
                         duration: Some(source.duration),
                         thumbnail: None,
                         // YYYY-MM-DD, from an ISO 8601 time.

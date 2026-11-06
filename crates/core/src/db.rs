@@ -785,6 +785,15 @@ ALTER TABLE vods ADD COLUMN channel_login TEXT;";
 /// `Annotations::contexts`, as a JSON array), on the VOD's annotations row,
 /// which say which sections of a streamer card show. Null for an import from
 /// before: none known.
+/// Version 40: the channel's page as the site gave it (`channel_url`,
+/// `VodInfo::channel_url`), for a site whose channels' addresses can't be
+/// built from a login. Kept on the row because the info it comes from is
+/// removed with the VOD's work files once it's transcribed. Null for a VOD
+/// added before, filled from its info where that is still kept
+/// (`pipeline::fill_channels`).
+const MIGRATE_V40: &str = "
+ALTER TABLE vods ADD COLUMN channel_url TEXT;";
+
 const MIGRATE_V38: &str = "
 ALTER TABLE vod_annotations ADD COLUMN contexts TEXT;";
 
@@ -823,7 +832,7 @@ END;";
 /// The columns `vod_from_row` reads, by name, so adding a column can't shift the others.
 /// Its stretches come as one JSON array (`stretches::from_json` reads it), for its status.
 pub(crate) const VOD_COLUMNS: &str =
-    "id, platform, platform_id, url, title, channel, channel_login, duration, thumbnail, published, started_at, added_at,
+    "id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published, started_at, added_at,
      note, thumb, source_path, video_ext, received_ext, chat, chat_error, annotations, annotations_version, annotations_imported,
      EXISTS (SELECT 1 FROM segments WHERE segments.vod_id = vods.id) AS has_segments,
      EXISTS (SELECT 1 FROM clips WHERE clips.whole_of = vods.id) AS listed,
@@ -853,6 +862,7 @@ pub(crate) fn vod_from_row(r: &Row, files: &crate::Paths) -> rusqlite::Result<Vo
             title: r.get("title")?,
             channel: r.get("channel")?,
             channel_login: r.get("channel_login")?,
+            channel_url: r.get("channel_url")?,
             duration,
             thumbnail: r.get("thumbnail")?,
             published: r.get("published")?,
@@ -1371,6 +1381,7 @@ impl Db {
             MIGRATE_V37,
             MIGRATE_V38,
             MIGRATE_BUILT_PATHS,
+            MIGRATE_V40,
         ];
         if (version as usize) < migrations.len() {
             // A copy as it was first, so an upgrade that turns out wrong can be
@@ -1414,11 +1425,11 @@ impl Db {
         // New VODs go to the top of the library: their own clip does (`add_vod_clip`).
         let id = self.atomically(|db| {
             db.conn.execute(
-                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, duration, thumbnail, published, started_at, status, added_at)
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published, started_at, status, added_at)
                  VALUES ((SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11)",
+                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'queued', ?12)",
                 params![
-                    info.platform, info.platform_id, info.url, info.title, info.channel, info.channel_login,
+                    info.platform, info.platform_id, info.url, info.title, info.channel, info.channel_login, info.channel_url,
                     info.duration, info.thumbnail, info.published, info.started_at, now()
                 ],
             )?;
@@ -2146,6 +2157,16 @@ impl Db {
         Ok(())
     }
 
+    /// VOD `vod_id`'s channel's login and page, where the library has none
+    /// yet (a VOD added before it kept them: `MIGRATE_V37`, `MIGRATE_V40`).
+    pub fn fill_channel(&self, vod_id: i64, login: Option<&str>, page: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE vods SET channel_login = coalesce(channel_login, ?2), channel_url = coalesce(channel_url, ?3) WHERE id = ?1",
+            params![vod_id, login, page],
+        )?;
+        Ok(())
+    }
+
     /// VOD `vod_id` started at `secs` (Unix seconds), by its chat
     /// (`chat::vod_start`): better than anything else says, so it replaces
     /// it (see `MIGRATE_V33`).
@@ -2531,6 +2552,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,
@@ -3019,7 +3041,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         // The counts are the indexes' own, words already there included: nothing to fill.
         let lines = |table: &str, term: &str| -> i64 {
             let sql = format!("SELECT doc FROM {table} WHERE term = ?1");
@@ -3059,12 +3081,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE marks DROP COLUMN people; ",
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 29;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 29;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.cast.len()), (Some("Big laugh"), 0));
         // And a cast, once there is one, is kept and read back.
@@ -3091,12 +3113,12 @@ mod tests {
                 "ALTER TABLE marks DROP COLUMN icon; ALTER TABLE vods DROP COLUMN annotations; ",
                 "ALTER TABLE vods DROP COLUMN annotations_version; ALTER TABLE vods DROP COLUMN annotations_imported; ",
                 "ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 30;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 30;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         let marks = db.marks(vod).unwrap();
         assert_eq!((marks[0].text.as_deref(), marks[0].detail.icon.as_deref()), (Some("The game"), None));
         // And an icon, once there is one, is kept and read back.
@@ -3120,12 +3142,12 @@ mod tests {
             .execute_batch(concat!(
                 "ALTER TABLE vods DROP COLUMN annotations; ALTER TABLE vods DROP COLUMN annotations_version; ",
                 "ALTER TABLE vods DROP COLUMN annotations_imported; ALTER TABLE vods DROP COLUMN started_at; ",
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 31;"
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 31;"
             ))
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         assert_eq!(db.vod(vod).unwrap().unwrap().annotations, Availability::Unknown);
         let listed = db.vods().unwrap();
         assert_eq!(listed[0].annotations, Availability::Unknown);
@@ -3143,12 +3165,12 @@ mod tests {
         Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 32;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN started_at; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 32;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         assert_eq!(db.vod(vod).unwrap().unwrap().info.started_at, None);
         db.set_chat_start(vod, 1790631005.0).unwrap();
         assert_eq!(db.vods().unwrap()[0].info.started_at.as_deref(), Some("2026-09-28T21:30:05Z"));
@@ -3172,11 +3194,11 @@ mod tests {
         // Back to version 33: the column 34 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 33;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; ALTER TABLE vod_annotations DROP COLUMN povs; ALTER TABLE marks DROP COLUMN imported_as; PRAGMA user_version = 33;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         let kept = db.vod_annotations(vod).unwrap().unwrap();
         assert!(kept.povs.is_empty() && kept.cast.is_empty());
     }
@@ -3197,16 +3219,17 @@ mod tests {
         // Back to version 36: the column 37 adds, gone.
         Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 36;")
+            .execute_batch("ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 36;")
             .unwrap();
         let db = Db::open(&path).unwrap();
         let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         assert_eq!(db.vod(before).unwrap().unwrap().info.channel_login, None);
         let info = VodInfo {
             platform: "twitch".into(),
             channel: Some("마를로".into()),
             channel_login: Some("marlowe".into()),
+            channel_url: None,
             ..crate::edits::tests::info("new")
         };
         let (added, _) = db.add_vod(&info).unwrap();
@@ -3220,6 +3243,49 @@ mod tests {
         // The page reads it beside the name.
         let json = serde_json::to_value(shown).unwrap();
         assert_eq!(json["channel_login"], "marlowe");
+    }
+
+    #[test]
+    fn a_channels_page_is_kept_and_filled_in_only_where_missing() {
+        let root = crate::TempDir::new("channel-page");
+        let path = root.join("library.sqlite");
+        let before = {
+            let db = Db::open(&path).unwrap();
+            db.add_vod(&VodInfo { platform: "dailymotion".into(), ..crate::edits::tests::info("old") }).unwrap().0.id
+        };
+        // Back to version 39: the column 40 adds, gone.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("ALTER TABLE vods DROP COLUMN channel_url; PRAGMA user_version = 39;")
+            .unwrap();
+        let db = Db::open(&path).unwrap();
+        let version: i32 = db.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 40);
+        assert_eq!(db.vod(before).unwrap().unwrap().info.channel_url, None);
+        let page = "https://www.dailymotion.com/quill";
+        let info = VodInfo {
+            platform: "dailymotion".into(),
+            channel_url: Some(page.into()),
+            ..crate::edits::tests::info("new")
+        };
+        let (added, _) = db.add_vod(&info).unwrap();
+        assert_eq!(added.info.channel_url.as_deref(), Some(page));
+        let json = serde_json::to_value(db.vod(added.id).unwrap().unwrap()).unwrap();
+        assert_eq!(json["channel_url"], page);
+        // Filled in where there's none; what's there stays.
+        db.fill_channel(before, Some("x2"), Some("https://www.dailymotion.com/x2")).unwrap();
+        db.fill_channel(added.id, Some("other"), Some("https://www.dailymotion.com/other")).unwrap();
+        let old = db.vod(before).unwrap().unwrap().info;
+        assert_eq!(
+            (old.channel_login.as_deref(), old.channel_url.as_deref()),
+            (Some("x2"), Some("https://www.dailymotion.com/x2"))
+        );
+        let new = db.vod(added.id).unwrap().unwrap().info;
+        assert_eq!(
+            (new.channel_login, new.channel_url.as_deref()),
+            (Some("other".into()), Some(page)),
+            "only the login was missing"
+        );
     }
 
     #[test]

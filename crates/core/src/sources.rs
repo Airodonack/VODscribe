@@ -35,10 +35,10 @@ impl Db {
     pub fn add_realized(&self, vod_id: i64, start: f64, end: f64) -> Result<i64> {
         self.atomically(|db| {
             db.conn.execute(
-                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, duration, thumbnail, published,
+                "INSERT INTO vods (id, platform, platform_id, url, title, channel, channel_login, channel_url, duration, thumbnail, published,
                                    status, progress, added_at, model, chat)
                  SELECT (SELECT max(next, (SELECT coalesce(max(id), 0) + 1 FROM vods)) FROM vod_ids),
-                        'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?5, url, title, channel, channel_login, ?4, thumbnail,
+                        'realized', ?1 || ':' || ?2 || '-' || ?3 || ':' || ?5, url, title, channel, channel_login, channel_url, ?4, thumbnail,
                         published, 'done', 1.0, ?5, model, chat
                  FROM vods WHERE id = ?1",
                 params![vod_id, start, end, end - start, now()],
@@ -321,7 +321,7 @@ mod tests {
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 35;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vods DROP COLUMN channel_url; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 35;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();

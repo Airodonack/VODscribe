@@ -1193,6 +1193,7 @@ mod tests {
             title: id.into(),
             channel: Some(channel.into()),
             channel_login: None,
+            channel_url: None,
             duration: Some(3600.0),
             thumbnail: None,
             published: None,

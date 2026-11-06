@@ -134,6 +134,7 @@ mod tests {
             title: String::new(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: None,
             thumbnail: None,
             published: None,

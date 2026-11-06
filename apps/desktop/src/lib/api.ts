@@ -32,6 +32,8 @@ export interface Vod {
   channel: string | null;
   /** The channel's login (Twitch's) or handle, as its site gave it, where it can differ from `channel`; null for a VOD added before it was kept. */
   channel_login?: string | null;
+  /** The channel's page as its site gave it (https on the VOD's site), for a site whose channels' addresses can't be built from a login; null when it gave none. */
+  channel_url?: string | null;
   duration: number | null;
   thumbnail: string | null;
   /** File name of the local thumbnail copy ("" if there's none); see `thumbUrl`. */

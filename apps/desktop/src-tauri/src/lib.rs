@@ -206,6 +206,9 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
     if let Ok(vods) = vods {
         let library: Vec<i64> = vods.iter().map(|v| v.id).collect();
         vodscribe_core::pipeline::tidy_media(&paths, &library);
+        // What VODs added before the library kept their channel's login and
+        // page lack, from their info where it's still kept.
+        vodscribe_core::pipeline::fill_channels(&db, &paths, &vods);
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
     let db = Mutex::new(db);

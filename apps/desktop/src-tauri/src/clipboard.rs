@@ -285,6 +285,7 @@ mod tests {
             title: "t".into(),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(60.0),
             thumbnail: None,
             published: None,

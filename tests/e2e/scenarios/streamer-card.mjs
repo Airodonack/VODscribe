@@ -13,14 +13,18 @@
 // what's there: no empty heading or list, nothing drawn with no height, the
 // same gap between what is there. With the file host not answering
 // (offline), Pell's card is the name the VOD gives, "Pell", and once it
-// answers, the card's own, "Pell Harrow". Escape closes a card.
+// answers, the card's own, "Pell Harrow". Escape closes a card. A VOD
+// added from YouTube (the yt-dlp stand-in's, lib/siteVod.mjs) and one from
+// Dailymotion, with no annotations: the channel's card links to the
+// channel's page as the site named it, with no picture.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { until } from "../lib/app.mjs";
+import { MINUTE, until } from "../lib/app.mjs";
 import { serveFiles } from "../lib/fileHost.mjs";
+import { addSiteVod, withSiteVods } from "../lib/siteVod.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "..", "fixtures", "annotations-minute.json");
@@ -247,6 +251,38 @@ export default {
     if (JSON.stringify([...asked].sort()) !== JSON.stringify(once.sort()))
       wrong.push(`the file host was asked for ${asked.join(", ")}`);
     served.stop();
+
+    // A site's VOD with no annotations: the channel's card is its name and
+    // its page, as the site named it; no picture (YouTube's waits for its
+    // icon, CastDisc.svelte), and no initial in the heading either.
+    if (process.platform !== "win32")
+      await withSiteVods(ctx, async (started) => {
+        // The helpers above drive `app`: the one started with the stand-in now.
+        app = started;
+        const sites = [
+          ["youtube", "e2echannel", "youtube.com/@marlowe <https://www.youtube.com/@marlowe>"],
+          ["dailymotion", "xe2echannel", "dailymotion.com/marlowe <https://www.dailymotion.com/marlowe>"],
+        ];
+        for (const [site, id, link] of sites) {
+          // Added, it opens; a Dailymotion VOD with no video kept has no player bar yet, so it's its heading waited for.
+          await addSiteVod(app, id, site === "youtube" ? null : site);
+          await until(
+            `${site}'s VOD open`,
+            () => app.js(`return !!document.querySelector(arguments[0])`, `.info .meta .platform.${site}`),
+            MINUTE,
+          );
+          await app.click(".info .meta .channel");
+          const got = await settledCard(`${site}'s channel`);
+          check(`${site}'s channel's card`, got, {
+            name: "Marlowe",
+            aliases: null,
+            links: [link],
+            sections: [],
+            picture: "no img",
+          });
+          await close();
+        }
+      });
     if (wrong.length) throw new Error(wrong.join("; "));
     ctx.log("each card shows what it has and nothing for what it hasn't; NoPixel only where the VOD names it");
   },

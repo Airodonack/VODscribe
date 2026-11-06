@@ -6,9 +6,9 @@
 // player.
 
 import { annotated } from "./annotated.svelte";
-import { channelAccount, channelMember, isVoice, speakerColor } from "./annotated";
+import { channelAccount, channelPage, channelPerson, speakerColor } from "./annotated";
 import { api, type CastMember, type Vod } from "./api";
-import { displayName, sameName } from "./castNames";
+import { displayName } from "./castNames";
 import { CardCache } from "./streamers";
 
 export const cards = new CardCache(
@@ -28,6 +28,8 @@ export type CardFor = {
   moment: number | null;
   /** Their account to look their card up by when the cast names none: the VOD's channel's. */
   account?: CastMember["account"];
+  /** The VOD's channel's page, from the VOD itself, for a site other than Twitch and Kick (annotated.ts `channelPage`): one of the card's links. */
+  page?: { label: string; href: string };
 };
 
 class OpenCard {
@@ -57,21 +59,24 @@ export function showCard(e: MouseEvent, of: CardFor) {
 }
 
 /**
- * Whose card the VOD's channel opens (its name over the player): the cast
- * member the channel is (by an account, else by name), or just the channel,
- * looked up by its own account where the VOD has one (annotated.ts
- * `channelAccount`).
+ * Whose card the VOD's channel opens (its name over the player): the person
+ * the channel is (annotated.ts `channelPerson`, the one whose picture is
+ * beside the name), looked up by the channel's own account where the VOD has
+ * one (`channelAccount`), its page among the card's links where the VOD
+ * knows it (`channelPage`).
  */
 export function channelCard(vod: Vod): CardFor {
-  const channel = vod.channel ?? "";
   const cast = annotated.of(vod.id)?.cast ?? [];
   const account = channelAccount(vod);
-  const member = channelMember(cast, channel) ??
-    cast.find((m) => !isVoice(m) && (sameName(m.name, channel) || (!!m.player && sameName(m.player, channel)))) ?? {
-      name: channel,
-      aliases: [],
-      role: "streamer",
-      ...(account ? { account } : {}),
-    };
-  return { member, name: displayName(member), color: speakerColor(cast, member.name), vod, moment: null, account };
+  const member = channelPerson(vod, cast) ?? { name: "", aliases: [], role: "streamer" };
+  const page = channelPage(vod);
+  return {
+    member,
+    name: displayName(member),
+    color: speakerColor(cast, member.name),
+    vod,
+    moment: null,
+    account,
+    ...(page ? { page } : {}),
+  };
 }

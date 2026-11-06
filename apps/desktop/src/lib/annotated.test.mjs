@@ -1,18 +1,7 @@
 // What an imported annotations file shows (annotated.ts): node --test apps/desktop/src/lib/annotated.test.mjs
 import assert from "node:assert/strict";
+import { register } from "node:module";
 import { test } from "node:test";
-import {
-  CAST_COLORS,
-  activityColor,
-  activityLabel,
-  castDetail,
-  castIndex,
-  channelAccount,
-  channelMember,
-  crowds,
-  isVoice,
-  speakerColor,
-} from "./annotated.ts";
 import {
   HIGHLIGHT_GLYPHS,
   UNKNOWN_GLYPH,
@@ -23,6 +12,32 @@ import {
   readAccount,
 } from "./annotations.ts";
 import { AVATAR_BASE, avatarUrl, channelLabel, channelUrl } from "./accounts.ts";
+
+// annotated.ts imports "./accounts" as the page's bundler finds it; here it is the
+// .ts file it is.
+register(
+  "data:text/javascript," +
+    encodeURIComponent(`
+export async function resolve(specifier, context, next) {
+  if (specifier.startsWith("./") && !/\\.[a-z]+$/.test(specifier) && context.parentURL?.endsWith(".ts"))
+    return next(specifier + ".ts", context);
+  return next(specifier, context);
+}`),
+);
+const {
+  CAST_COLORS,
+  activityColor,
+  activityLabel,
+  castDetail,
+  castIndex,
+  channelAccount,
+  channelMember,
+  channelPage,
+  channelPerson,
+  crowds,
+  isVoice,
+  speakerColor,
+} = await import("./annotated.ts");
 
 const cast = [
   { name: "Marlowe", aliases: ["Mar", "M"], role: "streamer" },
@@ -352,6 +367,81 @@ test("a VOD's own channel is an account by its name or address", () => {
   assert.equal(channelAccount(vod("local", null, "file:///a.mp4")), undefined);
 });
 
+test("a YouTube VOD's channel is its handle or id, as the site gave it, never its name", () => {
+  const url = "https://www.youtube.com/watch?v=noa29qsTc4g";
+  /** @param {Partial<import("./api").Vod>} fields */
+  const vod = (fields) => ({ platform: "youtube", channel: "Quill", url, ...fields });
+  const handle = vod({ channel_login: "@quill" });
+  assert.deepEqual(channelAccount(handle), { platform: "youtube", login: "@quill" });
+  assert.deepEqual(channelPage(handle), { label: "youtube.com/@quill", href: "https://www.youtube.com/@quill" });
+  // A handle in another script, its page's address escaped.
+  assert.deepEqual(channelPage(vod({ channel_login: "@마를로" })), {
+    label: "youtube.com/@%EB%A7%88%EB%A5%BC%EB%A1%9C",
+    href: "https://www.youtube.com/@%EB%A7%88%EB%A5%BC%EB%A1%9C",
+  });
+  // No handle kept: the channel's page, by handle or by id.
+  const id = "UCabcdefghijklmnopqrstuv";
+  assert.deepEqual(channelAccount(vod({ channel_url: "https://www.youtube.com/@quill" })), {
+    platform: "youtube",
+    login: "@quill",
+  });
+  const byId = vod({ channel_url: `https://www.youtube.com/channel/${id}` });
+  assert.deepEqual(channelAccount(byId), { platform: "youtube", login: id });
+  assert.deepEqual(channelPage(byId), {
+    label: `youtube.com/channel/${id}`,
+    href: `https://www.youtube.com/channel/${id}`,
+  });
+  assert.deepEqual(channelAccount(vod({ channel_login: id })), { platform: "youtube", login: id });
+  // Nothing known (a VOD added before either was kept), a login that's
+  // neither, a page elsewhere or not https: no account and no link.
+  for (const fields of [
+    {},
+    { channel_login: null, channel_url: null },
+    { channel_login: "quill" },
+    { channel_url: "https://www.youtube.com.example/@quill" },
+    { channel_url: "https://evil.example/@quill" },
+    { channel_url: "http://www.youtube.com/@quill" },
+    { channel_url: "https://user@www.youtube.com/@quill" },
+    { channel_url: "https://www.youtube.com/watch?v=noa29qsTc4g" },
+    { channel_url: "https://www.youtube.com/channel/UC1/videos" },
+    { channel_url: "not a link" },
+  ]) {
+    assert.equal(channelAccount(vod(fields)), undefined, JSON.stringify(fields));
+    assert.equal(channelPage(vod(fields)), undefined, JSON.stringify(fields));
+  }
+});
+
+test("another site's VOD links to its channel's page, on that site only", () => {
+  const url = "https://www.dailymotion.com/video/x9";
+  /** @param {Partial<import("./api").Vod>} fields */
+  const vod = (fields) => ({ platform: "dailymotion", channel: "Quill", url, ...fields });
+  assert.deepEqual(channelPage(vod({ channel_url: "https://www.dailymotion.com/quill" })), {
+    label: "dailymotion.com/quill",
+    href: "https://www.dailymotion.com/quill",
+  });
+  // A host under the VOD's site is the site's.
+  assert.deepEqual(channelPage(vod({ channel_url: "https://dailymotion.com/quill/" })), {
+    label: "dailymotion.com/quill",
+    href: "https://dailymotion.com/quill/",
+  });
+  assert.equal(channelAccount(vod({ channel_url: "https://www.dailymotion.com/quill" })), undefined, "no picture");
+  for (const fields of [
+    {},
+    { channel_login: "x2t8mt3" },
+    { channel_url: "https://www.dailymotion.com.example/quill" },
+    { channel_url: "https://evil.example/www.dailymotion.com/quill" },
+    { channel_url: "http://www.dailymotion.com/quill" },
+    { channel_url: "javascript:alert(1)" },
+    { channel_url: "https://www.dailymotion.com:8443/quill" },
+    { channel_url: "https://www.dailymotion.com/quill", url: "file:///a.mp4" },
+  ])
+    assert.equal(channelPage(vod(fields)), undefined, JSON.stringify(fields));
+  // Twitch and Kick go by the account as before; a file has none.
+  const elsewhere = { channel: "Marlowe", channel_url: "https://www.twitch.tv/marlowe" };
+  assert.equal(channelPage({ platform: "twitch", url: "https://www.twitch.tv/videos/1", ...elsewhere }), undefined);
+  assert.equal(channelPage({ platform: "local", url: "file:///a.mp4", ...elsewhere }), undefined);
+});
+
 test("a Twitch channel whose name differs from its login is found by the login the site gave", () => {
   const vod = { platform: "twitch", channel: "마를로", channel_login: "marlowe", url: "" };
   assert.deepEqual(channelAccount(vod), { platform: "twitch", login: "marlowe" });
@@ -364,4 +454,46 @@ test("a Twitch channel whose name differs from its login is found by the login t
   /** @type {import("./api").CastMember[]} */
   const cast = [{ name: "Marlowe", aliases: [], role: "streamer", account: { platform: "twitch", login: "marlowe" } }];
   assert.equal(channelMember(cast, "마를로", "marlowe")?.name, "Marlowe");
+});
+
+test("the picture beside a channel's name and the card it opens are one person", () => {
+  /** @type {import("./api").CastMember[]} */
+  const cast = [
+    { name: "Marlowe", aliases: [], role: "streamer", account: { platform: "twitch", login: "marlowe" } },
+    { name: "마를로", aliases: [], role: "friend" },
+    { name: "Ada", aliases: [], role: "friend" },
+    { name: "Voice", aliases: [], role: "tts" },
+  ];
+  const twitch = { platform: "twitch", url: "https://www.twitch.tv/videos/1" };
+  // A channel whose name isn't its login: the cast member with that login,
+  // not the one who happens to share the channel's name.
+  assert.equal(channelPerson({ ...twitch, channel: "마를로", channel_login: "marlowe" }, cast)?.name, "Marlowe");
+  // By name: a cast member with an account first, else one without.
+  assert.equal(channelPerson({ ...twitch, channel: "marlowe" }, cast)?.name, "Marlowe");
+  // One named as the channel with no account takes the channel's own, for their picture and link.
+  assert.deepEqual(channelPerson({ ...twitch, channel: "Ada" }, cast), {
+    name: "Ada",
+    aliases: [],
+    role: "friend",
+    account: { platform: "twitch", login: "ada" },
+  });
+  assert.deepEqual(
+    channelPerson({ platform: "youtube", url: "https://www.youtube.com/watch?v=x", channel: "Ada" }, cast),
+    { name: "Ada", aliases: [], role: "friend" },
+    "none known: none given",
+  );
+  // No one in the cast: the channel itself, by its own account where it has one.
+  assert.deepEqual(channelPerson({ ...twitch, channel: "Pell" }, cast), {
+    name: "Pell",
+    aliases: [],
+    role: "streamer",
+    account: { platform: "twitch", login: "pell" },
+  });
+  assert.deepEqual(
+    channelPerson({ platform: "youtube", url: "https://www.youtube.com/watch?v=x", channel: "Voice" }, cast),
+    { name: "Voice", aliases: [], role: "streamer" },
+    "a voice isn't the channel",
+  );
+  assert.equal(channelPerson({ ...twitch, channel: null }, cast), undefined);
+  assert.equal(channelPerson({ ...twitch, channel: " " }, cast), undefined);
 });

@@ -1947,6 +1947,7 @@ pub(crate) mod tests {
             title: format!("VOD {id}"),
             channel: None,
             channel_login: None,
+            channel_url: None,
             duration: Some(600.0),
             thumbnail: None,
             published: None,

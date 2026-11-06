@@ -24,6 +24,11 @@ pub struct VodInfo {
     /// Twitch name in another script). The streamer's picture goes by it.
     #[serde(default)]
     pub channel_login: Option<String>,
+    /// The channel's page, as the site gives it (yt-dlp's `uploader_url` or
+    /// `channel_url`): https on the VOD's own site only (`channel_page`),
+    /// for a site whose channels' addresses can't be built from a login.
+    #[serde(default)]
+    pub channel_url: Option<String>,
     pub duration: Option<f64>,
     pub thumbnail: Option<String>,
     /// YYYY-MM-DD
@@ -62,20 +67,48 @@ pub fn parse_info(json: &Value) -> Result<VodInfo> {
     // A Twitch clip's "id" is a number of its own, which Twitch's VOD lookups
     // would take for a VOD's; it goes by its slug instead (see `twitch`).
     let id = if extractor == "TwitchClips" { s("display_id").or_else(|| s("id")) } else { s("id") };
+    let url = s("webpage_url").or_else(|| s("original_url")).context("yt-dlp returned no URL")?;
+    // The uploader's login and page are the channel's only when the uploader
+    // is the channel: a Twitch clip's uploader is whoever clipped it.
+    let uploader_is_channel = s("channel").is_none() || s("channel") == s("uploader");
+    // The uploader's page first: YouTube's goes by the handle (/@name), its
+    // channel_url by the channel's id.
+    let channel_url = [s("uploader_url").filter(|_| uploader_is_channel), s("channel_url")]
+        .into_iter()
+        .flatten()
+        .find_map(|page| channel_page(&page, &url));
     Ok(VodInfo {
         platform: platform_of(&extractor),
         platform_id: id.context("yt-dlp returned no video id")?,
-        url: s("webpage_url").or_else(|| s("original_url")).context("yt-dlp returned no URL")?,
+        url,
         title: s("title").unwrap_or_else(|| "Untitled".into()),
         channel: s("channel").or_else(|| s("uploader")),
-        // The uploader's login is the channel's only when the uploader is the
-        // channel: a Twitch clip's uploader is whoever clipped it.
-        channel_login: s("uploader_id").filter(|_| s("channel").is_none() || s("channel") == s("uploader")),
+        channel_login: s("uploader_id").filter(|_| uploader_is_channel),
+        channel_url,
         duration: json.get("duration").and_then(Value::as_f64),
         thumbnail: s("thumbnail"),
         published,
         started_at: started_by_site(json, &extractor),
     })
+}
+
+/// `page` as a channel's page for the VOD at `vod_url`: an https link with a
+/// plain host (no user, no port) on the VOD's own site (its host, or one
+/// under it, either without "www." or "m."). None for anything else: the
+/// info is the site's word, but a link the app offers must go where the VOD
+/// came from.
+pub fn channel_page(page: &str, vod_url: &str) -> Option<String> {
+    fn site(url: &str) -> Option<String> {
+        let rest = url.strip_prefix("https://")?;
+        let host = rest.split(['/', '?', '#']).next()?.to_ascii_lowercase();
+        let plain = !host.is_empty()
+            && host.split('.').all(|label| !label.is_empty())
+            && host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-');
+        plain.then(|| host.strip_prefix("www.").or_else(|| host.strip_prefix("m.")).unwrap_or(&host).to_string())
+    }
+    let clean = page.len() <= 2048 && !page.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\');
+    let (own, vods) = (site(page)?, site(vod_url)?);
+    (clean && own.contains('.') && (own == vods || own.ends_with(&format!(".{vods}")))).then(|| page.to_string())
 }
 
 /// When the site says a VOD started, from yt-dlp's info: a Twitch VOD's
@@ -709,6 +742,64 @@ mod tests {
         let none = serde_json::json!({ "id": "v2", "extractor_key": "TwitchVod", "webpage_url": "https://www.twitch.tv/videos/2",
             "uploader": "someone" });
         assert_eq!(login(none), None);
+    }
+
+    #[test]
+    fn a_channels_page_is_kept_from_its_own_site_only() {
+        let page = |json: serde_json::Value| parse_info(&json).unwrap().channel_url;
+        // YouTube: the handle's page before the channel id's.
+        let yt = serde_json::json!({ "id": "noa29qsTc4g", "extractor_key": "Youtube",
+            "webpage_url": "https://www.youtube.com/watch?v=noa29qsTc4g", "channel": "Quill", "uploader": "Quill",
+            "uploader_id": "@quill", "uploader_url": "https://www.youtube.com/@quill",
+            "channel_id": "UCabcdefghijklmnopqrstuv", "channel_url": "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv" });
+        assert_eq!(page(yt).as_deref(), Some("https://www.youtube.com/@quill"));
+        let id_only = serde_json::json!({ "id": "v", "extractor_key": "Youtube", "webpage_url": "https://www.youtube.com/watch?v=v",
+            "channel_url": "https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv" });
+        assert_eq!(page(id_only).as_deref(), Some("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv"));
+        // Another site, on its own host.
+        let other = serde_json::json!({ "id": "x9", "extractor_key": "Dailymotion", "webpage_url": "https://www.dailymotion.com/video/x9",
+            "uploader": "Quill", "uploader_url": "https://www.dailymotion.com/quill" });
+        assert_eq!(page(other).as_deref(), Some("https://www.dailymotion.com/quill"));
+        // Elsewhere, not https, or none: no page. A clip's uploader's isn't the channel's.
+        let elsewhere = serde_json::json!({ "id": "x9", "extractor_key": "Dailymotion", "webpage_url": "https://www.dailymotion.com/video/x9",
+            "uploader_url": "https://dailymotion.com.example/quill", "channel_url": "http://www.dailymotion.com/quill" });
+        assert_eq!(page(elsewhere), None);
+        let clip = serde_json::json!({ "id": "1", "display_id": "Slug", "extractor_key": "TwitchClips",
+            "webpage_url": "https://www.twitch.tv/ea/clip/Slug", "channel": "EA", "uploader": "stereotype_",
+            "uploader_url": "https://www.twitch.tv/stereotype_" });
+        assert_eq!(page(clip), None);
+        let none = serde_json::json!({ "id": "v2", "extractor_key": "TwitchVod", "webpage_url": "https://www.twitch.tv/videos/2" });
+        assert_eq!(page(none), None);
+    }
+
+    #[test]
+    fn a_channels_page_must_be_https_on_the_vods_site() {
+        let vod = "https://www.youtube.com/watch?v=noa29qsTc4g";
+        for ok in [
+            "https://www.youtube.com/@quill",
+            "https://youtube.com/@quill",
+            "https://m.youtube.com/channel/UC1",
+            "https://music.youtube.com/@q",
+        ] {
+            assert_eq!(channel_page(ok, vod).as_deref(), Some(ok), "{ok}");
+        }
+        for refused in [
+            "http://www.youtube.com/@quill",
+            "https://www.youtube.com.example/@quill",
+            "https://evil.example/www.youtube.com",
+            "https://notyoutube.com/@quill",
+            "https://user@www.youtube.com/@quill",
+            "https://www.youtube.com:8443/@quill",
+            "https://www.youtube.com/@quill name",
+            "https://www.youtube.com\\@evil.example/",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert_eq!(channel_page(refused, vod), None, "{refused}");
+        }
+        // A VOD with no plain https host of its own has no page to match.
+        assert_eq!(channel_page("https://www.youtube.com/@quill", "file:///a.mp4"), None);
+        assert_eq!(channel_page("https://localhost/x", "https://localhost/v"), None, "a bare name isn't a site");
     }
 
     #[test]

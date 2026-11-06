@@ -1,14 +1,14 @@
 <script lang="ts">
   // The streamer's picture beside their channel's name, in the VOD's heading
   // and its library row, as the Cast list shows them (CastDisc.svelte), for
-  // a VOD with a VODscription: the cast member the channel is (annotated.ts
-  // `channelMember`), or when the cast gives none an account, the channel
-  // itself, by its own login (annotated.ts `channelAccount`). There's no
+  // a VOD with a VODscription: the person the channel is (annotated.ts
+  // `channelPerson`: a cast member, or the channel itself by its own
+  // account), the one whose card the channel's name opens. There's no
   // room there for an initial, so it's the picture or nothing: with pictures
   // off (Settings › Privacy), nothing is read or asked.
   import { annotated } from "./annotated.svelte";
-  import { channelAccount, channelMember, speakerColor } from "./annotated";
-  import type { CastMember, Vod } from "./api";
+  import { channelPerson, speakerColor } from "./annotated";
+  import type { Vod } from "./api";
   import CastDisc from "./CastDisc.svelte";
   import { displayName } from "./castNames";
 
@@ -20,13 +20,8 @@
   });
   const annotations = $derived(on ? annotated.of(vod.id) : null);
   const cast = $derived(annotations?.cast ?? []);
-  const member = $derived.by((): CastMember | undefined => {
-    if (!annotations || !vod.channel) return undefined;
-    const named = channelMember(cast, vod.channel, vod.channel_login);
-    if (named) return named;
-    const account = channelAccount(vod);
-    return account && { name: vod.channel, aliases: [], role: "streamer", account };
-  });
+  // The channel's card is this person's too (streamers.svelte.ts `channelCard`).
+  const member = $derived(annotations ? channelPerson(vod, cast) : undefined);
 </script>
 
 {#if member}
