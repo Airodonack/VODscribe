@@ -16,9 +16,10 @@ permissions:
   contents: read
 
 # A newer push to the same ref replaces a check in progress.
+# Each push to main keeps its own result; elsewhere a newer push replaces it.
 concurrency:
-  group: check-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.ref == 'refs/heads/main' && format('check-run-{0}', github.run_id) || format('check-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   format:

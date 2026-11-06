@@ -8,10 +8,10 @@ GitHub Actions for this repository.
 - `notices.yml`: regenerates the third-party notices on a Dependabot pull request and pushes them to its branch.
 - `pinned-downloads.yml`: checks weekly that every pinned download is still there at its size, with `scripts/check-pinned-downloads.py`.
 
-| Event                                                 | Lane | Runs                                                                                                                               |
-| ----------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| a push to `main` that touches the app, a pull request | fast | the Linux build and the Linux end-to-end tests in 2 shards. A newer push to the same ref cancels the run in progress.              |
-| every night at 09:00 UTC, a manual run, a `v*` tag    | full | all four builds, Linux, Windows, macOS on Apple silicon and Intel, and every system's end-to-end tests. Never cancelled by a push. |
+| Event                                                 | Lane | Runs                                                                                                                                |
+| ----------------------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| a push to `main` that touches the app, a pull request | fast | the Linux build and the Linux end-to-end tests in 2 shards. On `main` every push's run finishes; elsewhere a newer push cancels it. |
+| every night at 09:00 UTC, a manual run, a `v*` tag    | full | all four builds, Linux, Windows, macOS on Apple silicon and Intel, and every system's end-to-end tests. Never cancelled by a push.  |
 
 A last job merges the shards' results into one summary, and fails on a failed scenario or a shard that never reported.
 
