@@ -21,6 +21,14 @@
 <article class="prose">
   <h1>Support</h1>
 
+  <h2>Twitch or YouTube don't play on Linux</h2>
+  <p>
+    They need a video decoder that some systems leave out, and VODscribe's package brings it in. If it was skipped: on
+    Ubuntu or Debian, install <code>gstreamer1.0-libav</code>. On Fedora, VODscribe needs <code>openh264</code> from
+    Cisco's repository; if the install says nothing provides it, turn that repository on with
+    <code>sudo dnf config-manager setopt fedora-cisco-openh264.enabled=1</code> and install again.
+  </p>
+
   <h2>Bugs and ideas</h2>
   <p>
     <a href={BUG_FORM} target="_blank" rel="noopener">Report a bug</a> or
