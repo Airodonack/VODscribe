@@ -51,7 +51,6 @@ permissions = [
   "allow-add-mark",
   "allow-move-mark",
   "allow-set-mark-text",
-  "allow-resolve-installed",
   "allow-list-edits",
   "allow-create-edit",
   "allow-get-edit",

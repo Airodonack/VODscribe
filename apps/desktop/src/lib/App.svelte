@@ -46,6 +46,7 @@
   import { undoRedo as undoRedoIn } from "./undo";
   import Toast from "./Toast.svelte";
   import AnnotationsOffer from "./AnnotationsOffer.svelte";
+  import ResolveNote from "./ResolveNote.svelte";
   import { offers } from "./offers.svelte";
   import type { Doc } from "./api";
   import { nav, searching, type Search, type Step } from "./nav.svelte";
@@ -1092,6 +1093,7 @@
   <Toast />
   <AnnotationsOffer />
   <StreamerCard />
+  <ResolveNote />
 {/if}
 
 <style>

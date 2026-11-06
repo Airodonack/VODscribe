@@ -191,14 +191,15 @@ export function noFinishedOnly() {
 
 /** An app that takes finished files only, as Qt's apps do (Kdenlive, say): let
  *  go on, it asks for the drop's files, takes those already there, and gives
- *  up after 5 s. Its windows' class is "Clip-taker". */
+ *  up after 5 s. Its windows' class is "Clip-taker", or its first argument's,
+ *  capitalised ("resolve": "Resolve"). */
 const FINISHED_ONLY = `
 import os, sys, time
 import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import GLib
-GLib.set_prgname("clip-taker")  # its windows' class, set before GTK starts
+GLib.set_prgname(sys.argv[1] if len(sys.argv) > 1 else "clip-taker")  # its windows' class, set before GTK starts
 from gi.repository import Gdk, Gtk
 
 def say(what):
@@ -244,9 +245,10 @@ Gtk.main()
  * The app that takes finished files only (`FINISHED_ONLY`), its script and
  * what it says in folder `work`, beside the app's window: where to drop on
  * it, what it has said so far (`said`, its lines), and `close`. On macOS,
- * with `refuses`, it refuses every drag instead.
+ * with `refuses`, it refuses every drag instead. On Linux, its windows'
+ * class is `name`'s (DaVinci Resolve's is "resolve").
  */
-export async function openFinishedOnly(app, ctx, work, { refuses = false } = {}) {
+export async function openFinishedOnly(app, ctx, work, { refuses = false, name = "clip-taker" } = {}) {
   mkdirSync(work, { recursive: true });
   if (process.platform === "darwin") return openFinishedOnlyMac(app, ctx, work, refuses);
   const script = path.join(work, "finished-only.py");
@@ -255,7 +257,7 @@ export async function openFinishedOnly(app, ctx, work, { refuses = false } = {})
   writeFileSync(log, "");
   const out = openSync(log, "a");
   try {
-    const opened = await openBeside(app, ctx, [PYTHON, script], {}, "^finished-only$", ["ignore", out, out]);
+    const opened = await openBeside(app, ctx, [PYTHON, script, name], {}, "^finished-only$", ["ignore", out, out]);
     return { ...opened, said: () => readFileSync(log, "utf8").split("\n").filter(Boolean) };
   } finally {
     closeSync(out);

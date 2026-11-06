@@ -14,7 +14,7 @@ const fakes = {
     };
     export const thumbUrl = async () => null;`,
   "./appSettings.svelte": `export const settings = { load: async () => {}, value: { clip_format: "mp4" } };`,
-  "./resolveHint.svelte": `export const formatHint = { dragged() {} };`,
+  "./resolveDrop.svelte": `export const resolveNote = { show: (how, count) => globalThis.fake.resolve.push([how, count]) };`,
   "./toasts.svelte": `export const toast = globalThis.fake.toast;`,
   "./clips.svelte": `export const clips = globalThis.fake.clips;`,
   "./cuts.svelte": `export const cuts = { list: [] };`,
@@ -77,7 +77,7 @@ const fake = {
   /**
    * The system's drag numbered `drag` (the last asked for, unless said) ends
    * as `e` says: each listener hears it, as each hears Tauri's events.
-   * @param {{ delivered: boolean, failed: string | null, finished_only: boolean, receiver: string | null }} e
+   * @param {{ delivered: boolean, failed: string | null, finished_only: boolean, receiver: string | null, resolve?: "refused" | "maybe" }} e
    * @param {unknown} [drag]
    */
   ended: (e, drag = fake.numbers.at(-1)) => {
@@ -110,6 +110,8 @@ const fake = {
   made: [],
   /** Clips kept in the clip bar. @type {number[]} */
   kept: [],
+  /** The Resolve notes shown: how it went, and how many clips. @type {[string, number][]} */
+  resolve: [],
   /** What the toasts said. @type {string[]} */
   toasts: [],
   /** The toasts hidden as no longer so, by their place in `toasts`. @type {number[]} */
@@ -239,6 +241,7 @@ function reset() {
   fake.heard.length = 0;
   fake.noted = false;
   fake.kept.length = 0;
+  fake.resolve.length = 0;
   fake.toasts.length = 0;
   fake.dropped.length = 0;
   fake.listeners.clear();
@@ -479,6 +482,33 @@ test("an app that takes finished files only, its name unknown, is said as that a
     "That app takes finished files only. The clip is being made; drag it from the clip bar when it's ready.",
   ]);
   assert.deepEqual(fake.kept, [9]);
+});
+
+test("refused to DaVinci Resolve: its note asks, and the clips are kept to drag again", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: false, failed: null, finished_only: false, receiver: null, resolve: "refused" });
+  await tick();
+  assert.deepEqual(fake.resolve, [["refused", 2]]);
+  assert.deepEqual(fake.kept, [3, 4], "not kept in the clip bar");
+  assert.deepEqual(fake.deleted, []);
+  assert.deepEqual(fake.toasts, [], "said in the note alone");
+});
+
+test("let go where Resolve may be: its note asks, and the clips go as any drop's", async () => {
+  reset();
+  const done = carriedSet(true, async () => pair());
+  move(120, 120);
+  move(0, 300);
+  await done;
+  fake.ended?.({ delivered: true, failed: null, finished_only: false, receiver: null, resolve: "maybe" });
+  await tick();
+  assert.deepEqual(fake.resolve, [["maybe", 2]]);
+  assert.deepEqual(fake.kept, []);
+  assert.deepEqual(fake.deleted, [3, 4]);
 });
 
 test("a drag whose file couldn't be made says so once it's over", async () => {

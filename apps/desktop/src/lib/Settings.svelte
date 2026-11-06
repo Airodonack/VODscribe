@@ -443,7 +443,7 @@
             />
             Suggest MOV for DaVinci Resolve
           </label>
-          <p class="muted hint">Once, after a clip is dragged out, if Resolve is installed and clips are MP4.</p>
+          <p class="muted hint">When an MP4 clip is dropped on Resolve, which can't open it.</p>
         {/if}
       </section>
     {:else if settingsWindow.section === "updates"}

@@ -6,9 +6,14 @@
 //! waits: closures run on the main thread through Tauri wait for the end of
 //! it. What other threads send the page goes as a GLib source, which the
 //! hold runs (page.rs).
+//!
+//! A drag watched for DaVinci Resolve (resolve.rs) refuses it the files as
+//! it asks, where X11 names it; on Wayland, which doesn't, the watch hears
+//! so.
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use anyhow::Result;
 use dragndrop_source::linux::{self, Drag};
@@ -19,11 +24,12 @@ use super::{Event, Item, ReleasedEarly};
 
 /// Begins GTK's drag of `items` from `window`, showing `image` (a PNG),
 /// while its mouse button is down. On the main thread. `on` hears how it
-/// goes.
+/// goes; `resolve` watches it for DaVinci Resolve.
 pub(crate) fn start(
     window: &tauri::WebviewWindow,
     items: Vec<Box<dyn Item>>,
     image: &[u8],
+    resolve: Arc<crate::resolve::Watch>,
     on: impl Fn(Event) + Send + Sync + 'static,
 ) -> Result<()> {
     // A drag begun while the last one's answer waits would run inside it.
@@ -35,6 +41,13 @@ pub(crate) fn start(
     let page = crate::webview::page(window).ok();
     let drag = Drag::new(items, on);
     let targets = drag.targets();
+    if resolve.applies() {
+        if linux::names_receivers(&source.display()) {
+            drag.refuse(move |asker| resolve.refuses(asker.class.as_deref(), asker.program.as_deref()));
+        } else {
+            resolve.unnamed();
+        }
+    }
     let handlers: Rc<RefCell<Vec<(gtk::Widget, glib::SignalHandlerId)>>> = Rc::default();
     let widget: gtk::Widget = source.clone().upcast();
     let asked = drag.clone();

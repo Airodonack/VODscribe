@@ -2,7 +2,7 @@
 // while it shows (crates/core `settings`): Settings has a switch for each in
 // the pane of its subject, and Reset settings brings them all back. The note
 // itself turns its switch off: the permission note's "Don't show this
-// again", ticked; the Resolve hint, once answered either way. The
+// again", ticked; so the Resolve note's "Don't show again". The
 // VODscription offer's "No, and don't show again" is the Privacy switch
 // `ask_for_annotations`.
 

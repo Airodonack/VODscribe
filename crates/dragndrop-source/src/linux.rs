@@ -6,7 +6,9 @@
 //! [`Drag::drop_performed`], `drag-failed` to [`Drag::failed`] and
 //! `drag-end` to [`Drag::end`]; and say when the drag is over a window of
 //! your own ([`Drag::over_own`]), which X11 tells by itself and Wayland
-//! doesn't.
+//! doesn't. Where X11 names the app asking ([`names_receivers`]), you may
+//! have some apps given none of the files ([`Drag::refuse`]): one known to
+//! misread them, say.
 //!
 //! Each file is offered two ways, both answered as they're asked for, so the
 //! app it's let go on chooses:
@@ -109,9 +111,14 @@ struct Inner {
     receiver: RefCell<Option<String>>,
     /// The files were all made as it ended.
     made: Cell<bool>,
+    /// Which other apps asking are given none of the files (`Drag::refuse`).
+    refuse: RefCell<Option<Refuse>>,
     /// Let go (drop-performed), anywhere.
     dropped: Cell<bool>,
 }
+
+/// Says of another app asking for a drag's files whether it gets none.
+type Refuse = Box<dyn Fn(&Asker) -> bool>;
 
 /// The `info` of the targets, as `drag-data-get` hears it.
 const URIS: u32 = 0;
@@ -138,6 +145,7 @@ impl Drag {
             receiver: RefCell::new(None),
             made: Cell::new(false),
             dropped: Cell::new(false),
+            refuse: RefCell::new(None),
         }))
     }
 
@@ -163,6 +171,13 @@ impl Drag {
         drag.asks.set(drag.asks.get() + 1);
         let n = drag.asks.get();
         if drag.failed.get() || drag.ended.get() {
+            return;
+        }
+        if self.refuses(context) {
+            trace(&format!("ask {n} ({}) refused: an app told to get none", data.target().name()));
+            if info == URIS {
+                answer(data, &[]);
+            }
             return;
         }
         if let Some(ark) = drag.ark.as_ref().filter(|_| info == crate::ark::SERVICE || info == crate::ark::OBJECT) {
@@ -209,6 +224,23 @@ impl Drag {
             }
             None => trace(&format!("ask {n}: not answered, the drag is over")),
         }
+    }
+
+    /// Has every other app asking for the files that `refuse` says yes to
+    /// answered with none, as it asks, by what X11 says of its window
+    /// ([`Asker`]). Where X11 doesn't name the app asking (Wayland:
+    /// [`names_receivers`]), it's never asked. Call it before the drag
+    /// begins.
+    pub fn refuse(&self, refuse: impl Fn(&Asker) -> bool + 'static) {
+        *self.0.refuse.borrow_mut() = Some(Box::new(refuse));
+    }
+
+    /// Whether the app asking (`context`'s destination) is one to refuse.
+    fn refuses(&self, context: &gtk::gdk::DragContext) -> bool {
+        let refuse = self.0.refuse.borrow();
+        let (Some(refuse), Some(window)) = (refuse.as_ref(), other_window(context)) else { return false };
+        let asker = Asker { class: window_class(&window), program: window_pid(&window).and_then(program_of) };
+        refuse(&asker)
     }
 
     /// Waits, running GTK's main loop, until the files are all made or one
@@ -382,6 +414,21 @@ fn answer(data: &gtk::SelectionData, paths: &[PathBuf]) {
     data.set_uris(&uris.iter().map(|u| u.as_str()).collect::<Vec<_>>());
 }
 
+/// Another app asking for a drag's files, as X11 tells of its window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Asker {
+    /// Its window's class (WM_CLASS's second part: "dolphin", "Resolve").
+    pub class: Option<String>,
+    /// The program its process runs, if it can be read (not another user's).
+    pub program: Option<PathBuf>,
+}
+
+/// Whether the apps a drag on `display` goes to are named as they ask for
+/// its files and as it ends: on X11, by their windows; on Wayland, never.
+pub fn names_receivers(display: &gtk::gdk::Display) -> bool {
+    display.type_().name().starts_with("GdkX11")
+}
+
 /// The window a drag is over, asking for its data or let go on (`context`'s
 /// destination), if it's another app's: X11 says; Wayland doesn't.
 fn other_window(context: &gtk::gdk::DragContext) -> Option<gtk::gdk::Window> {
@@ -466,6 +513,11 @@ fn window_pid(window: &gtk::gdk::Window) -> Option<u32> {
         4.. => Some(u32::from_ne_bytes(bytes[..4].try_into().ok()?)),
         _ => None,
     }
+}
+
+/// The program process `pid` runs; None if that can't be read.
+fn program_of(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
 }
 
 /// The toolkit process `pid` runs, by the libraries it has loaded; None if
@@ -565,6 +617,13 @@ mod tests {
         assert_eq!(desktop_entry("[Desktop Action new]\nName=New\n"), (None, None), "another group's name");
         assert_eq!(app_name("org.example.NoSuchApp"), "NoSuchApp", "a reverse domain name's last part");
         assert_eq!(app_name("No-such-app"), "No-such-app");
+    }
+
+    /// The app asking is told by the program its process runs.
+    #[test]
+    fn an_apps_program_is_read_from_its_process() {
+        assert_eq!(program_of(std::process::id()), std::env::current_exe().ok());
+        assert_eq!(program_of(u32::MAX), None);
     }
 
     /// Qt's apps are answered at once, GTK 4's held, the others held only

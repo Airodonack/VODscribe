@@ -161,7 +161,7 @@ export interface Settings {
   load_cast_pictures: boolean;
   /** Whether the note on permission shows before downloading from a site (permission.ts). */
   ask_before_downloading: boolean;
-  /** Whether MOV clips are suggested where DaVinci Resolve is on Linux (resolveHint.svelte.ts). */
+  /** Whether an MP4 clip dropped on DaVinci Resolve on Linux asks to switch to MOV (resolveDrop.svelte.ts). */
   suggest_mov_for_resolve: boolean;
 }
 
@@ -343,6 +343,10 @@ export interface DragEnded {
   failed: string | null;
   finished_only: boolean;
   receiver: string | null;
+  /** Let go on DaVinci Resolve on Linux, which was refused the MP4 clips
+   *  ("refused"), or on an app the system doesn't name, where Resolve is
+   *  installed ("maybe"): the page asks to switch to MOV (resolveDrop.svelte.ts). */
+  resolve?: "refused" | "maybe" | null;
 }
 
 /** A drag of clips' files out of the window let go on another app before
@@ -703,8 +707,6 @@ export const api = {
   addMark: (vodId: number, time: number, kind: MarkKind = "cut", text: string | null = null) =>
     marking(invoke<Mark>("add_mark", { vodId, time, kind, text })),
   setMarkText: (id: number, text: string | null) => marking(invoke<void>("set_mark_text", { id, text })),
-  /** Whether DaVinci Resolve is installed on Linux, where it can't read MP4 clips. */
-  resolveInstalled: () => invoke<boolean>("resolve_installed"),
   /** The view open (an edit or a VOD's), for the history: what changes are made from. */
   setView: (view: Doc | null) => invoke<void>("set_view", { view }),
   /** Undoes the newest change in `view`'s history (or one made from it); null if there's none. */

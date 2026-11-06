@@ -7,6 +7,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Transcribe from the captions button. Right-click CC under the player, or press and hold it, for Transcribe VOD, the selection, or how much from the playhead; T still transcribes, and the bar's own Transcribe button is gone.
 - Videos from zips and other apps drop in. A video dragged from a zip in File Explorer or an archive manager on Linux, or one a Mac app hands over only once it's dropped, is copied into VODscribe, listed with the jobs as it comes, and opens once it's in.
 - Clips come in more formats. Settings › Encoding adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
+- Dropping on DaVinci Resolve offers MOV. On Linux, where Resolve can't open MP4, a clip dropped on it is held back and VODscribe offers to switch to MOV, in place of the library's note.
 - Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
 - Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
 - The VODscription offer has plainer buttons. After you add a VOD, "No, and don't show again" sits beside Not now.

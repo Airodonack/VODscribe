@@ -33,7 +33,7 @@
 
 import { api, events, thumbUrl, type Clip, type ClipFormat, type DragEnded, type Put, type Vod } from "./api";
 import { settings } from "./appSettings.svelte";
-import { formatHint } from "./resolveHint.svelte";
+import { resolveNote } from "./resolveDrop.svelte";
 import { clips } from "./clips.svelte";
 import { cuts } from "./cuts.svelte";
 import { edits, putOf, type Stretch } from "./edits.svelte";
@@ -116,7 +116,12 @@ export function making(count: number): string {
  * false if the button was let go first, when nothing is asked and the clips
  * are the caller's to forget.
  */
-async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = () => true): Promise<boolean> {
+async function dragOut(
+  list: Clip[],
+  image?: Uint8Array,
+  held: () => boolean = () => true,
+  vodId?: number,
+): Promise<boolean> {
   if (!list.length || list.some((c) => c.status === "error")) return false;
   outgoing = list.filter((c) => c.status === "ready" && c.file_path).map((c) => c.file_path!);
   out = true;
@@ -145,9 +150,19 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
     stopMaking?.();
     if (told !== undefined) toast.drop(told);
     if (end?.failed) clips.error = `Couldn't make the clip: ${end.failed}`;
+    // Let go on DaVinci Resolve, or perhaps (where the system can't tell),
+    // with MP4 clips it can't open: asked whether to switch to MOV. Refused
+    // there, they're kept in the clip bar, to drag again, made again as MOV
+    // if switched (those of a VOD's bar; another's are made so as they're
+    // dragged next).
+    if (end?.resolve) {
+      const remake = () => vodId !== undefined && list.forEach((c) => void remade(c, vodId));
+      resolveNote.show(end.resolve, list.length, end.resolve === "refused" ? remake : undefined);
+    }
+    if (end?.resolve === "refused") list.forEach(keepHidden);
     // Let go on an app that takes only files already made, before they were:
     // said, and they're kept in the clip bar, to drag again once made.
-    if (end?.finished_only) {
+    else if (end?.finished_only) {
       toast.showUnlessUp(finishedOnly(end.receiver, list.length));
       list.forEach(keepHidden);
     }
@@ -198,7 +213,6 @@ async function dragOut(list: Clip[], image?: Uint8Array, held: () => boolean = (
   // Refused, or not begun because the button came up first (clips.rs
   // `start_drag`, said by the result, not an error): a drag that never was.
   if (!began) over();
-  formatHint.dragged();
   return true;
 }
 
@@ -706,7 +720,7 @@ function carryWith(p: Payload): Promise<void> {
         if (made.length && ready.length === made.length && down) {
           const png = await p.image();
           back = bringsBack(p);
-          dragged = await dragOut(ready, png, () => down);
+          dragged = await dragOut(ready, png, () => down, p.vodId);
           if (!dragged) back = null;
         }
       } finally {

@@ -29,6 +29,7 @@ mod page;
 mod player;
 mod receive;
 mod recovery;
+mod resolve;
 mod screen;
 mod setup;
 mod storyboards;
@@ -431,7 +432,6 @@ pub fn run() {
             clips::add_mark,
             clips::move_mark,
             clips::set_mark_text,
-            clips::resolve_installed,
             edits::list_edits,
             edits::create_edit,
             edits::get_edit,

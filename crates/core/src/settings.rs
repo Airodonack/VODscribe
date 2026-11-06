@@ -143,9 +143,10 @@ pub struct Settings {
     /// "Don't show this again" is ticked or it's turned off in Settings.
     /// Only the page reads it.
     pub ask_before_downloading: bool,
-    /// Whether the page suggests MOV clips once, after a clip is dragged out,
-    /// where DaVinci Resolve is installed on Linux (resolveHint.svelte.ts):
-    /// off once answered, back on from Settings. Only the page reads it.
+    /// Whether an MP4 clip dragged out onto DaVinci Resolve on Linux is
+    /// refused there and the page asks to make clips as MOV (the app's
+    /// resolve.rs): on until its "Don't show again" is ticked or it's turned
+    /// off in Settings.
     pub suggest_mov_for_resolve: bool,
 }
 

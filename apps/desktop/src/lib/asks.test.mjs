@@ -51,6 +51,6 @@ test("only a note stopped is brought over", () => {
 });
 
 test("the old keys are read only to bring them over", () => {
-  for (const name of ["./permission.ts", "./resolveHint.svelte.ts", "./appSettings.svelte.ts"])
+  for (const name of ["./permission.ts", "./resolveDrop.svelte.ts", "./appSettings.svelte.ts"])
     for (const key of Object.values(OLD_KEYS)) assert.ok(!source(name).includes(key), `${name} reads ${key}`);
 });

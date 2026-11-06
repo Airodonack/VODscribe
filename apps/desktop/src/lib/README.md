@@ -39,7 +39,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `jobs.ts`: what the jobs list says.
 - `videos.svelte.ts`: whole videos downloaded on request.
 - `playable.ts`: what this computer's web view plays, asked at each start.
-- `FormatHint.svelte`, `resolveHint.svelte.ts`: the one-time hint for DaVinci Resolve on Linux.
+- `ResolveNote.svelte`, `resolveDrop.svelte.ts`: the note at a drop on DaVinci Resolve on Linux, which can't read MP4.
 
 ## The player
 

@@ -12,6 +12,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `jobs.rs`: clips, renders, video downloads and storyboards, one at a time.
 - `job_list.rs`: the jobs list the library shows.
 - `clips.rs`: clips' commands, and the queue that cuts them.
+- `resolve.rs`: MP4 clips dropped on DaVinci Resolve on Linux, which can't open them, are held back.
 - `edits.rs`: edits' commands, and their rendering.
 - `footage.rs`: where a stretch plays from, and the downloads of sections edits need.
 - `videos.rs`: downloading a VOD's whole video on request.

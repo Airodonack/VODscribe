@@ -985,13 +985,6 @@ pub(crate) async fn cancel_mark(app: AppHandle, state: State<'_, AppState>, id: 
     Ok(())
 }
 
-/// Whether DaVinci Resolve is installed where its Linux installer puts it:
-/// it can't read MP4 clips there, so the interface points to the setting.
-#[tauri::command]
-pub(crate) fn resolve_installed() -> bool {
-    cfg!(target_os = "linux") && Path::new("/opt/resolve/bin/resolve").is_file()
-}
-
 /// Clip `id`'s file, if it's made.
 fn ready_file(app: &AppHandle, id: i64) -> CmdResult<PathBuf> {
     let clip = app.state::<AppState>().db.lock().unwrap().clip(id).map_err(err)?.ok_or("That clip is gone.")?;
@@ -1116,11 +1109,16 @@ pub(crate) async fn drag_clip(
     // PNG of reasonable size; else the first clip's first frame.
     let drawn = image.filter(|png| png.len() < (2 << 20) && png.starts_with(b"\x89PNG"));
     let image = drawn.or_else(|| std::fs::read(thumb_path(&app, ids[0])).ok());
-    let names = {
+    let (names, resolve) = {
         let state = app.state::<AppState>();
-        let format = Settings::load(&state.paths.settings()).clip_encoding().format();
+        let settings = Settings::load(&state.paths.settings());
+        let format = settings.clip_encoding().format();
         let db = state.db.lock().unwrap();
-        ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect()
+        let names: Vec<_> =
+            ids.iter().map(|&id| Outgoing { name: drag_name(&db, format, id), job: Some(id) }).collect();
+        let named: Vec<_> = names.iter().map(|o| o.name.as_str()).collect();
+        let resolve = crate::resolve::Watch::new(crate::resolve::applies(&settings, &named));
+        (names, resolve)
     };
     let asking = app.clone();
     let listed = ids.clone();
@@ -1159,7 +1157,7 @@ pub(crate) async fn drag_clip(
             crate::page::emit(&telling, "drag-making", DragMaking { drag: number, making });
         }
     };
-    drag_file(window, number, names, files, image, taken, dropped, waited).await
+    drag_file(window, number, names, files, image, resolve, taken, dropped, waited).await
 }
 
 /// How the system's drag of files out of the window ended, as the page hears
@@ -1177,6 +1175,9 @@ pub(crate) struct DragEnded {
     pub(crate) failed: Option<String>,
     pub(crate) finished_only: bool,
     pub(crate) receiver: Option<String>,
+    /// Let go on DaVinci Resolve, or perhaps (`resolve`): the page asks
+    /// whether to make clips as MOV.
+    pub(crate) resolve: Option<crate::resolve::ResolveDrop>,
 }
 
 /// A drag of clips' files out of the window let go on another app before
@@ -1232,7 +1233,8 @@ fn drag_name(db: &Db, format: vodscribe_core::settings::ClipFormat, id: i64) -> 
 /// it's over (once the files went where they were dropped, or couldn't),
 /// `taken` runs if another app took them, then the page hears "drag-ended"
 /// (`DragEnded`, with the page's `number` for the drag), so what it does next
-/// (deleting a clip made only for the drag) knows. `dropped(true)` once it's
+/// (deleting a clip made only for the drag) knows. `resolve` watches it for
+/// DaVinci Resolve (resolve.rs). `dropped(true)` once it's
 /// let go on another app, `dropped(false)` once it's over; `waited()` once
 /// that app waits for a file still being made (it may be called again). False
 /// if none began, the button up before it could (`ReleasedEarly`).
@@ -1243,6 +1245,7 @@ pub(crate) async fn drag_file(
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Option<Vec<u8>>,
+    resolve: crate::resolve::Watch,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
     waited: impl Fn() + Send + Sync + 'static,
@@ -1252,7 +1255,7 @@ pub(crate) async fn drag_file(
     let on_main = window.clone();
     window
         .run_on_main_thread(move || {
-            let started = start_drag(&on_main, number, names, files, image, taken, dropped, waited);
+            let started = start_drag(&on_main, number, names, files, image, resolve, taken, dropped, waited);
             let _ = tx.send(began(started));
         })
         .map_err(err)?;
@@ -1304,7 +1307,9 @@ fn drag_outcome(
 /// runs if another app was given the app's own files (not copies written for
 /// it), then the page hears "drag-ended" (`drag_outcome`); let go on an app
 /// that took nothing because they weren't made yet, that it takes finished
-/// files only, and its name where the system says.
+/// files only, and its name where the system says. On Linux, `resolve`
+/// refuses them to DaVinci Resolve as it asks, and the page hears that it
+/// did (resolve.rs).
 #[allow(clippy::too_many_arguments)]
 fn start_drag(
     window: &tauri::WebviewWindow,
@@ -1312,6 +1317,7 @@ fn start_drag(
     names: Vec<Outgoing>,
     files: impl Fn() -> Vec<Made> + Send + Sync + 'static,
     image: Vec<u8>,
+    resolve: crate::resolve::Watch,
     taken: impl Fn() + Send + Sync + 'static,
     dropped: impl Fn(bool) + Send + Sync + 'static,
     waited: impl Fn() + Send + Sync + 'static,
@@ -1329,7 +1335,9 @@ fn start_drag(
         })
         .collect();
     let told = window.app_handle().clone();
-    drag_source::start(window, items, &image, move |event| match event {
+    let resolve = Arc::new(resolve);
+    let watched = resolve.clone();
+    let on = move |event| match event {
         // Let go on another app: listed with the jobs from now, until it's over.
         Event::LetGo => dropped(true),
         // (Off the main thread: the library's lock.)
@@ -1338,7 +1346,16 @@ fn start_drag(
                 Failure::Cancelled => CANCELED.to_string(),
                 Failure::Failed(why) => why,
             });
-            let outcome = drag_outcome(ended.ending, ended.delivered, failure, ended.made, ended.receiver);
+            // Refused to Resolve: nothing else to say of it.
+            let outcome = match watched.heard(ended.ending, ended.delivered) {
+                Some(heard @ crate::resolve::ResolveDrop::Refused) => {
+                    DragEnded { resolve: Some(heard), ..Default::default() }
+                }
+                heard => DragEnded {
+                    resolve: heard,
+                    ..drag_outcome(ended.ending, ended.delivered, failure, ended.made, ended.receiver)
+                },
+            };
             let outcome = DragEnded { drag: number, ..outcome };
             drag_source::trace(&format!("ended: {outcome:?}"));
             // Taken, then the page told, so a drag of its own coming back in
@@ -1356,7 +1373,14 @@ fn start_drag(
             // nothing holds that queue now.
             let _ = told.emit("drag-ended", outcome);
         }
-    })
+    };
+    #[cfg(target_os = "linux")]
+    return drag_source::start(window, items, &image, resolve, on);
+    #[cfg(not(target_os = "linux"))]
+    {
+        drop(resolve);
+        drag_source::start(window, items, &image, on)
+    }
 }
 
 /// A clip's (or an edit's) file in a drag out of the window, the `index`th
@@ -1482,6 +1506,7 @@ mod tests {
             failed: failed.map(String::from),
             finished_only,
             receiver: receiver.map(String::from),
+            resolve: None,
         };
         assert_eq!(drag_outcome(Elsewhere, true, None, true, named()), ended(true, None, false, None), "given");
         assert_eq!(
