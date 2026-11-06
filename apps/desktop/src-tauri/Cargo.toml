@@ -100,7 +100,7 @@ glib = "0.18"
 png = "0.18"
 # The Servo runtime (the `servo` feature). A path for now: the repository has
 # no published home yet.
-tauri-runtime-servo = { path = "/mnt/data/servo-spike/tauri-servo/tauri-runtime-servo", optional = true }
+tauri-runtime-servo = { path = "/mnt/data/vodscribe/cache/servo/tauri-servo/tauri-runtime-servo", optional = true }
 # Servo and its runtime report through `log`, the page's console among them
 # (the `console` target); the wry runtime's web views have an inspector instead.
 env_logger = { version = "0.11", optional = true }
