@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
@@ -336,7 +336,7 @@ struct Progress {
 
 pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(clip)) = db.clip(id) {
-        let _ = app.emit("clip", clip);
+        crate::page::emit(app, "clip", clip);
     }
 }
 
@@ -396,7 +396,7 @@ fn cut(app: &AppHandle, id: i64, stop: &AtomicBool, removing: &Mutex<HashSet<i64
         let mut last = last.lock().unwrap();
         if last.elapsed() >= PROGRESS_EVERY {
             *last = Instant::now();
-            let _ = app.emit("clip-progress", Progress { id, progress });
+            crate::page::emit(app, "clip-progress", Progress { id, progress });
             crate::job_list::progressed(app, id, progress);
         }
     };
@@ -781,7 +781,7 @@ pub(crate) fn after_delete(app: &AppHandle, id: i64, file: Option<String>, hande
         delete_file(path);
     }
     let _ = std::fs::remove_file(thumb_path(app, id));
-    let _ = app.emit("clip-removed", id);
+    crate::page::emit(app, "clip-removed", id);
 }
 
 /// Shows clip `id`'s file in the system file manager.
@@ -1108,14 +1108,13 @@ pub(crate) async fn drag_clip(
     };
     // The app they were let go on waits for some still being made: the page
     // says so ("drag-making"), once, as that app may show nothing till they
-    // come. Told at once: on Linux this runs on the main thread, inside the
-    // drag's wait, which holds what other threads send (`start_drag`).
+    // come.
     let told = AtomicBool::new(false);
     let waited = move || {
         // (The library busy: taken as still being made, as the drag does.)
         let making = asked.iter().filter(|&&id| matches!(made(&telling, id), None | Some(Made::Making))).count();
         if making > 0 && !told.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            let _ = telling.emit("drag-making", DragMaking { drag: number, making });
+            crate::page::emit(&telling, "drag-making", DragMaking { drag: number, making });
         }
     };
     drag_file(window, number, names, files, image, taken, dropped, waited).await
@@ -1552,25 +1551,20 @@ fn start_drag(
         data.set_uris(&uris.iter().map(|u| u.as_str()).collect::<Vec<_>>());
     };
     // Waits, running the app's main loop, until the files are all made or
-    // one won't be, or the drag is over.
+    // one won't be, or the drag is over. What other threads tell the page
+    // meanwhile still gets there (page.rs).
     let hold = {
-        let (drag, files, app) = (drag.clone(), files.clone(), window.app_handle().clone());
+        let (drag, files) = (drag.clone(), files.clone());
         move || {
             HOLDING.with(|h| h.set(h.get() + 1));
             drag.holding.set(drag.holding.get() + 1);
             let main = glib::MainLoop::new(None, false);
-            let (quit, looked, watched, app) = (main.clone(), files.clone(), drag.clone(), app.clone());
-            let ticks = Cell::new(0u32);
+            let (quit, looked, watched) = (main.clone(), files.clone(), drag.clone());
             // (The tick ends itself as it ends the wait.)
             glib::timeout_add_local(HOLD_TICK, move || {
                 if watched.failed.get() || watched.ended.get() || settled(looked()).is_some() {
                     quit.quit();
                     return glib::ControlFlow::Break;
-                }
-                crate::player::retell(&app);
-                ticks.set(ticks.get() + 1);
-                if ticks.get().is_multiple_of(5) {
-                    crate::job_list::retell(&app);
                 }
                 glib::ControlFlow::Continue
             });
@@ -1689,7 +1683,7 @@ fn start_drag(
                     trace(&format!("over: copied for Dolphin, failed {failed:?}"));
                     dropped(false);
                     let ended = DragEnded { drag: number, delivered: failed.is_none(), failed, ..Default::default() };
-                    let _ = told.emit("drag-ended", ended);
+                    crate::page::emit(told.app_handle(), "drag-ended", ended);
                 })
             });
             if !copying {
@@ -1707,7 +1701,7 @@ fn start_drag(
                         taken();
                     }
                     dropped(false);
-                    let _ = told.emit("drag-ended", ended);
+                    crate::page::emit(told.app_handle(), "drag-ended", ended);
                 });
             }
             // The press that started the drag never comes back up in the page:
@@ -2101,7 +2095,7 @@ fn start_drag(
                 if ended.delivered && outcome.taken {
                     taken();
                 }
-                let _ = told.emit("drag-ended", ended);
+                crate::page::emit(told.app_handle(), "drag-ended", ended);
             });
         },
         trace,
@@ -2163,7 +2157,7 @@ fn start_drag(
                 taken();
             }
             dropped(false);
-            let _ = told.emit("drag-ended", DragEnded { drag: number, ..outcome });
+            crate::page::emit(told.app_handle(), "drag-ended", DragEnded { drag: number, ..outcome });
         }
     })
 }

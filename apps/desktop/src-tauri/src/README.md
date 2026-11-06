@@ -29,6 +29,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `app_server.rs`: serves the page from `http://localhost` in release builds, since YouTube's and Twitch's players need an http page.
 - `media.rs`: serves local files to the page's `<video>`.
 - `loopback.rs`: what those local servers share; they answer on loopback only.
+- `page.rs`: sends the page its events, from any thread.
 - `webview.rs`: the window's WebKitGTK view on Linux.
 - `receive.rs`: files dropped with no path, written into the library.
 - `e2e.rs`: the end-to-end tests' way in; the `e2e` feature only.

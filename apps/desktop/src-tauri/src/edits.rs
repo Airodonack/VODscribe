@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{ClipStatus, Db};
 use vodscribe_core::edits::{self, Edit, EditPiece};
 use vodscribe_core::settings::Settings;
@@ -33,9 +33,9 @@ struct Progress {
 pub(crate) fn emit(app: &AppHandle, db: &Db, id: i64) {
     if let Ok(Some(edit)) = db.edit(id) {
         let snippet = edit.snippet_of.is_some();
-        let _ = app.emit("edit", edit);
+        crate::page::emit(app, "edit", edit);
         if snippet && let Ok(Some(clip)) = db.clip(id) {
-            let _ = app.emit("clip", clip);
+            crate::page::emit(app, "clip", clip);
         }
     }
 }
@@ -165,7 +165,7 @@ pub(crate) fn render_edit(app: &AppHandle, id: i64, stop: &AtomicBool) -> Result
     let report = |progress: f64| {
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
-            let _ = app.emit("edit-progress", Progress { id, progress });
+            crate::page::emit(app, "edit-progress", Progress { id, progress });
             crate::job_list::progressed(app, id, progress);
         }
     };
@@ -209,7 +209,7 @@ pub(crate) struct EditView {
 pub(crate) fn view(app: &AppHandle, db: &Db, id: i64) -> CmdResult<EditView> {
     let edit = db.edit(id).map_err(err)?.ok_or("That edit is gone.")?;
     let pieces = pieces(app, db, id).map_err(err)?;
-    let _ = app.emit("edit", edit.clone());
+    crate::page::emit(app, "edit", edit.clone());
     Ok(EditView { edit, pieces })
 }
 
@@ -321,7 +321,7 @@ pub(crate) async fn delete_edit(app: AppHandle, state: State<'_, AppState>, id: 
     for (clip, handed_out) in gone.clips {
         crate::clips::after_delete(&app, clip.id, clip.file_path, handed_out);
     }
-    let _ = app.emit("edit-removed", id);
+    crate::page::emit(&app, "edit-removed", id);
     Ok(())
 }
 

@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 
 use crate::{AppState, CmdResult};
@@ -131,7 +131,7 @@ fn send_changes(app: &AppHandle, heard: Receiver<()>) {
         while heard.try_recv().is_ok() {}
         let jobs = listed(app);
         if last.as_ref() != Some(&jobs) {
-            let _ = app.emit("jobs", &jobs);
+            crate::page::emit(app, "jobs", &jobs);
             last = Some(jobs);
         }
     }
@@ -156,26 +156,6 @@ fn listed(app: &AppHandle) -> Vec<Job> {
 fn receiving(state: &AppState) -> Vec<Job> {
     let listed = state.receives.listed().into_iter();
     listed.map(|(id, label, progress)| Job { kind: Kind::Receive, id, label, running: true, progress }).collect()
-}
-
-/// Sends the list as it is now, from the main thread, where Tauri sends it at
-/// once: while a drag out waits for its files in a main loop run inside an
-/// ask (clips.rs `start_drag`), what the list's own thread sends waits in
-/// Tauri's queue until that ends, and the jobs shown would stand. Not if the
-/// library's reads are busy just now (the next tick tells).
-#[cfg(target_os = "linux")]
-pub(crate) fn retell(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let render = state.clips.listed();
-    let erase = state.sweeper.listed();
-    let rendering = *state.job_list.rendering.lock().unwrap();
-    let erasing = *state.job_list.erasing.lock().unwrap();
-    let Ok(db) = state.reads.try_lock() else { return };
-    let out = |id| state.clips.is_out(id);
-    let mut jobs = arrange(render, erase, (rendering, erasing), |queue, id| describe(&db, queue, id, out));
-    drop(db);
-    jobs.extend(receiving(&state));
-    let _ = app.emit("jobs", &jobs);
 }
 
 /// What job `id` on `queue` makes and what it's called; None if it's gone,

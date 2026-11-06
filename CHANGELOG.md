@@ -11,6 +11,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Fixes:
   - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
   - A Mac drop keeps your files. A file you saved under the clip's name while the clip was being made is no longer deleted or written over; VODscribe says a file of that name is already there.
+  - Progress keeps moving during clip drags. On Linux, transcriptions, downloads and clips no longer freeze while an app waits for a clip you dragged out.
 
 ## 0.7.1 — 2026-11-05
 

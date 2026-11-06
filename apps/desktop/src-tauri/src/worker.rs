@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::{Db, Status, Vod};
 use vodscribe_core::pipeline::{Transcription, WorkerSpec};
 use vodscribe_core::settings::{Device, Settings};
@@ -341,7 +341,7 @@ fn reporter<'a>(
         let now = Instant::now();
         if status != last.0 || now - last.1 >= PROGRESS_INTERVAL {
             last = (status, now);
-            let _ = app.emit("vod-progress", (vod_id, stretch_id, status, p));
+            crate::page::emit(app, "vod-progress", (vod_id, stretch_id, status, p));
         }
     }
 }

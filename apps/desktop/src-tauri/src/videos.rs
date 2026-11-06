@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{Db, Vod};
 use vodscribe_core::playable::Playable;
 use vodscribe_core::settings::Settings;
@@ -84,7 +84,7 @@ impl Videos {
             if error.is_none() {
                 let _ = crate::emit_vod(&app, &state.db.lock().unwrap(), id);
             }
-            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: error.clone() });
+            crate::page::emit(&app, "video-progress", VideoProgress { id, progress: None, error: error.clone() });
             if error.is_none() {
                 state.storyboards.push(id);
             }
@@ -105,7 +105,7 @@ impl Videos {
     /// Stops every download and empties the queue (deleting what each had).
     pub(crate) fn stop_all(&self, app: &AppHandle) {
         for (id, _) in self.0.take_waiting(|_| true) {
-            let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
+            crate::page::emit(app, "video-progress", VideoProgress { id, progress: None, error: None });
         }
         self.0.stop_running(|_| true);
     }
@@ -138,7 +138,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
             let mut last = report.lock().unwrap();
             if last.elapsed() >= PROGRESS_EVERY {
                 *last = Instant::now();
-                let _ = app.emit("video-progress", VideoProgress { id, progress: Some(progress), error: None });
+                crate::page::emit(app, "video-progress", VideoProgress { id, progress: Some(progress), error: None });
             }
         };
         match stream_then_keep(app, &vod, duration, height, stop, &report) {
@@ -155,7 +155,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     let mut report = |progress: f64| {
         if last.elapsed() >= PROGRESS_EVERY {
             last = Instant::now();
-            let _ = app.emit("video-progress", VideoProgress { id, progress: Some(progress), error: None });
+            crate::page::emit(app, "video-progress", VideoProgress { id, progress: Some(progress), error: None });
         }
     };
     let result = (|| {
@@ -277,7 +277,7 @@ pub(crate) async fn keep_video(
     if !state.videos.0.push_new((id, height), queued) {
         return Ok(());
     }
-    let _ = app.emit("video-progress", VideoProgress { id, progress: Some(0.0), error: None });
+    crate::page::emit(&app, "video-progress", VideoProgress { id, progress: Some(0.0), error: None });
     Ok(())
 }
 
@@ -295,7 +295,7 @@ fn downloading_to_transcribe(db: &Db, vod: &Vod) -> Result<bool> {
 #[tauri::command]
 pub(crate) async fn stop_video(app: AppHandle, state: State<'_, AppState>, id: i64) -> CmdResult<()> {
     if !stop(&state.db, &state.videos, &state.paths.work(), id) {
-        let _ = app.emit("video-progress", VideoProgress { id, progress: None, error: None });
+        crate::page::emit(&app, "video-progress", VideoProgress { id, progress: None, error: None });
     }
     Ok(())
 }

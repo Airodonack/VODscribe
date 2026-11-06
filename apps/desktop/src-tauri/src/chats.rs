@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{ChatLine, ChatStatus, ChatWindow, LibraryChat};
 use vodscribe_core::layers::{self, Timeline};
 use vodscribe_core::word_emotes::{self, WordEmote};
@@ -68,7 +68,7 @@ fn fetch(app: &AppHandle, id: i64) {
         db: &state.db,
         vod_id: id,
         on_save: Box::new(|| {
-            let _ = app.emit("chat-saved", id);
+            crate::page::emit(app, "chat-saved", id);
         }),
         starts: Vec::new(),
     };
@@ -76,7 +76,7 @@ fn fetch(app: &AppHandle, id: i64) {
         let percent = (f * 100.0) as i32;
         if percent != shown {
             shown = percent;
-            let _ = app.emit("chat-progress", (id, f));
+            crate::page::emit(app, "chat-progress", (id, f));
         }
     };
     // The tests' builds can fetch a chat the tests left, without the network (`e2e::chat`).

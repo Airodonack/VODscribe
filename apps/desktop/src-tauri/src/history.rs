@@ -17,7 +17,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::{ClipStatus, Db, MarkState};
 use vodscribe_core::edits::EditState;
 
@@ -465,7 +465,7 @@ fn step(app: &AppHandle, view: Doc, undo: bool) -> CmdResult<Option<Done>> {
     let other = if undo { &mut s.redo } else { &mut s.undo };
     other.entry(entry.doc).or_default().push(entry);
     changed(app, &db, done.doc);
-    let _ = app.emit("restored", Restored { doc: done.doc, revision: done.revision });
+    crate::page::emit(app, "restored", Restored { doc: done.doc, revision: done.revision });
     Ok(Some(done))
 }
 

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::Db;
 use vodscribe_core::tools;
 use vodscribe_player::clock::{Event, Player};
@@ -136,19 +136,6 @@ fn status(player: &Player) -> Status {
         shown: player.shown(),
         waiting: player.waiting_for_footage(),
         fps: player.fps_at(player.shown().unwrap_or_else(|| player.time())),
-    }
-}
-
-/// Tells the page where the player is, from the main thread, where Tauri
-/// sends it at once: while a drag out waits for its files in a main loop run
-/// inside an ask (clips.rs `start_drag`), what the player's own thread tells
-/// waits in Tauri's queue until that ends, and the time shown would stand.
-#[cfg(target_os = "linux")]
-pub(crate) fn retell(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    let Ok(open) = state.player.open.try_lock() else { return };
-    if let Some(o) = open.as_ref() {
-        let _ = app.emit("player-time", status(&o.player));
     }
 }
 
@@ -375,7 +362,7 @@ async fn open_with(
                     // None when there's nothing to play: black.
                     crate::screen::show(&shown, open.player.frame());
                 }
-                let _ = told.emit("player-time", status(&open.player));
+                crate::page::emit(&told, "player-time", status(&open.player));
             }));
             let mut open = state.player.open.lock().unwrap();
             if state.player.asked.load(Ordering::Acquire) != asked {
@@ -397,7 +384,7 @@ async fn open_with(
             o.player.pause();
         }
         let now = status(&o.player);
-        let _ = app.emit("player-time", now);
+        crate::page::emit(&app, "player-time", now);
         opened.status = Some(now);
     }
     Ok(opened)
@@ -634,7 +621,7 @@ fn with(app: &AppHandle, f: impl FnOnce(&Player)) -> CmdResult<Status> {
     let open = open.as_ref().ok_or("No player is open.")?;
     f(&open.player);
     let status = status(&open.player);
-    let _ = app.emit("player-time", status);
+    crate::page::emit(app, "player-time", status);
     Ok(status)
 }
 

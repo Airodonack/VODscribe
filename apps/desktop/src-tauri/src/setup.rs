@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::Status;
 use vodscribe_core::gpu::{self, GpuInfo};
 use vodscribe_core::settings::Settings;
@@ -166,7 +166,7 @@ impl Reporter {
         };
         if due {
             *sent = Some((Instant::now(), step));
-            let _ = self.app.emit(self.event, value);
+            crate::page::emit(&self.app, self.event, value);
         }
     }
 }
@@ -230,7 +230,7 @@ impl Install {
             *last.lock().unwrap() = None;
             held.store(FREE, Ordering::Relaxed);
             let error = result.err().filter(|e| !vodscribe_core::is_canceled(e)).map(err);
-            let _ = app.emit(done_event, error);
+            crate::page::emit(&app, done_event, error);
         });
         Ok(())
     }
@@ -250,7 +250,7 @@ async fn update_yt_dlp_now(app: AppHandle, state: State<'_, AppState>) -> CmdRes
     let bin = state.paths.bin();
     tauri::async_runtime::spawn_blocking(move || {
         tools::update_yt_dlp(&bin, |p| {
-            let _ = app.emit("yt-dlp-progress", p);
+            crate::page::emit(&app, "yt-dlp-progress", p);
         })
     })
     .await
@@ -439,7 +439,7 @@ pub(crate) async fn clear_cache(app: AppHandle, state: State<'_, AppState>) -> C
     .await
     .map_err(err)??;
     for vod in state.db.lock().unwrap().vods().map_err(err)? {
-        let _ = app.emit("vod", vod);
+        crate::page::emit(&app, "vod", vod);
     }
     Ok(())
 }

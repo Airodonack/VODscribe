@@ -27,6 +27,7 @@ mod job_list;
 mod jobs;
 mod loopback;
 mod media;
+mod page;
 mod player;
 mod receive;
 mod recovery;
@@ -42,7 +43,7 @@ mod worker;
 
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::{Paths, model};
 
@@ -181,7 +182,7 @@ fn allow_images_from(csp: &mut Option<tauri::utils::config::Csp>, base: &str) {
 fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
     if let Some(mut vod) = db.vod(id).map_err(err)? {
         vodscribe_core::pipeline::mark_partial(&app.state::<AppState>().paths.work(), &mut vod);
-        let _ = app.emit("vod", vod);
+        crate::page::emit(app, "vod", vod);
     }
     Ok(())
 }

@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::annotations::{self, Found, Offer, VodAnnotations};
 use vodscribe_core::annotations_filter;
 use vodscribe_core::chat::ChatMessage;
@@ -73,7 +73,7 @@ async fn import(
     emit_vod(&app, &state.db.lock().unwrap(), vod.id)?;
     // Whatever started the import (the offer, a file, a test), the page
     // re-reads what it shows of the VOD from here.
-    let _ = app.emit("annotations-imported", vod.id);
+    crate::page::emit(&app, "annotations-imported", vod.id);
     Ok(Imported { vod, created })
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn look_up_added(app: &AppHandle, vod: &Vod) {
         }
         match look_up(&app, id, &platform, &platform_id) {
             Ok(Found::Available { .. }) => {
-                let _ = app.emit("annotations-found", id);
+                crate::page::emit(&app, "annotations-found", id);
             }
             Ok(Found::None) => {}
             Err(e) => {

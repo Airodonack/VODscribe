@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use vodscribe_core::db::Db;
 use vodscribe_core::footage::{self, Growing, Source};
 use vodscribe_core::settings::Settings;
@@ -258,7 +258,7 @@ impl Footage {
                 if let Some(e) = &error {
                     eprintln!("footage of {vod_id} at {start}: {e:#}");
                 }
-                let _ = app.emit("footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
+                crate::page::emit(&app, "footage", Fetched { vod_id, error: error.map(|e| format!("{e:#}")) });
             }
         })?;
         Ok(())
@@ -394,7 +394,7 @@ pub(crate) fn ensure_as(
                         crate::player::footage_grew(app, vod_id);
                     }
                     last = Some((usable, progress));
-                    let _ = app.emit("footage-progress", Fetching { vod_id, from, to, progress, usable });
+                    crate::page::emit(app, "footage-progress", Fetching { vod_id, from, to, progress, usable });
                 }
                 let wait = Instant::now();
                 while wait.elapsed() < PROGRESS_EVERY {

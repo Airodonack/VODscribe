@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Manager, State};
 use vodscribe_core::db::{Db, SearchFilter, SearchHit, Status, Vod, give_way};
 use vodscribe_core::edits::LibraryItem;
 use vodscribe_core::query::QueryInfo;
@@ -100,7 +100,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
 
     // Not transcribed: that's asked for (Transcribe), all of it or a stretch.
     let state = app.state::<AppState>();
-    let _ = app.emit("vod", &added.vod);
+    crate::page::emit(&app, "vod", &added.vod);
     if added.created {
         state.chat.push(added.vod.id);
         crate::annotations::look_up_added(&app, &added.vod);
@@ -144,7 +144,7 @@ pub(crate) async fn add_files(app: AppHandle, paths: Vec<String>) -> CmdResult<A
 
 /// Tells the page of file VOD `vod`, just added (`created`) or found.
 fn announce_file(app: &AppHandle, vod: &Vod, created: bool) {
-    let _ = app.emit("vod", vod);
+    crate::page::emit(app, "vod", vod);
     if created {
         // A file has no chat; the queue records that.
         app.state::<AppState>().chat.push(vod.id);
@@ -353,7 +353,7 @@ pub(crate) async fn delete_vod(
     if !erased && state.db.lock().unwrap().uses(id).map_err(err)? <= 0 {
         state.sweeper.removed(id);
     }
-    let _ = app.emit("vod-removed", id);
+    crate::page::emit(&app, "vod-removed", id);
     Ok(None)
 }
 
