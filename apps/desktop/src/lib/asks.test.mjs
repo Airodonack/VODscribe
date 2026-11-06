@@ -1,4 +1,5 @@
-// The notes that can be stopped (asks.ts) and their switches in Settings:
+// The notes that can be stopped (asks.ts); their switches in Settings are
+// the settings scenario's (tests/e2e/scenarios/settings.mjs):
 // node --test apps/desktop/src/lib/asks.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -47,18 +48,6 @@ test("only a note stopped is brought over", () => {
   );
   const one = broughtOver((key) => (key === "vodscribe.resolveHintSeen" ? "true" : null));
   assert.deepEqual(one, { change: { suggest_mov_for_resolve: false }, keys: ["vodscribe.resolveHintSeen"] });
-});
-
-test("each note has a switch in Settings that shows and changes its setting", () => {
-  const settings = source("./Settings.svelte");
-  for (const ask of ASKS) {
-    assert.match(settings, new RegExp(`shows\\(appSettings\\.value, "${ask}"\\)`), `${ask} isn't read in Settings`);
-    assert.match(
-      settings,
-      new RegExp(`appSettings\\.update\\(\\{ ${ask}: e\\.currentTarget\\.checked \\}\\)`),
-      `${ask} has no switch in Settings`,
-    );
-  }
 });
 
 test("the old keys are read only to bring them over", () => {

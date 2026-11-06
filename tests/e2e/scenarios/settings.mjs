@@ -4,7 +4,8 @@
 // So is a note's switch: the note before downloading from a site, stopped
 // as 0.7.0 kept it, shows its switch off; turned on, the note comes back on
 // a site VOD's download button; turned off, it stays off after a restart,
-// and Reset settings turns it on again.
+// and Reset settings turns it on again. On Linux the same for the Resolve
+// hint's switch, on at the start.
 //
 // Offline: the VOD is a file added here, made Dailymotion's (no player the
 // app can show, so its row downloads its video); nothing is downloaded.
@@ -43,32 +44,39 @@ const openSettings = async (app) => {
 
 const CHOICES = { Theme: "Dark", "Video quality": "480p", "Clip format": "MOV ProRes", "Clip quality": "High" };
 
-/** The switch of the note before downloading, in Settings › Privacy. */
-const ASK = "Ask before downloading from a site";
-/** Whether that switch is on, or null when it isn't shown. */
-const askSwitch = (app) =>
+/** The switches of the notes that can be stopped (asks.ts): each one's
+ *  words, its section of Settings and its setting. Resolve's is Linux's only. */
+const ASK = { label: "Ask before downloading from a site", section: "Privacy", key: "ask_before_downloading" };
+const RESOLVE = { label: "Suggest MOV for DaVinci Resolve", section: "Storage", key: "suggest_mov_for_resolve" };
+/** Whether switch `which` is on, or null when it isn't shown. */
+const switchOn = (app, which) =>
   app.js(
     `const l = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label.toggle')]
        .find((l) => l.textContent.trim() === arguments[0]);
      return l ? l.querySelector("input").checked : null`,
-    ASK,
+    which.label,
   );
-/** Turns that switch to `on`, and waits till Settings shows it and it's saved. */
-async function setAsk(app, on) {
-  await app.openSettings("Privacy");
+/** Waits till switch `which` shows `on` in its section and its setting is saved so. */
+async function switchIs(app, which, on, why = "") {
+  await app.openSettings(which.section);
+  await until(
+    `"${which.label}" ${on ? "on" : "off"}${why}, and saved so`,
+    async () => (await switchOn(app, which)) === on && (await app.invoke("get_settings"))[which.key] === on,
+    10_000,
+  );
+}
+/** Turns switch `which` to `on`, and waits till Settings shows it and it's saved. */
+async function setSwitch(app, which, on) {
+  await app.openSettings(which.section);
   await app.js(
     `const l = [...document.querySelectorAll('[role="dialog"][aria-label="Settings"] label.toggle')]
        .find((l) => l.textContent.trim() === arguments[0]);
      if (!l) throw new Error("no switch " + arguments[0]);
      if (l.querySelector("input").checked !== arguments[1]) l.querySelector("input").click();`,
-    ASK,
+    which.label,
     on,
   );
-  await until(
-    `"${ASK}" ${on ? "on" : "off"} and saved`,
-    async () => (await askSwitch(app)) === on && (await app.invoke("get_settings")).ask_before_downloading === on,
-    10_000,
-  );
+  await switchIs(app, which, on);
 }
 const same = (a, b) => Object.keys(b).every((k) => a[k] === b[k]);
 
@@ -93,15 +101,9 @@ export default {
     app = await ctx.start();
     await app.toLibrary();
 
-    await app.openSettings("Privacy");
-    await until(
-      `"${ASK}" off, as it was stopped`,
-      async () =>
-        (await askSwitch(app)) === false && (await app.invoke("get_settings")).ask_before_downloading === false,
-      10_000,
-    );
+    await switchIs(app, ASK, false, ", as it was stopped");
     // Turned on, the note shows again before the download; Cancel downloads nothing.
-    await setAsk(app, true);
+    await setSwitch(app, ASK, true);
     await app.click('[role="dialog"][aria-label="Settings"] button[aria-label="Close"]');
     await app.click(`.vod[data-key="${id}"] button.keep`);
     const note = '[role="dialog"][aria-label="Before downloading the video"]';
@@ -115,8 +117,14 @@ export default {
       note,
     );
     await until("the note closed", () => app.js(`return !document.querySelector(arguments[0])`, note), 10_000);
-    ctx.log(`"${ASK}" came in off, from 0.7.0's choice; turned on, the note showed again`);
-    await setAsk(app, false);
+    ctx.log(`"${ASK.label}" came in off, from 0.7.0's choice; turned on, the note showed again`);
+    await setSwitch(app, ASK, false);
+    const linux = process.platform === "linux";
+    if (linux) {
+      await switchIs(app, RESOLVE, true, " at the start");
+      await setSwitch(app, RESOLVE, false);
+      ctx.log(`"${RESOLVE.label}" on at the start; turned off, and saved`);
+    }
 
     await openSettings(app);
     const before = await chosen(app, Object.keys(CHOICES));
@@ -166,8 +174,10 @@ export default {
     const after = await chosen(app, Object.keys(CHOICES));
     await ctx.checkpoint("settings-dark");
     if (!same(after, CHOICES)) throw new Error(`after a restart, Settings shows ${JSON.stringify(after)}`);
-    await app.openSettings("Privacy");
-    if ((await askSwitch(app)) !== false) throw new Error(`after a restart, "${ASK}" isn't off`);
+    for (const which of linux ? [ASK, RESOLVE] : [ASK]) {
+      await app.openSettings(which.section);
+      if ((await switchOn(app, which)) !== false) throw new Error(`after a restart, "${which.label}" isn't off`);
+    }
 
     // Reset settings… (Help), answered Reset: every choice as it was at the start.
     await app.answer("Reset");
@@ -192,8 +202,7 @@ export default {
       saved.ask_before_downloading !== true
     )
       throw new Error(`after a reset the settings are ${JSON.stringify(saved)}`);
-    await app.openSettings("Privacy");
-    await until(`"${ASK}" on after the reset`, async () => (await askSwitch(app)) === true, 10_000);
-    ctx.log("Reset settings put them back, the note's switch on");
+    for (const which of linux ? [ASK, RESOLVE] : [ASK]) await switchIs(app, which, true, " after the reset");
+    ctx.log(`Reset settings put them back, the notes' switches on`);
   },
 };
