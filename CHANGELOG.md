@@ -22,6 +22,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 - Fixes:
+  - Twitch and YouTube play on Ubuntu. A fresh Ubuntu has no decoder for their video, so they didn't play; the package now brings one in.
   - Twitch keeps a mute before Play. A mute set on the bar before Play was lost, and the video played with sound.
   - YouTube shows captions once. With CC on, YouTube's own captions in its player are turned off, as ours show under it.
   - Every Twitch channel shows its picture. A VOD you add from a channel whose name differs from its login, such as a Korean one, gets the streamer's picture too.
