@@ -8,6 +8,11 @@ import { MINUTE, TIMED_POLL, until } from "../lib/app.mjs";
 
 export default {
   name: "export-whole",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "sound-only-fullscreen":
+      "Full screen for a file with sound only: all black above the timeline, with its line of speech (ending has landed.) in large white text centred in the black, on one line; at the bottom a waveform timeline with the playhead at 0:01 and one bar of buttons ending in the leave-full-screen icon.",
+  },
   async run(app, ctx) {
     const { fixtures, log } = ctx;
     await app.toLibrary();

@@ -10,6 +10,13 @@ import { until } from "../lib/app.mjs";
 
 export default {
   name: "marks-undo",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "chapter-title-box":
+      "A popover under the timeline holds a focused text box reading The landing, and under it Chapter at 0:03 · Enter saves and a Copy it as YouTube chapters link; above the timeline a chapter band starts at 0:03, still labelled Untitled chapter in italics, and a small pink star marks 0:01.",
+    "timeline-marks":
+      "No popover: above the timeline a chapter band from 0:03 to the end reads The landing, a small pink star marks 0:01, the header beside the VOD's name shows The landing in the accent colour, and the bar reads 0:03.00 · The landing.",
+  },
   async run(app, { fixtures, log, checkpoint }) {
     await app.toLibrary();
     const vod = await app.addAndTranscribe(fixtures.landed);

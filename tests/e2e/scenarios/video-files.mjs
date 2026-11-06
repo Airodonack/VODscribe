@@ -11,6 +11,13 @@ import { videos } from "../lib/fixtures.mjs";
 
 export default {
   name: "video-files",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "playing-video":
+      "The file landed plays (the bar shows the pause icon): the colour-bar video fills its frame with one caption line on a dark band over its lower part, matching the transcript's one line; the library lists the five files, mute, silent, wide, a Unicode name and landed, with landed selected.",
+    "playing-wide":
+      "The file wide plays (the bar shows the pause icon): a thin strip of colour bars, much wider than tall, sits centred in the black frame with black above and below it, not stretched, and one caption line on the black under it; the wide row is selected in the library.",
+  },
   async run(app, { out, log, checkpoint }) {
     const files = videos(path.join(out, "fixtures"));
     await app.toLibrary();

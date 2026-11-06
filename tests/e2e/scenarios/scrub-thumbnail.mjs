@@ -136,6 +136,12 @@ export default {
       "Dark theme. In the middle of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits just to the left of the thin hover line, inside the timeline's bar, with a light time tip reading 0:10 at the bar's top centred on the line, readable against the dark page.",
     "dark-end":
       "Dark theme. At the right end of the timeline, a small slightly see-through thumbnail of the video (a flat-coloured frame) sits inside the timeline's bar just to the left of the hover line, whole, not cut off, with a light time tip reading 0:19 at the bar's top, kept a little in from the bar's right end.",
+    "light-start":
+      "Light theme. At the left end of the timeline, a small slightly see-through thumbnail of the video (a flat red frame) sits inside the timeline's bar just to the right of the hover line, whole, not cut off, with a dark time tip reading 0:00 at the bar's top, kept within the bar's left end; neither is over the video picture above.",
+    "dark-start":
+      "Dark theme. At the left end of the timeline, a small slightly see-through thumbnail of the video (a flat red frame) sits inside the timeline's bar just to the right of the hover line, whole, not cut off, with a light time tip reading 0:00 at the bar's top, kept within the bar's left end, readable against the dark page.",
+    "no-picture":
+      "Dark theme. A sound-only file is open (a wide Play from 0:00 button where a picture would be, a waveform timeline): over the timeline only a light time tip reading 0:02, at the bar's top and centred on the hover line, with no thumbnail box.",
   },
   async run(app, ctx) {
     const file = colours(path.join(ctx.out, "fixtures"));

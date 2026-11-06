@@ -20,6 +20,21 @@ const SITES = [
 
 export default {
   name: "platforms",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "twitch-playing":
+      "A Twitch VOD plays in Twitch's own player (the header says Twitch · Airodonack and Open on Twitch): the test video's big running clock and Segment 1 of 7 show in it, the app's bar under the timeline shows the pause icon, and the transcript lists lines from 0:00 with 0 messages beside Chat.",
+    "twitch-caption-strip":
+      "A Twitch VOD playing in Twitch's own player: in the dark strip just under the player one short line of caption text, centred and readable, from the transcript's first line (… captions and transcripts.); nothing of ours lies over the player.",
+    "kick-playing":
+      "A Kick VOD, My first stream. (Kick · Airodonack, Open on Kick), plays: the test video's big running clock and Segment 1 of 7 show, the bar shows the pause icon at a few seconds in, and the transcript lists lines from 0:00 with 0 messages beside Chat.",
+    "kick-caption-strip":
+      "A Kick VOD playing: in the dark strip just under the player one short line of caption text, centred and readable, from the transcript's first line (… captions and transcripts.); nothing of ours lies over the picture.",
+    "youtube-playing":
+      "A YouTube VOD, vodscribe test video (YouTube · Airodonack, Open on YouTube), plays in YouTube's own player over the test video's running clock; the bar shows the pause icon a few seconds in, No chat replay beside a greyed Chat, and the transcript lists lines at 0:00, 0:10, 0:20 and on.",
+    "youtube-caption-strip":
+      "A YouTube VOD playing in YouTube's own player: in the dark strip just under the player one line of caption text, centred and readable, from the transcript's first line (This is the VODScribe test video …); the strip doesn't overlap the player.",
+  },
   needs: ["network"],
   allowErrors: true,
   async run(app, ctx) {

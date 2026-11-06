@@ -59,6 +59,12 @@ export default {
       "On the timeline two neighbouring stretches, about 0:01 to 0:02 and 0:02 to 0:03, are outlined and shaded, each with a small round number: 2 on the left one, 1 on the right one. The clip bar under the timeline has no row about them (no count, no Clip or Add to edit… buttons there).",
     "stretch-grabbed":
       "On the timeline the stretch from about 0:02 to 0:03 has a dashed outline over a light shade, and no other stretch is outlined or numbered; a small card with a picture and a waveform, saying its length, sits near it, carried.",
+    "clips-picked":
+      "On the clip bar both pills are ringed in the accent colour and numbered, 1 on Tranguelity and 2 on Swift in uh, each with its play, folder and × icons; there is no row about them under the bar (no count, no Clip or Add to edit… buttons).",
+    "clip-bar-box":
+      "On the clip bar a thin rectangle, drawn from the empty space at the right, reaches over both pills, and both are ringed and numbered 1 and 2.",
+    "library-picked":
+      "In the library a bar reads 2 VODs with Add to edit…, Remove… and an ×; the rows fourth and third are outlined and shaded, numbered 2 and 1, while first and eagle-has-landed are not; the main area offers to search all 4 VODs.",
   },
   async run(app, ctx) {
     await app.toLibrary();

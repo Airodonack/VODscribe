@@ -63,6 +63,10 @@ export function checkFormat(version, from) {
 export function upgradeScenario(version, expect) {
   return {
     name: `upgrade-${version}`,
+    // What a person should see at the checkpoint (verify.mjs).
+    expects: {
+      [`upgraded-${version}`]: `Light theme. The library lists Walking the wetland trail (Kick, saying Paused over a progress line), Speedrunning the old tutorial (Twitch), the edit Landing highlights (selected), Building a lighthouse on the cliff (YouTube), the edit Stream highlights and eagle-has-landed (Local file); Landing highlights is open with ${expect.bands} named pieces in the lane over its waveform, the first Houston, and its transcript starts with Houston, Tranquility Base.`,
+    },
     before() {
       oldLibrary(path.dirname(LANDED), version, { "{FIXTURES}": path.dirname(LANDED) });
     },

@@ -167,7 +167,7 @@ test("every scenario's expectations are one or two sentences, keyed by a label",
     const { default: scenario } = await import(pathToFileURL(path.join(dir, file)));
     for (const [label, text] of Object.entries(scenario.expects ?? {})) {
       count += 1;
-      assert.match(label, /^[\w-]+$/, `${file}: label ${label}`);
+      assert.match(label, /^[\w.-]+$/, `${file}: label ${label}`);
       assert.equal(typeof text, "string", `${file}/${label}`);
       const sentences = text.split(/(?<=[.!?])\s+(?=[A-Z])/).length;
       assert.ok(sentences <= 2, `${file}/${label}: ${sentences} sentences`);

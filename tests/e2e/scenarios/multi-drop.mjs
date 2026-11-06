@@ -48,6 +48,16 @@ export default {
       "Near the pointer, a card follows it: a flat lime-green picture, a strip for the waveform under it (empty: the video has no sound) and under that the text 0:01  0:01–0:02. No number badge on it and no other cards behind it.",
     "three-pieces-carried":
       "Near the pointer, a card with a flat red picture, an empty waveform strip and the text 3 stretches under it; two more cards peek out behind it, each a few pixels further right and down, and nothing further behind them.",
+    "clips-over-an-edit":
+      "In the library the Edit 1 row is lit, a + in its middle, with a dashed Make new edit box above it; over the row a card with a waveform and the text 2 clips, a second card behind it, follows the pointer; on the clip bar both pills are ringed and numbered 2 and 1.",
+    "stretches-over-the-clip-bar":
+      "Edit 1 is open with three pieces, two of them outlined and numbered 2 and 1 on its timeline; the clip bar under the buttons is lit, with Let go to keep them as clips on it, and a card saying 2 stretches, another behind it, is carried over the bar.",
+    "clips-over-the-timeline":
+      "Edit 1 is open: at the very start of its timeline an insert marker with a 0:00 tip shows where the clips would go, a card saying 2 clips (another behind it) is carried near it, and on the clip bar two pills are ringed and numbered 2 and 1.",
+    "add-to-edit-where":
+      'In the library a bar reads 2 VODs with Add to edit…, Remove… and an ×; a small menu under it, headed Into "Edit 1":, offers Timeline, at the end (highlighted) and + Clip bar; the picked rows are outlined, the visible one numbered 2.',
+    "transcribe-all-lit":
+      "In the library a bar reads 2 VODs with Add to edit… and Remove…; the rows second and first, numbered 1 and 2, are outlined and shaded darker, both Not transcribed, and no other row is lit.",
   },
   async run(app, ctx) {
     await app.toLibrary();

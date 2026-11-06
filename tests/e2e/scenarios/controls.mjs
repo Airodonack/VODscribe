@@ -81,6 +81,12 @@ export default {
   expects: {
     "controls-changed":
       "Settings is open on Controls: rows of actions grouped under headings such as Everywhere and Playing, each with its keys at the right as small boxed key caps, each cap with an × and a + after the last; Play or pause shows K and P and no Space.",
+    "controls-recording":
+      "Settings is open on Controls over the dimmed app: a Filter controls box, then rows under Everywhere and Playing, each action's keys at the right as boxed key caps with an ×; on the Play or pause row, after Space and K, a dashed box reads Press a key….",
+    "controls-clash":
+      "Settings, Controls, scrolled to the Playing rows: under Cut here (keys B and Ctrl+B, its + ringed) an extra row reads K Used by Play or pause. in orange, then Replace and Cancel buttons; the rows below are unchanged.",
+    "controls-end":
+      "Settings, Controls, scrolled to the end: the In an edit and With a cut or mark selected groups with their keys, a Reset link beside the two Remove rows left with Backspace only, then a Reset all controls… link and a grey paragraph starting Always the same: that names Esc and Tab; nothing cut off at the bottom.",
   },
   async run(app, ctx) {
     await app.toLibrary();

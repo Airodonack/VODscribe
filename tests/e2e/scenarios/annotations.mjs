@@ -211,6 +211,8 @@ export default {
       'Under the transcript\'s header, a thin rule reading "💬 Hello" and under it a heading with a plain yellow picture, "Marlowe (Vance)" in colour and "0:00", over lines reading "Line 13" and on; nothing overlaps.',
     "annotations-cast":
       'The transcript\'s lines sit under headings, each a circle (Marlowe\'s a plain yellow picture, Ada\'s a coloured circle with "A"), a name in colour ("Marlowe (Vance)" twice in one colour, "Ada" in another) and a time; no heading reads "Mar"; the last two lines share one "Ada" heading; the line at 0:15 is under a heading "Unknown" with a gray circle holding a person\'s outline; thin rules across the transcript read "💬 Hello", "🎮 The game" and "Goodbye". A small panel titled by its list shows Marlowe (Vance) (Streamer · also Mar, Their stream at 0:15) and Ada (Friend, kick.com/ada_plays), each with the same circle as their heading.',
+    "columns-hidden":
+      "Both side columns are hidden: no library on the left and no chapters column on the right, each leaving only a thin full-height strip with a small arrow at the window's edge; the player, its timeline with its lanes, the bar of buttons and the transcript with its chat beside it fill the width between the strips.",
   },
   async run(app, ctx) {
     const dir = path.join(ctx.out, "fixtures");

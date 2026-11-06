@@ -88,6 +88,8 @@ export default {
       "A Settings dialog over the library: down its left a list of sections (Transcription, Appearance, Controls, Storage, Updates, Privacy, Help) with one of them highlighted, and to the right that section's heading and its options, each with a line of explanation.",
     "settings-help":
       'Settings, in a dark theme, shows its Help section: a link to report a problem at the top, then, set apart under a "Reset and repair" heading like the other subsections, two red-outlined buttons, Reset settings… and Repair VODscribe…, each with a line of explanation under it.',
+    "settings-dark":
+      "Settings again after a restart, in the dark theme over the darkened app: Storage is the highlighted section, 480p picked under Downloaded videos, Delete all downloaded videos… and Delete fetched video in red outlines, and MOV ProRes picked under Clips and edits are made as; all text light on dark and readable.",
   },
   async run(app, ctx) {
     await app.toLibrary();

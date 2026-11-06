@@ -87,6 +87,11 @@ function leftOf(id) {
 
 export default {
   name: "jobs",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "jobs-list":
+      "A three-minute video, not transcribed, is open; at the bottom of the library a bar reads Making 3 clips over a thin progress line, and above it a list: Clip at 0:00 saying Making the clip with a percentage and a progress bar, then Clip at 0:01 and Clip at 0:02 each saying Waiting, every row with an ×.",
+  },
   async run(app, ctx) {
     const { log } = ctx;
     const dir = path.join(ctx.out, "fixtures");

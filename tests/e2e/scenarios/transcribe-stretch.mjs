@@ -37,6 +37,10 @@ export default {
   expects: {
     "transcribe-lit-the-rest":
       "In the bar under the timeline a Transcribe button sits at the right, just before the captions (CC) button; on the timeline the two stretches 0:00 to 2:00 and 3:00 to the end are outlined and lit, and the stretch from 2:00 to 3:00 between them is not.",
+    "transcribe-lit-the-whole-VOD":
+      "A ten-minute file, not transcribed: the whole timeline, from 0:00 to the end, is outlined and lit; in the bar under it the Transcribe button sits at the right, just before the greyed captions (CC) button; the transcript says Not transcribed yet. with Transcribe the whole VOD and Transcribe from here links.",
+    "transcribe-lit-all-of-it-again":
+      "The same file, now transcribed (a list of lines from 0:00 Swippin', uh …): the whole timeline, from 0:00 to the end, is outlined and lit again, with the bar's Transcribe button just before the captions (CC) button.",
   },
   async run(app, ctx) {
     await app.toLibrary();

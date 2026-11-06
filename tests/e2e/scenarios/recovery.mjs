@@ -12,6 +12,11 @@ const DAMAGED = "This is not a SQLite database: the library's file, damaged.\n".
 
 export default {
   name: "recovery",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "recovery-screen":
+      "A screen of its own instead of the library: the VODscribe logo, the heading Your library couldn't be opened, a line saying nothing has been deleted, a box with the error naming library.sqlite and file is not a database, Try again and a filled Start a new library button each with a line of explanation, and Show the file and Report the problem links.",
+  },
   before() {
     mkdirSync(dataDirs()[0], { recursive: true });
     writeFileSync(path.join(dataDirs()[0], "library.sqlite"), DAMAGED);

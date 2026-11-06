@@ -14,6 +14,11 @@ import { MINUTE, until } from "../lib/app.mjs";
 
 export default {
   name: "clip",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "clip-bar":
+      "A sound file's player (a caption line and a waveform, no picture): cuts at 0:01 and 0:03 mark a shaded stretch between them, the bar reads 0:01–0:03 (0:02) after Clip, and under the bar one clip pill holds a play icon, 0:02, the first words of the line, a folder icon and an ×, whole, on one line.",
+  },
   async run(app, { fixtures, checkpoint }) {
     await app.toLibrary();
     const done = await app.addAndTranscribe(fixtures.landed);

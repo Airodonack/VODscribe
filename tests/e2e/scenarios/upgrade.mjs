@@ -18,6 +18,11 @@ const fixtures = path.dirname(LANDED);
 
 export default {
   name: "upgrade",
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "upgraded-library":
+      "Dark theme, as chosen in the old version: the library holds one VOD, eagle-has-landed (Local file, 0:05), and the main area offers to search all 1 VOD, with the play keys under it.",
+  },
   before() {
     // The fixture names its file by a placeholder for the fixtures folder.
     oldLibrary(fixtures, VERSION, { "{FIXTURES}": fixtures });
