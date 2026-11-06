@@ -9,6 +9,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Clips come in more formats. Settings › Encoding adds H.265 and ProRes beside H.264 and DNxHR, and a Proxy, Standard or High quality, for clips and edits alike.
 - Dropping on DaVinci Resolve offers MOV. On Linux, where Resolve can't open MP4, a clip dropped on it is held back and VODscribe offers to switch to MOV, in place of the library's note.
 - Open on Twitch drags as a link. Drag Open on YouTube, Twitch or Kick, beside the VOD's title, to a browser or a chat to share where you are.
+- Clips now live in the library. A clip or edit dragged out or shown in its folder still goes by its title; the ones already in Videos/VODscribe stay there.
 - Searches that leave words out are quicker. A minus over a wide window, such as -the within:1h, takes a fraction of a second on a long transcript instead of several.
 - The VODscription offer has plainer buttons. After you add a VOD, "No, and don't show again" sits beside Not now.
 - The jobs list shows three at first. Past three, N more at its foot shows the rest.

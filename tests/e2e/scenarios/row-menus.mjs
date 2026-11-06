@@ -136,7 +136,7 @@ export default {
     const kept = path.join(ctx.out, "row-menus", "kept.mp3");
     mkdirSync(path.dirname(kept), { recursive: true });
     copyFileSync(fixtures.landed, kept);
-    makeSiteVod(vod.id, "dailymotion", "xe2erow", { mediaPath: kept });
+    makeSiteVod(vod.id, "dailymotion", "xe2erow", { video: kept });
     app = await ctx.start();
     await app.toLibrary();
     await until(

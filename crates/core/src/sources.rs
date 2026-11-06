@@ -140,7 +140,7 @@ impl Db {
     /// Notes that VOD `vod_id`'s files, transcript and chat are gone while
     /// pieces of it stay: holes, till nothing uses it and it goes too.
     pub fn set_gone(&self, vod_id: i64) -> Result<()> {
-        self.conn.execute("UPDATE vods SET gone = 1, media_path = NULL WHERE id = ?1", [vod_id])?;
+        self.conn.execute("UPDATE vods SET gone = 1, video_ext = NULL, media_path = NULL WHERE id = ?1", [vod_id])?;
         // Its cast and activity go with its transcript.
         self.conn.execute("DELETE FROM vod_annotations WHERE vod_id = ?1", [vod_id])?;
         Ok(())
@@ -321,7 +321,7 @@ mod tests {
         rusqlite::Connection::open(&path)
             .unwrap()
             .execute_batch(
-                "ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 35;",
+                "ALTER TABLE vods DROP COLUMN video_ext; ALTER TABLE vods DROP COLUMN audio_ext; ALTER TABLE vods DROP COLUMN received_ext; ALTER TABLE stretches DROP COLUMN audio_ext; ALTER TABLE renders DROP COLUMN file_ext; ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 35;",
             )
             .unwrap();
         let db = Db::open(&path).unwrap();

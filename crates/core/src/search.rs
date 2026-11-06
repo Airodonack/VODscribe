@@ -1781,7 +1781,7 @@ mod tests {
         let mut db = Db::open(Path::new(&path)).unwrap();
         plant(&mut db);
         drop(db);
-        let db = Db::open_reader(Path::new(&path)).unwrap();
+        let db = Db::open(Path::new(&path)).unwrap();
         println!("| case | query | hits | ms (median of 7) | slowest |");
         println!("|---|---|---|---|---|");
         for (what, query) in BENCHMARK {

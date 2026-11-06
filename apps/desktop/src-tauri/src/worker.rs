@@ -73,14 +73,14 @@ impl Worker {
     /// once the app's state is managed, since a job reads it (`emit_vod`)
     /// and a job left from last time is there to start at once.
     pub fn start(app: AppHandle, paths: Paths) -> Result<Self> {
-        Db::open(&paths.db())?.requeue_interrupted()?;
+        Db::open_in(&paths)?.requeue_interrupted()?;
         let queue = Arc::new(Mutex::new(Queue { jobs: Vec::new(), held: true }));
         let (dl_tx, dl_rx) = mpsc::channel();
         let (tr_tx, tr_rx) = mpsc::channel();
         for (stage, rx) in [(Stage::Download, dl_rx), (Stage::Transcribe, tr_rx)] {
             let ctx = Ctx {
                 app: app.clone(),
-                db: Db::open(&paths.db())?,
+                db: Db::open_in(&paths)?,
                 paths: paths.clone(),
                 queue: queue.clone(),
                 wake_other: match stage {
@@ -441,7 +441,7 @@ fn transcribe(ctx: &mut Ctx, vod: &Vod, stretch: &Stretch, flag: &AtomicBool, pr
     let app = ctx.app.clone();
     let mut report = reporter(&app, vod.id, stretch.id, progress);
     // The pipeline holds the stage's connection, so notices go through a second one.
-    let notes = Db::open(&ctx.paths.db())?;
+    let notes = Db::open_in(&ctx.paths)?;
     let mut notice = |notice: String| {
         let _ = notes.set_note(vod.id, Some(&notice));
         let _ = crate::emit_vod(&app, &notes, vod.id);
@@ -530,14 +530,19 @@ mod tests {
 
     impl Drop for Work {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            // The folder it's in, with the library beside it.
+            let _ = std::fs::remove_dir_all(self.0.parent().unwrap_or(&self.0));
         }
     }
 
     /// A library with one VOD and a request for all of it in `status`, and
     /// a work dir holding its audio. Returns the request's id.
     fn setup(status: Status) -> (Db, Work, i64) {
-        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        // A folder of its own, so its media folder (beside the work folder) is its own too.
+        let root = std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id()));
+        let work = Paths::new(&root).work();
+        std::fs::create_dir_all(&work).unwrap();
+        let db = Db::open(&root.join("library.sqlite")).unwrap();
         let info = VodInfo {
             platform: "youtube".into(),
             platform_id: "x".into(),
@@ -553,10 +558,6 @@ mod tests {
         let id = db.add_vod(&info).unwrap().0.id;
         let stretch = db.request(id, 0.0, None).unwrap().id;
         db.set_stretch_status(stretch, status, 0.5, None).unwrap();
-        // A folder of its own, so its media folder (beside it) is its own too.
-        let work =
-            std::env::temp_dir().join(format!("vodscribe-finish-{}-{}", std::process::id(), next_id())).join("work");
-        std::fs::create_dir_all(&work).unwrap();
         std::fs::write(work.join(format!("{id}.m4a")), b"audio").unwrap();
         db.set_audio_path(id, Some(&work.join(format!("{id}.m4a")).to_string_lossy())).unwrap();
         (db, Work(work), stretch)
@@ -597,7 +598,7 @@ mod tests {
     #[test]
     fn a_cancelled_stretch_leaves_the_video_downloading_to_play() {
         let (_, work, _) = setup(Status::Transcribing);
-        let db = Db::open(std::path::Path::new(":memory:")).unwrap();
+        let db = Db::open(&work.parent().unwrap().join("other.sqlite")).unwrap();
         let info = VodInfo {
             platform: "rumble".into(),
             platform_id: "r".into(),
@@ -613,7 +614,7 @@ mod tests {
         let vod = db.add_vod(&info).unwrap().0.id;
         let media = pipeline::media_dir(&work);
         std::fs::create_dir_all(&media).unwrap();
-        let part = pipeline::media_stem(&media, vod, "t").with_extension("mp4.part");
+        let part = db.files().source_video(vod, "mp4.part");
         std::fs::write(&part, b"half a video").unwrap();
         let id = db.request(vod, 100.0, Some(130.0)).unwrap().id;
         db.set_stretch_status(id, Status::Transcribing, 0.5, None).unwrap();
@@ -687,7 +688,7 @@ mod tests {
         let media = pipeline::media_dir(&work);
         std::fs::create_dir_all(&media).unwrap();
         let vod = vod_of(&db, id);
-        let video = pipeline::media_stem(&media, vod, "t").with_extension("mp4");
+        let video = db.files().source_video(vod, "mp4");
         std::fs::write(&video, b"").unwrap();
         let video = video.to_string_lossy().into_owned();
         db.set_media_path(vod, Some(&video)).unwrap();

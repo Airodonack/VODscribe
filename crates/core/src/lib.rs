@@ -20,6 +20,7 @@ pub mod footage;
 pub mod gpu;
 pub mod kick;
 pub mod layers;
+pub mod library;
 pub mod local;
 pub mod mkv;
 pub mod model;
@@ -41,7 +42,7 @@ pub mod transcript;
 pub mod twitch;
 pub mod word_emotes;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Where a download is, as the app shows it.
 #[derive(Clone, Copy, Debug, serde::Serialize)]
@@ -204,6 +205,146 @@ impl Paths {
         pipeline::media_dir(&self.work())
     }
 
+    // The library's own files, one function per kind, each built from its
+    // row's id (and an extension, where what's made decides it). Nothing
+    // in the library stores where a file is: a copy of the library opened
+    // from another folder, or on another computer, finds them all. Named
+    // for the folders the library will have (`source_`: a VOD's files;
+    // `clip_`: a clip's or an edit's; `temp_`: emptied at every start), so
+    // a new layout changes only these bodies.
+
+    /// Where VOD `vod_id`'s kept video downloads to, before its extension
+    /// (`pipeline::keeps_video`); its part files start the same.
+    pub fn source_video_stem(&self, vod_id: i64) -> PathBuf {
+        pipeline::media_stem(&self.media(), vod_id)
+    }
+
+    /// VOD `vod_id`'s kept video, once it's here (`Db::set_video`).
+    pub fn source_video(&self, vod_id: i64, ext: &str) -> PathBuf {
+        with_ext(self.source_video_stem(vod_id), ext)
+    }
+
+    /// Where VOD `vod_id`'s whole audio downloads to, before its extension.
+    pub fn source_audio_stem(&self, vod_id: i64) -> PathBuf {
+        self.work().join(vod_id.to_string())
+    }
+
+    /// VOD `vod_id`'s whole audio, downloaded to transcribe it.
+    pub fn source_audio(&self, vod_id: i64, ext: &str) -> PathBuf {
+        with_ext(self.source_audio_stem(vod_id), ext)
+    }
+
+    /// Where request `stretch_id`'s section of VOD `vod_id`'s audio downloads
+    /// to, before its extension.
+    pub fn source_section_stem(&self, vod_id: i64, stretch_id: i64) -> PathBuf {
+        pipeline::section_stem(&self.work(), vod_id, stretch_id)
+    }
+
+    /// Request `stretch_id`'s section of VOD `vod_id`'s audio.
+    pub fn source_section(&self, vod_id: i64, stretch_id: i64, ext: &str) -> PathBuf {
+        with_ext(self.source_section_stem(vod_id, stretch_id), ext)
+    }
+
+    /// Where files dropped from another app arrive, as `<name>.part`, before
+    /// each is added (`source_received`).
+    pub fn received(&self) -> PathBuf {
+        self.media().join("received")
+    }
+
+    /// VOD `vod_id`'s file, received from another app's drop: the app's own
+    /// copy, which it plays as a file on this computer.
+    pub fn source_received(&self, vod_id: i64, ext: &str) -> PathBuf {
+        with_ext(self.received().join(vod_id.to_string()), ext)
+    }
+
+    /// Stretches of VODs downloaded for clips and edits (`footage`).
+    pub fn source_footage(&self) -> PathBuf {
+        self.local.join("footage")
+    }
+
+    /// A VOD's picture, `name` as `Vod::thumb` has it.
+    pub fn source_thumb(&self, name: &str) -> PathBuf {
+        self.thumbs().join(name)
+    }
+
+    /// The storyboard of `file`, one of VOD `vod_id`'s files, named for its
+    /// path. (Its header holds the path too, so one of a file that moved is
+    /// made again: a cache, slow to make, but never wrong.)
+    pub fn source_storyboard(&self, vod_id: i64, file: &Path) -> PathBuf {
+        self.storyboards().join(format!("{vod_id}-{:016x}.sb", fnv1a(file.to_string_lossy().as_bytes())))
+    }
+
+    /// Clips' and edits' files, and the names they're handed out by.
+    pub fn clips(&self) -> PathBuf {
+        self.local.join("clips")
+    }
+
+    /// Clip `clip_id`'s file, cut or rendered (`Db::set_clip_file`). Edits are
+    /// clips (the listed ones), so an edit's render is here too.
+    pub fn clip_file(&self, clip_id: i64, ext: &str) -> PathBuf {
+        with_ext(self.clips().join(clip_id.to_string()), ext)
+    }
+
+    /// Where clip `clip_id`'s file is handed out under the names it's known
+    /// by (dragged to another app, copied, shown in its folder): beside its
+    /// own, and gone with it.
+    pub fn clip_names(&self, clip_id: i64) -> PathBuf {
+        self.clips().join(clip_id.to_string())
+    }
+
+    /// Clips' first frames (`clip_thumb`).
+    pub fn clip_thumbs(&self) -> PathBuf {
+        self.local.join("clip-thumbs")
+    }
+
+    /// Clip `clip_id`'s first frame, shown while it's dragged out.
+    pub fn clip_thumb(&self, clip_id: i64) -> PathBuf {
+        self.clip_thumbs().join(format!("{clip_id}.png"))
+    }
+
+    /// What VOD `vod_id`'s site said of it, for its audio (`pipeline::fresh_info`).
+    pub fn source_info(&self, vod_id: i64) -> PathBuf {
+        pipeline::info_path(&self.work(), vod_id)
+    }
+
+    /// What VOD `vod_id`'s site said of it, for its video kept whole.
+    pub fn source_video_info(&self, vod_id: i64) -> PathBuf {
+        self.work().join(format!("video-{vod_id}.info.json"))
+    }
+
+    /// What VOD `vod_id`'s site said of it, for its footage's sections.
+    pub fn source_footage_info(&self, vod_id: i64) -> PathBuf {
+        self.work().join(format!("footage-{vod_id}.info.json"))
+    }
+
+    /// Where footage section `name` (`footage::section_stem`) downloads to,
+    /// before its extension, till it goes to `source_footage`.
+    pub fn source_footage_download(&self, name: &str) -> PathBuf {
+        self.work().join(format!("footage-{name}"))
+    }
+
+    /// Emote images matched to words in chat (`word_emotes`).
+    pub fn cache_word_emotes(&self) -> PathBuf {
+        self.emotes().join("words")
+    }
+
+    /// What a site said of a link looked up (`n` makes it unique), before
+    /// it's a VOD of the library's.
+    pub fn temp_probe(&self, n: u128) -> PathBuf {
+        self.work().join(format!("probe-{n}.json"))
+    }
+
+    /// What a site's player is fed from here (the embed takeover).
+    pub fn temp_embed(&self) -> PathBuf {
+        self.local.join("embed")
+    }
+
+    /// Edits' preview segments from before edits played in the app's own
+    /// player: nothing reads them now.
+    pub fn temp_preview(&self) -> PathBuf {
+        self.local.join("preview")
+    }
+
     /// The last filter of published annotations fetched (`annotations_filter`),
     /// with its ETag beside it in a file of the same name ending `.etag`, so the
     /// next check asks only whether it changed.
@@ -259,6 +400,20 @@ impl Paths {
         }
         Ok(())
     }
+}
+
+/// `stem` with `.ext` after it (a stem's own dots, as in `12.s3`, kept).
+fn with_ext(stem: PathBuf, ext: &str) -> PathBuf {
+    let mut name = stem.into_os_string();
+    name.push(".");
+    name.push(ext);
+    name.into()
+}
+
+/// FNV-1a: the same for the same bytes in every version and on every
+/// system, as file names kept from one run to the next must be.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 /// A fresh folder for a test, removed when it's dropped, even when the test
@@ -325,6 +480,58 @@ mod tests {
         assert!(paths.cache_dirs().iter().all(empty), "cache dirs are gone or empty");
         assert_eq!(std::fs::read(paths.db()).unwrap(), b"library");
         assert_eq!(std::fs::read(paths.settings()).unwrap(), b"{}");
+    }
+
+    /// Every file of the library's is where `Paths` builds it: no code outside
+    /// this module joins a folder of the library's to a name by hand.
+    #[test]
+    fn only_paths_joins_the_librarys_folders() {
+        let folders = [
+            "root",
+            "local",
+            "work()",
+            "media()",
+            "thumbs()",
+            "peaks()",
+            "storyboards()",
+            "emotes()",
+            "received()",
+            "clips()",
+            "clip_thumbs()",
+            "source_footage()",
+            "bin()",
+            "models()",
+            "gpu_pack()",
+        ];
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut found = Vec::new();
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(repo.join("crates"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path().join("src"))
+            .chain([repo.join("apps/desktop/src-tauri/src")])
+            .collect();
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") || path.ends_with("crates/core/src/lib.rs") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).unwrap();
+                // Tests make folders of their own as they like.
+                let code = text.split("#[cfg(test)]\nmod tests").next().unwrap_or_default();
+                for (n, line) in code.lines().enumerate() {
+                    if folders.iter().any(|f| line.contains(&format!(".{f}.join("))) {
+                        found.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "joined by hand, not built by Paths:\n{}", found.join("\n"));
     }
 
     #[test]

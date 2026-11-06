@@ -31,7 +31,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function latestFormat() {
   try {
     const source = readFileSync(path.join(here, "..", "..", "..", "crates", "core", "src", "db.rs"), "utf8");
-    return source.match(/let migrations = \[([\s\S]*?)\];/)[1].match(/\b(?:SCHEMA|MIGRATE_V\d+),/g).length;
+    return source.match(/let migrations = \[([\s\S]*?)\];/)[1].match(/\b(?:SCHEMA|MIGRATE_\w+),/g).length;
   } catch {
     return null;
   }

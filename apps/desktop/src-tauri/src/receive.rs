@@ -289,7 +289,7 @@ mod taking {
         #[cfg(target_os = "linux")]
         fn stage(&self) -> Option<PathBuf> {
             // (Not while the library can't be opened: the recovery screen.)
-            Some(self.app.try_state::<AppState>()?.paths.media().join("received"))
+            Some(self.app.try_state::<AppState>()?.paths.received())
         }
 
         fn incoming(&self, items: Vec<Item>) -> Vec<(Item, Destination)> {
@@ -337,7 +337,7 @@ mod taking {
         fn start(app: &AppHandle, name: &str, size: Option<u64>, opened: Arc<AtomicBool>) -> anyhow::Result<Sink> {
             let state = app.state::<AppState>();
             let shown = file_name(name).ok_or_else(|| anyhow::anyhow!("not a video or audio file"))?;
-            let dir = state.paths.media().join("received");
+            let dir = state.paths.received();
             std::fs::create_dir_all(&dir)?;
             let receives = &state.receives;
             let mut list = receives.list.lock().unwrap();

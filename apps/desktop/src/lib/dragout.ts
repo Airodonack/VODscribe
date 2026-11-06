@@ -60,9 +60,15 @@ let drags = 0;
 const handing = new Map<number, number>();
 export const draggingOut = () => out;
 
-/** Whether `paths` are just the clips being dragged out. */
+/** Whether `paths` are just the clips being dragged out: their files, or
+ *  the names they're handed out by, in a folder beside each file named as
+ *  it is without its extension (`Paths::clip_names`). */
 export function isOutgoing(paths: string[]): boolean {
-  return outgoing.length > 0 && paths.length > 0 && paths.every((p) => outgoing.includes(p));
+  const named = (p: string, file: string) => {
+    const folder = file.replace(/\.[^./\\]*$/, "");
+    return p.startsWith(folder + "/") || p.startsWith(folder + "\\");
+  };
+  return outgoing.length > 0 && paths.length > 0 && paths.every((p) => outgoing.some((f) => p === f || named(p, f)));
 }
 
 /** Whether the system's drag can begin before the files are made (the app

@@ -2,7 +2,8 @@
 
 One module per subject.
 
-- `lib.rs`: the crate's root, and `Paths`, where the data folder's parts live.
+- `lib.rs`: the crate's root, and `Paths`, where the data folder's parts live and every file of the library's is built.
+- `library.rs`: moves files recorded by full path before 0.7.2 to where `Paths` builds them.
 - `db.rs`: the library, one SQLite file with full-text indexes over transcripts and chat.
 - `stretches.rs`: what of each VOD is transcribed, and what is asked to be.
 - `transcript.rs`: words and lines as the model gives them.

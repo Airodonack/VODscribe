@@ -12,7 +12,7 @@ pub(crate) async fn thumbnail(state: State<'_, AppState>, name: String) -> CmdRe
     if thumbs::mime(&name).is_none() {
         return Err("Not a thumbnail.".into());
     }
-    let bytes = std::fs::read(state.paths.thumbs().join(&name)).map_err(err)?;
+    let bytes = std::fs::read(state.paths.source_thumb(&name)).map_err(err)?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 

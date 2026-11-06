@@ -4,12 +4,12 @@
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 
-import { clipsDir, dataDirs, libraryPath, makeSiteVod, putBackYtDlp, YT_DLP_STAND_IN } from "./data.mjs";
+import { clipsDir, dataDirs, keptVideo, libraryPath, makeSiteVod, putBackYtDlp, YT_DLP_STAND_IN } from "./data.mjs";
 
 const home = mkdtempSync(path.join(tmpdir(), "vodscribe-data-test-"));
 const saved = { ...process.env };
@@ -21,9 +21,9 @@ before(() => {
   mkdirSync(dataDirs()[0], { recursive: true });
   const db = new DatabaseSync(libraryPath());
   db.exec(`CREATE TABLE vods (id INTEGER PRIMARY KEY, platform TEXT, platform_id TEXT, url TEXT, title TEXT,
-    channel TEXT, duration REAL, source_path TEXT, media_path TEXT, chat TEXT, chat_error TEXT)`);
+    channel TEXT, duration REAL, source_path TEXT, received_ext TEXT, video_ext TEXT, media_path TEXT, chat TEXT, chat_error TEXT)`);
   db.prepare(
-    `INSERT INTO vods VALUES (1, 'local', 'a', 'file:///a.mp4', 'a', NULL, 70, '/a.mp4', NULL, 'none', NULL)`,
+    `INSERT INTO vods VALUES (1, 'local', 'a', 'file:///a.mp4', 'a', NULL, 70, '/a.mp4', NULL, NULL, NULL, 'none', NULL)`,
   ).run();
   db.close();
 });
@@ -57,6 +57,8 @@ test("a file's VOD is made a site's, its file gone and its chat known to have no
     channel: null,
     duration: 70,
     source_path: null,
+    received_ext: null,
+    video_ext: null,
     media_path: null,
     chat: "none",
     chat_error: null,
@@ -64,19 +66,22 @@ test("a file's VOD is made a site's, its file gone and its chat known to have no
 });
 
 test("the fields given are set, a chat to fetch and a video kept among them", () => {
+  const video = path.join(home, "a video.mp4");
+  writeFileSync(video, "video");
   makeSiteVod(1, "youtube", "noa29qsTc4g", {
     title: "A stream",
     channel: "Marlowe",
     duration: 14400,
     chat: null,
-    mediaPath: "/kept.mp4",
+    video,
   });
   const got = vod();
   assert.equal(got.url, "https://www.youtube.com/watch?v=noa29qsTc4g");
   assert.deepEqual(
-    [got.title, got.channel, got.duration, got.chat, got.media_path],
-    ["A stream", "Marlowe", 14400, null, "/kept.mp4"],
+    [got.title, got.channel, got.duration, got.chat, got.video_ext, got.media_path],
+    ["A stream", "Marlowe", 14400, null, "mp4", keptVideo(1, "mp4")],
   );
+  assert.equal(readFileSync(keptVideo(1, "mp4"), "utf8"), "video", "copied in where the app keeps it");
 });
 
 test("a field it doesn't know, a site it has no link for or a VOD that isn't there is refused", () => {
@@ -85,25 +90,8 @@ test("a field it doesn't know, a site it has no link for or a VOD that isn't the
   assert.throws(() => makeSiteVod(2, "twitch", "1"), /no VOD 2/);
 });
 
-const linuxOnly = { skip: process.platform === "win32" || process.platform === "darwin" };
-
-test("clips go to the data folder where there's no Videos folder", linuxOnly, () => {
-  process.env.XDG_CONFIG_HOME = path.join(home, "no-config");
-  assert.equal(clipsDir(), path.join(home, "app.vodscribe", "clips"));
-});
-
-test("clips go to the Videos folder's VODscribe, as user-dirs.dirs names it", linuxOnly, () => {
-  const config = path.join(home, "config");
-  mkdirSync(config, { recursive: true });
-  process.env.XDG_CONFIG_HOME = config;
-  const dirs = path.join(config, "user-dirs.dirs");
-  writeFileSync(dirs, 'XDG_DESKTOP_DIR="$HOME/Desktop"\nXDG_VIDEOS_DIR="$HOME/Films"\n');
-  assert.equal(clipsDir(), path.join(homedir(), "Films", "VODscribe"));
-  writeFileSync(dirs, 'XDG_VIDEOS_DIR="/srv/videos"\n');
-  assert.equal(clipsDir(), path.join("/srv/videos", "VODscribe"));
-  // Pointed at the home folder: none, as xdg-user-dirs has it.
-  writeFileSync(dirs, 'XDG_VIDEOS_DIR="$HOME/"\n');
-  assert.equal(clipsDir(), path.join(home, "app.vodscribe", "clips"));
+test("clips are in the local data folder", () => {
+  assert.equal(clipsDir(), path.join(dataDirs().at(-1), "clips"));
 });
 
 /** A bin folder of its own holding `files` (name: contents). */

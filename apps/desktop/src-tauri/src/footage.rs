@@ -72,11 +72,11 @@ struct Fetched {
 pub(crate) fn remove(app: &AppHandle, vod_id: i64) {
     footage::remove(&dir(app), vod_id);
     // And what the site said of it, kept for its sections.
-    let _ = std::fs::remove_file(app.state::<AppState>().paths.work().join(format!("footage-{vod_id}.info.json")));
+    let _ = std::fs::remove_file(app.state::<AppState>().paths.source_footage_info(vod_id));
 }
 
 fn dir(app: &AppHandle) -> PathBuf {
-    app.state::<AppState>().paths.local.join("footage")
+    app.state::<AppState>().paths.source_footage()
 }
 
 /// Whether VOD `vod_id`'s footage is gone for good: it was deleted without
@@ -354,7 +354,7 @@ pub(crate) fn ensure_as(
     // each section (a VOD playing asks for one every two minutes): kept
     // beside, outside this section's files. A download it no longer
     // serves asks again (`download_or_reprobe`).
-    let info = work.join(format!("footage-{vod_id}.info.json"));
+    let info = paths.source_footage_info(vod_id);
     let fresh = std::fs::metadata(&info)
         .and_then(|m| m.modified())
         .is_ok_and(|at| at.elapsed().is_ok_and(|age| age < INFO_FOR));
@@ -413,8 +413,15 @@ pub(crate) fn ensure_as(
                 guess.store(p.to_bits(), Ordering::Relaxed);
                 progress(p);
             };
-            let file =
-                fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &work.join(&prefix), wanted, stop, report)?;
+            let file = fetch::download_or_reprobe(
+                &yt_dlp,
+                &vod.info.url,
+                &info,
+                &paths.source_footage_download(&name),
+                wanted,
+                stop,
+                report,
+            )?;
             let dir = dir(app);
             std::fs::create_dir_all(&dir)?;
             let out = dir.join(format!("{name}.mkv"));

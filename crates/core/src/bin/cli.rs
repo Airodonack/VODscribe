@@ -85,7 +85,7 @@ fn main() -> Result<()> {
         }
         ["probe", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("run `setup` first")?;
-            let probe_path = paths.work().join("probe.json");
+            let probe_path = paths.temp_probe(0);
             let info = fetch::probe(&yt_dlp, url, &probe_path, &AtomicBool::new(false));
             let _ = std::fs::remove_file(&probe_path);
             let info = info?;
@@ -93,7 +93,7 @@ fn main() -> Result<()> {
         }
         ["chat", url] => {
             let yt_dlp = tools::find_yt_dlp(&paths.bin()).context("yt-dlp not found; run setup")?;
-            let info = fetch::probe(&yt_dlp, url, &paths.work().join("cli.info.json"), &AtomicBool::new(false))?;
+            let info = fetch::probe(&yt_dlp, url, &paths.temp_probe(1), &AtomicBool::new(false))?;
             let started = Instant::now();
             let mut store = chat::MemoryChat::default();
             let found = chat::fetch(&info, Some(&yt_dlp), &paths.work(), 0, &mut store, &cancel, |f| {

@@ -11,17 +11,16 @@
 // while that goes on is over at once (it used to wait up to three seconds
 // for it); at the next start what was left of it is erased.
 //
-// A clip's part file is beside its clip: in the Videos folder's VODscribe
-// on Windows and macOS (and on Linux with a Videos folder set), in the
-// app's data elsewhere. Looking in the data alone found none on the hosted
-// Windows and macOS runners, every night (2026-10-31, 2026-11-01).
+// A clip's part file is beside its clip, in the clips' folder of the app's
+// local data (before 0.7.2, in the Videos folder: looking in the data alone
+// found none on the hosted Windows and macOS runners, 2026-10-31).
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { clipsDir, dataDirs, libraryPath, makeSiteVod } from "../lib/data.mjs";
+import { clipsDir, dataDirs, keptVideo, libraryPath, makeSiteVod } from "../lib/data.mjs";
 import { longVideo, TWITCH_VOD, videos } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
@@ -81,7 +80,7 @@ function writeLongChat(id) {
 function leftOf(id) {
   const db = new DatabaseSync(libraryPath(), { readOnly: true });
   try {
-    const row = db.prepare("SELECT gone, media_path FROM vods WHERE id = ?").get(id) ?? null;
+    const row = db.prepare("SELECT gone, video_ext FROM vods WHERE id = ?").get(id) ?? null;
     const chat = Number(db.prepare("SELECT count(*) AS n FROM chat WHERE vod_id = ?").get(id).n);
     return { row, chat };
   } finally {
@@ -268,10 +267,7 @@ export default {
     const title = "A stream with chat";
     // Kept videos are beside the downloads' work folder (Paths::media): in
     // the local data on Windows, not the roaming data the library is in.
-    const media = path.join(dataDirs().at(-1), "media");
-    mkdirSync(media, { recursive: true });
-    const kept = path.join(media, `${title} [${String(site.id).padStart(6, "0")}].mp4`);
-    copyFileSync(videos(dir).video, kept);
+    const kept = keptVideo(site.id, "mp4");
     makeSiteVod(site.id, "twitch", TWITCH_VOD, {
       title,
       channel: "Marlowe",
@@ -279,7 +275,7 @@ export default {
       duration: 14400,
       chat: "done",
       chatError: null,
-      mediaPath: kept,
+      video: videos(dir).video,
     });
     const wrote = writeLongChat(site.id);
     const messages = leftOf(site.id).chat;

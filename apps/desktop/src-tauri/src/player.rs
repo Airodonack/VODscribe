@@ -733,7 +733,7 @@ mod tests {
         let player = Player::open(std::path::Path::new("ffmpeg"), Timeline::covering(60.0, Vec::new())).unwrap();
         player.set_waits_for_footage(true);
         // Meanwhile (the probe), the download ends: recorded, then refiled, with no player open yet.
-        let kept = std::env::temp_dir().join(format!("vodscribe-refile-{}.mp4", std::process::id()));
+        let kept = db.lock().unwrap().files().source_video(id, "mp4");
         db.lock().unwrap().set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
         refile_open(&native, id, &kept, 60.0);
         // The open is in place (open_with), and catches up.

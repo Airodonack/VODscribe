@@ -205,9 +205,8 @@ exec '${real}' "$@"
       const cuts = (await app.invoke("list_marks", { vodId: vod.id })).map((m) => m.start);
       /** How long the stretch from `start` is, between the cuts. */
       const stretchFrom = (start) => Math.min(...cuts.filter((c) => c > start + 0.01)) - start;
-      // The app's clip files (where they are: the Videos folder, or its data's).
-      // The app's clip files: where clips go (the Videos or Movies folder's VODscribe, or the data's clips)
-      // and anywhere in its data; on macOS the Movies folder is the runner's own, so only those written since this began.
+      // The app's clip files, and the names they're handed out by beside them
+      // (all in its data); on macOS only those written since this began.
       const clipDirs = [...new Set([clipsDir(), ...dataDirs()])];
       const appFiles = () =>
         clipDirs.flatMap(filesUnder).filter((f) => /\.(mov|mp4)(\.part)?$/.test(f) && (!mac || mtimeOf(f) >= started));
@@ -848,7 +847,7 @@ async function onWindows(app, ctx) {
     `Add-Type -TypeDefinition (Get-Content -Raw '${source}') -OutputAssembly '${ffmpeg}' -OutputType ConsoleApplication`,
   ]);
   encodes("slow");
-  // The clips folder (Videos\VODscribe), as it was: what the test adds there goes after.
+  // The clips folder (in the local data), as it was: what the test adds there goes after.
   const clips = clipsDir();
   const appFiles = () =>
     [...filesUnder(clips), ...filesUnder(dataDirs()[0])].filter((f) => /\.(mov|mp4)(\.part)?$/.test(f));

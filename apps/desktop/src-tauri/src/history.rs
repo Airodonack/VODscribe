@@ -822,7 +822,8 @@ mod tests {
     fn undone_resize_is_made_again(db: &Db, doc: Doc, clip: i64, made: (f64, f64)) {
         let history = History::default();
         let ready = |(start, end): (f64, f64)| {
-            assert!(db.set_clip_file(clip, start, end, ClipStatus::Ready, Some("/clips/x.mp4"), None).unwrap());
+            let file = db.files().clip_file(clip, "mp4").to_string_lossy().into_owned();
+            assert!(db.set_clip_file(clip, start, end, ClipStatus::Ready, Some(&file), None).unwrap());
             db.set_made_now(clip).unwrap();
         };
         ready(made);

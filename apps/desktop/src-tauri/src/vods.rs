@@ -71,7 +71,7 @@ pub(crate) async fn add_vod(app: AppHandle, url: String, ticket: Option<u64>) ->
         }
         let yt_dlp = tools::find_yt_dlp(&state.paths.bin()).ok_or_else(|| anyhow::anyhow!(fetch::NO_YT_DLP))?;
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos();
-        let probe_path = state.paths.work().join(format!("probe-{nanos}.json"));
+        let probe_path = state.paths.temp_probe(nanos);
         let info = fetch::probe(&yt_dlp, &url, &probe_path, &cancel);
         // Canceled once looked up, but before it's in the library: not added either.
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -180,7 +180,21 @@ fn add_local(app: &AppHandle, path: &Path, received: bool) -> anyhow::Result<(Vo
         anyhow::bail!("{} is part of VODscribe's own data.", vodscribe_core::tools::shown(path));
     }
     // One transaction, so a file never shows up as an online VOD with a path for a link.
-    add_to_library(app, &info, Some(&info.url))
+    let (vod, created) = add_to_library(app, &info, Some(&info.url))?;
+    let Some(ext) = canonical.extension().and_then(|e| e.to_str()).filter(|_| received && created) else {
+        return Ok((vod, created));
+    };
+    // The app's own copy goes where the library keeps a received file, named
+    // for its VOD, before anything reads it (nothing's asked of it yet).
+    let to = state.paths.source_received(vod.id, ext);
+    if let Err(e) = std::fs::rename(canonical, &to) {
+        // Played where it arrived, moved by `library::settle` at the next start.
+        eprintln!("VOD {}: its received file stays where it arrived: {e}", vod.id);
+        return Ok((vod, created));
+    }
+    let db = state.db.lock().unwrap();
+    db.set_received(vod.id, &to.to_string_lossy())?;
+    Ok((db.vod(vod.id)?.unwrap_or(vod), created))
 }
 
 /// Adds a VOD (a file at `source`, if given), in one transaction; one
@@ -380,9 +394,7 @@ fn erase_source(app: &AppHandle, db: &Db, id: i64, kept: bool) -> anyhow::Result
     pipeline::remove_work_files(&paths.work(), id);
     pipeline::remove_media(&paths.work(), id);
     // A file received from another app's drag is the app's own copy.
-    if let Some(source) = db.vod(id)?.and_then(|v| v.source_path)
-        && local::is_inside(Path::new(&source), &paths.media())
-    {
+    if let Some(source) = db.vod(id)?.filter(|v| v.received).and_then(|v| v.source_path) {
         let _ = std::fs::remove_file(source);
     }
     thumbs::remove(&paths.thumbs(), id);
@@ -436,12 +448,7 @@ fn realize(app: &AppHandle, ffmpeg: &Path, vod_id: i64, piece: i64, stop: &Atomi
         let (new, out) = {
             let db = state.db.lock().unwrap();
             let new = db.add_realized(vod_id, start, end)?;
-            let name = clips::extension(vod.audio_only, ClipFormat::Mp4);
-            (
-                new,
-                pipeline::media_stem(&pipeline::media_dir(&state.paths.work()), new, &vod.info.title)
-                    .with_extension(name),
-            )
+            (new, state.paths.source_video(new, clips::extension(vod.audio_only, ClipFormat::Mp4)))
         };
         let within = (start - source.offset, end - source.offset);
         let made =
@@ -646,7 +653,7 @@ pub(crate) fn delete_kept_video(
         if busy(vod.status) {
             return Err("Its video is still in use: wait until it's transcribed.".into());
         }
-        forget_video(&db, work, id).map_err(err)?;
+        forget_video(&db, id).map_err(err)?;
         vod.media
     };
     // Forgotten first, so nothing starts on it; deleted with the library let
@@ -665,16 +672,11 @@ pub(crate) fn busy(status: Status) -> bool {
     matches!(status, Status::Downloading | Status::Transcribing | Status::Ready | Status::Queued)
 }
 
-/// Forgets VOD `id`'s kept video (and its audio, if that was kept with it);
-/// the caller deletes the files (`pipeline::remove_media`), once it has let
-/// the library go.
-pub(crate) fn forget_video(db: &Db, work: &std::path::Path, id: i64) -> anyhow::Result<()> {
-    db.set_media_path(id, None)?;
-    let media = pipeline::media_dir(work);
-    if db.audio_path(id)?.is_some_and(|p| std::path::Path::new(&p).parent() == Some(media.as_path())) {
-        db.set_audio_path(id, None)?;
-    }
-    Ok(())
+/// Forgets VOD `id`'s kept video (its audio, when that's the video, is
+/// known from it and so goes with it); the caller deletes the files
+/// (`pipeline::remove_media`), once it has let the library go.
+pub(crate) fn forget_video(db: &Db, id: i64) -> anyhow::Result<()> {
+    db.set_media_path(id, None)
 }
 
 /// Puts VOD `id`'s requests in one of `which` (paused, failed) back in their

@@ -1,6 +1,6 @@
 // A clip: cuts at 1 and 3 s (B), then Clip with the playhead between them
-// (App.clipOneToThree); resized, it's made again as a new file and the one
-// before goes (it was never dragged out); then deleting it, and undoing
+// (App.clipOneToThree); resized, it's made again, a new file in its place;
+// then deleting it, and undoing
 // that and the resize. Last, its file deleted outside the app (as in a file
 // manager): back in the window, its pill goes; undone, the clip is made
 // again, and the chapter added before that goes only with the next undo.
@@ -8,7 +8,7 @@
 // selection's end) makes it run from 2 to 4, and C clips just that, pressed
 // twice too.
 
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 
 import { MINUTE, until } from "../lib/app.mjs";
 
@@ -28,26 +28,22 @@ export default {
     await until("the chip to show it made", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
     await checkpoint("clip-bar");
 
-    // Resized to 1 to 4 s: a new file, named for its new range; the old one goes.
+    // Resized to 1 to 4 s: made again, a new file in its place (its path is
+    // built from its id, `Paths::clip_file`).
     const first = clip.file_path;
+    const before = statSync(first).ino;
     await app.invoke("set_clip_range", { id: clip.id, start: 1, end: 4 });
     const moved = await until(
       "the clip made again",
       async () => {
         const [c] = await app.invoke("list_clips", { vodId: done.id });
-        return c?.status === "ready" && c.file_path !== first && c;
+        return (
+          c?.status === "ready" && c.end === 4 && existsSync(c.file_path) && statSync(c.file_path).ino !== before && c
+        );
       },
       MINUTE,
     );
-    if (!existsSync(moved.file_path)) throw new Error(`the resized clip says ${moved.file_path}, which isn't there`);
-    await until(
-      "the old range's file gone",
-      () => {
-        if (!existsSync(first)) return true;
-        throw new Error(`${first} is still there`);
-      },
-      10_000,
-    );
+    if (moved.file_path !== first) throw new Error(`the resized clip moved from ${first} to ${moved.file_path}`);
     await until("the chip to show it made", () => app.js(`return !!document.querySelector(".chip.ready")`), 10_000);
     await app.click('.chip.ready button[aria-label="Delete clip"]');
     await until(

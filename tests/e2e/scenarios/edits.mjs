@@ -11,7 +11,7 @@
 // transcribed: the CC button in its bar all the same, off, as on a VOD.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -911,8 +911,9 @@ export default {
     await app.invoke("delete_mark", { id: later.id });
     await until("current again with the chapter gone", async () => (await app.invoke("list_edits"))[0].current, 10_000);
 
-    // Renamed and rendered again: a file of the new name; the one before goes
-    // (it was never dragged out).
+    // Renamed and rendered again: a new file in its place (its path is built
+    // from its id, `Paths::clip_file`; its title is the name it's handed out by).
+    const renderedIno = statSync(rendered.file_path).ino;
     await app.invoke("rename_edit", { id: made.id, title: `${NAME} 2` });
     await until("the rename", async () => (await app.invoke("list_edits"))[0]?.title === `${NAME} 2`, 10_000);
     await app.invoke("render_edit_now", { id: made.id });
@@ -921,22 +922,27 @@ export default {
       async () => {
         const [e] = await app.invoke("list_edits");
         if (e?.status === "error") throw new Error(`the render failed: ${e.error}`);
-        return e?.status === "ready" && e.file_path !== rendered.file_path && e;
+        return e?.status === "ready" && existsSync(e.file_path) && statSync(e.file_path).ino !== renderedIno && e;
       },
       2 * MINUTE,
     );
-    if (existsSync(rendered.file_path)) throw new Error(`the render before, ${rendered.file_path}, is still there`);
+    if (again.file_path !== rendered.file_path)
+      throw new Error(`the render moved from ${rendered.file_path} to ${again.file_path}`);
     await app.invoke("rename_edit", { id: made.id, title: NAME });
     await until("the name back", async () => (await app.invoke("list_edits"))[0]?.title === NAME, 10_000);
-    ctx.log(`renamed and rendered again: ${again.file_path}, the one before gone`);
+    ctx.log(`renamed and rendered again: ${again.file_path}, a new file in its place`);
 
     // A name being typed stays while the edit changes under it (a render's news).
     await app.js(`document.querySelector(arguments[0]).focus()`, title);
     await app.type(title, "Half typ");
+    const againIno = statSync(again.file_path).ino;
     await app.invoke("render_edit_now", { id: made.id });
     await until(
       "a render, begun and done",
-      async () => (await app.invoke("list_edits"))[0]?.file_path !== again.file_path,
+      async () => {
+        const [e] = await app.invoke("list_edits");
+        return e?.status === "ready" && existsSync(e.file_path) && statSync(e.file_path).ino !== againIno;
+      },
       2 * MINUTE,
     );
     await new Promise((r) => setTimeout(r, 500));

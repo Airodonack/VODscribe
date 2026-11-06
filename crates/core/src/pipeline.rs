@@ -204,7 +204,7 @@ fn download(
         Some(selector) => {
             let dir = media_dir(work_dir);
             fs::create_dir_all(&dir)?;
-            (media_stem(&dir, vod.id, &vod.info.title), fetch::Wanted::Video { selector, ffmpeg: tools.ffmpeg })
+            (media_stem(&dir, vod.id), fetch::Wanted::Video { selector, ffmpeg: tools.ffmpeg })
         }
         None => (work_dir.join(vod.id.to_string()), fetch::Wanted::Audio),
     };
@@ -244,12 +244,11 @@ pub fn media_dir(work_dir: &Path) -> PathBuf {
 }
 
 /// Where VOD `vod_id`'s kept video goes in `dir`, without its extension:
-/// `<title> [<id>]`, so it can be found and copied out by hand, in order by
-/// title, then by id: padded to six digits, so [000007] comes before
-/// [000012]. The id is how the app knows whose it is (`owner`); videos kept
-/// before 0.4.0 are plain `<id>.<ext>`.
-pub fn media_stem(dir: &Path, vod_id: i64, title: &str) -> PathBuf {
-    dir.join(format!("{} [{vod_id:06}]", crate::clips::safe_name(title)))
+/// `<id>` (`Paths::source_video_stem`). The name a user sees is given only
+/// where it's handed out. Videos kept from 0.4.0 to 0.7.1 were named
+/// `<title> [<id>]` (`owner` still knows them, so their leftovers go).
+pub fn media_stem(dir: &Path, vod_id: i64) -> PathBuf {
+    dir.join(vod_id.to_string())
 }
 
 /// The VOD a work or media file belongs to: `<id>.…` (the work dir, and
@@ -298,7 +297,7 @@ pub fn remove_media(work_dir: &Path, vod_id: i64) {
 /// stems, the kept video's in `media_dir` and the audio's in `work_dir`.
 /// None when no download has begun, or it has finished.
 pub fn partial_download(work_dir: &Path, vod: &Vod) -> Option<PathBuf> {
-    let stems = [media_stem(&media_dir(work_dir), vod.id, &vod.info.title), work_dir.join(vod.id.to_string())];
+    let stems = [media_stem(&media_dir(work_dir), vod.id), work_dir.join(vod.id.to_string())];
     stems.iter().flat_map(|stem| fetch::part_files(stem)).max_by_key(|(_, len)| *len).map(|(path, _)| path)
 }
 
@@ -666,7 +665,7 @@ mod tests {
         let work = root.join("work");
         let media = media_dir(&work);
         fs::create_dir_all(&media).unwrap();
-        let db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(&root.join("library.sqlite")).unwrap();
         let info = |id: &str| VodInfo {
             platform: "youtube".into(),
             platform_id: id.into(),
@@ -698,11 +697,11 @@ mod tests {
         let id = vod.id;
         fs::create_dir_all(&work).unwrap();
         fs::write(work.join(format!("{id}.f140.m4a.part")), [0; 10]).unwrap();
-        fs::write(media.join(format!("A talk [{id:06}].f137.mp4.part")), [0; 30]).unwrap();
+        fs::write(media.join(format!("{id}.f137.mp4.part")), [0; 30]).unwrap();
         fs::write(work.join(format!("{id}.info.json")), [0; 99]).unwrap();
         fs::write(work.join(format!("{id}0.m4a.part")), [0; 99]).unwrap();
         fs::write(work.join(format!("{}.m4a.part", other.id)), [0; 99]).unwrap();
-        let shown = media.join(format!("A talk [{id:06}].f137.mp4.part"));
+        let shown = media.join(format!("{id}.f137.mp4.part"));
         assert_eq!(file_on_disk(&db, &work, id).unwrap(), Some(shown));
         assert!(listed(&db, id).partial);
         fs::write(work.join(format!("{id}.f251.webm.part")), [0; 50]).unwrap();
@@ -712,7 +711,7 @@ mod tests {
         assert!(!listed(&db, other.id).partial);
 
         // Kept, it's the kept file, and the list doesn't call it partial.
-        let kept = media.join(format!("A talk [{id:06}].mp4"));
+        let kept = media.join(format!("{id}.mp4"));
         fs::write(&kept, b"x").unwrap();
         db.set_media_path(id, Some(&kept.to_string_lossy())).unwrap();
         assert_eq!(file_on_disk(&db, &work, id).unwrap(), Some(kept));
@@ -729,7 +728,7 @@ mod tests {
         assert_eq!(owner("Talk [000007].mp4"), Some(7), "padded");
         assert_eq!(owner("2024.10.15 Stream [000007].mp4"), Some(7), "not 2024");
         assert_eq!(owner("12. Intro [000007].f399.mp4.part"), Some(7), "not 12");
-        assert_eq!(media_stem(Path::new("/m"), 7, "Talk [1]"), Path::new("/m/Talk (1) [000007]"));
+        assert_eq!(media_stem(Path::new("/m"), 7), Path::new("/m/7"));
         assert_eq!(owner("clip-12-1000-5000.mp4"), None);
         assert_eq!(owner("video-12.info.json"), None);
         assert_eq!(owner("notes.txt"), None);
@@ -804,7 +803,7 @@ mod tests {
         };
         let vod = db.add_vod(&info).unwrap().0;
         let stretch = db.request(vod.id, 0.0, None).unwrap();
-        let kept = media_dir(&paths.work()).join("x [1].mp4");
+        let kept = paths.source_video(vod.id, "mp4");
         fs::create_dir_all(kept.parent().unwrap()).unwrap();
         fs::write(&kept, b"video").unwrap();
         db.set_media_path(vod.id, Some(&kept.to_string_lossy())).unwrap();

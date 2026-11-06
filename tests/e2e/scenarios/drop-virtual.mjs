@@ -213,6 +213,9 @@ async function receivedIntoLibrary(app, ctx, received) {
   if (!vod.source_path || path.dirname(vod.source_path).toLowerCase() !== received.toLowerCase())
     throw new Error(`it isn't kept in ${received}: ${vod.source_path}`);
   if (!existsSync(vod.source_path)) throw new Error(`${vod.source_path} isn't there`);
+  // Named for its VOD (`Paths::source_received`), so a library moved finds it.
+  if (path.basename(vod.source_path, path.extname(vod.source_path)) !== String(vod.id))
+    throw new Error(`it's kept as ${path.basename(vod.source_path)}, not named for VOD ${vod.id}`);
   await until(
     "its duration read",
     async () => {

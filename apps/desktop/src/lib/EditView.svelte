@@ -910,9 +910,7 @@
           class="make"
           onclick={() => edits.render(edit.id)}
           disabled={!segments.length}
-          title="{again
-            ? 'Render the edit again'
-            : 'Render the edit'} into one video, in Videos/VODscribe/Edits{labelOf('edit.render')
+          title="{again ? 'Render the edit again' : 'Render the edit'} into one video{labelOf('edit.render')
             ? ` (${labelOf('edit.render')}: export)`
             : ''}"
         >

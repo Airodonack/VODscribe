@@ -37,7 +37,7 @@ function filesOf(id) {
   const local = dataDirs().at(-1);
   return [
     path.join(local, "work", `${id}.info.json`),
-    path.join(local, "media", `A kept video [${String(id).padStart(6, "0")}].mp4`),
+    path.join(local, "media", `${id}.mp4`),
     path.join(local, "thumbs", `${id}.jpg`),
     path.join(local, "peaks", `${id}.peaks`),
     path.join(local, "footage", `${id}-0-5000.mp4`),

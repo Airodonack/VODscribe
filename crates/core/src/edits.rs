@@ -769,7 +769,7 @@ impl Db {
         let row = self
             .conn
             .query_row(
-                "SELECT c.title, r.status, r.file_path, r.error, c.revision, r.revision,
+                "SELECT c.title, r.status, r.file_ext, r.error, c.revision, r.revision,
                         c.bar_of, (SELECT whole_of FROM clips o WHERE o.id = c.bar_of), r.made_of
                  FROM clips c JOIN renders r ON r.clip_id = c.id WHERE c.id = ?1",
                 [id],
@@ -787,9 +787,10 @@ impl Db {
                 },
             )
             .optional()?;
-        let Some((title, status, file_path, error, revision, rendered, snippet_of, made_of)) = row else {
+        let Some((title, status, file_ext, error, revision, rendered, snippet_of, made_of)) = row else {
             return Ok(None);
         };
+        let file_path = file_ext.map(|ext| crate::db::shown(&self.files.clip_file(id, &ext)));
         let pieces = self.edit_pieces(id)?;
         // Of the edit as it is if made of what it's made of now (a file made
         // before that was recorded: of the revision it was made at).
@@ -1810,11 +1811,12 @@ impl Db {
         error: Option<&str>,
         version: Option<i64>,
     ) -> Result<()> {
+        let ext = file.map(|f| crate::db::built_ext(f, |ext| self.files.clip_file(id, ext))).transpose()?;
         self.conn.execute(
-            "UPDATE renders SET status = ?2, file_path = coalesce(?3, file_path), error = ?4,
-               revision = coalesce(?5, revision)
+            "UPDATE renders SET status = ?2, file_ext = coalesce(?3, file_ext), file_path = coalesce(?6, file_path),
+               error = ?4, revision = coalesce(?5, revision)
              WHERE clip_id = ?1",
-            params![id, status.as_str(), file, error, version],
+            params![id, status.as_str(), ext, error, version, file],
         )?;
         Ok(())
     }
@@ -2017,7 +2019,14 @@ pub(crate) mod tests {
         assert_eq!(rev(whole), 10);
 
         // What's made of a clip isn't a change to it.
-        db.set_edit_render(edit, ClipStatus::Ready, Some("/v/e.mp4"), None, Some(8)).unwrap();
+        db.set_edit_render(
+            edit,
+            ClipStatus::Ready,
+            Some(&db.files().clip_file(edit, "mp4").to_string_lossy()),
+            None,
+            Some(8),
+        )
+        .unwrap();
         db.hand_out_edit(edit).unwrap();
         assert_eq!(rev(edit), 8);
         assert!(db.edit(edit).unwrap().unwrap().current);
@@ -2265,7 +2274,14 @@ pub(crate) mod tests {
             let e = db.edit(edit).unwrap().unwrap();
             db.made_of(edit, &e.title, &db.edit_pieces(edit).unwrap()).unwrap()
         };
-        db.set_edit_render(edit, ClipStatus::Ready, Some("/x.mp4"), None, db.revision(edit).unwrap()).unwrap();
+        db.set_edit_render(
+            edit,
+            ClipStatus::Ready,
+            Some(&db.files().clip_file(edit, "mp4").to_string_lossy()),
+            None,
+            db.revision(edit).unwrap(),
+        )
+        .unwrap();
         db.set_made_of(edit, &made()).unwrap();
         let current = || db.edit(edit).unwrap().unwrap().current;
         assert!(current());
@@ -2286,7 +2302,14 @@ pub(crate) mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         let clip = db.add_clip(vod, 10.0, 20.0, "c", true).unwrap().id;
-        db.set_edit_render(clip, ClipStatus::Ready, Some("/c.mp4"), None, None).unwrap();
+        db.set_edit_render(
+            clip,
+            ClipStatus::Ready,
+            Some(&db.files().clip_file(clip, "mp4").to_string_lossy()),
+            None,
+            None,
+        )
+        .unwrap();
         db.set_made_now(clip).unwrap();
         let current = || db.edit(clip).unwrap().unwrap().current;
         assert!(current());
@@ -2746,12 +2769,19 @@ pub(crate) mod tests {
         assert_eq!(((now[0].start, now[0].end), (now[1].start, now[1].end)), ((10.0, 16.0), (16.0, 40.0)));
         // Rendered files say whether they're of the edit as it is.
         let version = db.revision(edit.id).unwrap();
-        db.set_edit_render(edit.id, ClipStatus::Ready, Some("/v/e.mp4"), None, version).unwrap();
+        db.set_edit_render(
+            edit.id,
+            ClipStatus::Ready,
+            Some(&db.files().clip_file(edit.id, "mp4").to_string_lossy()),
+            None,
+            version,
+        )
+        .unwrap();
         assert!(db.edit(edit.id).unwrap().unwrap().current);
         db.remove_piece(split[1].id).unwrap();
         let after = db.edit(edit.id).unwrap().unwrap();
         assert!(!after.current);
-        assert_eq!(after.file_path.as_deref(), Some("/v/e.mp4"));
+        assert_eq!(after.file_path, Some(db.files().clip_file(edit.id, "mp4").to_string_lossy().into_owned()));
         // Deleting the VOD takes its pieces with it.
         db.delete_vod(vod).unwrap();
         assert_eq!(db.edit(edit.id).unwrap().unwrap().pieces, 0);

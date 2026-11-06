@@ -164,7 +164,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
             }
         }
     }
-    let info = work.join(format!("video-{id}.info.json"));
+    let info = paths.source_video_info(id);
     let playable = Playable::load(&paths.playable());
     let selector = playable.selector(height);
     let wanted = fetch::Wanted::Video { selector: &selector, ffmpeg: &ffmpeg };
@@ -178,7 +178,7 @@ fn download(app: &AppHandle, id: i64, height: u32, stop: &AtomicBool) -> Result<
     };
     let result = (|| {
         fetch::probe(&yt_dlp, &vod.info.url, &info, stop)?;
-        let out = pipeline::media_stem(&media, id, &vod.info.title);
+        let out = paths.source_video_stem(id);
         fetch::download_or_reprobe(&yt_dlp, &vod.info.url, &info, &out, wanted, stop, &mut report)
     })();
     let _ = std::fs::remove_file(&info);
@@ -235,7 +235,7 @@ fn stream_then_keep(
     if !playable.plays(&streams) {
         anyhow::bail!("its section came in a format that doesn't play here ({streams:?})");
     }
-    let out = pipeline::media_stem(&paths.media(), vod.id, &vod.info.title).with_extension("mp4");
+    let out = paths.source_video(vod.id, "mp4");
     vodscribe_core::clips::remux(&ffmpeg, &section.path, &out, duration, stop, |p| report(0.95 + p * 0.05))?;
     record(&state.db, &state.videos, &paths.work(), vod.id, &out, stop)?;
     crate::player::refile(app, vod.id, &out, duration);
@@ -358,7 +358,7 @@ pub(crate) async fn delete_all_videos(app: AppHandle, state: State<'_, AppState>
                 continue;
             }
             if vod.media {
-                crate::vods::forget_video(&db, &work, vod.id).map_err(err)?;
+                crate::vods::forget_video(&db, vod.id).map_err(err)?;
                 crate::emit_vod(&app, &db, vod.id)?;
             }
             gone.push(vod.id);
@@ -423,7 +423,11 @@ mod tests {
         fn new() -> Self {
             use std::sync::atomic::AtomicU64;
             static N: AtomicU64 = AtomicU64::new(0);
-            let db = Db::open(Path::new(":memory:")).unwrap();
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir().join(format!("vodscribe-videos-{}-{n}", std::process::id()));
+            let work = vodscribe_core::Paths::new(&root).work();
+            std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
+            let db = Db::open(&root.join("library.sqlite")).unwrap();
             let info = VodInfo {
                 platform: "youtube".into(),
                 platform_id: "x".into(),
@@ -439,15 +443,12 @@ mod tests {
             let id = db.add_vod(&info).unwrap().0.id;
             let whole = db.request(id, 0.0, None).unwrap();
             db.finish_stretch(whole.id).unwrap();
-            let n = N.fetch_add(1, Ordering::Relaxed);
-            let work = std::env::temp_dir().join(format!("vodscribe-videos-{}-{n}", std::process::id())).join("work");
-            std::fs::create_dir_all(pipeline::media_dir(&work)).unwrap();
             Setup { db: Arc::new(Mutex::new(db)), videos: Arc::new(Videos::new()), work, id, owner: true }
         }
 
         /// Where the VOD's video goes, with `ext`.
         fn file(&self, ext: &str) -> std::path::PathBuf {
-            pipeline::media_stem(&pipeline::media_dir(&self.work), self.id, "t").with_extension(ext)
+            self.db.lock().unwrap().files().source_video(self.id, ext)
         }
 
         /// A video kept as a download leaves it: the file, recorded.

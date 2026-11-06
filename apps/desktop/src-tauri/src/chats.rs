@@ -200,7 +200,7 @@ pub(crate) async fn chat_word_emotes(app: AppHandle, vod_id: i64, providers: Vec
         return Ok(Vec::new());
     }
     let Some(vod) = crate::with_reads(app.clone(), move |db| db.vod(vod_id)).await? else { return Ok(Vec::new()) };
-    let dir = app.state::<AppState>().paths.emotes().join("words");
+    let dir = app.state::<AppState>().paths.cache_word_emotes();
     tauri::async_runtime::spawn_blocking(move || {
         let ids: Vec<&str> = providers.iter().map(String::as_str).collect();
         word_emotes::for_vod(&vod.info, &dir, &ids)

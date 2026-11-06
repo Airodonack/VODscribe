@@ -25,7 +25,7 @@
 // first's card with two stacked behind it and no blank card (past three,
 // blank cards behind them thicken the pile), captioned "3 stretches".
 
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -380,10 +380,16 @@ export default {
       await os.gesture([["key", "Escape"], ["wait", 300], ["up"]]);
       await until("the system's drag, over", () => app.js("return window.__dragsEnded"), 10_000);
       if (!paths) throw new Error("the drag never came back over the window with its files");
+      // Each under the name it's handed out by, in a folder beside its file
+      // (`Paths::clip_names`): a hard link, the same file.
       const want = ready.map((c) => c.file_path);
-      if (paths.length !== 2 || !want.every((p) => paths.includes(p)))
-        throw new Error(`the drag held ${JSON.stringify(paths)}, not ${JSON.stringify(want)}`);
-      ctx.log(`two pills dragged out of the window: one drag with both files`);
+      const handedOut = (file) =>
+        paths.find((p) => path.dirname(p) === file.replace(/\.[^./]*$/, "") && statSync(p).ino === statSync(file).ino);
+      if (paths.length !== 2 || !want.every(handedOut))
+        throw new Error(`the drag held ${JSON.stringify(paths)}, not names of ${JSON.stringify(want)}`);
+      ctx.log(
+        `two pills dragged out of the window: one drag with both files, as ${paths.map((p) => path.basename(p)).join(", ")}`,
+      );
       await sleep(1500);
       await app.key("Escape");
     }

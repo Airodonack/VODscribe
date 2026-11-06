@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn footage_is_the_vods_file_a_clips_or_a_section() {
         let dir = crate::TempDir::new("footage");
-        let db = Db::open(Path::new(":memory:")).unwrap();
+        let db = Db::open(&dir.join("library.sqlite")).unwrap();
         let vod = db.add_vod(&info("x")).unwrap().0.id;
         assert_eq!(find(&db, &dir, vod, 10.0, 20.0).unwrap(), None, "nothing yet");
 
@@ -299,13 +299,15 @@ mod tests {
 
         // A clip's file covering the stretch comes first.
         let clip = db.add_clip(vod, 8.0, 30.0, "c", true).unwrap();
-        let file = dir.join("clip.mp4");
+        let file = db.files().clip_file(clip.id, "mp4");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, b"x").unwrap();
         db.set_clip_file(clip.id, 8.0, 30.0, ClipStatus::Ready, Some(&file.to_string_lossy()), None).unwrap();
         assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: file, offset: 8.0, section: None }));
 
         // The VOD's own file, before both.
-        let own = dir.join("own.mp4");
+        let own = db.files().source_video(vod, "mp4");
+        fs::create_dir_all(own.parent().unwrap()).unwrap();
         fs::write(&own, b"x").unwrap();
         db.set_media_path(vod, Some(&own.to_string_lossy())).unwrap();
         assert_eq!(find(&db, &dir, vod, 20.0, 30.0).unwrap(), Some(Source { path: own, offset: 0.0, section: None }));

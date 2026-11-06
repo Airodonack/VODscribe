@@ -36,7 +36,7 @@ import {
 import { longVideo, minute } from "../lib/fixtures.mjs";
 import * as os from "../lib/os.mjs";
 
-/** The app's file `name`: in the clips' folder (the Videos folder's VODscribe, or the data's clips) or anywhere in its data. */
+/** The app's file `name`: a clip's, or a name it's handed out by (`Paths::clip_names`), anywhere in its data. */
 function appFile(name) {
   for (const dir of new Set([clipsDir(), ...dataDirs()])) {
     const found = existsSync(dir) && findIn(dir, name);

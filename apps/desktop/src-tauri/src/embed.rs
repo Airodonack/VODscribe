@@ -84,12 +84,13 @@ const PAST_END: f64 = 60.0;
 
 /// The folder sessions keep their files in, in the app's data.
 fn root(app: &AppHandle) -> PathBuf {
-    app.state::<AppState>().paths.local.join("embed")
+    app.state::<AppState>().paths.temp_embed()
 }
 
-/// Deletes what sessions left (the app quit, or stopped, while one was open).
-pub(crate) fn clear(local: &Path) {
-    let _ = std::fs::remove_dir_all(local.join("embed"));
+/// Deletes what sessions left in `dir` (`root`: the app quit, or stopped,
+/// while one was open).
+pub(crate) fn clear(dir: &Path) {
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Whether a site's VOD's picture can be taken into the app's player (built

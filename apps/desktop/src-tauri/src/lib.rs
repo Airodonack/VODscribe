@@ -191,12 +191,12 @@ fn emit_vod(app: &AppHandle, db: &Db, id: i64) -> CmdResult<()> {
 fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<()> {
     // Edits' preview segments, from before edits played in the app's own
     // player (up to 2 GB): nothing reads them now.
-    let _ = std::fs::remove_dir_all(paths.local.join("preview"));
-    embed::clear(&paths.local);
+    let _ = std::fs::remove_dir_all(paths.temp_preview());
+    embed::clear(&paths.temp_embed());
     // Footage sections a quit (or a crash) left downloading or downloaded in the work folder.
     footage::tidy_work(&paths.work());
     // Files a quit (or a crash) left being received from another app's drop.
-    receive::tidy(&paths.media().join("received"));
+    receive::tidy(&paths.received());
     // Kept videos' leftovers from VODs no longer in the library; only
     // tidying, so a library that can't be read here isn't a reason not
     // to start.
@@ -206,8 +206,8 @@ fn start_library(app: &mut tauri::App, paths: Paths, db: Db) -> anyhow::Result<(
         vodscribe_core::peaks::tidy(&paths.peaks(), &library);
     }
     let db = Mutex::new(db);
-    let reads = Mutex::new(Db::open_reader(&paths.db())?);
-    let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths.db())?);
+    let reads = Mutex::new(Db::open_reader(&paths)?);
+    let searches = vodscribe_core::searcher::Searcher::new(Db::open_reader(&paths)?);
     let worker = Worker::start(app.handle().clone(), paths.clone())?;
     let handle = app.handle().clone();
     let media = media::MediaServer::start(move |asked| match asked {
@@ -287,7 +287,7 @@ pub fn run() {
             // A library that won't open: the window opens on the recovery
             // screen (recovery.rs) instead of the app failing to start.
             let db_path = paths.db();
-            match Db::open(&db_path) {
+            match Db::open_in(&paths) {
                 Ok(db) => {
                     app.manage(recovery::Problem::none(db_path));
                     start_library(app, paths, db)?;
