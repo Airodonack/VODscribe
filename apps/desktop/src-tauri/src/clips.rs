@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use vodscribe_core::db::{Clip, ClipBar, ClipStatus, Db, Mark, MarkDoc};
 use vodscribe_core::settings::Settings;
 use vodscribe_core::{clips, tools};
@@ -1348,7 +1348,13 @@ fn start_drag(
                 taken();
             }
             dropped(false);
-            crate::page::emit(&told, "drag-ended", outcome);
+            // Through Tauri's own queue, not `page::emit`: brought back and
+            // let go on the window, the web view's drop is in that queue
+            // already, and the page must hear it first, while it still knows
+            // where the drag would go. On Linux `page::emit` would overtake
+            // it, and the drop would land nowhere. The drag is over, so
+            // nothing holds that queue now.
+            let _ = told.emit("drag-ended", outcome);
         }
     })
 }
