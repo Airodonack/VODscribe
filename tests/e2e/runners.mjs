@@ -93,12 +93,14 @@ function sendHarness(mkdir) {
   execFileSync("ssh", [...shared, runner.host, unpack], { input: tar.stdout });
 }
 
-/** The Windows runner's screen before the suite, run in the scheduled task
- *  (over SSH there's no desktop to see): a screenshot to out\desktop-before.png,
- *  the windows up to out\desktop-before.txt, and exit 3 if a window is in
- *  front that isn't the desktop, the taskbar or the task's own console, with
- *  what it is as JSON (lib/runnerScreen.mjs windowsNotClear says it). */
-const WINDOWS_DESKTOP = String.raw`$ErrorActionPreference = 'Stop'
+/** The Windows runner's screen, run in the scheduled task (over SSH there's
+ *  no desktop to see) before the suite, and again after a failed one with
+ *  "after": a screenshot to out\desktop-<when>.png, the windows up to
+ *  out\desktop-<when>.txt, and exit 3 if a window is in front that isn't the
+ *  desktop, the taskbar or the task's own console, with what it is as JSON
+ *  (lib/runnerScreen.mjs windowsNotClear says it). */
+const WINDOWS_DESKTOP = String.raw`param([string]$When = 'before')
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type @'
 using System;
@@ -119,7 +121,7 @@ public static class Desk {
 $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
 $bitmap = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
 [System.Drawing.Graphics]::FromImage($bitmap).CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bitmap.Size)
-$bitmap.Save("$PSScriptRoot\out\desktop-before.png", [System.Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Save("$PSScriptRoot\out\desktop-$When.png", [System.Drawing.Imaging.ImageFormat]::Png)
 $front = [Desk]::GetForegroundWindow()
 $id = 0; [void][Desk]::GetWindowThreadProcessId($front, [ref]$id)
 $process = Get-Process -Id $id -ErrorAction SilentlyContinue
@@ -131,7 +133,7 @@ $box = New-Object Desk+Box; [void][Desk]::GetWindowRect($front, [ref]$box)
 $bounds = [System.Windows.Forms.Screen]::FromHandle($front).Bounds
 $full = $box.Left -le $bounds.Left -and $box.Top -le $bounds.Top -and $box.Right -ge $bounds.Right -and $box.Bottom -ge $bounds.Bottom
 $up = Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { "$($_.ProcessName)  $($_.MainWindowTitle)" }
-@("in front: $owner  $class  $title  (Windows' own: $system, full screen: $full)") + $up | Set-Content "$PSScriptRoot\out\desktop-before.txt"
+@("in front: $owner  $class  $title  (Windows' own: $system, full screen: $full)") + $up | Set-Content "$PSScriptRoot\out\desktop-$When.txt"
 # Nothing in front, the desktop, the taskbar, or the console this task runs in.
 $own = $front -eq [Desk]::GetConsoleWindow() -or $title -like '*run.cmd*'
 if ($front -eq [IntPtr]::Zero -or $own -or $class -in 'Progman', 'WorkerW', 'Shell_TrayWnd') { exit 0 }
@@ -210,7 +212,11 @@ async function windows() {
     "powershell -NoProfile -ExecutionPolicy Bypass -File desktop.ps1 > out\\desktop.log 2>&1",
     "if errorlevel 3 (type out\\desktop.log > out\\run.log & echo 3 > out\\exit.txt & exit /b 3)",
     `node tests\\e2e\\run.mjs "${exe}" --driver bridge ${args} > out\\run.log 2>&1`,
-    "echo %ERRORLEVEL% > out\\exit.txt",
+    "set CODE=%ERRORLEVEL%",
+    // One of Windows' own offers (an upgrade screen, Copilot) can come up
+    // during the suite and fail what follows: a failed run looks again.
+    'if not "%CODE%"=="0" powershell -NoProfile -ExecutionPolicy Bypass -File desktop.ps1 after > out\\desktop-after.log 2>&1',
+    "echo %CODE% > out\\exit.txt",
   ].join("\r\n");
   const local = path.join(out, "run.cmd");
   writeFileSync(local, cmd);
@@ -270,11 +276,17 @@ async function windows() {
   scp("-r", `${runner.host}:${runner.dir}/out/*`, out);
   // Nothing left to start on its own.
   ps(`Unregister-ScheduledTask -TaskName vodscribe-e2e -Confirm:$false -ErrorAction SilentlyContinue; exit 0`);
-  const checked = path.join(out, "desktop.log");
-  const said = existsSync(checked) ? readFileSync(checked, "utf8").trim() : "";
-  // What's in front, as desktop.ps1 found it, or what went wrong with the check itself.
-  const front = said.split(/\r?\n/).find((l) => l.startsWith("{"));
-  if (said) log(`desktop: ${front ? windowsNotClear(JSON.parse(front)) : said}`);
+  // What's in front, as desktop.ps1 found it before the suite and after a
+  // failed one, or what went wrong with the check itself.
+  for (const [file, when] of [
+    ["desktop.log", "desktop"],
+    ["desktop-after.log", "desktop after the failed run"],
+  ]) {
+    const checked = path.join(out, file);
+    const said = existsSync(checked) ? readFileSync(checked, "utf8").trim() : "";
+    const front = said.split(/\r?\n/).find((l) => l.startsWith("{"));
+    if (said) log(`${when}: ${front ? windowsNotClear(JSON.parse(front)) : said}`);
+  }
   return Number(readFileSync(path.join(out, "exit.txt"), "utf8").trim());
 }
 
