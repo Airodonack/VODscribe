@@ -45,6 +45,7 @@ use objc2_foundation::{
 };
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
+use super::placeholder::Placeholder;
 use super::{Ended, Ending, Event, Failure, Item, ReleasedEarly, State};
 
 /// How often a promise waiting for its file looks at it.
@@ -149,19 +150,14 @@ impl Hand {
     /// Writes file `index` to `url` once it's made, with an empty file there
     /// meanwhile and a progress on it (Finder's progress and cancel). Why
     /// not, if it wasn't: None if the receiver called it off. A file already
-    /// at `url` is left as it is and the write refused: emptied for the
-    /// progress, it would be lost on a cancel.
+    /// at `url`, or put there during the wait, is left as it is and the
+    /// write refused.
     fn write(&self, index: usize, url: &NSURL) -> Result<(), Option<String>> {
         let item = &self.items[index];
         let to = url.path().map(|p| PathBuf::from(p.to_string())).ok_or(Some("no place to write it".to_string()))?;
-        // A new file, never one already there: so the file at `to` is this
-        // drag's own from here on, and removed if it isn't written.
-        if let Err(e) = std::fs::OpenOptions::new().write(true).create_new(true).open(&to) {
-            return Err(Some(match e.kind() {
-                std::io::ErrorKind::AlreadyExists => "a file of that name is already there".to_string(),
-                _ => format!("couldn't write the file there: {e}"),
-            }));
-        }
+        // A new file, never one already there. Only this file is the drag's
+        // own: one put at its name during the wait is left alone.
+        let placeholder = Placeholder::create(&to).map_err(not_written)?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let progress = NSProgress::progressWithTotalUnitCount(100);
         progress.setKind(Some(unsafe { NSProgressKindFile }));
@@ -195,8 +191,7 @@ impl Hand {
                 // The placeholder out of the way first: a copy to a new
                 // name is a clone on APFS, onto one it's written out.
                 State::Ready(from) => {
-                    let _ = std::fs::remove_file(&to);
-                    break item.write(&from, &to).map_err(|e| Some(format!("couldn't write the file there: {e}")));
+                    break placeholder.remove().and_then(|()| item.write(&from, &to)).map_err(not_written);
                 }
                 State::Failed(why) => break Err(Some(why)),
             }
@@ -204,10 +199,18 @@ impl Hand {
         progress.setCompletedUnitCount(100);
         progress.unpublish();
         if result.is_err() {
-            let _ = std::fs::remove_file(&to);
+            let _ = placeholder.remove();
         }
         result
     }
+}
+
+/// Why a promised file couldn't be put where it was dropped, as the app says it.
+fn not_written(e: std::io::Error) -> Option<String> {
+    Some(match e.kind() {
+        std::io::ErrorKind::AlreadyExists => "a file of that name is already there".to_string(),
+        _ => format!("couldn't write the file there: {e}"),
+    })
 }
 
 /// Which file of a drag an object stands for.

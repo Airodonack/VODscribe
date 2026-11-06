@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(unix)]
+mod placeholder;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::start;
 
@@ -36,10 +38,12 @@ pub(crate) trait Item: Send + Sync {
     fn file_type(&self) -> String;
     /// Where it is now. Asked on the main thread too: it mustn't wait long.
     fn state(&self) -> State;
-    /// Puts the made file `from` at `to`, where the receiver asked for it
-    /// (a copy, by default: on APFS a clone, at once).
+    /// Puts the made file `from` at `to`, where the receiver asked for it,
+    /// as a new file: never onto or through one there, which is refused
+    /// (AlreadyExists). A copy, by default: on APFS a clone, at once.
+    #[cfg(unix)]
     fn write(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        std::fs::copy(from, to).map(|_| ())
+        placeholder::copy_new(from, to)
     }
     /// The receiver called its copy off (Finder's cancel on the file).
     fn cancelled(&self) {}
