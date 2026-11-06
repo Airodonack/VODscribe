@@ -303,9 +303,11 @@
   // VOD with a transcript, before its captions are read: shown only once
   // they were, it pushed everything below down a moment after opening.
   const hasCues = $derived(cuesRead ? cues.length > 0 : vod.transcribed !== "none");
-  const stripCue = $derived(
-    !drawsCaptions && prefs.captions && hasCues ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null,
-  );
+  const stripShown = $derived(!drawsCaptions && prefs.captions && hasCues);
+  const stripCue = $derived(stripShown ? (player ? (cueAt(cues, reading.now)?.text ?? "") : "") : null);
+  // Ours in the strip, a site's own captions in its player go off (embed.ts):
+  // captions show once.
+  $effect(() => player?.stripCaptions?.(stripShown));
   const now = $derived(reading.now);
   // The chapter playing, named in the header where there's room for it.
   const chapterNow = $derived(cuts.isOf({ kind: "vod", id: vod.id }) ? cuts.chapterAt(now) : undefined);

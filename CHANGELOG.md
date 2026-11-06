@@ -16,6 +16,8 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
 - New clips go after the picked one. The Clip key, and a stretch dropped on the clip bar, put the clip after the clip you picked there, as a paste does, and pick it.
 - Fixes:
+  - Twitch starts muted when muted before Play. A mute set on the bar before Play was lost, and the video played with sound.
+  - YouTube shows captions once. With CC on, YouTube's own captions in its player are turned off, as ours show under it.
   - Quitting stays quick during an erasure. Right after a VOD with a long chat was removed, VODscribe could take seconds to close.
   - A Mac drop keeps your files. A file you saved under the clip's name while the clip was being made is no longer deleted or written over; VODscribe says a file of that name is already there.
   - Progress keeps moving during clip drags. On Linux, transcriptions, downloads and clips no longer freeze while an app waits for a clip you dragged out.

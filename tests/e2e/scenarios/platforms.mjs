@@ -33,7 +33,7 @@ export default {
     "youtube-playing":
       "A YouTube VOD, vodscribe test video (YouTube · Airodonack, Open on YouTube), plays in YouTube's own player over the test video's running clock; the bar shows the pause icon a few seconds in, No chat replay beside a greyed Chat, and the transcript lists lines at 0:00, 0:10, 0:20 and on.",
     "youtube-caption-strip":
-      "A YouTube VOD playing in YouTube's own player: in the dark strip just under the player one line of caption text, centred and readable, from the transcript's first line (This is the VODScribe test video …); the strip doesn't overlap the player.",
+      "A YouTube VOD playing in YouTube's own player: in the dark strip just under the player one line of caption text, centred and readable, from the transcript's first line (This is the VODScribe test video …); no caption text inside YouTube's player, and the strip doesn't overlap the player.",
   },
   needs: ["network"],
   allowErrors: true,

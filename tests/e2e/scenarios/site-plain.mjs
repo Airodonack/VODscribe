@@ -8,10 +8,17 @@
 // none. The volume is set and muted on the bar before Play too, their player
 // starts at it, muted, and it's kept: after a restart their player starts at
 // the last one set. Not transcribed, the captions button is greyed, with no
-// strip.
+// strip. On YouTube, first, a VOD with a transcript shows captions once:
+// with ours off, theirs show in their player; with ours on, in the strip
+// under it, theirs are turned off.
+
+import path from "node:path";
 
 import { MINUTE, until } from "../lib/app.mjs";
-import { addTestVod, pressPlay } from "../lib/siteVod.mjs";
+import { makeSiteVod } from "../lib/data.mjs";
+import { videos } from "../lib/fixtures.mjs";
+import * as os from "../lib/os.mjs";
+import { TEST_VODS, addTestVod, pressPlay } from "../lib/siteVod.mjs";
 
 const SITE = process.env.E2E_SITE ?? "twitch";
 const SLIDER = '.bar input[aria-label="Volume"]';
@@ -57,6 +64,30 @@ const theirsAt = (app, volume, muted = false) =>
     }),
   );
 
+/** Whether YouTube's own captions show in their player, at any of a few
+ *  looks over `ms`: their caption box (near black, under white text) in
+ *  the lower part of their frame (the test video's there is lighter). They say
+ *  nothing once turned off, so this is read from the screen. */
+async function theirCaptionsShow(app, ms) {
+  const frame = await os.rectOf(app, "iframe");
+  const band = {
+    x: Math.round(frame.x + frame.w * 0.15),
+    y: Math.round(frame.y + frame.h * 0.72),
+    w: Math.round(frame.w * 0.7),
+    h: Math.round(frame.h * 0.25),
+  };
+  let most = 0;
+  for (const end = Date.now() + ms; Date.now() < end;) {
+    const px = os.pixels(os.screenshot(), band, 140, 30);
+    let dark = 0;
+    for (let i = 0; i < px.length; i += 3) if (Math.max(px[i], px[i + 1], px[i + 2]) < 60) dark++;
+    most = Math.max(most, dark / (px.length / 3));
+    if (most > 0.02) return { shown: true, most };
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { shown: false, most };
+}
+
 /** Waits for `value` to be the volume kept (playerPrefs.svelte.ts). */
 const keptAt = (app, value) =>
   until(
@@ -72,8 +103,14 @@ const keptAt = (app, value) =>
 export default {
   name: "site-plain",
   needs: ["network"],
+  // What a person should see at each checkpoint (verify.mjs).
+  expects: {
+    "youtube-captions-once":
+      "A YouTube VOD playing in YouTube's own player (the test video's clock and Segment text): no caption text inside their player, and the bar's CC button shows on.",
+  },
   async run(app, ctx) {
     if (await app.invoke("embed_takeover")) ctx.skip("this build takes over the sites' players (site-embed)");
+    if (SITE === "youtube") app = await captionsOnce(app, ctx);
     const vod = await addTestVod(app, SITE);
     // Anything the app's frame script (embed_shim.js) says, from any frame:
     // injected, it says so even in a frame left plain ({ kind: "plain" }).
@@ -199,3 +236,54 @@ export default {
     ctx.log("after a restart: their player started at 30%");
   },
 };
+
+/** YouTube's VOD with a transcript (a file's, transcribed here, made the
+ *  test VOD's library entry, removed after): with ours off their captions
+ *  show in their player, and with ours on, in the strip under it, theirs go
+ *  off. The app, started again. */
+async function captionsOnce(app, ctx) {
+  if (os.cannotSee()) {
+    ctx.log("their captions not looked at: the screen can't be read here");
+    return app;
+  }
+  await app.toLibrary();
+  const [added] = await app.addFiles([videos(path.join(ctx.out, "fixtures")).video]);
+  const vod = await app.transcribe(added.id);
+  await ctx.quit();
+  makeSiteVod(vod.id, "youtube", TEST_VODS.youtube.id);
+  app = await ctx.start();
+  await app.toLibrary();
+  // When their captions module says it loaded, with a track: theirs are on.
+  await app.js(`window.addEventListener("message", (e) => {
+    let d = e.data;
+    try { if (typeof d === "string") d = JSON.parse(d); } catch { return; }
+    if (d?.event === "apiInfoDelivery" && d.info?.captions?.track?.languageCode) window.__theirTrack = d.info.captions.track.languageCode;
+  });`);
+  await app.openVod(vod.id);
+  await until(
+    "the Play button",
+    () => app.js(`return !!document.querySelector('.bar button[aria-label="Play"]')`),
+    MINUTE,
+  );
+  const strip = () => app.js(`return !!document.querySelector(".caption-strip")`);
+  // Ours off (captions are a choice kept: on, as the app starts out).
+  if (await strip()) await app.key("C", { shift: true });
+  await until("no strip, with ours off", async () => !(await strip()), 10_000);
+  await app.plays({ press: () => pressPlay(app), ms: 2 * MINUTE });
+  const track = await until("their captions loaded", () => app.js(`return window.__theirTrack ?? null`), 30_000);
+  const off = await theirCaptionsShow(app, 8000);
+  if (!off.shown) throw new Error(`with ours off, their captions (${track}) don't show in their player`);
+  // Ours on: theirs go.
+  await app.key("C", { shift: true });
+  await until("the strip, with ours on", strip, 10_000);
+  await new Promise((r) => setTimeout(r, 1500));
+  const on = await theirCaptionsShow(app, 6000);
+  if (on.shown) throw new Error("with ours on, their captions still show in their player");
+  await ctx.checkpoint("youtube-captions-once");
+  const pct = (f) => `${Math.round(f * 1000) / 10}%`;
+  ctx.log(
+    `with ours off their captions (${track}) showed in their player; with ours on, none (${pct(on.most)} dark, against ${pct(off.most)})`,
+  );
+  await app.invoke("delete_vod", { id: vod.id });
+  return app;
+}
