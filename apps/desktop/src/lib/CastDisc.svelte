@@ -4,9 +4,9 @@
   // (accounts.ts). The picture shows only once it has loaded, so the disc is
   // never empty: before, or when there's none, the initial is what shows. It
   // is shown whole as the site has it, only clipped round as chats draw one,
-  // and the disc links where their name beside it does (`to`, castLink.svelte.ts:
-  // their channel, or their stream at the moment), unless it sits inside
-  // something that is a control of its own (`link`). The Cast popover and the
+  // and a click on it opens their streamer card as their name beside it does
+  // (`onopen`, streamers.svelte.ts), unless it sits inside something that is
+  // a control of its own (`link`). The Cast popover and the
   // chapters and highlights pane draw it smaller (`size`). A text-to-speech
   // voice is no one: a voice's sign in place of an initial, and no picture;
   // nor is a speaker no one names (`anonymous`): a person's outline. Where
@@ -17,7 +17,6 @@
   import { annotated } from "./annotated.svelte";
   import { isVoice } from "./annotated";
   import type { CastMember } from "./api";
-  import type { CastLink } from "./castLink.svelte";
   import Icon from "./Icon.svelte";
   import { initial } from "./transcriptGroups";
 
@@ -27,7 +26,7 @@
     member,
     size = 22,
     link = true,
-    to = null,
+    onopen = null,
     anonymous = false,
     pictureOnly = false,
   }: {
@@ -38,10 +37,10 @@
     member?: CastMember;
     /** Its width and height, in pixels; the initial is drawn to match. */
     size?: number;
-    /** Whether it's a link; false inside a button, which can't hold one. */
+    /** Whether a click on it opens anything; false inside a button, which can't hold one. */
     link?: boolean;
-    /** Where it links, as their name beside it does; null for nowhere. */
-    to?: CastLink | null;
+    /** Opens their card, as their name beside it does; null for no one's. */
+    onopen?: ((e: MouseEvent) => void) | null;
     /** For lines no one is named for: an outline of a person, no one's initial. */
     anonymous?: boolean;
     /** Only the picture, once loaded; nothing until then, or without one. */
@@ -87,20 +86,20 @@
 
 {#if pictureOnly && (!picture || failed)}
   <!-- No picture to show: nothing, not an initial. -->
-{:else if to && link}
-  <!-- The name beside it is the same link, for the keyboard and screen readers. -->
-  <a
-    class="avatar"
+{:else if onopen && link}
+  <!-- The name beside it opens the same card, for the keyboard and screen readers. -->
+  <button
+    type="button"
+    class="avatar opens"
     class:unknown={!color}
     class:pictured={loaded}
     class:waiting={pictureOnly && !loaded}
     style:background={color}
     style:--size="{size}px"
-    href={to.href}
-    title={to.title}
+    title="{name}'s card"
     tabindex="-1"
     aria-hidden="true"
-    onclick={(e) => (e.preventDefault(), to.follow())}>{@render face()}</a
+    onclick={onopen}>{@render face()}</button
   >
 {:else}
   <span
@@ -130,6 +129,12 @@
     line-height: 1;
     text-decoration: none;
     user-select: none;
+  }
+
+  button.avatar {
+    padding: 0;
+    border: none;
+    cursor: pointer;
   }
 
   .avatar.unknown {

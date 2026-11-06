@@ -1,5 +1,6 @@
 <script lang="ts">
   import ChannelDisc from "./ChannelDisc.svelte";
+  import { channelCard, showCard } from "./streamers.svelte";
   import { onDestroy, tick, untrack } from "svelte";
   import { api, events, type Cue, type Vod } from "./api";
   import { ask } from "./ask";
@@ -645,7 +646,12 @@
       <strong title={vod.title}>{vod.title}</strong>
       <span class="meta muted">
         <span class="platform {vod.platform}">{site}</span>
-        {#if vod.channel}<span class="sep">·</span><ChannelDisc {vod} size={16} />{vod.channel}{/if}
+        {#if vod.channel}<span class="sep">·</span><button
+            type="button"
+            class="channel"
+            title="{vod.channel}'s card"
+            onclick={(e) => showCard(e, channelCard(vod))}><ChannelDisc {vod} size={16} />{vod.channel}</button
+          >{/if}
         {#if vod.duration}<span class="sep">·</span>{formatTime(vod.duration)}{/if}
       </span>
       {#if chapterNow?.text}
@@ -940,6 +946,21 @@
     flex: none;
     font-size: 12px;
     white-space: nowrap;
+  }
+
+  /* The channel's picture and name, opening the streamer's card: as the text beside it reads. */
+  .meta .channel {
+    display: inline;
+    padding: 0;
+    border: none;
+    background: none;
+    font-size: inherit;
+    cursor: pointer;
+  }
+
+  .meta .channel:hover {
+    color: var(--text);
+    text-decoration: underline;
   }
 
   /* A phone (the website's VOD page): the title over its details, and the

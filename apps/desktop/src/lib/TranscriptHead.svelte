@@ -17,12 +17,12 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { api, type CastMember, type Stretch, type Vod } from "./api";
-  import { castDetail, speakerColor } from "./annotated";
-  import { castLink } from "./castLink.svelte";
+  import { castDetail, isVoice, speakerColor } from "./annotated";
+  import { showCard } from "./streamers.svelte";
   import { cuts } from "./cuts.svelte";
   import { displayName } from "./castNames";
   import Popover from "./Popover.svelte";
-  import { formatSpan, formatTime } from "./platform";
+  import { formatSpan } from "./platform";
   import type { EventKind } from "./events";
   import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
@@ -113,7 +113,7 @@
 
   let castOpen = $state(false);
   let castAnchor = $state<HTMLElement>();
-  // The Cast list's links go to their streams at the playhead, when it's this VOD's.
+  // The Cast list's cards link to their streams at the playhead, when it's this VOD's.
   const playhead = $derived(vod && cuts.vodId === vod.id ? cuts.now : null);
 </script>
 
@@ -175,27 +175,22 @@
       <Popover bind:open={castOpen} anchor={castAnchor} label="Cast" width={280}>
         <ul class="cast">
           {#each cast as member (member.name)}
-            {@const to = castLink(member, vod, playhead)}
+            {@const name = displayName(member)}
+            {@const color = speakerColor(cast, member.name)}
+            <!-- Their name and disc open their card, which has their links: their channel, and their
+                 own stream at the playhead when it ran alongside. A text-to-speech voice has none. -->
+            {@const open = isVoice(member)
+              ? null
+              : (e: MouseEvent) => showCard(e, { member, name, color, vod: vod ?? null, moment: playhead })}
             <li>
-              <CastDisc name={displayName(member)} color={speakerColor(cast, member.name)} {member} {to} size={20} />
+              <CastDisc {name} {color} {member} onopen={open} size={20} />
               <span class="who">
-                <!-- The streamer who plays them is in the name ("Gigi (GEEGA)"), so only their channel follows,
-                     or their own stream at the playhead when it ran alongside. -->
-                <strong>{displayName(member)}</strong>
-                <span class="muted">{castDetail(member)}</span>
-                {#if to}
-                  <span class="muted"
-                    ><a
-                      class="channel"
-                      href={to.href}
-                      title={to.pov ? to.title : undefined}
-                      onclick={(e) => (e.preventDefault(), to.follow())}
-                      >{to.pov ? `Their stream at ${formatTime(to.pov.offset)}` : to.title}{#if to.outside}<span
-                          class="out"><Icon name="external" size={10} /></span
-                        >{/if}</a
-                    ></span
-                  >
+                {#if open}
+                  <button type="button" class="name" title="{name}'s card" onclick={open}>{name}</button>
+                {:else}
+                  <strong>{name}</strong>
                 {/if}
+                <span class="muted">{castDetail(member)}</span>
               </span>
             </li>
           {/each}
@@ -358,12 +353,6 @@
     flex: none;
   }
 
-  /* The sign that the link leaves the app (castLink.svelte.ts `outside`). */
-  .out {
-    margin-left: 3px;
-    opacity: 0.7;
-  }
-
   .cast-toggle {
     display: inline-flex;
     align-items: center;
@@ -402,8 +391,18 @@
     font-size: 12px;
   }
 
-  .channel {
-    color: var(--accent);
+  /* A name that opens their card: bold as the others, underlined under the pointer. */
+  .who .name {
+    padding: 0;
+    border: none;
+    background: none;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .who .name:hover {
+    text-decoration: underline;
   }
 
   .chat-toggle {

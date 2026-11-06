@@ -17,7 +17,7 @@ The commands the page calls, the queues that do the work, and the native parts o
 - `videos.rs`: downloading a VOD's whole video on request.
 - `storyboards.rs`: keyframe pictures of the footage on this computer.
 - `thumbnails.rs`: VOD thumbnails for the page.
-- `annotations.rs`: importing VODscriptions and asking whether a VOD has one.
+- `annotations.rs`: importing VODscriptions, asking whether a VOD has one, and fetching streamer cards.
 - `history.rs`: undo and redo, per document.
 - `clipboard.rs`: Ctrl+C and Ctrl+V.
 - `choices.rs`: the page's small choices, read at start and written as they change.

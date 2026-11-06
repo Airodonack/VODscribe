@@ -1,9 +1,9 @@
-// Where a cast member's name and disc lead (Transcript.svelte's headings,
-// TranscriptHead.svelte's Cast list, AnnotationsPane.svelte's chips,
-// CastDisc.svelte): their channel; or, when their own stream ran alongside
-// this VOD and covers the moment (povs.ts), that stream at the same moment,
-// in the app when the library has it (`povLibrary`), else on its site. A
-// text-to-speech voice leads nowhere.
+// Where a cast member's link on their streamer card leads (StreamerCard.svelte,
+// opened from their name or disc in the transcript's headings, the Cast list
+// and the highlights' chips): their channel; or, when their own stream ran
+// alongside this VOD and covers the moment (povs.ts), that stream at the same
+// moment, in the app when the library has it (`povLibrary`), else on its
+// site. A text-to-speech voice leads nowhere.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { channelLabel, channelUrl } from "./accounts";

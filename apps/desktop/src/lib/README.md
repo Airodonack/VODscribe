@@ -132,7 +132,9 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `AnnotationsOffer.svelte`, `offers.svelte.ts`: the offer of a VOD's VODscription.
 - `CastDisc.svelte`: a cast member's disc.
 - `accounts.ts`: where a cast member's account and picture come from.
-- `castLink.svelte.ts`: where a cast member's name leads.
+- `castLink.svelte.ts`: where a cast member's link leads, their own stream at the moment first.
+- `streamers.ts`: the streamer card's file, its index, and reading them.
+- `streamers.svelte.ts`, `StreamerCard.svelte`: the streamer card a name or picture opens.
 - `castNames.ts`: what a cast member is called on screen.
 - `povs.ts`: another streamer's view of the same moment.
 
@@ -147,7 +149,7 @@ Svelte components (`.svelte`), modules (`.ts`) and stores (`.svelte.ts`). The we
 - `stored.ts`: small choices kept in the data folder.
 - `DownloadStep.svelte`: a download's current step.
 - `Modal.svelte`: a window over the app.
-- `Popover.svelte`: a panel opened from a button.
+- `Popover.svelte`: a panel opened from a button, or at the pointer.
 - `swallowClick.ts`: the press that closed a menu, kept from the page.
 - `portal.ts`: moves an element to the end of `<body>`.
 - `Menu.svelte`: a menu's choice.

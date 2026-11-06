@@ -320,7 +320,9 @@ mod tests {
         };
         rusqlite::Connection::open(&path)
             .unwrap()
-            .execute_batch("ALTER TABLE vods DROP COLUMN channel_login; PRAGMA user_version = 35;")
+            .execute_batch(
+                "ALTER TABLE vods DROP COLUMN channel_login; ALTER TABLE vod_annotations DROP COLUMN contexts; PRAGMA user_version = 35;",
+            )
             .unwrap();
         let db = Db::open(&path).unwrap();
 

@@ -34,7 +34,7 @@ One module per subject.
 - `mkv.rs`: how much of a Matroska file still being written is whole.
 - `time.rs`: time in flicks, a whole number per frame at every common rate.
 - `clipboard.rs`: what Ctrl+C copies and Ctrl+V puts back.
-- `annotations.rs`: importing a VOD's published annotations.
+- `annotations.rs`: importing a VOD's published annotations, and fetching streamer cards.
 - `annotations_filter.rs`: the Bloom filter of published VODs, so the host never learns the library.
 - `thumbs.rs`: local copies of VOD thumbnails.
 - `peaks.rs`: a VOD's waveform.

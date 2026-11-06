@@ -1,7 +1,8 @@
 //! Importing annotations for a VOD (`vodscribe_core::annotations`): from the
 //! file host where they're published, or from a file (the tests'); asking
 //! the file host whether a VOD has some; and reading a VOD's cast and
-//! activity back for the page, and where its pictures come from.
+//! activity back for the page, where its pictures come from, and the
+//! streamer cards its cast opens.
 
 use std::path::Path;
 
@@ -239,4 +240,31 @@ pub(crate) async fn fetch_annotations(app: AppHandle, vod_id: i64) -> CmdResult<
 #[tauri::command]
 pub(crate) fn avatar_base() -> Option<String> {
     annotations::avatar_base()
+}
+
+/// Streamer card `id` as the file host has it (the page reads it,
+/// streamers.ts); None when it isn't there, or when the user turned asking
+/// the file host off (Settings): the card shows what the VOD knows. Offline,
+/// an error, which the page takes as the same.
+#[tauri::command]
+pub(crate) async fn streamer_card(app: AppHandle, id: String) -> CmdResult<Option<serde_json::Value>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !may_ask(&app) {
+            return Ok(None);
+        }
+        annotations::streamer_card(&id)
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)
+}
+
+/// The file host's index of streamers' accounts (the page reads it,
+/// streamers.ts), as `streamer_card` asks.
+#[tauri::command]
+pub(crate) async fn streamer_index(app: AppHandle) -> CmdResult<Option<serde_json::Value>> {
+    tauri::async_runtime::spawn_blocking(move || if may_ask(&app) { annotations::streamer_index() } else { Ok(None) })
+        .await
+        .map_err(err)?
+        .map_err(err)
 }

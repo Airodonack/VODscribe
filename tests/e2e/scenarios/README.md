@@ -71,6 +71,7 @@ One file per scenario, each on an empty library. A scenario's `expects` says wha
 - `snippet-editor.mjs`: a clip opened in the editor.
 - `speed-menu.mjs`: the speed button clicked, and held for its menu; the captions button right-clicked for the Transcribe menu.
 - `store-errors.mjs`: errors show as toasts wherever the user is.
+- `streamer-card.mjs`: a person's card from their name or picture, showing only what it has.
 - `transcribe-search-play.mjs`: adding, transcribing, searching and playing a file.
 - `transcribe-stretch.mjs`: transcribing only a stretch of a file.
 - `upgrade-0.4.0.mjs`: opening 0.4.0's library and settings.

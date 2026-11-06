@@ -40,10 +40,10 @@
   import { load, save } from "./stored";
   import Icon from "./Icon.svelte";
   import { annotated } from "./annotated.svelte";
-  import { castIndex, speakerColor } from "./annotated";
+  import { castIndex, isVoice, speakerColor } from "./annotated";
   import { GROUP_HEAD_HEIGHT, anyoneNamed, groupHeads, type GroupHead } from "./transcriptGroups";
   import { groupSpans, pinnedAt, reserveAt, type Divider } from "./pinned";
-  import { castLink } from "./castLink.svelte";
+  import { showCard } from "./streamers.svelte";
   import { speakerName } from "./castNames";
   import CastDisc from "./CastDisc.svelte";
 
@@ -1203,29 +1203,33 @@
 {/snippet}
 
 <!-- Who says the lines below, and when the first is: their picture, or their
-     initial; their name links to their channel, or to their own stream at the
-     moment the lines start when it ran alongside (castLink.svelte.ts). Pinned at
-     the top, the rest of it scrolls back to where their lines start.
-     Lines no one is named for, where others are, are Unknown's: a person's outline, no link. -->
+     initial; their name and picture open their streamer card at the pointer
+     (StreamerCard.svelte), with their links: their channel, and their own stream
+     at the moment the lines start when it ran alongside. Pinned at the top, the
+     rest of it scrolls back to where their lines start. Lines no one is named
+     for, where others are, are Unknown's: a person's outline, no card; nor has a
+     text-to-speech voice one. -->
 {#snippet speakerHead(group: GroupHead, pinnedCopy: boolean)}
   {@const color = group.unknown ? null : speakerColor(cast, group.name)}
   {@const member = group.unknown ? undefined : cast[castIndex(cast, group.name)]}
-  {@const to = castLink(member, vod, group.start)}
   {@const label = group.unknown ? group.name : speakerName(member, group.name)}
+  {@const open =
+    member && !isVoice(member)
+      ? (e: MouseEvent) => showCard(e, { member, name: label, color, vod: vod ?? null, moment: group.start })
+      : null}
   <span class="avatar-slot">
-    <CastDisc name={label} {color} {member} {to} anonymous={group.unknown} />
+    <CastDisc name={label} {color} {member} onopen={open} anonymous={group.unknown} />
   </span>
   <span class="who">
-    {#if to}
-      <a
+    {#if open}
+      <button
+        type="button"
         class="speaker channel"
         class:unknown={!color}
         style:color
-        href={to.href}
-        title={to.title}
+        title="{label}'s card"
         tabindex={pinnedCopy ? -1 : undefined}
-        onclick={(e) => (e.preventDefault(), to.follow())}
-        >{label}{#if to.outside}<span class="out"><Icon name="external" size={10} /></span>{/if}</a
+        onclick={open}>{label}</button
       >
     {:else}
       <span class="speaker" class:unknown={!color} style:color>{label}</span>
@@ -1288,7 +1292,7 @@
                   class="pinned-speaker"
                   data-time={pinnedGroup.start}
                   title="Back to where these lines start"
-                  onclick={(e) => !(e.target as Element).closest("a") && toRow(start)}
+                  onclick={(e) => !(e.target as Element).closest("a, button") && toRow(start)}
                 >
                   {@render speakerHead(pinnedGroup, true)}
                 </div>
@@ -1539,18 +1543,17 @@
     color: var(--text);
   }
 
-  .speaker.channel {
-    text-decoration: none;
+  /* A name that opens a card: the name as it reads, underlined under the pointer. */
+  button.speaker {
+    padding: 0;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
   }
 
   .speaker.channel:hover {
     text-decoration: underline;
-  }
-
-  /* The sign that the name's link leaves the app (castLink.svelte.ts `outside`). */
-  .out {
-    margin-left: 3px;
-    opacity: 0.7;
   }
 
   .head-time {

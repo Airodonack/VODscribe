@@ -8,9 +8,9 @@
   // shows its highlights until it's collapsed, then how many it holds; a
   // highlight shows its kind's emoji, title, start and length (and the discs
   // of who's in it, at the end of that line) until it's expanded, then its
-  // kind's word too, why and cast by name (each by their own short name, a
-  // link where the streamer playing them is: their channel, or their own
-  // stream at the highlight's start, castLink.svelte.ts). A click on a
+  // kind's word too, why and cast by name (each by their own short name,
+  // opening their streamer card, StreamerCard.svelte, with their links: their
+  // channel, and their own stream at the highlight's start). A click on a
   // row plays from its start; the chevron beside it opens or closes it. The
   // rows take the keyboard as one list (↑/↓, Home and End between them, Enter
   // to play, → and ← to open and close, ← from a highlight to its chapter).
@@ -30,7 +30,7 @@
   import { SvelteSet } from "svelte/reactivity";
   import type { Put, Vod } from "./api";
   import AddToEdit from "./AddToEdit.svelte";
-  import { castLink } from "./castLink.svelte";
+  import { showCard } from "./streamers.svelte";
   import CastDisc from "./CastDisc.svelte";
   import Icon from "./Icon.svelte";
   import Menu, { type MenuItem } from "./Menu.svelte";
@@ -40,7 +40,7 @@
   import { carry, stretchAt } from "./dragout";
   import { pressToDrag } from "./pressToDrag";
   import { putOf } from "./edits.svelte";
-  import { castIndex, speakerColor } from "./annotated";
+  import { castIndex, isVoice, speakerColor } from "./annotated";
   import { speakerName } from "./castNames";
   import { annotated } from "./annotated.svelte";
   import { highlightGlyph } from "./annotations";
@@ -438,21 +438,24 @@
                     {#if row.cast.length}
                       <p class="people">
                         {#each people(row) as p, j (j)}
-                          {@const to = castLink(p.member, vod, row.start)}
-                          {#if to}
-                            <a
+                          {@const member = p.member}
+                          {#if member && !isVoice(member)}
+                            <button
+                              type="button"
                               class="chip"
-                              href={to.href}
-                              title={to.pov ? to.title : `${p.member?.player?.trim() || p.member?.name} · ${to.title}`}
-                              onclick={(e) => (e.preventDefault(), to.follow())}
-                              ><CastDisc
-                                name={p.label}
-                                color={p.color}
-                                member={p.member}
-                                size={16}
-                                link={false}
-                              /><strong class:unknown={!p.color} style:color={p.color}>{p.short}</strong
-                              >{#if to.outside}<span class="out"><Icon name="external" size={9} /></span>{/if}</a
+                              title="{p.label}'s card"
+                              onclick={(e) =>
+                                showCard(e, {
+                                  member,
+                                  name: p.label,
+                                  color: p.color,
+                                  vod: vod ?? null,
+                                  moment: row.start,
+                                })}
+                              ><CastDisc name={p.label} color={p.color} {member} size={16} link={false} /><strong
+                                class:unknown={!p.color}
+                                style:color={p.color}>{p.short}</strong
+                              ></button
                             >
                           {:else}
                             <span class="chip"
@@ -808,16 +811,10 @@
     gap: 4px 10px;
   }
 
-  /* A cast member's disc, then their name in their colour, a link to the
-     streamer's channel (or stream) when they have one. A chip is never cut short: one
-     that doesn't fit beside the one before goes to the next line whole, and
-     only a name wider than the column breaks, between its words. */
-  /* The sign that the chip's link leaves the app (castLink.svelte.ts `outside`). */
-  .out {
-    margin-left: 2px;
-    opacity: 0.7;
-  }
-
+  /* A cast member's disc, then their name in their colour, opening their
+     card. A chip is never cut short: one that doesn't fit beside the one
+     before goes to the next line whole, and only a name wider than the
+     column breaks, between its words. */
   .chip {
     display: inline-flex;
     align-items: center;
@@ -827,11 +824,19 @@
     text-decoration: none;
   }
 
-  a.chip:hover strong {
+  button.chip {
+    padding: 0;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  button.chip:hover strong {
     text-decoration: underline;
   }
 
-  a.chip:focus-visible {
+  button.chip:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
     border-radius: var(--radius);

@@ -18,6 +18,8 @@
   // a right click on a window in the back opens the menu there, and the click
   // that brings the window to the front never reaches the page: the window's
   // coming to the front closes a menu opened that way.
+  // Opened at a point instead (`at`, a streamer's card at the pointer), it
+  // sits below and to the right of it, or above it, by the same rules.
   let {
     open = $bindable(),
     anchor,
@@ -25,6 +27,7 @@
     width,
     padding = 12,
     above = false,
+    at = null,
     grow = false,
     closeOn = "click",
     children,
@@ -37,6 +40,8 @@
     padding?: number;
     /** Above the button if it fits there, rather than below. */
     above?: boolean;
+    /** A point in the window to open at, its left edge there, rather than against the button. */
+    at?: { x: number; y: number } | null;
     /** As wide as what's in it, `width` at the least (a menu, its longest choice). */
     grow?: boolean;
     /** What outside it closes it: a click, or a press as it begins (a menu's). */
@@ -51,11 +56,12 @@
   const LEAST = 160;
   let place = $state<{ top?: number; bottom?: number; right: number; maxHeight: number } | null>(null);
   function fit() {
-    if (!open || !anchor) return;
-    const box = anchor.getBoundingClientRect();
-    // Right edges aligned, but never past the window's left edge (a button near it).
+    if (!open || (!anchor && !at)) return;
+    const box = at ? new DOMRect(at.x, at.y, 0, 0) : anchor!.getBoundingClientRect();
+    // Right edges aligned (from a point, its left edge there), but never past the window's left edge (a button near it).
     const wide = Math.max(width, panel?.offsetWidth ?? 0);
-    const right = Math.max(8, Math.min(window.innerWidth - box.right, window.innerWidth - wide - 8));
+    const edge = at ? window.innerWidth - box.left - wide : window.innerWidth - box.right;
+    const right = Math.max(8, Math.min(edge, window.innerWidth - wide - 8));
     const below = window.innerHeight - box.bottom - 16;
     const up = box.top - 16;
     place = (above ? up < LEAST && below >= LEAST : below >= ROOM || (below >= up && below >= LEAST))
@@ -67,6 +73,7 @@
   $effect(() => {
     // Again once it's drawn, to know its width.
     void panel;
+    void at;
     if (open) fit();
   });
 

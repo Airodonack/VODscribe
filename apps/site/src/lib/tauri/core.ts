@@ -7,6 +7,7 @@ import { storedId } from "./annotated";
 import { annotated } from "./annotations";
 import type { SearchFilter } from "desktop/lib/api.ts";
 import { changed } from "desktop/lib/markSources.ts";
+import { cardId } from "desktop/lib/annotations.ts";
 
 type Args = Record<string, unknown>;
 
@@ -137,11 +138,20 @@ const commands: Record<string, (args: Args) => unknown> = {
   },
   // The cast's pictures come from the app's own server, unless the build names another.
   avatar_base: () => __AVATAR_BASE__,
-  // A VOD page's cast, activity and other points of view, as the app keeps them from an import; none in the demo.
+  // A VOD page's cast, activity, other points of view and contexts, as the app keeps them from an import; none in the demo.
   vod_annotations: ({ vodId }) => {
     const open = annotated();
-    return open && open.vod.id === vodId ? { cast: open.cast, activity: open.activity, povs: open.povs } : null;
+    return open && open.vod.id === vodId
+      ? { cast: open.cast, activity: open.activity, povs: open.povs, contexts: open.contexts }
+      : null;
   },
+  // Streamer cards, from where the app has them; none to be had (offline, or the host's
+  // answer without CORS headers) is none, and the card shows what the VOD knows.
+  streamer_card: ({ id }) => {
+    const card = cardId(id);
+    return card ? jsonAt(`${CARDS}/streamers/${card}.json`) : null;
+  },
+  streamer_index: () => jsonAt(`${CARDS}/streamers.json`),
   add_mark: ({ vodId, time, kind, text }) => {
     const mark = {
       id: ++lastMark,
@@ -181,6 +191,19 @@ const commands: Record<string, (args: Args) => unknown> = {
     return open.peaks ? peaksAt(open.peaks) : new ArrayBuffer(0);
   },
 };
+
+/** Where streamer cards are published: the app's file host (crates/core annotations.rs `BASE_URL`). */
+const CARDS = "https://dl.vodscribe.com";
+
+/** The JSON at `url`, or null when it's missing or can't be fetched or read. */
+async function jsonAt(url: string): Promise<unknown> {
+  try {
+    const res = await fetch(url);
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The waveform file at `url`, or none when it's missing or can't be fetched. */
 async function peaksAt(url: string): Promise<ArrayBuffer> {

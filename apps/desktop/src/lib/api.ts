@@ -494,8 +494,10 @@ export interface CastMember {
   role: string;
   /** The streamer behind a character, by their public name. */
   player?: string;
-  /** Where they stream: the transcript links to the channel and shows their picture (accounts.ts). */
+  /** Where they stream: their card links to the channel, and they show its picture (accounts.ts). */
   account?: { platform: "twitch" | "kick" | "youtube"; login: string };
+  /** Their streamer card's id, when the file names one (streamers.ts). */
+  streamer?: string;
 }
 
 /** What a VOD is doing from `start` to `end`: a game, just chatting, an event. */
@@ -523,6 +525,8 @@ export interface VodAnnotations {
   activity: Activity[];
   /** Other streamers' VODs that ran alongside. */
   povs: Pov[];
+  /** What the VOD is part of ("nopixel"): which sections of a streamer card show (streamers.ts). */
+  contexts: string[];
 }
 
 /** A caption (crates/core `transcript::Cue`). */
@@ -686,6 +690,11 @@ export const api = {
   avatarBase: () => invoke<string | null>("avatar_base"),
   /** A VOD's cast and activity, if annotations were imported for it. */
   vodAnnotations: (vodId: number) => invoke<VodAnnotations | null>("vod_annotations", { vodId }),
+  /** Streamer card `id` as the file host has it, unread (streamers.ts reads it); null when it isn't there,
+   *  or Settings turned asking the file host off. */
+  streamerCard: (id: string) => invoke<unknown>("streamer_card", { id }),
+  /** The file host's index of streamers' accounts, unread (streamers.ts), as `streamerCard` asks. */
+  streamerIndex: () => invoke<unknown>("streamer_index"),
   /** Edit `id`'s own marks, each where its moment plays on the edit's timeline. */
   editMarks: (id: number) => invoke<Mark[]>("edit_marks", { id }),
   /** A mark (a cut, chapter or highlight) in edit `editId` at `time` seconds of its timeline. */

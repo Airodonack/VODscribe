@@ -58,6 +58,7 @@
   import { isShort, shortMode } from "./shortMode.svelte";
   import { canEmbed } from "./embed";
   import { povLibrary } from "./castLink.svelte";
+  import StreamerCard from "./StreamerCard.svelte";
   import type { PaneRow } from "./annotationRows";
 
   // The website's VOD pages open straight onto their one VOD, without the
@@ -1090,6 +1091,7 @@
   </div>
   <Toast />
   <AnnotationsOffer />
+  <StreamerCard />
 {/if}
 
 <style>

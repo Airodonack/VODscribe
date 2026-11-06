@@ -401,6 +401,8 @@ pub fn run() {
             annotations::fetch_annotations,
             annotations::vod_annotations,
             annotations::avatar_base,
+            annotations::streamer_card,
+            annotations::streamer_index,
             vods::cancel_add,
             vods::list_vods,
             vods::add_files,

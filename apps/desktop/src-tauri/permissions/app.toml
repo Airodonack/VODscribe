@@ -21,6 +21,8 @@ permissions = [
   "allow-fetch-annotations",
   "allow-vod-annotations",
   "allow-avatar-base",
+  "allow-streamer-card",
+  "allow-streamer-index",
   "allow-cancel-add",
   "allow-list-vods",
   "allow-add-files",

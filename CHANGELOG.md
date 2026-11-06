@@ -12,6 +12,7 @@ What changed in each release, for people who use VODscribe. The entry for the ve
 - The VODscription offer has plainer buttons. After you add a VOD, "No, and don't show again" sits beside Not now.
 - The jobs list shows three at first. Past three, N more at its foot shows the rest.
 - Clip settings have their own section. Settings › Encoding has the clip format and quality; Storage keeps the downloaded and fetched videos.
+- Names open a streamer card. A click on someone's name or picture in a VODscription's transcript, a highlight or over the player shows who they are and their links in one place.
 - Bug reports start from a form. The website's support page has Report a bug and Suggest an idea, which open a form on GitHub, and Write to support, which starts an email with the same questions.
 - The timeline shows what's downloaded. A Dailymotion VOD playing as its video downloads is darker past what's in, as an edit's footage still to come is.
 - Releases mark the version you're reading. On a wide window, a bar in the list of versions beside the notes follows the release you've scrolled to.
