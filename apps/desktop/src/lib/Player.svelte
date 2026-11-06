@@ -671,12 +671,17 @@
     </div>
   {/snippet}
   {#snippet headEnd()}
-    <!-- Its file's folder, or its page on its site, at the playhead (actions.ts, as its row's menu has them). -->
+    <!-- Its file's folder, or its page on its site, at the playhead (actions.ts, as its row's menu has them):
+         the page as a link, so it can be dragged to a browser or a chat. -->
     {#each actionsFor( { kind: "vod", vod, at: now } ).filter((a) => a.id === "folder" || a.id === "open") as action (action.id)}
-      <button class="link open" onclick={action.run}>
-        {action.label}
-        {#if action.id === "open"}<Icon name="external" size={12} />{/if}
-      </button>
+      {#if action.href}
+        <a class="open" href={action.href} onclick={(e) => (e.preventDefault(), action.run())}>
+          {action.label}
+          <Icon name="external" size={12} />
+        </a>
+      {:else}
+        <button class="link open" onclick={action.run}>{action.label}</button>
+      {/if}
     {/each}
     <!-- Hidden, the bar goes with the picture, so what brings them back is here
          (its other half is in the bar, PlayerBar.svelte's `hide`). -->
@@ -997,6 +1002,19 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
+  }
+
+  /* As button.link (app.css), for the site's page. */
+  a.open {
+    color: var(--muted);
+    font-size: 12px;
+    text-decoration: none;
+    border-radius: 3px;
+  }
+
+  a.open:hover {
+    color: var(--text);
+    text-decoration: underline;
   }
 
   .stage {

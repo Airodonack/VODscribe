@@ -3,8 +3,8 @@
 // Twitch (or YouTube or Kick, with E2E_SITE=youtube or kick). Opened at its
 // start and played, the stamp comes up with the time playing; after a click
 // further on the timeline, it follows. Open on <site> beside it opens the
-// same moment. Kick's links can't name a time: on Kick, both are the VOD's
-// link with none. What's copied is read from the clipboard command as the
+// same moment, and is a link to it, so it drags as one. Kick's links can't
+// name a time: on Kick, both are the VOD's link with none. What's copied is read from the clipboard command as the
 // page sends it (the app's IPC), not back from the system's clipboard, which
 // the app may only write; what's opened from the opener's command, which
 // goes no further (no browser opens).
@@ -66,7 +66,7 @@ export default {
     /** Clicks the stamp, then Open on <site>: what the stamp showed, and the
      *  links copied and opened, checked against the time playing. */
     const copy = async (what) => {
-      const { shown, link, opened, played } = await until(
+      const { shown, link, opened, href, played } = await until(
         `the stamp (${what})`,
         () =>
           app.js(`
@@ -77,10 +77,11 @@ export default {
             const played = seconds(document.querySelector("button.time .now > span:not(.widest)")?.textContent ?? "");
             const before = [window.__copied.length, window.__opened.length];
             stamp.click();
-            document.querySelector("button.link.open").click();
+            const open = document.querySelector("a.open");
+            open.click();
             await new Promise((r) => setTimeout(r, 300));
             return window.__copied.length > before[0] && window.__opened.length > before[1] &&
-              { shown, link: window.__copied.at(-1), opened: window.__opened.at(-1), played };`),
+              { shown, link: window.__copied.at(-1), opened: window.__opened.at(-1), href: open.href, played };`),
         MINUTE,
       );
       const copied = linkTime(link);
@@ -90,6 +91,7 @@ export default {
         throw new Error(`${what}: the bar was at ${played} s, the stamp showed ${shown} s and copied ${link}`);
       if (open !== copied && (open === null || copied === null || Math.abs(open - copied) > 1))
         throw new Error(`${what}: copied ${link} but Open on opened ${opened}`);
+      if (href !== opened) throw new Error(`${what}: Open on opened ${opened} but links to ${href}`);
       const feedback = await app.js(`return document.querySelector("button.stamp .copied-text")?.textContent ?? ""`);
       if (feedback !== "Copied") throw new Error(`${what}: the stamp said "${feedback}", not Copied`);
       return copied ?? shown;
